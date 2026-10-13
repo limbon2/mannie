@@ -1,0 +1,39 @@
+[package]
+name = "mannie-store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Mannie's SQLite store: the writer thread, the reader pool, migrations and repositories. The only crate that uses rusqlite."
+license.workspace = true
+publish.workspace = true
+
+[[test]]
+name = "durability"
+required-features = ["validation"]
+
+[[bench]]
+harness = false
+name = "writer_throughput"
+required-features = ["validation"]
+
+[dependencies]
+mannie-types = { workspace = true }
+rusqlite = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true, features = ["rt", "sync"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+serde = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+
+[features]
+# Exposes the synthetic event table that the validations (V3) write to. Never
+# enabled in the desktop app or the worker.
+validation = []
+
+[lints]
+workspace = true

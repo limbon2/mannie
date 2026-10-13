@@ -9,3 +9,4 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - Documentation baseline: vision, goals and scope, the feature protocol, architecture, architecture decision records, milestones, engineering standards and agent rules.
 - Documentation checks, run with `task docs:check`.
 - Decisions on the interface language, closing the window, code signing and release hosting, with the window and tray feature and ADR-0019 for message catalogs.
+- The SQLite store, with migrations, a copy of the database before each migration, and refusal of a database from a newer version.
