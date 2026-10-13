@@ -1,0 +1,24 @@
+[package]
+name = "mannie-types"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Shared domain, IPC and settings types of Mannie, and the redacting secret type. No I/O."
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+specta = { workspace = true }
+thiserror = { workspace = true }
+zeroize = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[features]
+# The IPC types of the desktop app's validation commands (V1, V2, V3).
+validation = []
+
+[lints]
+workspace = true

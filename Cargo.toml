@@ -1,9 +1,11 @@
 # Cargo workspace of the Rust core, the desktop app and the worker
-# (docs/engineering/repository.md). M0 adds the members and the shared package
-# settings. The lint policy below exists from the start, so every crate is
-# written under it.
+# (docs/engineering/repository.md). Library crates live in crates/, and the two
+# binaries in apps/. A crate is added when the first milestone that needs it
+# starts, so no member is a placeholder.
 #
-# Every member inherits the policy with:
+# Every member inherits the package settings and the lint policy with:
+#
+#     version.workspace = true   (and the other [workspace.package] keys)
 #
 #     [lints]
 #     workspace = true
@@ -15,7 +17,30 @@
 
 [workspace]
 resolver = "3"
-members = []
+members = [
+  "crates/mannie-types",
+]
+
+# One version for the desktop app and the worker (ADR-0018). `task
+# release:prepare` changes it.
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99"
+license = "Apache-2.0"
+publish = false
+
+# Every dependency is declared once, here, and members refer to it with
+# `workspace = true`. Cargo.lock pins the exact versions; specta and
+# tauri-specta are release candidates and are pinned here as well (ADR-0007).
+# cargo-deny (deny.toml) enforces which crate may depend on which.
+[workspace.dependencies]
+mannie-types = { path = "crates/mannie-types" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+specta = { version = "=2.0.0-rc.25", features = ["derive"] }
+thiserror = "2.0.21"
+zeroize = "1.9.1"
 
 [workspace.lints.clippy]
 # Suppressions use #[expect], which fails once the lint no longer fires.
