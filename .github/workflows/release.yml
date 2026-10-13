@@ -1,0 +1,294 @@
+# Builds a release from a version tag (docs/engineering/releasing.md,
+# ADR-0018): every check, the desktop installers and the worker archives, an
+# install check of each artifact on a clean runner, SHA-256 checksums, Ed25519
+# signatures of the worker archives, CycloneDX SBOMs and third-party notices,
+# and a draft GitHub release whose notes are the version's changelog section.
+# Nothing is published: the owner checks the draft on clean machines and
+# publishes it (V10). Actions are pinned by commit SHA.
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  version:
+    name: Check the version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: version
+        name: Compare the tag with the workspace version and the changelog
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          workspace="$(node scripts/release.mjs version)"
+          if [ "$version" != "$workspace" ]; then
+            echo "The tag $GITHUB_REF_NAME does not match the workspace version $workspace. Run task release:prepare first." >&2
+            exit 1
+          fi
+          node scripts/release.mjs notes "$version" > /dev/null
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  checks:
+    name: Checks
+    uses: ./.github/workflows/ci.yml
+
+  freebsd-tests:
+    name: FreeBSD tests
+    uses: ./.github/workflows/nightly.yml
+
+  windows:
+    name: Windows installer and worker
+    needs: version
+    runs-on: windows-2025
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: release
+      - run: task gen
+      - run: pnpm --dir apps/desktop exec tauri build --bundles nsis
+      - run: cargo build --locked --release -p mannie-worker
+      - name: Collect the artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist, staging | Out-Null
+          $installer = Get-ChildItem -Path target/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
+          Copy-Item -Path $installer.FullName -Destination "dist/mannie-$env:VERSION-windows-x86_64-setup.exe"
+          Copy-Item -Path target/release/mannie-worker.exe, LICENSE -Destination staging
+          Compress-Archive -Path staging/* -DestinationPath "dist/mannie-worker-$env:VERSION-windows-x86_64.zip"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows
+          path: dist/
+          if-no-files-found: error
+
+  linux-desktop:
+    name: Linux packages
+    needs: version
+    # The oldest supported Ubuntu LTS, so the packages run on every supported distribution.
+    runs-on: ubuntu-22.04
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: release
+      - run: task gen
+      - run: pnpm --dir apps/desktop exec tauri build --bundles deb,rpm
+      - name: Collect the artifacts
+        run: |
+          mkdir -p dist
+          cp target/release/bundle/deb/*.deb "dist/mannie-$VERSION-linux-amd64.deb"
+          cp target/release/bundle/rpm/*.rpm "dist/mannie-$VERSION-linux-x86_64.rpm"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-desktop
+          path: dist/
+          if-no-files-found: error
+
+  linux-worker:
+    name: Static Linux worker
+    needs: version
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install the Rust toolchain and the musl target
+        run: |
+          rustup toolchain install
+          rustup target add x86_64-unknown-linux-musl
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+      - run: cargo build --locked --release -p mannie-worker --target x86_64-unknown-linux-musl
+      - name: Collect the artifacts
+        run: |
+          mkdir -p dist staging
+          cp target/x86_64-unknown-linux-musl/release/mannie-worker LICENSE staging/
+          tar -czf "dist/mannie-worker-$VERSION-linux-x86_64.tar.gz" -C staging .
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-worker
+          path: dist/
+          if-no-files-found: error
+
+  freebsd-worker:
+    name: FreeBSD worker
+    needs: version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
+        with:
+          # Built on the oldest supported 14.x release (ADR-0008).
+          release: "14.4"
+          usesh: true
+          envs: VERSION
+          prepare: |
+            pkg install -y curl
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+          run: |
+            set -eu
+            . "$HOME/.cargo/env"
+            rustup toolchain install
+            cargo build --locked --release -p mannie-worker
+            mkdir -p dist staging
+            cp target/release/mannie-worker LICENSE staging/
+            tar -czf "dist/mannie-worker-$VERSION-freebsd-x86_64.tar.gz" -C staging .
+            # Only dist/ needs to come back to the runner.
+            rm -rf target staging
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: freebsd-worker
+          path: dist/
+          if-no-files-found: error
+
+  install-windows:
+    name: Install check on Windows
+    needs: [version, windows]
+    runs-on: windows-2025
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: windows
+          path: dist
+      - name: Install the desktop app, start it, and remove it
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Start-Process -FilePath "dist/mannie-$env:VERSION-windows-x86_64-setup.exe" -ArgumentList '/S' -Wait
+          $app = Get-ChildItem -Path $env:LOCALAPPDATA -Recurse -Filter 'mannie-desktop.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -eq $app) { throw 'the installer did not install mannie-desktop.exe' }
+          $process = Start-Process -FilePath $app.FullName -PassThru
+          Start-Sleep -Seconds 15
+          if ($process.HasExited) { throw "the desktop app exited with code $($process.ExitCode)" }
+          Stop-Process -Id $process.Id
+          $uninstaller = Join-Path $app.DirectoryName 'uninstall.exe'
+          Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait
+      - name: Unpack the worker and run it
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Expand-Archive -Path "dist/mannie-worker-$env:VERSION-windows-x86_64.zip" -DestinationPath worker
+          $reported = & worker/mannie-worker.exe --version
+          if ($reported -ne "mannie-worker $env:VERSION") { throw "the worker reports $reported" }
+
+  install-linux:
+    name: Install check on ${{ matrix.distribution }}
+    needs: [version, linux-desktop, linux-worker]
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        distribution: [ubuntu, fedora]
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: linux-*
+          path: dist
+          merge-multiple: true
+      - name: Install the package in a clean container, start the app, and run the worker
+        run: |
+          if [ "${{ matrix.distribution }}" = ubuntu ]; then
+            image=ubuntu:24.04
+            install="apt-get update && apt-get install -y ./dist/mannie-$VERSION-linux-amd64.deb xvfb xauth dbus-x11"
+          else
+            image=fedora:latest
+            install="dnf install -y ./dist/mannie-$VERSION-linux-x86_64.rpm xorg-x11-server-Xvfb xauth dbus-x11"
+          fi
+          docker run --rm -v "$PWD:/check" -w /check -e VERSION "$image" sh -c "
+            set -eu
+            $install
+            sh scripts/ci/check-linux-install.sh
+          "
+
+  install-freebsd:
+    name: Install check on FreeBSD
+    needs: [version, freebsd-worker]
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: freebsd-worker
+          path: dist
+      - uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
+        with:
+          release: "14.4"
+          usesh: true
+          copyback: false
+          envs: VERSION
+          run: |
+            set -eu
+            mkdir worker
+            tar -xzf "dist/mannie-worker-$VERSION-freebsd-x86_64.tar.gz" -C worker
+            reported="$(worker/mannie-worker --version)"
+            [ "$reported" = "mannie-worker $VERSION" ] || { echo "the worker reports $reported" >&2; exit 1; }
+
+  publish:
+    name: Draft the release
+    needs: [version, checks, freebsd-tests, install-windows, install-linux, install-freebsd]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: release
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: cargo-about@0.9.2,cargo-cyclonedx@0.5.9
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Sign the worker archives
+        env:
+          MANNIE_RELEASE_SIGNING_KEY: ${{ secrets.MANNIE_RELEASE_SIGNING_KEY }}
+        run: |
+          node scripts/release.mjs sign dist/mannie-worker-*
+          node scripts/release.mjs verify release/mannie-release.pub dist/mannie-worker-*.zip dist/mannie-worker-*.tar.gz
+      - name: Write the SBOMs
+        run: |
+          cargo cyclonedx --manifest-path apps/desktop/src-tauri/Cargo.toml --format json --spec-version 1.5 --target all
+          cargo cyclonedx --manifest-path apps/worker/Cargo.toml --format json --spec-version 1.5 --target all
+          mv apps/desktop/src-tauri/mannie-desktop.cdx.json "dist/mannie-desktop-$VERSION-rust.cdx.json"
+          mv apps/worker/mannie-worker.cdx.json "dist/mannie-worker-$VERSION.cdx.json"
+          pnpm sbom --sbom-format cyclonedx --filter mannie-desktop > "dist/mannie-desktop-$VERSION-npm.cdx.json"
+      - name: Write the third-party notices
+        run: |
+          cargo about generate --locked -o "dist/THIRD-PARTY-NOTICES-$VERSION-rust.md" about.hbs
+          pnpm licenses list --json --long --filter mannie-desktop | node scripts/third-party-notices.mjs > "dist/THIRD-PARTY-NOTICES-$VERSION-npm.md"
+      - name: Write the checksums
+        run: node scripts/release.mjs checksums dist
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/release.mjs notes "$VERSION" > notes.md
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Mannie $VERSION" --notes-file notes.md dist/*

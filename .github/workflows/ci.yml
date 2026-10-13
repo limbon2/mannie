@@ -1,0 +1,138 @@
+# The checks of every pull request and every push to main (engineering
+# standards, Definition of Done): `task ci` and the end-to-end tests on Windows
+# and Linux, the credential store with GNOME Keyring, KWallet and no Secret
+# Service (V7), the worker service on Windows and Linux, and the worker's
+# FreeBSD and static Linux builds. The release workflow runs it too. Actions
+# are pinned by commit SHA.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  check:
+    name: task ci (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: check
+      - run: task ci
+
+  e2e:
+    name: End-to-end tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # V1 names the WebKitGTK 4.1 of Ubuntu 22.04, the oldest supported LTS.
+        os: [windows-2025, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: e2e
+      - name: Run the end-to-end tests on WebView2
+        if: runner.os == 'Windows'
+        run: task e2e
+      # WebKitGTK needs a display and the single-instance plugin a session bus.
+      - name: Run the end-to-end tests on WebKitGTK
+        if: runner.os == 'Linux'
+        run: dbus-run-session -- xvfb-run --auto-servernum task e2e
+
+  credentials:
+    name: Credential store (${{ matrix.secret-service }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        secret-service: [gnome-keyring, kwallet, none]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+        with:
+          cache-key: credentials
+      - name: Install the Secret Service
+        if: matrix.secret-service != 'none'
+        run: |
+          sudo apt-get install -y --no-install-recommends ${{ matrix.secret-service == 'kwallet' && 'libkf5wallet-bin libqca-qt5-2-plugins' || 'gnome-keyring' }}
+      - name: Build the tests
+        run: cargo test --locked -p mannie-secrets --no-run
+      - name: Store, read, replace and delete a credential
+        if: matrix.secret-service != 'none'
+        run: dbus-run-session -- sh scripts/ci/with-secret-service.sh ${{ matrix.secret-service }} cargo test --locked -p mannie-secrets -- --ignored --exact the_secret_service_stores_reads_replaces_and_deletes
+      - name: Keep a planted secret out of logs, databases and crash files
+        if: matrix.secret-service != 'none'
+        run: dbus-run-session -- sh scripts/ci/with-secret-service.sh ${{ matrix.secret-service }} cargo test --locked -p mannie-secrets --test planted_secret
+      # A session bus without service directories cannot start a Secret
+      # Service, whatever the runner has installed.
+      - name: Refuse to store a credential without a Secret Service
+        if: matrix.secret-service == 'none'
+        run: dbus-run-session --config-file=scripts/ci/session-without-services.conf -- cargo test --locked -p mannie-secrets -- --ignored --exact without_a_secret_service_no_credential_is_stored
+
+  worker-service:
+    name: Worker service (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install the Rust toolchain from rust-toolchain.toml
+        shell: bash
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: worker-service
+      - run: cargo build --locked -p mannie-worker
+      - name: Install, check and remove the Windows service
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/ci/worker-service-windows.ps1 -Worker target/debug/mannie-worker.exe
+      - name: Install, check and remove the systemd unit
+        if: runner.os == 'Linux'
+        run: sudo sh scripts/ci/worker-service-unix.sh target/debug/mannie-worker
+
+  worker-builds:
+    name: Worker builds for FreeBSD and static Linux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install the Rust toolchain and targets from rust-toolchain.toml
+        run: |
+          rustup toolchain install
+          rustup target add x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: worker-builds
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: cross@0.2.5
+      - name: Build the static Linux worker
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+          cargo build --locked --release -p mannie-worker --target x86_64-unknown-linux-musl
+      # The worker's tests run on FreeBSD every night (nightly.yml).
+      - name: Cross-build the FreeBSD worker
+        run: cross build --locked --release -p mannie-worker --target x86_64-unknown-freebsd

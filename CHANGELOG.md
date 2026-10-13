@@ -18,4 +18,5 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - The worker: a headless service that starts, logs and opens its store, and installs itself as a Windows service, a systemd unit or an rc.d service with `mannie-worker service install`.
 - The interface language as a setting, with English message catalogs and a pseudo-locale that the end-to-end tests check.
 - Mannie's application icon.
+- CI on Windows and Linux, nightly worker tests on FreeBSD, and a release workflow that builds, checks, signs and drafts a release from a version tag.
 - The tasks `gen`, `dev`, `build`, `lint`, `test`, `e2e` and `release:prepare`.

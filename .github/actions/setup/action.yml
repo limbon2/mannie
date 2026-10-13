@@ -1,0 +1,62 @@
+# The toolchains every job needs, as `task setup` installs them on a
+# workstation: the Rust toolchain from rust-toolchain.toml, Node.js, pnpm from
+# packageManager, Task, cargo-deny and tauri-driver, the pnpm packages and, on
+# Linux, the system libraries of the desktop app. Actions are pinned by commit
+# SHA.
+name: Set up the toolchains
+description: Installs the pinned toolchains, the Rust tools and the pnpm packages.
+
+inputs:
+  rust-targets:
+    description: Extra Rust targets to install, separated by spaces.
+    required: false
+    default: ""
+  cache-key:
+    description: Separates this job's Rust build cache from the other jobs'.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install the desktop app's system libraries
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          libwebkit2gtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev libxdo-dev \
+          webkit2gtk-driver xvfb dbus-x11
+
+    - name: Install the Rust toolchain from rust-toolchain.toml
+      shell: bash
+      run: |
+        rustup toolchain install
+        if [ -n "${{ inputs.rust-targets }}" ]; then
+          rustup target add ${{ inputs.rust-targets }}
+        fi
+        rustc --version
+
+    - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      with:
+        key: ${{ inputs.cache-key }}
+
+    - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: 24
+        cache: pnpm
+
+    - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+      with:
+        version: 3.40.1
+        repo-token: ${{ github.token }}
+
+    - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+      with:
+        tool: cargo-deny@0.20.2,tauri-driver@2.1.0
+
+    - name: Install the pnpm packages
+      shell: bash
+      run: pnpm install --frozen-lockfile
