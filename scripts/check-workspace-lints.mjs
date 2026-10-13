@@ -6,9 +6,10 @@
 // this script.
 
 import { readFileSync } from 'node:fs';
+import { text } from 'node:stream/consumers';
 
 /** @type {{ packages: { name: string, manifest_path: string }[] }} */
-const metadata = JSON.parse(readFileSync(process.stdin.fd, 'utf8'));
+const metadata = JSON.parse(await text(process.stdin));
 
 // The three ways TOML can spell the setting.
 const inheritsWorkspaceLints = [
