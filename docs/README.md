@@ -3,10 +3,10 @@
 |              |                                                                                                                       |
 | ------------ | --------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                      |
-| Last updated | 2026-10-13                                                                                                            |
+| Last updated | 2026-10-14                                                                                                            |
 | Related      | [AGENTS.md](../AGENTS.md), [README](../README.md), [ADR index](adr/README.md), [Feature protocol](features/README.md) |
 
-This is the founding documentation: the vision, scope, architecture, decisions and working rules that come before any code.
+This is the project's documentation: the vision, scope, architecture, decisions and working rules, and the results of the validations that settle the decisions.
 
 ## Reading order
 
@@ -28,6 +28,7 @@ This is the founding documentation: the vision, scope, architecture, decisions a
 | 14  | [Engineering standards](engineering/standards.md)    | The Definition of Done and the standards for code, contracts, data and tests                                                                                                                                                  |
 | 15  | [Repository](engineering/repository.md)              | The layout, the crates and their rules, generated artifacts and tasks                                                                                                                                                         |
 | 16  | [Releasing](engineering/releasing.md)                | When releases happen and how they are built                                                                                                                                                                                   |
+| -   | [M0 validation results](roadmap/m0-validation.md)    | What the M0 validations showed, and the decisions they leave for the owner                                                                                                                                                    |
 | -   | [Architecture decision records](adr/README.md)       | The decisions behind all of the above                                                                                                                                                                                         |
 | -   | [Features](features/README.md)                       | One document per feature: [chat](features/chat.md), [window and tray](features/window-and-tray.md), [system tools](features/system-tools.md), [child agents](features/child-agents.md), [workers](features/workers/README.md) |
 | -   | [Glossary](glossary.md)                              | Shared vocabulary                                                                                                                                                                                                             |

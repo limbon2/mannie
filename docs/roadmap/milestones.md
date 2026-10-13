@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                      |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                     |
-| Last updated | 2026-10-13                                                                                                                                                           |
+| Last updated | 2026-10-14                                                                                                                                                           |
 | Related      | [Goals and scope](../product/goals-and-scope.md), [Feature protocol](../features/README.md), [Releasing](../engineering/releasing.md), [ADR index](../adr/README.md) |
 
 ## 1. Delivery approach
@@ -144,7 +144,7 @@ Accepted features go into new milestones as they arrive, and each of those miles
 
 ## 4. Validations
 
-Each validation settles one or more Proposed ADRs. The validation code stays in the repository as tests or benchmarks.
+Each validation settles one or more Proposed ADRs. The validation code stays in the repository as tests or benchmarks. The [M0 validation results](m0-validation.md) record what the M0 validations showed.
 
 | V   | Proves                                                                                                                                                                                                                                                                                                                                                                                                                                 | ADRs               | Milestone |
 | --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ | --------- |
