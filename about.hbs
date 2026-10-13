@@ -1,0 +1,18 @@
+# Third-party notices: Rust crates
+
+The Mannie desktop app and the Mannie worker are built from these Rust crates. Each section names a license, the crates that use it, and the license's text.
+
+{{#each licenses}}
+## {{name}}
+
+Used by:
+
+{{#each used_by}}
+- {{crate.name}} {{crate.version}}{{#if crate.repository}} ({{crate.repository}}){{/if}}
+{{/each}}
+
+```text
+{{{text}}}
+```
+
+{{/each}}

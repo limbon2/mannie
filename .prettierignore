@@ -6,3 +6,6 @@
 
 # Lockfiles are written by their package managers.
 pnpm-lock.yaml
+
+# The notices template's line breaks are the output's line breaks.
+about.hbs

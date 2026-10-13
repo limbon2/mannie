@@ -18,6 +18,9 @@ apps/desktop/project.inlang/*
 !apps/desktop/project.inlang/settings.json
 !apps/desktop/project.inlang/paraglide.config.js
 
+# SBOMs that cargo-cyclonedx writes beside each crate; releases attach them.
+*.cdx.json
+
 # Local environment.
 .env
 .env.*
