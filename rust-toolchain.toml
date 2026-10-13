@@ -1,0 +1,7 @@
+# The Rust toolchain for every build, pinned to one stable release
+# (ADR-0008). Upgrading it is a dedicated change that updates this file and
+# docs/architecture/technology-stack.md.
+[toolchain]
+channel = "1.99.0"
+components = ["clippy", "rust-src", "rustfmt"]
+profile = "minimal"
