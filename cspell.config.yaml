@@ -17,6 +17,7 @@ words:
   - clippy
   - cssparser
   - cyclonedx
+  - dbus
   - DMABUF
   - edgedriver
   - egui
@@ -29,6 +30,9 @@ words:
   - libappindicator
   - libayatana
   - libqca
+  - librsvg
+  - libwebkit
+  - libxdo
   - lifecycles
   - limbon
   - lockfiles

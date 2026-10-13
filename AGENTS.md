@@ -5,7 +5,7 @@ Instructions for coding agents working in this repository, and for the people wh
 ## Project
 
 - What: Mannie is a desktop AI agent harness for one owner. It chats with AI models, runs system tools on the owner's machine under approvals, and spreads work across machines through workers that own their hosts. The core is Rust. The desktop app is Tauri 2 with a SvelteKit UI built from shadcn-svelte components, and the worker is a headless service for Windows, Linux and FreeBSD.
-- Phase: documentation baseline. There is no application code yet, and [M0 (Foundation)](docs/roadmap/milestones.md#m0-foundation) is next.
+- Phase: [M0 (Foundation)](docs/roadmap/milestones.md#m0-foundation). The workspace, the desktop shell, the store, credentials, logging, the worker skeleton, CI and the release pipeline exist; no feature ships yet, and [M1 (Chat)](docs/roadmap/milestones.md#m1-chat) is next.
 - Read first: [docs/README.md](docs/README.md). Architecture decisions are in [docs/adr/](docs/adr/README.md), and the owner's decisions are in the [decision record](docs/roadmap/milestones.md#5-decisions).
 
 ## Precedence
@@ -45,10 +45,10 @@ The owner often describes what they want informally. Before writing code for any
 
 This rule exists because coding agents keep rebuilding shadcn components from memory. Follow it exactly ([ADR-0006](docs/adr/0006-use-shadcn-svelte-through-its-cli.md)):
 
-- Add components only with the pinned CLI, from `apps/desktop`: `pnpm shadcn-svelte add <name>`. Never write a registry component by hand, paste one from another project, or port one from the React version of shadcn/ui.
+- Add components only with the pinned CLI, from `apps/desktop`: `pnpm shadcn-svelte add <name>`. Never write a registry component by hand, paste one from another project, or port one from the React version of shadcn/ui. The agent skill's examples run `shadcn-svelte@latest`; in this repository, run the pinned CLI instead.
 - Before you use or add a component, read its documentation page, `https://shadcn-svelte.com/docs/components/<name>.md`. The index of all pages is `https://shadcn-svelte.com/llms.txt`. Then check `apps/desktop/components.json` and `apps/desktop/src/lib/components/ui/` for what is already installed.
-- Use the shadcn-svelte agent skill once M0 has installed it in the repository.
-- Do not edit files in `apps/desktop/src/lib/components/ui/`. Customize through the theme tokens and through components in `apps/desktop/src/lib/components/app/`. If a change inside `ui/` is unavoidable, record it with its reason in `apps/desktop/src/lib/components/ui/PATCHES.md`.
+- Use the shadcn-svelte agent skill in `.claude/skills/shadcn-svelte/` (Codex: `.agents/skills/shadcn-svelte/`). It is vendored as its authors wrote it; update it with `pnpm dlx skills@1.7.2 add huntabyte/shadcn-svelte --skill shadcn-svelte --agent claude-code codex --copy -y`, which records it in `skills-lock.json`.
+- Do not edit files in `apps/desktop/src/lib/components/ui/`. Customize through the theme tokens and through components in `apps/desktop/src/lib/components/app/`. If a change inside `ui/` is unavoidable, record it with its reason in `apps/desktop/src/lib/components/ui/PATCHES.md`, which also lists the components' built-in English text and how the app avoids it.
 - When shadcn-svelte has no matching component, compose one in `apps/desktop/src/lib/components/app/` from installed components and bits-ui primitives. Read the bits-ui documentation first: `https://bits-ui.com/llms.txt` lists a page for every primitive.
 - Update components only in a dedicated change: bump the pinned CLI, re-add the components with `--overwrite`, review the diff and apply the registered patches again.
 - Icons come from `@lucide/svelte`.
@@ -56,7 +56,9 @@ This rule exists because coding agents keep rebuilding shadcn components from me
 ## Svelte
 
 - Use Svelte 5 runes only. Do not use legacy syntax: `export let`, `$:` statements, `on:` event directives, or stores for new state. Use `$app/state`, not `$app/stores`.
-- Look up Svelte and SvelteKit APIs in the official documentation through the Svelte MCP server (`@sveltejs/mcp`: `list-sections`, then `get-documentation`) instead of relying on memory. M0 adds its configuration to the repository.
+- Look up Svelte and SvelteKit APIs in the official documentation through the Svelte MCP server (`@sveltejs/mcp`: `list-sections`, then `get-documentation`) instead of relying on memory. `.mcp.json` (Claude Code) and `.codex/config.toml` (Codex) start the pinned server from `node_modules`, so run `task setup` first.
+- SvelteKit 3 keeps its configuration in `apps/desktop/vite.config.ts`, and the app imports its own modules through the `#lib/*` subpath import instead of `$lib`.
+- Code is sorted by kind. In `apps/desktop/src/lib/`, components go in `components/` (shadcn-svelte's in `ui/`, Mannie's in `app/<area>/`), state in `state/`, helpers in `utils/`, shared types in `types/` and slot registrations in `registrations/` ([desktop app](docs/architecture/desktop-app.md#6-frontend-structure)). The desktop crate's IPC commands go in `apps/desktop/src-tauri/src/commands/`. Put new code beside code of its kind, and name an area's files after it.
 - Run `svelte-autofixer` on every new or changed component until it reports no issues.
 
 ## Working agreements
@@ -141,20 +143,22 @@ Documents follow the conventions in [docs/README.md](docs/README.md): a status t
 
 ## Commands
 
-`Taskfile.yml` defines every workflow, and `task --list` shows them. Today the tasks are:
+`Taskfile.yml` defines every workflow, and `task --list` shows them. The ones you use most:
 
-- `task setup` installs the pinned tooling from the lockfile;
-- `task fmt` formats and sorts all code and documentation (ESLint fixes, Prettier, Tombi), and `task fmt:check` checks it;
-- `task lint` runs ESLint (`lint:ts`) and Tombi's TOML lint (`lint:toml`);
-- `task test:scripts` runs the tests of the repository scripts, such as the local ESLint rules;
-- `task docs:fmt` formats the documentation, and `task docs:check` checks its formatting, Markdown rules, spelling, links and consistency;
-- `task ci` runs `docs:check`, `fmt:check`, `lint` and `test:scripts`, the checks every change must pass.
-
-The Rust tasks `fmt:rust`, `fmt:check:rust` and `lint:rust` already exist. They join `fmt`, `fmt:check` and `lint` with the first crate in M0, which also adds `gen`, `dev`, `build`, `test`, `e2e` and `release:prepare` ([repository](docs/engineering/repository.md#7-tasks)). Update this section when it does.
+- `task setup` installs the pinned pnpm packages, cargo-deny and tauri-driver;
+- `task gen` generates the IPC bindings, compiles the message catalogs and writes SvelteKit's types; run it after changing a command, a type that crosses IPC or a message;
+- `task dev` runs the desktop app, and `task build` builds the installers and the worker;
+- `task fmt` formats everything, and `task fmt:check` checks it;
+- `task lint` runs ESLint, svelte-check, tsc, Tombi, Clippy, cargo-deny, the npm license check and the catalog check;
+- `task test` runs the Rust, Vitest and script tests;
+- `task e2e` builds the validation app and runs the end-to-end tests through tauri-driver (V1, V2, V3, V11);
+- `task docs:check` checks the documentation;
+- `task ci` runs every check a change must pass;
+- `task release:prepare VERSION=x.y.z` prepares a release ([releasing](docs/engineering/releasing.md)).
 
 ## Environment
 
 - The owner's workstation runs Windows 11, and the shell is PowerShell. Development also happens on Linux, and FreeBSD builds of the worker run in CI.
-- Installed tools: Node.js 24, pnpm 11.8, Task 3.40 and Git. Rust is not installed yet; M0 adds `rust-toolchain.toml` and the setup steps.
+- Installed tools: Node.js 24, pnpm 11.8, Task 3.40, Git, and Rust through rustup, which installs the toolchain that `rust-toolchain.toml` pins. [CONTRIBUTING](CONTRIBUTING.md) lists the system packages, such as WebKitGTK on Linux and the WebDriver for the end-to-end tests.
 - Task commands call real executables only, never Unix utilities such as `rm` or `mkdir`, which Windows lacks.
 - Third-party facts in the documentation were verified on 2026-10-13. Check them again before relying on version-specific behavior.
