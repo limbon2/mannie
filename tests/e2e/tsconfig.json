@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "lib": ["dom", "dom.iterable", "es2024"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "noEmit": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "es2024",
+    "types": ["node", "mocha", "@wdio/globals/types", "@wdio/mocha-framework"],
+    "verbatimModuleSyntax": true
+  },
+  "include": ["**/*.ts"]
+}

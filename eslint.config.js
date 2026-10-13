@@ -416,6 +416,14 @@ export default defineConfig(
       'no-console': 'off',
     },
   },
+  {
+    name: 'mannie/e2e',
+    files: ['tests/e2e/**'],
+    rules: {
+      // The end-to-end tests print the measurements that the validation records cite.
+      'no-console': 'off',
+    },
+  },
 
   // Last: turn off every rule that would fight Prettier's layout.
   prettier,
