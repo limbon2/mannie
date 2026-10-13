@@ -18,6 +18,7 @@ words:
   - cssparser
   - cyclonedx
   - DMABUF
+  - edgedriver
   - egui
   - HMAC
   - huntabyte
@@ -70,3 +71,4 @@ words:
   - unpairs
   - WCAG
   - zbus
+  - zeroize
