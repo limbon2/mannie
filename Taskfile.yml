@@ -194,7 +194,8 @@ tasks:
       - pnpm exec prettier --check --log-level warn .
       - pnpm exec markdownlint-cli2
       - pnpm exec cspell lint --no-progress --no-summary "**/*.md"
-      - pnpm exec remark . --ignore-path .gitignore --frail --quiet --no-stdout
+      # The vendored agent skill keeps its authors' links (ADR-0006).
+      - pnpm exec remark . --ignore-path .gitignore --ignore-pattern ".claude/skills/**" --ignore-pattern ".agents/skills/**" --frail --quiet --no-stdout
       - node scripts/check-docs.mjs
 
   ci:

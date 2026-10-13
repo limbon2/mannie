@@ -7,6 +7,9 @@ ignorePaths:
   - pnpm-lock.yaml
   - LICENSE
   - .claude/worktrees/**
+  # The vendored shadcn-svelte agent skill (ADR-0006).
+  - .claude/skills/**
+  - .agents/skills/**
 words:
   - appindicator
   - Authenticode

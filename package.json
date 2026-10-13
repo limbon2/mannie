@@ -12,6 +12,7 @@
     "@eslint/compat": "2.1.1",
     "@eslint/js": "10.0.1",
     "@sveltejs/load-config": "0.2.3",
+    "@sveltejs/mcp": "0.1.26",
     "@types/mocha": "10.0.10",
     "@types/node": "24.19.2",
     "@wdio/cli": "10.0.2",

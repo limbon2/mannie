@@ -14,5 +14,6 @@
   },
   "globs": ["**/*.md"],
   "gitignore": true,
-  "ignores": [".claude/worktrees/**"],
+  // Worktrees are other checkouts; the vendored agent skill keeps its authors' style.
+  "ignores": [".claude/worktrees/**", ".claude/skills/**", ".agents/skills/**"],
 }

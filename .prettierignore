@@ -7,5 +7,11 @@
 # Lockfiles are written by their package managers.
 pnpm-lock.yaml
 
+# The shadcn-svelte agent skill is vendored as its authors wrote it, and the
+# skills CLI writes its lock file (ADR-0006).
+.agents/skills/
+.claude/skills/
+skills-lock.json
+
 # The notices template's line breaks are the output's line breaks.
 about.hbs

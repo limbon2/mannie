@@ -1,0 +1,9 @@
+# Codex settings for this repository (AGENTS.md, agent tooling). The Svelte MCP
+# server answers questions about Svelte and SvelteKit from their documentation
+# and checks components with its autofixer. It is the pinned @sveltejs/mcp
+# package from the root package.json, started with node so that the command is
+# the same on Windows, Linux and FreeBSD. Claude Code reads the same server from
+# .mcp.json.
+[mcp_servers.svelte]
+command = "node"
+args = ["node_modules/@sveltejs/mcp/dist/index.mjs"]

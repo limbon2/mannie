@@ -20,3 +20,4 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - Mannie's application icon.
 - CI on Windows and Linux, nightly worker tests on FreeBSD, and a release workflow that builds, checks, signs and drafts a release from a version tag.
 - The tasks `gen`, `dev`, `build`, `lint`, `test`, `e2e` and `release:prepare`.
+- The shadcn-svelte agent skill and the Svelte MCP server for coding agents.
