@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                        |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                                       |
-| Last updated | 2026-10-13                                                                                                                                                                             |
+| Last updated | 2026-10-14                                                                                                                                                                             |
 | Related      | [Repository](repository.md), [Releasing](releasing.md), [Security](../architecture/security.md), [Extension points](../architecture/extension-points.md), [AGENTS.md](../../AGENTS.md) |
 
 ## 1. Definition of Done
@@ -41,7 +41,7 @@ Nothing reaches `main` as a placeholder: no stubbed security checks, no TODO in 
 
 - TypeScript in strict mode, with no `any` and no non-null assertions.
 - Svelte 5 runes only, forced for project files. `$app/state` instead of `$app/stores`. State lives in `.svelte.ts` modules.
-- The structure of `apps/desktop/src/lib/` is described in the [desktop app](../architecture/desktop-app.md#6-frontend-structure) document. Feature UI lives in `features/<feature>/` and reaches the shell only through its slots.
+- The structure of `apps/desktop/src/lib/` is described in the [desktop app](../architecture/desktop-app.md#6-frontend-structure) document. Code is sorted by kind: components, state, helpers, types and slot registrations each have a folder, and an area's files carry its name. Feature UI reaches the shell only through its slots.
 - IPC goes only through the generated bindings. There is no `invoke` with a string command name, and no `fetch`.
 - Visible text comes only from the message functions that Paraglide JS generates from `apps/desktop/messages/` ([ADR-0019](../adr/0019-keep-visible-text-in-message-catalogs.md)). Components contain no literal UI text, and dates, numbers and durations go through `Intl`.
 - UI components follow [ADR-0006](../adr/0006-use-shadcn-svelte-through-its-cli.md): CLI-added shadcn-svelte components in `components/ui/`, composition in `components/app/`.

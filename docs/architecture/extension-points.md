@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                          |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Status       | Draft for review                                                                                                                                                         |
-| Last updated | 2026-10-13                                                                                                                                                               |
+| Last updated | 2026-10-14                                                                                                                                                               |
 | Related      | [ADR-0002](../adr/0002-grow-through-extension-points.md), [Feature protocol](../features/README.md), [Repository](../engineering/repository.md), [Overview](overview.md) |
 
 Mannie adds features by registration. A feature is a vertical slice: Rust modules, IPC types, UI components, migrations and tests, plus its feature document. The slice plugs into the extension points below and leaves other features alone ([ADR-0002](../adr/0002-grow-through-extension-points.md)).
@@ -56,11 +56,11 @@ Parts and events are tagged enums in `mannie-types` with a version-tolerant enco
 
 ### 3.6 IPC commands and channels
 
-Each feature defines its command arguments, results, errors and channel messages in `mannie-types` and registers its commands with tauri-specta in `mannie-desktop` ([ADR-0007](../adr/0007-generate-ipc-bindings-from-rust.md)). Every command needs a capability grant ([ADR-0004](../adr/0004-keep-system-access-in-the-rust-core.md)). A changed contract gets a new command, and the old one is deprecated.
+Each feature defines its command arguments, results, errors and channel messages in `mannie-types` and registers its commands with tauri-specta in `mannie-desktop`, whose commands live in `src/commands/`, one module per area ([ADR-0007](../adr/0007-generate-ipc-bindings-from-rust.md)). Every command needs a capability grant ([ADR-0004](../adr/0004-keep-system-access-in-the-rust-core.md)). A changed contract gets a new command, and the old one is deprecated.
 
 ### 3.7 UI shell slots
 
-The shell in `apps/desktop/src/lib/shell/` defines typed slots: navigation entries, views, panels, settings sections, command palette actions and part renderers keyed by part type. A feature registers its Svelte components in its own module under `src/lib/features/<feature>/`, and the shell renders whatever is registered. The shell never imports a feature directly.
+The shell defines typed slots in `apps/desktop/src/lib/state/shell-slots.svelte.ts`, with their entry types in `types/shell-slots.ts`: navigation entries, views, panels, settings sections, command palette actions and part renderers keyed by part type. A feature registers its Svelte components in its registration, `src/lib/registrations/<feature>.ts`, and the shell renders whatever is registered. The shell never imports a feature directly. The frontend is sorted by kind, so the feature's components, state and helpers sit with the others of their kind ([desktop app](desktop-app.md#6-frontend-structure)).
 
 ### 3.8 Settings sections
 
@@ -80,18 +80,18 @@ A feature adds its visible text as messages in `apps/desktop/messages/en.json`, 
 
 ## 4. Anatomy of a feature slice
 
-| Layer            | What the feature adds                                        | Where                                                    |
-| ---------------- | ------------------------------------------------------------ | -------------------------------------------------------- |
-| Feature document | Intent, behavior, fit, design and acceptance                 | `docs/features/<slug>.md`, or a folder for a big feature |
-| Rust logic       | A module in the crate that owns the capability               | `crates/<crate>/src/<feature>/`                          |
-| Shared types     | IPC types, parts, events and settings                        | `crates/mannie-types/src/<feature>/`                     |
-| Registration     | Calls to the registries                                      | The composition roots in `apps/`                         |
-| UI               | Components, state and slot registrations                     | `apps/desktop/src/lib/features/<feature>/`               |
-| Data             | Tables and migrations                                        | The store's migration list, in the feature's module      |
-| Link contract    | A protobuf package, when machines talk                       | `proto/mannie/link/<feature>/`                           |
-| Visible text     | Messages under the feature's key prefix                      | `apps/desktop/messages/`                                 |
-| Tests            | Unit tests beside the code, integration and end-to-end tests | Next to the code and in each crate's `tests/`            |
-| Changelog        | One line                                                     | `CHANGELOG.md`                                           |
+| Layer            | What the feature adds                                        | Where                                                                                                        |
+| ---------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| Feature document | Intent, behavior, fit, design and acceptance                 | `docs/features/<slug>.md`, or a folder for a big feature                                                     |
+| Rust logic       | A module in the crate that owns the capability               | `crates/<crate>/src/<feature>/`                                                                              |
+| Shared types     | IPC types, parts, events and settings                        | `crates/mannie-types/src/<feature>/`                                                                         |
+| Registration     | Calls to the registries                                      | The composition roots in `apps/`                                                                             |
+| UI               | Components, state and slot registrations                     | `apps/desktop/src/lib/`, sorted by kind: `components/app/<feature>/`, `state/`, `registrations/<feature>.ts` |
+| Data             | Tables and migrations                                        | The store's migration list, in the feature's module                                                          |
+| Link contract    | A protobuf package, when machines talk                       | `proto/mannie/link/<feature>/`                                                                               |
+| Visible text     | Messages under the feature's key prefix                      | `apps/desktop/messages/`                                                                                     |
+| Tests            | Unit tests beside the code, integration and end-to-end tests | Next to the code and in each crate's `tests/`                                                                |
+| Changelog        | One line                                                     | `CHANGELOG.md`                                                                                               |
 
 ## 5. When an extension point is missing
 

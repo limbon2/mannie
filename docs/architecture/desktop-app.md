@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                                                                                                                                                               |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                                                                                                                                                                              |
-| Last updated | 2026-10-13                                                                                                                                                                                                                                                                                                                    |
+| Last updated | 2026-10-14                                                                                                                                                                                                                                                                                                                    |
 | Related      | [ADR-0003](../adr/0003-build-the-desktop-app-on-tauri-2.md), [ADR-0004](../adr/0004-keep-system-access-in-the-rust-core.md), [ADR-0005](../adr/0005-build-the-ui-with-sveltekit-as-a-static-spa.md), [ADR-0006](../adr/0006-use-shadcn-svelte-through-its-cli.md), [ADR-0007](../adr/0007-generate-ipc-bindings-from-rust.md) |
 
 The desktop app is the master. It is a Tauri 2 application with a Rust core and a SvelteKit UI in the operating system's webview.
@@ -34,7 +34,11 @@ The Rust core is trusted, and the webview is not ([ADR-0004](../adr/0004-keep-sy
 
 - Plugins: single-instance and opener only. The fs, shell and http plugins are not used, and any new plugin needs an ADR.
 - `withGlobalTauri` is false, navigation is limited to the app's origin, and the webview cannot open new windows.
-- Content Security Policy: `default-src 'self'`; `script-src 'self'`; `style-src 'self'`; `img-src 'self' data: blob:`; `connect-src` limited to Tauri's IPC endpoints; `object-src`, `frame-src` and `base-uri` set to `'none'`. V1 validates the policy with the full component stack.
+- Content Security Policy: `default-src 'self'`; `script-src 'self'`; `style-src 'self'`; `img-src 'self' data: blob:`; `connect-src` limited to Tauri's IPC endpoints (`ipc:` and `https://ipc.localhost`); `object-src`, `frame-src` and `base-uri` set to `'none'`. Tauri adds the hashes of the inline bootstrap script that SvelteKit writes. V1 validates the policy with the full component stack; its [results](../roadmap/m0-validation.md) record what the policy blocks and how the app lives with it:
+  - SvelteKit's route announcer and bits-ui's command wrappers carry static inline `style` attributes, which the policy blocks. `src/app.css` gives these elements the same presentation through selectors.
+  - mode-watcher's inline head script is turned off. `static/theme.js`, a file the policy allows, applies the saved theme before the first paint.
+  - SvelteKit fetches `_app/version.json` when the window gains focus, to notice a new deployment; `connect-src` refuses it, and nothing depends on it.
+- The main window is at least 800 pixels wide, so the sidebar never switches to its narrow-screen sheet, whose text is built into the component ([patches](../../apps/desktop/src/lib/components/ui/PATCHES.md)).
 - `useHttpsScheme` is true and stays true, so the app's origin, and with it the webview's storage, never moves.
 - The isolation pattern is not used. [ADR-0004](../adr/0004-keep-system-access-in-the-rust-core.md) explains why.
 
@@ -47,25 +51,37 @@ The Rust core is trusted, and the webview is not ([ADR-0004](../adr/0004-keep-sy
 
 ## 6. Frontend structure
 
+The frontend is sorted by kind: components sit with components, state with state, and helpers with helpers.
+
 ```text
 apps/desktop/
 ├── messages/                    # message catalogs, one file per locale; en.json is the base (ADR-0019)
-├── project.inlang/              # Paraglide project settings: locales and plugins
+├── project.inlang/              # the Paraglide project: locales, plugins and Paraglide's options
+├── static/theme.js              # applies the saved theme before the first paint
 ├── src/
-│   ├── routes/                  # top-level views only; the root layout sets ssr = false, prerender = false
+│   ├── app.css                  # Tailwind CSS, the theme tokens, and the styles the policy blocks inline
+│   ├── routes/                  # top-level views only; the root layout loads what the window needs
 │   └── lib/
 │       ├── components/
 │       │   ├── ui/              # shadcn-svelte CLI output only (ADR-0006), plus PATCHES.md
-│       │   └── app/             # Mannie's shared components, composed from ui/ and bits-ui
-│       ├── shell/               # layout and the typed slot registries (extension points)
-│       ├── features/<feature>/  # one folder per feature: components, state, slot registrations
+│       │   └── app/             # Mannie's components, composed from ui/ and bits-ui
+│       │       └── shell/       # the shell: frame, sidebar, command palette, settings and startup views
+│       ├── state/               # state modules: the shell's slots, the interface settings, the locale
+│       ├── utils/               # helpers: messages for error codes, the active view, ordering, languages
+│       ├── types/               # shared types: the slot entries, the settings failures
+│       ├── registrations/       # what fills the slots: the shell's entries, the feature list, composeShell()
+│       ├── validation/          # the validation harness, which only validation builds load
 │       ├── generated/           # IPC bindings, generated and never committed
-│       ├── paraglide/           # message functions compiled from messages/, never committed
-│       └── utils/
-└── src-tauri/                   # the mannie-desktop crate
+│       └── paraglide/           # message functions compiled from messages/, never committed
+└── src-tauri/                   # the mannie-desktop crate; its IPC commands are in src/commands/
 ```
 
-- State lives in `.svelte.ts` modules that use runes. Each open conversation has a state object that its channel subscription feeds.
+- An area's files carry its name inside each kind folder. The shell's components are in `components/app/shell/`, its slots in `state/shell-slots.svelte.ts`, and its entries in `registrations/shell.ts`. A feature adds its components in `components/app/<feature>/`, its state in `state/`, its helpers in `utils/`, and its registration in `registrations/<feature>.ts`, which it lists in `registrations/features.ts`.
+- Components that are not CLI output live in `components/app/` ([ADR-0006](../adr/0006-use-shadcn-svelte-through-its-cli.md)): shared compositions directly in it, and each area's components in a folder of their own.
+- The app imports its own modules through the `#lib/*` subpath import, which SvelteKit 3 uses in place of `$lib`.
+- The root layout's load function asks the core whether it started and loads the interface settings with their locale before anything renders.
+- `composeShell()` creates the shell's slots, registers the shell's own entries (the interface settings and the commands for the settings and the theme), then calls each feature's registration. The shell renders whatever the slots hold and never imports a feature.
+- State lives in `.svelte.ts` modules in `state/` that use runes. Each open conversation has a state object that its channel subscription feeds.
 - Components are small and do one thing. A view composes feature components through the shell's slots instead of importing features directly.
 - Styling uses Tailwind CSS utilities and the theme tokens of shadcn-svelte, without hard-coded colors or per-feature global stylesheets.
 

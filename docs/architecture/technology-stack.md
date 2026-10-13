@@ -3,14 +3,14 @@
 |              |                                                                                                                                                          |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                         |
-| Last updated | 2026-10-13                                                                                                                                               |
+| Last updated | 2026-10-14                                                                                                                                               |
 | Related      | [ADR index](../adr/README.md), [Overview](overview.md), [Engineering standards](../engineering/standards.md), [Repository](../engineering/repository.md) |
 
 For each building block, this document says what Mannie uses, how, and what it leaves out. The decisions themselves are in the ADRs.
 
 ## 1. Version baseline
 
-Verified 2026-10-13. The lockfiles (`Cargo.lock`, `pnpm-lock.yaml`) and `rust-toolchain.toml` hold the exact pins from M0 on. This table mirrors them and changes with every upgrade.
+Verified 2026-10-13; the rows for the tools M0 added, from mode-watcher on, were verified 2026-10-14. The lockfiles (`Cargo.lock`, `pnpm-lock.yaml`) and `rust-toolchain.toml` hold the exact pins. This table mirrors them and changes with every upgrade.
 
 | Component                             | Baseline                                                                           | License                | Notes                                                                                                                   |
 | ------------------------------------- | ---------------------------------------------------------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------- |
@@ -22,11 +22,11 @@ Verified 2026-10-13. The lockfiles (`Cargo.lock`, `pnpm-lock.yaml`) and `rust-to
 | Svelte                                | 5.57.2                                                                             | MIT                    | Runes mode forced                                                                                                       |
 | SvelteKit, adapter-static             | 3.0.1, 4.0.0                                                                       | MIT                    | Needs Vite 8, TypeScript 6 and Node 22 or newer                                                                         |
 | Vite                                  | 8.3.4                                                                              | MIT                    |                                                                                                                         |
-| TypeScript                            | 6.x                                                                                | Apache-2.0             | 7.0.2 is released, but SvelteKit 3 declares `^6.0.0`                                                                    |
+| TypeScript                            | 6.0.3                                                                              | Apache-2.0             | 7.0.2 is released, but SvelteKit 3 declares `^6.0.0`                                                                    |
 | shadcn-svelte CLI                     | 1.7.0                                                                              | MIT                    | No update command ([ADR-0006](../adr/0006-use-shadcn-svelte-through-its-cli.md))                                        |
 | bits-ui                               | 2.19.5                                                                             | MIT                    | Primitives under shadcn-svelte                                                                                          |
 | Tailwind CSS                          | 4.3.3                                                                              | MIT                    |                                                                                                                         |
-| `@lucide/svelte`                      | 1.56.0                                                                             | ISC                    | Icons                                                                                                                   |
+| `@lucide/svelte`                      | 1.55.0                                                                             | ISC                    | Icons. 1.56.0 was younger than pnpm's minimum release age when M0 pinned the icons                                      |
 | Paraglide JS (`@inlang/paraglide-js`) | 2.27.0                                                                             | MIT                    | Message catalogs compiled to typed message functions ([ADR-0019](../adr/0019-keep-visible-text-in-message-catalogs.md)) |
 | `@sveltejs/mcp`                       | 0.1.26                                                                             | MIT                    | Svelte documentation and autofixer for coding agents                                                                    |
 | tokio                                 | 1.53.2                                                                             | MIT                    |                                                                                                                         |
@@ -39,6 +39,16 @@ Verified 2026-10-13. The lockfiles (`Cargo.lock`, `pnpm-lock.yaml`) and `rust-to
 | schemars                              | 1.2.3                                                                              | MIT                    | Tool input schemas                                                                                                      |
 | Node.js, pnpm, Task                   | 24 LTS, 11.8.0, 3.40 or newer                                                      |                        | Development tooling                                                                                                     |
 | FreeBSD (worker)                      | 14.4 until 2026-12-31; 14.5 until 2027-06-30; 15.1 until 2027-03-31                |                        | FreeBSD 13 reached its end of life on 2026-04-30                                                                        |
+| mode-watcher                          | 1.1.0                                                                              | MIT                    | Light, dark and system themes, with the inline head script turned off for the Content Security Policy                   |
+| clap                                  | 4.6.7                                                                              | MIT or Apache-2.0      | The worker's command line                                                                                               |
+| windows-service                       | 0.8.1                                                                              | MIT or Apache-2.0      | The worker as a Windows service                                                                                         |
+| WebdriverIO                           | 10.0.2                                                                             | MIT                    | End-to-end tests, through tauri-driver                                                                                  |
+| axe-core                              | 4.14.0                                                                             | MPL-2.0                | Accessibility checks in the end-to-end tests; never shipped                                                             |
+| cargo-deny                            | 0.20.2                                                                             | MIT or Apache-2.0      | `task lint`                                                                                                             |
+| tauri-driver                          | 2.1.0                                                                              | MIT or Apache-2.0      | `task e2e`                                                                                                              |
+| cargo-about, cargo-cyclonedx          | 0.9.2, 0.5.9                                                                       | MIT or Apache-2.0      | Third-party notices and SBOMs of a release                                                                              |
+| cross                                 | 0.2.5                                                                              | MIT or Apache-2.0      | The worker's FreeBSD build in CI                                                                                        |
+| skills CLI (`skills`)                 | 1.7.2                                                                              | MIT                    | Installs the shadcn-svelte agent skill ([ADR-0006](../adr/0006-use-shadcn-svelte-through-its-cli.md))                   |
 
 ## 2. Tauri 2
 
@@ -51,12 +61,13 @@ Verified 2026-10-13. The lockfiles (`Cargo.lock`, `pnpm-lock.yaml`) and `rust-to
 - SvelteKit runs as a static single-page app with adapter-static and an `index.html` fallback, without server-side rendering or prerendering ([ADR-0005](../adr/0005-build-the-ui-with-sveltekit-as-a-static-spa.md)).
 - Svelte 5 runes are forced for project files. `$app/state` replaces `$app/stores`.
 - `svelte-check` runs in CI with zero warnings allowed.
-- Paraglide JS compiles the message catalogs in `apps/desktop/messages/` into typed message functions. `sv add paraglide` sets it up, and a custom strategy reads the locale from the core's settings ([ADR-0019](../adr/0019-keep-visible-text-in-message-catalogs.md)).
+- SvelteKit 3 takes its configuration in the `sveltekit()` call of `vite.config.ts`, and the app imports its own modules through the `#lib/*` subpath import, which replaces `$lib`.
+- Paraglide JS compiles the message catalogs in `apps/desktop/messages/` into typed message functions: its Vite plugin on every build, and `task gen` for the type checks. A custom strategy reads the locale from the core's settings ([ADR-0019](../adr/0019-keep-visible-text-in-message-catalogs.md)).
 
 ## 4. shadcn-svelte, bits-ui and Tailwind CSS
 
 - Components are added only with the pinned shadcn-svelte CLI, after reading their documentation ([ADR-0006](../adr/0006-use-shadcn-svelte-through-its-cli.md)).
-- The official shadcn-svelte agent skill is installed in the repository in M0, together with the Svelte MCP server for documentation lookups and the autofixer.
+- The official shadcn-svelte agent skill is vendored in the repository, and the Svelte MCP server is configured for documentation lookups and the autofixer ([repository](../engineering/repository.md)).
 - Theme tokens are CSS variables. Tailwind CSS 4 utilities are the only styling mechanism.
 
 ## 5. IPC bindings
@@ -97,7 +108,9 @@ Verified 2026-10-13. The lockfiles (`Cargo.lock`, `pnpm-lock.yaml`) and `rust-to
 | cargo-deny                             | Advisories, licenses, bans and sources ([ADR-0017](../adr/0017-license-and-dependency-policy.md)) |
 | rustfmt, clippy                        | Rust formatting and lints                                                                         |
 | Vitest                                 | Frontend unit tests                                                                               |
-| tauri-driver (WebDriver)               | End-to-end tests of the desktop app on Windows and Linux                                          |
+| WebdriverIO with tauri-driver          | End-to-end tests of the desktop app on WebView2 and WebKitGTK                                     |
+| inlang CLI                             | Checks of the message catalogs                                                                    |
+| cargo-about, cargo-cyclonedx, pnpm     | Third-party notices and CycloneDX SBOMs of a release                                              |
 | axe-core                               | Accessibility checks in end-to-end tests                                                          |
 | Prettier, ESLint, svelte-check         | Frontend formatting, lints and type checks                                                        |
 | Prettier, markdownlint, cspell, remark | Documentation checks (`task docs:check`)                                                          |
