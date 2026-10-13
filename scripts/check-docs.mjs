@@ -204,11 +204,12 @@ function requireKeys(doc, table, keys) {
 }
 
 const today = new Date();
-const todayIso = [
-  today.getFullYear(),
-  String(today.getMonth() + 1).padStart(2, '0'),
-  String(today.getDate()).padStart(2, '0'),
-].join('-');
+/**
+ * The latest date anywhere on Earth now, the date at UTC+14. A document's date
+ * is in the future only when no time zone has reached it yet: CI runs in UTC,
+ * and the owner may be a day ahead of it.
+ */
+const latestIso = new Date(today.getTime() + 14 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
 /**
  * @param {Doc} doc
@@ -220,7 +221,7 @@ function checkDate(doc, cell) {
   }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(cell.value)) {
     reportError(doc.path, cell.line, `"${cell.value}" is not a YYYY-MM-DD date`);
-  } else if (cell.value > todayIso) {
+  } else if (cell.value > latestIso) {
     reportError(doc.path, cell.line, `${cell.value} is in the future`);
   }
 }
