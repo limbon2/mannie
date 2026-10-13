@@ -66,11 +66,15 @@ This rule exists because coding agents keep rebuilding shadcn components from me
 - Readable source code is part of the deliverable. Write for the person who will review, debug and change it. Never minify or compress source by hand.
 - Use each language's formatter:
 
-  | Language                                      | Formatter    |
-  | --------------------------------------------- | ------------ |
-  | Rust                                          | rustfmt      |
-  | TypeScript, Svelte, CSS, JSON, YAML, Markdown | Prettier     |
-  | Protobuf                                      | `buf format` |
+  | Language                       | Formatter                                                                    |
+  | ------------------------------ | ---------------------------------------------------------------------------- |
+  | Rust                           | rustfmt                                                                      |
+  | TypeScript, Svelte, JavaScript | ESLint fixes, which sort imports, type members and attributes, then Prettier |
+  | CSS, JSON, YAML, Markdown      | Prettier                                                                     |
+  | TOML                           | Tombi                                                                        |
+  | Protobuf                       | `buf format`                                                                 |
+
+  `task fmt` runs them in that order.
 
 - Use descriptive names and straightforward control flow. Avoid nested ternaries, dense chains and several side effects in one expression.
 - Extract modules around real responsibilities. Avoid speculative abstractions and layers with a single implementation, unless an ADR asks for them.
@@ -106,9 +110,9 @@ Documents follow the conventions in [docs/README.md](docs/README.md): a status t
 
 ### Verification
 
-- Run the formatter on the files you changed, then its check. Never add suppressions such as `#[allow]`, `eslint-disable` or `@ts-ignore` just to make a check pass. A justified suppression is narrow and has a comment.
+- Run `task fmt`, then `task fmt:check`. Never add a suppression just to make a check pass. A justified suppression is narrow and states its reason: `#[expect(lint, reason = "...")]` in Rust, never `#[allow]`, and `// eslint-disable-next-line rule -- reason` in TypeScript and Svelte, never `@ts-ignore`. A suppression that no longer suppresses anything fails the check.
 - Run the checks that the change touches. Behavior changes need tests, including the failure paths. A passing build alone does not show that a feature works.
-- Documentation changes must pass `task docs:check`.
+- Documentation changes must pass `task docs:check`. Before reporting a change as done, run `task ci`.
 - Tell existing failures apart from failures your change introduced.
 
 ### Generated files and caches
@@ -139,12 +143,14 @@ Documents follow the conventions in [docs/README.md](docs/README.md): a status t
 
 `Taskfile.yml` defines every workflow, and `task --list` shows them. Today the tasks are:
 
-- `task setup` installs the pinned documentation tooling;
-- `task docs:fmt` formats the documentation;
-- `task docs:check` checks formatting, Markdown rules, spelling, links and the consistency of the documents;
-- `task ci` runs every check a change must pass.
+- `task setup` installs the pinned tooling from the lockfile;
+- `task fmt` formats and sorts all code and documentation (ESLint fixes, Prettier, Tombi), and `task fmt:check` checks it;
+- `task lint` runs ESLint (`lint:ts`) and Tombi's TOML lint (`lint:toml`);
+- `task test:scripts` runs the tests of the repository scripts, such as the local ESLint rules;
+- `task docs:fmt` formats the documentation, and `task docs:check` checks its formatting, Markdown rules, spelling, links and consistency;
+- `task ci` runs `docs:check`, `fmt:check`, `lint` and `test:scripts`, the checks every change must pass.
 
-M0 adds `gen`, `dev`, `build`, `fmt`, `fmt:check`, `lint`, `test`, `e2e` and `release:prepare` ([repository](docs/engineering/repository.md#7-tasks)). Update this section when it does.
+The Rust tasks `fmt:rust`, `fmt:check:rust` and `lint:rust` already exist. They join `fmt`, `fmt:check` and `lint` with the first crate in M0, which also adds `gen`, `dev`, `build`, `test`, `e2e` and `release:prepare` ([repository](docs/engineering/repository.md#7-tasks)). Update this section when it does.
 
 ## Environment
 

@@ -19,7 +19,7 @@ From M0 on, the desktop app also needs its platform webview: the WebView2 runtim
 1. Run `task setup` once after cloning.
 2. For anything new, follow the [feature protocol](docs/features/README.md). An architectural change needs an [ADR](docs/adr/0000-template.md) before any code.
 3. Make the change with its tests and documentation, meeting the [Definition of Done](docs/engineering/standards.md#1-definition-of-done).
-4. Run `task docs:fmt`, then `task ci`.
+4. Run `task fmt`, then `task ci`.
 5. Commit with a [Conventional Commits](https://www.conventionalcommits.org/) message that has a scope, for example `feat(chat): stream reasoning summaries` or `docs(adr): accept ADR-0009`.
 6. Add one line to `CHANGELOG.md` under Unreleased for every change the owner would notice.
 
