@@ -5,6 +5,11 @@
 # release are used, so results change only with a Tombi upgrade and need no
 # network.
 
+# Build output holds generated TOML. Outside a Git checkout, such as a source
+# archive, .gitignore does not keep Tombi out of it.
+[files]
+exclude = ["**/node_modules/**", "**/target/**"]
+
 [format.rules]
 line-width = 120
 

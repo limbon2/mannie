@@ -1,8 +1,12 @@
 # Every workflow of the repository lives here; `task --list` shows them.
-# Commands call real executables only (pnpm, node, git), never Unix utilities,
-# so each task runs the same on Windows, Linux and FreeBSD.
-# docs/engineering/repository.md describes the tasks and the ones M0 adds.
+# Commands call real executables only (pnpm, node, cargo, git), never Unix
+# utilities, so each task runs the same on Windows, Linux and FreeBSD.
+# docs/engineering/repository.md describes the tasks.
 version: "3"
+
+# A pipeline fails when any of its commands fails, such as `cargo metadata` in
+# `cargo metadata | node scripts/...`.
+set: [pipefail]
 
 tasks:
   default:
@@ -12,9 +16,172 @@ tasks:
       - task --list
 
   setup:
-    desc: Install the pinned tooling from the lockfile (run once after cloning)
+    desc: Install the pinned tooling (run once after cloning) - the pnpm packages, cargo-deny and tauri-driver
     cmds:
       - pnpm install --frozen-lockfile
+      - cargo install --locked cargo-deny@0.20.2
+      - cargo install --locked tauri-driver@2.1.0
+
+  # Generated code (docs/engineering/repository.md, generated artifacts)
+
+  gen:
+    desc: Generate the IPC bindings, compile the message catalogs and write SvelteKit's types
+    cmds:
+      # The generator also writes the bindings of the validation commands, so
+      # it needs the validation feature (apps/desktop/src-tauri/Cargo.toml).
+      - cargo run --locked --quiet -p mannie-desktop --features validation --bin mannie-desktop-bindings -- apps/desktop/src/lib/generated
+      - pnpm --dir apps/desktop exec paraglide-js compile --project ./project.inlang
+      - pnpm --dir apps/desktop exec svelte-kit sync
+
+  gen:pseudo-locale:
+    desc: Generate the pseudo-locale catalog that the end-to-end tests use (ADR-0019)
+    cmds:
+      - node scripts/pseudo-locale.mjs
+
+  # Running and building
+
+  dev:
+    desc: Run the desktop app in development mode
+    cmds:
+      - task: gen
+      - pnpm --dir apps/desktop exec tauri dev
+
+  build:
+    desc: Build the desktop app's installers and the worker in release mode
+    cmds:
+      - task: gen
+      - pnpm --dir apps/desktop exec tauri build
+      - cargo build --locked --release -p mannie-worker
+
+  # Formatting and sorting
+
+  fmt:
+    desc: Format and sort all code and documentation (ESLint fixes, Prettier, Tombi, rustfmt)
+    cmds:
+      # ESLint sorts imports, type members and Svelte attributes, then Prettier
+      # lays out the result. Problems ESLint cannot fix are left to `task lint`.
+      - cmd: pnpm exec eslint --fix .
+        ignore_error: true
+      - pnpm exec prettier --write --log-level warn .
+      - pnpm exec tombi format --quiet
+      - task: fmt:rust
+
+  fmt:rust:
+    desc: Format the Rust code with rustfmt
+    cmds:
+      - cargo fmt --all
+
+  fmt:check:
+    desc: Check that all code and documentation is formatted and sorted
+    cmds:
+      - pnpm exec prettier --check --log-level warn .
+      - pnpm exec tombi format --check --quiet
+      - task: fmt:check:rust
+
+  fmt:check:rust:
+    desc: Check the formatting of the Rust code
+    cmds:
+      - cargo fmt --all --check
+
+  # Linting
+
+  lint:
+    desc: Run the linters and the dependency and catalog checks
+    cmds:
+      - task: lint:ts
+      - task: lint:types
+      - task: lint:toml
+      - task: lint:rust
+      - task: lint:deps
+      - task: lint:messages
+
+  lint:ts:
+    desc: Lint TypeScript, Svelte and JavaScript with ESLint, including the order of imports, types and attributes
+    cmds:
+      - pnpm exec eslint --max-warnings 0 .
+
+  lint:types:
+    desc: Type-check the desktop app and its unit tests (svelte-check), and the end-to-end tests (tsc)
+    cmds:
+      - pnpm --dir apps/desktop exec svelte-check --tsconfig ./tsconfig.json --fail-on-warnings
+      - pnpm exec tsc --project tests/e2e/tsconfig.json
+
+  lint:toml:
+    desc: Lint the TOML files against their schemas with Tombi
+    cmds:
+      - pnpm exec tombi lint --error-on-warnings --quiet
+
+  lint:rust:
+    desc: Check that every crate inherits the workspace lints, then run Clippy with warnings denied
+    cmds:
+      - cargo metadata --format-version 1 --no-deps | node scripts/check-workspace-lints.mjs
+      - cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+  lint:deps:
+    desc: Check the dependencies' advisories, licenses, bans and sources (cargo-deny), the worker's graph (V5) and the desktop app's npm licenses
+    cmds:
+      - cargo deny --locked check
+      - cargo metadata --format-version 1 --locked | node scripts/check-worker-dependencies.mjs
+      - pnpm licenses list --json --filter mannie-desktop | node scripts/check-licenses.mjs
+
+  lint:messages:
+    desc: Check the message catalogs for missing, empty and inconsistent messages
+    cmds:
+      - pnpm --dir apps/desktop exec inlang check --project ./project.inlang
+
+  # Tests
+
+  test:
+    desc: Run the unit and integration tests
+    cmds:
+      - task: test:rust
+      - task: test:desktop
+      - task: test:scripts
+
+  test:rust:
+    desc: Run the Rust tests
+    cmds:
+      # tauri-build leaves a stub msvcrt.lib in the desktop crate's build
+      # output for the static C runtime, and Cargo hands that folder to the
+      # doctests of every crate built in the same run, which then fail to link
+      # on Windows. The desktop crate's tests therefore run on their own.
+      - cargo test --workspace --all-features --locked --exclude mannie-desktop
+      - cargo test -p mannie-desktop --all-features --locked
+
+  test:desktop:
+    desc: Run the desktop app's unit tests with Vitest
+    cmds:
+      - pnpm --dir apps/desktop exec vitest run
+
+  test:scripts:
+    desc: Run the tests of the repository scripts, such as the local ESLint rules
+    cmds:
+      - node --test "tests/scripts/**/*.test.mjs"
+
+  e2e:
+    desc: Build the validation app and run the end-to-end tests (V1, V2, V3, V11) through tauri-driver
+    cmds:
+      - task: gen
+      - task: gen:pseudo-locale
+      # tauri-driver needs Microsoft Edge WebDriver in the WebView2 runtime's
+      # version on Windows, and WebKitWebDriver from the distribution on Linux.
+      - cmd: node scripts/edgedriver.mjs
+        platforms: [windows]
+      - pnpm --dir apps/desktop exec tauri build --debug --no-bundle --features validation --config src-tauri/tauri.validation.conf.json
+      - pnpm exec wdio run tests/e2e/wdio.conf.ts
+
+  # Releases (docs/engineering/releasing.md)
+
+  release:prepare:
+    desc: Set the version and turn the changelog's Unreleased section into the release's section (VERSION=0.1.0)
+    requires:
+      vars: [VERSION]
+    cmds:
+      - node scripts/release.mjs prepare {{.VERSION}}
+      # Records the new version of the workspace's own crates in Cargo.lock.
+      - cargo update --workspace
+
+  # Documentation
 
   docs:fmt:
     desc: Format the documentation and repository configuration with Prettier
@@ -30,72 +197,11 @@ tasks:
       - pnpm exec remark . --ignore-path .gitignore --frail --quiet --no-stdout
       - node scripts/check-docs.mjs
 
-  # Formatting and sorting
-
-  fmt:
-    desc: Format and sort all code and documentation (ESLint fixes, Prettier, Tombi)
-    cmds:
-      # ESLint sorts imports, type members and Svelte attributes, then Prettier
-      # lays out the result. Problems ESLint cannot fix are left to `task lint`.
-      - cmd: pnpm exec eslint --fix .
-        ignore_error: true
-      - pnpm exec prettier --write --log-level warn .
-      - pnpm exec tombi format --quiet
-      # M0 adds `task: fmt:rust` here with the first crate.
-
-  fmt:rust:
-    desc: Format the Rust code with rustfmt
-    cmds:
-      - cargo fmt --all
-
-  fmt:check:
-    desc: Check that all code and documentation is formatted and sorted
-    cmds:
-      - pnpm exec prettier --check --log-level warn .
-      - pnpm exec tombi format --check --quiet
-      # M0 adds `task: fmt:check:rust` here with the first crate.
-
-  fmt:check:rust:
-    desc: Check the formatting of the Rust code
-    cmds:
-      - cargo fmt --all --check
-
-  # Linting
-
-  lint:
-    desc: Run the linters
-    cmds:
-      - task: lint:ts
-      - task: lint:toml
-      # M0 adds `task: lint:rust` here with the first crate, and svelte-check and cargo-deny with the app.
-
-  lint:ts:
-    desc: Lint TypeScript, Svelte and JavaScript with ESLint, including the order of imports, types and attributes
-    cmds:
-      - pnpm exec eslint --max-warnings 0 .
-
-  lint:rust:
-    desc: Check that every crate inherits the workspace lints, then run Clippy with warnings denied
-    cmds:
-      - cargo metadata --format-version 1 --no-deps | node scripts/check-workspace-lints.mjs
-      - cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-
-  lint:toml:
-    desc: Lint the TOML files against their schemas with Tombi
-    cmds:
-      - pnpm exec tombi lint --error-on-warnings --quiet
-
-  # Tests
-
-  test:scripts:
-    desc: Run the tests of the repository scripts, such as the local ESLint rules
-    cmds:
-      - node --test "tests/scripts/**/*.test.mjs"
-
   ci:
-    desc: Run every check a change must pass
+    desc: Run every check a change must pass (after `task setup`)
     cmds:
+      - task: gen
       - task: docs:check
       - task: fmt:check
       - task: lint
-      - task: test:scripts
+      - task: test
