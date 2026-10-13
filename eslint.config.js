@@ -241,7 +241,8 @@ export default defineConfig(
             ['type-sibling', 'value-sibling', 'type-index', 'value-index'],
             'unknown',
           ],
-          internalPattern: [String.raw`^\$lib(?:/|$)`],
+          // SvelteKit 3 replaces the $lib alias with the #lib subpath import.
+          internalPattern: [String.raw`^#lib(?:/|$)`],
           newlinesBetween: 1,
         },
       ],
@@ -400,6 +401,12 @@ export default defineConfig(
       'better-tailwindcss/no-unnecessary-whitespace': 'error',
       // Class order and line wrapping belong to Prettier.
     },
+  },
+  {
+    name: 'mannie/desktop-static',
+    // Plain scripts that the webview loads before the app, such as theme.js.
+    files: ['apps/desktop/static/**/*.js'],
+    languageOptions: { globals: globals.browser },
   },
   {
     name: 'mannie/scripts',

@@ -1,0 +1,22 @@
+# The pnpm workspace: the repository tooling at the root and the desktop app.
+packages:
+  - apps/desktop
+
+# Refuse to install with a Node.js or pnpm version outside `engines`.
+engineStrict: true
+
+# Versions that more than one package.json uses. The desktop app runs Vitest,
+# and the tests in tests/apps/desktop/ import its types from the root.
+catalog:
+  vitest: 5.0.4
+
+# Packages that may run install scripts; everything else is refused.
+allowBuilds:
+  esbuild: true
+
+# runed, which bits-ui uses, declares SvelteKit 2 as an optional peer. Only its
+# useSearchParams utility touches SvelteKit, and neither bits-ui nor Mannie
+# uses it, so SvelteKit 3 is accepted for that peer (risk R3).
+peerDependencyRules:
+  allowedVersions:
+    runed>@sveltejs/kit: "3"
