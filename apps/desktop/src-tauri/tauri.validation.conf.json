@@ -1,0 +1,15 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "identifier": "io.github.limbon2.mannie.validation",
+  "build": {
+    "beforeBuildCommand": "pnpm build:validation"
+  },
+  "app": {
+    "security": {
+      "csp": {
+        "script-src": "'self' 'report-sample'",
+        "style-src": "'self' 'report-sample'"
+      }
+    }
+  }
+}

@@ -1,0 +1,67 @@
+[package]
+name = "mannie-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The Mannie desktop app: the Tauri composition root of the master, its IPC commands and capabilities."
+license.workspace = true
+publish.workspace = true
+default-run = "mannie-desktop"
+
+[lib]
+name = "mannie_desktop"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mannie-desktop"
+path = "src/main.rs"
+
+# Writes the TypeScript IPC bindings (`task gen`, ADR-0007). It needs the
+# validation feature because it also writes the bindings of the validation
+# commands.
+[[bin]]
+name = "mannie-desktop-bindings"
+path = "src/bin/bindings.rs"
+required-features = ["validation"]
+
+[dependencies]
+anyhow = { workspace = true }
+mannie-logging = { workspace = true }
+mannie-store = { workspace = true }
+mannie-types = { workspace = true }
+serde = { workspace = true }
+specta = { workspace = true }
+specta-typescript = { workspace = true }
+# Without `dynamic-acl`: capabilities are fixed at build time and nothing adds
+# one at runtime (ADR-0004). The other features are Tauri's defaults.
+tauri = {
+  workspace = true,
+  default-features = false,
+  features = [
+    "common-controls-v6",
+    "compression",
+    "dbus",
+    "wry",
+    "x11",
+  ]
+}
+tauri-plugin-single-instance = { workspace = true }
+tauri-specta = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+# test-util lets the channel tests run on a paused clock.
+tokio = { workspace = true, features = ["macros", "rt", "sync", "test-util", "time"] }
+
+[build-dependencies]
+tauri-build = { workspace = true }
+
+[features]
+# The commands and the capability that the end-to-end validations use (V1, V2,
+# V3). Only validation builds enable it; a release never does.
+validation = ["mannie-types/validation"]
+
+[lints]
+workspace = true

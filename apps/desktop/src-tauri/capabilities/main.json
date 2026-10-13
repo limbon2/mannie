@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "What the main window may call: Mannie's own commands and nothing else. Every app command needs a grant here (ADR-0004).",
+  "windows": ["main"],
+  "permissions": ["allow-get-interface-settings", "allow-get-startup-status", "allow-update-interface-settings"]
+}
