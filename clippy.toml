@@ -28,4 +28,4 @@ disallowed-methods = [
 ]
 
 # Names that doc comments may use without backticks, in addition to Clippy's list.
-doc-valid-idents = ["..", "gRPC", "OpenAI", "SvelteKit", "UUIDv7", "WebKitGTK", "WebView", "WebView2"]
+doc-valid-idents = ["..", "gRPC", "KWallet", "OpenAI", "SvelteKit", "UUIDv7", "WebKitGTK", "WebView", "WebView2"]

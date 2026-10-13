@@ -19,6 +19,7 @@
 resolver = "3"
 members = [
   "crates/mannie-logging",
+  "crates/mannie-secrets",
   "crates/mannie-store",
   "crates/mannie-types",
 ]
@@ -37,7 +38,9 @@ publish = false
 # tauri-specta are release candidates and are pinned here as well (ADR-0007).
 # cargo-deny (deny.toml) enforces which crate may depend on which.
 [workspace.dependencies]
+keyring-core = "1.0.1"
 mannie-logging = { path = "crates/mannie-logging" }
+mannie-secrets = { path = "crates/mannie-secrets" }
 mannie-store = { path = "crates/mannie-store" }
 mannie-types = { path = "crates/mannie-types" }
 regex = "1.13.1"
@@ -52,6 +55,9 @@ tokio = "1.53.2"
 tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+uuid = { version = "1.28.0", features = ["v7"] }
+windows-native-keyring-store = "1.1.0"
+zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-tokio-crypto-rust"] }
 zeroize = "1.9.1"
 
 [workspace.lints.clippy]

@@ -1,0 +1,30 @@
+[package]
+name = "mannie-secrets"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The operating system's credential store, on the master only: Windows Credential Manager and the Linux Secret Service."
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+keyring-core = { workspace = true }
+mannie-types = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+mannie-logging = { workspace = true }
+mannie-store = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+uuid = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus-secret-service-keyring-store = { workspace = true }
+
+[target."cfg(windows)".dependencies]
+windows-native-keyring-store = { workspace = true }
+
+[lints]
+workspace = true
