@@ -1,0 +1,63 @@
+# Spell checking for the documentation. Fix a misspelling before adding a word;
+# add only real project, product and technical terms here.
+version: "0.2"
+language: en-US
+useGitignore: true
+ignorePaths:
+  - pnpm-lock.yaml
+  - LICENSE
+  - .claude/worktrees/**
+words:
+  - appindicator
+  - Authenticode
+  - checksummed
+  - clippy
+  - DMABUF
+  - egui
+  - HMAC
+  - huntabyte
+  - inlang
+  - journaled
+  - keepalive
+  - libappindicator
+  - libayatana
+  - lifecycles
+  - limbon
+  - lockfiles
+  - Mannie
+  - Mannie's
+  - metacharacters
+  - msvc
+  - NSIS
+  - Ollama
+  - Paraglide
+  - prerender
+  - prerendered
+  - prerendering
+  - procctl
+  - prost
+  - protoc
+  - protox
+  - QUIC
+  - redb
+  - redirections
+  - remarkrc
+  - reqwest
+  - rusqlite
+  - rustls
+  - rustup
+  - schemars
+  - serde
+  - setsid
+  - Slint
+  - specta
+  - sqlx
+  - subreaper
+  - Taskfile
+  - Tauri
+  - Tauri's
+  - thiserror
+  - unpairing
+  - unpairs
+  - WCAG
+  - zbus

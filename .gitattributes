@@ -1,0 +1,29 @@
+# Normalize every text file to LF in the repository and in working trees, on
+# every OS. The formatters (rustfmt, Prettier, buf format) all emit LF, and
+# mixed endings would show up as spurious diffs on Windows checkouts.
+* text=auto eol=lf
+
+# cmd.exe reads batch files reliably only with CRLF line endings.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Recorded server-sent event streams are test fixtures whose exact bytes
+# matter: CRLF line endings are legal in SSE and must survive checkout.
+*.sse -text
+
+# Binary assets: never normalize or diff as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.sqlite binary

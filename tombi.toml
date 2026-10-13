@@ -1,0 +1,12 @@
+# Tombi formats and lints every TOML file: the Cargo manifests, clippy.toml,
+# rust-toolchain.toml, deny.toml and this file. With the Cargo schema it keeps
+# dependency tables, feature lists and lint tables sorted, and [package] keys
+# in Cargo's conventional order. Only the schemas built into the pinned Tombi
+# release are used, so results change only with a Tombi upgrade and need no
+# network.
+
+[format.rules]
+line-width = 120
+
+[schema.catalog]
+paths = ["tombi://www.schemastore.org/api/json/catalog.json"]

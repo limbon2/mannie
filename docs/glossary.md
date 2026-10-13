@@ -1,0 +1,58 @@
+# Glossary
+
+|              |                                                                                                                                                                                            |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Status       | Draft for review                                                                                                                                                                           |
+| Last updated | 2026-10-13                                                                                                                                                                                 |
+| Related      | [Domain model](architecture/domain-model.md), [Orchestration](architecture/orchestration.md), [Extension points](architecture/extension-points.md), [Feature protocol](features/README.md) |
+
+This glossary defines the terms that Mannie's documents, contracts and code share. A term is added only when more than one feature uses it. A term that belongs to one feature is defined in that feature's document.
+
+| Term               | Definition                                                                                                                                                                                 |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Agent              | A model-driven loop that runs on exactly one machine, following an agent definition. Its tools act only on that machine.                                                                   |
+| Agent definition   | A named configuration of an agent: instructions, tool set, budgets and default provider profile. Examples: the conversation agent, the explore and general child agents, the worker agent. |
+| Approval           | The owner's decision about one operation that policy did not already allow: allow once, allow for this conversation, save a rule, or deny.                                                 |
+| Archived output    | A tool result too large for the model's context, stored outside the transcript and replaced there by an excerpt and a reference that a read-back tool can follow.                          |
+| Checkpoint         | A summary that stands in for older parts of a conversation in the model's context after compaction. The transcript itself is unchanged.                                                    |
+| Child agent        | An agent that another agent starts on the same machine to perform a task and report back. The built-in kinds are explore (read-only tools) and general.                                    |
+| Compaction         | Replacing older parts of the model's context with a checkpoint when the context budget runs low.                                                                                           |
+| Context budget     | The input tokens one model call may use: the model's context window minus the output reserve and a safety margin.                                                                          |
+| Conversation       | An ordered history of turns between a requester and an agent. The owner's conversations live on the master; a worker keeps the conversations of the tasks it runs.                         |
+| Conversation agent | The agent of one of the owner's conversations on the master. It answers the owner, uses tools on the master's machine, starts child agents and delegates tasks to workers.                 |
+| Credential lease   | A provider credential that the master gives a worker for one task. The worker holds it in memory only and drops it when the task ends.                                                     |
+| Cursor             | The sequence number of the last event a subscriber has received. A subscriber that reconnects replays every event after its cursor.                                                        |
+| Delegation         | The master's conversation agent assigning a task to a worker agent.                                                                                                                        |
+| Event              | An append-only record of a change in a conversation, such as a new part, a streamed delta or an operation's new state. Events carry a per-conversation sequence number.                    |
+| Extension point    | A named seam through which a feature adds behavior without editing other features, such as the tool registry or a UI shell slot. See [extension points](architecture/extension-points.md). |
+| Feature            | A unit of product behavior the owner asked for, described by a feature document.                                                                                                           |
+| Feature document   | The single document, or folder for a big feature, that describes a feature from idea to shipped. See the [feature protocol](features/README.md).                                           |
+| Feature level      | The version of one link service that the master and a worker agree on when they connect.                                                                                                   |
+| Grant              | A permission created by an approval that lasts for the rest of a conversation, such as write access to one folder.                                                                         |
+| Host               | The computer a worker runs on.                                                                                                                                                             |
+| Host facts         | What a worker discovers about its host and reports to the master: operating system and version, architecture, shells and installed tools.                                                  |
+| Host instructions  | Instructions written on a worker's host for the worker agent: the host's purpose, conventions and constraints.                                                                             |
+| Link               | The mutually authenticated connection between the master and one worker.                                                                                                                   |
+| Locale             | The language, and its conventions for dates and numbers, that the interface uses. English is the base locale.                                                                              |
+| Machine            | A computer that Mannie acts on: the master's computer or a worker's host.                                                                                                                  |
+| Master             | The desktop application. It holds the owner's conversations, provider profiles and credentials, and the worker registry, and it orchestrates work.                                         |
+| Message catalog    | The file of visible interface text for one locale. Features add their messages under their own key prefix, and a new language is a new catalog.                                            |
+| Operation          | One side effect performed by a tool, such as writing a file or running a command, recorded in a journal through its whole lifecycle.                                                       |
+| Owner              | The single person who uses Mannie and decides its direction.                                                                                                                               |
+| Pairing            | The one-time procedure that makes a master and a worker trust each other's public keys.                                                                                                    |
+| Part               | A typed element of a turn: text, reasoning, tool call, tool result, task event and others. Features may add part types.                                                                    |
+| Policy ceiling     | The most that tools may do on a worker's host, configured on that host. The master can narrow it for a task but never widen it.                                                            |
+| Provider           | A service that serves models through an API, such as OpenAI or a vLLM server.                                                                                                              |
+| Provider profile   | A named provider configuration: API interface, base URL, model, limits and a reference to the stored credential.                                                                           |
+| Pseudo-locale      | A test locale generated from the English catalog that marks and lengthens every message, so text that bypasses the catalog stands out.                                                     |
+| Quirk profile      | Declarative adjustments for the behavior of a specific server or model, such as tool calls written as text, applied by the provider adapters.                                              |
+| Report             | The confirmed result of a task, returned to the agent that assigned it.                                                                                                                    |
+| Rule               | A saved permission pattern, such as a command prefix, that allows matching operations without asking.                                                                                      |
+| Run                | The execution of one turn by an agent. A run is a durable actor that continues independently of any window or connection.                                                                  |
+| Step               | One model call within a run, together with the tool calls it produced.                                                                                                                     |
+| Subagent           | Not used in Mannie. See child agent.                                                                                                                                                       |
+| Task               | Work that one agent assigns to another agent, either a child agent or a worker agent, with an instruction and an expected report.                                                          |
+| Turn               | One request and the agent's complete response to it.                                                                                                                                       |
+| Worker             | The headless service on a host that runs worker agents for the tasks the master delegates.                                                                                                 |
+| Worker agent       | The agent a worker runs for one task, using its host's tools, host facts and host instructions.                                                                                            |
+| Workspace          | The folder an agent works in by default on its machine. Policy can allow operations inside it without asking.                                                                              |

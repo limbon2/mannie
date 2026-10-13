@@ -1,0 +1,101 @@
+# Every workflow of the repository lives here; `task --list` shows them.
+# Commands call real executables only (pnpm, node, git), never Unix utilities,
+# so each task runs the same on Windows, Linux and FreeBSD.
+# docs/engineering/repository.md describes the tasks and the ones M0 adds.
+version: "3"
+
+tasks:
+  default:
+    desc: List the tasks
+    silent: true
+    cmds:
+      - task --list
+
+  setup:
+    desc: Install the pinned tooling from the lockfile (run once after cloning)
+    cmds:
+      - pnpm install --frozen-lockfile
+
+  docs:fmt:
+    desc: Format the documentation and repository configuration with Prettier
+    cmds:
+      - pnpm exec prettier --write --log-level warn .
+
+  docs:check:
+    desc: Check formatting, Markdown rules, spelling, links and consistency of the documentation
+    cmds:
+      - pnpm exec prettier --check --log-level warn .
+      - pnpm exec markdownlint-cli2
+      - pnpm exec cspell lint --no-progress --no-summary "**/*.md"
+      - pnpm exec remark . --ignore-path .gitignore --frail --quiet --no-stdout
+      - node scripts/check-docs.mjs
+
+  # Formatting and sorting
+
+  fmt:
+    desc: Format and sort all code and documentation (ESLint fixes, Prettier, Tombi)
+    cmds:
+      # ESLint sorts imports, type members and Svelte attributes, then Prettier
+      # lays out the result. Problems ESLint cannot fix are left to `task lint`.
+      - cmd: pnpm exec eslint --fix .
+        ignore_error: true
+      - pnpm exec prettier --write --log-level warn .
+      - pnpm exec tombi format --quiet
+      # M0 adds `task: fmt:rust` here with the first crate.
+
+  fmt:rust:
+    desc: Format the Rust code with rustfmt
+    cmds:
+      - cargo fmt --all
+
+  fmt:check:
+    desc: Check that all code and documentation is formatted and sorted
+    cmds:
+      - pnpm exec prettier --check --log-level warn .
+      - pnpm exec tombi format --check --quiet
+      # M0 adds `task: fmt:check:rust` here with the first crate.
+
+  fmt:check:rust:
+    desc: Check the formatting of the Rust code
+    cmds:
+      - cargo fmt --all --check
+
+  # Linting
+
+  lint:
+    desc: Run the linters
+    cmds:
+      - task: lint:ts
+      - task: lint:toml
+      # M0 adds `task: lint:rust` here with the first crate, and svelte-check and cargo-deny with the app.
+
+  lint:ts:
+    desc: Lint TypeScript, Svelte and JavaScript with ESLint, including the order of imports, types and attributes
+    cmds:
+      - pnpm exec eslint --max-warnings 0 .
+
+  lint:rust:
+    desc: Check that every crate inherits the workspace lints, then run Clippy with warnings denied
+    cmds:
+      - cargo metadata --format-version 1 --no-deps | node scripts/check-workspace-lints.mjs
+      - cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+  lint:toml:
+    desc: Lint the TOML files against their schemas with Tombi
+    cmds:
+      - pnpm exec tombi lint --error-on-warnings --quiet
+
+  # Tests
+
+  test:scripts:
+    desc: Run the tests of the repository scripts, such as the local ESLint rules
+    cmds:
+      - node --test "tests/scripts/**/*.test.mjs"
+
+  ci:
+    desc: Run every check a change must pass
+    cmds:
+      - task: docs:check
+      - task: fmt:check
+      - task: lint
+      - task: test:scripts

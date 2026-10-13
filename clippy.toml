@@ -1,0 +1,31 @@
+# Settings of the Clippy lints. The lint levels live in [workspace.lints] in
+# Cargo.toml; this file only tunes how the lints behave.
+
+# The crates are internal, so lints may suggest changes to public signatures.
+avoid-breaking-exported-api = false
+
+# Tests may unwrap, panic, print and use dbg!; production code may not.
+allow-dbg-in-tests = true
+allow-panic-in-tests = true
+allow-print-in-tests = true
+allow-unwrap-in-tests = true
+
+# A tracing span guard held across .await records unrelated work in the span.
+# Paths that a crate cannot see (it does not depend on tracing) are skipped.
+await-holding-invalid-types = [
+  { path = "tracing::span::Entered", reason = "Instrument the future with .instrument(span) instead.", allow-invalid = true },
+  { path = "tracing::span::EnteredSpan", reason = "Instrument the future with .instrument(span) instead.", allow-invalid = true },
+]
+
+# Rules of the engineering standards (Rust): channels are bounded, code that
+# depends on time takes the injected clock, and IDs are UUIDv7. The one module
+# that wraps a disallowed call says why with #[expect(clippy::disallowed_methods)].
+disallowed-methods = [
+  { path = "std::sync::mpsc::channel", reason = "Channels are bounded: use std::sync::mpsc::sync_channel or tokio::sync::mpsc::channel." },
+  { path = "std::time::SystemTime::now", reason = "Code that depends on time takes the injected clock." },
+  { path = "tokio::sync::mpsc::unbounded_channel", reason = "Channels are bounded: use tokio::sync::mpsc::channel.", allow-invalid = true },
+  { path = "uuid::Uuid::new_v4", reason = "IDs are UUIDv7: use Uuid::now_v7.", allow-invalid = true },
+]
+
+# Names that doc comments may use without backticks, in addition to Clippy's list.
+doc-valid-idents = ["..", "gRPC", "OpenAI", "SvelteKit", "UUIDv7", "WebKitGTK", "WebView", "WebView2"]

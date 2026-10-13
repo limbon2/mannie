@@ -1,0 +1,98 @@
+# Extension points
+
+|              |                                                                                                                                                                          |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Status       | Draft for review                                                                                                                                                         |
+| Last updated | 2026-10-13                                                                                                                                                               |
+| Related      | [ADR-0002](../adr/0002-grow-through-extension-points.md), [Feature protocol](../features/README.md), [Repository](../engineering/repository.md), [Overview](overview.md) |
+
+Mannie adds features by registration. A feature is a vertical slice: Rust modules, IPC types, UI components, migrations and tests, plus its feature document. The slice plugs into the extension points below and leaves other features alone ([ADR-0002](../adr/0002-grow-through-extension-points.md)).
+
+## 1. Rules for every extension point
+
+1. A feature owns what it registers. Other features reach it only through its public interface or through another extension point.
+2. Registration is explicit code in a composition root (`mannie-desktop`, `mannie-worker`) or in a registry module of the UI shell. Nothing is discovered by scanning or loaded at runtime.
+3. Contracts grow by addition. A reader that meets a variant it does not know skips it or shows it in a generic form, and does not fail.
+4. Each extension point has an owning module and a test that registers a fake entry, so a broken extension point fails its own tests first.
+5. A new extension point, or a change to an existing one, needs an ADR. An extension point is added when the first feature needs it.
+
+## 2. Catalog
+
+| Extension point                 | Owning module                 | What a feature registers                                                                      | Introduced in |
+| ------------------------------- | ----------------------------- | --------------------------------------------------------------------------------------------- | ------------- |
+| Tool registry                   | `mannie-tools`                | A tool: name, schema, availability, permission class and executor                             | M2            |
+| Agent definitions               | `mannie-runtime`              | An agent definition: instructions, tool set, budgets and default profile                      | M1            |
+| Provider adapters               | `mannie-provider`             | An adapter for an API interface, or a quirk profile                                           | M1            |
+| Instruction sections            | `mannie-runtime`              | A section of the system prompt and its position                                               | M1            |
+| Transcript parts and run events | `mannie-types`                | A part type or event variant, with its rendering for the model                                | M1            |
+| IPC commands and channels       | `mannie-desktop`              | Commands and channel message types for the feature's UI                                       | M0            |
+| UI shell slots                  | The desktop app's shell       | Navigation entries, views, panels, settings sections, command palette actions, part renderers | M0            |
+| Settings sections               | `mannie-types`                | A typed settings section with defaults and validation                                         | M0            |
+| Store tables and migrations     | `mannie-store`                | The feature's tables and its forward-only migrations                                          | M0            |
+| Link services                   | `mannie-link`                 | A protobuf package with its feature level                                                     | M4            |
+| Message catalogs                | The desktop app's `messages/` | The feature's visible text, under its own key prefix                                          | M0            |
+
+## 3. The extension points
+
+### 3.1 Tool registry
+
+A tool implements the `Tool` trait. It declares its name, a description written for the model, an input schema generated from a Rust type with schemars, the agent definitions and machine roles it is available to, and its permission class: read-only, or with side effects. Its executor follows the operation lifecycle ([ADR-0013](../adr/0013-journal-every-side-effect.md)): prepare, then execute after authorization. Results are typed values with a rendering for the model. The registry rejects duplicate names at startup. [Tools](tools.md) has the contract in full.
+
+### 3.2 Agent definitions
+
+An agent definition names an agent's instructions, its tool set (tool names from the registry), its budgets and its default provider profile. Built-in definitions include the conversation agent, the explore and general child agents, and the worker agent. A feature that needs a new kind of agent registers a definition. It does not change the loop.
+
+### 3.3 Provider adapters and quirk profiles
+
+An adapter implements the `Provider` trait for one API interface ([ADR-0011](../adr/0011-own-the-provider-adapters.md)). A quirk profile is data: it matches a server or a model and switches documented normalizations on, such as reading tool calls that the model wrote as text. A feature that supports a new provider adds an adapter or a quirk profile, together with recorded fixtures for its tests.
+
+### 3.4 Instruction sections
+
+The system prompt is assembled from sections that modules register, each with a fixed position. Stable sections come first (the base instructions, the agent definition, the tool guidance and the owner's instructions), and sections specific to a host or a session come after them, so that providers can cache the stable prefix. Context that changes from turn to turn goes into the latest user message instead of the system prompt.
+
+### 3.5 Transcript parts and run events
+
+Parts and events are tagged enums in `mannie-types` with a version-tolerant encoding. A feature adds a variant together with its rendering for the model and its renderer in the UI. Code that reads parts handles unknown variants: the model sees a short placeholder, and the UI shows a generic card.
+
+### 3.6 IPC commands and channels
+
+Each feature defines its command arguments, results, errors and channel messages in `mannie-types` and registers its commands with tauri-specta in `mannie-desktop` ([ADR-0007](../adr/0007-generate-ipc-bindings-from-rust.md)). Every command needs a capability grant ([ADR-0004](../adr/0004-keep-system-access-in-the-rust-core.md)). A changed contract gets a new command, and the old one is deprecated.
+
+### 3.7 UI shell slots
+
+The shell in `apps/desktop/src/lib/shell/` defines typed slots: navigation entries, views, panels, settings sections, command palette actions and part renderers keyed by part type. A feature registers its Svelte components in its own module under `src/lib/features/<feature>/`, and the shell renders whatever is registered. The shell never imports a feature directly.
+
+### 3.8 Settings sections
+
+A feature declares a settings section as a Rust type with defaults and validation. The store persists it, the settings view renders it in the feature's settings slot, and the core validates every change. Settings never contain secrets; a credential is a reference to the credential store.
+
+### 3.9 Store tables and migrations
+
+A feature owns its tables, named with its module's prefix, and the forward-only migrations that create and change them ([ADR-0009](../adr/0009-persist-state-in-sqlite.md)). It reaches other modules' data through their repositories. A destructive change takes two releases: the first adds the new shape and stops using the old one, and the second removes the old shape.
+
+### 3.10 Link services
+
+A feature that needs traffic between the master and workers adds a protobuf package under `proto/mannie/link/` with its own feature level ([ADR-0016](../adr/0016-link-machines-over-pinned-mtls-grpc.md)). The two sides agree on feature levels when they connect, and a feature checks the agreed level before it uses its service. `buf breaking` guards compatibility.
+
+### 3.11 Message catalogs
+
+A feature adds its visible text as messages in `apps/desktop/messages/en.json`, with keys under the feature's own prefix, such as `chat_` or `tools_` ([ADR-0019](../adr/0019-keep-visible-text-in-message-catalogs.md)). Paraglide JS compiles the catalogs into typed message functions, so a component that uses a missing key fails the build. Error codes from the core map to messages in the same catalog. A feature never edits another feature's messages, and translations of a feature's messages go into the catalog of each added locale.
+
+## 4. Anatomy of a feature slice
+
+| Layer            | What the feature adds                                        | Where                                                    |
+| ---------------- | ------------------------------------------------------------ | -------------------------------------------------------- |
+| Feature document | Intent, behavior, fit, design and acceptance                 | `docs/features/<slug>.md`, or a folder for a big feature |
+| Rust logic       | A module in the crate that owns the capability               | `crates/<crate>/src/<feature>/`                          |
+| Shared types     | IPC types, parts, events and settings                        | `crates/mannie-types/src/<feature>/`                     |
+| Registration     | Calls to the registries                                      | The composition roots in `apps/`                         |
+| UI               | Components, state and slot registrations                     | `apps/desktop/src/lib/features/<feature>/`               |
+| Data             | Tables and migrations                                        | The store's migration list, in the feature's module      |
+| Link contract    | A protobuf package, when machines talk                       | `proto/mannie/link/<feature>/`                           |
+| Visible text     | Messages under the feature's key prefix                      | `apps/desktop/messages/`                                 |
+| Tests            | Unit tests beside the code, integration and end-to-end tests | Next to the code and in each crate's `tests/`            |
+| Changelog        | One line                                                     | `CHANGELOG.md`                                           |
+
+## 5. When an extension point is missing
+
+If a feature cannot be built without editing modules that belong to other features, an extension point is missing. Stop, and write an ADR that adds the extension point in a general form, with the feature as its first user. Build the extension point, then the feature on top of it. A one-off exception in another feature's code is not an acceptable shortcut.

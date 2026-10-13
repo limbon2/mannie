@@ -1,0 +1,8 @@
+# Prettier also skips every path in .gitignore.
+
+# Worktrees of coding agents are other checkouts of the repository. Git
+# excludes them locally, which Prettier does not read.
+.claude/worktrees/
+
+# Lockfiles are written by their package managers.
+pnpm-lock.yaml

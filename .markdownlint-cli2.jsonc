@@ -1,0 +1,18 @@
+// Markdown rules for every document. Prettier owns the layout, so rules that
+// overlap with it are turned off.
+{
+  "config": {
+    "default": true,
+    // Prose is not hard-wrapped (Prettier keeps proseWrap at "preserve").
+    "MD013": false,
+    // Repeated headings such as "Exit criteria" are fine under different parents.
+    "MD024": { "siblings_only": true },
+    // Bold labels may introduce a list, for example "**Scope**" in a milestone.
+    "MD036": false,
+    // Prettier aligns table columns; its output is the table style.
+    "MD060": false,
+  },
+  "globs": ["**/*.md"],
+  "gitignore": true,
+  "ignores": [".claude/worktrees/**"],
+}

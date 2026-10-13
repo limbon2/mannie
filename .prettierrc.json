@@ -1,0 +1,36 @@
+{
+  "printWidth": 120,
+  "endOfLine": "lf",
+  "plugins": [
+    "prettier-plugin-svelte",
+    "prettier-plugin-organize-attributes",
+    "prettier-plugin-css-order",
+    "prettier-plugin-tailwindcss"
+  ],
+  "attributeGroups": ["^id$", "^class$", "$DEFAULT", "^on"],
+  "attributeIgnoreCase": true,
+  "attributeSort": "ASC",
+  "cssDeclarationSorterKeepOverrides": true,
+  "cssDeclarationSorterOrder": "smacss",
+  "tailwindFunctions": ["clsx", "cn", "tv"],
+  "overrides": [
+    {
+      "files": ["*.ts", "*.mts", "*.cts", "*.js", "*.mjs", "*.cjs", "*.svelte"],
+      "options": {
+        "singleQuote": true
+      }
+    },
+    {
+      "files": "*.svelte",
+      "options": {
+        "parser": "svelte"
+      }
+    },
+    {
+      "files": "apps/desktop/**",
+      "options": {
+        "tailwindStylesheet": "./apps/desktop/src/app.css"
+      }
+    }
+  ]
+}
