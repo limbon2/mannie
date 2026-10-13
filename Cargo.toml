@@ -19,6 +19,7 @@
 resolver = "3"
 members = [
   "apps/desktop/src-tauri",
+  "apps/worker",
   "crates/mannie-logging",
   "crates/mannie-secrets",
   "crates/mannie-store",
@@ -40,6 +41,7 @@ publish = false
 # cargo-deny (deny.toml) enforces which crate may depend on which.
 [workspace.dependencies]
 anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
 keyring-core = "1.0.1"
 mannie-logging = { path = "crates/mannie-logging" }
 mannie-secrets = { path = "crates/mannie-secrets" }
@@ -64,6 +66,7 @@ tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 uuid = { version = "1.28.0", features = ["v7"] }
 windows-native-keyring-store = "1.1.0"
+windows-service = "0.8.1"
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-tokio-crypto-rust"] }
 zeroize = "1.9.1"
 
