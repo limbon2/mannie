@@ -62,6 +62,7 @@ words:
   - reqwest
   - rusqlite
   - rustls
+  - RustSec
   - rustup
   - schemars
   - serde
