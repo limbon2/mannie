@@ -1,0 +1,9 @@
+{
+  "error": {
+    "class": "permanent",
+    "failure": {
+      "code": "invalid_credential"
+    }
+  },
+  "events": []
+}

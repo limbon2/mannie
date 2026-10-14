@@ -1,0 +1,233 @@
+//! The context budget (docs/features/chat/conversations.md, context budget and
+//! compaction): estimates before a conversation's first reply, and the token
+//! counts the provider reported after it, which are the truth (ADR-0012,
+//! decision 7).
+
+use mannie_provider::{Content, Message, ModelRequest};
+use mannie_types::transcript::ContextUsage;
+use serde::{Deserialize, Serialize};
+
+/// Tokens counted for each message on top of its text: the role and the
+/// framing that every API adds.
+const MESSAGE_OVERHEAD: u32 = 4;
+
+/// The growth of a request, in tokens, below which an estimate's error hides
+/// whether a server cut it.
+const MEASURABLE_GROWTH: u32 = 64;
+
+/// A conservative estimate of the tokens of a text: two tokens for every five
+/// bytes. English averages about four bytes per token, and the estimate stays
+/// above the count for most other languages and for code.
+pub(crate) fn estimate_text(text: &str) -> u32 {
+    let bytes = u64::try_from(text.len()).unwrap_or(u64::MAX);
+    u32::try_from((bytes * 2).div_ceil(5)).unwrap_or(u32::MAX)
+}
+
+/// The estimated tokens of one message.
+pub(crate) fn estimate_message(message: &Message) -> u32 {
+    message
+        .content
+        .iter()
+        .map(|content| match content {
+            Content::Text(text) | Content::ProviderItem(text) => estimate_text(text),
+        })
+        .fold(MESSAGE_OVERHEAD, u32::saturating_add)
+}
+
+/// The estimated tokens of a whole request's input.
+pub(crate) fn estimate_request(request: &ModelRequest) -> u32 {
+    request.messages.iter().map(estimate_message).fold(
+        estimate_text(&request.instructions).saturating_add(MESSAGE_OVERHEAD),
+        u32::saturating_add,
+    )
+}
+
+/// What the runtime remembers about the last model call of a conversation,
+/// as a versioned JSON document in the store.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Ledger {
+    /// The profile binding of the call.
+    pub(crate) binding: Option<String>,
+    /// The checkpoint the call's context used.
+    pub(crate) checkpoint: Option<String>,
+    /// The input tokens the provider reported.
+    pub(crate) reported_input: Option<u32>,
+    /// What Mannie estimated for the same input.
+    pub(crate) estimated_input: Option<u32>,
+}
+
+impl Ledger {
+    /// Reads the ledger, or an empty one when it is missing or unreadable.
+    pub(crate) fn parse(text: Option<&str>) -> Self {
+        text.and_then(|text| serde_json::from_str(text).ok())
+            .unwrap_or_default()
+    }
+
+    /// The ledger as the store keeps it.
+    pub(crate) fn to_json(&self) -> String {
+        serde_json::to_string(self).unwrap_or_else(|_unencodable| "{}".to_owned())
+    }
+
+    /// The tokens a request is expected to use. With a report from a call of
+    /// the same binding and checkpoint, the reported input is the base, and
+    /// only what was added since is estimated, scaled by how far the estimate
+    /// was off on that call.
+    pub(crate) fn project(&self, binding: &str, checkpoint: Option<&str>, estimate: u32) -> u32 {
+        let same_context =
+            self.binding.as_deref() == Some(binding) && self.checkpoint.as_deref() == checkpoint;
+        let (Some(reported), Some(estimated)) = (self.reported_input, self.estimated_input) else {
+            return estimate;
+        };
+        if !same_context || estimated == 0 {
+            return estimate;
+        }
+        let ratio = (f64::from(reported) / f64::from(estimated)).clamp(0.5, 2.0);
+        let added = f64::from(estimate.saturating_sub(estimated)) * ratio;
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "the added estimate is non-negative and capped at u32::MAX below"
+        )]
+        let added = added.ceil().min(f64::from(u32::MAX)) as u32;
+        reported.saturating_add(added)
+    }
+
+    /// Whether a call's reported input shows that the server cut its request.
+    /// Between two calls of one binding and checkpoint the request only grows,
+    /// so its reported size grows by about what was added since this ledger's
+    /// call. A server that cuts requests beyond its context instead of failing
+    /// reports less: growth of half the addition or less counts as cut.
+    pub(crate) fn shows_cut(
+        &self,
+        binding: &str,
+        checkpoint: Option<&str>,
+        projected: u32,
+        reported: u32,
+    ) -> bool {
+        let same_context =
+            self.binding.as_deref() == Some(binding) && self.checkpoint.as_deref() == checkpoint;
+        let Some(previous) = self.reported_input.filter(|_| same_context) else {
+            return false;
+        };
+        let added = projected.saturating_sub(previous);
+        added >= MEASURABLE_GROWTH && reported.saturating_add(added / 2) < projected
+    }
+}
+
+/// The usage that the conversation view shows.
+pub(crate) fn usage(used: u32, budget: u32, estimated: bool) -> ContextUsage {
+    ContextUsage {
+        used_tokens: used,
+        budget_tokens: budget,
+        estimated,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use mannie_provider::{Message, ModelRequest, Role};
+    use mannie_types::provider::ReasoningEffort;
+
+    use super::{Ledger, estimate_request, estimate_text};
+
+    #[test]
+    fn estimates_round_up_two_tokens_per_five_bytes() {
+        assert_eq!(estimate_text(""), 0);
+        assert_eq!(estimate_text("a"), 1);
+        assert_eq!(estimate_text("hello"), 2);
+        assert_eq!(estimate_text("日本語"), 4, "nine bytes of three characters");
+    }
+
+    #[test]
+    fn a_request_counts_its_instructions_and_messages() {
+        let request = ModelRequest {
+            model: "m".to_owned(),
+            instructions: "hello".to_owned(),
+            messages: vec![
+                Message::text(Role::User, "hello"),
+                Message::text(Role::Assistant, ""),
+            ],
+            max_output_tokens: 1,
+            reasoning_effort: ReasoningEffort::ServerDefault,
+        };
+
+        assert_eq!(estimate_request(&request), (2 + 4) + (2 + 4) + 4);
+    }
+
+    #[test]
+    fn projections_use_reported_counts_for_the_same_context_only() {
+        let ledger = Ledger {
+            binding: Some("p:1".to_owned()),
+            checkpoint: None,
+            reported_input: Some(1_000),
+            estimated_input: Some(1_250),
+        };
+
+        assert_eq!(ledger.project("p:1", None, 1_750), 1_400);
+        assert_eq!(ledger.project("p:2", None, 1_750), 1_750, "another binding");
+        assert_eq!(
+            ledger.project("p:1", Some("c"), 1_750),
+            1_750,
+            "another checkpoint"
+        );
+        assert_eq!(Ledger::default().project("p:1", None, 900), 900);
+    }
+
+    #[test]
+    fn a_report_that_grew_less_than_the_request_shows_a_cut() {
+        let ledger = Ledger {
+            binding: Some("p:1".to_owned()),
+            checkpoint: None,
+            reported_input: Some(3_900),
+            estimated_input: Some(6_000),
+        };
+
+        assert!(
+            !ledger.shows_cut("p:1", None, 4_500, 4_480),
+            "it grew by the addition"
+        );
+        assert!(
+            !ledger.shows_cut("p:1", None, 4_500, 4_250),
+            "it grew by half the addition, within the estimate's error"
+        );
+        assert!(
+            ledger.shows_cut("p:1", None, 4_500, 4_096),
+            "the server stopped at its window"
+        );
+        assert!(
+            ledger.shows_cut("p:1", None, 4_500, 3_900),
+            "it did not grow at all"
+        );
+        assert!(
+            !ledger.shows_cut("p:1", None, 3_940, 3_900),
+            "the addition is too small to measure"
+        );
+        assert!(
+            !ledger.shows_cut("p:2", None, 4_500, 4_096),
+            "another binding"
+        );
+        assert!(
+            !ledger.shows_cut("p:1", Some("c"), 4_500, 4_096),
+            "another checkpoint"
+        );
+        assert!(
+            !Ledger::default().shows_cut("p:1", None, 4_500, 1_000),
+            "no earlier report"
+        );
+    }
+
+    #[test]
+    fn the_ledger_survives_the_store_and_tolerates_garbage() {
+        let ledger = Ledger {
+            binding: Some("p:1".to_owned()),
+            checkpoint: Some("c".to_owned()),
+            reported_input: Some(10),
+            estimated_input: Some(12),
+        };
+
+        assert_eq!(Ledger::parse(Some(&ledger.to_json())), ledger);
+        assert_eq!(Ledger::parse(Some("not json")), Ledger::default());
+        assert_eq!(Ledger::parse(None), Ledger::default());
+    }
+}

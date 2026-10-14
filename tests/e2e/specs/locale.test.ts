@@ -42,6 +42,7 @@ describe('visible text and the locale (V11)', () => {
 
   it('shows only catalog text in the settings and the main view', async () => {
     await browser.keys([Key.Ctrl, ',']);
+    await $('#interface-language').waitForDisplayed();
     expect(await uncataloguedText()).toEqual([]);
 
     await browser.execute(() => {

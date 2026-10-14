@@ -9,7 +9,9 @@
 //! - Other crates use the repositories in this crate and never see SQLite.
 
 mod error;
+mod provider;
 mod readers;
+mod runtime;
 mod schema;
 mod settings;
 mod store;
@@ -18,6 +20,11 @@ pub mod validation;
 mod writer;
 
 pub use error::{DatabaseError, StoreError};
+pub use provider::{ProfileFields, ProfileStoreError, StoredProfile};
+pub use runtime::{
+    Applied, Change, EventsAfter, ModelPart, ModelTurn, NewCheckpoint, NewConversation, NewPart,
+    NewRun, ProviderItem, Recovered, RuntimeStoreError, StoredCheckpoint,
+};
 pub use settings::SettingsStoreError;
 pub use store::{Store, StoreOptions};
 
@@ -38,7 +45,11 @@ pub enum Durability {
 /// against the migrated schema (ADR-0009).
 #[cfg(test)]
 pub(crate) fn all_statements() -> impl Iterator<Item = &'static str> {
-    settings::STATEMENTS.iter().copied()
+    settings::STATEMENTS
+        .iter()
+        .chain(provider::STATEMENTS)
+        .copied()
+        .chain(runtime::statements())
 }
 
 #[cfg(test)]

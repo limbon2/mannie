@@ -22,11 +22,13 @@
 6. At startup, runs that were active become interrupted, and the owner can retry them. Operations follow [ADR-0013](0013-journal-every-side-effect.md).
 7. Token counts reported by the provider are the truth for budgets. Estimates are used only before a conversation's first response.
 8. Compaction is a projection: a checkpoint replaces covered parts in the model's context, and the transcript itself is never edited.
+9. A subscriber without a cursor, or with a cursor far behind, first receives a snapshot of the conversation with the sequence number it reflects, and then the events after that number.
+10. When a part finishes, its full text is stored with the part, and the events that streamed its deltas are dropped in the same transaction. The event that finishes the part carries the whole text, so applying the stored events after any cursor still gives the current state. Sequence numbers only increase, and may skip the numbers of dropped deltas.
 
 ## Consequences
 
 - Positive: reloads, crashes and dropped links are ordinary events with one recovery path, shared by the UI and the master.
-- Negative: the actor model needs care around ordering and shutdown, and each conversation's event log keeps growing.
+- Negative: the actor model needs care around ordering and shutdown, and each conversation's event log keeps growing, by its lifecycle events once the deltas of finished parts are dropped.
 
 ## Alternatives considered
 
@@ -37,4 +39,4 @@
 
 ## Validation
 
-V3 measures the store and channel throughput that this design needs. M1 proves the behavior: reloading the webview during a reply loses nothing, and killing the process leaves an intact transcript and a run the owner can retry.
+V3 measures the store and channel throughput that this design needs. M1 proves the behavior: reloading the webview during a reply loses nothing, killing the process leaves an intact transcript and a run the owner can retry, and a property test shows that subscribers who replay from any cursor, or start from a snapshot, end with the same state as a fresh read.

@@ -1,0 +1,64 @@
+[package]
+name = "mannie-provider"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Mannie's provider adapters: one streamed model call through the OpenAI Responses API or Chat Completions, with quirk profiles (ADR-0011)."
+license.workspace = true
+publish.workspace = true
+
+# The conformance tests replay recorded and constructed fixtures through the
+# fixture server of the testing module (V8).
+[[test]]
+name = "conformance"
+required-features = ["testing"]
+
+# The transport over real HTTP: redirects, the credential, timeouts and the
+# log.
+[[test]]
+name = "transport"
+required-features = ["testing"]
+
+# A credential that a server repeats never reaches the log; its own binary,
+# because tracing caches enabled callsites for the whole process.
+[[test]]
+name = "log"
+required-features = ["testing"]
+
+# Live tests call real servers when MANNIE_LIVE_* variables name them; they are
+# ignored unless run on purpose (`task provider:live`, `task provider:record`).
+[[test]]
+name = "live"
+required-features = ["testing"]
+
+[dependencies]
+# The chunks of a streamed response body.
+bytes = { workspace = true }
+futures-util = { workspace = true }
+mannie-types = { workspace = true }
+# HTTP/1.1 and HTTP/2 over rustls, the operating system's trust store through
+# rustls-platform-verifier, streamed bodies, and the system's proxy settings.
+reqwest = { workspace = true, features = ["http2", "rustls-no-provider", "stream", "system-proxy"] }
+rustls = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true, features = ["macros", "sync", "time"] }
+tracing = { workspace = true }
+# The host of a base URL, to tell local addresses from remote ones.
+url = { workspace = true }
+zeroize = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "test-util", "time"] }
+tracing-subscriber = { workspace = true }
+
+[features]
+# The scripted provider and the fixture server, for the tests of this crate and
+# of the runtime. Never enabled in the desktop app or the worker.
+testing = ["tokio/io-util", "tokio/net", "tokio/rt"]
+
+[lints]
+workspace = true

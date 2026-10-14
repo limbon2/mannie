@@ -1,0 +1,446 @@
+//! Live conformance (V8): the scenarios of the fixtures, run against a real
+//! server that `MANNIE_LIVE_*` variables name. The tests are ignored unless
+//! run on purpose: `task provider:live` runs them, and the provider-live
+//! workflow runs them every night for each server that its secrets name.
+//!
+//! | Variable                         | Meaning                                                        |
+//! | -------------------------------- | -------------------------------------------------------------- |
+//! | `MANNIE_LIVE_SERVER`             | `open_ai`, `open_router`, `vllm`, `sglang`, `lm_studio`, `ollama` |
+//! | `MANNIE_LIVE_INTERFACE`          | `responses` or `chat_completions`                              |
+//! | `MANNIE_LIVE_BASE_URL`           | The server's base URL                                          |
+//! | `MANNIE_LIVE_MODEL`              | The model                                                      |
+//! | `MANNIE_LIVE_API_KEY`            | The credential, if the server needs one                        |
+//! | `MANNIE_LIVE_REASONING_EFFORT`   | An effort such as `low`, for the reasoning scenarios           |
+//! | `MANNIE_LIVE_CONTEXT_WINDOW`     | The model's context window, for the overflow scenario          |
+//! | `MANNIE_LIVE_SERVER_VERSION`     | The server's version, for the fixtures' manifests              |
+//! | `MANNIE_RECORD_FIXTURES`         | `1` writes each scenario as a recorded fixture                 |
+//!
+//! Recording never writes a file that contains the credential.
+
+#![cfg(test)]
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use futures_util::StreamExt;
+use mannie_provider::testing::{Exchange, RecordingProxy};
+use mannie_provider::{
+    Content, HttpClient, Message, ModelList, ModelRequest, ProviderError, ProviderEvent,
+    ProviderRegistry, Role, Target, list_models, quirks_for,
+};
+use mannie_types::clock::{Clock, SystemClock};
+use mannie_types::provider::{ApiInterface, ReasoningEffort, ServerKind};
+use mannie_types::run::{FinishReason, RunFailure};
+use mannie_types::secret::Secret;
+use reqwest::Url;
+use serde_json::{Value, json};
+
+/// The live server, as the environment names it.
+struct Live {
+    server: ServerKind,
+    interface: ApiInterface,
+    base_url: Url,
+    model: String,
+    credential: Option<Secret>,
+    effort: ReasoningEffort,
+    context_window: Option<u32>,
+    server_version: Option<String>,
+    record: bool,
+}
+
+impl Live {
+    fn from_environment() -> Option<Self> {
+        let variable = |name: &str| {
+            std::env::var(name)
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        };
+        let server = serde_json::from_value(json!(variable("MANNIE_LIVE_SERVER")?)).ok()?;
+        let interface = serde_json::from_value(json!(
+            variable("MANNIE_LIVE_INTERFACE").unwrap_or_else(|| "chat_completions".to_owned())
+        ))
+        .ok()?;
+        let effort = variable("MANNIE_LIVE_REASONING_EFFORT")
+            .and_then(|effort| serde_json::from_value(json!(effort)).ok())
+            .unwrap_or_default();
+        Some(Self {
+            server,
+            interface,
+            base_url: Url::parse(&variable("MANNIE_LIVE_BASE_URL")?).ok()?,
+            model: variable("MANNIE_LIVE_MODEL")?,
+            credential: variable("MANNIE_LIVE_API_KEY").map(Secret::new),
+            effort,
+            context_window: variable("MANNIE_LIVE_CONTEXT_WINDOW")
+                .and_then(|text| text.parse().ok()),
+            server_version: variable("MANNIE_LIVE_SERVER_VERSION"),
+            record: variable("MANNIE_RECORD_FIXTURES").as_deref() == Some("1"),
+        })
+    }
+
+    fn request(
+        &self,
+        prompt: &str,
+        max_output_tokens: u32,
+        effort: ReasoningEffort,
+    ) -> ModelRequest {
+        ModelRequest {
+            model: self.model.clone(),
+            instructions: String::new(),
+            messages: vec![Message::text(Role::User, prompt)],
+            max_output_tokens,
+            reasoning_effort: effort,
+        }
+    }
+}
+
+/// What one call produced.
+#[derive(Debug, Default)]
+struct Outcome {
+    events: Vec<ProviderEvent>,
+    error: Option<ProviderError>,
+}
+
+impl Outcome {
+    fn text(&self) -> String {
+        self.events
+            .iter()
+            .filter_map(|event| match event {
+                ProviderEvent::TextDelta(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn finish(&self) -> Option<FinishReason> {
+        self.events.iter().find_map(|event| match event {
+            ProviderEvent::Finished(reason) => Some(*reason),
+            _ => None,
+        })
+    }
+
+    fn item(&self) -> Option<String> {
+        self.events.iter().find_map(|event| match event {
+            ProviderEvent::ProviderItem(item) => Some(item.clone()),
+            _ => None,
+        })
+    }
+}
+
+struct Runner {
+    live: Live,
+    client: HttpClient,
+    registry: ProviderRegistry,
+}
+
+impl Runner {
+    fn new(live: Live) -> Self {
+        let client = HttpClient::new(Arc::new(SystemClock)).unwrap();
+        let registry = ProviderRegistry::with_builtin(&client);
+        Self {
+            live,
+            client,
+            registry,
+        }
+    }
+
+    async fn call(
+        &self,
+        base_url: &Url,
+        credential: Option<Secret>,
+        request: ModelRequest,
+    ) -> Outcome {
+        let adapter = self.registry.adapter(self.live.interface).unwrap();
+        let target = Target {
+            base_url: base_url.clone(),
+            credential,
+            quirks: quirks_for(self.live.interface, Some(self.live.server)),
+        };
+        let mut stream = adapter.stream(&target, request);
+        let mut outcome = Outcome::default();
+        while let Some(item) = stream.next().await {
+            match item {
+                Ok(event) => outcome.events.push(event),
+                Err(error) => {
+                    outcome.error = Some(error);
+                    break;
+                }
+            }
+        }
+        outcome
+    }
+
+    /// Runs a scenario through the recording proxy when recording, and
+    /// directly otherwise.
+    async fn scenario(
+        &self,
+        name: &str,
+        credential: Option<Secret>,
+        request: ModelRequest,
+    ) -> Outcome {
+        if !self.live.record {
+            return self.call(&self.live.base_url, credential, request).await;
+        }
+        let proxy = RecordingProxy::start(self.live.base_url.clone())
+            .await
+            .unwrap();
+        let outcome = self
+            .call(&proxy.base_url(), credential, request.clone())
+            .await;
+        let exchange = proxy
+            .exchanges()
+            .pop()
+            .expect("the proxy forwarded the call");
+        self.write_fixture(name, &request, &exchange);
+        outcome
+    }
+
+    fn write_fixture(&self, scenario: &str, request: &ModelRequest, exchange: &Exchange) {
+        let folder = fixture_folder(self.live.server, scenario);
+        std::fs::create_dir_all(&folder).unwrap();
+        let today = time::OffsetDateTime::from_unix_timestamp(SystemClock.now().as_millis() / 1000)
+            .unwrap()
+            .date()
+            .to_string();
+        let messages: Vec<Value> = request
+            .messages
+            .iter()
+            .map(|message| {
+                let role = match message.role {
+                    Role::User => "user",
+                    Role::Assistant => "assistant",
+                };
+                let mut entry = json!({ "role": role });
+                for content in &message.content {
+                    match content {
+                        Content::Text(text) => entry["text"] = json!(text),
+                        Content::ProviderItem(item) => {
+                            entry["item"] = serde_json::from_str(item).unwrap();
+                        }
+                    }
+                }
+                entry
+            })
+            .collect();
+        let manifest = json!({
+            "server": self.live.server,
+            "serverVersion": self.live.server_version,
+            "interface": self.live.interface,
+            "provenance": "recorded",
+            "recordedOn": today,
+            "request": {
+                "model": request.model,
+                "instructions": request.instructions,
+                "messages": messages,
+                "maxOutputTokens": request.max_output_tokens,
+                "reasoningEffort": request.reasoning_effort,
+            },
+        });
+        let headers: serde_json::Map<String, Value> = exchange
+            .headers
+            .iter()
+            .map(|(name, value)| (name.clone(), json!(value)))
+            .collect();
+        let response = json!({ "status": exchange.status, "headers": headers });
+        let is_stream = exchange
+            .headers
+            .iter()
+            .any(|(name, value)| name == "content-type" && value.starts_with("text/event-stream"));
+        let body_name = if is_stream { "body.sse" } else { "body.json" };
+        let files: [(&str, Vec<u8>); 4] = [
+            ("manifest.json", pretty(&manifest)),
+            ("response.json", pretty(&response)),
+            (body_name, exchange.body.clone()),
+            ("request.json", exchange.request.body.clone()),
+        ];
+        for (name, bytes) in &files {
+            if let Some(credential) = &self.live.credential {
+                let secret = credential.expose().as_bytes();
+                let leaks = bytes.windows(secret.len()).any(|window| window == secret);
+                assert!(
+                    !leaks,
+                    "{name} of {scenario} contains the credential; nothing was written"
+                );
+            }
+        }
+        for (name, bytes) in files {
+            std::fs::write(folder.join(name), bytes).unwrap();
+        }
+        println!("recorded {}", folder.display());
+    }
+}
+
+fn pretty(value: &Value) -> Vec<u8> {
+    let mut text = serde_json::to_string_pretty(value).unwrap();
+    text.push('\n');
+    text.into_bytes()
+}
+
+fn fixture_folder(server: ServerKind, scenario: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(server.as_str())
+        .join(scenario)
+}
+
+impl Runner {
+    async fn check_text_and_length(&self) {
+        let live = &self.live;
+        let text = self
+            .scenario(
+                "text",
+                live.credential.clone(),
+                live.request("Reply with the single word: ready", 2_048, live.effort),
+            )
+            .await;
+        assert_eq!(text.error, None, "text");
+        assert!(!text.text().trim().is_empty(), "text: no answer");
+        assert_eq!(text.finish(), Some(FinishReason::Stop), "text");
+
+        let length = self
+            .scenario(
+                "length",
+                live.credential.clone(),
+                live.request(
+                    "Count from 1 to 300, separated by spaces.",
+                    16,
+                    ReasoningEffort::ServerDefault,
+                ),
+            )
+            .await;
+        assert_eq!(length.error, None, "length");
+        assert_eq!(length.finish(), Some(FinishReason::OutputLimit), "length");
+    }
+
+    async fn check_refusals(&self) {
+        let live = &self.live;
+        let unknown = self
+            .scenario(
+                "unknown_model",
+                live.credential.clone(),
+                ModelRequest {
+                    model: "mannie-unknown-model".to_owned(),
+                    ..live.request("Hello", 64, ReasoningEffort::ServerDefault)
+                },
+            )
+            .await;
+        assert!(
+            matches!(unknown.error, Some(ProviderError::Permanent(_))),
+            "unknown model: {:?}",
+            unknown.error
+        );
+        if live.credential.is_some() {
+            let invalid = self
+                .scenario(
+                    "invalid_key",
+                    Some(Secret::new("sk-mannie-invalid-0000000000000000".to_owned())),
+                    live.request("Hello", 64, ReasoningEffort::ServerDefault),
+                )
+                .await;
+            assert_eq!(
+                invalid.error,
+                Some(ProviderError::Permanent(RunFailure::InvalidCredential)),
+                "invalid key"
+            );
+        }
+    }
+
+    async fn check_reasoning(&self) {
+        let live = &self.live;
+        if live.effort.api_name().is_none() {
+            return;
+        }
+        let question = "What is 17 times 23? Answer with the number only.";
+        let reasoning = self
+            .scenario(
+                "reasoning",
+                live.credential.clone(),
+                live.request(question, 8_192, live.effort),
+            )
+            .await;
+        assert_eq!(reasoning.error, None, "reasoning");
+        let has_reasoning = reasoning.events.iter().any(|event| {
+            matches!(
+                event,
+                ProviderEvent::ReasoningDelta(_) | ProviderEvent::ProviderItem(_)
+            )
+        });
+        assert!(has_reasoning, "reasoning: none arrived");
+        if live.interface != ApiInterface::Responses {
+            return;
+        }
+        let item = reasoning
+            .item()
+            .expect("the reasoning came with an encrypted item");
+        let replay = ModelRequest {
+            messages: vec![
+                Message::text(Role::User, question),
+                Message {
+                    role: Role::Assistant,
+                    content: vec![Content::ProviderItem(item), Content::Text(reasoning.text())],
+                },
+                Message::text(Role::User, "And 18 times 23?"),
+            ],
+            ..live.request("", 8_192, live.effort)
+        };
+        let replayed = self
+            .scenario("reasoning_replay", live.credential.clone(), replay)
+            .await;
+        assert_eq!(replayed.error, None, "reasoning replay");
+    }
+
+    async fn check_overflow(&self) {
+        let live = &self.live;
+        let Some(window) = live.context_window else {
+            return;
+        };
+        let words = usize::try_from(window)
+            .unwrap_or(usize::MAX / 8)
+            .saturating_mul(2);
+        let long = "word ".repeat(words);
+        let overflow = self
+            .scenario(
+                "overflow",
+                live.credential.clone(),
+                live.request(&long, 64, ReasoningEffort::ServerDefault),
+            )
+            .await;
+        if live.server == ServerKind::Ollama {
+            // Ollama shortens the prompt instead of failing.
+            println!("overflow on Ollama: {:?}", overflow.error);
+        } else {
+            assert_eq!(
+                overflow.error,
+                Some(ProviderError::ContextOverflow),
+                "overflow"
+            );
+        }
+    }
+
+    async fn check_model_list(&self) {
+        let listed = list_models(
+            &self.client,
+            &self.live.base_url,
+            self.live.credential.as_ref(),
+        )
+        .await;
+        assert!(
+            matches!(listed, ModelList::Listed(_) | ModelList::Unavailable),
+            "models: {listed:?}"
+        );
+    }
+}
+
+#[tokio::test]
+#[ignore = "calls the live server that the MANNIE_LIVE_* variables name"]
+async fn the_live_server_behaves_as_the_fixtures_say() {
+    let Some(live) = Live::from_environment() else {
+        panic!("set MANNIE_LIVE_SERVER, MANNIE_LIVE_BASE_URL and MANNIE_LIVE_MODEL");
+    };
+    let runner = Runner::new(live);
+
+    runner.check_text_and_length().await;
+    runner.check_refusals().await;
+    runner.check_reasoning().await;
+    runner.check_overflow().await;
+    runner.check_model_list().await;
+}

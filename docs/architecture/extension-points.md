@@ -52,7 +52,9 @@ The system prompt is assembled from sections that modules register, each with a 
 
 ### 3.5 Transcript parts and run events
 
-Parts and events are tagged enums in `mannie-types` with a version-tolerant encoding. A feature adds a variant together with its rendering for the model and its renderer in the UI. Code that reads parts handles unknown variants: the model sees a short placeholder, and the UI shows a generic card.
+Parts and events are tagged enums in `mannie-types` with a version-tolerant encoding. A feature adds a variant together with its rendering for the model and its renderer in the UI. Code that reads parts handles unknown variants: the model sees a short placeholder, and the UI shows a generic card. An unknown event changes nothing that the UI shows, and the UI moves its cursor past it.
+
+M1 adds the parts of chat: the owner's text, the reply's text, reasoning, and errors, each with a state (streaming, complete, stopped, interrupted, incomplete or discarded) and an audience (the owner, the model or both). Its events cover turns, runs, parts with their deltas, discarded attempts, checkpoints, the context's use and changes to a conversation ([conversations](../features/chat/conversations.md)).
 
 ### 3.6 IPC commands and channels
 
@@ -60,11 +62,20 @@ Each feature defines its command arguments, results, errors and channel messages
 
 ### 3.7 UI shell slots
 
-The shell defines typed slots in `apps/desktop/src/lib/state/shell-slots.svelte.ts`, with their entry types in `types/shell-slots.ts`: navigation entries, views, panels, settings sections, command palette actions and part renderers keyed by part type. A feature registers its Svelte components in its registration, `src/lib/registrations/<feature>.ts`, and the shell renders whatever is registered. The shell never imports a feature directly. The frontend is sorted by kind, so the feature's components, state and helpers sit with the others of their kind ([desktop app](desktop-app.md#6-frontend-structure)).
+The shell defines typed slots in `apps/desktop/src/lib/state/shell-slots.svelte.ts`, with their entry types in `types/shell-slots.ts` ([ADR-0020](../adr/0020-complete-the-ui-shell-slots.md)):
+
+- navigation entries and views; a view's title can be content, such as a conversation's title, which the pseudo-locale check then skips;
+- sidebar panels, below the navigation, such as the conversation list;
+- overlays, mounted once at the shell's root, such as dialogs that several places open;
+- settings sections, each a page of the settings that the settings sidebar lists by its icon and title;
+- command palette actions, which can say when they are available;
+- part renderers, keyed by part type, with a generic card for a type that no feature registered.
+
+A feature registers its Svelte components in its registration, `src/lib/registrations/<feature>.ts`, and the shell renders whatever is registered. The shell never imports a feature directly. The window has a fixed height, so a view can keep parts of itself in place, such as a message box below a transcript. The frontend is sorted by kind, so the feature's components, state and helpers sit with the others of their kind ([desktop app](desktop-app.md#6-frontend-structure)).
 
 ### 3.8 Settings sections
 
-A feature declares a settings section as a Rust type with defaults and validation. The store persists it, the settings view renders it in the feature's settings slot, and the core validates every change. Settings never contain secrets; a credential is a reference to the credential store.
+A feature declares a settings section as a Rust type with defaults and validation. The store persists it, the settings show it as a page of its own through the feature's settings slot, and the core validates every change. Settings never contain secrets; a credential is a reference to the credential store.
 
 ### 3.9 Store tables and migrations
 

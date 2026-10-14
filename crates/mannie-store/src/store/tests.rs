@@ -440,3 +440,32 @@ async fn an_invalid_stored_section_is_reported() {
         "{error:?}"
     );
 }
+
+/// The database of M0 has only the settings table. M1's migrations add the
+/// runtime's and the profiles' tables, keep the settings and copy the database
+/// first (engineering standards, data).
+#[tokio::test]
+async fn a_database_from_the_first_schema_is_upgraded_and_keeps_its_settings() {
+    let fixture = Fixture::new();
+    let first_schema = &MIGRATIONS[..1];
+    let older = fixture.open(first_schema).unwrap();
+    let settings = InterfaceSettings {
+        locale: Some(LocaleTag::parse("de").unwrap()),
+    };
+    older.save_settings(&settings).await.unwrap();
+    drop(older);
+    assert_eq!(user_version(&fixture.database()), 1);
+
+    let upgraded = fixture.open(MIGRATIONS).unwrap();
+
+    assert_eq!(user_version(&fixture.database()), Store::schema_version());
+    assert_eq!(
+        upgraded.load_settings::<InterfaceSettings>().await.unwrap(),
+        settings
+    );
+    assert_eq!(upgraded.list_conversations().await.unwrap(), []);
+    assert_eq!(upgraded.list_profiles().await.unwrap(), []);
+    let backups = fixture.backup_files();
+    assert_eq!(backups.len(), 1, "{backups:?}");
+    assert_eq!(user_version(&backups[0]), 1);
+}

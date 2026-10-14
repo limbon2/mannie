@@ -1,0 +1,186 @@
+//! Instruction sections (docs/architecture/extension-points.md, instruction
+//! sections): the system prompt is assembled from sections that modules
+//! register, each at a fixed position. Stable sections come first, so that
+//! providers can cache the prefix; the checkpoint, which changes more often,
+//! comes after them.
+
+use crate::agents::AgentDefinition;
+use crate::texts;
+
+/// What the sections of one call can draw on.
+#[derive(Debug, Clone, Copy)]
+pub struct InstructionContext<'a> {
+    /// The agent that makes the call.
+    pub agent: &'a AgentDefinition,
+    /// The owner's global instructions, possibly empty.
+    pub owner_instructions: &'a str,
+    /// The summary of the checkpoint that stands in for older turns.
+    pub checkpoint: Option<&'a str>,
+}
+
+/// One section of the system prompt.
+#[derive(Debug, Clone, Copy)]
+pub struct InstructionSection {
+    /// Unique among sections.
+    pub id: &'static str,
+    /// Sections are ordered by this number, lowest first.
+    pub position: u32,
+    /// The section's text for a call, or `None` to leave it out.
+    pub text: fn(&InstructionContext<'_>) -> Option<String>,
+}
+
+/// A section whose ID is already registered.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("the instruction section {id} is already registered")]
+pub struct DuplicateSection {
+    /// The ID.
+    pub id: &'static str,
+}
+
+/// The registered sections.
+#[derive(Debug, Clone, Default)]
+pub struct InstructionRegistry {
+    sections: Vec<InstructionSection>,
+}
+
+/// Mannie's sections: the base instructions, the agent's instructions, the
+/// owner's instructions and the checkpoint.
+pub const BUILTIN_SECTIONS: [InstructionSection; 4] = [
+    InstructionSection {
+        id: "base",
+        position: 0,
+        text: |_context| Some(texts::BASE_INSTRUCTIONS.to_owned()),
+    },
+    InstructionSection {
+        id: "agent",
+        position: 100,
+        text: |context| non_empty(context.agent.instructions).map(str::to_owned),
+    },
+    InstructionSection {
+        id: "owner",
+        position: 200,
+        text: |context| {
+            non_empty(context.owner_instructions).map(|instructions| {
+                format!(
+                    "{}\n\n{}",
+                    texts::OWNER_INSTRUCTIONS_HEADING,
+                    instructions.trim()
+                )
+            })
+        },
+    },
+    InstructionSection {
+        id: "checkpoint",
+        position: 1_000,
+        text: |context| {
+            context
+                .checkpoint
+                .and_then(non_empty)
+                .map(|summary| format!("{}\n\n{}", texts::CHECKPOINT_HEADING, summary.trim()))
+        },
+    },
+];
+
+fn non_empty(text: &str) -> Option<&str> {
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+impl InstructionRegistry {
+    /// A registry without sections.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// A registry with Mannie's sections.
+    pub fn with_builtin() -> Self {
+        Self {
+            sections: BUILTIN_SECTIONS.to_vec(),
+        }
+    }
+
+    /// Registers a section. IDs are unique.
+    pub fn register(&mut self, section: InstructionSection) -> Result<(), DuplicateSection> {
+        if self
+            .sections
+            .iter()
+            .any(|existing| existing.id == section.id)
+        {
+            return Err(DuplicateSection { id: section.id });
+        }
+        self.sections.push(section);
+        Ok(())
+    }
+
+    /// The system prompt for a call: the sections in their order, separated by
+    /// blank lines.
+    pub fn assemble(&self, context: &InstructionContext<'_>) -> String {
+        let mut sections: Vec<&InstructionSection> = self.sections.iter().collect();
+        sections.sort_by_key(|section| section.position);
+        sections
+            .into_iter()
+            .filter_map(|section| (section.text)(context))
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DuplicateSection, InstructionContext, InstructionRegistry, InstructionSection};
+    use crate::agents::CONVERSATION;
+    use crate::texts;
+
+    #[test]
+    fn sections_join_in_their_order_and_empty_ones_are_left_out() {
+        let registry = InstructionRegistry::with_builtin();
+        let plain = InstructionContext {
+            agent: &CONVERSATION,
+            owner_instructions: "  ",
+            checkpoint: None,
+        };
+        let full = InstructionContext {
+            agent: &CONVERSATION,
+            owner_instructions: "Answer in German.\n",
+            checkpoint: Some("They talked about tea."),
+        };
+
+        assert_eq!(registry.assemble(&plain), texts::BASE_INSTRUCTIONS);
+        assert_eq!(
+            registry.assemble(&full),
+            format!(
+                "{}\n\n{}\n\nAnswer in German.\n\n{}\n\nThey talked about tea.",
+                texts::BASE_INSTRUCTIONS,
+                texts::OWNER_INSTRUCTIONS_HEADING,
+                texts::CHECKPOINT_HEADING
+            )
+        );
+    }
+
+    #[test]
+    fn a_registered_section_takes_its_position_and_ids_are_unique() {
+        let mut registry = InstructionRegistry::with_builtin();
+        let fake = InstructionSection {
+            id: "fake",
+            position: 150,
+            text: |_context| Some("FAKE".to_owned()),
+        };
+        registry.register(fake).unwrap();
+        let context = InstructionContext {
+            agent: &CONVERSATION,
+            owner_instructions: "Owner text.",
+            checkpoint: None,
+        };
+
+        let assembled = registry.assemble(&context);
+        let duplicate = registry.register(fake);
+
+        let fake_at = assembled.find("FAKE").unwrap();
+        let owner_at = assembled.find("Owner text.").unwrap();
+        assert!(fake_at < owner_at, "{assembled}");
+        assert_eq!(duplicate, Err(DuplicateSection { id: "fake" }));
+    }
+}

@@ -13,14 +13,18 @@ ignorePaths:
 words:
   - appindicator
   - Authenticode
+  - autolinks
   - checksummed
   - clippy
+  - cmark
   - cssparser
   - cyclonedx
   - dbus
   - DMABUF
   - edgedriver
   - egui
+  - exmarkdown
+  - fastrand
   - HMAC
   - huntabyte
   - inlang
@@ -47,6 +51,7 @@ words:
   - prerendered
   - prerendering
   - procctl
+  - proptest
   - prost
   - protoc
   - protox
@@ -64,6 +69,7 @@ words:
   - Slint
   - specta
   - sqlx
+  - strikethrough
   - subreaper
   - Taskfile
   - Tauri

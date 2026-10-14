@@ -1,0 +1,14 @@
+{
+  "error": {
+    "class": "transient",
+    "failure": {
+      "code": "broken_stream"
+    },
+    "retryAfterMs": null
+  },
+  "events": [
+    {
+      "text": "Rea"
+    }
+  ]
+}

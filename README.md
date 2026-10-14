@@ -8,7 +8,7 @@ Mannie is a desktop AI agent harness for one owner. It starts with three capabil
 
 New features are added one at a time through a [feature protocol](docs/features/README.md).
 
-> Status: [M0 (Foundation)](docs/roadmap/milestones.md#m0-foundation). The engineering platform is in place: the desktop shell, typed IPC, the store, credentials, logging, the worker service, CI and the release pipeline. No feature ships yet. [M1 (Chat)](docs/roadmap/milestones.md#m1-chat) ends with v0.1.0, the first release.
+> Status: [M1 (Chat)](docs/roadmap/milestones.md#m1-chat), in progress. The engineering platform of [M0](docs/roadmap/milestones.md#m0-foundation) is in place: the desktop shell, typed IPC, the store, credentials, logging, the worker service, CI and the release pipeline. M1 builds chat and the window and tray behavior, and ends with v0.1.0, the first release.
 
 ## Principles
 

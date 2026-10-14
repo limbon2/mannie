@@ -43,6 +43,9 @@ export function startupProblemMessage(problem: StartupProblem): string {
     case 'database_unavailable': {
       return m.shell_startup_database_unavailable({ path: problem.path });
     }
+    case 'http_client_unavailable': {
+      return m.shell_startup_http_client_unavailable();
+    }
     case 'migration_failed': {
       return m.shell_startup_migration_failed({
         backupDirectory: problem.backupDirectory,

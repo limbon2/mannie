@@ -1,0 +1,11 @@
+{
+  "error": {
+    "class": "transient",
+    "failure": {
+      "code": "rate_limited",
+      "retryAt": 1791892820000
+    },
+    "retryAfterMs": 20000
+  },
+  "events": []
+}

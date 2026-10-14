@@ -1,0 +1,14 @@
+data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1791892800,"model":"deepseek-ai/DeepSeek-R1-Distill-Qwen-7B","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null,"logprobs":null}]}
+
+data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1791892800,"model":"deepseek-ai/DeepSeek-R1-Distill-Qwen-7B","choices":[{"index":0,"delta":{"content":"<think>\nThe user"},"finish_reason":null,"logprobs":null}]}
+
+data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1791892800,"model":"deepseek-ai/DeepSeek-R1-Distill-Qwen-7B","choices":[{"index":0,"delta":{"content":" wants 17\u00b723.\n</th"},"finish_reason":null,"logprobs":null}]}
+
+data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1791892800,"model":"deepseek-ai/DeepSeek-R1-Distill-Qwen-7B","choices":[{"index":0,"delta":{"content":"ink>\n\n391"},"finish_reason":null,"logprobs":null}]}
+
+data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1791892800,"model":"deepseek-ai/DeepSeek-R1-Distill-Qwen-7B","choices":[{"index":0,"delta":{},"finish_reason":"stop","logprobs":null}]}
+
+data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1791892800,"model":"deepseek-ai/DeepSeek-R1-Distill-Qwen-7B","choices":[],"usage":{"prompt_tokens":25,"completion_tokens":30,"total_tokens":55}}
+
+data: [DONE]
+

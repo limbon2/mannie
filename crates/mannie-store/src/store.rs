@@ -13,7 +13,7 @@ use crate::Durability;
 use crate::error::{DatabaseError, StoreError};
 use crate::readers::Readers;
 use crate::schema::{self, Migration};
-use crate::writer::Writer;
+use crate::writer::{TransactError, Writer};
 
 /// How long a connection waits for a lock before it reports the database as
 /// busy. Only one process opens the database, so a lock is never held long.
@@ -137,10 +137,7 @@ impl Store {
         }
 
         let readers = Arc::new(Readers::open(path, options.readers.max(1))?);
-        let writer = Writer::start(connection).map_err(|source| StoreError::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
+        let writer = Writer::start(connection, path)?;
         Ok(Self {
             inner: Arc::new(Inner {
                 path: path.to_path_buf(),
@@ -173,6 +170,53 @@ impl Store {
         F: FnOnce(&Transaction<'_>) -> rusqlite::Result<T> + Send + 'static,
     {
         self.inner.writer.write(durability, work).await
+    }
+
+    /// Runs `work` in a transaction that it may refuse: when `work` returns an
+    /// error, nothing is written and the error is returned.
+    pub(crate) async fn transact<T, E, F>(
+        &self,
+        durability: Durability,
+        work: F,
+    ) -> Result<T, TransactError<E>>
+    where
+        T: Send + 'static,
+        E: Send + 'static,
+        F: FnOnce(&Transaction<'_>) -> Result<T, TransactError<E>> + Send + 'static,
+    {
+        self.inner.writer.transact(durability, work).await
+    }
+
+    /// Runs `work` on the writer's connection outside of a transaction.
+    pub(crate) async fn maintain<T, F>(&self, work: F) -> Result<T, StoreError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Connection) -> rusqlite::Result<T> + Send + 'static,
+    {
+        self.inner.writer.maintain(work).await
+    }
+
+    /// Waits until every write queued before this call is committed, then
+    /// copies the write-ahead log into the database file and empties the log.
+    ///
+    /// SQLite syncs the log before it copies it, so afterwards the batches of
+    /// streamed text that were committed with normal durability survive a power
+    /// loss too. Shutting down calls it last. Deleting a conversation calls it
+    /// so that the deleted text does not stay in the log.
+    pub async fn flush(&self) -> Result<(), StoreError> {
+        let busy = self
+            .maintain(|connection| {
+                connection.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+            })
+            .await?;
+        if busy != 0 {
+            // A read still used an older snapshot after the busy timeout, so
+            // part of the log stays until the next checkpoint copies it.
+            tracing::warn!("the write-ahead log could not be emptied while a read was running");
+        }
+        Ok(())
     }
 
     /// Runs `work` on a read-only connection.

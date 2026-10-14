@@ -1,11 +1,11 @@
 # System tools
 
-|              |                                                                                                                                                                                                     |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status       | Accepted                                                                                                                                                                                            |
-| Milestone    | M2                                                                                                                                                                                                  |
-| Last updated | 2026-10-13                                                                                                                                                                                          |
-| Related      | [ADR-0013](../adr/0013-journal-every-side-effect.md), [ADR-0014](../adr/0014-contain-process-trees.md), [Tools](../architecture/tools.md), [Security](../architecture/security.md), [Chat](chat.md) |
+|              |                                                                                                                                                                                                            |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status       | Accepted                                                                                                                                                                                                   |
+| Milestone    | M2                                                                                                                                                                                                         |
+| Last updated | 2026-10-13                                                                                                                                                                                                 |
+| Related      | [ADR-0013](../adr/0013-journal-every-side-effect.md), [ADR-0014](../adr/0014-contain-process-trees.md), [Tools](../architecture/tools.md), [Security](../architecture/security.md), [Chat](chat/README.md) |
 
 ## Intent
 
@@ -33,7 +33,7 @@ The owner wants the model to do real work on their computer: read, write, edit a
 
 - Extension points: the tool registry (introduced by this feature), the conversation agent's definition, transcript parts for tool calls, tool results and operation states, run events, IPC commands for approval decisions and rules, UI part renderers for tool activity and approval requests, the settings section for workspace defaults and rules, and store tables for the operation journal, grants and rules.
 - Follows [ADR-0004](../adr/0004-keep-system-access-in-the-rust-core.md), [ADR-0013](../adr/0013-journal-every-side-effect.md) and [ADR-0014](../adr/0014-contain-process-trees.md).
-- Must not change: the behavior of [chat](chat.md) when a conversation uses no tools.
+- Must not change: the behavior of [chat](chat/README.md) when a conversation uses no tools.
 
 ## Open questions
 

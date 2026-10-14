@@ -153,6 +153,25 @@ tasks:
     cmds:
       - pnpm --dir apps/desktop exec vitest run
 
+  bench:
+    desc: Run the store's benchmarks, the writer's throughput and the snapshot of a conversation with 10,000 parts
+    cmds:
+      - cargo bench --locked -p mannie-store --features validation
+
+  # Providers (docs/features/chat/providers.md, conformance; V8)
+
+  provider:live:
+    desc: Run the live conformance tests against the server that the MANNIE_LIVE_* variables name
+    cmds:
+      - cargo test --locked -p mannie-provider --features testing --test live -- --ignored --nocapture
+
+  provider:record:
+    desc: Record the fixtures of the server that the MANNIE_LIVE_* variables name, as the live tests run
+    env:
+      MANNIE_RECORD_FIXTURES: "1"
+    cmds:
+      - task: provider:live
+
   test:scripts:
     desc: Run the tests of the repository scripts, such as the local ESLint rules
     cmds:
@@ -161,6 +180,19 @@ tasks:
   e2e:
     desc: Build the validation app and run the end-to-end tests (V1, V2, V3, V11) through tauri-driver
     cmds:
+      - task: e2e:build
+      - pnpm exec wdio run tests/e2e/wdio.conf.ts
+
+  e2e:perf:
+    desc: Build the validation app and measure the performance targets NFR-PERF-01 to 04; MANNIE_PERF_REPORT_ONLY=1 reports without enforcing
+    cmds:
+      - task: e2e:build
+      - pnpm exec wdio run tests/e2e/wdio.perf.conf.ts
+
+  e2e:build:
+    desc: Build the validation app that the end-to-end tests drive
+    internal: true
+    cmds:
       - task: gen
       - task: gen:pseudo-locale
       # tauri-driver needs Microsoft Edge WebDriver in the WebView2 runtime's
@@ -168,7 +200,6 @@ tasks:
       - cmd: node scripts/edgedriver.mjs
         platforms: [windows]
       - pnpm --dir apps/desktop exec tauri build --debug --no-bundle --features validation --config src-tauri/tauri.validation.conf.json
-      - pnpm exec wdio run tests/e2e/wdio.conf.ts
 
   # Releases (docs/engineering/releasing.md)
 

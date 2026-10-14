@@ -1,29 +1,32 @@
 // What the shell itself registers in its slots: the interface settings
-// section and the commands for the settings and the theme.
+// section, the commands for the settings and the theme, and the confirmation
+// of links from model output, which every view that renders Markdown uses.
+import PaletteIcon from '@lucide/svelte/icons/palette';
 import { resetMode, setMode } from 'mode-watcher';
 
-import { goto } from '$app/navigation';
-import { resolve } from '$app/paths';
-
+import LinkConfirmationDialog from '#lib/components/app/markdown/LinkConfirmationDialog.svelte';
 import InterfaceSettingsSection from '#lib/components/app/shell/InterfaceSettingsSection.svelte';
 import { m } from '#lib/paraglide/messages.js';
 import type { ShellSlots } from '#lib/state/shell-slots.svelte.js';
+import { openSettings } from '#lib/utils/settings-sections.js';
 
 /** Registers the shell's own entries. */
 export function registerShell(slots: ShellSlots): void {
   slots.settingsSections.register({
     component: InterfaceSettingsSection,
     description: m.shell_settings_interface_description,
+    icon: PaletteIcon,
     id: 'shell.interface',
     order: 0,
     title: m.shell_settings_interface_title,
   });
+  slots.overlays.register({ component: LinkConfirmationDialog, id: 'shell.link-confirmation' });
   slots.commands.register({
     group: m.shell_command_group_general,
     id: 'shell.open-settings',
     label: m.shell_command_open_settings,
     order: 0,
-    run: () => void goto(resolve('/settings')),
+    run: () => void openSettings(),
   });
   slots.commands.register({
     group: m.shell_command_group_appearance,

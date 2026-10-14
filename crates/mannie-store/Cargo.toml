@@ -16,9 +16,16 @@ harness = false
 name = "writer_throughput"
 required-features = ["validation"]
 
+[[bench]]
+harness = false
+name = "snapshot"
+required-features = ["validation"]
+
 [dependencies]
 mannie-types = { workspace = true }
 rusqlite = { workspace = true }
+# The versioned JSON documents of the runtime's and the profiles' tables.
+serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
@@ -26,7 +33,6 @@ tokio = { workspace = true, features = ["rt", "sync"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
-serde = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 

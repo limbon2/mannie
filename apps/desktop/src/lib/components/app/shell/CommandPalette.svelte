@@ -3,12 +3,7 @@
   import { m } from '#lib/paraglide/messages.js';
   import { getShellSlots } from '#lib/state/shell-slots.svelte.js';
   import type { ShellCommand } from '#lib/types/shell-slots.js';
-  import { sortedByOrder } from '#lib/utils/order.js';
-
-  interface CommandGroup {
-    readonly commands: ShellCommand[];
-    readonly heading: string;
-  }
+  import { groupCommands } from '#lib/utils/commands.js';
 
   let { open = $bindable(false) }: { open?: boolean } = $props();
 
@@ -19,16 +14,9 @@
   const uid = $props.id();
   const listId = `${uid}-list`;
 
-  const groups = $derived(groupByHeading(slots.commands.entries));
-
-  /** Groups the commands under their group's heading, in the order the groups first appear. */
-  function groupByHeading(commands: readonly ShellCommand[]): CommandGroup[] {
-    const headings = [...new Set(commands.map((command) => command.group()))];
-    return headings.map((heading) => ({
-      commands: sortedByOrder(commands.filter((command) => command.group() === heading)),
-      heading,
-    }));
-  }
+  // Read while the palette is open, so that a command's availability follows
+  // the state it depends on.
+  const groups = $derived(open ? groupCommands(slots.commands.entries) : []);
 
   function run(command: ShellCommand): void {
     open = false;

@@ -3,7 +3,7 @@
 // data.
 import { mkdirSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 
@@ -13,10 +13,15 @@ export const VALIDATION_IDENTIFIER = 'io.github.limbon2.mannie.validation';
 /** The repository's root folder. */
 export const repository = fileURLToPath(new URL('../../..', import.meta.url));
 
-/** The validation build of the desktop app. */
+/**
+ * The validation build of the desktop app. Cargo builds it into the absolute
+ * folder that `CARGO_TARGET_DIR` names, when it is set, so the tests can run
+ * while `task dev` keeps its own build of the app open in `target/`.
+ */
 export function applicationPath(): string {
   const binary = process.platform === 'win32' ? 'mannie-desktop.exe' : 'mannie-desktop';
-  return join(repository, 'target', 'debug', binary);
+  const targetDirectory = resolve(repository, process.env.CARGO_TARGET_DIR ?? 'target');
+  return join(targetDirectory, 'debug', binary);
 }
 
 /** The data folder of validation builds: the database, the logs and the webview's storage. */

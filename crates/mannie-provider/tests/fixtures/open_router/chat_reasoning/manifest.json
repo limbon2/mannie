@@ -1,0 +1,21 @@
+{
+  "server": "open_router",
+  "interface": "chat_completions",
+  "provenance": "constructed",
+  "sources": [
+    "https://openrouter.ai/docs/api-reference/streaming"
+  ],
+  "verifiedOn": "2026-10-14",
+  "request": {
+    "model": "openai/gpt-5-mini",
+    "instructions": "",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What is 17 times 23? Answer with the number only."
+      }
+    ],
+    "maxOutputTokens": 8192,
+    "reasoningEffort": "low"
+  }
+}

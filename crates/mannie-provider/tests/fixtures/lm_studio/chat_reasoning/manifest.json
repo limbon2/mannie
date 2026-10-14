@@ -1,0 +1,21 @@
+{
+  "server": "lm_studio",
+  "interface": "chat_completions",
+  "provenance": "constructed",
+  "sources": [
+    "https://lmstudio.ai/docs/developer/openai-compat"
+  ],
+  "verifiedOn": "2026-10-14",
+  "request": {
+    "model": "openai/gpt-oss-20b",
+    "instructions": "",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What is 17 times 23? Answer with the number only."
+      }
+    ],
+    "maxOutputTokens": 8192,
+    "reasoningEffort": "low"
+  }
+}

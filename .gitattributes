@@ -10,6 +10,7 @@
 # Recorded server-sent event streams are test fixtures whose exact bytes
 # matter: CRLF line endings are legal in SSE and must survive checkout.
 *.sse -text
+crates/mannie-provider/tests/fixtures/**/body.json -text
 
 # Binary assets: never normalize or diff as text.
 *.png binary

@@ -1,9 +1,10 @@
 # The checks of every pull request and every push to main (engineering
 # standards, Definition of Done): `task ci` and the end-to-end tests on Windows
-# and Linux, the credential store with GNOME Keyring, KWallet and no Secret
-# Service (V7), the worker service on Windows and Linux, and the worker's
-# FreeBSD and static Linux builds. The release workflow runs it too. Actions
-# are pinned by commit SHA.
+# and Linux, with the performance figures they measure (NFR-PERF-01 to 04,
+# enforced only on the reference machine), the credential store with GNOME
+# Keyring, KWallet and no Secret Service (V7), the worker service on Windows
+# and Linux, and the worker's FreeBSD and static Linux builds. The release
+# workflow runs it too. Actions are pinned by commit SHA.
 name: CI
 
 on:
@@ -54,10 +55,32 @@ jobs:
       - name: Run the end-to-end tests on WebView2
         if: runner.os == 'Windows'
         run: task e2e
-      # WebKitGTK needs a display and the single-instance plugin a session bus.
+      # WebKitGTK needs a display, the single-instance plugin a session bus,
+      # and provider profiles a Secret Service for their credentials.
+      - name: Install GNOME Keyring
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y --no-install-recommends gnome-keyring
       - name: Run the end-to-end tests on WebKitGTK
         if: runner.os == 'Linux'
-        run: dbus-run-session -- xvfb-run --auto-servernum task e2e
+        run: dbus-run-session -- sh scripts/ci/with-secret-service.sh gnome-keyring xvfb-run --auto-servernum task e2e
+      # Shared runners measure their neighbours as much as Mannie, so CI
+      # records the figures without enforcing the targets.
+      - name: Measure the performance targets on WebView2
+        if: runner.os == 'Windows'
+        env:
+          MANNIE_PERF_REPORT_ONLY: "1"
+        run: pnpm exec wdio run tests/e2e/wdio.perf.conf.ts
+      - name: Measure the performance targets on WebKitGTK
+        if: runner.os == 'Linux'
+        env:
+          MANNIE_PERF_REPORT_ONLY: "1"
+        run: dbus-run-session -- sh scripts/ci/with-secret-service.sh gnome-keyring xvfb-run --auto-servernum pnpm exec wdio run tests/e2e/wdio.perf.conf.ts
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: performance-${{ matrix.os }}
+          path: target/perf/results.json
+          if-no-files-found: ignore
 
   credentials:
     name: Credential store (${{ matrix.secret-service }})

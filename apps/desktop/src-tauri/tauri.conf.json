@@ -55,6 +55,14 @@
       "nsis": {
         "installMode": "currentUser"
       }
+    },
+    "linux": {
+      "deb": {
+        "depends": ["libayatana-appindicator3-1"]
+      },
+      "rpm": {
+        "depends": ["libappindicator-gtk3"]
+      }
     }
   }
 }

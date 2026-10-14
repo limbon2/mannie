@@ -5,7 +5,7 @@ Instructions for coding agents working in this repository, and for the people wh
 ## Project
 
 - What: Mannie is a desktop AI agent harness for one owner. It chats with AI models, runs system tools on the owner's machine under approvals, and spreads work across machines through workers that own their hosts. The core is Rust. The desktop app is Tauri 2 with a SvelteKit UI built from shadcn-svelte components, and the worker is a headless service for Windows, Linux and FreeBSD.
-- Phase: [M0 (Foundation)](docs/roadmap/milestones.md#m0-foundation). The workspace, the desktop shell, the store, credentials, logging, the worker skeleton, CI and the release pipeline exist; no feature ships yet, and [M1 (Chat)](docs/roadmap/milestones.md#m1-chat) is next.
+- Phase: [M1 (Chat)](docs/roadmap/milestones.md#m1-chat), in progress. M0 built the platform: the workspace, the desktop shell, the store, credentials, logging, the worker skeleton, CI and the release pipeline. M1 adds [chat](docs/features/chat/README.md) and [window and tray](docs/features/window-and-tray.md), with the `mannie-provider` and `mannie-runtime` crates, and ends with v0.1.0.
 - Read first: [docs/README.md](docs/README.md). Architecture decisions are in [docs/adr/](docs/adr/README.md), and the owner's decisions are in the [decision record](docs/roadmap/milestones.md#5-decisions).
 
 ## Precedence

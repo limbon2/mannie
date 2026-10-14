@@ -1,15 +1,28 @@
-//! Validation commands (V1, V2, V3). Only validation builds compile them, and
-//! only the validation capability grants them; a release has neither.
+//! Validation commands (V1, V2, V3, and the end-to-end tests of M1). Only
+//! validation builds compile them, and only the validation capability grants
+//! them; a release has neither.
+//!
+//! The WebDriver tests cannot press the window's close button or reach the
+//! tray, so these commands call the same code that those do
+//! (docs/features/window-and-tray.md, tests).
 
 use std::time::Duration;
 
+use mannie_logging::ErrorChain;
 use mannie_types::clock::{Clock, SystemClock};
+use mannie_types::ids::ConversationId;
 use mannie_types::ipc::{ChannelBatch, CommandError};
-use mannie_types::validation::{ChannelLoad, ChannelLoadSummary, ValidationDelta, ValidationError};
+use mannie_types::validation::{
+    ChannelLoad, ChannelLoadSummary, SeedConversation, ValidationDelta, ValidationError,
+    ValidationTrayItem, ValidationWindowState,
+};
 use tauri::ipc::Channel;
+use tauri::{AppHandle, Manager, State};
 use tokio::time::{Instant, MissedTickBehavior};
 
 use crate::ipc::channel::{self, BatchSender};
+use crate::state::Core;
+use crate::window::{MAIN_WINDOW, tray};
 
 /// Streams a synthetic load to the webview: `load.runs` simulated runs that
 /// each send `load.deltas_per_second` deltas for `load.duration_millis`, over
@@ -96,4 +109,98 @@ fn epoch_millis() -> f64 {
 pub(crate) fn validation_ungranted_command() -> bool {
     tracing::error!("a command without a grant ran; the capability configuration is broken");
     true
+}
+
+/// Closes the main window the way its close button does: Tauri emits the
+/// close request, and the core decides what happens.
+#[tauri::command]
+#[specta::specta]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri hands command arguments over by value"
+)]
+pub(crate) fn validation_close_main_window(
+    app: AppHandle,
+) -> Result<(), CommandError<ValidationError>> {
+    let window = app
+        .get_webview_window(MAIN_WINDOW)
+        .ok_or(ValidationError::Failed)?;
+    window.close().map_err(|error| {
+        tracing::warn!(%error, "could not close the main window");
+        CommandError::new(ValidationError::Failed)
+    })
+}
+
+/// Whether the main window is visible and the tray exists.
+#[tauri::command]
+#[specta::specta]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri hands command arguments over by value"
+)]
+pub(crate) fn validation_window_state(
+    app: AppHandle,
+) -> Result<ValidationWindowState, CommandError<ValidationError>> {
+    let window = app
+        .get_webview_window(MAIN_WINDOW)
+        .ok_or(ValidationError::Failed)?;
+    let visible = window.is_visible().map_err(|error| {
+        tracing::warn!(%error, "could not read whether the main window is visible");
+        CommandError::new(ValidationError::Failed)
+    })?;
+    Ok(ValidationWindowState {
+        visible,
+        tray: tray::exists(&app),
+    })
+}
+
+/// Runs a menu item of the tray, as a click on it does.
+#[tauri::command]
+#[specta::specta]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri hands command arguments over by value"
+)]
+pub(crate) fn validation_tray_menu(app: AppHandle, item: ValidationTrayItem) {
+    let item = match item {
+        ValidationTrayItem::Open => tray::OPEN_ITEM,
+        ValidationTrayItem::Quit => tray::QUIT_ITEM,
+    };
+    tray::on_menu_item(&app, item);
+}
+
+/// The ID of Mannie's process, so that a test can kill it as a crash would.
+#[tauri::command]
+#[specta::specta]
+pub(crate) fn validation_process_id() -> u32 {
+    std::process::id()
+}
+
+/// Seeds a long conversation for the performance checks (NFR-PERF-04).
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn validation_seed_conversation(
+    core: State<'_, Core>,
+    input: SeedConversation,
+) -> Result<ConversationId, CommandError<ValidationError>> {
+    input.check()?;
+    let runtime = core.runtime().ok_or(ValidationError::CoreUnavailable)?;
+    runtime
+        .seed_conversation(input.turns)
+        .await
+        .map_err(|error| {
+            tracing::error!(error = %ErrorChain(&error), "could not seed a conversation");
+            CommandError::new(ValidationError::Failed)
+        })
+}
+
+/// The links that `open_link` would have opened, in order.
+#[tauri::command]
+#[specta::specta]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri hands command arguments over by value"
+)]
+pub(crate) fn validation_opened_links(core: State<'_, Core>) -> Vec<String> {
+    core.opened_links()
 }

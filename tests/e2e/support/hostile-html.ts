@@ -58,3 +58,30 @@ export function hostileNavigations(origin: string): string[] {
     `<a id="hostile-link" href="${origin}/link">link</a>`,
   ];
 }
+
+/**
+ * Markdown that tries to smuggle a URL or markup past the renderer of model
+ * output (ADR-0021): links and images to `origin`, script in links, raw HTML
+ * inline and in tables, task lists and footnotes, and encoded markup.
+ */
+export function hostileMarkdown(origin: string): string[] {
+  return [
+    '[click](javascript:window.compromised=true)',
+    `[remote](${origin}/link "title")`,
+    `![tracker](${origin}/tracker.png)`,
+    `![tracker][image]\n\n[image]: ${origin}/reference.png`,
+    `[reference][target]\n\n[target]: ${origin}/reference`,
+    `<${origin}/autolink>`,
+    `www.example.com/page and ${origin}/bare`,
+    '<a href="javascript:window.compromised=true">inline html</a>',
+    '<img src=x onerror=window.compromised=true>',
+    '`<script>window.compromised = true;</script>`',
+    '```html\n<script>window.compromised = true;</script>\n```',
+    `[![nested](${origin}/image.png)](${origin}/)`,
+    `| a | b |\n| - | - |\n| <script>window.compromised = true;</script> | [l](${origin}/cell) |`,
+    `- [x] done <style>body { background: url("${origin}/style.png"); }</style>\n- [ ] open`,
+    'Text[^note]\n\n[^note]: A footnote with <b onmouseover="window.compromised = true">html</b>',
+    '<details open ontoggle="window.compromised = true">',
+    '&lt;script&gt;window.compromised = true;&lt;/script&gt; &#x3C;img src=x onerror=window.compromised=true&#x3E;',
+  ];
+}

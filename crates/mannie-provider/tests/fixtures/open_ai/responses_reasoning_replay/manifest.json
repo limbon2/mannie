@@ -1,0 +1,41 @@
+{
+  "server": "open_ai",
+  "interface": "responses",
+  "provenance": "constructed",
+  "sources": [
+    "https://developers.openai.com/api/reference/responses/streaming",
+    "https://developers.openai.com/api/reference/chat/streaming"
+  ],
+  "verifiedOn": "2026-10-14",
+  "request": {
+    "model": "gpt-6-luna",
+    "instructions": "",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What is 17 times 23? Answer with the number only."
+      },
+      {
+        "role": "assistant",
+        "text": "391",
+        "item": {
+          "type": "reasoning",
+          "id": "rs_1",
+          "encrypted_content": "gAAAAABconstructedOpaqueReasoning==",
+          "summary": [
+            {
+              "type": "summary_text",
+              "text": "**Multiplying** 17 by 23 gives 391."
+            }
+          ]
+        }
+      },
+      {
+        "role": "user",
+        "text": "And 18 times 23?"
+      }
+    ],
+    "maxOutputTokens": 8192,
+    "reasoningEffort": "low"
+  }
+}

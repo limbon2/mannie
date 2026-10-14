@@ -1,0 +1,22 @@
+{
+  "server": "open_ai",
+  "interface": "responses",
+  "provenance": "constructed",
+  "sources": [
+    "https://developers.openai.com/api/reference/responses/streaming",
+    "https://developers.openai.com/api/reference/chat/streaming"
+  ],
+  "verifiedOn": "2026-10-14",
+  "request": {
+    "model": "gpt-6-luna",
+    "instructions": "",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Count from 1 to 300, separated by spaces."
+      }
+    ],
+    "maxOutputTokens": 16,
+    "reasoningEffort": "server_default"
+  }
+}

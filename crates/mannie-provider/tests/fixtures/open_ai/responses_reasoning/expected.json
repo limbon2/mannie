@@ -1,0 +1,48 @@
+{
+  "error": null,
+  "events": [
+    {
+      "reasoning": "**Multiplying** 17 by 23"
+    },
+    {
+      "reasoning": " gives 391."
+    },
+    {
+      "reasoning": "\n\n"
+    },
+    {
+      "reasoning": "Checking the result."
+    },
+    {
+      "item": {
+        "encrypted_content": "gAAAAABconstructedOpaqueReasoning==",
+        "id": "rs_1",
+        "summary": [
+          {
+            "text": "**Multiplying** 17 by 23 gives 391.",
+            "type": "summary_text"
+          },
+          {
+            "text": "Checking the result.",
+            "type": "summary_text"
+          }
+        ],
+        "type": "reasoning"
+      }
+    },
+    {
+      "text": "391"
+    },
+    {
+      "usage": {
+        "cachedInput": 0,
+        "input": 25,
+        "output": 140,
+        "reasoning": 128
+      }
+    },
+    {
+      "finished": "stop"
+    }
+  ]
+}

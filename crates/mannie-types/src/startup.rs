@@ -49,4 +49,7 @@ pub enum StartupProblem {
     },
     /// The folder for Mannie's data could not be determined.
     DataDirectoryUnavailable,
+    /// The HTTP client for model providers could not be set up, for example
+    /// because the system's certificates could not be loaded.
+    HttpClientUnavailable,
 }

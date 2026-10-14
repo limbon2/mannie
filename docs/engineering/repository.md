@@ -15,7 +15,7 @@
 
 ## 2. Layout
 
-M0 built this layout:
+M0 and M1 built this layout:
 
 ```text
 mannie/
@@ -30,12 +30,14 @@ mannie/
 ├── package.json  pnpm-workspace.yaml  pnpm-lock.yaml   # repository tooling, pinned
 ├── .mcp.json  .codex/           # the Svelte MCP server for Claude Code and Codex
 ├── .claude/skills/  .agents/skills/  skills-lock.json   # the shadcn-svelte agent skill
-├── .github/                     # CI, nightly FreeBSD and release workflows
+├── .github/                     # CI, nightly FreeBSD, live provider and release workflows
 ├── crates/
 │   ├── mannie-types/            # shared domain, IPC and settings types; the secret type
 │   ├── mannie-store/            # SQLite, migrations, repositories (the only rusqlite user)
 │   ├── mannie-logging/          # tracing to rotating files, redaction, crash files
-│   └── mannie-secrets/          # operating system credential store (master only)
+│   ├── mannie-secrets/          # operating system credential store (master only)
+│   ├── mannie-provider/         # provider adapters, quirk profiles; fixtures in tests/fixtures/
+│   └── mannie-runtime/          # runs as actors, the event log's hubs, context and compaction
 ├── apps/
 │   ├── desktop/                 # SvelteKit app (package.json, vite.config.ts, src/)
 │   │   ├── messages/            # message catalogs, one file per locale (ADR-0019)
@@ -45,7 +47,7 @@ mannie/
 ├── scripts/                     # checks, the pseudo-locale, release steps, CI helpers, local ESLint rules
 ├── tests/
 │   ├── apps/desktop/            # Vitest unit tests of the desktop app
-│   ├── e2e/                     # WebdriverIO end-to-end tests (V1, V2, V3, V11)
+│   ├── e2e/                     # WebdriverIO end-to-end tests (V1, V2, V3, V11, M1's features), perf/ for NFR-PERF
 │   └── scripts/                 # tests of the repository scripts
 └── docs/
 ```
@@ -56,29 +58,27 @@ SvelteKit 3 keeps its configuration in the `sveltekit()` call of `apps/desktop/v
 
 ## 3. Later crates
 
-Each crate arrives with the milestone that first needs it, so no crate is a placeholder:
+Each crate arrives with the milestone that first needs it, so no crate is a placeholder. M1 brought `mannie-provider` and `mannie-runtime`.
 
-| Crate             | Arrives with                                                                            |
-| ----------------- | --------------------------------------------------------------------------------------- |
-| `mannie-provider` | M1, chat                                                                                |
-| `mannie-runtime`  | M1, chat                                                                                |
-| `mannie-tools`    | M2, system tools                                                                        |
-| `mannie-link`     | M4, workers, together with `proto/mannie/link/` and `buf.yaml` for the link's contracts |
+| Crate          | Arrives with                                                                            |
+| -------------- | --------------------------------------------------------------------------------------- |
+| `mannie-tools` | M2, system tools                                                                        |
+| `mannie-link`  | M4, workers, together with `proto/mannie/link/` and `buf.yaml` for the link's contracts |
 
 ## 4. Crates and dependency rules
 
-| Crate             | Responsibility                                       | May depend on                                                      |
-| ----------------- | ---------------------------------------------------- | ------------------------------------------------------------------ |
-| `mannie-types`    | Shared types and the redacting secret type. No I/O.  | serde, specta, thiserror, zeroize                                  |
-| `mannie-store`    | Persistence                                          | `mannie-types`, rusqlite                                           |
-| `mannie-logging`  | Logging to rotating files, redaction and crash files | `mannie-types`, tracing and its subscriber and appender, regex     |
-| `mannie-provider` | Provider adapters                                    | `mannie-types`, reqwest                                            |
-| `mannie-tools`    | Tools, operations and process containment            | `mannie-types`, `mannie-store`                                     |
-| `mannie-runtime`  | The agent runtime                                    | `mannie-types`, `mannie-store`, `mannie-provider`, `mannie-tools`  |
-| `mannie-link`     | The link between master and workers                  | `mannie-types`, tonic, prost, rustls                               |
-| `mannie-secrets`  | The operating system credential store                | `mannie-types`, keyring-core and its stores                        |
-| `mannie-desktop`  | The Tauri application and its IPC                    | Every library crate, tauri                                         |
-| `mannie-worker`   | The worker service                                   | Every library crate except `mannie-secrets`, windows-service, clap |
+| Crate             | Responsibility                                       | May depend on                                                                 |
+| ----------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `mannie-types`    | Shared types and the redacting secret type. No I/O.  | serde, specta, thiserror, zeroize                                             |
+| `mannie-store`    | Persistence                                          | `mannie-types`, rusqlite                                                      |
+| `mannie-logging`  | Logging to rotating files, redaction and crash files | `mannie-types`, tracing and its subscriber and appender, regex                |
+| `mannie-provider` | Provider adapters and quirk profiles                 | `mannie-types`, reqwest, rustls                                               |
+| `mannie-tools`    | Tools, operations and process containment            | `mannie-types`, `mannie-store`                                                |
+| `mannie-runtime`  | The agent runtime                                    | `mannie-types`, `mannie-store`, `mannie-provider`, and `mannie-tools` from M2 |
+| `mannie-link`     | The link between master and workers                  | `mannie-types`, tonic, prost, rustls                                          |
+| `mannie-secrets`  | The operating system credential store                | `mannie-types`, keyring-core and its stores                                   |
+| `mannie-desktop`  | The Tauri application and its IPC                    | Every library crate, tauri                                                    |
+| `mannie-worker`   | The worker service                                   | Every library crate except `mannie-secrets`, windows-service, clap            |
 
 cargo-deny enforces the rules that matter most: only `mannie-desktop` depends on `tauri`, only `mannie-store` on `rusqlite`, only `mannie-secrets` on keyring-core, and only `mannie-desktop` on `mannie-secrets`; ring is the only crypto provider, and `openssl-sys` and `aws-lc-sys` are banned ([ADR-0008](../adr/0008-one-workspace-two-binaries.md)). `scripts/check-worker-dependencies.mjs` checks that no crate of Tauri, GTK or WebKitGTK reaches the worker on any target (V5).
 
@@ -93,6 +93,7 @@ cargo-deny enforces the rules that matter most: only `mannie-desktop` depends on
 | Tauri capability schemas     | Tauri's build step                    | `apps/desktop/src-tauri/gen/`                       | Every build                              |
 | Tauri command permissions    | The command list in `build.rs`        | `apps/desktop/src-tauri/permissions/autogenerated/` | Every build                              |
 | Microsoft Edge WebDriver     | The installed WebView2 version        | `target/edgedriver/`                                | `task e2e` on Windows                    |
+| Performance figures          | A run of the performance suite        | `target/perf/results.json`                          | `task e2e:perf`                          |
 | Link code                    | `proto/mannie/link/`                  | Cargo's build output                                | Every build, from M4                     |
 | Third-party notices and SBOM | Lockfiles                             | Release artifacts                                   | Release builds                           |
 
@@ -140,6 +141,10 @@ The application icons in `apps/desktop/src-tauri/icons/` are assets, not code: t
 | `task lint:messages`                   | Checks the message catalogs with the inlang CLI                                                                               |
 | `task test`                            | Runs the Rust tests, the desktop app's Vitest tests and the tests of the repository scripts                                   |
 | `task e2e`                             | Builds the validation app and runs the end-to-end tests through tauri-driver                                                  |
+| `task e2e:perf`                        | Builds the validation app and measures NFR-PERF-01 to 04; `MANNIE_PERF_REPORT_ONLY=1` reports without enforcing the targets   |
+| `task bench`                           | Runs the store's benchmarks                                                                                                   |
+| `task provider:live`                   | Runs the live conformance tests against the server that the `MANNIE_LIVE_*` variables name (V8)                               |
+| `task provider:record`                 | Records the fixtures of that server as the live tests run (V8)                                                                |
 | `task release:prepare VERSION=x.y.z`   | Sets the version and turns the changelog's Unreleased section into the release's section ([releasing](releasing.md))          |
 | `task docs:fmt`                        | Formats the documentation and repository configuration with Prettier                                                          |
 | `task docs:check`                      | Checks formatting, Markdown rules, spelling, links and the consistency of the documents                                       |

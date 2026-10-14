@@ -21,3 +21,16 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - CI on Windows and Linux, nightly worker tests on FreeBSD, and a release workflow that builds, checks, signs and drafts a release from a version tag.
 - The tasks `gen`, `dev`, `build`, `lint`, `test`, `e2e` and `release:prepare`.
 - The shadcn-svelte agent skill and the Svelte MCP server for coding agents.
+- Chat with OpenAI models and OpenAI-compatible servers, such as vLLM, SGLang, LM Studio, Ollama and OpenRouter, through the Responses API or Chat Completions, with replies that stream into the conversation view.
+- Provider profiles in the settings, with credentials in the system's credential store, the known limits of common models filled in, and a provider test of the credential, the server, the model and a short reply.
+- Replies that continue in the core while the window reloads or hides: Stop, also with Escape, Retry, automatic retries that wait as long as the provider asks, and replies that a crash or a quit interrupted, which can be retried.
+- The conversation list, with rename and delete; a deleted conversation's text is overwritten in the database.
+- Model output as Markdown: raw HTML shows as text, images are never loaded, and a link opens only after the owner confirms its address.
+- Reasoning shown apart from the answer, and encrypted reasoning sent back only to the profile that wrote it.
+- The context budget of each profile, with a meter, automatic compaction into a summary near the limit, and Compact now.
+- Instructions from the owner that apply to every conversation.
+- A note under a reply when a server, such as Ollama beyond a model's context size, cut the request without an error.
+- The choice on the first close between running in the system tray and quitting, the tray menu, and a warning before quitting while replies are being written.
+- The tasks `e2e:perf`, `bench`, `provider:live` and `provider:record`, a nightly workflow of live provider tests, and end-to-end tests that keep the app's window off the screen.
+- The settings as a page of their own, with a page per section in the settings sidebar and a link back to the main view.
+- A provider profile dialog that shows example values in empty fields, says when an API key is saved, and warns before saving replaces or removes it; icon buttons for Send and Retry; and plainer wording across the interface.

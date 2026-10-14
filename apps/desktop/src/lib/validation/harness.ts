@@ -1,10 +1,19 @@
-// The validation harness (V1, V2, V3, V11). Only validation builds load it
-// (src/routes/+layout.ts); the end-to-end tests drive it through
-// `window.mannieValidation`. A release never contains it.
+// The validation harness (V1, V2, V3, V11, and the tests of the M1 features).
+// Only validation builds load it (src/routes/+layout.ts); the end-to-end tests
+// drive it through `window.mannieValidation`. A release never contains it.
 import { Channel } from '@tauri-apps/api/core';
 
-import type { ChannelBatch, ChannelLoad, ChannelLoadSummary, ValidationDelta } from '#lib/generated/validation.js';
+import { commands as appCommands, type CreateProviderProfile } from '#lib/generated/bindings.js';
+import type {
+  ChannelBatch,
+  ChannelLoad,
+  ChannelLoadSummary,
+  ValidationDelta,
+  ValidationTrayItem,
+  ValidationWindowState,
+} from '#lib/generated/validation.js';
 import { commands } from '#lib/generated/validation.js';
+import { providerProfiles } from '#lib/state/provider-profiles.svelte.js';
 
 /** A Content Security Policy violation the webview reported. */
 export interface CspViolation {
@@ -51,10 +60,26 @@ export interface ChannelLoadReport {
 /** The harness's interface for the end-to-end tests. */
 export interface ValidationHarness {
   callUngrantedCommand(): Promise<string>;
+  /** Closes the main window as its close button does. */
+  closeMainWindow(): Promise<void>;
+  /** Adds a provider profile without the settings view, and returns its ID. */
+  createProviderProfile(input: CreateProviderProfile): Promise<string>;
   cspViolations(): readonly CspViolation[];
+  /** Deletes every provider profile, and with them the credentials they stored. */
+  deleteProviderProfiles(): Promise<number>;
   insertHostileHtml(payloads: readonly string[]): Promise<boolean>;
+  /** The links that the app would have opened in the browser. */
+  openedLinks(): Promise<string[]>;
   probeScripts(): Promise<ScriptProbe>;
+  /** The ID of the app's process. */
+  processId(): Promise<number>;
   runChannelLoad(load: ChannelLoad): Promise<ChannelLoadReport>;
+  /** Adds a conversation with this many turns, and returns its ID. */
+  seedConversation(turns: number): Promise<string>;
+  /** Chooses an item of the tray's menu. */
+  trayMenu(item: ValidationTrayItem): Promise<void>;
+  /** Whether the main window is visible and the tray exists. */
+  windowState(): Promise<ValidationWindowState>;
 }
 
 declare global {
@@ -218,6 +243,32 @@ async function insertHostileHtml(payloads: readonly string[]): Promise<boolean> 
   return window.compromised;
 }
 
+/** The data of a command's result; a failure throws with its code, which WebDriver reports. */
+function unwrap<T>(result: { data: T; status: 'ok' } | { error: { code: string }; status: 'error' }): T {
+  if (result.status === 'error') {
+    throw new Error(`the command failed with ${result.error.code}`);
+  }
+  return result.data;
+}
+
+// The window keeps its own list of profiles; the harness reads it again after
+// each change, as the settings view does after its own.
+
+async function createProviderProfile(input: CreateProviderProfile): Promise<string> {
+  const profile = unwrap(await appCommands.createProviderProfile(input));
+  await providerProfiles.reload();
+  return profile.id;
+}
+
+async function deleteProviderProfiles(): Promise<number> {
+  const profiles = unwrap(await appCommands.listProviderProfiles());
+  for (const profile of profiles) {
+    unwrap(await appCommands.deleteProviderProfile({ id: profile.id }));
+  }
+  await providerProfiles.reload();
+  return profiles.length;
+}
+
 async function callUngrantedCommand(): Promise<string> {
   try {
     await commands.validationUngrantedCommand();
@@ -229,8 +280,20 @@ async function callUngrantedCommand(): Promise<string> {
 
 window.mannieValidation = {
   callUngrantedCommand,
+  closeMainWindow: async () => {
+    unwrap(await commands.validationCloseMainWindow());
+  },
+  createProviderProfile,
   cspViolations: () => [...violations],
+  deleteProviderProfiles,
   insertHostileHtml,
+  openedLinks: async () => commands.validationOpenedLinks(),
   probeScripts,
+  processId: async () => commands.validationProcessId(),
   runChannelLoad,
+  seedConversation: async (turns) => unwrap(await commands.validationSeedConversation({ turns })),
+  trayMenu: async (item) => {
+    await commands.validationTrayMenu(item);
+  },
+  windowState: async () => unwrap(await commands.validationWindowState()),
 };

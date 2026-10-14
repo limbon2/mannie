@@ -19,7 +19,7 @@
   const slots = getShellSlots();
 
   const entries = $derived(sortedByOrder(slots.navigation.entries));
-  const onSettings = $derived(page.route.id === '/settings');
+  const panels = $derived(sortedByOrder(slots.sidebarPanels.entries));
   const current = $derived(activeView(slots.views, page.url));
 
   function viewQuery(entry: NavigationEntry): string {
@@ -28,7 +28,7 @@
 
   function isCurrent(entry: NavigationEntry): boolean {
     const showsView = current.kind === 'view' && current.view.id === entry.view;
-    return showsView && !onSettings;
+    return showsView;
   }
 </script>
 
@@ -40,14 +40,10 @@
     </div>
   </Sidebar.Header>
   <Sidebar.Content>
-    <Sidebar.Group>
-      <Sidebar.GroupLabel>{m.shell_navigation_label()}</Sidebar.GroupLabel>
-      <Sidebar.GroupContent>
-        {#if entries.length === 0}
-          <p class="px-2 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
-            {m.shell_navigation_empty()}
-          </p>
-        {:else}
+    {#if entries.length > 0}
+      <Sidebar.Group>
+        <Sidebar.GroupLabel>{m.shell_navigation_label()}</Sidebar.GroupLabel>
+        <Sidebar.GroupContent>
           <Sidebar.Menu>
             {#each entries as entry (entry.id)}
               <Sidebar.MenuItem>
@@ -66,9 +62,12 @@
               </Sidebar.MenuItem>
             {/each}
           </Sidebar.Menu>
-        {/if}
-      </Sidebar.GroupContent>
-    </Sidebar.Group>
+        </Sidebar.GroupContent>
+      </Sidebar.Group>
+    {/if}
+    {#each panels as panel (panel.id)}
+      <panel.component />
+    {/each}
   </Sidebar.Content>
   <Sidebar.Footer>
     <Sidebar.Menu>
@@ -80,9 +79,9 @@
         </Sidebar.MenuButton>
       </Sidebar.MenuItem>
       <Sidebar.MenuItem>
-        <Sidebar.MenuButton isActive={onSettings} tooltipContent={m.shell_open_settings()}>
+        <Sidebar.MenuButton tooltipContent={m.shell_open_settings()}>
           {#snippet child({ props })}
-            <a {...props} aria-current={onSettings ? 'page' : undefined} href={resolve('/settings')}>
+            <a {...props} href={resolve('/settings')}>
               <SettingsIcon />
               <span>{m.shell_open_settings()}</span>
             </a>

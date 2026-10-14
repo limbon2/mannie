@@ -3,7 +3,15 @@
 // it to the components through context.
 import { createContext } from 'svelte';
 
-import type { NavigationEntry, SettingsSection, ShellCommand, ShellView } from '#lib/types/shell-slots.js';
+import type {
+  NavigationEntry,
+  Overlay,
+  PartRenderer,
+  SettingsSection,
+  ShellCommand,
+  ShellView,
+  SidebarPanel,
+} from '#lib/types/shell-slots.js';
 
 interface SlotEntry {
   readonly id: string;
@@ -42,7 +50,10 @@ export class Slot<T extends SlotEntry> {
 export class ShellSlots {
   readonly commands = new Slot<ShellCommand>('commands');
   readonly navigation = new Slot<NavigationEntry>('navigation');
+  readonly overlays = new Slot<Overlay>('overlays');
+  readonly partRenderers = new Slot<PartRenderer>('part renderers');
   readonly settingsSections = new Slot<SettingsSection>('settings sections');
+  readonly sidebarPanels = new Slot<SidebarPanel>('sidebar panels');
   readonly views = new Slot<ShellView>('views');
 }
 

@@ -1,0 +1,25 @@
+{
+  "error": null,
+  "events": [
+    {
+      "reasoning": "\nThe user"
+    },
+    {
+      "reasoning": " wants 17·23.\n"
+    },
+    {
+      "text": "391"
+    },
+    {
+      "usage": {
+        "cachedInput": null,
+        "input": 25,
+        "output": 30,
+        "reasoning": null
+      }
+    },
+    {
+      "finished": "stop"
+    }
+  ]
+}

@@ -16,13 +16,13 @@
 
 ## 2. Overview
 
-| Milestone       | Goal                                                       | Features                                                                       | Release |
-| --------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------ | ------- |
-| M0 Foundation   | The engineering platform and the validations features need | None                                                                           | Dry run |
-| M1 Chat         | Chat with OpenAI models and the owner's own model servers  | [Chat](../features/chat.md), [window and tray](../features/window-and-tray.md) | v0.1.0  |
-| M2 System tools | The model works safely on the master's machine             | [System tools](../features/system-tools.md)                                    | v0.2.0  |
-| M3 Child agents | Agents split work on their own machine                     | [Child agents](../features/child-agents.md)                                    | v0.3.0  |
-| M4 Workers      | Workers own their hosts and take tasks from the master     | [Workers](../features/workers/README.md)                                       | v0.4.0  |
+| Milestone       | Goal                                                       | Features                                                                              | Release |
+| --------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------- | ------- |
+| M0 Foundation   | The engineering platform and the validations features need | None                                                                                  | Dry run |
+| M1 Chat         | Chat with OpenAI models and the owner's own model servers  | [Chat](../features/chat/README.md), [window and tray](../features/window-and-tray.md) | v0.1.0  |
+| M2 System tools | The model works safely on the master's machine             | [System tools](../features/system-tools.md)                                           | v0.2.0  |
+| M3 Child agents | Agents split work on their own machine                     | [Child agents](../features/child-agents.md)                                           | v0.3.0  |
+| M4 Workers      | Workers own their hosts and take tasks from the master     | [Workers](../features/workers/README.md)                                              | v0.4.0  |
 
 ```mermaid
 flowchart LR
@@ -69,9 +69,9 @@ Exit criteria:
 
 Goal: chat that the owner can use every day with OpenAI models and their own model servers. It ends with v0.1.0, the first release.
 
-Features: [Chat](../features/chat.md) and [window and tray](../features/window-and-tray.md).
+Features: [Chat](../features/chat/README.md) and [window and tray](../features/window-and-tray.md).
 
-Scope: provider adapters for Responses and Chat Completions with quirk profiles; provider profiles with credentials in the credential store, and the provider test; runs as durable actors, with transcript events and channels that replay from a cursor; the conversation views with safe Markdown; stop, retry, interrupted replies and crash recovery; the context budget, compaction and archived outputs; the owner's global instructions; the choice between the system tray and quitting when the window closes.
+Scope: provider adapters for Responses and Chat Completions with quirk profiles; provider profiles with credentials in the credential store, and the provider test; runs as durable actors, with transcript events and channels that replay from a cursor; the conversation views with safe Markdown; stop, retry, interrupted replies and crash recovery; the context budget and compaction; the owner's global instructions; the choice between the system tray and quitting when the window closes. Archived outputs move to M2, which has the first tool results that need them (pending the owner's review, [chat](../features/chat/README.md#decisions)).
 
 Validations: V8. M1 also completes the validation of [ADR-0012](../adr/0012-run-agents-as-durable-actors.md).
 
@@ -83,7 +83,7 @@ Exit criteria:
 - Budgets use the token counts the provider reports, and compaction is tested at each supported model's limit.
 - Model output from the corpus of hostile Markdown and HTML runs no script and loads nothing remote.
 - The first close asks between the tray and quitting, the answer persists, and quitting with active runs warns first.
-- ADR-0011 and ADR-0012 are Accepted, and v0.1.0 is released through the pipeline.
+- ADR-0011, ADR-0012, ADR-0020 and ADR-0021 are Accepted, and v0.1.0 is released through the pipeline.
 
 ### M2: System tools
 
@@ -144,7 +144,7 @@ Accepted features go into new milestones as they arrive, and each of those miles
 
 ## 4. Validations
 
-Each validation settles one or more Proposed ADRs. The validation code stays in the repository as tests or benchmarks. The [M0 validation results](m0-validation.md) record what the M0 validations showed.
+Each validation settles one or more Proposed ADRs. The validation code stays in the repository as tests or benchmarks. The [M0 validation results](m0-validation.md) and the [M1 validation results](m1-validation.md) record what each milestone's validations showed.
 
 | V   | Proves                                                                                                                                                                                                                                                                                                                                                                                                                                 | ADRs               | Milestone |
 | --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ | --------- |
@@ -172,7 +172,7 @@ No decision is open. New owner decisions get the next number here, and architect
 | D4  | First features (2026-10-13)       | Chat, system tools, and the master/worker system as child agents and workers. Later features arrive through the feature protocol, and the scope of each release is decided as the project goes.                                                                                                                   | [Goals and scope](../product/goals-and-scope.md)                                                                                                                                                  |
 | D5  | Orchestration (2026-10-13)        | The master takes care of the owner's request and orchestrates. Workers are autonomous agents that each own a host, which may serve a purpose; they take care of the master's request and of their host's environment. The master never runs tools on a worker's host. Child agents run on their parent's machine. | [ADR-0015](../adr/0015-run-an-agent-runtime-on-every-machine.md), [orchestration](../architecture/orchestration.md)                                                                               |
 | D6  | Platforms (2026-10-13)            | The desktop app runs on Windows and Linux. The worker runs on Windows, Linux and FreeBSD. macOS is not a target.                                                                                                                                                                                                  | [ADR-0008](../adr/0008-one-workspace-two-binaries.md)                                                                                                                                             |
-| D7  | First providers (2026-10-13)      | The OpenAI Responses API and OpenAI-compatible Chat Completions servers. Other providers arrive as features.                                                                                                                                                                                                      | [ADR-0011](../adr/0011-own-the-provider-adapters.md), [chat](../features/chat.md)                                                                                                                 |
+| D7  | First providers (2026-10-13)      | The OpenAI Responses API and OpenAI-compatible Chat Completions servers. Other providers arrive as features.                                                                                                                                                                                                      | [ADR-0011](../adr/0011-own-the-provider-adapters.md), [chat](../features/chat/README.md)                                                                                                          |
 | D8  | License (2026-10-13)              | Apache-2.0.                                                                                                                                                                                                                                                                                                       | [ADR-0017](../adr/0017-license-and-dependency-policy.md)                                                                                                                                          |
 | D9  | Bundle identifier (2026-10-13)    | `io.github.limbon2.mannie`. It determines the data folder, the names of credential store entries and the WebView2 profile.                                                                                                                                                                                        | [ADR-0010](../adr/0010-keep-provider-credentials-on-the-master.md), [overview](../architecture/overview.md)                                                                                       |
 | D10 | Interface language (2026-10-13)   | English first, with a way to add languages later without pain and without restructuring the project. Every piece of visible text comes from a message catalog from the first component on, so a new language is a new catalog file.                                                                               | [ADR-0019](../adr/0019-keep-visible-text-in-message-catalogs.md), [standards](../engineering/standards.md#4-ui-and-visible-text)                                                                  |

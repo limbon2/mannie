@@ -8,6 +8,8 @@ import {
   focusedElement,
   focusIsVisible,
   isDark,
+  leaveSettings,
+  openSettings,
   waitForApp,
   waitForShownText,
 } from '../support/page.ts';
@@ -26,10 +28,17 @@ describe('the shell', () => {
     await waitForApp();
   });
 
-  it('opens into the working view, with the sidebar and the empty main area', async () => {
+  it('opens into the chat view, with the conversation list in the sidebar', async () => {
     await expect($('[data-slot="sidebar"]')).toBeDisplayed();
-    await expect($('main#main')).toHaveText(expect.stringContaining('Nothing to show'));
-    await expect($('[data-slot="sidebar"]')).toHaveText(expect.stringContaining('No views yet.'));
+    await expect($('main#main textarea[aria-describedby="composer-hint"]')).toBeDisplayed();
+    // Without navigation entries, the sidebar shows no navigation group, only
+    // the chat feature's panel (ADR-0020).
+    const labels = await browser.execute(() =>
+      [...document.querySelectorAll('[data-slot="sidebar"] [data-slot="sidebar-group-label"]')].map((label) =>
+        label.textContent.trim(),
+      ),
+    );
+    expect(labels).toEqual(['Conversations']);
   });
 
   it('passes the WCAG 2.1 AA checks in the light theme', async () => {
@@ -71,6 +80,34 @@ describe('the shell', () => {
     await browser.keys(Key.ArrowUp);
     expect(await isDark()).toBe(true);
     expect(await axeViolations()).toEqual([]);
+  });
+
+  it('shows the settings as a page of their own, with a page per section and a way back', async () => {
+    // The previous test left the settings open. A new conversation gives the
+    // main view search parameters, which the way back restores.
+    await leaveSettings();
+    await $('[data-slot="sidebar-group-action"]').click();
+    await browser.waitUntil(async () => browser.execute(() => location.search === '?view=chat'), {
+      timeoutMsg: 'the new conversation did not open',
+    });
+
+    await openSettings('window.behavior');
+
+    const entries = await browser.execute(() =>
+      [...document.querySelectorAll('[data-slot="sidebar"] [data-sidebar="menu-button"]')].map((entry) =>
+        entry.textContent.trim(),
+      ),
+    );
+    expect(entries).toEqual(['Back', 'Interface', 'Providers', 'Instructions', 'Window']);
+    await waitForShownText('[id="settings-section-window.behavior"]', 'Window');
+    await expect($('#interface-theme-system')).not.toBeExisting();
+    await expect($('main#main textarea[aria-describedby="composer-hint"]')).not.toBeExisting();
+    expect(await axeViolations()).toEqual([]);
+
+    await leaveSettings();
+
+    await expect($('main#main textarea[aria-describedby="composer-hint"]')).toBeDisplayed();
+    expect(await browser.execute(() => location.search)).toBe('?view=chat');
   });
 
   it('shows and hides the sidebar with Ctrl+B', async () => {

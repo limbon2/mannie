@@ -77,6 +77,54 @@ pub enum ValidationError {
     /// The webview stopped receiving the channel.
     #[error("the webview stopped receiving the channel")]
     ChannelClosed,
+    /// The core started without its database or its runtime.
+    #[error("the core is not running")]
+    CoreUnavailable,
+    /// The validation could not do what was asked; the log has the cause.
+    #[error("the validation command failed")]
+    Failed,
+}
+
+/// The most turns that `validation_seed_conversation` writes.
+pub const MAX_SEEDED_TURNS: u32 = 20_000;
+
+/// A conversation to seed for the performance checks (NFR-PERF-04).
+#[derive(Debug, Clone, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SeedConversation {
+    /// How many turns, each with the owner's message and a reply.
+    pub turns: u32,
+}
+
+impl SeedConversation {
+    /// Checks the number of turns.
+    pub fn check(&self) -> Result<(), ValidationError> {
+        if (1..=MAX_SEEDED_TURNS).contains(&self.turns) {
+            Ok(())
+        } else {
+            Err(ValidationError::LoadOutOfRange)
+        }
+    }
+}
+
+/// The state of the main window and the tray, as the validations see it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidationWindowState {
+    /// Whether the main window is visible.
+    pub visible: bool,
+    /// Whether the tray icon exists.
+    pub tray: bool,
+}
+
+/// An item of the tray's menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ValidationTrayItem {
+    /// "Open Mannie".
+    Open,
+    /// "Quit".
+    Quit,
 }
 
 #[cfg(test)]

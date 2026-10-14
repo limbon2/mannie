@@ -39,16 +39,46 @@ interface ChannelLoad {
   readonly runs: number;
 }
 
+/** A provider profile, as `create_provider_profile` takes it. */
+export interface ProfileInput {
+  readonly credential: string | null;
+  readonly draft: {
+    readonly baseUrl: string;
+    readonly contextWindow: number;
+    readonly interface: 'chat_completions' | 'responses';
+    readonly model: string;
+    readonly name: string;
+    readonly outputLimit: number;
+    readonly reasoningEffort: 'high' | 'low' | 'max' | 'medium' | 'minimal' | 'none' | 'server_default' | 'xhigh';
+  };
+}
+
+/** Whether the main window shows and whether the tray exists. */
+export interface WindowState {
+  readonly tray: boolean;
+  readonly visible: boolean;
+}
+
 interface Harness {
   callUngrantedCommand(): Promise<string>;
+  closeMainWindow(): Promise<void>;
+  createProviderProfile(input: ProfileInput): Promise<string>;
   cspViolations(): readonly CspViolation[];
+  deleteProviderProfiles(): Promise<number>;
   insertHostileHtml(payloads: readonly string[]): Promise<boolean>;
+  openedLinks(): Promise<string[]>;
   probeScripts(): Promise<ScriptProbe>;
+  processId(): Promise<number>;
   runChannelLoad(load: ChannelLoad): Promise<ChannelLoadReport>;
+  seedConversation(turns: number): Promise<string>;
+  trayMenu(item: 'open' | 'quit'): Promise<void>;
+  windowState(): Promise<WindowState>;
 }
 
 declare global {
   interface Window {
+    /** Set by any hostile payload that manages to run. */
+    compromised?: boolean;
     mannieValidation?: Harness;
   }
 }
@@ -128,4 +158,96 @@ export async function runChannelLoad(load: ChannelLoad): Promise<ChannelLoadRepo
     }
     return harness.runChannelLoad(requested);
   }, load);
+}
+
+/** Closes the main window as its close button does: the core decides what happens. */
+export async function closeMainWindow(): Promise<void> {
+  await browser.execute(async () => {
+    const harness = window.mannieValidation;
+    if (harness === undefined) {
+      throw new Error('the validation harness is missing: run the validation build');
+    }
+    await harness.closeMainWindow();
+  });
+}
+
+/** Adds a provider profile without the settings view, and returns its ID. */
+export async function createProviderProfile(input: ProfileInput): Promise<string> {
+  return browser.execute(async (profile) => {
+    const harness = window.mannieValidation;
+    if (harness === undefined) {
+      throw new Error('the validation harness is missing: run the validation build');
+    }
+    return harness.createProviderProfile(profile);
+  }, input);
+}
+
+/** Deletes every provider profile and the credentials they stored. Returns how many there were. */
+export async function deleteProviderProfiles(): Promise<number> {
+  return browser.execute(async () => {
+    const harness = window.mannieValidation;
+    if (harness === undefined) {
+      throw new Error('the validation harness is missing: run the validation build');
+    }
+    return harness.deleteProviderProfiles();
+  });
+}
+
+/** The links the app would have opened in the browser, in order. */
+export async function openedLinks(): Promise<string[]> {
+  return browser.execute(async () => {
+    const harness = window.mannieValidation;
+    if (harness === undefined) {
+      throw new Error('the validation harness is missing: run the validation build');
+    }
+    return harness.openedLinks();
+  });
+}
+
+/** The ID of the app's process. */
+export async function processId(): Promise<number> {
+  return browser.execute(async () => {
+    const harness = window.mannieValidation;
+    if (harness === undefined) {
+      throw new Error('the validation harness is missing: run the validation build');
+    }
+    return harness.processId();
+  });
+}
+
+/** Adds a conversation with this many turns, each with a message and a reply, and returns its ID. */
+export async function seedConversation(turns: number): Promise<string> {
+  return browser.execute(async (count) => {
+    const harness = window.mannieValidation;
+    if (harness === undefined) {
+      throw new Error('the validation harness is missing: run the validation build');
+    }
+    return harness.seedConversation(count);
+  }, turns);
+}
+
+/**
+ * Chooses an item of the tray's menu. "Quit" without active replies ends the
+ * app, and with it the WebDriver session, so the call does not wait for an
+ * answer.
+ */
+export async function chooseTrayItem(item: 'open' | 'quit'): Promise<void> {
+  await browser.execute((chosen) => {
+    const harness = window.mannieValidation;
+    if (harness === undefined) {
+      throw new Error('the validation harness is missing: run the validation build');
+    }
+    void harness.trayMenu(chosen);
+  }, item);
+}
+
+/** Whether the main window shows and whether the tray exists. */
+export async function windowState(): Promise<WindowState> {
+  return browser.execute(async () => {
+    const harness = window.mannieValidation;
+    if (harness === undefined) {
+      throw new Error('the validation harness is missing: run the validation build');
+    }
+    return harness.windowState();
+  });
 }

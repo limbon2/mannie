@@ -4,8 +4,8 @@
 //! Every command also needs a permission (`build.rs`) and a grant
 //! (`capabilities/`), or Tauri refuses it (ADR-0004).
 
-#[cfg(feature = "validation")]
 pub(crate) mod channel;
+pub(crate) mod subscriptions;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,7 +14,7 @@ use specta_typescript::Typescript;
 use tauri::Wry;
 use tauri_specta::{Builder, ErrorHandlingMode, collect_commands};
 
-use crate::commands::{interface, startup};
+use crate::commands::{chat, interface, links, providers, startup, window};
 
 /// The first line of every generated file.
 const HEADER: &str =
@@ -52,6 +52,37 @@ macro_rules! app_commands {
             startup::get_startup_status,
             interface::get_interface_settings,
             interface::update_interface_settings,
+            chat::subscribe_conversations,
+            chat::subscribe_conversation,
+            chat::unsubscribe,
+            chat::load_earlier_turns,
+            chat::start_conversation,
+            chat::send_message,
+            chat::stop_reply,
+            chat::retry_reply,
+            chat::rename_conversation,
+            chat::delete_conversation,
+            chat::set_conversation_profile,
+            chat::compact_conversation,
+            chat::get_checkpoint,
+            chat::get_chat_settings,
+            chat::update_chat_settings,
+            providers::list_provider_profiles,
+            providers::create_provider_profile,
+            providers::update_provider_profile,
+            providers::delete_provider_profile,
+            providers::set_default_provider_profile,
+            providers::test_provider_profile,
+            providers::get_model_defaults,
+            links::check_link,
+            links::open_link,
+            window::subscribe_window_requests,
+            window::answer_close_question,
+            window::confirm_quit,
+            window::dismiss_window_request,
+            window::get_window_settings,
+            window::update_window_settings,
+            window::set_tray_labels,
             $($extra)*
         ]
     };
@@ -80,6 +111,12 @@ fn validation_builder() -> Builder<Wry> {
         .commands(collect_commands![
             crate::commands::validation::stream_validation_events,
             crate::commands::validation::validation_ungranted_command,
+            crate::commands::validation::validation_close_main_window,
+            crate::commands::validation::validation_window_state,
+            crate::commands::validation::validation_tray_menu,
+            crate::commands::validation::validation_process_id,
+            crate::commands::validation::validation_seed_conversation,
+            crate::commands::validation::validation_opened_links,
         ])
 }
 
@@ -104,6 +141,12 @@ pub(crate) fn runtime_builder() -> Builder<Wry> {
             .commands(app_commands![
                 crate::commands::validation::stream_validation_events,
                 crate::commands::validation::validation_ungranted_command,
+                crate::commands::validation::validation_close_main_window,
+                crate::commands::validation::validation_window_state,
+                crate::commands::validation::validation_tray_menu,
+                crate::commands::validation::validation_process_id,
+                crate::commands::validation::validation_seed_conversation,
+                crate::commands::validation::validation_opened_links,
             ])
     }
 }

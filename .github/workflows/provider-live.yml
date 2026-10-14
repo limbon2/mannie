@@ -1,0 +1,105 @@
+# Live conformance of the provider adapters (V8; docs/features/chat/
+# providers.md, conformance): every night and on demand, the live tests run
+# against each server that the repository's variables and secrets name, and
+# against an Ollama container of a pinned version. A server without its
+# variables is reported as not configured. The workflow is not part of the
+# release, so that a provider's outage never blocks one. Actions are pinned by
+# commit SHA, and the Ollama image by digest.
+#
+# For each server NAME of the matrix, the repository needs the variables
+# MANNIE_LIVE_<NAME>_BASE_URL and MANNIE_LIVE_<NAME>_MODEL, the secret
+# MANNIE_LIVE_<NAME>_API_KEY when the server needs a key, and, where they
+# apply, the variables MANNIE_LIVE_<NAME>_REASONING_EFFORT, _CONTEXT_WINDOW and
+# _SERVER_VERSION (crates/mannie-provider/tests/live.rs).
+name: Provider live tests
+
+on:
+  schedule:
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  configured:
+    name: Live (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: OPENAI_RESPONSES, server: open_ai, interface: responses }
+          - { name: OPENAI_CHAT, server: open_ai, interface: chat_completions }
+          - { name: OPENROUTER, server: open_router, interface: chat_completions }
+          - { name: VLLM, server: vllm, interface: chat_completions }
+          - { name: SGLANG, server: sglang, interface: chat_completions }
+          - { name: LM_STUDIO, server: lm_studio, interface: chat_completions }
+    env:
+      MANNIE_LIVE_SERVER: ${{ matrix.server }}
+      MANNIE_LIVE_INTERFACE: ${{ matrix.interface }}
+      MANNIE_LIVE_BASE_URL: ${{ vars[format('MANNIE_LIVE_{0}_BASE_URL', matrix.name)] }}
+      MANNIE_LIVE_MODEL: ${{ vars[format('MANNIE_LIVE_{0}_MODEL', matrix.name)] }}
+      MANNIE_LIVE_REASONING_EFFORT: ${{ vars[format('MANNIE_LIVE_{0}_REASONING_EFFORT', matrix.name)] }}
+      MANNIE_LIVE_CONTEXT_WINDOW: ${{ vars[format('MANNIE_LIVE_{0}_CONTEXT_WINDOW', matrix.name)] }}
+      MANNIE_LIVE_SERVER_VERSION: ${{ vars[format('MANNIE_LIVE_{0}_SERVER_VERSION', matrix.name)] }}
+    steps:
+      - name: Check that the server is configured
+        id: settings
+        run: |
+          if [ -z "$MANNIE_LIVE_BASE_URL" ] || [ -z "$MANNIE_LIVE_MODEL" ]; then
+            echo "::notice::${{ matrix.name }} is not configured: set MANNIE_LIVE_${{ matrix.name }}_BASE_URL and MANNIE_LIVE_${{ matrix.name }}_MODEL"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.settings.outputs.configured == 'true'
+      - name: Install the Rust toolchain from rust-toolchain.toml
+        if: steps.settings.outputs.configured == 'true'
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: steps.settings.outputs.configured == 'true'
+        with:
+          key: provider-live
+      - name: Run the live tests
+        if: steps.settings.outputs.configured == 'true'
+        env:
+          MANNIE_LIVE_API_KEY: ${{ secrets[format('MANNIE_LIVE_{0}_API_KEY', matrix.name)] }}
+        run: cargo test --locked -p mannie-provider --features testing --test live -- --ignored --nocapture
+
+  ollama:
+    name: Live (OLLAMA)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      ollama:
+        # 0.34.4
+        image: ollama/ollama@sha256:8262851b2846b87c649eddf3e76beb270c52f4d1bc94559f47efde16b0841551
+        ports:
+          - 11434:11434
+    env:
+      MANNIE_LIVE_SERVER: ollama
+      MANNIE_LIVE_INTERFACE: chat_completions
+      MANNIE_LIVE_BASE_URL: http://127.0.0.1:11434/v1
+      # A small model that writes its reasoning between think tags.
+      MANNIE_LIVE_MODEL: qwen3:0.6b
+      MANNIE_LIVE_SERVER_VERSION: 0.34.4
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Pull the model
+        run: |
+          curl --fail --silent --show-error --max-time 900 http://127.0.0.1:11434/api/pull \
+            --data "{\"model\": \"$MANNIE_LIVE_MODEL\", \"stream\": false}"
+      - name: Install the Rust toolchain from rust-toolchain.toml
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: provider-live
+      - name: Run the live tests
+        run: cargo test --locked -p mannie-provider --features testing --test live -- --ignored --nocapture

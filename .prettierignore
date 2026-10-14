@@ -15,3 +15,6 @@ skills-lock.json
 
 # The notices template's line breaks are the output's line breaks.
 about.hbs
+
+# Provider fixtures are byte-for-byte copies of what servers sent (V8).
+crates/mannie-provider/tests/fixtures/

@@ -1,0 +1,10 @@
+{
+  "error": {
+    "class": "permanent",
+    "failure": {
+      "code": "model_not_found",
+      "model": "mannie-unknown-model"
+    }
+  },
+  "events": []
+}

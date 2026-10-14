@@ -1,0 +1,22 @@
+{
+  "server": "open_ai",
+  "interface": "chat_completions",
+  "provenance": "constructed",
+  "sources": [
+    "https://developers.openai.com/api/reference/responses/streaming",
+    "https://developers.openai.com/api/reference/chat/streaming"
+  ],
+  "verifiedOn": "2026-10-14",
+  "request": {
+    "model": "mannie-unknown-model",
+    "instructions": "",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Reply with the single word: ready"
+      }
+    ],
+    "maxOutputTokens": 1024,
+    "reasoningEffort": "server_default"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "server": "sglang",
+  "interface": "chat_completions",
+  "provenance": "constructed",
+  "sources": [
+    "https://docs.sglang.ai/basic_usage/openai_api_completions.html"
+  ],
+  "verifiedOn": "2026-10-14",
+  "request": {
+    "model": "Qwen/Qwen3-8B",
+    "instructions": "",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What is 17 times 23? Answer with the number only."
+      }
+    ],
+    "maxOutputTokens": 8192,
+    "reasoningEffort": "low"
+  }
+}

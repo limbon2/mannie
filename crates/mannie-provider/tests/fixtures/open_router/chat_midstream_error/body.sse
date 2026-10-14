@@ -1,0 +1,5 @@
+: OPENROUTER PROCESSING
+data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1791892800,"model":"openai/gpt-5-mini","provider":"OpenAI","choices":[{"index":0,"delta":{"role":"assistant","content":"Rea"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1791892800,"model":"openai/gpt-5-mini","provider":"OpenAI","error":{"code":"server_error","message":"Provider returned error"},"choices":[{"index":0,"delta":{"content":""},"finish_reason":"error"}]}
+

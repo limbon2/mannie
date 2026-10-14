@@ -66,6 +66,7 @@ deny = [
   # The crate boundaries of docs/engineering/repository.md.
   { crate = "tauri", wrappers = [
     "mannie-desktop",
+    "tauri-plugin-opener",
     "tauri-plugin-single-instance",
     "tauri-specta",
   ], reason = "only the desktop app depends on Tauri (ADR-0008)" },
@@ -75,8 +76,6 @@ deny = [
     "windows-native-keyring-store",
     "zbus-secret-service-keyring-store",
   ], reason = "credentials go through mannie-secrets (ADR-0010)" },
-  # The desktop app starts using mannie-secrets in M1; until then cargo-deny
-  # warns that this wrapper is unused.
   { crate = "mannie-secrets", wrappers = [
     "mannie-desktop",
   ], reason = "provider credentials stay on the master; the worker never depends on the credential store (ADR-0010)" },

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { Slot } from '../../../../../../apps/desktop/src/lib/state/shell-slots.svelte.js';
+import { ShellSlots, Slot } from '../../../../../../apps/desktop/src/lib/state/shell-slots.svelte.js';
 
 interface Entry {
   readonly id: string;
@@ -33,5 +33,22 @@ describe('Slot', () => {
       slot.register({ id: 'shell.open-settings', order: 1 });
     }).toThrow('The commands slot already has an entry with the ID shell.open-settings.');
     expect(slot.entries).toHaveLength(1);
+  });
+});
+
+describe('ShellSlots', () => {
+  it('has a slot for panels, overlays and part renderers that refuses duplicates', () => {
+    const slots = new ShellSlots();
+    const component = () => ({});
+
+    slots.sidebarPanels.register({ component, id: 'fake.panel', order: 1 });
+    slots.overlays.register({ component, id: 'fake.overlay' });
+    slots.partRenderers.register({ component, id: 'fake_part' });
+
+    expect(slots.sidebarPanels.find('fake.panel')?.order).toBe(1);
+    expect(slots.overlays.find('fake.overlay')).toBeDefined();
+    expect(() => {
+      slots.partRenderers.register({ component, id: 'fake_part' });
+    }).toThrow('The part renderers slot already has an entry with the ID fake_part.');
   });
 });

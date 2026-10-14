@@ -1,0 +1,21 @@
+{
+  "server": "ollama",
+  "interface": "chat_completions",
+  "provenance": "constructed",
+  "sources": [
+    "https://docs.ollama.com/api/openai-compatibility"
+  ],
+  "verifiedOn": "2026-10-14",
+  "request": {
+    "model": "qwen3:8b",
+    "instructions": "",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Count from 1 to 300, separated by spaces."
+      }
+    ],
+    "maxOutputTokens": 16,
+    "reasoningEffort": "server_default"
+  }
+}

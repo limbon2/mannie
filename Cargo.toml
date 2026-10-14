@@ -21,6 +21,8 @@ members = [
   "apps/desktop/src-tauri",
   "apps/worker",
   "crates/mannie-logging",
+  "crates/mannie-provider",
+  "crates/mannie-runtime",
   "crates/mannie-secrets",
   "crates/mannie-store",
   "crates/mannie-types",
@@ -41,20 +43,34 @@ publish = false
 # cargo-deny (deny.toml) enforces which crate may depend on which.
 [workspace.dependencies]
 anyhow = "1.0.104"
+bytes = "1.12.1"
 clap = { version = "4.6.7", features = ["derive"] }
+fastrand = "2.5.0"
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 keyring-core = "1.0.1"
 mannie-logging = { path = "crates/mannie-logging" }
+mannie-provider = { path = "crates/mannie-provider" }
+mannie-runtime = { path = "crates/mannie-runtime" }
 mannie-secrets = { path = "crates/mannie-secrets" }
 mannie-store = { path = "crates/mannie-store" }
 mannie-types = { path = "crates/mannie-types" }
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 regex = "1.13.1"
+# Without the default TLS feature, which brings the aws-lc crypto provider that
+# deny.toml bans: rustls with ring only (ADR-0008, ADR-0011).
+reqwest = { version = "0.13.5", default-features = false }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
+# ring is the only crypto provider (ADR-0008); rustls's default features would
+# add aws-lc.
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+sha2 = "0.10.9"
 specta = { version = "=2.0.0-rc.25", features = ["derive"] }
 specta-typescript = "=0.0.12"
 tauri = "2.12.3"
 tauri-build = "2.7.2"
+tauri-plugin-opener = "2.7.1"
 tauri-plugin-single-instance = "2.5.3"
 tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
 tempfile = "3.27.0"
@@ -64,6 +80,7 @@ tokio = "1.53.2"
 tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+url = "2.5.8"
 uuid = { version = "1.28.0", features = ["v7"] }
 windows-native-keyring-store = "1.1.0"
 windows-service = "0.8.1"

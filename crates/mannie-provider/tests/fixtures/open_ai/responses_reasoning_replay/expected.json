@@ -1,0 +1,19 @@
+{
+  "error": null,
+  "events": [
+    {
+      "text": "414"
+    },
+    {
+      "usage": {
+        "cachedInput": 128,
+        "input": 160,
+        "output": 90,
+        "reasoning": 80
+      }
+    },
+    {
+      "finished": "stop"
+    }
+  ]
+}

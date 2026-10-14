@@ -1,0 +1,9 @@
+{
+  "error": {
+    "class": "permanent",
+    "failure": {
+      "code": "quota_exceeded"
+    }
+  },
+  "events": []
+}

@@ -1,0 +1,75 @@
+[package]
+name = "mannie-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Mannie's agent runtime: runs as durable actors, the event log and its subscriptions, retries, the context budget and compaction (ADR-0012)."
+license.workspace = true
+publish.workspace = true
+
+# The run actor against a fake model.
+[[test]]
+name = "loop"
+required-features = ["testing"]
+
+# Subscribers end with the state of a fresh snapshot (property test).
+[[test]]
+name = "subscriptions"
+required-features = ["testing"]
+
+# Compaction at the limits of every known model and of small local models.
+[[test]]
+name = "compaction"
+required-features = ["testing"]
+
+# Killing the process during a reply keeps the transcript, and Retry works.
+[[test]]
+name = "crash"
+required-features = ["testing"]
+
+# Profiles and their credentials in the vault.
+[[test]]
+name = "profiles"
+required-features = ["testing"]
+
+# A planted credential reaches only the Authorization header; its own binary,
+# because it installs a global log subscriber.
+[[test]]
+name = "planted_credential"
+required-features = ["testing"]
+
+[dependencies]
+# The jitter of retry delays.
+fastrand = { workspace = true }
+futures-util = { workspace = true }
+mannie-provider = { workspace = true }
+mannie-store = { workspace = true }
+mannie-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# The hash of the text that a checkpoint covers.
+sha2 = { workspace = true }
+# The temporary store of the test runtime, with the testing feature.
+tempfile = { workspace = true, optional = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+mannie-provider = { workspace = true, features = ["testing"] }
+proptest = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
+tracing-subscriber = { workspace = true }
+
+[features]
+# The test runtime, the in-memory vault and the fake model, for the tests of
+# this crate. Never enabled in the desktop app or the worker.
+testing = ["dep:tempfile", "mannie-provider/testing"]
+# The seeder of long conversations for the desktop app's performance checks.
+# Never enabled in a release.
+validation = ["mannie-store/validation"]
+
+[lints]
+workspace = true

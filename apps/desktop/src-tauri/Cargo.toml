@@ -27,13 +27,18 @@ required-features = ["validation"]
 [dependencies]
 anyhow = { workspace = true }
 mannie-logging = { workspace = true }
+mannie-provider = { workspace = true }
+mannie-runtime = { workspace = true }
+# Provider credentials in the operating system's credential store (ADR-0010).
+mannie-secrets = { workspace = true }
 mannie-store = { workspace = true }
 mannie-types = { workspace = true }
 serde = { workspace = true }
 specta = { workspace = true }
 specta-typescript = { workspace = true }
 # Without `dynamic-acl`: capabilities are fixed at build time and nothing adds
-# one at runtime (ADR-0004). The other features are Tauri's defaults.
+# one at runtime (ADR-0004). `tray-icon` adds the tray (window and tray
+# feature); the other features are Tauri's defaults.
 tauri = {
   workspace = true,
   default-features = false,
@@ -41,10 +46,15 @@ tauri = {
     "common-controls-v6",
     "compression",
     "dbus",
+    "tray-icon",
     "wry",
     "x11",
   ]
 }
+# Opens links in the system browser after the owner confirmed them (ADR-0003,
+# decision 3). Only its Rust function is used: the plugin is not registered,
+# so the webview has no opener command.
+tauri-plugin-opener = { workspace = true }
 tauri-plugin-single-instance = { workspace = true }
 tauri-specta = { workspace = true }
 thiserror = { workspace = true }
@@ -61,7 +71,7 @@ tauri-build = { workspace = true }
 [features]
 # The commands and the capability that the end-to-end validations use (V1, V2,
 # V3). Only validation builds enable it; a release never does.
-validation = ["mannie-types/validation"]
+validation = ["mannie-runtime/validation", "mannie-types/validation"]
 
 [lints]
 workspace = true

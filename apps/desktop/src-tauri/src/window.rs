@@ -1,9 +1,18 @@
 //! The main window. It is created from its configuration in
 //! `tauri.conf.json`, with the navigation rules of ADR-0004 added: the webview
-//! never leaves the app's origin and never opens another window.
+//! never leaves the app's origin and never opens another window. Closing it
+//! goes through the core's decision (docs/features/window-and-tray.md).
 
-use tauri::webview::NewWindowResponse;
-use tauri::{App, AppHandle, Manager, Url, WebviewWindowBuilder};
+pub(crate) mod close;
+pub(crate) mod requests;
+pub(crate) mod tray;
+#[cfg(feature = "validation")]
+mod validation;
+
+use tauri::webview::{NewWindowResponse, PageLoadEvent};
+use tauri::{App, AppHandle, Manager, Url, WebviewWindowBuilder, WindowEvent};
+
+use crate::state::Core;
 
 /// The label of the main window, the only window that receives grants.
 pub(crate) const MAIN_WINDOW: &str = "main";
@@ -28,8 +37,10 @@ pub(crate) fn create_main(app: &App) -> Result<(), WindowError> {
         .iter()
         .find(|window| window.label == MAIN_WINDOW)
         .ok_or(WindowError::MissingConfiguration)?;
+    #[cfg(feature = "validation")]
+    let config = &*validation::window_config(config);
     let dev_url = app.config().build.dev_url.clone();
-    WebviewWindowBuilder::from_config(app, config)?
+    let window = WebviewWindowBuilder::from_config(app, config)?
         .on_navigation(move |url| {
             let allowed = is_app_origin(url, dev_url.as_ref());
             if !allowed {
@@ -49,23 +60,59 @@ pub(crate) fn create_main(app: &App) -> Result<(), WindowError> {
             );
             NewWindowResponse::Deny
         })
+        .on_page_load(|window, payload| {
+            // A page that loads again subscribes again from its cursor; the
+            // forwarders of the page before it end here.
+            if payload.event() == PageLoadEvent::Started
+                && let Some(core) = window.try_state::<Core>()
+            {
+                core.page_loaded();
+            }
+        })
         .build()?;
+    #[cfg(feature = "validation")]
+    validation::place_window(&window);
+    let app = app.handle().clone();
+    window.on_window_event(move |event| {
+        if let WindowEvent::CloseRequested { api, .. } = event {
+            // The core decides what closing does: hide, ask or quit.
+            api.prevent_close();
+            close::on_close_requested(&app);
+        }
+    });
     Ok(())
 }
 
 /// Shows the main window and brings it to the front, for example when Mannie
-/// is started a second time.
+/// is started a second time or the owner chose "Open Mannie" in the tray.
 pub(crate) fn show_main(app: &AppHandle) {
     let Some(window) = app.get_webview_window(MAIN_WINDOW) else {
-        tracing::warn!("a second start found no main window to show");
+        tracing::warn!("there is no main window to show");
         return;
     };
-    let shown = window
-        .unminimize()
-        .and_then(|()| window.show())
-        .and_then(|()| window.set_focus());
+    let shown = window.unminimize().and_then(|()| window.show());
+    let shown = if brings_to_front() {
+        shown.and_then(|()| window.set_focus())
+    } else {
+        shown
+    };
     if let Err(error) = shown {
         tracing::warn!(%error, "could not bring the main window to the front");
+    }
+}
+
+/// Whether showing the main window also gives it the focus. In validation
+/// builds that keep the window out of the owner's way, it never does: when
+/// Windows refuses the focus, tao, Tauri's window library, simulates an Alt key
+/// press to force it.
+fn brings_to_front() -> bool {
+    #[cfg(feature = "validation")]
+    {
+        !validation::hides_window()
+    }
+    #[cfg(not(feature = "validation"))]
+    {
+        true
     }
 }
 

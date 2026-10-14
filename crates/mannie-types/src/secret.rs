@@ -3,6 +3,7 @@
 
 use std::fmt;
 
+use serde::{Deserialize, Deserializer};
 use zeroize::Zeroizing;
 
 /// A secret value, such as a provider credential.
@@ -13,6 +14,10 @@ use zeroize::Zeroizing;
 /// a log, the database or an IPC response by accident. Code that has to hand
 /// the value to its destination, such as the credential store or a request
 /// header, calls [`Secret::expose`].
+///
+/// A secret can arrive in a command's arguments, so it implements
+/// `Deserialize`: the owner types a credential into the webview, which sends it
+/// to the core once. It never travels back.
 #[derive(Clone)]
 pub struct Secret(Zeroizing<String>);
 
@@ -44,6 +49,18 @@ impl From<String> for Secret {
     }
 }
 
+impl<'de> Deserialize<'de> for Secret {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(Self::new)
+    }
+}
+
+impl specta::Type for Secret {
+    fn definition(types: &mut specta::Types) -> specta::datatype::DataType {
+        <String as specta::Type>::definition(types)
+    }
+}
+
 impl fmt::Debug for Secret {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("Secret(<redacted>)")
@@ -68,6 +85,13 @@ mod tests {
             assert!(!output.contains(PLANTED), "{output}");
             assert!(output.contains("<redacted>"), "{output}");
         }
+    }
+
+    #[test]
+    fn deserializes_from_a_string() {
+        let secret: Secret = serde_json::from_str(&format!("\"{PLANTED}\"")).unwrap();
+
+        assert_eq!(secret.expose(), PLANTED);
     }
 
     #[test]

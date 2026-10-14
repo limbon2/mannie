@@ -1,0 +1,15 @@
+{
+  "error": {
+    "class": "transient",
+    "failure": {
+      "code": "server_error",
+      "status": 500
+    },
+    "retryAfterMs": null
+  },
+  "events": [
+    {
+      "text": "Rea"
+    }
+  ]
+}

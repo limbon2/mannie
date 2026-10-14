@@ -1,0 +1,22 @@
+{
+  "error": null,
+  "events": [
+    {
+      "text": "1 2 3"
+    },
+    {
+      "text": " 4 5 6"
+    },
+    {
+      "usage": {
+        "cachedInput": null,
+        "input": 20,
+        "output": 16,
+        "reasoning": null
+      }
+    },
+    {
+      "finished": "output_limit"
+    }
+  ]
+}

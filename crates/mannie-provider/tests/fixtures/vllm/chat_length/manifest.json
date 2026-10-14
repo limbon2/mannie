@@ -1,0 +1,21 @@
+{
+  "server": "vllm",
+  "interface": "chat_completions",
+  "provenance": "constructed",
+  "sources": [
+    "https://docs.vllm.ai/en/stable/features/reasoning_outputs/"
+  ],
+  "verifiedOn": "2026-10-14",
+  "request": {
+    "model": "Qwen/Qwen3-8B",
+    "instructions": "",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Count from 1 to 300, separated by spaces."
+      }
+    ],
+    "maxOutputTokens": 16,
+    "reasoningEffort": "server_default"
+  }
+}

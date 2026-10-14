@@ -1,0 +1,25 @@
+{
+  "error": null,
+  "events": [
+    {
+      "text": "Rea"
+    },
+    {
+      "text": "dy"
+    },
+    {
+      "text": "."
+    },
+    {
+      "usage": {
+        "cachedInput": 0,
+        "input": 18,
+        "output": 3,
+        "reasoning": 0
+      }
+    },
+    {
+      "finished": "stop"
+    }
+  ]
+}

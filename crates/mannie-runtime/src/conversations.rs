@@ -1,0 +1,523 @@
+//! The conversation commands (docs/features/chat/conversations.md,
+//! contracts): what the desktop's chat commands call.
+
+use std::sync::Arc;
+
+use mannie_store::{
+    Change, Durability, NewConversation, NewRun, ProfileStoreError, RuntimeStoreError,
+    SettingsStoreError, StoredProfile,
+};
+use mannie_types::chat::{
+    ChatError, ChatSettings, CheckpointRef, EarlierTurns, LoadEarlierTurns, MAX_EARLIER_TURNS,
+    RenameConversation, SendMessage, SetConversationProfile, StartConversation,
+    StartedConversation, StartedReply, StopOutcome, SubscribeConversation, UpdateChatSettings,
+    check_message, check_title, title_from_message,
+};
+use mannie_types::ids::{ConversationId, ProfileId};
+use mannie_types::transcript::Checkpoint;
+
+use crate::agents::CONVERSATION_AGENT;
+use crate::compaction::Trigger;
+use crate::hub::{ConversationSubscription, ListSubscription};
+use crate::{Busy, Runtime, lock};
+
+/// A conversation that a command has reserved: for a new run, or for the
+/// owner's compaction. Dropping it releases the conversation unless a run
+/// took it over.
+struct Reservation<'a> {
+    runtime: &'a Runtime,
+    conversation: ConversationId,
+}
+
+impl Drop for Reservation<'_> {
+    fn drop(&mut self) {
+        let mut busy = lock(&self.runtime.inner.busy);
+        if matches!(
+            busy.get(&self.conversation),
+            Some(Busy::Starting | Busy::Compacting)
+        ) {
+            busy.remove(&self.conversation);
+        }
+    }
+}
+
+fn store_failure(error: RuntimeStoreError) -> ChatError {
+    match error {
+        RuntimeStoreError::ConversationNotFound => ChatError::ConversationNotFound,
+        RuntimeStoreError::RunActive => ChatError::RunActive,
+        RuntimeStoreError::NothingToRetry => ChatError::NothingToRetry,
+        other => {
+            tracing::error!(error = %other, error.code = other.code(), "a conversation could not be read or saved");
+            ChatError::StorageFailed
+        }
+    }
+}
+
+fn profile_store_failure(error: &ProfileStoreError) -> ChatError {
+    tracing::error!(%error, error.code = error.code(), "a provider profile could not be read");
+    ChatError::StorageFailed
+}
+
+fn settings_failure(error: &SettingsStoreError) -> ChatError {
+    if let SettingsStoreError::NewerVersion { .. } = error {
+        return ChatError::WrittenByNewerVersion;
+    }
+    tracing::error!(%error, error.code = error.code(), "the chat settings could not be read or saved");
+    ChatError::StorageFailed
+}
+
+impl Runtime {
+    fn refuse_when_quitting(&self) -> Result<(), ChatError> {
+        if self.is_shutting_down() {
+            return Err(ChatError::ShuttingDown);
+        }
+        Ok(())
+    }
+
+    fn reserve(
+        &self,
+        conversation: &ConversationId,
+        busy_with: Busy,
+    ) -> Result<Reservation<'_>, ChatError> {
+        let mut busy = lock(&self.inner.busy);
+        match busy.get(conversation) {
+            Some(Busy::Compacting) => Err(ChatError::Compacting),
+            Some(Busy::Starting | Busy::Running(_)) => Err(ChatError::RunActive),
+            None => {
+                busy.insert(conversation.clone(), busy_with);
+                Ok(Reservation {
+                    runtime: self,
+                    conversation: conversation.clone(),
+                })
+            }
+        }
+    }
+
+    /// The profile a conversation uses: its own, or the default when it has
+    /// none or its own was deleted.
+    async fn profile_for(&self, chosen: Option<&ProfileId>) -> Result<StoredProfile, ChatError> {
+        if let Some(id) = chosen {
+            let profile = self
+                .inner
+                .store
+                .profile(id)
+                .await
+                .map_err(|error| profile_store_failure(&error))?;
+            if let Some(profile) = profile {
+                return Ok(profile);
+            }
+        }
+        self.inner
+            .store
+            .default_profile()
+            .await
+            .map_err(|error| profile_store_failure(&error))?
+            .ok_or(ChatError::NoProfile)
+    }
+
+    fn new_run(&self, profile: &StoredProfile) -> NewRun {
+        NewRun {
+            id: self.inner.ids.run(),
+            agent: CONVERSATION_AGENT.to_owned(),
+            profile_id: profile.id.clone(),
+            binding: profile.binding(),
+        }
+    }
+
+    /// Hands a reserved conversation over to a new run.
+    fn start_reserved(
+        &self,
+        reservation: Reservation<'_>,
+        turn: &mannie_types::ids::TurnId,
+        run: &NewRun,
+    ) {
+        self.spawn_run(
+            reservation.conversation.clone(),
+            turn.clone(),
+            run.id.clone(),
+            run.profile_id.clone(),
+            run.agent.clone(),
+        );
+        // The run holds the conversation now; the reservation's drop leaves
+        // it alone.
+        drop(reservation);
+    }
+
+    /// Creates a conversation with the owner's first message and starts the
+    /// reply.
+    pub async fn start_conversation(
+        &self,
+        input: StartConversation,
+    ) -> Result<StartedConversation, ChatError> {
+        self.refuse_when_quitting()?;
+        check_message(&input.text)?;
+        let profile = match &input.profile_id {
+            Some(id) => self
+                .inner
+                .store
+                .profile(id)
+                .await
+                .map_err(|error| profile_store_failure(&error))?
+                .ok_or(ChatError::ProfileNotFound)?,
+            None => self.profile_for(None).await?,
+        };
+        let conversation_id = self.inner.ids.conversation();
+        let reservation = self.reserve(&conversation_id, Busy::Starting)?;
+        let turn_id = self.inner.ids.turn();
+        let run = self.new_run(&profile);
+        let changes = vec![
+            Change::CreateConversation {
+                conversation: NewConversation {
+                    id: conversation_id.clone(),
+                    title: title_from_message(&input.text),
+                    profile_id: input.profile_id,
+                },
+            },
+            Change::StartTurn {
+                turn_id: turn_id.clone(),
+                user_part_id: self.inner.ids.part(),
+                text: input.text,
+                run: run.clone(),
+            },
+        ];
+        self.inner
+            .hubs
+            .apply(
+                &self.inner.store,
+                &conversation_id,
+                changes,
+                Durability::Full,
+            )
+            .await
+            .map_err(store_failure)?;
+        self.start_reserved(reservation, &turn_id, &run);
+        Ok(StartedConversation {
+            conversation_id,
+            turn_id,
+            run_id: run.id,
+        })
+    }
+
+    /// Adds the owner's message to a conversation and starts the reply.
+    pub async fn send_message(&self, input: SendMessage) -> Result<StartedReply, ChatError> {
+        self.refuse_when_quitting()?;
+        check_message(&input.text)?;
+        let reservation = self.reserve(&input.conversation_id, Busy::Starting)?;
+        let summary = self
+            .inner
+            .store
+            .conversation_summary(&input.conversation_id)
+            .await
+            .map_err(store_failure)?
+            .ok_or(ChatError::ConversationNotFound)?;
+        let profile = self.profile_for(summary.profile_id.as_ref()).await?;
+        let turn_id = self.inner.ids.turn();
+        let run = self.new_run(&profile);
+        let change = Change::StartTurn {
+            turn_id: turn_id.clone(),
+            user_part_id: self.inner.ids.part(),
+            text: input.text,
+            run: run.clone(),
+        };
+        self.inner
+            .hubs
+            .apply(
+                &self.inner.store,
+                &input.conversation_id,
+                vec![change],
+                Durability::Full,
+            )
+            .await
+            .map_err(store_failure)?;
+        self.start_reserved(reservation, &turn_id, &run);
+        Ok(StartedReply {
+            turn_id,
+            run_id: run.id,
+        })
+    }
+
+    /// Starts a new run for the latest turn when its reply failed, was
+    /// stopped or was interrupted.
+    pub async fn retry_reply(
+        &self,
+        conversation: &ConversationId,
+    ) -> Result<StartedReply, ChatError> {
+        self.refuse_when_quitting()?;
+        let reservation = self.reserve(conversation, Busy::Starting)?;
+        let summary = self
+            .inner
+            .store
+            .conversation_summary(conversation)
+            .await
+            .map_err(store_failure)?
+            .ok_or(ChatError::ConversationNotFound)?;
+        let latest = self
+            .inner
+            .store
+            .latest_turn(conversation)
+            .await
+            .map_err(store_failure)?;
+        let Some((turn_id, Some(state))) = latest else {
+            return Err(ChatError::NothingToRetry);
+        };
+        if !state.is_retryable() {
+            return Err(ChatError::NothingToRetry);
+        }
+        let profile = self.profile_for(summary.profile_id.as_ref()).await?;
+        let run = self.new_run(&profile);
+        let change = Change::RetryTurn {
+            turn_id: turn_id.clone(),
+            run: run.clone(),
+        };
+        self.inner
+            .hubs
+            .apply(
+                &self.inner.store,
+                conversation,
+                vec![change],
+                Durability::Full,
+            )
+            .await
+            .map_err(store_failure)?;
+        self.start_reserved(reservation, &turn_id, &run);
+        Ok(StartedReply {
+            turn_id,
+            run_id: run.id,
+        })
+    }
+
+    /// Stops the active reply of a conversation and waits until it has
+    /// ended, up to the stop timeout. Stopping a reply that already ended
+    /// changes nothing.
+    pub async fn stop_reply(&self, conversation: &ConversationId) -> StopOutcome {
+        let running = {
+            let busy = lock(&self.inner.busy);
+            match busy.get(conversation) {
+                Some(Busy::Running(handle)) => Some((handle.mailbox.clone(), handle.ended.clone())),
+                _ => None,
+            }
+        };
+        let Some((mailbox, mut ended)) = running else {
+            return StopOutcome::NotRunning;
+        };
+        // A full mailbox already holds a command that ends the run.
+        let _delivered = mailbox.try_send(crate::actor::Command::Stop);
+        let waited = tokio::time::timeout(
+            self.inner.config.stop_timeout,
+            ended.wait_for(|ended| *ended),
+        )
+        .await;
+        if waited.is_err() {
+            tracing::warn!(conversation = %conversation, "a stopped run did not end in time");
+        }
+        StopOutcome::Stopped
+    }
+
+    /// Renames a conversation.
+    pub async fn rename_conversation(&self, input: RenameConversation) -> Result<(), ChatError> {
+        let title = check_title(&input.title)?;
+        self.inner
+            .hubs
+            .apply(
+                &self.inner.store,
+                &input.conversation_id,
+                vec![Change::Rename { title }],
+                Durability::Full,
+            )
+            .await
+            .map_err(store_failure)?;
+        Ok(())
+    }
+
+    /// Chooses the profile of a conversation's next replies, or the default.
+    pub async fn set_conversation_profile(
+        &self,
+        input: SetConversationProfile,
+    ) -> Result<(), ChatError> {
+        if let Some(id) = &input.profile_id {
+            self.inner
+                .store
+                .profile(id)
+                .await
+                .map_err(|error| profile_store_failure(&error))?
+                .ok_or(ChatError::ProfileNotFound)?;
+        }
+        self.inner
+            .hubs
+            .apply(
+                &self.inner.store,
+                &input.conversation_id,
+                vec![Change::SetProfile {
+                    profile_id: input.profile_id,
+                }],
+                Durability::Full,
+            )
+            .await
+            .map_err(store_failure)?;
+        Ok(())
+    }
+
+    /// Deletes a conversation with everything in it. An active reply is
+    /// stopped first.
+    pub async fn delete_conversation(
+        &self,
+        conversation: &ConversationId,
+    ) -> Result<(), ChatError> {
+        let running = {
+            let busy = lock(&self.inner.busy);
+            match busy.get(conversation) {
+                Some(Busy::Compacting) => return Err(ChatError::Compacting),
+                Some(Busy::Starting) => return Err(ChatError::RunActive),
+                Some(Busy::Running(_)) => true,
+                None => false,
+            }
+        };
+        if running {
+            self.stop_reply(conversation).await;
+        }
+        let deleted = self
+            .inner
+            .store
+            .delete_conversation(conversation)
+            .await
+            .map_err(store_failure)?;
+        if !deleted {
+            return Err(ChatError::ConversationNotFound);
+        }
+        self.inner.hubs.deleted(conversation).await;
+        tracing::info!(conversation = %conversation, "deleted a conversation");
+        Ok(())
+    }
+
+    /// Compacts a conversation now, at the owner's request.
+    pub async fn compact_conversation(
+        &self,
+        conversation: &ConversationId,
+    ) -> Result<(), ChatError> {
+        self.refuse_when_quitting()?;
+        let _reservation = self.reserve(conversation, Busy::Compacting)?;
+        let summary = self
+            .inner
+            .store
+            .conversation_summary(conversation)
+            .await
+            .map_err(store_failure)?
+            .ok_or(ChatError::ConversationNotFound)?;
+        let profile = self.profile_for(summary.profile_id.as_ref()).await?;
+        let setup = self
+            .setup_for(&profile, CONVERSATION_AGENT)
+            .await
+            .map_err(|failure| ChatError::CompactionFailed { failure })?;
+        let prepared = self
+            .prepare_call(conversation, &setup)
+            .await
+            .map_err(call_failure)?;
+        if prepared.turns.len() < 2 {
+            return Err(ChatError::NothingToCompact);
+        }
+        let slots = Arc::clone(&self.inner.slots);
+        // The runtime never closes the semaphore.
+        let _permit = slots
+            .acquire_owned()
+            .await
+            .map_err(|_closed| ChatError::ShuttingDown)?;
+        let written = self
+            .write_checkpoint(
+                conversation,
+                &setup,
+                &prepared,
+                Trigger::Manual,
+                prepared.size,
+            )
+            .await
+            .map_err(call_failure)?;
+        if written {
+            Ok(())
+        } else {
+            Err(ChatError::NothingToCompact)
+        }
+    }
+
+    /// The owner's turns before `before_position`, page by page.
+    pub async fn earlier_turns(&self, input: LoadEarlierTurns) -> Result<EarlierTurns, ChatError> {
+        let limit = input.limit.clamp(1, MAX_EARLIER_TURNS);
+        let (turns, has_earlier_turns) = self
+            .inner
+            .store
+            .earlier_turns(&input.conversation_id, input.before_position, limit)
+            .await
+            .map_err(store_failure)?;
+        Ok(EarlierTurns {
+            turns,
+            has_earlier_turns,
+        })
+    }
+
+    /// A checkpoint with its summary.
+    pub async fn checkpoint(&self, input: CheckpointRef) -> Result<Checkpoint, ChatError> {
+        self.inner
+            .store
+            .checkpoint(&input.conversation_id, &input.checkpoint_id)
+            .await
+            .map_err(store_failure)?
+            .ok_or(ChatError::CheckpointNotFound)
+    }
+
+    /// The owner's chat settings.
+    pub async fn chat_settings(&self) -> Result<ChatSettings, ChatError> {
+        self.inner
+            .store
+            .load_settings::<ChatSettings>()
+            .await
+            .map_err(|error| settings_failure(&error))
+    }
+
+    /// Saves the owner's chat settings. Replies use them from their next
+    /// call.
+    pub async fn update_chat_settings(
+        &self,
+        input: UpdateChatSettings,
+    ) -> Result<ChatSettings, ChatError> {
+        let settings = input.into_settings()?;
+        self.inner
+            .store
+            .save_settings(&settings)
+            .await
+            .map_err(|error| settings_failure(&error))?;
+        Ok(settings)
+    }
+
+    /// Follows a conversation from a cursor, or from a snapshot.
+    pub async fn subscribe(
+        &self,
+        input: SubscribeConversation,
+    ) -> Result<ConversationSubscription, ChatError> {
+        self.inner
+            .hubs
+            .subscribe(
+                &self.inner.store,
+                &input.conversation_id,
+                input.after_seq,
+                self.inner.config.subscriptions,
+            )
+            .await
+            .map_err(store_failure)?
+            .ok_or(ChatError::ConversationNotFound)
+    }
+
+    /// Follows the conversation list.
+    pub async fn subscribe_list(&self) -> Result<ListSubscription, ChatError> {
+        self.inner
+            .hubs
+            .subscribe_list(&self.inner.store, self.inner.config.subscriptions)
+            .await
+            .map_err(store_failure)
+    }
+}
+
+fn call_failure(error: crate::calls::CallError) -> ChatError {
+    match error {
+        crate::calls::CallError::Failed(failure) => ChatError::CompactionFailed { failure },
+        crate::calls::CallError::Store(error) => store_failure(error),
+    }
+}

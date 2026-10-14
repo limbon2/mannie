@@ -1,7 +1,15 @@
 {
   "$schema": "../../gen/schemas/desktop-schema.json",
   "identifier": "validation",
-  "description": "Validation builds only (V1, V2, V3): the channel load command. `validation_ungranted_command` is deliberately not granted, to show that a command without a grant is refused.",
+  "description": "Validation builds only: the channel load (V2, V3) and the commands that stand in for the window's close button, the tray, a crash, a long conversation and the system browser in the end-to-end tests. `validation_ungranted_command` is deliberately not granted, to show that a command without a grant is refused (V1).",
   "windows": ["main"],
-  "permissions": ["allow-stream-validation-events"]
+  "permissions": [
+    "allow-stream-validation-events",
+    "allow-validation-close-main-window",
+    "allow-validation-opened-links",
+    "allow-validation-process-id",
+    "allow-validation-seed-conversation",
+    "allow-validation-tray-menu",
+    "allow-validation-window-state"
+  ]
 }

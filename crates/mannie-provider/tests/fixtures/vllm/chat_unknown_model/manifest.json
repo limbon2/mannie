@@ -1,0 +1,21 @@
+{
+  "server": "vllm",
+  "interface": "chat_completions",
+  "provenance": "constructed",
+  "sources": [
+    "https://docs.vllm.ai/en/stable/features/reasoning_outputs/"
+  ],
+  "verifiedOn": "2026-10-14",
+  "request": {
+    "model": "mannie-unknown-model",
+    "instructions": "",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Reply with the single word: ready"
+      }
+    ],
+    "maxOutputTokens": 1024,
+    "reasoningEffort": "server_default"
+  }
+}

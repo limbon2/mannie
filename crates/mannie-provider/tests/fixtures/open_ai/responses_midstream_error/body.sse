@@ -1,0 +1,6 @@
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_5","output_index":0,"content_index":0,"delta":"Rea"}
+
+event: error
+data: {"type":"error","sequence_number":2,"code":"server_error","message":"The server had an error while processing your request.","param":null}
+

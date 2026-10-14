@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 
 // Helpers that run in the app's webview.
 import type { AxeResults } from 'axe-core';
+import { Key } from 'webdriverio';
 
 const axeSource = readFileSync(createRequire(import.meta.url).resolve('axe-core/axe.min.js'), 'utf8');
 
@@ -31,8 +32,31 @@ export async function waitForApp(): Promise<void> {
   });
 }
 
-/** Runs axe's WCAG 2.1 AA rules on the page and returns the violations. */
+/**
+ * Waits until the page's finite animations, such as a dialog that fades in,
+ * have finished. Animations that run forever, such as spinners, do not count.
+ */
+export async function waitForAnimations(): Promise<void> {
+  await browser.waitUntil(
+    async () =>
+      browser.execute(() =>
+        document.getAnimations().every((animation) => {
+          const runsForever = animation.effect?.getComputedTiming().endTime === Infinity;
+          const isRunning = animation.playState === 'running';
+          return runsForever || !isRunning;
+        }),
+      ),
+    { timeout: 5_000, timeoutMsg: 'the page kept animating' },
+  );
+}
+
+/**
+ * Runs axe's WCAG 2.1 AA rules on the page and returns the violations. It
+ * waits for animations first: colors measured halfway through a fade are not
+ * the colors the owner reads.
+ */
 export async function axeViolations(): Promise<AxeViolation[]> {
+  await waitForAnimations();
   await browser.execute(axeSource);
   return browser.execute(async (tags: string[]) => {
     const axe = window.axe;
@@ -75,6 +99,36 @@ export async function waitForShownText(selector: string, expected: RegExp | stri
   );
 }
 
+/**
+ * Opens the settings with Ctrl+, and then the page of the section `id`, such
+ * as `chat.providers`, from the settings sidebar. The sidebar's links are
+ * found by their address, never their text, so this works in the pseudo-locale.
+ */
+export async function openSettings(id: string): Promise<void> {
+  await browser.keys([Key.Ctrl, ',']);
+  const entry = await $(`[data-slot="sidebar"] a[href$="?section=${id}"]`);
+  await entry.waitForClickable();
+  await entry.click();
+  await browser.waitUntil(async () => (await entry.getAttribute('aria-current')) === 'page', {
+    timeout: 10_000,
+    timeoutMsg: `the settings page of ${id} did not open`,
+  });
+}
+
+/** Leaves the settings through the link back to the main view, when they are open. */
+export async function leaveSettings(): Promise<void> {
+  const onSettings = await browser.execute(() => location.pathname.endsWith('/settings'));
+  if (!onSettings) {
+    return;
+  }
+  // The settings sidebar's header holds only that link.
+  await $('[data-slot="sidebar-header"] a').click();
+  await browser.waitUntil(async () => browser.execute(() => !location.pathname.endsWith('/settings')), {
+    timeout: 10_000,
+    timeoutMsg: 'the settings did not close',
+  });
+}
+
 /** Whether the window shows the dark theme. */
 export async function isDark(): Promise<boolean> {
   return browser.execute(() => document.documentElement.classList.contains('dark'));
@@ -85,7 +139,10 @@ export async function isDark(): Promise<boolean> {
  * In the pseudo-locale every catalog message is wrapped in ⟦ and ⟧
  * (scripts/pseudo-locale.mjs), so any other text with letters bypassed the
  * catalog (ADR-0019). It checks text nodes and the attributes that screen
- * readers announce or that show as text.
+ * readers announce or that show as text. Text inside an element marked
+ * `data-content` is the owner's or a model's, such as messages, replies and
+ * names, and needs no catalog; a catalog message that names such content is
+ * still marked as a whole.
  */
 export async function uncataloguedText(): Promise<string[]> {
   return browser.execute(() => {
@@ -104,11 +161,19 @@ export async function uncataloguedText(): Promise<string[]> {
       const isVisible = style.visibility !== 'hidden';
       return isDisplayed && isVisible;
     };
+    const isContent = (element: Element | null): boolean => {
+      if (element === null) {
+        return false;
+      }
+      // SvelteKit's route announcer repeats the page's title, which the
+      // header shows and this check covers there.
+      return element.closest('[data-content], #svelte-announcer') !== null;
+    };
     const problems: string[] = [];
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
       const text = node.textContent?.trim() ?? '';
-      const needsMarks = hasLetters(text) && !isMarked(text);
+      const needsMarks = hasLetters(text) && !isMarked(text) && !isContent(node.parentElement);
       if (needsMarks && isShown(node.parentElement)) {
         problems.push(text);
       }

@@ -1,10 +1,9 @@
 // V1: the security baseline of the webview (ADR-0004). The policy holds with
 // the whole component stack, a command without a grant is refused, and
 // hostile HTML runs no script and loads nothing remote.
-import { createServer } from 'node:net';
-
 import { Key } from 'webdriverio';
 
+import { type ConnectionCounter, countConnections } from '../support/connections.ts';
 import {
   callUngrantedCommand,
   type CspViolation,
@@ -36,40 +35,6 @@ function isRestoredInlineStyle(violation: CspViolation): boolean {
   const hasSample = violation.sample !== '';
   const isKnown = RESTORED_INLINE_STYLES.some((style) => style.startsWith(violation.sample));
   return isStyleAttribute && isInline && hasSample && isKnown;
-}
-
-/** A local server that counts the connections the webview opens to it. */
-interface ConnectionCounter {
-  close(): Promise<void>;
-  connections(): number;
-  readonly origin: string;
-}
-
-async function countConnections(): Promise<ConnectionCounter> {
-  let connections = 0;
-  const server = createServer((socket) => {
-    connections += 1;
-    socket.destroy();
-  });
-  await new Promise<void>((resolve) => {
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  const address = server.address();
-  const hasNoPort = address === null || typeof address === 'string';
-  if (hasNoPort) {
-    throw new Error('the connection counter has no port');
-  }
-  return {
-    close: async () => {
-      await new Promise<void>((resolve) => {
-        server.close(() => {
-          resolve();
-        });
-      });
-    },
-    connections: () => connections,
-    origin: `https://127.0.0.1:${String(address.port)}`,
-  };
 }
 
 describe('the webview security baseline (V1)', () => {

@@ -33,12 +33,44 @@ pub(crate) struct Migration {
 
 /// Every migration, in order. New migrations are appended; an applied
 /// migration is never edited or removed.
-pub(crate) const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    module: "settings",
-    description: "create the settings sections table",
-    sql: include_str!("settings/migrations/0001_create_sections.sql"),
-}];
+pub(crate) const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        module: "settings",
+        description: "create the settings sections table",
+        sql: include_str!("settings/migrations/0001_create_sections.sql"),
+    },
+    Migration {
+        version: 2,
+        module: "runtime",
+        description: "create the conversations, turns and runs tables",
+        sql: include_str!("runtime/migrations/0002_create_conversations.sql"),
+    },
+    Migration {
+        version: 3,
+        module: "runtime",
+        description: "create the parts and provider items tables",
+        sql: include_str!("runtime/migrations/0003_create_parts.sql"),
+    },
+    Migration {
+        version: 4,
+        module: "runtime",
+        description: "create the events table",
+        sql: include_str!("runtime/migrations/0004_create_events.sql"),
+    },
+    Migration {
+        version: 5,
+        module: "runtime",
+        description: "create the checkpoints table",
+        sql: include_str!("runtime/migrations/0005_create_checkpoints.sql"),
+    },
+    Migration {
+        version: 6,
+        module: "provider",
+        description: "create the provider profiles table",
+        sql: include_str!("provider/migrations/0006_create_profiles.sql"),
+    },
+];
 
 /// How many backups of earlier schema versions the store keeps.
 const KEPT_BACKUPS: usize = 3;
