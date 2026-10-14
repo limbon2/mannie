@@ -45,6 +45,7 @@ mannie/
 │   │   └── src-tauri/           # the mannie-desktop crate (the only tauri user)
 │   └── worker/                  # the mannie-worker crate
 ├── scripts/                     # checks, the pseudo-locale, release steps, CI helpers, local ESLint rules
+├── release/                     # the public key that release signatures are checked against
 ├── tests/
 │   ├── apps/desktop/            # Vitest unit tests of the desktop app
 │   ├── e2e/                     # WebdriverIO end-to-end tests (V1, V2, V3, V11, M1's features), perf/ for NFR-PERF
