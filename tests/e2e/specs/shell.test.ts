@@ -91,7 +91,7 @@ describe('the shell', () => {
         entry.textContent.trim(),
       ),
     );
-    expect(entries).toEqual(['Back', 'Interface', 'Providers', 'Instructions', 'Tools', 'Window']);
+    expect(entries).toEqual(['Back', 'Interface', 'Providers', 'Instructions', 'Tools', 'Child agents', 'Window']);
     await waitForShownText('[id="settings-section-window.behavior"]', 'Window');
     await expect($('#interface-theme-system')).not.toBeExisting();
     await expect($('main#main textarea[aria-describedby="composer-hint"]')).not.toBeExisting();

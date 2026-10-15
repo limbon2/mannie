@@ -14,8 +14,8 @@
 
 - The conversation list is a sidebar panel ([ADR-0020](../../adr/0020-complete-the-ui-shell-slots.md)) with two groups: the projects with their conversations ([projects](projects.md#the-sidebar)), and the general conversations with a "New conversation" action, most recent first. A conversation with a running reply shows it. Each entry has a menu to rename or delete it; deleting asks for confirmation.
 - The conversation view is the app's first view, so Mannie opens into it. It opens the conversation the owner had open last, or the most recent one. Its address names the conversation: `?view=chat&conversation=<id>`.
-- The view's header shows the conversation's title, the provider profile it uses, with a menu to choose another, and the context meter. The meter shows the share of the context budget in use, with the exact counts, whether they are estimated, a link to the latest checkpoint and "Compact now".
-- The transcript scrolls by itself, and only the transcript: nothing in a reply makes the pane around it scroll. The message box stays at the bottom. While a reply streams or works with tools, the transcript follows it as long as the owner is at the bottom, also when the window or the message box changes size. Only the owner scrolling up, with the wheel, a touch, a key or the pointer, ends the following. Content that grows never ends it, however much it grows at once, and neither does the transcript moving up because the message box shrank or the window grew. A button brings the owner back to the newest message, and while a tool call waits for approval it reads "Jump to the approval request". Earlier turns load when the owner scrolls to the top.
+- The view's header shows the conversation's title, the provider profile it uses, with a menu to choose another, the controls that other features add to the toolbar through the shell ([ADR-0026](../../adr/0026-add-conversation-controls-back-for-child-agents.md)), such as the child agents' button, and the context meter. The meter shows the share of the context budget in use, with the exact counts, whether they are estimated, a link to the latest checkpoint and "Compact now".
+- The transcript scrolls by itself, and only the transcript: nothing in a reply makes the pane around it scroll. The message box stays at the bottom. While a reply streams or works with tools, the transcript follows it as long as the owner is at the bottom, also when the window or the message box changes size. Only the owner scrolling up, with the wheel, a touch, a key or the pointer, ends the following. Content that grows never ends it, however much it grows at once, and neither does the transcript moving up because the message box shrank or the window grew. A button brings the owner back to the newest message, and while a tool call waits for approval it reads "Jump to the approval request" and brings the owner to the part that waits, which can be the card of a child agent's task above later parts of the reply. Earlier turns load when the owner scrolls to the top.
 
 ### Parts
 
@@ -29,8 +29,14 @@ The conversation view renders each part through the part renderer registered for
 | Error             | The message for the failure code, with what the owner can do, and Retry when the reply can be retried         |
 | Checkpoint marker | A line between turns that says older turns are summarized for the model, with a button that opens the summary |
 
-- Below the latest reply, a status line says what the run is doing: waiting for a free slot, preparing, compacting, writing, retrying with the cause and a countdown, stopped, interrupted, failed, or cut at the output limit. Durations and counts are formatted with `Intl`. Below the status of a stopped or interrupted reply, Retry is a button that shows its icon, with "Retry" as its label and tooltip.
+- Below the latest reply, a status line says what the run is doing: waiting for a free slot, preparing, compacting, writing, waiting for its child agents with their number, retrying with the cause and a countdown, stopped, interrupted, failed, or cut at the output limit. Durations and counts are formatted with `Intl`. Below the status of a stopped or interrupted reply, Retry is a button that shows its icon, with "Retry" as its label and tooltip.
 - When a reply finishes, stops or fails, a status region announces it to screen readers. The streamed text itself is not announced word by word.
+
+### Read-only conversations
+
+A child agent's conversation belongs to the agent that gives it tasks ([child agents](../child-agents/README.md)). When the view opens one, it shows it read-only: without the profile menu, the conversation's menu, the message box and Retry. A footer says that the conversation belongs to a child agent, with "Stop" while the child works.
+
+Chat registers the side panel kind `chat.conversation` ([ADR-0025](../../adr/0025-add-side-panels-to-the-shell.md)), which shows any conversation read-only beside the main view in the same way, with the conversation's title, or a child's number and title, as its tab's label. A conversation that no longer exists says so, with "Close".
 
 ### Markdown rendering
 
@@ -50,6 +56,7 @@ The renderer follows [ADR-0021](../../adr/0021-render-model-output-as-markdown-w
 
 - Enter sends, Shift+Enter starts a new line, and Escape stops the reply while the box has the focus. The send button shows its icon, with "Send" as its label and tooltip, and becomes "Stop" while a reply runs.
 - The box keeps its text when sending fails, and says why. When no provider profile exists, the view says so and offers to open the provider settings.
+- The first message of a new conversation opens the conversation in a pane of its own, in place of the new conversation's pane. Once the conversation has loaded, the new pane's message box takes the focus, unless the owner moved the focus elsewhere meanwhile. Opening a conversation from the list or reloading the window does not put the focus there.
 
 ### Settings sections
 

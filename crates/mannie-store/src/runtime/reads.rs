@@ -5,6 +5,7 @@
 use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{CheckpointId, ConversationId, PartId, RunId, TurnId};
 use mannie_types::run::RunState;
+use mannie_types::tasks::TaskPartDocument;
 use mannie_types::tools::ToolCallDocument;
 use mannie_types::transcript::{
     Audience, Checkpoint, ContextUsage, ConversationEvent, ConversationSnapshot,
@@ -37,10 +38,13 @@ const SELECT_CONTEXT_USAGE: &str = "SELECT context_usage FROM runtime_conversati
 const SELECT_CONTEXT_LEDGER: &str = "SELECT context FROM runtime_conversations WHERE id = ?1";
 const SELECT_EVENTS_AFTER: &str = "SELECT seq, kind, part_id, body FROM runtime_events \
      WHERE conversation_id = ?1 AND seq > ?2 ORDER BY seq";
+// The conversation list holds the owner's conversations; task conversations
+// show only through their parents (docs/features/child-agents/tasks.md).
 const SELECT_ALL_SUMMARIES: &str = concat!(
     "SELECT ",
     summary_columns!(),
-    " FROM runtime_conversations c ORDER BY c.updated_at DESC, c.id DESC"
+    " FROM runtime_conversations c WHERE c.parent_conversation_id IS NULL \
+     ORDER BY c.updated_at DESC, c.id DESC"
 );
 const SELECT_CHECKPOINTS: &str = "SELECT id, covers_through_turn, content_hash, summary, created_at \
      FROM runtime_checkpoints WHERE conversation_id = ?1 \
@@ -50,12 +54,15 @@ const SELECT_CHECKPOINT_SUMMARY: &str =
 const SELECT_MODEL_TURNS: &str = "SELECT t.id, t.position, t.current_run_id, r.state FROM runtime_turns t \
      LEFT JOIN runtime_runs r ON r.id = t.current_run_id \
      WHERE t.conversation_id = ?1 AND t.position > ?2 ORDER BY t.position";
+// A task in the background keeps its part open until it ends, and the model
+// reads the call with the result it was given meanwhile (ADR-0024, decision 2).
 const SELECT_MODEL_PARTS: &str = "SELECT p.id, p.kind, p.audience, p.state, p.text, i.binding, i.item, \
      p.run_id, p.document, p.attempt \
      FROM runtime_parts p LEFT JOIN runtime_provider_items i ON i.part_id = p.id \
      WHERE p.turn_id = ?1 AND (p.run_id IS NULL OR p.run_id = ?2 \
      OR p.run_id IN (SELECT id FROM runtime_runs WHERE turn_id = ?1 AND kept = 1)) \
-     AND p.state NOT IN ('discarded', 'streaming') ORDER BY p.position";
+     AND (p.state NOT IN ('discarded', 'streaming') OR (p.state = 'streaming' AND p.kind = 'task')) \
+     ORDER BY p.position";
 const SELECT_KEPT_RUNS_OF_TURN: &str = "SELECT id, state FROM runtime_runs \
      WHERE turn_id = ?1 AND kept = 1 ORDER BY created_at, id";
 const SELECT_LATEST_TURN: &str = "SELECT t.id, r.state FROM runtime_turns t \
@@ -63,7 +70,9 @@ const SELECT_LATEST_TURN: &str = "SELECT t.id, r.state FROM runtime_turns t \
      WHERE t.conversation_id = ?1 ORDER BY t.position DESC LIMIT 1";
 const DELETE_CONVERSATION: &str = "DELETE FROM runtime_conversations WHERE id = ?1";
 const SELECT_TURN_REQUEST: &str = "SELECT text FROM runtime_parts      WHERE turn_id = ?1 AND run_id IS NULL ORDER BY position LIMIT 1";
-const SELECT_TOOL_CALLS_BEFORE: &str = "SELECT COUNT(*) FROM runtime_parts p      JOIN runtime_parts c ON c.turn_id = p.turn_id      WHERE c.id = ?1 AND p.kind = 'tool_call' AND p.position < c.position";
+const SELECT_TOOL_CALLS_BEFORE: &str = "SELECT COUNT(*) FROM runtime_parts p \
+     JOIN runtime_parts c ON c.turn_id = p.turn_id \
+     WHERE c.id = ?1 AND p.kind IN ('tool_call', 'task') AND p.position < c.position";
 const SELECT_ACTIVE_RUN_COUNT: &str =
     "SELECT COUNT(*) FROM runtime_runs WHERE state IN ('queued', 'running')";
 
@@ -170,8 +179,10 @@ pub struct ModelPart {
     pub text: String,
     /// Its provider-private data, if any.
     pub provider_item: Option<ProviderItem>,
-    /// The call of a tool call part.
+    /// The call of a tool call part, or the call record of a task part.
     pub tool_call: Option<ToolCallDocument>,
+    /// The task section of a task part.
+    pub task: Option<TaskPartDocument>,
     /// The model call of its run that wrote it, counting from 1, which tells
     /// the steps of a reply apart; 0 for the owner's message.
     pub attempt: u32,
@@ -671,11 +682,16 @@ fn model_parts(
             .zip(row.item)
             .map(|(binding, item)| ProviderItem { binding, item });
         let kind = PartKind::parse(&row.kind);
-        let tool_call = if kind == Some(PartKind::ToolCall) {
+        let (tool_call, task) = if kind.is_some_and(PartKind::is_call) {
             let document: PartDocument = from_json(&row.document, "part document")?;
-            document.tool_call
+            let task = if kind == Some(PartKind::Task) {
+                Some(document.task.unwrap_or_default())
+            } else {
+                None
+            };
+            (document.tool_call, task)
         } else {
-            None
+            (None, None)
         };
         parts.push(ModelPart {
             id: parse_id(&row.id, PartId::parse)?,
@@ -690,6 +706,7 @@ fn model_parts(
             text: row.text,
             provider_item,
             tool_call,
+            task,
             attempt: position(row.attempt.unwrap_or(0), "a part's attempt")?,
         });
     }

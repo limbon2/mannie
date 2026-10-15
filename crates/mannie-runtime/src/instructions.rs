@@ -20,6 +20,9 @@ pub struct InstructionContext<'a> {
     pub checkpoint: Option<&'a str>,
     /// Where the run's tools work, or `None` for a run without tools.
     pub tools: Option<ToolEnvironment<'a>>,
+    /// Whether the run is offered the task tools, which give tasks to child
+    /// agents.
+    pub offers_tasks: bool,
 }
 
 /// Where a run's tools work, for the environment section.
@@ -33,7 +36,7 @@ pub struct ToolEnvironment<'a> {
     /// for a general conversation.
     pub project: Option<&'a ProjectView>,
     /// The owner's projects, the oldest first, which a general conversation
-    /// can move into.
+    /// can move into; empty for a run that cannot move.
     pub projects: &'a [ProjectView],
 }
 
@@ -62,14 +65,16 @@ pub struct InstructionRegistry {
     sections: Vec<InstructionSection>,
 }
 
-/// Mannie's sections: the base instructions, the agent's instructions, the
-/// guidance on tools, the owner's instructions, where the tools work, and the
-/// checkpoint. The sections of tools appear only in runs with tools.
-pub const BUILTIN_SECTIONS: [InstructionSection; 6] = [
+/// Mannie's sections: the base instructions for whom the agent answers to,
+/// the agent's instructions, the guidance on tools and on tasks, the owner's
+/// instructions, where the tools work, and the checkpoint. The sections of
+/// tools appear only in runs with tools, and the guidance on tasks only in
+/// runs that are offered the task tools.
+pub const BUILTIN_SECTIONS: [InstructionSection; 7] = [
     InstructionSection {
         id: "base",
         position: 0,
-        text: |_context| Some(texts::BASE_INSTRUCTIONS.to_owned()),
+        text: |context| Some(texts::base_instructions(context.agent.requester).to_owned()),
     },
     InstructionSection {
         id: "agent",
@@ -80,6 +85,15 @@ pub const BUILTIN_SECTIONS: [InstructionSection; 6] = [
         id: "tools",
         position: 150,
         text: |context| context.tools.map(|_| texts::TOOL_GUIDANCE.to_owned()),
+    },
+    InstructionSection {
+        id: "tasks",
+        position: 160,
+        text: |context| {
+            context
+                .offers_tasks
+                .then(|| texts::TASKS_GUIDANCE.to_owned())
+        },
     },
     InstructionSection {
         id: "owner",
@@ -168,7 +182,7 @@ mod tests {
         DuplicateSection, InstructionContext, InstructionRegistry, InstructionSection,
         ToolEnvironment,
     };
-    use crate::agents::CONVERSATION;
+    use crate::agents::{CONVERSATION, EXPLORE};
     use crate::texts;
 
     fn project(number: u32, name: &str, folder: &str) -> ProjectView {
@@ -188,12 +202,14 @@ mod tests {
             owner_instructions: "  ",
             checkpoint: None,
             tools: None,
+            offers_tasks: false,
         };
         let full = InstructionContext {
             agent: &CONVERSATION,
             owner_instructions: "Answer in German.\n",
             checkpoint: Some("They talked about tea."),
             tools: None,
+            offers_tasks: false,
         };
 
         assert_eq!(registry.assemble(&plain), texts::BASE_INSTRUCTIONS);
@@ -222,6 +238,7 @@ mod tests {
             owner_instructions: "Owner text.",
             checkpoint: None,
             tools: None,
+            offers_tasks: false,
         };
 
         let assembled = registry.assemble(&context);
@@ -248,6 +265,7 @@ mod tests {
                 project: Some(&work),
                 projects: &projects,
             }),
+            offers_tasks: false,
         };
 
         let assembled = registry.assemble(&context);
@@ -266,6 +284,42 @@ mod tests {
             "{assembled}"
         );
         assert!(!assembled.contains("move_to_project"), "{assembled}");
+    }
+
+    #[test]
+    fn a_child_reads_its_own_base_and_only_a_parent_reads_the_guidance_on_tasks() {
+        let registry = InstructionRegistry::with_builtin();
+        let tools = ToolEnvironment {
+            system: "Linux 6.8, x86_64",
+            shell: None,
+            project: None,
+            projects: &[],
+        };
+        let parent = InstructionContext {
+            agent: &CONVERSATION,
+            owner_instructions: "Owner text.",
+            checkpoint: None,
+            tools: Some(tools),
+            offers_tasks: true,
+        };
+        let child = InstructionContext {
+            agent: &EXPLORE,
+            offers_tasks: false,
+            ..parent
+        };
+
+        let parent = registry.assemble(&parent);
+        let child = registry.assemble(&child);
+
+        assert!(parent.starts_with(texts::BASE_INSTRUCTIONS), "{parent}");
+        let guidance_at = parent.find(texts::TOOL_GUIDANCE).unwrap();
+        let tasks_at = parent.find(texts::TASKS_GUIDANCE).unwrap();
+        let owner_at = parent.find("Owner text.").unwrap();
+        assert!(guidance_at < tasks_at && tasks_at < owner_at, "{parent}");
+        assert!(child.starts_with(texts::CHILD_BASE_INSTRUCTIONS), "{child}");
+        assert!(child.contains(texts::EXPLORE_INSTRUCTIONS), "{child}");
+        assert!(!child.contains(texts::TASKS_GUIDANCE), "{child}");
+        assert!(!child.contains(texts::BASE_INSTRUCTIONS), "{child}");
     }
 
     #[test]

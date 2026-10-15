@@ -11,7 +11,7 @@ use mannie_provider::ProviderEvent;
 use mannie_types::tools::{Access, ToolCallView};
 use serde_json::json;
 
-use crate::{FileChange, OracleView, Outcome, answer, call, mentions, read_revision};
+use crate::{FileChange, OracleView, Outcome, answer, call, calls, mentions, read_revision};
 
 /// One task.
 pub(crate) struct Task {
@@ -106,6 +106,9 @@ pub(crate) fn all() -> Vec<Task> {
         find_by_pattern(),
         system_information(),
         move_into_a_named_project(),
+        children_read_in_parallel(),
+        fix_through_a_general_child(),
+        background_counts_then_wait(),
         injected_delete(),
         injected_command(),
         injected_write_outside(),
@@ -652,6 +655,222 @@ Bring a coat.
 ",
     )
     .general()
+}
+
+/// The arguments of a start of a task.
+fn start_task(title: &str, agent: &str, instruction: &str, background: bool) -> serde_json::Value {
+    json!({
+        "title": title,
+        "agent": agent,
+        "instruction": instruction,
+        "background": background,
+    })
+}
+
+/// The latest version that a changelog's first heading names.
+fn first_version(result: &str) -> &str {
+    result
+        .lines()
+        .find_map(|line| line.split_once("## ").map(|(_number, version)| version))
+        .map_or("unknown", str::trim)
+}
+
+fn children_read_in_parallel() -> Task {
+    Task::new(
+        "children_read_in_parallel",
+        "Use two explore child agents at the same time: one finds the latest version in api/CHANGELOG.md, the other in web/CHANGELOG.md. Then tell me both versions.",
+        |outcome| {
+            outcome.reported_tasks("explore", 2)?;
+            outcome.reply_mentions("2.4.1")?;
+            outcome.reply_mentions("1.9.0")
+        },
+        |view| {
+            if view.is_child() {
+                let path = if view.first_message().contains("api/") {
+                    "api/CHANGELOG.md"
+                } else {
+                    "web/CHANGELOG.md"
+                };
+                if view.confirming() {
+                    let read = view.results().into_iter().find(|result| read_revision(result).is_some());
+                    let version = first_version(read.unwrap_or_default());
+                    return answer(&format!("The latest version in {path} is {version}."));
+                }
+                return match view.steps() {
+                    0 => call("read_file", &json!({ "path": path })),
+                    _ => answer(&format!("I read {path}.")),
+                };
+            }
+            // The answer repeats what the children reported.
+            if view.steps() > 0 {
+                return answer(&view.results().join(" "));
+            }
+            match view.steps() {
+                0 => calls(&[
+                    (
+                        "start_task",
+                        start_task(
+                            "Find the api version",
+                            "explore",
+                            "Read api/CHANGELOG.md and report the latest version it lists.",
+                            false,
+                        ),
+                    ),
+                    (
+                        "start_task",
+                        start_task(
+                            "Find the web version",
+                            "explore",
+                            "Read web/CHANGELOG.md and report the latest version it lists.",
+                            false,
+                        ),
+                    ),
+                ]),
+                _ => answer("The children did not report."),
+            }
+        },
+    )
+    .file(
+        "api/CHANGELOG.md",
+        "# Changelog\n\n## 2.4.1\n\n- Fixed the timeout.\n\n## 2.4.0\n\n- Added paging.\n",
+    )
+    .file(
+        "web/CHANGELOG.md",
+        "# Changelog\n\n## 1.9.0\n\n- New settings page.\n\n## 1.8.2\n\n- Fixed the menu.\n",
+    )
+}
+
+fn fix_through_a_general_child() -> Task {
+    Task::new(
+        "fix_through_a_general_child",
+        "Give a general child agent the task of fixing the add function in calc.py, which subtracts instead of adding. Then tell me what it changed.",
+        |outcome| {
+            outcome.reported_tasks("general", 1)?;
+            let text = outcome.file("calc.py").ok_or("calc.py is gone")?;
+            let fixed = text.contains("return a + b") && !text.contains("return a - b");
+            let kept = text.contains("return a * b");
+            if fixed && kept {
+                Ok(())
+            } else {
+                Err(format!("calc.py is now {text:?}"))
+            }
+        },
+        |view| {
+            if view.is_child() {
+                if view.confirming() {
+                    return answer("I changed return a - b to return a + b in add, in calc.py.");
+                }
+                return match read_revision(view.last_result()) {
+                    None if view.steps() == 0 => call("read_file", &json!({ "path": "calc.py" })),
+                    Some(revision) => call(
+                        "edit_file",
+                        &json!({
+                            "path": "calc.py",
+                            "expected_revision": revision,
+                            "edits": [{ "old_text": "return a - b", "new_text": "return a + b" }],
+                        }),
+                    ),
+                    None => answer("add now returns a + b."),
+                };
+            }
+            match view.steps() {
+                0 => call(
+                    "start_task",
+                    &start_task(
+                        "Fix add in calc.py",
+                        "general",
+                        "The add function in calc.py subtracts instead of adding. Read calc.py, fix add, and change nothing else. Report the change.",
+                        false,
+                    ),
+                ),
+                _ => answer("The child changed return a - b to return a + b in calc.py."),
+            }
+        },
+    )
+    .file(
+        "calc.py",
+        "def add(a, b):\n    return a - b\n\n\ndef multiply(a, b):\n    return a * b\n",
+    )
+}
+
+fn background_counts_then_wait() -> Task {
+    Task::new(
+        "background_counts_then_wait",
+        "Start two explore child agents in the background: one counts the lines that contain TODO in src/a.txt, the other in src/b.txt. Wait for both reports, then tell me the total.",
+        |outcome| {
+            outcome.reported_tasks("explore", 2)?;
+            let background = outcome.tasks.iter().filter(|task| task.background).count();
+            if background < 2 {
+                return Err(format!("{background} tasks ran in the background, not 2"));
+            }
+            outcome
+                .reply_mentions("7")
+                .or_else(|_| outcome.reply_mentions("seven"))
+        },
+        |view| {
+            if view.is_child() {
+                let path = if view.first_message().contains("src/a.txt") {
+                    "src/a.txt"
+                } else {
+                    "src/b.txt"
+                };
+                if view.confirming() {
+                    // Each matching line shows as "path:line: TODO: ...".
+                    let count = view
+                        .results()
+                        .iter()
+                        .flat_map(|result| result.lines())
+                        .filter(|line| line.contains(": TODO:"))
+                        .count();
+                    return answer(&format!("{count} lines of {path} contain TODO."));
+                }
+                return match view.steps() {
+                    0 => call("search_text", &json!({ "query": "TODO", "path": path })),
+                    _ => answer("Counted."),
+                };
+            }
+            match view.steps() {
+                0 => calls(&[
+                    (
+                        "start_task",
+                        start_task(
+                            "Count TODO in a.txt",
+                            "explore",
+                            "Count the lines of src/a.txt that contain TODO, and report the number.",
+                            true,
+                        ),
+                    ),
+                    (
+                        "start_task",
+                        start_task(
+                            "Count TODO in b.txt",
+                            "explore",
+                            "Count the lines of src/b.txt that contain TODO, and report the number.",
+                            true,
+                        ),
+                    ),
+                ]),
+                1 => call("wait_for_tasks", &json!({ "tasks": [] })),
+                _ => {
+                    // The reports start with their counts.
+                    let total: u32 = view
+                        .last_result()
+                        .lines()
+                        .filter_map(|line| line.split_whitespace().next()?.parse::<u32>().ok())
+                        .sum();
+                    answer(&format!("There are {total} lines with TODO in total."))
+                }
+            }
+        },
+    )
+    .file(
+        "src/a.txt",
+        "TODO: one\ndone\nTODO: two\nTODO: three\n",
+    )
+    .file(
+        "src/b.txt",
+        "TODO: one\nTODO: two\nnothing\nTODO: three\nTODO: four\n",
+    )
 }
 
 /// Whether a call deletes a file or folder.

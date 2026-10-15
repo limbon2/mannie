@@ -624,3 +624,85 @@ async fn a_database_with_workspaces_is_upgraded_into_projects() {
         .unwrap();
     assert_eq!(violations, Vec::<String>::new());
 }
+
+/// The schema of system tools and projects (version 14) has no task
+/// conversations. Migrations 15 and 16 add them; the stored conversation, its
+/// project and its tool call read as before, as one of the owner's
+/// conversations (docs/features/child-agents/tasks.md, data). A fixture
+/// database of v0.2.0 replaces this seed once that release exists.
+#[tokio::test]
+async fn a_database_from_the_tools_schema_is_upgraded_for_task_conversations() {
+    let fixture = Fixture::new();
+    let tools_schema = &MIGRATIONS[..14];
+    let older = fixture.open(tools_schema).unwrap();
+    older
+        .write(Durability::Full, |transaction| {
+            transaction.execute_batch(
+                "INSERT INTO runtime_projects (id, name, folder, created_at, updated_at) \
+                 VALUES ('0199e0f2-7a1b-7c3d-8e4f-000000000009', NULL, '/work/app', 1, 1); \
+                 INSERT INTO runtime_conversations (id, title, title_source, profile_id, last_seq, \
+                 workspace, project_id, created_at, updated_at) \
+                 VALUES ('0199e0f2-7a1b-7c3d-8e4f-000000000001', 'With tools', 'first_message', NULL, 0, \
+                 '/work/app', '0199e0f2-7a1b-7c3d-8e4f-000000000009', 1, 1); \
+                 INSERT INTO runtime_turns (id, conversation_id, position, current_run_id, created_at) \
+                 VALUES ('0199e0f2-7a1b-7c3d-8e4f-000000000002', '0199e0f2-7a1b-7c3d-8e4f-000000000001', 0, \
+                 '0199e0f2-7a1b-7c3d-8e4f-000000000003', 1); \
+                 INSERT INTO runtime_runs (id, conversation_id, turn_id, agent, profile_id, binding, state, version, \
+                 outcome, created_at, started_at, ended_at, kept) \
+                 VALUES ('0199e0f2-7a1b-7c3d-8e4f-000000000003', '0199e0f2-7a1b-7c3d-8e4f-000000000001', \
+                 '0199e0f2-7a1b-7c3d-8e4f-000000000002', 'conversation', '0199e0f2-0000-7000-8000-000000000001', \
+                 '0199e0f2-0000-7000-8000-000000000001:1', 'completed', 1, '{}', 1, 1, 2, 0); \
+                 INSERT INTO runtime_parts (id, conversation_id, turn_id, run_id, attempt, position, kind, audience, \
+                 state, text, version, document, created_at, finished_at) \
+                 VALUES ('0199e0f2-7a1b-7c3d-8e4f-000000000004', '0199e0f2-7a1b-7c3d-8e4f-000000000001', \
+                 '0199e0f2-7a1b-7c3d-8e4f-000000000002', NULL, NULL, 0, 'user_text', 'both', 'complete', 'List it', \
+                 1, '{}', 1, 1), \
+                 ('0199e0f2-7a1b-7c3d-8e4f-000000000005', '0199e0f2-7a1b-7c3d-8e4f-000000000001', \
+                 '0199e0f2-7a1b-7c3d-8e4f-000000000002', '0199e0f2-7a1b-7c3d-8e4f-000000000003', 1, 1, 'tool_call', \
+                 'both', 'complete', '{\"path\":\".\"}', 1, \
+                 '{\"toolCall\":{\"callId\":\"call_1\",\"tool\":\"list_directory\",\"status\":\"completed\"}}', 1, 2);",
+            )
+        })
+        .await
+        .unwrap();
+    drop(older);
+    assert_eq!(user_version(&fixture.database()), 14);
+
+    let upgraded = fixture.open(MIGRATIONS).unwrap();
+
+    assert_eq!(user_version(&fixture.database()), Store::schema_version());
+    let conversations = upgraded.list_conversations().await.unwrap();
+    let [conversation] = conversations.as_slice() else {
+        panic!("{conversations:?}");
+    };
+    assert_eq!(conversation.title, "With tools");
+    assert_eq!(conversation.task, None);
+    assert_eq!(conversation.workspace.as_deref(), Some("/work/app"));
+    let turns = upgraded.model_turns(&conversation.id, None).await.unwrap();
+    assert_eq!(turns[0].parts.len(), 2);
+    assert_eq!(
+        turns[0].parts[1]
+            .tool_call
+            .as_ref()
+            .map(|call| call.tool.as_str()),
+        Some("list_directory")
+    );
+    assert_eq!(turns[0].parts[1].task, None);
+    assert_eq!(
+        upgraded.task_conversations(&conversation.id).await.unwrap(),
+        Vec::new()
+    );
+    assert_eq!(
+        upgraded.next_task_number(&conversation.id).await.unwrap(),
+        1
+    );
+    let violations: Vec<String> = upgraded
+        .read(|connection| {
+            let mut check = connection.prepare("PRAGMA foreign_key_check")?;
+            let rows = check.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect()
+        })
+        .await
+        .unwrap();
+    assert_eq!(violations, Vec::<String>::new());
+}

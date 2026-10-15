@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use mannie_provider::testing::Step;
 use mannie_provider::{
-    EventStream, HttpClient, ModelRequest, Provider, ProviderError, ProviderEvent,
+    Content, EventStream, HttpClient, ModelRequest, Provider, ProviderError, ProviderEvent,
     ProviderRegistry, Target,
 };
 use mannie_store::{Store, StoreOptions};
@@ -26,6 +26,7 @@ use mannie_types::provider::{
 };
 use mannie_types::run::{FinishReason, RunFailure, RunState, RunView, Usage};
 use mannie_types::secret::Secret;
+use mannie_types::tasks::{TaskCallView, TaskView};
 use mannie_types::tools::ToolCallView;
 use mannie_types::transcript::{
     ConversationEvent, ConversationUpdate, PartContent, PartState, TurnView,
@@ -143,6 +144,9 @@ struct ModelState {
     context_window: Option<u32>,
     full_summaries: bool,
     replies: VecDeque<Vec<Step>>,
+    /// Scripts for the reply calls whose first message holds a marker, in
+    /// order for each marker.
+    routed: Vec<(String, VecDeque<Vec<Step>>)>,
     summaries: VecDeque<Vec<Step>>,
     requests: Vec<ModelRequest>,
     summaries_written: u32,
@@ -184,6 +188,33 @@ impl FakeModel {
         lock(&self.state).replies.push_back(steps);
     }
 
+    /// Adds the script of the next reply call whose first message contains
+    /// `marker`, such as a child agent's instruction. A call whose first
+    /// message holds no marker with a script left plays the next script of
+    /// [`Self::push_reply`].
+    pub fn push_reply_for(&self, marker: &str, steps: Vec<Step>) {
+        let mut state = lock(&self.state);
+        if let Some((_marker, scripts)) = state
+            .routed
+            .iter_mut()
+            .find(|(known, _scripts)| known == marker)
+        {
+            scripts.push_back(steps);
+        } else {
+            state
+                .routed
+                .push((marker.to_owned(), VecDeque::from([steps])));
+        }
+    }
+
+    /// The requests of reply calls whose first message contains `marker`.
+    pub fn requests_for(&self, marker: &str) -> Vec<ModelRequest> {
+        self.reply_requests()
+            .into_iter()
+            .filter(|request| first_message(request).contains(marker))
+            .collect()
+    }
+
     /// Adds the script of the next summary call.
     pub fn push_summary(&self, steps: Vec<Step>) {
         lock(&self.state).summaries.push_back(steps);
@@ -220,6 +251,25 @@ impl FakeModel {
 
 fn is_summary(request: &ModelRequest) -> bool {
     request.instructions == texts::COMPACTION_INSTRUCTIONS
+}
+
+/// The text of a request's first message: the owner's first message, or a
+/// child agent's instruction.
+fn first_message(request: &ModelRequest) -> String {
+    request
+        .messages
+        .first()
+        .map(|message| {
+            message
+                .content
+                .iter()
+                .filter_map(|content| match content {
+                    Content::Text(text) => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Mannie's estimate of a request's input, in tokens.
@@ -306,6 +356,7 @@ impl Provider for FakeModel {
         let summary = is_summary(&request);
         let needed = estimate(&request).saturating_add(request.max_output_tokens);
         let max_output_tokens = request.max_output_tokens;
+        let first = first_message(&request);
         let steps = {
             let mut state = lock(&self.state);
             let overflows = state.context_window.is_some_and(|window| needed > window);
@@ -334,11 +385,17 @@ impl Provider for FakeModel {
                     reply(&text)
                 })
             } else {
+                let routed = state
+                    .routed
+                    .iter_mut()
+                    .find(|(marker, scripts)| {
+                        !scripts.is_empty() && first.contains(marker.as_str())
+                    })
+                    .and_then(|(_marker, scripts)| scripts.pop_front());
                 // A reply without a script fails, so that a test that makes
                 // more calls than it expects notices.
-                state
-                    .replies
-                    .pop_front()
+                routed
+                    .or_else(|| state.replies.pop_front())
                     .unwrap_or_else(|| failure(ProviderError::Permanent(RunFailure::Internal)))
             }
         };
@@ -712,8 +769,11 @@ fn append_text(content: &mut PartContent, delta: &str) {
         | PartContent::Reasoning { text } => {
             text.push_str(delta);
         }
-        // A tool call's arguments arrive with the part's next update.
-        PartContent::ToolCall { .. } | PartContent::Error { .. } | PartContent::Unknown { .. } => {}
+        // A call's arguments arrive with the part's next update.
+        PartContent::ToolCall { .. }
+        | PartContent::Task { .. }
+        | PartContent::Error { .. }
+        | PartContent::Unknown { .. } => {}
     }
 }
 
@@ -877,6 +937,26 @@ impl Transcript {
                 PartContent::ToolCall { call } => Some(*call),
                 _ => None,
             })
+            .collect()
+    }
+
+    /// The calls of task tools of the turn at `position`, in order.
+    pub fn task_calls(&self, position: u32) -> Vec<TaskCallView> {
+        self.parts(position)
+            .into_iter()
+            .filter_map(|part| match part.content {
+                PartContent::Task { call } => Some(*call),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The tasks that the calls of the turn at `position` assigned, in
+    /// order.
+    pub fn tasks(&self, position: u32) -> Vec<TaskView> {
+        self.task_calls(position)
+            .into_iter()
+            .filter_map(|call| call.task)
             .collect()
     }
 

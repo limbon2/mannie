@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                                                                                                                                                               |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                                                                                                                                                                              |
-| Last updated | 2026-10-14                                                                                                                                                                                                                                                                                                                    |
+| Last updated | 2026-10-15                                                                                                                                                                                                                                                                                                                    |
 | Related      | [ADR-0003](../adr/0003-build-the-desktop-app-on-tauri-2.md), [ADR-0004](../adr/0004-keep-system-access-in-the-rust-core.md), [ADR-0005](../adr/0005-build-the-ui-with-sveltekit-as-a-static-spa.md), [ADR-0006](../adr/0006-use-shadcn-svelte-through-its-cli.md), [ADR-0007](../adr/0007-generate-ipc-bindings-from-rust.md) |
 
 The desktop app is the master. It is a Tauri 2 application with a Rust core and a SvelteKit UI in the operating system's webview.
@@ -71,6 +71,8 @@ apps/desktop/
 │       │       ├── shell/       # the shell: frame, sidebars, command palette, settings pages and startup views
 │       │       ├── markdown/    # model output as Markdown, and the confirmation of links (ADR-0021)
 │       │       ├── chat/        # conversations, the transcript's parts, provider profiles and instructions
+│       │       ├── tools/       # tool calls and their approvals, permissions, rules and the tools settings
+│       │       ├── child-agents/  # the cards of tasks and the child agents settings
 │       │       └── window-and-tray/  # the questions about closing, and the window settings
 │       ├── state/               # state modules: the shell's slots, settings, conversations, profiles, the window's questions
 │       ├── utils/               # helpers: messages for error codes, the transcript's reducer, Markdown, calls, ordering
@@ -88,6 +90,7 @@ apps/desktop/
 - The root layout's load function asks the core whether it started and loads the interface settings with their locale before anything renders.
 - `composeShell()` creates the shell's slots, registers the shell's own entries (the interface settings and the commands for the settings and the theme), then calls each feature's registration. The shell renders whatever the slots hold and never imports a feature.
 - The settings are a page of their own (`/settings`). The shell then shows the settings sidebar in place of the main one: a link back to the main view as the owner left it, and a page per settings section, which the `section` search parameter selects.
+- Side panels open beside the main view, in a resizable split that keeps its size in the webview's storage, or over the view when the main area is narrower than 720 pixels ([ADR-0025](../adr/0025-add-side-panels-to-the-shell.md)). The main view's address holds the open panels, one `panel` search parameter each, and the visible one in `shown-panel`, so a view that opens other content leaves them behind, the settings lead back to them and a reload shows them again. `state/side-panels.svelte.ts` opens, shows and closes them and moves the focus.
 - State lives in `.svelte.ts` modules in `state/` that use runes. Each open conversation has a state object that its channel subscription feeds.
 - Components are small and do one thing. A view composes feature components through the shell's slots instead of importing features directly.
 - Styling uses Tailwind CSS utilities and the theme tokens of shadcn-svelte, without hard-coded colors or per-feature global stylesheets.

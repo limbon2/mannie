@@ -21,6 +21,7 @@ function conversation(id: string, projectId: string | null, updatedAt: number): 
     id,
     profileId: null,
     projectId,
+    task: null,
     title: id,
     titleSource: 'first_message',
     updatedAt,

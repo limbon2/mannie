@@ -20,6 +20,13 @@ export const PROJECT_PARAMETER = 'project';
 /** The ID of the provider profiles' settings section, whose page other chat views link to. */
 export const PROVIDER_SETTINGS_SECTION = 'chat.providers';
 
+/**
+ * The kind of side panel that shows a conversation read-only, with the
+ * conversation's ID as its argument (ADR-0025, decision 7). Other features
+ * open it by this ID, such as child agents for their task conversations.
+ */
+export const CONVERSATION_PANEL = 'chat.conversation';
+
 /** The search parameters of a conversation in the chat view. */
 export function conversationQuery(id: string): string {
   return new URLSearchParams({ [CONVERSATION_PARAMETER]: id, [VIEW_PARAMETER]: CHAT_VIEW }).toString();

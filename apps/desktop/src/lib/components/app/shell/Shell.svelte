@@ -4,9 +4,11 @@
   import { afterNavigate } from '$app/navigation';
   import { page } from '$app/state';
 
+  import * as Resizable from '#lib/components/ui/resizable/index.js';
   import * as Sidebar from '#lib/components/ui/sidebar/index.js';
   import { m } from '#lib/paraglide/messages.js';
   import { getShellSlots } from '#lib/state/shell-slots.svelte.js';
+  import { MAIN_AREA_ID, sidePanels } from '#lib/state/side-panels.svelte.js';
   import { openSettings } from '#lib/utils/settings-sections.js';
   import { activeView } from '#lib/utils/views.js';
 
@@ -14,14 +16,36 @@
   import SettingsSidebar from './SettingsSidebar.svelte';
   import ShellSidebar from './ShellSidebar.svelte';
   import SidebarToggle from './SidebarToggle.svelte';
+  import SidePanelArea from './SidePanelArea.svelte';
 
   let { children }: { children: Snippet } = $props();
+
+  /** Below this width of the main area in pixels, an open side panel covers the view (ADR-0025, decision 2). */
+  const NARROW_MAIN_AREA = 720;
+  /** The side pane's share of the main area when it first opens, and its limits, in percent. */
+  const SIDE_PANE_DEFAULT = 40;
+  const SIDE_PANE_MIN = 25;
+  const SIDE_PANE_MAX = 65;
+  const MAIN_PANE_MIN = 35;
+  // PaneForge keeps a layout for each set of panes under their IDs, so the IDs
+  // stay the same from one start to the next.
+  const MAIN_PANE_ID = 'shell-main-pane';
+  const SIDE_PANE_ID = 'shell-side-pane';
 
   let paletteOpen = $state(false);
   /** The main view's search parameters as the owner last saw them, where the settings lead back to. */
   let mainViewSearch = $state('');
+  /** The width of the main area below the header, in pixels; 0 until it is measured. */
+  let areaWidth = $state(0);
 
   const slots = getShellSlots();
+
+  const hasPanels = $derived(sidePanels.state.panels.length > 0);
+  // An area that is not measured yet counts as wide, so that a reload with
+  // panels does not show them over the view for a moment.
+  const narrow = $derived(areaWidth > 0 && areaWidth < NARROW_MAIN_AREA);
+  const split = $derived(hasPanels && !narrow);
+  const covered = $derived(hasPanels && narrow);
 
   const onSettings = $derived(page.route.id === '/settings');
   const title = $derived(viewTitle());
@@ -89,13 +113,42 @@
   {:else}
     <ShellSidebar onFindCommand={() => (paletteOpen = true)} />
   {/if}
-  <Sidebar.Inset id="main" class="min-h-0 overflow-hidden" tabindex={-1}>
+  <Sidebar.Inset id={MAIN_AREA_ID} class="min-h-0 overflow-hidden" tabindex={-1}>
     <header class="flex h-12 shrink-0 items-center gap-2 border-b px-3">
       <SidebarToggle />
       <h1 class="truncate text-sm font-medium" data-content={titleIsContent ? '' : undefined}>{title}</h1>
     </header>
-    <div class="flex min-h-0 flex-1 flex-col overflow-auto">
-      {@render children()}
+    <!-- The view stays in the same pane whether side panels are open or not,
+         so opening one never starts the view over. -->
+    <div class="relative flex min-h-0 flex-1" bind:clientWidth={areaWidth}>
+      <Resizable.PaneGroup class="min-h-0" autoSaveId="mannie.shell.side-panels" direction="horizontal">
+        <Resizable.Pane id={MAIN_PANE_ID} class="flex min-h-0 flex-col" minSize={MAIN_PANE_MIN} order={0}>
+          <div class="flex min-h-0 flex-1 flex-col overflow-auto" inert={covered}>
+            {@render children()}
+          </div>
+        </Resizable.Pane>
+        {#if split}
+          <!-- The window splitter pattern: PaneForge gives the handle the main
+               pane's share as its value and names that pane as the one it
+               controls; the name and the orientation come from here. -->
+          <Resizable.Handle aria-label={m.shell_side_panel_resize()} aria-orientation="vertical" withHandle />
+          <Resizable.Pane
+            id={SIDE_PANE_ID}
+            class="flex min-h-0 flex-col"
+            defaultSize={SIDE_PANE_DEFAULT}
+            maxSize={SIDE_PANE_MAX}
+            minSize={SIDE_PANE_MIN}
+            order={1}
+          >
+            <SidePanelArea />
+          </Resizable.Pane>
+        {/if}
+      </Resizable.PaneGroup>
+      {#if covered}
+        <div class="absolute inset-0 z-10 flex flex-col">
+          <SidePanelArea />
+        </div>
+      {/if}
     </div>
   </Sidebar.Inset>
 </Sidebar.Provider>

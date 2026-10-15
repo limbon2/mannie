@@ -93,6 +93,7 @@ function snapshot(turns: TurnView[], throughSeq: number): ConversationUpdate {
       hasActiveRun: false,
       id: CONVERSATION,
       profileId: null,
+      task: null,
       title: 'Title',
       titleSource: 'first_message',
       updatedAt: 0,

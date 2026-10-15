@@ -1,14 +1,15 @@
 <script lang="ts">
   import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
   import PlusIcon from '@lucide/svelte/icons/plus';
-  import { onMount, untrack } from 'svelte';
+  import { onMount } from 'svelte';
 
   import * as Collapsible from '#lib/components/ui/collapsible/index.js';
   import * as Sidebar from '#lib/components/ui/sidebar/index.js';
   import { m } from '#lib/paraglide/messages.js';
-  import { conversationList } from '#lib/state/conversation-list.svelte.js';
+  import { conversationList, type ConversationMove } from '#lib/state/conversation-list.svelte.js';
   import { projectActions } from '#lib/state/project-actions.svelte.js';
   import { sidebarCollapse } from '#lib/state/sidebar-collapse.svelte.js';
+  import { startedConversationId } from '#lib/state/started-conversation.js';
   import { openConversationId } from '#lib/utils/chat-urls.js';
 
   import ProjectRow from './ProjectRow.svelte';
@@ -21,39 +22,29 @@
   // group below says why.
   const groups = $derived(conversationList.grouped.projects);
 
-  const openId = $derived(openConversationId());
-  // The open conversation's project: `undefined` while the list does not know
-  // the conversation, `null` for a general conversation.
-  const openProject = $derived(openId === null ? undefined : conversationList.find(openId)?.projectId);
-
-  // What the effect below saw last; it is no state, since nothing renders it.
-  let seen: { readonly conversation: string | null; readonly project: string | null | undefined } = {
-    conversation: null,
-    project: undefined,
-  };
-
   function setOpen(open: boolean): void {
     sidebarCollapse.setProjectsOpen(open);
   }
 
-  // When the open conversation moves into a collapsed project, the project
-  // expands, so the owner sees where the conversation went. Opening or
-  // reloading a conversation keeps what the owner collapsed. The effect only
-  // writes the sidebar's collapsed state, which it does not read.
-  $effect(() => {
-    const conversation = openId;
-    const project = openProject;
-    const isSameConversation = conversation === seen.conversation;
-    const wasGeneral = seen.project === null;
-    const isInProject = typeof project === 'string';
-    seen = { conversation, project };
-    if (isSameConversation && wasGeneral && isInProject) {
-      untrack(() => sidebarCollapse.reveal(project));
+  /**
+   * When the open conversation moves into a collapsed project, the project
+   * expands, so the owner sees where the conversation went. The conversation
+   * that a first message started counts as open until the view shows it,
+   * since its reply can move it before then. Opening or reloading a
+   * conversation keeps what the owner collapsed.
+   */
+  function revealMove(move: ConversationMove): void {
+    const openId = openConversationId();
+    const isOpen = move.conversationId === openId;
+    const isOpening = openId === null && move.conversationId === startedConversationId();
+    if (isOpen || isOpening) {
+      sidebarCollapse.reveal(move.projectId);
     }
-  });
+  }
 
   onMount(() => {
     conversationList.start();
+    return conversationList.onMove(revealMove);
   });
 </script>
 

@@ -13,15 +13,17 @@ vi.mock('mode-watcher', () => ({ resetMode: vi.fn(), setMode: vi.fn() }));
 
 /**
  * A feature as a later milestone adds one: a view, its navigation entry, a
- * command, a settings section, a sidebar panel, an overlay and a part
- * renderer.
+ * command, a settings section, a sidebar panel, an overlay, a part renderer,
+ * a kind of side panel and a conversation control.
  */
 function registerExampleFeature(slots: ShellSlots): void {
   const component = () => ({});
   slots.views.register({ component, id: 'example', title: () => 'Example' });
   slots.sidebarPanels.register({ component, id: 'example.panel', order: 0 });
   slots.overlays.register({ component, id: 'example.overlay' });
+  slots.sidePanels.register({ component, defaultLabel: () => 'Example', icon: component, id: 'example.side' });
   slots.partRenderers.register({ component, id: 'example_part' });
+  slots.conversationControls.register({ component, id: 'example.control', order: 0 });
   slots.navigation.register({ icon: component, id: 'example', label: () => 'Example', order: 0, view: 'example' });
   slots.commands.register({
     group: () => 'Example',
@@ -47,6 +49,7 @@ describe('composeShell', () => {
     expect(slots.settingsSections.entries.map((section) => section.id)).toEqual(['shell.interface']);
     expect(slots.commands.entries.map((command) => command.id)).toEqual([
       'shell.open-settings',
+      'shell.close-side-panel',
       'shell.theme-light',
       'shell.theme-dark',
       'shell.theme-system',
@@ -56,6 +59,8 @@ describe('composeShell', () => {
     expect(slots.sidebarPanels.entries).toEqual([]);
     expect(slots.overlays.entries.map((overlay) => overlay.id)).toEqual(['shell.link-confirmation']);
     expect(slots.partRenderers.entries).toEqual([]);
+    expect(slots.sidePanels.entries).toEqual([]);
+    expect(slots.conversationControls.entries).toEqual([]);
   });
 
   it('composes the app’s features beside the shell, with chat first', async () => {
@@ -65,6 +70,8 @@ describe('composeShell', () => {
 
     expect(slots.views.entries.map((view) => view.id)).toEqual(['chat']);
     expect(slots.sidebarPanels.entries.map((panel) => panel.id)).toEqual(['chat.projects', 'chat.conversations']);
+    expect(slots.sidePanels.entries.map((kind) => kind.id)).toEqual(['chat.conversation']);
+    expect(slots.conversationControls.entries.map((control) => control.id)).toEqual(['child-agents.control']);
     expect(slots.overlays.entries.map((overlay) => overlay.id)).toEqual([
       'shell.link-confirmation',
       'chat.dialogs',
@@ -77,6 +84,7 @@ describe('composeShell', () => {
       'reasoning',
       'error',
       'tool_call',
+      'task',
     ]);
     expect(slots.settingsSections.entries.map((section) => section.id)).toEqual([
       'shell.interface',
@@ -84,6 +92,7 @@ describe('composeShell', () => {
       'chat.instructions',
       'window.behavior',
       'tools.settings',
+      'child-agents.settings',
     ]);
     expect(slots.commands.entries.map((command) => command.id)).toEqual(
       expect.arrayContaining(['chat.add-project', 'chat.add-project-from-path', 'tools.show-permissions']),
@@ -100,6 +109,8 @@ describe('composeShell', () => {
     expect(slots.sidebarPanels.find('example.panel')).toBeDefined();
     expect(slots.overlays.find('example.overlay')).toBeDefined();
     expect(slots.partRenderers.find('example_part')).toBeDefined();
+    expect(slots.sidePanels.find('example.side')).toBeDefined();
+    expect(slots.conversationControls.find('example.control')).toBeDefined();
     expect(slots.settingsSections.entries.map((section) => section.id)).toEqual([
       'shell.interface',
       'example.settings',

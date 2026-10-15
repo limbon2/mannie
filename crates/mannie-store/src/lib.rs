@@ -24,8 +24,9 @@ pub use error::{DatabaseError, StoreError};
 pub use provider::{ProfileFields, ProfileStoreError, StoredProfile};
 pub use runtime::{
     AddedProject, Applied, Change, ConversationList, EventsAfter, KeptRun, ModelPart, ModelTurn,
-    NewArchive, NewCheckpoint, NewConversation, NewPart, NewRun, ProjectDeletion, ProviderItem,
-    Recovered, RuntimeStoreError, StoredArchive, StoredCheckpoint, UncertainCall,
+    NewArchive, NewCheckpoint, NewConversation, NewPart, NewRun, NewTask, ProjectDeletion,
+    ProviderItem, Recovered, RuntimeStoreError, StoredArchive, StoredCheckpoint, StoredChild,
+    StoredTask, TaskEnding, TaskOrigin, UncertainCall,
 };
 pub use settings::SettingsStoreError;
 pub use store::{Store, StoreOptions};

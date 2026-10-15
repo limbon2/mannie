@@ -15,11 +15,19 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - The Tools settings: changes inside the workspace without asking, the command rules, the grants for projects and every conversation, and the environment variables that commands receive.
 - A "Use tools" switch for each provider profile, and a Tools check in the provider test.
 - Evaluations of the system tools with real models and with a scripted oracle, `task tools:eval` and a weekly workflow.
+- Child agents: the conversation agent gives self-contained tasks to explore children, which only read and search, and general children, which can also change files and run commands, on the same computer and in the conversation's workspace, in parallel, in the background, and as follow-ups that keep the child's context; only each child's confirmed report reaches the conversation.
+- The card of each task in the reply, with the child's number, title, state and current activity, the child's approval requests to answer in place, Stop for one child, and the instruction and the report on demand.
+- Side panels beside the main view: "Open conversation" shows a child's whole conversation read-only, with a tab for each open conversation that has its own Close, a resizable split that works from the keyboard, and Close the side panel in the command palette.
+- A "Child agents" button in the conversation's toolbar that says how many child agents work, lists them, and opens a child's conversation in a side panel.
+- The Child agents settings: how many child agents work at the same time, from 1 to 16, 4 by default.
+- Evaluations of tasks split across child agents.
 
 ### Fixed
 
 - The conversation view stops following a reply only when the owner scrolls up; a tool call or an approval request that appeared at once, or a message box that shrank after sending, could end the following and leave the newest activity out of view.
 - A long reply no longer stretches the pane around the conversation: the text that only screen readers read escaped the transcript's scrolling, so the wheel could scroll the whole view away into empty space.
+- The message box keeps the focus after the first message of a new conversation; the conversation's own pane replaced the new conversation's, and the focus fell to the page.
+- A collapsed project expands whenever the open conversation moves into it; a move that came in the same batch of updates as the new conversation, or before the view showed the conversation, left it collapsed.
 
 ### Security
 

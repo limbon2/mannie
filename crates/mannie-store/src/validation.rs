@@ -129,6 +129,7 @@ async fn seed(
                     title: "A long conversation".to_owned(),
                     profile_id: None,
                     project_id: None,
+                    task: None,
                 },
             });
             created = true;
@@ -148,6 +149,7 @@ async fn seed(
                     profile_id: profile.clone(),
                     binding: format!("{profile}:1"),
                 },
+                task: None,
             });
             changes.push(Change::StartRun {
                 run_id: run_id.clone(),
@@ -186,6 +188,7 @@ async fn seed(
                     finish: Some(FinishReason::Stop),
                     ..RunOutcome::default()
                 },
+                task: None,
             });
             written += 1;
         }

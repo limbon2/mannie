@@ -93,9 +93,11 @@ function appendText(part: PartView, text: string): void {
       return;
     }
     case 'error':
+    case 'task':
     case 'tool_call':
     case 'unknown': {
-      // A tool call's arguments arrive whole, with the part's next update.
+      // A call's arguments arrive whole, with the part's next update; a
+      // task's view never carries them.
       return;
     }
   }

@@ -1,7 +1,9 @@
 // The conversation list (docs/features/chat/conversation-view.md, layout;
 // projects.md): the whole list and the projects from the core first, then
 // each conversation and project that is created, changed or deleted. The
-// window follows it for as long as it runs.
+// window follows it for as long as it runs. Updates arrive in batches, so the
+// list announces each move of a conversation into a project as it applies
+// it: a batch can hold a new conversation and its move.
 import {
   type ChatError,
   commands,
@@ -21,6 +23,23 @@ function newestFirst(left: ConversationSummary, right: ConversationSummary): num
     return byTime;
   }
   return right.id.localeCompare(left.id);
+}
+
+/** A general conversation that moved into a project. */
+export interface ConversationMove {
+  readonly conversationId: string;
+  readonly projectId: string;
+}
+
+/** Whether a conversation's update moves it from the general conversations into a project. */
+function moveOf(previous: ConversationSummary | undefined, next: ConversationSummary): ConversationMove | null {
+  const wasGeneral = previous?.projectId === null;
+  const projectId = next.projectId;
+  const isInProject = projectId !== null;
+  if (!wasGeneral || !isInProject) {
+    return null;
+  }
+  return { conversationId: next.id, projectId };
 }
 
 /** The oldest first, as the core sorts them. */
@@ -44,6 +63,8 @@ export class ConversationList {
   readonly grouped: GroupedConversations = $derived(groupConversations(this.conversations, this.projects));
   /** Counts subscriptions, so that the updates of an ended one change nothing. */
   #generation = 0;
+  /** The functions that hear of moves; no state, since nothing renders them. */
+  readonly #moveListeners: ((move: ConversationMove) => void)[] = [];
   #started = false;
   #subscription: SubscriptionId | null = null;
 
@@ -55,6 +76,21 @@ export class ConversationList {
   /** The project with this ID, if the list has it. */
   findProject(id: string): ProjectView | undefined {
     return this.projects.find((project) => project.id === id);
+  }
+
+  /**
+   * Calls `listener` for each general conversation that moves into a
+   * project, as the list applies the move. Returns a function that stops
+   * the calls.
+   */
+  onMove(listener: (move: ConversationMove) => void): () => void {
+    this.#moveListeners.push(listener);
+    return () => {
+      const index = this.#moveListeners.indexOf(listener);
+      if (index !== -1) {
+        this.#moveListeners.splice(index, 1);
+      }
+    };
   }
 
   /** Adds or replaces a project that a command returned, before its update arrives through the channel. */
@@ -100,16 +136,35 @@ export class ConversationList {
         return;
       }
       case 'snapshot': {
+        // A list that subscribes again after it fell behind can find moves
+        // in the new snapshot.
+        const previous: Partial<Record<string, ConversationSummary>> = Object.fromEntries(
+          this.conversations.map((known) => [known.id, known]),
+        );
         this.conversations = [...update.conversations].sort(newestFirst);
         this.projects = [...update.projects].sort(oldestFirst);
         this.status = 'ready';
         this.failure = null;
+        for (const conversation of update.conversations) {
+          this.#announce(moveOf(previous[conversation.id], conversation));
+        }
         return;
       }
       case 'upserted': {
+        const before = this.find(update.conversation.id);
         const others = this.conversations.filter((conversation) => conversation.id !== update.conversation.id);
         this.conversations = [...others, update.conversation].sort(newestFirst);
+        this.#announce(moveOf(before, update.conversation));
       }
+    }
+  }
+
+  #announce(move: ConversationMove | null): void {
+    if (move === null) {
+      return;
+    }
+    for (const listener of [...this.#moveListeners]) {
+      listener(move);
     }
   }
 

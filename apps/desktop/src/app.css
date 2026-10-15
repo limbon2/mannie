@@ -152,3 +152,15 @@
     display: contents;
   }
 }
+
+/*
+ * While a pane resizer is dragged with the pointer, PaneForge sets the cursor
+ * of the whole page through a style element, which the Content Security
+ * Policy blocks (ADR-0004). This rule shows the same cursor while the side
+ * panel's handle is dragged.
+ */
+@layer base {
+  :root:has([data-pane-resizer][data-active="pointer"][data-direction="horizontal"]) * {
+    cursor: ew-resize !important;
+  }
+}

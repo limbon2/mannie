@@ -17,7 +17,7 @@ use mannie_provider::ProviderError;
 use mannie_provider::ProviderEvent;
 use mannie_provider::testing::Step;
 use mannie_runtime::testing::{
-    Harness, HarnessOptions, Transcript, fast_config, reply, server_error,
+    Harness, HarnessOptions, Transcript, fast_config, reply, server_error, tool_calls,
 };
 use mannie_runtime::{Runtime, RuntimeConfig, SubscriptionLimits};
 use mannie_store::Store;
@@ -36,6 +36,9 @@ enum Outcome {
     RetriesOnce,
     /// A permanent failure after the deltas, then a retry by the owner.
     FailsThenRetried,
+    /// A task in the background whose child streams the deltas, a wait for
+    /// its report, then the reply.
+    GivesATask,
 }
 
 #[derive(Debug, Clone)]
@@ -60,6 +63,7 @@ fn turn_plan() -> impl Strategy<Value = TurnPlan> {
             3 => Just(Outcome::Completes),
             1 => Just(Outcome::RetriesOnce),
             1 => Just(Outcome::FailsThenRetried),
+            1 => Just(Outcome::GivesATask),
         ],
     )
         .prop_map(|(deltas, outcome)| TurnPlan { deltas, outcome })
@@ -88,7 +92,7 @@ fn streamed(plan: &TurnPlan) -> Vec<Step> {
     steps
 }
 
-fn script(harness: &Harness, plan: &TurnPlan) {
+fn script(harness: &Harness, index: usize, plan: &TurnPlan) {
     let mut steps = streamed(plan);
     match plan.outcome {
         Outcome::Completes => {
@@ -106,6 +110,33 @@ fn script(harness: &Harness, plan: &TurnPlan) {
             )));
             harness.model.push_reply(steps);
             harness.model.push_reply(reply("retried by the owner"));
+        }
+        Outcome::GivesATask => {
+            let marker = format!("CHILD-{index}");
+            let start = serde_json::json!({
+                "activity": "Delegating",
+                "title": format!("Task {index}"),
+                "agent": "explore",
+                "instruction": format!("{marker}: look around"),
+                "background": true,
+            })
+            .to_string();
+            harness.model.push_reply(tool_calls(&[(
+                &format!("start_{index}"),
+                "start_task",
+                &start,
+            )]));
+            harness.model.push_reply(tool_calls(&[(
+                &format!("wait_{index}"),
+                "wait_for_tasks",
+                r#"{"tasks":[]}"#,
+            )]));
+            let mut child = streamed(plan);
+            child.push(Step::Event(ProviderEvent::Finished(FinishReason::Stop)));
+            harness.model.push_reply_for(&marker, child);
+            harness.model.push_reply_for(&marker, reply("Report."));
+            steps.push(Step::Event(ProviderEvent::Finished(FinishReason::Stop)));
+            harness.model.push_reply(steps);
         }
     }
 }
@@ -136,8 +167,8 @@ async fn drive(
     turns: Vec<TurnPlan>,
     finished: watch::Sender<Option<u32>>,
 ) -> ConversationId {
-    for plan in &turns {
-        script(harness, plan);
+    for (index, plan) in turns.iter().enumerate() {
+        script(harness, index, plan);
     }
     let started = harness
         .runtime
@@ -294,6 +325,8 @@ fn run_case(
                 },
                 ..fast_config()
             },
+            // Tasks need tools; a reply without them streams as before.
+            use_tools: true,
             ..HarnessOptions::default()
         })
         .await;
@@ -369,4 +402,26 @@ fn a_slow_subscriber_falls_behind_and_catches_up_from_its_cursor() {
     let seen = run_case(turns, subscribers).unwrap();
 
     assert!(seen[0].lagged > 0, "the slow subscriber never fell behind");
+}
+
+#[test]
+fn a_subscriber_follows_a_task_to_its_report() {
+    let turns = vec![TurnPlan {
+        deltas: (0..20).map(|index| (format!("{index} "), 1)).collect(),
+        outcome: Outcome::GivesATask,
+    }];
+    let subscribers = vec![SubscriberPlan {
+        start_delay_ms: 0,
+        from_first_event: true,
+        reconnect_after: 4,
+        reconnects: 1,
+        pace_ms: 1,
+    }];
+
+    let seen = run_case(turns, subscribers).unwrap();
+
+    let tasks = seen[0].transcript.tasks(0);
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].state, mannie_types::tasks::TaskState::Reported);
+    assert_eq!(tasks[0].report.as_deref(), Some("Report."));
 }

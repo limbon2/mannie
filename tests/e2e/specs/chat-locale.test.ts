@@ -11,8 +11,10 @@ import { Key } from 'webdriverio';
 import {
   addProfile,
   addProject,
+  callMessage,
   clickWithText,
   COMPOSER,
+  LATEST_MAIN_TURN,
   projectToggle,
   sendMessage,
   startNewConversation,
@@ -147,6 +149,47 @@ describe('the chat and window views in the pseudo-locale', () => {
     expect(await uncataloguedText()).toEqual([]);
   });
 
+  it('shows only catalog text in a task’s card, its child’s request and the child’s side panel', async () => {
+    // The previous test left the Tools profile on. Without a workspace, the
+    // child's change asks the owner, in its task's card.
+    const path = join(tmpdir(), 'mannie-e2e-pseudo-locale-task.txt');
+    const instruction = callMessage('write_file', { activity: 'Writing a note', content: 'x', path });
+    await sendMessage(
+      callMessage('start_task', { agent: 'general', background: false, instruction, title: 'Write a note' }),
+    );
+    const card = `${LATEST_MAIN_TURN} [data-task-number="1"]`;
+    await $(`${card} [data-tool-status="awaiting_approval"]`).waitForDisplayed({ timeout: 30_000 });
+    await $(`${card} [data-task-details]`).click();
+    await waitForAnimations();
+
+    expect(await uncataloguedText()).toEqual([]);
+    expect(await overflowsHorizontally()).toBe(false);
+    expect(await axeViolations()).toEqual([]);
+
+    await $(`${card} [data-task-open]`).click();
+    await $('[data-side-panels] article').waitForDisplayed({ timeout: 10_000 });
+    await waitForAnimations();
+    expect(await uncataloguedText()).toEqual([]);
+    expect(await overflowsHorizontally()).toBe(false);
+    expect(await axeViolations()).toEqual([]);
+
+    // The toolbar's button lists the conversation's child agents.
+    await waitForPointerInput();
+    await $('main [data-child-agents]').click();
+    await $('[data-slot="dropdown-menu-content"]').waitForDisplayed();
+    await waitForAnimations();
+    expect(await uncataloguedText()).toEqual([]);
+    await closeOverlays();
+
+    // Stopping the parent's reply stops its child.
+    await $(COMPOSER).click();
+    await browser.keys(Key.Escape);
+    await $(`${card}[data-task-state="canceled"]`).waitForDisplayed({ timeout: 10_000 });
+    expect(await uncataloguedText()).toEqual([]);
+    await $('[data-side-panel-close]').click();
+    await $('[data-side-panels]').waitForExist({ reverse: true });
+  });
+
   it('shows only catalog text in the projects of the sidebar, their menu and their dialogs', async () => {
     const folder = realpathSync.native(mkdtempSync(join(tmpdir(), 'mannie-e2e-locale-')));
     try {
@@ -196,6 +239,7 @@ describe('the chat and window views in the pseudo-locale', () => {
       'chat.instructions',
       'window.behavior',
       'tools.settings',
+      'child-agents.settings',
     ]) {
       await openSettings(section);
 

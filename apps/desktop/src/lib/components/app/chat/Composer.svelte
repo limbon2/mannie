@@ -1,6 +1,8 @@
 <script lang="ts">
   import SendIcon from '@lucide/svelte/icons/send';
   import SquareIcon from '@lucide/svelte/icons/square';
+  import { untrack } from 'svelte';
+  import type { Attachment } from 'svelte/attachments';
 
   import { Button } from '#lib/components/ui/button/index.js';
   import { Textarea } from '#lib/components/ui/textarea/index.js';
@@ -21,9 +23,17 @@
     onStop?: () => Promise<void>;
     /** Whether a reply is being written, which the button then stops. */
     replying?: boolean;
+    /**
+     * Whether the box takes the focus once it is enabled, as the box of a
+     * conversation that the first message of a new conversation just opened.
+     */
+    takeFocus?: boolean;
   }
 
-  let { disabled = false, onSend, onStop, replying = false }: Props = $props();
+  let { disabled = false, onSend, onStop, replying = false, takeFocus = false }: Props = $props();
+
+  // The pane asks for the focus only when it opens.
+  let focusPending = untrack(() => takeFocus);
 
   let text = $state('');
   let sending = $state(false);
@@ -65,12 +75,30 @@
     event.preventDefault();
     void send();
   }
+
+  /**
+   * Gives the box the focus once it is enabled, when its pane asked for it.
+   * The pane replaced the one whose box the owner wrote in, so the focus fell
+   * to the page; an element that took the focus since then keeps it.
+   */
+  const takeFocusWhenEnabled: Attachment<HTMLTextAreaElement> = (box) => {
+    const takesFocusNow = focusPending && !disabled;
+    if (!takesFocusNow) {
+      return;
+    }
+    focusPending = false;
+    const focusIsLost = document.activeElement === null || document.activeElement === document.body;
+    if (focusIsLost) {
+      box.focus();
+    }
+  };
 </script>
 
 <form class="flex flex-col gap-2 border-t bg-background p-3" onsubmit={handleSubmit}>
   <div class="flex items-end gap-2">
     <Textarea
       class="max-h-48 min-h-10 resize-none"
+      {@attach takeFocusWhenEnabled}
       aria-describedby="composer-hint"
       aria-label={m.chat_composer_label()}
       {disabled}

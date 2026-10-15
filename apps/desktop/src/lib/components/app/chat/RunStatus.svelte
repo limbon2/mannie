@@ -25,10 +25,12 @@
     conversationId: string;
     /** The parts of the reply's turn, among them the tool call that runs. */
     parts: readonly PartView[];
+    /** Whether the conversation shows read-only, without Retry. */
+    readOnly?: boolean;
     run: RunView | null;
   }
 
-  let { conversationId, parts, run }: Props = $props();
+  let { conversationId, parts, readOnly = false, run }: Props = $props();
 
   let retrying = $state(false);
   let retryFailure = $state<ChatFailure | null>(null);
@@ -73,6 +75,9 @@
       }
       case 'waiting_for_slot': {
         return { busy: true, retryable: false, text: m.chat_status_waiting_for_slot() };
+      }
+      case 'waiting_for_tasks': {
+        return { busy: true, retryable: false, text: m.chat_status_waiting_for_tasks({ count: activity.count }) };
       }
       case 'writing': {
         return { busy: true, retryable: false, text: m.chat_status_writing() };
@@ -131,7 +136,7 @@
       {/if}
       <span>{line.text}</span>
     </div>
-    {#if line.retryable}
+    {#if line.retryable && !readOnly}
       <Tooltip.Root>
         <Tooltip.Trigger disabled={retrying} onclick={retry}>
           {#snippet child({ props })}

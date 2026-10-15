@@ -1,0 +1,83 @@
+[
+  {
+    "description": "Gives a self-contained task to a child agent on this computer. The child works in a conversation of its own, in this conversation's workspace, and reports back. An explore agent only reads and searches. A general agent can also change files and run commands, and the owner approves its changes and commands the same way as yours. The child knows nothing of this conversation, so the instruction must contain everything it needs. Tasks started in one step run at the same time. With background false, the result is the child's report. With background true, the result gives the task's number, and wait_for_tasks returns the report.",
+    "name": "start_task",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "activity": {
+          "description": "A few words for the owner that say what this call does, as an ongoing action, such as \"Reading package.json\" or \"Counting the failed tests\".",
+          "type": "string"
+        },
+        "agent": {
+          "description": "explore to read and search, or general to also change files and run commands.",
+          "enum": ["explore", "general"],
+          "type": "string"
+        },
+        "background": {
+          "description": "false to wait for the report before your next step, true to continue while the child works.",
+          "type": "boolean"
+        },
+        "instruction": {
+          "description": "The complete task: the goal, the files or facts to start from, the constraints, and what the report must contain.",
+          "type": "string"
+        },
+        "title": {
+          "description": "A few words for the owner that name the task, such as \"Find the callers of parse_config\".",
+          "type": "string"
+        }
+      },
+      "required": ["activity", "agent", "background", "instruction", "title"],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Gives another instruction to the child agent of an earlier task, after that task ended. The child continues in its own conversation and remembers what it did and learned. background works as in start_task.",
+    "name": "follow_up_task",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "activity": {
+          "description": "A few words for the owner that say what this call does, as an ongoing action, such as \"Reading package.json\" or \"Counting the failed tests\".",
+          "type": "string"
+        },
+        "background": {
+          "description": "false to wait for the report before your next step, true to continue while the child works.",
+          "type": "boolean"
+        },
+        "instruction": {
+          "description": "What the child should do next. It remembers the earlier task, so say only what is new.",
+          "type": "string"
+        },
+        "task": {
+          "description": "The number of the task, as its result gave it.",
+          "type": "integer"
+        }
+      },
+      "required": ["activity", "background", "instruction", "task"],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Waits until tasks of this conversation have ended and returns their reports. A report you already read is returned again. An empty list waits for every task of this reply whose report you have not read.",
+    "name": "wait_for_tasks",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "activity": {
+          "description": "A few words for the owner that say what this call does, as an ongoing action, such as \"Reading package.json\" or \"Counting the failed tests\".",
+          "type": "string"
+        },
+        "tasks": {
+          "description": "The numbers of the tasks to wait for, or an empty list for every task of this reply whose report you have not read.",
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "required": ["activity", "tasks"],
+      "type": "object"
+    }
+  }
+]

@@ -14,9 +14,10 @@
   const renderer = $derived(slots.partRenderers.find(kind));
 </script>
 
-<!-- The wrapper takes no box of its own; its attributes name the part's kind
-     and state for styling, debugging and the end-to-end tests. -->
-<div class="contents" data-part-kind={kind} data-part-state={part.state}>
+<!-- The wrapper takes no box of its own; its attributes name the part, its
+     kind and its state for styling, debugging, the end-to-end tests and the
+     jump to a part that waits for the owner. -->
+<div class="contents" data-part-id={part.id} data-part-kind={kind} data-part-state={part.state}>
   {#if renderer}
     <renderer.component {conversationId} {latest} {part} />
   {:else}

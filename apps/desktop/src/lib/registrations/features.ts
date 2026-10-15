@@ -4,6 +4,7 @@
 import type { ShellSlots } from '#lib/state/shell-slots.svelte.js';
 
 import { registerChat } from './chat.js';
+import { registerChildAgents } from './child-agents.js';
 import { registerTools } from './tools.js';
 import { registerWindowAndTray } from './window-and-tray.js';
 
@@ -11,4 +12,9 @@ import { registerWindowAndTray } from './window-and-tray.js';
 export type FeatureRegistration = (slots: ShellSlots) => void;
 
 /** Every feature, in the order it registers. Chat comes first, so Mannie opens into its view. */
-export const features: readonly FeatureRegistration[] = [registerChat, registerWindowAndTray, registerTools];
+export const features: readonly FeatureRegistration[] = [
+  registerChat,
+  registerWindowAndTray,
+  registerTools,
+  registerChildAgents,
+];

@@ -177,6 +177,9 @@ export function chatFailureMessage(failure: ChatFailure): string {
     case 'store_unavailable': {
       return m.shell_error_store_unavailable();
     }
+    case 'task_conversation': {
+      return m.chat_error_task_conversation();
+    }
     case 'title_empty': {
       return m.chat_error_title_empty();
     }

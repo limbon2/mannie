@@ -7,6 +7,7 @@ use super::{
     ContextSize, Plan, Trigger, chunks, content_hash, fit, needed, plan, render_turns,
     summary_allowance, turns_estimate,
 };
+use crate::agents::Requester;
 use crate::budget::estimate_text;
 use crate::texts;
 
@@ -20,6 +21,7 @@ fn part(id: u32, kind: PartKind, text: &str) -> ModelPart {
         provider_item: None,
         run_id: None,
         tool_call: None,
+        task: None,
         attempt: 1,
     }
 }
@@ -76,7 +78,7 @@ fn the_summary_allowance_is_15_percent_within_its_bounds() {
 fn a_plan_keeps_the_newest_two_turns_when_that_reaches_the_target() {
     // Ten turns of about 804 tokens each in a budget of 10,000.
     let candidates = turns(10, 1_000);
-    let per_turn = turns_estimate(&candidates[..1]);
+    let per_turn = turns_estimate(&candidates[..1], Requester::Owner);
     let projected = per_turn * 10;
 
     let planned = plan(
@@ -84,6 +86,7 @@ fn a_plan_keeps_the_newest_two_turns_when_that_reaches_the_target() {
         size(10_000, projected),
         1_024,
         Trigger::Automatic,
+        Requester::Owner,
     );
 
     assert_eq!(
@@ -99,13 +102,14 @@ fn a_plan_keeps_the_newest_two_turns_when_that_reaches_the_target() {
 #[test]
 fn a_plan_keeps_fewer_turns_when_two_do_not_fit_the_target() {
     let candidates = turns(3, 4_000);
-    let per_turn = turns_estimate(&candidates[..1]);
+    let per_turn = turns_estimate(&candidates[..1], Requester::Owner);
 
     let planned = plan(
         &candidates,
         size(12_000, per_turn * 3),
         1_024,
         Trigger::Automatic,
+        Requester::Owner,
     )
     .unwrap();
 
@@ -125,21 +129,42 @@ fn an_automatic_compaction_that_frees_little_is_skipped_unless_the_request_does_
             &candidates,
             size(10_000, projected),
             1_024,
-            Trigger::Automatic
+            Trigger::Automatic,
+            Requester::Owner
         ),
         None
     );
     assert_eq!(
-        plan(&candidates, size(10_000, 10_001), 1_024, Trigger::Automatic).map(|plan| plan.covered),
+        plan(
+            &candidates,
+            size(10_000, 10_001),
+            1_024,
+            Trigger::Automatic,
+            Requester::Owner
+        )
+        .map(|plan| plan.covered),
         Some(1),
         "a request beyond the budget is compacted however little it frees"
     );
     assert_eq!(
-        plan(&candidates, size(10_000, projected), 1_024, Trigger::Manual).map(|plan| plan.covered),
+        plan(
+            &candidates,
+            size(10_000, projected),
+            1_024,
+            Trigger::Manual,
+            Requester::Owner
+        )
+        .map(|plan| plan.covered),
         Some(1)
     );
     assert_eq!(
-        plan(&[], size(10_000, projected), 1_024, Trigger::Overflow),
+        plan(
+            &[],
+            size(10_000, projected),
+            1_024,
+            Trigger::Overflow,
+            Requester::Owner
+        ),
         None
     );
 }
@@ -147,7 +172,7 @@ fn an_automatic_compaction_that_frees_little_is_skipped_unless_the_request_does_
 #[test]
 fn freed_tokens_follow_the_calibration_of_the_projection() {
     let candidates = turns(4, 2_000);
-    let estimate = turns_estimate(&candidates);
+    let estimate = turns_estimate(&candidates, Requester::Owner);
     let uncalibrated = ContextSize {
         budget: 10_000,
         projected: estimate,
@@ -160,8 +185,20 @@ fn freed_tokens_follow_the_calibration_of_the_projection() {
         ..uncalibrated
     };
 
-    let by_estimate = plan(&candidates, uncalibrated, 500, Trigger::Manual);
-    let by_count = plan(&candidates, calibrated, 500, Trigger::Manual);
+    let by_estimate = plan(
+        &candidates,
+        uncalibrated,
+        500,
+        Trigger::Manual,
+        Requester::Owner,
+    );
+    let by_count = plan(
+        &candidates,
+        calibrated,
+        500,
+        Trigger::Manual,
+        Requester::Owner,
+    );
 
     assert_eq!(
         by_estimate,
@@ -191,7 +228,7 @@ fn rendered_turns_name_the_speakers_and_leave_reasoning_out() {
         texts::CONTINUATION_NOTE,
     ));
 
-    let rendered = render_turns(&[with_reasoning]);
+    let rendered = render_turns(&[with_reasoning], Requester::Owner);
 
     assert_eq!(
         rendered,
@@ -290,15 +327,62 @@ fn tool_calls_count_and_hash_their_results_and_reach_summaries() {
     let short = with_result("short");
     let long = with_result(&"x".repeat(10_000));
 
-    assert!(turns_estimate(&long) > turns_estimate(&short) + 3_000);
+    assert!(
+        turns_estimate(&long, Requester::Owner) > turns_estimate(&short, Requester::Owner) + 3_000
+    );
     assert_ne!(content_hash(None, &short), content_hash(None, &long));
     assert!(
-        render_turns(&short)[0].contains(&texts::compaction_tool_call(
+        render_turns(&short, Requester::Owner)[0].contains(&texts::compaction_tool_call(
             "read_file",
             r#"{"path":"a.txt"}"#,
             "short"
         )),
         "{:?}",
-        render_turns(&short)
+        render_turns(&short, Requester::Owner)
+    );
+}
+
+#[test]
+fn task_calls_reach_summaries_and_the_hash_covers_their_results() {
+    use mannie_types::tasks::{AwaitedTask, TaskPartDocument, TaskState};
+    use mannie_types::tools::{ToolCallDocument, ToolCallStatus};
+
+    let wait = |output: &str| ModelPart {
+        tool_call: Some(ToolCallDocument {
+            status: ToolCallStatus::Completed,
+            ..ToolCallDocument::receiving("call_1".to_owned(), "wait_for_tasks".to_owned())
+        }),
+        task: Some(TaskPartDocument {
+            awaited: vec![AwaitedTask {
+                number: 2,
+                title: "Read the tests".to_owned(),
+                state: TaskState::Reported,
+            }],
+            output: Some(output.to_owned()),
+            ..TaskPartDocument::default()
+        }),
+        ..part(2, PartKind::Task, r#"{"tasks":[2]}"#)
+    };
+    let with_result = |output: &str| {
+        let mut turn = turn(0, 10);
+        turn.parts.push(wait(output));
+        vec![turn]
+    };
+
+    let short = with_result("Task 2 reported:\n\nAll green.");
+    let other = with_result("Task 2 reported:\n\nTwo failures.");
+
+    let rendered = render_turns(&short, Requester::Owner);
+    assert!(
+        rendered[0].contains(&texts::compaction_task_call(
+            "wait_for_tasks",
+            r#"{"tasks":[2]}"#,
+            "Task 2 reported:\n\nAll green."
+        )),
+        "{rendered:?}"
+    );
+    assert_ne!(content_hash(None, &short), content_hash(None, &other));
+    assert!(
+        turns_estimate(&short, Requester::Owner) > turns_estimate(&[turn(0, 10)], Requester::Owner)
     );
 }

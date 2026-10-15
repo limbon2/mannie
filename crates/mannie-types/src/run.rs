@@ -105,6 +105,12 @@ pub enum RunActivity {
         /// When the tool started.
         started_at: UtcMillis,
     },
+    /// Waiting for child agents to end their tasks, without a model slot
+    /// (docs/features/child-agents/tasks.md, lanes).
+    WaitingForTasks {
+        /// How many tasks the run waits for.
+        count: u32,
+    },
 }
 
 /// Why a model call ended.
@@ -368,6 +374,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(RunActivity::WaitingForSlot).unwrap(),
             serde_json::json!({ "kind": "waiting_for_slot" })
+        );
+        assert_eq!(
+            serde_json::to_value(RunActivity::WaitingForTasks { count: 2 }).unwrap(),
+            serde_json::json!({ "kind": "waiting_for_tasks", "count": 2 })
         );
     }
 }

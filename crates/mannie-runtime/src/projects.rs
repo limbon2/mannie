@@ -170,6 +170,9 @@ impl Runtime {
             for conversation in &deletion.conversations {
                 self.inner.hubs.deleted(conversation).await;
             }
+            for conversation in &deletion.task_conversations {
+                self.inner.hubs.ended_task_conversation(conversation).await;
+            }
             if deletion.project_deleted {
                 self.inner
                     .hubs

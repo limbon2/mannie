@@ -1,10 +1,10 @@
 # Agent runtime
 
-|              |                                                                                                                                                                                                      |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status       | Draft for review                                                                                                                                                                                     |
-| Last updated | 2026-10-14                                                                                                                                                                                           |
-| Related      | [ADR-0011](../adr/0011-own-the-provider-adapters.md), [ADR-0012](../adr/0012-run-agents-as-durable-actors.md), [Tools](tools.md), [Orchestration](orchestration.md), [Domain model](domain-model.md) |
+|              |                                                                                                                                                                                                                                                                          |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Status       | Draft for review                                                                                                                                                                                                                                                         |
+| Last updated | 2026-10-15                                                                                                                                                                                                                                                               |
+| Related      | [ADR-0011](../adr/0011-own-the-provider-adapters.md), [ADR-0012](../adr/0012-run-agents-as-durable-actors.md), [ADR-0024](../adr/0024-run-child-agent-tasks-in-the-parent-run.md), [Tools](tools.md), [Orchestration](orchestration.md), [Domain model](domain-model.md) |
 
 The agent runtime (`mannie-runtime`) executes agents. The same runtime runs in the desktop app and in every worker ([ADR-0015](../adr/0015-run-an-agent-runtime-on-every-machine.md)).
 
@@ -19,8 +19,9 @@ The runtime owns the agent loop, budgets, retries, context management and compac
 - A run stores each event before publishing it, and it stores each step before running that step's tool calls.
 - Each conversation has at most one active run, and different conversations run in parallel. A global limit of 8 concurrent model calls protects the provider and the machine; runs over the limit wait in order.
 - A supervisor watches each run's task. A run whose task panics ends as failed with an internal error, and its conversation is free again.
+- A child agent's run belongs to its parent's run, which starts it, reads its state from a board that the child writes, and writes that state into the parent's conversation as the conversation's only writer. The parent's run ends only after its children have ended ([ADR-0024](../adr/0024-run-child-agent-tasks-in-the-parent-run.md)).
 - At shutdown, the runtime accepts no new runs, asks every run to stop, and waits up to 3 seconds; runs still active become interrupted.
-- At startup, runs that were active become interrupted, with the text they had written. The owner retries them, or for tasks the assigning agent decides.
+- At startup, runs that were active become interrupted, with the text they had written, the runs of task conversations first. The owner retries them, or for tasks the assigning agent decides.
 
 ## 3. The loop
 
@@ -41,8 +42,8 @@ flowchart TD
 ```
 
 - Every step makes exactly one model call. The runtime never lets a provider or a library run tool calls on its own.
-- Budgets come from the agent definition: the number of rounds with tool calls, the number of tool calls in a turn, and per-tool limits such as the number of child agents. When a budget runs out, the next request keeps the tools, so the model still reads its earlier calls, but sets the tool choice to `none` and tells the model to give its final answer. A call that a server returns anyway is not run.
-- Tool calls in one step run through lanes. Calls without a lane run one after another. Calls with independent lanes, such as tasks for different child agents or workers, run in parallel. On one machine, operations that change files are always serialized. Until lanes arrive with child agents, every call of a step runs after the other, and the run gives up its model slot while its tools run ([tool calls](../features/system-tools/tool-calls.md#the-loop)).
+- Budgets come from the agent definition: the number of rounds with tool calls, the number of tool calls in a turn, and the number of tasks that a reply can give to child agents. When a budget runs out, the next request keeps the tools, so the model still reads its earlier calls, but sets the tool choice to `none` and tells the model to give its final answer. A call that a server returns anyway is not run.
+- Tool calls in one step run through lanes. The calls start in their order, and calls without a lane of their own run one after another. A task for a child agent does not hold up the step: the next call starts while the child works, `wait_for_tasks` waits until its tasks end, and when the calls are done, the step waits for its tasks that do not run in the background ([tasks](../features/child-agents/tasks.md#lanes)). On one machine, operations that change files are always serialized, a child's too. The run gives up its model slot while its tools run and while it waits for tasks ([tool calls](../features/system-tools/tool-calls.md#the-loop)).
 
 ## 4. Model calls
 
@@ -59,9 +60,9 @@ Some servers and models stop a step early or put tool calls in the wrong place. 
 | A step with no text and no tool call                 | Sends a short continuation note to the model and calls it again                                    |
 | A tool call written as text or left in the reasoning | Converts it when the quirk profile allows that, otherwise asks the model to use the tool interface |
 | An answer that announces a next step and then stops  | Sends a continuation note                                                                          |
-| A task report that may be unfinished                 | Asks the agent to confirm that it is done before the report goes back                              |
+| A task report that may be unfinished                 | Asks the agent once to confirm that it is done before the report goes back                         |
 
-The number of continuation notes per turn is limited. Continuation notes are recorded as parts that only the model sees, and the UI does not show them as messages.
+The number of continuation notes per turn is limited, and a child's confirmation does not count against it. Continuation notes are recorded as parts that only the model sees, and the UI does not show them as messages.
 
 ## 6. Transcript and events
 
@@ -83,11 +84,11 @@ The number of continuation notes per turn is limited. Continuation notes are rec
 
 ## 8. Stop, retry and recovery
 
-| Action or event | Behavior                                                                                                                                                                                   |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Stop            | Cancels the model call and pending approvals, stops running tool calls through the process supervisor, and keeps the partial text.                                                         |
-| Retry           | Starts a new run for the latest turn, when its run failed, stopped or was interrupted. Completed operations keep their results; uncertain operations are shown to the model, not repeated. |
-| Process restart | Active runs become interrupted. Executing operations become uncertain. Approvals that were pending are canceled.                                                                           |
+| Action or event | Behavior                                                                                                                                                                                                                              |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stop            | Cancels the model call and pending approvals, stops running tool calls through the process supervisor, stops the run's child agents, and keeps the partial text. Stopping a child's run ends only its task, and its parent continues. |
+| Retry           | Starts a new run for the latest turn, when its run failed, stopped or was interrupted. Completed operations keep their results; uncertain operations are shown to the model, not repeated.                                            |
+| Process restart | Active runs become interrupted. Executing operations become uncertain. Approvals that were pending are canceled. Tasks that were running become interrupted, and nothing restarts them.                                               |
 
 ## 9. Testing
 

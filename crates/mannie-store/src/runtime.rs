@@ -14,15 +14,19 @@ mod projects;
 mod reads;
 mod recovery;
 mod rows;
+mod tasks;
 
+use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{
-    ArchiveId, CheckpointId, ConversationId, PartId, ProfileId, ProjectId, RunId, TurnId,
+    ArchiveId, CheckpointId, ConversationId, PartId, ProfileId, ProjectId, RunId, TaskId, TurnId,
 };
 use mannie_types::run::{RunActivity, RunFailure, RunOutcome, RunState};
+use mannie_types::tasks::{TaskPartDocument, TaskState};
 use mannie_types::tools::ToolCallDocument;
 use mannie_types::transcript::{
     ContextUsage, ConversationEvent, ConversationSummary, PartKind, PartState,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::error::StoreError;
 
@@ -46,6 +50,87 @@ pub struct NewConversation {
     /// The project it starts in, whose folder becomes its workspace, or
     /// `None` for a general conversation.
     pub project_id: Option<ProjectId>,
+    /// What makes it a task conversation, or `None` for the owner's.
+    pub task: Option<TaskOrigin>,
+}
+
+/// The parent, number and agent of a task conversation
+/// (docs/features/child-agents/tasks.md, task conversations).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskOrigin {
+    /// The parent conversation, whose deletion deletes the task conversation.
+    pub parent_id: ConversationId,
+    /// The child's number among the parent's children, from 1.
+    pub number: u32,
+    /// The name of the child's agent definition.
+    pub agent: String,
+}
+
+/// A task to store with the turn that works on it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewTask {
+    /// The task, as the parent's run chose it.
+    pub id: TaskId,
+    /// The parent's part that assigned the task.
+    pub part_id: PartId,
+    /// Whether the task continues an earlier task of the same child.
+    pub follow_up: bool,
+    /// Whether the parent continues while the child works.
+    pub background: bool,
+}
+
+/// How a task ended: the document that its row keeps.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskEnding {
+    /// The final state.
+    pub state: TaskState,
+    /// The child's report, when it reported.
+    #[serde(default)]
+    pub report: Option<String>,
+    /// Why the task failed.
+    #[serde(default)]
+    pub failure: Option<RunFailure>,
+}
+
+/// A task as the store keeps it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredTask {
+    /// The task.
+    pub id: TaskId,
+    /// The child's conversation.
+    pub conversation_id: ConversationId,
+    /// The parent's part that assigned the task.
+    pub part_id: PartId,
+    /// The child's turn that works on it.
+    pub turn_id: TurnId,
+    /// Whether it continues an earlier task of the same child.
+    pub follow_up: bool,
+    /// Whether the parent continues while the child works.
+    pub background: bool,
+    /// Where it is in its life.
+    pub state: TaskState,
+    /// How it ended, once it ended.
+    pub ending: Option<TaskEnding>,
+    /// When it was stored.
+    pub created_at: UtcMillis,
+    /// When it ended.
+    pub ended_at: Option<UtcMillis>,
+}
+
+/// A child of a conversation: its task conversation and its latest task.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredChild {
+    /// The child's conversation.
+    pub conversation_id: ConversationId,
+    /// The child's number.
+    pub number: u32,
+    /// The name of the child's agent definition.
+    pub agent: String,
+    /// The title of the child's conversation: its first task's title.
+    pub title: String,
+    /// The child's latest task.
+    pub latest: Option<StoredTask>,
 }
 
 /// A run to add.
@@ -134,12 +219,16 @@ pub enum Change {
     StartTurn {
         /// The turn.
         turn_id: TurnId,
-        /// The part that holds the owner's message.
+        /// The part that holds the owner's message, or the instruction of a
+        /// task.
         user_part_id: PartId,
         /// The message.
         text: String,
         /// The run.
         run: NewRun,
+        /// The task that the turn works on, in a task conversation. Creating
+        /// a task with an existing ID leaves that task as it is.
+        task: Option<NewTask>,
     },
     /// Adds a queued run that replaces the reply of the latest turn. Refused
     /// unless the turn's current run failed, stopped or was interrupted.
@@ -161,7 +250,8 @@ pub enum Change {
         /// What it does.
         activity: RunActivity,
     },
-    /// An active run ends.
+    /// An active run ends. In a task conversation, its task ends with it:
+    /// as `task` says, or with the state that the run's end implies.
     EndRun {
         /// The run.
         run_id: RunId,
@@ -169,6 +259,8 @@ pub enum Change {
         state: RunState,
         /// How it ended.
         outcome: RunOutcome,
+        /// How the run's task ended, with the child's report.
+        task: Option<TaskEnding>,
     },
     /// A part starts streaming.
     StartPart {
@@ -210,6 +302,19 @@ pub enum Change {
         part_id: PartId,
         /// The call as it is now.
         tool_call: ToolCallDocument,
+        /// Outputs to archive with the part.
+        archives: Vec<NewArchive>,
+    },
+    /// A task part that is not finished changes: its call record, the task it
+    /// assigned or the tasks it waits for, and the result the model reads.
+    /// The archived outputs, such as a long report, are stored with it.
+    UpdateTaskPart {
+        /// The part.
+        part_id: PartId,
+        /// The call as it is now.
+        tool_call: ToolCallDocument,
+        /// The task section as it is now.
+        task: Box<TaskPartDocument>,
         /// Outputs to archive with the part.
         archives: Vec<NewArchive>,
     },
@@ -301,6 +406,12 @@ pub enum RuntimeStoreError {
         /// The part.
         part: PartId,
     },
+    /// The part is not a task part.
+    #[error("the part {part} is not a task part")]
+    NotATaskPart {
+        /// The part.
+        part: PartId,
+    },
     /// The project does not exist.
     #[error("the project does not exist")]
     ProjectNotFound,
@@ -332,6 +443,7 @@ impl RuntimeStoreError {
             Self::RunNotActive { .. } => "runtime_store.run_not_active",
             Self::PartNotStreaming { .. } => "runtime_store.part_not_streaming",
             Self::NotAToolCall { .. } => "runtime_store.not_a_tool_call",
+            Self::NotATaskPart { .. } => "runtime_store.not_a_task_part",
             Self::ProjectNotFound => "runtime_store.project_not_found",
             Self::AlreadyInProject => "runtime_store.already_in_project",
             Self::InvalidData { .. } => "runtime_store.invalid_data",
@@ -367,6 +479,7 @@ pub(crate) fn statements() -> impl Iterator<Item = &'static str> {
         .chain(reads::STATEMENTS)
         .chain(recovery::STATEMENTS)
         .chain(rows::STATEMENTS)
+        .chain(tasks::STATEMENTS)
         .copied()
 }
 

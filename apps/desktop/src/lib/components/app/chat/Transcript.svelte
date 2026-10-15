@@ -11,6 +11,7 @@
   import type { RunView } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
   import { chatActions } from '#lib/state/chat-actions.svelte.js';
+  import { setConversationContext } from '#lib/state/conversation-context.js';
   import type { OpenConversation } from '#lib/state/conversation.svelte.js';
   import { chatFailureMessage } from '#lib/utils/chat-errors.js';
   import { latestTurn } from '#lib/utils/conversation-reducer.js';
@@ -22,8 +23,21 @@
   // layout): it follows a reply while the owner is at the bottom, until the
   // owner scrolls up, offers a way back to the newest message otherwise, and
   // loads earlier turns when the owner reaches the top. Screen readers hear
-  // when a reply ends; the streamed text itself is not announced.
-  let { conversation }: { conversation: OpenConversation } = $props();
+  // when a reply ends; the streamed text itself is not announced. A
+  // read-only transcript, such as a child agent's, offers no Retry.
+  interface Props {
+    conversation: OpenConversation;
+    /** Whether the owner cannot act on the conversation here. */
+    readOnly?: boolean;
+  }
+
+  let { conversation, readOnly = false }: Props = $props();
+
+  setConversationContext({
+    get readOnly() {
+      return readOnly;
+    },
+  });
 
   /** How close to the bottom, in pixels, still counts as following. */
   const FOLLOW_DISTANCE = 48;
@@ -46,7 +60,9 @@
   const transcript = $derived(conversation.transcript);
   const latest = $derived(latestTurn(transcript));
   const checkpoint = $derived(transcript.checkpoint);
-  const awaitingApproval = $derived(latest?.run?.activity?.kind === 'awaiting_approval');
+  /** The part that waits for the owner, such as a tool call or the card of a child whose call waits. */
+  const waitingPart = $derived(latest?.run?.activity?.kind === 'awaiting_approval' ? latest.run.activity.partId : null);
+  const awaitingApproval = $derived(waitingPart !== null);
 
   function endAnnouncement(run: RunView): string {
     switch (run.state) {
@@ -92,6 +108,23 @@
   function scrollToBottom(): void {
     if (scroller !== undefined) {
       scroller.scrollTop = scroller.scrollHeight;
+    }
+  }
+
+  /**
+   * Brings the part that waits for the owner into view, which may stand above
+   * later parts of the reply, as a child's card does; otherwise the newest
+   * message.
+   */
+  function jump(): void {
+    const wrapper =
+      waitingPart === null ? null : (scroller?.querySelector(`[data-part-id="${CSS.escape(waitingPart)}"]`) ?? null);
+    // The part's wrapper has no box of its own, so its content scrolls.
+    const target = wrapper?.firstElementChild;
+    if (target instanceof HTMLElement) {
+      target.scrollIntoView({ block: 'center' });
+    } else {
+      scrollToBottom();
     }
   }
 
@@ -212,7 +245,7 @@
             <PartOutlet conversationId={conversation.id} latest={turn === latest} {part} />
           {/each}
           {#if turn === latest}
-            <RunStatus conversationId={conversation.id} parts={turn.parts} run={turn.run} />
+            <RunStatus conversationId={conversation.id} parts={turn.parts} {readOnly} run={turn.run} />
           {/if}
         </article>
         {#if checkpointFollows(turn.position)}
@@ -239,7 +272,7 @@
   </p>
   {#if !following}
     <div class="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
-      <Button class="pointer-events-auto shadow-sm" size="sm" variant="secondary" onclick={scrollToBottom}>
+      <Button class="pointer-events-auto shadow-sm" size="sm" variant="secondary" onclick={jump}>
         <ArrowDownIcon data-icon="inline-start" />
         {awaitingApproval ? m.chat_jump_to_approval() : m.chat_jump_to_newest()}
       </Button>

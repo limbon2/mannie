@@ -128,6 +128,8 @@ stateDiagram-v2
 - A task carries an instruction, its constraints (budgets, deadline, a narrower policy) and a provider profile. It may continue an earlier task's conversation.
 - A task runs in a conversation on the executing machine. The assigning agent receives only the report; the owner can open the whole task conversation.
 - A report is confirmed: the executing agent checked that it finished before it answered.
+- A child agent's task runs in a task conversation on the master: a conversation with a parent conversation, a number that is unique within the parent, and the child's agent definition ([tasks](../features/child-agents/tasks.md#task-conversations)). A task conversation belongs to no project and works under its parent's workspace, project, grants and rules. Deleting the parent deletes its task conversations.
+- A task conversation has at most one task that is accepted or running. A follow-up is a new task in the same conversation, with the same number and agent. Nothing resumes an interrupted task of a child by itself; the parent's model decides whether to follow it up.
 
 ## 7. Workers and the link
 
@@ -165,3 +167,4 @@ stateDiagram-v2
 8. Contracts and stored data change only by addition, with deprecation before removal.
 9. Every task ID identifies one task, however many times it is submitted.
 10. A conversation in a project works in the project's folder and never leaves the project.
+11. A child agent works under its parent conversation's workspace, grants and rules, and starts no task of its own. Its parent's run ends only after the child's run ended.

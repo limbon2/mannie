@@ -6,6 +6,7 @@ use specta::Type;
 use crate::clock::UtcMillis;
 use crate::ids::{CheckpointId, ConversationId, ProfileId, ProjectId, TurnId};
 use crate::run::RunView;
+use crate::tasks::TaskConversation;
 
 use super::parts::PartView;
 
@@ -59,6 +60,10 @@ pub struct ConversationSummary {
     /// The conversation's workspace folder: its project's folder, or `None`
     /// for a general conversation.
     pub workspace: Option<String>,
+    /// The parent, number and agent of a task conversation, whose turns its
+    /// parent's agent writes; `None` for the owner's conversations
+    /// (docs/features/child-agents/tasks.md, task conversations).
+    pub task: Option<TaskConversation>,
     /// When it was created.
     pub created_at: UtcMillis,
     /// When it last changed. The list shows the most recent first.

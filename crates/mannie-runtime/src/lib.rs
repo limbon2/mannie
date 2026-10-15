@@ -24,6 +24,7 @@ mod instructions;
 mod profiles;
 mod projects;
 mod retry;
+mod tasks;
 #[cfg(feature = "testing")]
 pub mod testing;
 pub mod texts;
@@ -42,10 +43,12 @@ use mannie_store::{RuntimeStoreError, Store};
 use mannie_tools::{MutationLock, SystemFacts, ToolRegistry};
 use mannie_types::clock::Clock;
 use mannie_types::ids::{CheckpointId, ConversationId, ProfileId, ProjectId, RunId};
+use mannie_types::tasks::ChildAgentsSettings;
 use tokio::sync::{Semaphore, mpsc, watch};
 
 pub use agents::{
-    AgentDefinition, AgentRegistry, CONVERSATION, CONVERSATION_AGENT, DuplicateAgent, SYSTEM_TOOLS,
+    AgentDefinition, AgentRegistry, CONVERSATION, CONVERSATION_AGENT, DuplicateAgent, EXPLORE,
+    EXPLORE_AGENT, GENERAL, GENERAL_AGENT, Requester, SYSTEM_TOOLS,
 };
 pub use hub::{ConversationSubscription, ListSubscription, SubscriptionLimits};
 pub use instructions::{
@@ -54,11 +57,13 @@ pub use instructions::{
 };
 pub use profiles::{CredentialVault, VaultError};
 pub use retry::RetryPolicy;
+pub use tasks::TASK_TOOLS;
 
 use crate::actor::Command;
 use crate::approvals::Pending;
 use crate::hub::Hubs;
 use crate::ids::IdGenerator;
+use crate::tasks::ChildSlots;
 
 /// What the system tools work with. The composition root builds it once.
 #[derive(Debug, Clone)]
@@ -162,6 +167,12 @@ struct Inner {
     /// moves into them.
     removing_projects: Mutex<HashSet<ProjectId>>,
     slots: Arc<Semaphore>,
+    /// The slots of child agents on the machine (docs/features/child-agents/
+    /// tasks.md, slots).
+    child_slots: ChildSlots,
+    /// Makes changes of the child agents settings one at a time, so the pool
+    /// always has the limit that was stored last.
+    child_settings: tokio::sync::Mutex<()>,
     config: RuntimeConfig,
     shutting_down: AtomicBool,
     random: Mutex<fastrand::Rng>,
@@ -183,6 +194,9 @@ enum Busy {
 struct RunHandle {
     run_id: RunId,
     profile_id: ProfileId,
+    /// The parent conversation, for a run that works on a task of a child
+    /// agent, which its parent's run starts and ends.
+    parent: Option<ConversationId>,
     mailbox: mpsc::Sender<Command>,
     ended: watch::Receiver<bool>,
 }
@@ -224,6 +238,15 @@ impl Runtime {
         let random = config
             .random_seed
             .map_or_else(fastrand::Rng::new, fastrand::Rng::with_seed);
+        // A section that cannot be read leaves the default limit, and the
+        // settings page shows the failure when the owner opens it.
+        let child_agents = match deps.store.load_settings::<ChildAgentsSettings>().await {
+            Ok(settings) => settings,
+            Err(error) => {
+                tracing::warn!(%error, error.code = error.code(), "could not read the child agents settings; using the default limit");
+                ChildAgentsSettings::default()
+            }
+        };
         let inner = Inner {
             ids: IdGenerator::new(Arc::clone(&deps.clock)),
             store: deps.store,
@@ -240,6 +263,8 @@ impl Runtime {
             verified_checkpoints: Mutex::default(),
             removing_projects: Mutex::default(),
             slots: Arc::new(Semaphore::new(config.max_concurrent_calls)),
+            child_slots: ChildSlots::new(child_agents.parallel_children.get()),
+            child_settings: tokio::sync::Mutex::new(()),
             config,
             shutting_down: AtomicBool::new(false),
             random: Mutex::new(random),
@@ -249,12 +274,17 @@ impl Runtime {
         })
     }
 
-    /// How many runs are active.
+    /// How many of the owner's replies are active. The runs of child agents
+    /// belong to their parent's reply and do not count of their own.
     pub fn active_run_count(&self) -> u32 {
         let busy = lock(&self.inner.busy);
         let active = busy
             .values()
-            .filter(|busy| matches!(busy, Busy::Starting | Busy::Running(_)))
+            .filter(|busy| match busy {
+                Busy::Starting => true,
+                Busy::Running(handle) => handle.parent.is_none(),
+                Busy::Compacting => false,
+            })
             .count();
         u32::try_from(active).unwrap_or(u32::MAX)
     }

@@ -12,9 +12,10 @@ use mannie_types::provider::ReasoningEffort;
 use mannie_types::transcript::PartKind;
 use sha2::{Digest, Sha256};
 
+use crate::agents::Requester;
 use crate::budget::{estimate_message, estimate_text};
-use crate::context::call_result;
-use crate::texts;
+use crate::context::part_result;
+use crate::{tasks, texts};
 
 /// The most characters of a tool call's arguments, and of its result, that a
 /// summary call reads.
@@ -116,6 +117,7 @@ pub(crate) fn plan(
     size: ContextSize,
     allowance: u32,
     trigger: Trigger,
+    requester: Requester,
 ) -> Option<Plan> {
     let target = share(size.budget, TARGET_PERCENT);
     let mut best = None;
@@ -124,7 +126,7 @@ pub(crate) fn plan(
             continue;
         }
         let covered = candidates.len() - keep;
-        let freed = size.calibrate(turns_estimate(&candidates[..covered]));
+        let freed = size.calibrate(turns_estimate(&candidates[..covered], requester));
         let after = size
             .projected
             .saturating_sub(freed)
@@ -144,30 +146,30 @@ pub(crate) fn plan(
     worth_it.then_some(Plan { covered, after })
 }
 
-/// The estimated tokens of turns as the model reads them. A tool call counts
-/// its arguments and its result.
-pub(crate) fn turns_estimate(turns: &[ModelTurn]) -> u32 {
+/// The estimated tokens of turns as the model reads them. A call counts its
+/// arguments and its result.
+pub(crate) fn turns_estimate(turns: &[ModelTurn], requester: Requester) -> u32 {
     turns
         .iter()
         .flat_map(|turn| &turn.parts)
         .map(|part| {
             let text = estimate_message(&Message::text(Role::User, part.text.clone()));
-            let result = tool_result(part).map_or(0, |result| estimate_text(&result));
+            let result = call_result(part, requester).map_or(0, |result| estimate_text(&result));
             text.saturating_add(result)
         })
         .fold(0, u32::saturating_add)
 }
 
-/// What the model reads as the result of a tool call part.
-fn tool_result(part: &ModelPart) -> Option<String> {
+/// What the model reads as the result of a call part: a tool call or a task.
+fn call_result(part: &ModelPart, requester: Requester) -> Option<String> {
     part.tool_call
         .as_ref()
-        .map(|call| call_result(&part.id, call, &HashSet::new()))
+        .map(|call| part_result(part, call, &HashSet::new(), requester))
 }
 
 /// The covered turns as the summary call reads them: the owner's lines and
 /// the assistant's, in order. Reasoning stays out; it was the model's own.
-pub(crate) fn render_turns(turns: &[ModelTurn]) -> Vec<String> {
+pub(crate) fn render_turns(turns: &[ModelTurn], requester: Requester) -> Vec<String> {
     turns
         .iter()
         .map(|turn| {
@@ -176,13 +178,15 @@ pub(crate) fn render_turns(turns: &[ModelTurn]) -> Vec<String> {
                 let speaker = match part.kind {
                     Some(PartKind::UserText) => texts::COMPACTION_OWNER,
                     Some(PartKind::Text) => texts::COMPACTION_ASSISTANT,
-                    Some(PartKind::ToolCall) => {
-                        if let (Some(call), Some(result)) = (&part.tool_call, tool_result(part)) {
-                            lines.push(texts::compaction_tool_call(
-                                &call.tool,
-                                &cut(&part.text),
-                                &cut(&result),
-                            ));
+                    Some(kind @ (PartKind::ToolCall | PartKind::Task)) => {
+                        let result = call_result(part, requester);
+                        if let (Some(call), Some(result)) = (&part.tool_call, result) {
+                            let render = if kind == PartKind::Task {
+                                texts::compaction_task_call
+                            } else {
+                                texts::compaction_tool_call
+                            };
+                            lines.push(render(&call.tool, &cut(&part.text), &cut(&result)));
                         }
                         continue;
                     }
@@ -341,6 +345,18 @@ pub(crate) fn content_hash(previous: Option<&str>, turns: &[ModelTurn]) -> Strin
                 hasher.update([0x1f]);
                 if let Some(result) = &call.result {
                     hasher.update(result.output.as_bytes());
+                }
+            }
+            // A task part covers its tasks' numbers and the result that the
+            // model read, which hold whatever matters of its task.
+            if let Some(section) = &part.task {
+                hasher.update([0x1f]);
+                for number in tasks::reported_numbers(section) {
+                    hasher.update(number.to_be_bytes());
+                }
+                hasher.update([0x1f]);
+                if let Some(result) = tasks::task_result(section) {
+                    hasher.update(result.as_bytes());
                 }
             }
             hasher.update([0x1e]);

@@ -118,6 +118,7 @@ impl Fixture {
                             title: "A title".to_owned(),
                             profile_id: None,
                             project_id: None,
+                            task: None,
                         },
                     },
                     Change::StartTurn {
@@ -125,6 +126,7 @@ impl Fixture {
                         user_part_id: self.part_id(),
                         text: text.to_owned(),
                         run,
+                        task: None,
                     },
                 ],
             )
@@ -150,6 +152,7 @@ impl Fixture {
                     title: title.to_owned(),
                     profile_id: None,
                     project_id: Some(project.clone()),
+                    task: None,
                 },
             }],
         )
@@ -329,6 +332,7 @@ fn text_of(content: &PartContent) -> String {
         PartContent::ToolCall { call } => {
             format!("{} {:?} {}", call.tool, call.status, call.arguments)
         }
+        PartContent::Task { call } => format!("{} {:?}", call.tool, call.status),
         PartContent::Unknown { name } => name.clone(),
     }
 }
@@ -381,6 +385,7 @@ async fn a_second_turn_is_refused_while_a_run_is_active_and_nothing_is_stored() 
                 user_part_id: fixture.part_id(),
                 text: "Second".to_owned(),
                 run: fixture.new_run(),
+                task: None,
             }],
             Durability::Full,
         )
@@ -481,6 +486,7 @@ async fn a_streaming_part_is_rebuilt_from_its_deltas_until_it_finishes() {
                         finish: Some(FinishReason::Stop),
                         ..RunOutcome::default()
                     },
+                    task: None,
                 },
             ],
         )
@@ -572,6 +578,7 @@ async fn replaying_from_any_cursor_reaches_the_state_of_a_fresh_snapshot() {
                     run_id: run.clone(),
                     state: RunState::Completed,
                     outcome: RunOutcome::default(),
+                    task: None,
                 },
             ],
         )
@@ -661,6 +668,7 @@ async fn retry_replaces_the_reply_of_the_latest_turn_only_after_it_failed() {
                         failure: Some(RunFailure::ServerError { status: 500 }),
                         ..RunOutcome::default()
                     },
+                    task: None,
                 },
             ],
         )
@@ -716,6 +724,7 @@ async fn retry_replaces_the_reply_of_the_latest_turn_only_after_it_failed() {
                     run_id: retry_id,
                     state: RunState::Completed,
                     outcome: RunOutcome::default(),
+                    task: None,
                 },
             ],
         )
@@ -929,12 +938,14 @@ async fn snapshots_and_earlier_turns_page_through_long_conversations() {
                         run_id: run.clone(),
                         state: RunState::Completed,
                         outcome: RunOutcome::default(),
+                        task: None,
                     },
                     Change::StartTurn {
                         turn_id: fixture.turn_id(),
                         user_part_id: fixture.part_id(),
                         text: format!("Turn {index}"),
                         run: next,
+                        task: None,
                     },
                 ],
             )
@@ -1430,6 +1441,7 @@ async fn a_retry_keeps_a_reply_that_made_tool_calls_and_replaces_one_that_made_n
                     run_id: first_run.clone(),
                     state: RunState::Failed,
                     outcome: failure.clone(),
+                    task: None,
                 },
             ],
         )
@@ -1451,6 +1463,7 @@ async fn a_retry_keeps_a_reply_that_made_tool_calls_and_replaces_one_that_made_n
                     run_id: second_run.clone(),
                     state: RunState::Failed,
                     outcome: failure,
+                    task: None,
                 },
             ],
         )
@@ -1512,6 +1525,7 @@ async fn a_conversation_in_a_project_works_in_its_folder_and_shows_a_waiting_app
                         title: "Work".to_owned(),
                         profile_id: None,
                         project_id: Some(project.clone()),
+                        task: None,
                     },
                 },
                 Change::StartTurn {
@@ -1519,6 +1533,7 @@ async fn a_conversation_in_a_project_works_in_its_folder_and_shows_a_waiting_app
                     user_part_id: fixture.part_id(),
                     text: "Hello".to_owned(),
                     run,
+                    task: None,
                 },
                 Change::StartRun {
                     run_id: run_id.clone(),
@@ -1630,6 +1645,7 @@ async fn a_conversation_cannot_start_in_a_project_that_does_not_exist() {
                     title: "Nowhere".to_owned(),
                     profile_id: None,
                     project_id: Some(ProjectId::parse(&fixture.uuid()).unwrap()),
+                    task: None,
                 },
             }],
             Durability::Full,
@@ -1901,3 +1917,7 @@ async fn a_deleted_conversation_leaves_no_archive_or_grant_behind() {
     assert!(!fixture.files_contain(archived), "the archive is gone");
     assert!(!fixture.files_contain(granted), "the grant is gone");
 }
+
+/// The tests of tasks and task conversations (docs/features/child-agents/
+/// tasks.md, data).
+mod tasks;

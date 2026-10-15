@@ -118,6 +118,18 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         description: "create the shared grants table",
         sql: include_str!("tools/migrations/0014_create_shared_grants.sql"),
     },
+    Migration {
+        version: 15,
+        module: "runtime",
+        description: "add the parent, number and agent of task conversations",
+        sql: include_str!("runtime/migrations/0015_add_task_conversations.sql"),
+    },
+    Migration {
+        version: 16,
+        module: "runtime",
+        description: "create the tasks table",
+        sql: include_str!("runtime/migrations/0016_create_tasks.sql"),
+    },
 ];
 
 /// How many backups of earlier schema versions the store keeps.

@@ -3,7 +3,7 @@
 // shell renders whatever is registered and never imports a feature directly.
 import type { Component } from 'svelte';
 
-import type { ConversationId, PartView } from '#lib/generated/bindings.js';
+import type { ConversationId, ConversationSummary, PartView, TurnView } from '#lib/generated/bindings.js';
 
 /** A message function from the catalog, called when the text is shown (ADR-0019). */
 export type Message = () => string;
@@ -97,6 +97,61 @@ export interface Overlay {
   readonly component: Component;
   /** Unique among overlays. */
   readonly id: string;
+}
+
+/** What the component of a side panel kind receives. */
+export interface SidePanelProps {
+  /** What the panel shows, as the address names it, such as a conversation's ID. */
+  readonly argument: string;
+  /** Closes the panel, as when what it shows no longer exists. */
+  readonly close: () => void;
+  /**
+   * Names the panel's tab once the panel knows what it shows. A label that
+   * is content, such as a conversation's title, is marked so, and the
+   * catalog check of the end-to-end tests skips it (ADR-0019).
+   */
+  readonly setLabel: (label: string, isContent: boolean) => void;
+}
+
+/**
+ * A kind of side panel (ADR-0025): content that the shell shows beside the
+ * main view, in a tab of the side panel area. A feature opens a panel of its
+ * kind through the shell's side panels, with an argument.
+ */
+export interface SidePanelKind {
+  /** The panel's content. */
+  readonly component: Component<SidePanelProps>;
+  /** The tab's label until the panel names itself. */
+  readonly defaultLabel: Message;
+  /** An icon from @lucide/svelte, which the tab shows before its label. */
+  readonly icon: Component;
+  /** Unique among side panel kinds; the address names it, so it has no colon. */
+  readonly id: string;
+}
+
+/** What a conversation control receives (ADR-0026). */
+export interface ConversationControlProps {
+  /** The conversation whose toolbar shows the control. */
+  readonly conversation: ConversationSummary;
+  /**
+   * The turns that the conversation view has loaded, oldest first, as the
+   * transcript shows them. The control only reads them.
+   */
+  readonly turns: readonly TurnView[];
+}
+
+/**
+ * A control in a conversation's toolbar (ADR-0026): a feature's compact
+ * button or menu, before the context meter. It renders nothing when it has
+ * nothing to offer, and it never takes the focus by itself.
+ */
+export interface ConversationControl {
+  /** The control. */
+  readonly component: Component<ConversationControlProps>;
+  /** Unique among conversation controls. */
+  readonly id: string;
+  /** Controls are sorted by this number, lowest first. */
+  readonly order: number;
 }
 
 /** What a part renderer receives. */

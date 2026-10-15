@@ -6,6 +6,7 @@ use specta::Type;
 use crate::clock::UtcMillis;
 use crate::ids::{PartId, RunId, TurnId};
 use crate::run::RunFailure;
+use crate::tasks::TaskCallView;
 use crate::tools::ToolCallView;
 
 /// What a part is. Features add kinds; a reader that meets a kind it does not
@@ -26,17 +27,22 @@ pub enum PartKind {
     /// A tool call and everything Mannie did with it
     /// (docs/features/system-tools/tool-calls.md).
     ToolCall,
+    /// A call of a task tool, which assigns a task to a child agent or waits
+    /// for tasks, and is the task's record in the parent conversation
+    /// (docs/features/child-agents/tasks.md, the task part).
+    Task,
 }
 
 impl PartKind {
     /// Every kind this version knows.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::UserText,
         Self::Text,
         Self::Reasoning,
         Self::Error,
         Self::ContinuationNote,
         Self::ToolCall,
+        Self::Task,
     ];
 
     /// The kind's name as the store and the UI know it.
@@ -48,6 +54,7 @@ impl PartKind {
             Self::Error => "error",
             Self::ContinuationNote => "continuation_note",
             Self::ToolCall => "tool_call",
+            Self::Task => "task",
         }
     }
 
@@ -57,10 +64,18 @@ impl PartKind {
         Self::ALL.into_iter().find(|kind| kind.as_str() == name)
     }
 
+    /// Whether the part is a call that the model made: the model reads it as a
+    /// call followed by its result, and a retry keeps the run that made it.
+    pub fn is_call(self) -> bool {
+        matches!(self, Self::ToolCall | Self::Task)
+    }
+
     /// Who the part is for.
     pub fn audience(self) -> Audience {
         match self {
-            Self::UserText | Self::Text | Self::Reasoning | Self::ToolCall => Audience::Both,
+            Self::UserText | Self::Text | Self::Reasoning | Self::ToolCall | Self::Task => {
+                Audience::Both
+            }
             Self::Error => Audience::Owner,
             Self::ContinuationNote => Audience::Model,
         }
@@ -188,6 +203,12 @@ pub enum PartContent {
         /// The call, its status and its result.
         call: Box<ToolCallView>,
     },
+    /// A call of a task tool, with the task it assigned or the tasks it waits
+    /// for.
+    Task {
+        /// The call and its task.
+        call: Box<TaskCallView>,
+    },
     /// A kind of part that this version does not know.
     Unknown {
         /// The kind's name.
@@ -235,6 +256,17 @@ mod tests {
         for audience in [Audience::Both, Audience::Model, Audience::Owner] {
             assert_eq!(Audience::parse(audience.as_str()), Some(audience));
         }
+    }
+
+    #[test]
+    fn tool_calls_and_tasks_are_calls() {
+        let calls: Vec<_> = PartKind::ALL
+            .into_iter()
+            .filter(|kind| kind.is_call())
+            .collect();
+
+        assert_eq!(calls, [PartKind::ToolCall, PartKind::Task]);
+        assert_eq!(PartKind::Task.audience(), Audience::Both);
     }
 
     #[test]

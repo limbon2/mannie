@@ -39,6 +39,18 @@ required-features = ["testing"]
 name = "tool_crash"
 required-features = ["testing"]
 
+# Tasks of child agents: reports, tool sets, slots, background tasks,
+# follow-ups, approvals through the parent, stopping, budgets and refusals.
+[[test]]
+name = "tasks"
+required-features = ["testing"]
+
+# Killing the process in every state of a task never repeats what a child
+# did.
+[[test]]
+name = "task_crash"
+required-features = ["testing"]
+
 # A compromised model's injected operations cause nothing that the owner did
 # not allow.
 [[test]]

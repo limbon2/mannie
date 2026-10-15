@@ -22,18 +22,21 @@ use mannie_types::run::RunFailure;
 use mannie_types::tools::ToolCallStatus;
 use mannie_types::transcript::PartKind;
 
-use crate::agents::AgentDefinition;
+use crate::agents::{AgentDefinition, Requester};
 use crate::budget::{Ledger, estimate_request, usage};
 use crate::compaction::{self, ContextSize, Trigger};
 use crate::context::{RequestShape, build_request};
 use crate::instructions::{InstructionContext, ToolEnvironment};
 use crate::profiles::{VaultError, in_vault};
 use crate::retry::RetryDecision;
-use crate::{Runtime, lock, texts};
+use crate::{Runtime, lock, tasks, texts};
 
 /// The newest tool results of the latest turn that stay in the context when
 /// older ones are left out to save space.
 const KEPT_RESULTS: usize = 3;
+
+/// The tool that moves a general conversation into a project.
+const MOVE_TO_PROJECT: &str = "move_to_project";
 
 /// Why a call could not be prepared or made.
 #[derive(Debug)]
@@ -77,6 +80,12 @@ pub(crate) struct Setup {
     /// Their definitions, as requests carry them when the tools are
     /// offered.
     pub(crate) definitions: Vec<ToolDefinition>,
+    /// The definitions of the task tools that the run is offered: those its
+    /// agent names, when its profile uses tools and it is not a task itself
+    /// (ADR-0024, decision 1).
+    pub(crate) task_definitions: Vec<ToolDefinition>,
+    /// The child agents that `start_task` can start.
+    pub(crate) child_agents: Vec<&'static str>,
 }
 
 impl Setup {
@@ -87,7 +96,17 @@ impl Setup {
 
     /// Whether the run has tools.
     pub(crate) fn uses_tools(&self) -> bool {
-        !self.tools.is_empty()
+        !self.tools.is_empty() || self.offers_tasks()
+    }
+
+    /// Whether the run is offered the task tools.
+    pub(crate) fn offers_tasks(&self) -> bool {
+        !self.task_definitions.is_empty()
+    }
+
+    /// Whom the run's agent answers to.
+    pub(crate) fn requester(&self) -> Requester {
+        self.agent.requester
     }
 }
 
@@ -119,11 +138,13 @@ pub(crate) struct Prepared {
 }
 
 impl Runtime {
-    /// The setup of a run that uses the profile `profile_id`.
+    /// The setup of a run that uses the profile `profile_id`. A run that
+    /// works on a task is never offered the task tools.
     pub(crate) async fn load_setup(
         &self,
         profile_id: &ProfileId,
         agent: &str,
+        task: bool,
     ) -> Result<Setup, RunFailure> {
         let profile = match self.inner.store.profile(profile_id).await {
             Ok(Some(profile)) => profile,
@@ -133,7 +154,7 @@ impl Runtime {
                 return Err(RunFailure::Internal);
             }
         };
-        self.setup_for(&profile, agent).await
+        self.setup_for(&profile, agent, task).await
     }
 
     /// The setup of calls with a profile. Reads the credential, which may
@@ -142,6 +163,7 @@ impl Runtime {
         &self,
         profile: &StoredProfile,
         agent: &str,
+        task: bool,
     ) -> Result<Setup, RunFailure> {
         let Some(agent) = self.inner.agents.get(agent).cloned() else {
             tracing::error!(agent, "a run names an agent that is not registered");
@@ -177,6 +199,24 @@ impl Runtime {
                 parameters: with_activity(tool.parameters()),
             })
             .collect();
+        let child_agents: Vec<&'static str> = self
+            .inner
+            .agents
+            .child_agents()
+            .map(|definition| definition.name)
+            .collect();
+        // A child never gives tasks of its own (T-22), and an agent without a
+        // task budget or anyone to give tasks to is not offered the tools.
+        let offers_tasks =
+            profile.use_tools && !task && agent.max_tasks > 0 && !child_agents.is_empty();
+        let task_definitions = if offers_tasks {
+            tasks::definitions(&child_agents)
+                .into_iter()
+                .filter(|definition| agent.tools.contains(&definition.name.as_str()))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let credential = match profile.credential_ref.clone() {
             None => None,
             Some(reference) => {
@@ -203,14 +243,19 @@ impl Runtime {
             reasoning_effort: profile.reasoning_effort,
             tools,
             definitions,
+            task_definitions,
+            child_agents,
         })
     }
 
     /// The next call of a conversation: the instructions, the checkpoint and
-    /// the turns after it, and the size of it all.
+    /// the turns after it, and the size of it all. `authority` is the
+    /// conversation whose workspace and project the tools work in: the
+    /// parent's for a child agent, the conversation itself otherwise.
     pub(crate) async fn prepare_call(
         &self,
         conversation: &ConversationId,
+        authority: &ConversationId,
         setup: &Setup,
         options: CallOptions,
     ) -> Result<Prepared, CallError> {
@@ -221,7 +266,7 @@ impl Runtime {
             .map(|checkpoint| checkpoint.covers_through_turn);
         let turns = self.inner.store.model_turns(conversation, covered).await?;
         let (project_id, projects) = if setup.uses_tools() {
-            let summary = self.inner.store.conversation_summary(conversation).await?;
+            let summary = self.inner.store.conversation_summary(authority).await?;
             let projects = self.inner.store.projects().await?;
             (summary.and_then(|summary| summary.project_id), projects)
         } else {
@@ -237,13 +282,21 @@ impl Runtime {
             project,
             projects: &projects,
         };
-        let definitions: Vec<ToolDefinition> = setup
+        let mut definitions: Vec<ToolDefinition> = setup
             .tools
             .iter()
             .zip(&setup.definitions)
             .filter(|(tool, _definition)| tool.offered(&availability))
             .map(|(_tool, definition)| definition.clone())
             .collect();
+        definitions.extend(setup.task_definitions.iter().cloned());
+        // Only a run that can move into a project learns the owner's
+        // projects; a child works in its parent's workspace.
+        let movable: &[_] = if setup.tool(MOVE_TO_PROJECT).is_some() {
+            &projects
+        } else {
+            &[]
+        };
         let system = &self.inner.tools.system;
         let instructions = self.inner.instructions.assemble(&InstructionContext {
             agent: &setup.agent,
@@ -255,8 +308,9 @@ impl Runtime {
                 system: &system.system,
                 shell: system.shell.as_ref().map(|shell| shell.name.as_str()),
                 project,
-                projects: &projects,
+                projects: movable,
             }),
+            offers_tasks: setup.offers_tasks(),
         });
         let left_out = if options.leave_out_results {
             older_results(&turns)
@@ -276,8 +330,10 @@ impl Runtime {
             } else {
                 ToolChoice::Auto
             },
-            note: (options.tools_used_up && setup.uses_tools()).then_some(texts::TOOL_BUDGET_USED),
+            note: (options.tools_used_up && setup.uses_tools())
+                .then(|| texts::tool_budget_used(setup.requester())),
             left_out: &left_out,
+            requester: setup.requester(),
         };
         let request = build_request(shape, &turns);
         let estimate = estimate_request(&request);
@@ -366,7 +422,8 @@ impl Runtime {
             .split_last()
             .map_or(&[][..], |(_latest, earlier)| earlier);
         let allowance = compaction::summary_allowance(setup.budget, setup.output_limit);
-        let Some(plan) = compaction::plan(candidates, size, allowance, trigger) else {
+        let Some(plan) = compaction::plan(candidates, size, allowance, trigger, setup.requester())
+        else {
             return Ok(false);
         };
         let covered = &candidates[..plan.covered];
@@ -434,7 +491,7 @@ impl Runtime {
         covered: &[ModelTurn],
         allowance: u32,
     ) -> Result<String, CallError> {
-        let rendered = compaction::render_turns(covered);
+        let rendered = compaction::render_turns(covered, setup.requester());
         let overhead = compaction::request_overhead(previous, allowance);
         let chunk_tokens = setup
             .budget
@@ -496,8 +553,9 @@ impl Runtime {
 /// The smallest transcript chunk of a summary call.
 const MIN_CHUNK_TOKENS: u32 = 256;
 
-/// The tool calls of the latest turn whose results can be left out: every
-/// completed call but the newest three.
+/// The calls of the latest turn whose results can be left out: every
+/// completed tool call and every task call that returned reports, but the
+/// newest three.
 fn older_results(turns: &[ModelTurn]) -> HashSet<PartId> {
     let Some(latest) = turns.last() else {
         return HashSet::new();
@@ -505,7 +563,11 @@ fn older_results(turns: &[ModelTurn]) -> HashSet<PartId> {
     let completed: Vec<&PartId> = latest
         .parts
         .iter()
-        .filter(|part| part.kind == Some(PartKind::ToolCall))
+        .filter(|part| match part.kind {
+            Some(PartKind::ToolCall) => true,
+            Some(PartKind::Task) => part.task.as_ref().is_some_and(tasks::returned_reports),
+            _ => false,
+        })
         .filter(|part| {
             part.tool_call
                 .as_ref()

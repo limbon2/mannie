@@ -1,12 +1,15 @@
 // The chat feature's entries in the shell's slots (docs/features/chat/
-// conversation-view.md, projects.md; ADR-0020): the conversation view, which
-// Mannie opens into, the projects and the conversation list in the sidebar,
-// the part renderers, the dialogs, the commands and the settings sections.
+// conversation-view.md, projects.md; ADR-0020, ADR-0025): the conversation
+// view, which Mannie opens into, the projects and the conversation list in the
+// sidebar, the side panel that shows a conversation, the part renderers, the
+// dialogs, the commands and the settings sections.
+import MessagesSquareIcon from '@lucide/svelte/icons/messages-square';
 import ScrollTextIcon from '@lucide/svelte/icons/scroll-text';
 import ServerIcon from '@lucide/svelte/icons/server';
 
 import ChatDialogs from '#lib/components/app/chat/ChatDialogs.svelte';
 import ConversationListPanel from '#lib/components/app/chat/ConversationListPanel.svelte';
+import ConversationPanel from '#lib/components/app/chat/ConversationPanel.svelte';
 import ConversationView from '#lib/components/app/chat/ConversationView.svelte';
 import ErrorPart from '#lib/components/app/chat/ErrorPart.svelte';
 import InstructionsSettingsSection from '#lib/components/app/chat/InstructionsSettingsSection.svelte';
@@ -22,6 +25,7 @@ import { projectActions } from '#lib/state/project-actions.svelte.js';
 import type { ShellSlots } from '#lib/state/shell-slots.svelte.js';
 import {
   CHAT_VIEW,
+  CONVERSATION_PANEL,
   openConversationId,
   PROVIDER_SETTINGS_SECTION,
   startNewConversation,
@@ -43,6 +47,12 @@ export function registerChat(slots: ShellSlots): void {
   });
   slots.sidebarPanels.register({ component: ProjectsPanel, id: 'chat.projects', order: 0 });
   slots.sidebarPanels.register({ component: ConversationListPanel, id: 'chat.conversations', order: 10 });
+  slots.sidePanels.register({
+    component: ConversationPanel,
+    defaultLabel: m.chat_panel_label,
+    icon: MessagesSquareIcon,
+    id: CONVERSATION_PANEL,
+  });
   slots.overlays.register({ component: ChatDialogs, id: 'chat.dialogs' });
   slots.partRenderers.register({ component: UserTextPart, id: 'user_text' });
   slots.partRenderers.register({ component: TextPart, id: 'text' });

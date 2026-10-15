@@ -7,8 +7,8 @@ use mannie_types::projects::{ProjectView, folder_name};
 use mannie_types::transcript::ConversationSummary;
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
-use super::RuntimeStoreError;
 use super::rows::{millis, parse_id};
+use super::{RuntimeStoreError, tasks};
 use crate::writer::TransactError;
 use crate::{Durability, Store};
 
@@ -57,6 +57,9 @@ pub struct AddedProject {
 pub struct ProjectDeletion {
     /// The conversations it deleted.
     pub conversations: Vec<ConversationId>,
+    /// The task conversations of those conversations, which were deleted
+    /// with them.
+    pub task_conversations: Vec<ConversationId>,
     /// Whether it deleted the project too: not when a conversation joined
     /// the project meanwhile.
     pub project_deleted: bool,
@@ -240,18 +243,26 @@ impl Store {
         };
         let conversations = self.project_conversations(project_id).await?;
         let mut deleted = Vec::with_capacity(conversations.len());
+        let mut task_conversations = Vec::new();
         for conversation in conversations {
             let id = conversation.as_str().to_owned();
             let project = project_id.as_str().to_owned();
-            let count = self
-                .write(Durability::Full, move |transaction| {
-                    transaction
+            // A conversation's task conversations go with it, through the
+            // foreign key; the caller ends their subscriptions too.
+            let (count, children) = self
+                .transact(Durability::Full, move |transaction| {
+                    let children = tasks::task_conversations_in(transaction, &id)
+                        .map_err(TransactError::Rejected)?;
+                    let count = transaction
                         .prepare_cached(DELETE_PROJECT_CONVERSATION)?
-                        .execute([id, project])
+                        .execute([id, project])?;
+                    Ok((count, children))
                 })
-                .await?;
+                .await
+                .map_err(rejected)?;
             if count > 0 {
                 deleted.push(conversation);
+                task_conversations.extend(children);
             }
         }
         let project = project_id.as_str().to_owned();
@@ -272,6 +283,7 @@ impl Store {
         self.flush().await?;
         Ok(Some(ProjectDeletion {
             conversations: deleted,
+            task_conversations,
             project_deleted,
         }))
     }

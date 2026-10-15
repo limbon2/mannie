@@ -82,11 +82,18 @@ pub fn split_activity(arguments: &str) -> SplitArguments {
     }
 }
 
-/// An activity as the owner reads it: without control characters and
-/// invisible characters, with its white space collapsed to single spaces,
-/// and at most [`MAX_ACTIVITY_CHARS`] characters, the last of them "…" when
-/// it was longer. `None` when nothing is left.
+/// An activity as the owner reads it ([`clean_label`] with
+/// [`MAX_ACTIVITY_CHARS`]).
 fn clean(text: &str) -> Option<String> {
+    clean_label(text, MAX_ACTIVITY_CHARS)
+}
+
+/// A short text that a model wrote for the owner, such as an activity or a
+/// task's title, as the owner reads it: without control characters and
+/// invisible characters, with its white space collapsed to single spaces,
+/// and at most `max_chars` characters, the last of them "…" when it was
+/// longer. `None` when nothing is left.
+pub fn clean_label(text: &str, max_chars: usize) -> Option<String> {
     let shown: String = text
         .chars()
         .filter(|character| !is_invisible(*character))
@@ -102,10 +109,10 @@ fn clean(text: &str) -> Option<String> {
     if joined.is_empty() {
         return None;
     }
-    if joined.chars().count() <= MAX_ACTIVITY_CHARS {
+    if joined.chars().count() <= max_chars {
         return Some(joined);
     }
-    let kept: String = joined.chars().take(MAX_ACTIVITY_CHARS - 1).collect();
+    let kept: String = joined.chars().take(max_chars.saturating_sub(1)).collect();
     Some(format!("{}…", kept.trim_end()))
 }
 

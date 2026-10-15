@@ -27,13 +27,9 @@ use mannie_types::tools::{
 };
 use tokio::sync::oneshot;
 
-use super::{Ending, RunActor, StepCall, halt};
+use super::{Ending, MAX_DETAIL_CHARS, RunActor, StepCall, budget_bytes, halt};
 use crate::calls::Setup;
 use crate::projects::Moves;
-
-/// The most characters of a parser's message about invalid arguments that
-/// the journal and the model keep.
-const MAX_DETAIL_CHARS: usize = 1_000;
 
 /// How a tool call ended, for the calls after it in the same step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,12 +67,6 @@ struct Surroundings {
     project: Option<ProjectId>,
 }
 
-/// The bytes of a context budget in tokens, the inverse of the estimate of
-/// two tokens for every five bytes.
-fn budget_bytes(tokens: u32) -> usize {
-    usize::try_from(u64::from(tokens) * 5 / 2).unwrap_or(usize::MAX)
-}
-
 /// A store failure that ends the run.
 fn internal(error: &dyn std::fmt::Display, what: &str) -> Ending {
     tracing::error!(%error, "could not read {what} for a tool call");
@@ -84,8 +74,12 @@ fn internal(error: &dyn std::fmt::Display, what: &str) -> Ending {
 }
 
 impl RunActor {
-    /// Runs the complete calls of a model call one at a time. A denial skips
-    /// the rest of them, and calls beyond the reply's budget do not run.
+    /// Runs the complete calls of a model call in their order. A tool call
+    /// runs to its end before the next call starts; a start or a follow-up
+    /// of a task does not hold up the step, and the step ends when its tasks
+    /// that do not run in the background reported (ADR-0024, decision 5). A
+    /// denial skips the rest of the calls, and calls beyond the reply's
+    /// budget do not run.
     pub(super) async fn run_calls(
         &mut self,
         setup: &Setup,
@@ -102,11 +96,17 @@ impl RunActor {
                 continue;
             }
             self.tool_calls += 1;
-            if self.run_call(setup, call).await? == CallEnd::Denied {
+            self.publish_progress(call.document.activity.clone());
+            if call.task.is_some() {
+                self.run_task_call(setup, call).await?;
+            } else if self.run_call(setup, call).await? == CallEnd::Denied {
                 denied = true;
             }
         }
-        self.pending.push(self.activity(RunActivity::Preparing));
+        self.await_foreground_tasks().await?;
+        self.publish_progress(None);
+        let preparing = self.activity(RunActivity::Preparing);
+        self.pending.push(preparing);
         self.flush(Durability::Full).await
     }
 
@@ -229,11 +229,12 @@ impl RunActor {
         } else {
             ToolCallStatus::Running
         };
-        self.pending.push(update(&call));
-        self.pending.push(self.activity(RunActivity::RunningTool {
+        self.pending.push(call.update(Vec::new()));
+        let running = self.activity(RunActivity::RunningTool {
             part_id: call.part_id.clone(),
             started_at,
-        }));
+        });
+        self.pending.push(running);
         // The journal: the executing status is durable before the side
         // effect starts (ADR-0013, decision 5).
         self.flush(Durability::Full).await?;
@@ -268,7 +269,8 @@ impl RunActor {
 
     /// Waits for a running tool. Stop and Shutdown tell it to stop, and the
     /// run ends once it has; a command reports its process for the journal
-    /// as soon as it runs.
+    /// as soon as it runs. Meanwhile, the states that the run's children
+    /// publish are stored.
     async fn watch(
         &mut self,
         mut execution: BoxFuture<'static, Done>,
@@ -278,6 +280,7 @@ impl RunActor {
     ) -> Result<(Done, Option<Ending>), Ending> {
         let mut halted: Option<Ending> = None;
         let mut process_pending = true;
+        let board = Arc::clone(self.tasks.board());
         loop {
             tokio::select! {
                 done = &mut execution => return Ok((done, halted)),
@@ -295,10 +298,11 @@ impl RunActor {
                     process_pending = false;
                     if let Ok(record) = record {
                         call.document.process = Some(record);
-                        self.pending.push(update(call));
+                        self.pending.push(call.update(Vec::new()));
                         self.flush(Durability::Full).await?;
                     }
                 }
+                () = board.changed(), if halted.is_none() => self.mirror_children().await?,
             }
         }
     }
@@ -319,22 +323,31 @@ impl RunActor {
         let (waiting, answer) = self
             .runtime
             .ask_owner(&self.conversation, &call.part_id, request);
-        self.pending.push(update(call));
-        self.pending
-            .push(self.activity(RunActivity::AwaitingApproval {
-                part_id: call.part_id.clone(),
-            }));
-        self.flush(Durability::Full).await?;
+        self.pending.push(call.update(Vec::new()));
+        let awaiting = self.activity(RunActivity::AwaitingApproval {
+            part_id: call.part_id.clone(),
+        });
+        self.pending.push(awaiting);
+        let applied = self.flush_applied(Durability::Full).await?;
+        // A child's request shows in its parent's conversation, where the
+        // owner answers it (docs/features/child-agents/tasks.md, what the
+        // parent shows).
+        self.publish_approval(call, &applied);
         tracing::info!(run = %self.run, part = %call.part_id, tool = %call.document.tool, reasons = ?request.reasons, "a tool call waits for the owner");
         let answer = self.wait(answer).await;
         drop(waiting);
+        self.withdraw_approval();
         answer?.map_err(|_withdrawn| Ending::Interrupted)
     }
 
     /// The owner's message of the turn, while no tool call of the turn came
     /// before this one: content that the model read since can never stand in
-    /// for the owner's words (ADR-0023, decision 3).
+    /// for the owner's words (ADR-0023, decision 3). A child's turn holds
+    /// another agent's instruction, which never counts as the owner's words.
     async fn owner_request(&self, call: &StepCall) -> Result<Option<String>, Ending> {
+        if self.child.is_some() {
+            return Ok(None);
+        }
         let store = &self.runtime.inner.store;
         if store.tool_calls_before(&call.part_id).await? > 0 {
             return Ok(None);
@@ -345,7 +358,9 @@ impl RunActor {
     /// Saves what the owner's choice allows beyond this call: the request's
     /// grants, for the conversation, its project or every conversation, or a
     /// rule built from the request's command. A failure to save leaves this
-    /// call allowed, and the next call asks again.
+    /// call allowed, and the next call asks again. A child's grants "for this
+    /// conversation" belong to its parent, so they cover the parent and all
+    /// its children.
     async fn remember(&self, choice: &ApprovalChoice, request: &ApprovalRequest) {
         let store = &self.runtime.inner.store;
         let ids = &self.runtime.inner.ids;
@@ -358,7 +373,7 @@ impl RunActor {
         };
         match choice {
             ApprovalChoice::AllowForConversation if !request.grants.is_empty() => {
-                if let Err(error) = store.add_grants(&self.conversation, grants()).await {
+                if let Err(error) = store.add_grants(&self.authority, grants()).await {
                     tracing::warn!(%error, "could not save the grants of an approval");
                 }
             }
@@ -414,10 +429,12 @@ impl RunActor {
         })
     }
 
-    /// Reads what the policy and the tool need, fresh for this call.
+    /// Reads what the policy and the tool need, fresh for this call: the
+    /// workspace, the project and the grants of the authority conversation,
+    /// which for a child agent is its parent (ADR-0024, decision 3).
     async fn surroundings(&self, setup: &Setup) -> Result<Surroundings, Ending> {
         let inner = &self.runtime.inner;
-        let summary = inner.store.conversation_summary(&self.conversation).await?;
+        let summary = inner.store.conversation_summary(&self.authority).await?;
         let workspace = summary
             .as_ref()
             .and_then(|summary| summary.workspace.as_ref())
@@ -449,7 +466,7 @@ impl RunActor {
             .map_err(|error| internal(&error, "the tools settings"))?;
         let grants = inner
             .store
-            .grants(&self.conversation)
+            .grants(&self.authority)
             .await
             .map_err(|error| internal(&error, "the grants"))?
             .into_iter()
@@ -460,7 +477,25 @@ impl RunActor {
             .rules()
             .await
             .map_err(|error| internal(&error, "the rules"))?;
+        // A child knows only its parent's project and never moves a
+        // conversation.
+        let projects = if self.child.is_some() {
+            ProjectFacts {
+                all: Arc::from(current.clone().into_iter().collect::<Vec<_>>()),
+                current,
+                ..ProjectFacts::none()
+            }
+        } else {
+            ProjectFacts {
+                current,
+                all: Arc::from(projects),
+                moves: Arc::new(Moves {
+                    runtime: self.runtime.clone(),
+                }),
+            }
+        };
         let runtime = self.runtime.clone();
+        // Archives belong to the conversation of the call, also a child's.
         let context = ToolContext {
             conversation_id: self.conversation.clone(),
             workspace,
@@ -472,13 +507,7 @@ impl RunActor {
             mutations: inner.tools.mutations.clone(),
             archive_ids: Arc::new(move || runtime.inner.ids.archive()),
             system: Arc::clone(&inner.tools.system),
-            projects: ProjectFacts {
-                current,
-                all: Arc::from(projects),
-                moves: Arc::new(Moves {
-                    runtime: self.runtime.clone(),
-                }),
-            },
+            projects,
         };
         Ok(Surroundings {
             context,
@@ -533,14 +562,5 @@ impl RunActor {
             provider_item: None,
         });
         self.schedule_flush();
-    }
-}
-
-/// The change that stores a call's document as it is now.
-fn update(call: &StepCall) -> Change {
-    Change::UpdatePart {
-        part_id: call.part_id.clone(),
-        tool_call: call.document.clone(),
-        archives: Vec::new(),
     }
 }

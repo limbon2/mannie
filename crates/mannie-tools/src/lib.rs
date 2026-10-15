@@ -36,7 +36,8 @@ mod tool;
 mod tools;
 
 pub use activity::{
-    ACTIVITY_ARGUMENT, MAX_ACTIVITY_CHARS, SplitArguments, split_activity, with_activity,
+    ACTIVITY_ARGUMENT, MAX_ACTIVITY_CHARS, SplitArguments, clean_label, split_activity,
+    with_activity,
 };
 pub use digest::digest;
 pub use environment::CommandEnvironment;

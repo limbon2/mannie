@@ -3,15 +3,17 @@ use std::sync::LazyLock;
 
 use mannie_provider::{Content, Message, Role, ToolChoice, ToolDefinition};
 use mannie_store::{KeptRun, ModelPart, ModelTurn, ProviderItem};
-use mannie_types::ids::{ArchiveId, PartId, RunId, TurnId};
+use mannie_types::ids::{ArchiveId, ConversationId, PartId, RunId, TaskId, TurnId};
 use mannie_types::provider::{ApiInterface, ReasoningEffort};
 use mannie_types::run::RunState;
+use mannie_types::tasks::{AwaitedTask, TaskDocument, TaskPartDocument, TaskRefusal, TaskState};
 use mannie_types::tools::{
     ArchiveRef, NotRunReason, ToolCallDocument, ToolCallStatus, ToolOutcome, ToolResult,
 };
 use mannie_types::transcript::{PartKind, PartState};
 
 use super::{RequestShape, build_request};
+use crate::agents::Requester;
 use crate::texts;
 
 fn part_id(number: u32) -> PartId {
@@ -32,6 +34,7 @@ fn part(number: u32, kind: Option<PartKind>, text: &str) -> ModelPart {
         text: text.to_owned(),
         provider_item: None,
         tool_call: None,
+        task: None,
         attempt: u32::from(kind != Some(PartKind::UserText)),
     }
 }
@@ -102,6 +105,7 @@ fn shape(interface: ApiInterface) -> RequestShape<'static> {
         tool_choice: ToolChoice::Auto,
         note: None,
         left_out: &NOTHING_LEFT_OUT,
+        requester: Requester::Owner,
     }
 }
 
@@ -546,4 +550,172 @@ fn a_note_ends_the_request() {
         Some(&Message::text(Role::User, texts::TOOL_BUDGET_USED))
     );
     assert_eq!(request.tool_choice, ToolChoice::None);
+}
+
+/// A task part: a call of a task tool with its task section.
+fn task_part(number: u32, document: ToolCallDocument, section: TaskPartDocument) -> ModelPart {
+    ModelPart {
+        tool_call: Some(document),
+        task: Some(section),
+        ..part(number, Some(PartKind::Task), "{}")
+    }
+}
+
+/// The task that a start assigned, as its part records it.
+fn assigned(number: u32, background: bool, state: TaskState) -> TaskDocument {
+    TaskDocument {
+        task_id: TaskId::parse(&format!("0199e0f2-0000-7000-c000-{number:012}")).unwrap(),
+        number,
+        conversation_id: ConversationId::parse(&format!("0199e0f2-0000-7000-d000-{number:012}"))
+            .unwrap(),
+        agent: "explore".to_owned(),
+        title: "Look".to_owned(),
+        background,
+        follow_up: false,
+        state,
+        instruction: String::new(),
+        activity: None,
+        tool_calls: 0,
+        approval: None,
+        report: None,
+        failure: None,
+        started_at: None,
+        ended_at: None,
+    }
+}
+
+fn start_call(call_id: &str, status: ToolCallStatus) -> ToolCallDocument {
+    ToolCallDocument {
+        status,
+        ..ToolCallDocument::receiving(call_id.to_owned(), "start_task".to_owned())
+    }
+}
+
+#[test]
+fn task_parts_read_as_calls_with_their_results() {
+    let reported = TaskPartDocument {
+        task: Some(assigned(1, false, TaskState::Reported)),
+        output: Some(texts::task_reported(1, "Found it.")),
+        ..TaskPartDocument::default()
+    };
+    // A start in the background stays open while the task runs.
+    let mut background = task_part(
+        3,
+        start_call("start_2", ToolCallStatus::Running),
+        TaskPartDocument {
+            task: Some(assigned(2, true, TaskState::Running)),
+            output: Some(texts::task_started_in_background(2, "explore")),
+            ..TaskPartDocument::default()
+        },
+    );
+    background.state = PartState::Streaming;
+    let refused = TaskPartDocument {
+        refusal: Some(TaskRefusal::StillRunning { number: 2 }),
+        ..TaskPartDocument::default()
+    };
+    // A part that a crash ended before the model got a result.
+    let interrupted = TaskPartDocument {
+        task: Some(assigned(4, false, TaskState::Interrupted)),
+        ..TaskPartDocument::default()
+    };
+    let turns = [turn(
+        0,
+        Some(RunState::Running),
+        vec![
+            part(1, Some(PartKind::UserText), "Split it"),
+            task_part(
+                2,
+                start_call("start_1", ToolCallStatus::Completed),
+                reported,
+            ),
+            background,
+            task_part(
+                4,
+                start_call("follow_1", ToolCallStatus::Completed),
+                refused,
+            ),
+            task_part(
+                5,
+                start_call("start_4", ToolCallStatus::Canceled),
+                interrupted,
+            ),
+        ],
+    )];
+
+    let request = build_request(with_tools(ApiInterface::ChatCompletions), &turns);
+
+    let start = |call_id: &str| Content::ToolCall {
+        call_id: call_id.to_owned(),
+        name: "start_task".to_owned(),
+        arguments: "{}".to_owned(),
+    };
+    assert_eq!(
+        request.messages[1].content,
+        [
+            start("start_1"),
+            start("start_2"),
+            start("follow_1"),
+            start("start_4"),
+        ]
+    );
+    assert_eq!(
+        request.messages[2..],
+        [
+            tool_result("start_1", &texts::task_reported(1, "Found it.")),
+            tool_result("start_2", &texts::task_started_in_background(2, "explore")),
+            tool_result("follow_1", &texts::task_still_running(2)),
+            tool_result("start_4", &texts::task_interrupted(4)),
+        ]
+    );
+}
+
+#[test]
+fn reports_left_out_say_how_to_read_them_again_and_a_child_reads_its_own_denial() {
+    let waited = TaskPartDocument {
+        awaited: vec![
+            AwaitedTask {
+                number: 1,
+                title: "One".to_owned(),
+                state: TaskState::Reported,
+            },
+            AwaitedTask {
+                number: 3,
+                title: "Three".to_owned(),
+                state: TaskState::Failed,
+            },
+        ],
+        output: Some("Task 1 reported:\n\nlong".to_owned()),
+        ..TaskPartDocument::default()
+    };
+    let wait_call = ToolCallDocument {
+        status: ToolCallStatus::Completed,
+        ..ToolCallDocument::receiving("wait_1".to_owned(), "wait_for_tasks".to_owned())
+    };
+    let turns = [turn(
+        0,
+        Some(RunState::Running),
+        vec![
+            part(1, Some(PartKind::UserText), "Wait"),
+            task_part(2, wait_call, waited),
+            call(3, "{}", document("denied", ToolCallStatus::Denied)),
+        ],
+    )];
+    let left_out = HashSet::from([part_id(2)]);
+
+    let request = build_request(
+        RequestShape {
+            left_out: &left_out,
+            requester: Requester::Agent,
+            ..with_tools(ApiInterface::ChatCompletions)
+        },
+        &turns,
+    );
+
+    assert_eq!(
+        request.messages[2..],
+        [
+            tool_result("wait_1", &texts::report_left_out(&[1, 3])),
+            tool_result("denied", texts::CHILD_DENIED),
+        ]
+    );
 }

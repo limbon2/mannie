@@ -56,6 +56,14 @@
   "shell_startup_data_directory_unavailable": "Mannie could not find the folder for its data. Check that your user profile is available, then restart Mannie.",
   "shell_startup_http_client_unavailable": "Mannie could not set up its connections to model providers, for example because the system's certificates could not be read. Restart Mannie, and report the problem with the log file if it happens again.",
   "shell_loading": "Loading",
+  "shell_side_panel_label": "Side panel",
+  "shell_side_panel_tabs": "Open panels",
+  "shell_side_panel_close": "Close panel",
+  "shell_side_panel_resize": "Resize the side panel",
+  "shell_side_panel_unknown_label": "Panel",
+  "shell_side_panel_unknown_title": "This panel cannot be shown",
+  "shell_side_panel_unknown_description": "This version of Mannie has no panel of the kind {kind}.",
+  "shell_command_close_side_panel": "Close the side panel",
   "markdown_copy": "Copy",
   "markdown_copy_succeeded": "Copied.",
   "markdown_copy_failed": "Copying failed. Select the code and copy it yourself.",
@@ -118,6 +126,11 @@
   "chat_no_profile_title": "No provider profile yet",
   "chat_no_profile_description": "Replies need a provider profile with a server and a model. Add one in the provider settings.",
   "chat_no_profile_action": "Open the provider settings",
+  "chat_panel_label": "Conversation",
+  "chat_panel_task_label": "Task {number}: {title}",
+  "chat_panel_gone_description": "It was deleted.",
+  "chat_read_only_child": "This conversation belongs to a child agent. Its parent conversation gives it work.",
+  "chat_read_only": "This conversation is read-only here. Open it from the sidebar to write in it.",
   "chat_conversation_gone_title": "This conversation no longer exists",
   "chat_conversation_gone_description": "It was deleted. Start a new conversation or choose another one in the sidebar.",
   "chat_conversation_failed_title": "The conversation could not be opened",
@@ -165,6 +178,16 @@
   "chat_reply_failed": "The reply failed",
   "chat_status_busy": "Working",
   "chat_status_waiting_for_slot": "Waiting for a free slot…",
+  "chat_status_waiting_for_tasks": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Waiting for 1 child agent…",
+        "countPlural=other": "Waiting for {count: number} child agents…"
+      }
+    }
+  ],
   "chat_status_preparing": "Preparing the reply…",
   "chat_status_compacting": "Summarizing older messages for the model…",
   "chat_status_writing": "Writing…",
@@ -283,6 +306,7 @@
   "chat_error_written_by_newer_version": "A newer version of Mannie wrote these settings, so this version does not change them.",
   "chat_error_storage_failed": "The conversation could not be read or saved. Restart Mannie, and report the problem with the log file if it happens again.",
   "chat_error_shutting_down": "Mannie is quitting and starts no more replies.",
+  "chat_error_task_conversation": "This conversation belongs to a child agent, and only its parent conversation gives it work. You can stop it.",
   "chat_instructions_section_title": "Instructions",
   "chat_instructions_section_description": "Instructions that apply to every conversation, from its next reply on.",
   "chat_instructions_label": "Your instructions",
@@ -733,5 +757,73 @@
   "tools_failure_path_changed": "The path changed after the call was allowed, so nothing was changed.",
   "tools_failure_shell_missing": "The shell {path} is missing.",
   "tools_failure_spawn_failed": "The command could not be started.",
-  "tools_failure_io_error": "The system reported an error."
+  "tools_failure_io_error": "The system reported an error.",
+  "child_agents_task_number": "Task {number}",
+  "child_agents_tab_label": "Task {number}: {title}",
+  "child_agents_agent_explore": "Explore",
+  "child_agents_agent_general": "General",
+  "child_agents_agent_other": "{agent}",
+  "child_agents_follow_up": "Follow-up",
+  "child_agents_state_accepted": "Waiting for a free slot",
+  "child_agents_state_running": "Working",
+  "child_agents_state_awaiting_approval": "Waiting for your approval",
+  "child_agents_state_reported": "Reported",
+  "child_agents_state_failed": "Failed",
+  "child_agents_state_canceled": "Stopped",
+  "child_agents_state_interrupted": "Interrupted",
+  "child_agents_tool_calls": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "1 tool call",
+        "countPlural=other": "{count: number} tool calls"
+      }
+    }
+  ],
+  "child_agents_open_conversation": "Open conversation",
+  "child_agents_control_label": "Child agents",
+  "child_agents_control_label_working": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Child agents, 1 working",
+        "countPlural=other": "Child agents, {count: number} working"
+      }
+    }
+  ],
+  "child_agents_control_working": "Working",
+  "child_agents_control_ended": "Ended",
+  "child_agents_stop": "Stop",
+  "child_agents_details": "Details",
+  "child_agents_instruction": "Instruction",
+  "child_agents_report": "Report",
+  "child_agents_no_report": "The child agent ended without a report.",
+  "child_agents_failed": "The task failed: {cause}",
+  "child_agents_announce": "Task {number}: {state}",
+  "child_agents_refusal_budget_used": "No task started: this reply has started all the tasks it may start.",
+  "child_agents_refusal_not_started": "No task started: Mannie stopped before the task was stored.",
+  "child_agents_refusal_still_running": "No task started: task {number} is still running.",
+  "child_agents_refusal_unknown_task": "No task started: this conversation has no task {number}.",
+  "child_agents_call_untitled": "A task for a child agent",
+  "child_agents_call_starting": "Starting the task…",
+  "child_agents_call_canceled": "No task started: the reply stopped first.",
+  "child_agents_wait_running": "Waiting for reports…",
+  "child_agents_wait_done": "Read the reports",
+  "child_agents_wait_nothing": "No task to wait for",
+  "child_agents_wait_label": "Tasks",
+  "child_agents_settings_title": "Child agents",
+  "child_agents_settings_description": "How many child agents work at the same time on this computer.",
+  "child_agents_settings_limit_label": "Child agents at once",
+  "child_agents_settings_limit_description": "When this many child agents work, further tasks wait for a free slot. A higher limit starts waiting tasks at once.",
+  "child_agents_settings_default_limit": "{count} (default)",
+  "child_agents_settings_saving": "Saving",
+  "child_agents_settings_saved": "Saved.",
+  "child_agents_settings_save_failed_title": "The limit was not changed",
+  "child_agents_loading": "Loading",
+  "child_agents_try_again": "Try again",
+  "child_agents_error_parallel_children_invalid": "Choose a number from {min} to {max}.",
+  "child_agents_error_storage_failed": "The settings could not be read or saved. The log in Mannie's data folder has the cause. Try again, and restart Mannie if it keeps failing.",
+  "child_agents_error_written_by_newer_version": "A newer version of Mannie saved these settings, so this version cannot change them. Install the newer version to change them."
 }

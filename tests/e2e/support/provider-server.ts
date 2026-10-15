@@ -33,9 +33,11 @@ export const MODELS = {
   timed: 'e2e-timed',
   /**
    * Calls the tools that the owner's message lists, one `call <tool> <JSON
-   * arguments>` line each, with `next` between the steps of the reply. After
-   * the last step it answers with `TOOLS_DONE` and the last result it read.
-   * A checkpoint request gets a summary.
+   * arguments>` line each, with `next` between the steps of the reply, and
+   * sends a reply that never ends for a `hang` line. After the last step it
+   * answers with `TOOLS_DONE` and the last result it read. A child agent's
+   * instruction scripts the child the same way (docs/features/child-agents/
+   * child-agent-activity.md, tests). A checkpoint request gets a summary.
    */
   tools: 'e2e-tools',
   /** Refuses every request as if the credential were wrong, and repeats the credential as some servers do. */
@@ -78,6 +80,28 @@ interface ScriptedCall {
   readonly arguments: string;
   readonly name: string;
 }
+
+/** A step of the tools scenario: tool calls, or a reply that never ends. */
+type ScriptedStep = { readonly calls: ScriptedCall[]; readonly kind: 'calls' } | { readonly kind: 'hang' };
+
+/**
+ * The starts of the notes that Mannie writes for the model alone
+ * (crates/mannie-runtime/src/texts.rs). The scenarios read the owner's latest
+ * message, or a child agent's instruction, past them, so that a child's
+ * script continues after the note that asks it to confirm its task, and its
+ * report carries the result it read last.
+ */
+const MANNIE_NOTES = [
+  'Before you report, check that you did everything the task asks for.',
+  'Your last response was empty.',
+  'Continue with the next step',
+  'You wrote a tool call as text.',
+  'You have used all the tool calls',
+];
+
+/** The note that asks a parent to read the reports of its tasks. */
+const UNREAD_REPORTS_NOTE =
+  /^Tasks? [\d, and]+ ha(?:s|ve) ended, and you have not read (?:its report|their reports)\./u;
 
 /** The fast scenario's reply: Markdown with emphasis, code and lists, in pieces of up to four characters. */
 function fastPieces(): string[] {
@@ -245,11 +269,9 @@ class ReplyWriter {
   }
 }
 
-/** The text of the owner's latest message in a request body of either interface. */
-function latestOwnerText(body: Record<string, unknown>): string {
-  const entries = (body.messages ?? body.input) as { content?: unknown; role?: string }[] | undefined;
-  const latest = entries?.findLast((entry) => entry.role === 'user');
-  const content = latest?.content;
+/** The text of a message entry of either interface. */
+function entryText(entry: Record<string, unknown>): string {
+  const content = entry.content;
   if (typeof content === 'string') {
     return content;
   }
@@ -257,6 +279,32 @@ function latestOwnerText(body: Record<string, unknown>): string {
     return content.map((part: { text?: string }) => part.text ?? '').join('');
   }
   return '';
+}
+
+/** Whether a message of the user is a note of Mannie's own rather than the owner's or a parent agent's. */
+function isMannieNote(text: string): boolean {
+  const isListed = MANNIE_NOTES.some((note) => text.startsWith(note));
+  return isListed || UNREAD_REPORTS_NOTE.test(text);
+}
+
+/** The index of the owner's latest message, past Mannie's notes, or -1. */
+function ownerIndex(entries: readonly Record<string, unknown>[]): number {
+  return entries.findLastIndex((entry) => {
+    const isUser = entry.role === 'user';
+    const isNote = isMannieNote(entryText(entry));
+    return isUser && !isNote;
+  });
+}
+
+/** The text of the owner's latest message in a request body of either interface. */
+function latestOwnerText(body: Record<string, unknown>): string {
+  const entries = (body.messages ?? body.input ?? []) as Record<string, unknown>[];
+  const index = ownerIndex(entries);
+  if (index === -1) {
+    return '';
+  }
+  const latest = entries[index];
+  return latest === undefined ? '' : entryText(latest);
 }
 
 /** The names of the tools that a request offers, in either interface. */
@@ -268,8 +316,7 @@ function offeredTools(body: Record<string, unknown>): string[] {
 /** The entries of a request after the owner's latest message, in either interface. */
 function entriesAfterOwner(body: Record<string, unknown>): Record<string, unknown>[] {
   const entries = (body.messages ?? body.input ?? []) as Record<string, unknown>[];
-  const latest = entries.findLastIndex((entry) => entry.role === 'user');
-  return entries.slice(latest + 1);
+  return entries.slice(ownerIndex(entries) + 1);
 }
 
 /**
@@ -311,21 +358,37 @@ function latestToolResult(body: Record<string, unknown>): string {
   return '';
 }
 
-/** The steps that the owner's message lists for the tools scenario. */
-function scriptedSteps(text: string): ScriptedCall[][] {
-  const steps: ScriptedCall[][] = [[]];
+/**
+ * The steps that the owner's message lists for the tools scenario: `call`
+ * lines, `next` between steps, and `hang` for a step whose reply never ends.
+ */
+function scriptedSteps(text: string): ScriptedStep[] {
+  const steps: ScriptedStep[] = [];
+  let calls: ScriptedCall[] = [];
+  const endStep = (): void => {
+    if (calls.length > 0) {
+      steps.push({ calls, kind: 'calls' });
+    }
+    calls = [];
+  };
   for (const line of text.split(/\r?\n/u)) {
     const trimmed = line.trim();
     if (trimmed === 'next') {
-      steps.push([]);
+      endStep();
+      continue;
+    }
+    if (trimmed === 'hang') {
+      endStep();
+      steps.push({ kind: 'hang' });
       continue;
     }
     const match = /^call (\S+) (.+)$/u.exec(trimmed);
     if (match !== null) {
-      steps.at(-1)?.push({ arguments: match[2] ?? '{}', name: match[1] ?? '' });
+      calls.push({ arguments: match[2] ?? '{}', name: match[1] ?? '' });
     }
   }
-  return steps.filter((step) => step.length > 0);
+  endStep();
+  return steps;
 }
 
 /** The interface that a path belongs to, if any. */
@@ -490,8 +553,13 @@ export async function startProviderServer(): Promise<ProviderServer> {
         }
         const script = scriptedSteps(latestOwnerText(body));
         const step = script[steps];
+        if (step?.kind === 'hang') {
+          writer.text('Working.');
+          // The connection stays open until the app or the server closes it.
+          return;
+        }
         if (step !== undefined) {
-          callTools(writer, step, input);
+          callTools(writer, step.calls, input);
           return;
         }
         const reply = `${TOOLS_DONE} Last result: ${latestToolResult(body)}`;

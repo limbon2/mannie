@@ -29,7 +29,9 @@ A tool implements the `Tool` trait in `mannie-tools` and registers with the [too
 | Prepare          | Computes the canonical accesses without side effects.                                                                                                                                                     |
 | Execute          | Performs the work after authorization and returns a typed result.                                                                                                                                         |
 
-A call's surroundings, which the runtime reads again for every call, hold the conversation, its workspace, the store, the limits, the environment of commands, the conversation's project and the owner's projects, and the capability to move a general conversation into a project, which the runtime provides because a move changes the conversation ([ADR-0023](../adr/0023-organize-conversations-into-projects.md)).
+A call's surroundings, which the runtime reads again for every call, hold the conversation, its workspace, the store, the limits, the environment of commands, the conversation's project and the owner's projects, and the capability to move a general conversation into a project, which the runtime provides because a move changes the conversation ([ADR-0023](../adr/0023-organize-conversations-into-projects.md)). For a child agent, the runtime reads the workspace, the project and the grants from the parent conversation, and the conversation stays the child's own, where its archives live.
+
+The task tools of child agents are not in the registry. They act on runs rather than on the machine: they start, continue and wait for the runs of child agents, they have no operations of their own, and every side effect of a child is an operation of the child's own run. The runtime defines them, offers them only to runs that are not tasks themselves, and renders their results ([ADR-0024](../adr/0024-run-child-agent-tasks-in-the-parent-run.md)).
 
 Every call also carries an activity: a few words in which the model says what the call does, for the owner to read. The runtime adds the argument `activity` to each schema that a model receives and takes it out of the arguments before the tool reads them, so a tool cannot have an argument of that name. The activity is the model's claim, and nothing that authorizes a call reads it ([tool calls](../features/system-tools/tool-calls.md#the-activity-of-a-call)).
 
@@ -65,6 +67,7 @@ Policy decides first, and the owner decides what policy leaves open.
 
 - An approval request shows the operation exactly: the canonical paths, or the full command with its shell and working directory, and on a worker also the host.
 - The owner can allow the operation once, allow it for the conversation, its project or every conversation, save a rule, or deny it. A denial goes back to the model as the tool result.
+- A child agent's request shows in its parent's conversation, inside the card of its task, with the task's number and title. The decision names the child's conversation, and a grant "for this conversation" is saved for the parent, so it covers the parent and all its children.
 - A move into a project runs without a question only when the owner's message of the turn names the project and no other tool call of the turn came before it, so nothing that the model read can stand in for the owner's words; no grant or rule covers a move.
 - A command rule never matches a command that contains shell metacharacters (`;`, `&`, `|`, `$`, backticks, parentheses, braces or redirections). Such commands always ask.
 - Text that the model read can never create a grant or a rule, and neither can a report from another agent.

@@ -14,8 +14,13 @@ use super::rows::{PartDocument, from_json, parse_id};
 use super::{Change, RuntimeStoreError};
 use crate::{Durability, Store};
 
-const SELECT_ACTIVE_RUNS: &str = "SELECT id, conversation_id FROM runtime_runs \
-     WHERE state IN ('queued', 'running') ORDER BY created_at";
+// The runs of task conversations come first, so that a child's task ends
+// before its parent's part finishes from it (docs/features/child-agents/
+// tasks.md, recovery).
+const SELECT_ACTIVE_RUNS: &str = "SELECT r.id, r.conversation_id FROM runtime_runs r \
+     JOIN runtime_conversations c ON c.id = r.conversation_id \
+     WHERE r.state IN ('queued', 'running') \
+     ORDER BY c.parent_conversation_id IS NULL, r.created_at";
 const SELECT_OPEN_TOOL_CALLS: &str = "SELECT id, document FROM runtime_parts \
      WHERE run_id = ?1 AND kind = ?2 AND state = 'streaming' ORDER BY position";
 
@@ -69,6 +74,7 @@ impl Store {
                 run_id: run_id.clone(),
                 state: RunState::Interrupted,
                 outcome: RunOutcome::default(),
+                task: None,
             };
             self.apply(&conversation_id, vec![change], Durability::Full)
                 .await?;

@@ -38,6 +38,7 @@ impl Fixture {
                         title: "Tools".to_owned(),
                         profile_id: None,
                         project_id: None,
+                        task: None,
                     },
                 }],
                 Durability::Full,

@@ -401,6 +401,11 @@ pub enum ChatError {
     /// The system's folder dialog failed.
     #[error("the folder dialog failed")]
     FolderDialogFailed,
+    /// The conversation is a child agent's, which its parent conversation
+    /// directs: the owner can stop it, and nothing else (docs/features/
+    /// child-agents/tasks.md, task conversations).
+    #[error("the conversation belongs to a child agent")]
+    TaskConversation,
     /// The settings were written by a newer version of Mannie, which this
     /// version does not overwrite.
     #[error("the chat settings were written by a newer version of Mannie")]
@@ -443,6 +448,7 @@ impl ChatError {
             Self::NotAFolder => "chat.not_a_folder",
             Self::FolderUnreadable { .. } => "chat.folder_unreadable",
             Self::FolderDialogFailed => "chat.folder_dialog_failed",
+            Self::TaskConversation => "chat.task_conversation",
             Self::WrittenByNewerVersion => "chat.written_by_newer_version",
             Self::StorageFailed => "chat.storage_failed",
             Self::StoreUnavailable => "chat.store_unavailable",

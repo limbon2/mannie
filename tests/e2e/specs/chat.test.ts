@@ -11,6 +11,7 @@ import {
   COMPOSER,
   latestTurnParts,
   listedConversations,
+  send,
   sendMessage,
   startNewConversation,
   TEST_CREDENTIAL,
@@ -19,6 +20,7 @@ import {
   waitForCompleteReply,
   waitForComposer,
   waitForLatestPart,
+  waitForNewTurn,
 } from '../support/chat.ts';
 import { deleteProviderProfiles } from '../support/harness.ts';
 import { axeViolations, focusedElement, leaveSettings, waitForAnimations, waitForApp } from '../support/page.ts';
@@ -66,6 +68,9 @@ describe('chat', () => {
     await sendMessage('Hello from the test');
 
     expect(await waitForCompleteReply()).toBe('Reply to: Hello from the test');
+    // The conversation's own pane replaced the new conversation's, and its
+    // message box took the focus over.
+    expect(await focusedElement()).toMatchObject({ tag: 'textarea' });
     expect(await listedConversations()).toEqual(['Hello from the test']);
     const call = modelCalls(provider).at(-1);
     expect(call?.path).toBe('/v1/chat/completions');
@@ -144,6 +149,9 @@ describe('chat', () => {
     await browser.waitUntil(async () => (await turnCount()) === 2, { timeoutMsg: 'the transcript did not load' });
     const parts = await latestTurnParts();
     expect(parts.map((part) => part.kind)).toEqual(['user_text', 'text']);
+    // Only a conversation that the first message just opened takes the focus.
+    await waitForComposer();
+    expect(await focusedElement()).not.toMatchObject({ tag: 'textarea' });
   });
 
   it('sends with Enter from the keyboard alone, and Shift+Enter starts a new line', async () => {
@@ -155,9 +163,12 @@ describe('chat', () => {
     await browser.keys([Key.Shift, Key.Enter]);
     await browser.keys('second line'.split(''));
     expect(await focusedElement()).toMatchObject({ tag: 'textarea' });
+    const before = await turnCount();
 
     await browser.keys(Key.Enter);
 
+    // The new turn shows first, so the latest turn is the one just sent.
+    await waitForNewTurn(before);
     const owner = await waitForLatestPart('user_text', ['complete']);
     expect(owner.text).toBe('First line\nsecond line');
     expect(await waitForCompleteReply()).toBe('Reply to: First line\nsecond line');
@@ -179,7 +190,8 @@ describe('chat', () => {
   });
 
   it('sends the encrypted reasoning back to the model that wrote it', async () => {
-    await sendMessage('Think again');
+    // The reply repeats the previous one, so the new turn must show first.
+    await send('Think again');
 
     expect(await waitForCompleteReply()).toBe('The answer after reasoning.');
     const input = modelCalls(provider).at(-1)?.body?.input as { encrypted_content?: string; type?: string }[];

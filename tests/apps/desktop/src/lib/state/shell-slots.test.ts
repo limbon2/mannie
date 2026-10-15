@@ -52,3 +52,38 @@ describe('ShellSlots', () => {
     }).toThrow('The part renderers slot already has an entry with the ID fake_part.');
   });
 });
+
+describe('the conversation controls slot', () => {
+  it('registers a control for a conversation’s toolbar by its ID, and refuses a duplicate', () => {
+    const slots = new ShellSlots();
+    const component = () => ({});
+
+    slots.conversationControls.register({ component, id: 'fake.control', order: 2 });
+
+    expect(slots.conversationControls.find('fake.control')?.order).toBe(2);
+    expect(() => {
+      slots.conversationControls.register({ component, id: 'fake.control', order: 3 });
+    }).toThrow('The conversation controls slot already has an entry with the ID fake.control.');
+  });
+});
+
+describe('the side panels slot', () => {
+  it('registers a kind of side panel by its ID', () => {
+    const slots = new ShellSlots();
+    const component = () => ({});
+
+    slots.sidePanels.register({ component, defaultLabel: () => 'Fake', icon: component, id: 'fake.panel' });
+
+    expect(slots.sidePanels.find('fake.panel')?.defaultLabel()).toBe('Fake');
+  });
+
+  it('refuses a kind whose ID has a colon, which the address uses', () => {
+    const slots = new ShellSlots();
+    const component = () => ({});
+
+    expect(() => {
+      slots.sidePanels.register({ component, defaultLabel: () => 'Fake', icon: component, id: 'fake:panel' });
+    }).toThrow('The side panel kind fake:panel has a colon, which its address uses.');
+    expect(slots.sidePanels.entries).toEqual([]);
+  });
+});

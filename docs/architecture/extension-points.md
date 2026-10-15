@@ -18,29 +18,29 @@ Mannie adds features by registration. A feature is a vertical slice: Rust module
 
 ## 2. Catalog
 
-| Extension point                 | Owning module                 | What a feature registers                                                                      | Introduced in |
-| ------------------------------- | ----------------------------- | --------------------------------------------------------------------------------------------- | ------------- |
-| Tool registry                   | `mannie-tools`                | A tool: name, schema, availability, permission class and executor                             | M2            |
-| Agent definitions               | `mannie-runtime`              | An agent definition: instructions, tool set, budgets and default profile                      | M1            |
-| Provider adapters               | `mannie-provider`             | An adapter for an API interface, or a quirk profile                                           | M1            |
-| Instruction sections            | `mannie-runtime`              | A section of the system prompt and its position                                               | M1            |
-| Transcript parts and run events | `mannie-types`                | A part type or event variant, with its rendering for the model                                | M1            |
-| IPC commands and channels       | `mannie-desktop`              | Commands and channel message types for the feature's UI                                       | M0            |
-| UI shell slots                  | The desktop app's shell       | Navigation entries, views, panels, settings sections, command palette actions, part renderers | M0            |
-| Settings sections               | `mannie-types`                | A typed settings section with defaults and validation                                         | M0            |
-| Store tables and migrations     | `mannie-store`                | The feature's tables and its forward-only migrations                                          | M0            |
-| Link services                   | `mannie-link`                 | A protobuf package with its feature level                                                     | M4            |
-| Message catalogs                | The desktop app's `messages/` | The feature's visible text, under its own key prefix                                          | M0            |
+| Extension point                 | Owning module                 | What a feature registers                                                                            | Introduced in |
+| ------------------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------- | ------------- |
+| Tool registry                   | `mannie-tools`                | A tool: name, schema, availability, permission class and executor                                   | M2            |
+| Agent definitions               | `mannie-runtime`              | An agent definition: instructions, tool set, budgets, requester and default profile                 | M1            |
+| Provider adapters               | `mannie-provider`             | An adapter for an API interface, or a quirk profile                                                 | M1            |
+| Instruction sections            | `mannie-runtime`              | A section of the system prompt and its position                                                     | M1            |
+| Transcript parts and run events | `mannie-types`                | A part type or event variant, with its rendering for the model                                      | M1            |
+| IPC commands and channels       | `mannie-desktop`              | Commands and channel message types for the feature's UI                                             | M0            |
+| UI shell slots                  | The desktop app's shell       | Navigation entries, views, panels, side panels, conversation controls, settings, actions, renderers | M0            |
+| Settings sections               | `mannie-types`                | A typed settings section with defaults and validation                                               | M0            |
+| Store tables and migrations     | `mannie-store`                | The feature's tables and its forward-only migrations                                                | M0            |
+| Link services                   | `mannie-link`                 | A protobuf package with its feature level                                                           | M4            |
+| Message catalogs                | The desktop app's `messages/` | The feature's visible text, under its own key prefix                                                | M0            |
 
 ## 3. The extension points
 
 ### 3.1 Tool registry
 
-A tool implements the `Tool` trait. It declares its name, a description written for the model, an input schema generated from a Rust type with schemars, its permission class: read-only, or with side effects, and whether a model call is offered it, which can depend on the conversation's project and the owner's projects. Its executor follows the operation lifecycle ([ADR-0013](../adr/0013-journal-every-side-effect.md)): prepare, then execute after authorization. Results are typed values with a rendering for the model. An agent definition names the tools its agent may use, and a run gets those of them that the registry holds, so a tool that a platform's composition root does not register, such as `run_command` on FreeBSD until workers bring it, is not offered there. The registry rejects duplicate names when tools register. [Tools](tools.md) has the contract in full.
+A tool implements the `Tool` trait. It declares its name, a description written for the model, an input schema generated from a Rust type with schemars, its permission class: read-only, or with side effects, and whether a model call is offered it, which can depend on the conversation's project and the owner's projects. Its executor follows the operation lifecycle ([ADR-0013](../adr/0013-journal-every-side-effect.md)): prepare, then execute after authorization. Results are typed values with a rendering for the model. An agent definition names the tools its agent may use, and a run gets those of them that the registry holds, so a tool that a platform's composition root does not register, such as `run_command` on FreeBSD until workers bring it, is not offered there. The registry rejects duplicate names when tools register. [Tools](tools.md) has the contract in full. Tools that act on runs rather than on the machine, such as the task tools of child agents, belong to the runtime and stay outside the registry ([ADR-0024](../adr/0024-run-child-agent-tasks-in-the-parent-run.md)).
 
 ### 3.2 Agent definitions
 
-An agent definition names an agent's instructions, its tool set (tool names from the registry), its budgets and its default provider profile. Built-in definitions include the conversation agent, the explore and general child agents, and the worker agent. A feature that needs a new kind of agent registers a definition. It does not change the loop.
+An agent definition names an agent's instructions, its tool set (tool names from the registry), its budgets and its default provider profile. It also says who the agent answers to, the owner or another agent, which chooses the wording of its base instructions, its notes and its denials, and how many tasks a reply may give to child agents. Built-in definitions include the conversation agent, the explore and general child agents, and the worker agent. A feature that needs a new kind of agent registers a definition. It does not change the loop.
 
 ### 3.3 Provider adapters and quirk profiles
 
@@ -48,13 +48,15 @@ An adapter implements the `Provider` trait for one API interface ([ADR-0011](../
 
 ### 3.4 Instruction sections
 
-The system prompt is assembled from sections that modules register, each with a fixed position. Stable sections come first (the base instructions, the agent definition, the tool guidance and the owner's instructions), and sections specific to a host or a session come after them, so that providers can cache the stable prefix. Context that changes from turn to turn goes into the latest user message instead of the system prompt.
+The system prompt is assembled from sections that modules register, each with a fixed position. Stable sections come first (the base instructions, the agent definition, the tool guidance and the owner's instructions), and sections specific to a host or a session come after them, so that providers can cache the stable prefix. Context that changes from turn to turn goes into the latest user message instead of the system prompt. A section can depend on what a run is offered: the guidance on tasks reaches only runs that are offered the task tools.
 
 ### 3.5 Transcript parts and run events
 
 Parts and events are tagged enums in `mannie-types` with a version-tolerant encoding. A feature adds a variant together with its rendering for the model and its renderer in the UI. Code that reads parts handles unknown variants: the model sees a short placeholder, and the UI shows a generic card. An unknown event changes nothing that the UI shows, and the UI moves its cursor past it.
 
 M1 adds the parts of chat: the owner's text, the reply's text, reasoning, and errors, each with a state (streaming, complete, stopped, interrupted, incomplete or discarded) and an audience (the owner, the model or both). Its events cover turns, runs, parts with their deltas, discarded attempts, checkpoints, the context's use and changes to a conversation ([conversations](../features/chat/conversations.md)).
+
+M3 adds the part `task`, which records a call of a task tool together with its task, and the run activity `waiting_for_tasks` ([tasks](../features/child-agents/tasks.md#the-task-part)). Code in the store and the runtime that handles calls treats `task` parts as it treats `tool_call` parts.
 
 ### 3.6 IPC commands and channels
 
@@ -69,7 +71,9 @@ The shell defines typed slots in `apps/desktop/src/lib/state/shell-slots.svelte.
 - overlays, mounted once at the shell's root, such as dialogs that several places open;
 - settings sections, each a page of the settings that the settings sidebar lists by its icon and title;
 - command palette actions, which can say when they are available;
-- part renderers, keyed by part type, with a generic card for a type that no feature registered.
+- part renderers, keyed by part type, with a generic card for a type that no feature registered;
+- side panels, each a kind of content that opens beside the main view with an argument, such as a conversation's ID, and whose component can close its panel and name its tab; open panels show as tabs, belong to the view that opened them through its address, and get a generic body when no feature registered their kind ([ADR-0025](../adr/0025-add-side-panels-to-the-shell.md));
+- conversation controls, each a feature's compact button or menu in a conversation's toolbar, which receives the conversation's summary and the turns that the view has loaded, and renders nothing when it has nothing to offer ([ADR-0026](../adr/0026-add-conversation-controls-back-for-child-agents.md)).
 
 A feature registers its Svelte components in its registration, `src/lib/registrations/<feature>.ts`, and the shell renders whatever is registered. The shell never imports a feature directly. The window has a fixed height, so a view can keep parts of itself in place, such as a message box below a transcript. The frontend is sorted by kind, so the feature's components, state and helpers sit with the others of their kind ([desktop app](desktop-app.md#6-frontend-structure)).
 

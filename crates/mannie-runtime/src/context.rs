@@ -13,7 +13,8 @@ use mannie_types::run::RunState;
 use mannie_types::tools::{NotRunReason, ToolCallDocument, ToolCallStatus};
 use mannie_types::transcript::PartKind;
 
-use crate::texts;
+use crate::agents::Requester;
+use crate::{tasks, texts};
 
 /// The most characters of a call's arguments that a model without tools
 /// reads in the text that stands in for the call.
@@ -44,6 +45,8 @@ pub(crate) struct RequestShape<'a> {
     pub(crate) note: Option<&'a str>,
     /// Tool calls whose results are left out to save space.
     pub(crate) left_out: &'a HashSet<PartId>,
+    /// Whom the agent answers to, which decides how results address it.
+    pub(crate) requester: Requester,
 }
 
 /// Builds the request for `turns`, the turns after the checkpoint, oldest
@@ -114,7 +117,7 @@ fn append_turn(messages: &mut Vec<Message>, turn: &ModelTurn, shape: RequestShap
             current_run = Some(run);
             calling_attempt = None;
         }
-        let is_call = part.kind == Some(PartKind::ToolCall);
+        let is_call = part.kind.is_some_and(PartKind::is_call);
         let next_step = calling_attempt.is_some_and(|attempt| attempt != part.attempt);
         let follows_results = !reply.results.is_empty();
         if follows_results && (!is_call || next_step) {
@@ -147,7 +150,7 @@ fn append_turn(messages: &mut Vec<Message>, turn: &ModelTurn, shape: RequestShap
                     reply.content.push(Content::ProviderItem(item.item.clone()));
                 }
             }
-            Some(PartKind::ToolCall) => append_call(&mut reply, part, shape),
+            Some(PartKind::ToolCall | PartKind::Task) => append_call(&mut reply, part, shape),
             Some(PartKind::ContinuationNote) => {
                 reply.flush(messages);
                 messages.push(Message::text(Role::User, part.text.clone()));
@@ -192,13 +195,13 @@ fn end_run(messages: &mut Vec<Message>, reply: &mut Reply, state: Option<RunStat
     }
 }
 
-/// Adds a tool call: as a call with its result for a model with tools, as
-/// text for a model without them.
+/// Adds a call of a tool or of a task tool: as a call with its result for a
+/// model with tools, as text for a model without them.
 fn append_call(reply: &mut Reply, part: &ModelPart, shape: RequestShape<'_>) {
     let Some(call) = &part.tool_call else {
         return;
     };
-    let result = call_result(&part.id, call, shape.left_out);
+    let result = part_result(part, call, shape.left_out, shape.requester);
     if shape.tools.is_empty() {
         let arguments: String = part.text.chars().take(MAX_TEXT_CALL_ARGUMENTS).collect();
         reply.content.push(Content::Text(texts::tool_call_as_text(
@@ -229,11 +232,34 @@ fn json_object_or_empty(arguments: &str) -> String {
     }
 }
 
-/// What the model reads as a call's result.
+/// What the model reads as the result of a call part: a tool call's result,
+/// or for a task part its result, its refusal or its task's end
+/// (docs/features/child-agents/tasks.md, the task part).
+pub(crate) fn part_result(
+    part: &ModelPart,
+    call: &ToolCallDocument,
+    left_out: &HashSet<PartId>,
+    requester: Requester,
+) -> String {
+    let section = part
+        .task
+        .as_ref()
+        .filter(|_section| part.kind == Some(PartKind::Task));
+    let Some(section) = section else {
+        return call_result(&part.id, call, left_out, requester);
+    };
+    if left_out.contains(&part.id) && tasks::returned_reports(section) {
+        return texts::report_left_out(&tasks::reported_numbers(section));
+    }
+    tasks::task_result(section).unwrap_or_else(|| call_result(&part.id, call, left_out, requester))
+}
+
+/// What the model reads as a tool call's result.
 pub(crate) fn call_result(
     part: &PartId,
     call: &ToolCallDocument,
     left_out: &HashSet<PartId>,
+    requester: Requester,
 ) -> String {
     match call.status {
         ToolCallStatus::Completed => match &call.result {
@@ -248,7 +274,7 @@ pub(crate) fn call_result(
             Some(result) => result.output.clone(),
             None => texts::CANCELED.to_owned(),
         },
-        ToolCallStatus::Denied => texts::DENIED.to_owned(),
+        ToolCallStatus::Denied => texts::denied(requester).to_owned(),
         ToolCallStatus::Uncertain => texts::UNCERTAIN.to_owned(),
         ToolCallStatus::NotRun | ToolCallStatus::Canceled => match &call.not_run {
             Some(reason) => not_run(reason, &call.tool),

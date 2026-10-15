@@ -1,10 +1,10 @@
 # Orchestration
 
-|              |                                                                                                                                                                                                                                                                                             |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status       | Draft for review                                                                                                                                                                                                                                                                            |
-| Last updated | 2026-10-13                                                                                                                                                                                                                                                                                  |
-| Related      | [ADR-0015](../adr/0015-run-an-agent-runtime-on-every-machine.md), [ADR-0016](../adr/0016-link-machines-over-pinned-mtls-grpc.md), [ADR-0010](../adr/0010-keep-provider-credentials-on-the-master.md), [Child agents](../features/child-agents.md), [Workers](../features/workers/README.md) |
+|              |                                                                                                                                                                                                                                                                                                    |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status       | Draft for review                                                                                                                                                                                                                                                                                   |
+| Last updated | 2026-10-15                                                                                                                                                                                                                                                                                         |
+| Related      | [ADR-0015](../adr/0015-run-an-agent-runtime-on-every-machine.md), [ADR-0016](../adr/0016-link-machines-over-pinned-mtls-grpc.md), [ADR-0010](../adr/0010-keep-provider-credentials-on-the-master.md), [Child agents](../features/child-agents/README.md), [Workers](../features/workers/README.md) |
 
 This document describes how agents divide work: child agents on the same machine, and workers that own their hosts.
 
@@ -46,13 +46,16 @@ A report is the result of a task: a status (reported, failed, canceled or interr
 
 ## 3. Child agents
 
-- A child agent runs on the same machine as the agent that started it, in its own conversation, with its own context window.
+- A child agent runs on the same machine as the agent that started it, in a task conversation of its own, with its own context window and the provider profile of the reply that started it. The parent's run starts it and ends only after it ended ([ADR-0024](../adr/0024-run-child-agent-tasks-in-the-parent-run.md)).
 - The built-in agent definitions are explore, with read-only tools, and general, which adds file changes and commands. A feature can register more definitions.
-- A child agent works under its parent conversation's workspace, grants and rules. Its approval requests appear in the parent's conversation, labeled with the child agent's title.
-- A pool of slots limits how many child agents run at once (4 by default, configurable from 1 to 16). Tasks over the limit wait for a slot.
-- A background task lets the parent continue while the child works. The parent can wait for the report later, and the parent's turn does not finish while background tasks are still running.
-- A follow-up task can continue a finished child agent's conversation.
-- Child agents do not start child agents of their own. Stopping the parent stops its children, and the owner can also stop one child.
+- The conversation agent assigns tasks with the runtime's task tools, `start_task`, `follow_up_task` and `wait_for_tasks`. Each child of a conversation has a number, by which the model and the owner refer to it.
+- A child agent works under its parent conversation's workspace, project, grants and rules. Its approval requests appear in the parent's conversation, inside the card of its task, labeled with the task's number and title, and a grant that the owner gives there is saved for the parent.
+- A pool of slots on the machine limits how many child agents run at once (4 by default, configurable from 1 to 16). Tasks over the limit wait for a slot, in the order they started, and a child keeps its slot until it ends.
+- A background task lets the parent continue while the child works. The parent reads the report later with `wait_for_tasks`, and the parent's reply does not finish while background tasks are still running.
+- A follow-up task continues a finished child agent's conversation, with the same number and agent.
+- The report is the child's last answer after it confirmed once that it finished, and it reaches the parent's model only as a tool result.
+- Child agents do not start child agents of their own. Stopping the parent stops its children first, and the owner can also stop one child. After a restart, nothing starts a task again by itself.
+- The owner can open a child's conversation, read-only, in a side panel beside the parent's ([ADR-0025](../adr/0025-add-side-panels-to-the-shell.md)).
 
 ## 4. Workers
 

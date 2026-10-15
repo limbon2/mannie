@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use mannie_types::clock::Clock;
 use mannie_types::ids::{
     ArchiveId, CheckpointId, ConversationId, GrantId, InvalidId, PartId, ProfileId, ProjectId,
-    RuleId, RunId, TurnId,
+    RuleId, RunId, TaskId, TurnId,
 };
 use uuid::timestamp::context::ContextV7;
 use uuid::{Timestamp, Uuid};
@@ -100,6 +100,11 @@ impl IdGenerator {
     /// A new project ID.
     pub(crate) fn project(&self) -> ProjectId {
         self.make(ProjectId::parse)
+    }
+
+    /// A new task ID.
+    pub(crate) fn task(&self) -> TaskId {
+        self.make(TaskId::parse)
     }
 }
 

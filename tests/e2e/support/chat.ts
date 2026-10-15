@@ -10,6 +10,16 @@ import { leaveSettings, waitForAnimations } from './page.ts';
 /** The message box. */
 export const COMPOSER = 'textarea[aria-describedby="composer-hint"]';
 
+/**
+ * The turns of the main view's transcript. An open side panel sits in the
+ * main area and can show a transcript of its own (ADR-0025), which these
+ * helpers leave out.
+ */
+export const MAIN_TURNS = 'main article:not([data-side-panels] article)';
+
+/** The latest turn of the main view's transcript. */
+export const LATEST_MAIN_TURN = 'main article:last-of-type:not([data-side-panels] article)';
+
 /** The credential of the test profiles; the test provider accepts any. */
 export const TEST_CREDENTIAL = 'e2e-credential';
 
@@ -106,10 +116,10 @@ export async function waitForComposer(): Promise<void> {
 
 /** Waits until the pane of a new conversation shows, with the message box ready. */
 async function waitForNewConversation(): Promise<void> {
-  await browser.waitUntil(async () => browser.execute(() => document.querySelectorAll('main article').length === 0), {
-    timeout: 10_000,
-    timeoutMsg: 'the new conversation did not open',
-  });
+  await browser.waitUntil(
+    async () => browser.execute((turns: string) => document.querySelectorAll(turns).length === 0, MAIN_TURNS),
+    { timeout: 10_000, timeoutMsg: 'the new conversation did not open' },
+  );
   await waitForComposer();
 }
 
@@ -178,7 +188,7 @@ export async function startConversationIn(projectId: string): Promise<void> {
 /** Chooses how long the latest turn's waiting request is allowed, from its "Allow for…" menu. */
 export async function allowFor(label: string): Promise<void> {
   await waitForPointerInput();
-  const trigger = $('main article:last-of-type [data-allow-for]');
+  const trigger = $(`${LATEST_MAIN_TURN} [data-allow-for]`);
   await trigger.scrollIntoView({ block: 'center' });
   await trigger.click();
   await clickWithText('[data-slot="dropdown-menu-item"]', label);
@@ -214,13 +224,13 @@ export async function sendMessage(text: string): Promise<void> {
 
 /** How many turns the transcript shows. */
 export async function turnCount(): Promise<number> {
-  return browser.execute(() => document.querySelectorAll('main article').length);
+  return browser.execute((turns: string) => document.querySelectorAll(turns).length, MAIN_TURNS);
 }
 
 /** The parts of the latest turn, in order. */
 export async function latestTurnParts(): Promise<ShownPart[]> {
-  return browser.execute(() => {
-    const turns = document.querySelectorAll('main article');
+  return browser.execute((selector: string) => {
+    const turns = document.querySelectorAll(selector);
     const latest = turns.item(turns.length - 1) as Element | null;
     if (latest === null) {
       return [];
@@ -230,7 +240,7 @@ export async function latestTurnParts(): Promise<ShownPart[]> {
       state: element.dataset.partState ?? '',
       text: element.textContent.trim(),
     }));
-  });
+  }, MAIN_TURNS);
 }
 
 /**
@@ -289,8 +299,13 @@ export async function waitForNewTurn(before: number): Promise<void> {
   });
 }
 
-/** Sends a message and waits until its turn shows. */
+/**
+ * Sends a message and waits until its turn shows. It counts the turns once
+ * the message box takes messages, which is when a conversation that is still
+ * loading, such as after leaving the settings, shows all its turns.
+ */
 export async function send(text: string): Promise<void> {
+  await waitForComposer();
   const before = await turnCount();
   await sendMessage(text);
   await waitForNewTurn(before);
@@ -298,10 +313,10 @@ export async function send(text: string): Promise<void> {
 
 /** The status of the latest tool call in the latest turn, or `null` when it has none. */
 export async function latestToolStatus(): Promise<string | null> {
-  return browser.execute(() => {
-    const cards = document.querySelectorAll<HTMLElement>('main article:last-of-type [data-tool-status]');
+  return browser.execute((selector: string) => {
+    const cards = document.querySelectorAll<HTMLElement>(selector);
     return cards[cards.length - 1]?.dataset.toolStatus ?? null;
-  });
+  }, `${LATEST_MAIN_TURN} [data-tool-status]`);
 }
 
 /** Waits until the latest tool call of the latest turn has `status`. */
@@ -323,17 +338,22 @@ export async function waitForToolStatus(status: string, timeout = 30_000): Promi
  * message never covers it.
  */
 export async function clickInLatestTurn(label: string): Promise<void> {
-  await browser.execute((text: string) => {
-    const buttons = [...document.querySelectorAll<HTMLButtonElement>('main article:last-of-type button')];
-    buttons.find((button) => button.textContent.trim() === text)?.scrollIntoView({ block: 'center' });
-  }, label);
-  await clickWithText('main article:last-of-type button', label);
+  const selector = `${LATEST_MAIN_TURN} button`;
+  await browser.execute(
+    (text: string, buttonSelector: string) => {
+      const buttons = [...document.querySelectorAll<HTMLButtonElement>(buttonSelector)];
+      buttons.find((button) => button.textContent.trim() === text)?.scrollIntoView({ block: 'center' });
+    },
+    label,
+    selector,
+  );
+  await clickWithText(selector, label);
 }
 
 /** Sends a message of several lines, typed with Shift+Enter between them as the owner would, and waits until its turn shows. */
 export async function sendLines(lines: readonly string[]): Promise<void> {
-  const before = await turnCount();
   await waitForComposer();
+  const before = await turnCount();
   await waitForPointerInput();
   const box = await $(COMPOSER);
   await box.click();

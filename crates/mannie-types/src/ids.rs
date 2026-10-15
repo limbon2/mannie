@@ -131,6 +131,11 @@ uuid_id!(
     /// conversations that work in it.
     ProjectId
 );
+uuid_id!(
+    /// Identifies a task: one start or follow-up of a child agent's work,
+    /// chosen by the agent that assigns it.
+    TaskId
+);
 
 #[cfg(test)]
 mod tests {

@@ -19,6 +19,7 @@ pub mod run;
 pub mod secret;
 pub mod settings;
 pub mod startup;
+pub mod tasks;
 pub mod tools;
 pub mod transcript;
 #[cfg(feature = "validation")]

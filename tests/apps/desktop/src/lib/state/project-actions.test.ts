@@ -42,6 +42,7 @@ const CONVERSATION: ConversationSummary = {
   id: '0199e0f2-0000-7000-8000-000000000001',
   profileId: null,
   projectId: PROJECT.id,
+  task: null,
   title: 'In mannie',
   titleSource: 'first_message',
   updatedAt: 2,

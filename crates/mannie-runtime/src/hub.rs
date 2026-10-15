@@ -190,6 +190,18 @@ impl Hubs {
     /// Ends the subscriptions of a deleted conversation and removes it from
     /// the list.
     pub(crate) async fn deleted(&self, conversation: &ConversationId) {
+        self.end_subscriptions(conversation).await;
+        let mut list = self.list.lock().await;
+        publish(&mut list, &ListMessage::Removed(conversation.clone()));
+    }
+
+    /// Ends the subscriptions of a deleted task conversation, which the list
+    /// never showed.
+    pub(crate) async fn ended_task_conversation(&self, conversation: &ConversationId) {
+        self.end_subscriptions(conversation).await;
+    }
+
+    async fn end_subscriptions(&self, conversation: &ConversationId) {
         let hub = self.hub(conversation);
         let mut subscribers = hub.subscribers.lock().await;
         publish(&mut subscribers, &HubMessage::End(SubscriptionEnd::Deleted));
@@ -199,8 +211,6 @@ impl Hubs {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(conversation);
-        let mut list = self.list.lock().await;
-        publish(&mut list, &ListMessage::Removed(conversation.clone()));
     }
 
     /// Ends every subscription, because Mannie quits.

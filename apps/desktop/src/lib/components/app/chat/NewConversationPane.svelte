@@ -6,6 +6,7 @@
   import { m } from '#lib/paraglide/messages.js';
   import { conversationList } from '#lib/state/conversation-list.svelte.js';
   import { providerProfiles } from '#lib/state/provider-profiles.svelte.js';
+  import { markStartedConversation } from '#lib/state/started-conversation.js';
   import type { ChatFailure } from '#lib/types/chat.js';
   import { call } from '#lib/utils/calls.js';
   import { newConversationProjectId, openConversation } from '#lib/utils/chat-urls.js';
@@ -27,6 +28,10 @@
     if (!outcome.ok) {
       return outcome.failure;
     }
+    // The conversation's own pane replaces this one, whose message box the
+    // owner wrote in: its message box takes the focus over, and the sidebar
+    // follows a move of the conversation before the view shows it.
+    markStartedConversation(outcome.data.conversationId);
     await openConversation(outcome.data.conversationId);
     return null;
   }

@@ -7,6 +7,7 @@ use mannie_types::ids::{
     CheckpointId, ConversationId, PartId, ProfileId, ProjectId, RunId, TurnId,
 };
 use mannie_types::run::{RunActivity, RunFailure, RunOutcome, RunState, RunView};
+use mannie_types::tasks::{TaskConversation, TaskPartDocument};
 use mannie_types::tools::ToolCallDocument;
 use mannie_types::transcript::{
     Audience, CheckpointView, ContextUsage, ConversationEvent, ConversationSummary, PartContent,
@@ -32,7 +33,7 @@ macro_rules! summary_columns {
          EXISTS (SELECT 1 FROM runtime_runs r WHERE r.conversation_id = c.id \
          AND r.state IN ('queued', 'running') \
          AND json_extract(r.activity, '$.kind') = 'awaiting_approval'), \
-         c.workspace, c.project_id"
+         c.workspace, c.project_id, c.parent_conversation_id, c.task_number, c.task_agent"
     };
 }
 pub(crate) use summary_columns;
@@ -72,9 +73,12 @@ pub(crate) struct PartDocument {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) failure: Option<RunFailure>,
     /// The call of a tool call part, which is also its operation's journal
-    /// record (ADR-0013).
+    /// record (ADR-0013), or the call record of a task part.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) tool_call: Option<ToolCallDocument>,
+    /// The task section of a task part (ADR-0024, decision 2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) task: Option<TaskPartDocument>,
 }
 
 /// The document of a checkpoint.
@@ -278,6 +282,24 @@ impl PartRow {
         })
     }
 
+    /// The call record and the task section of a task part. A part whose
+    /// task section is not stored yet has an empty one.
+    pub(crate) fn task_call(
+        &self,
+    ) -> Result<(ToolCallDocument, TaskPartDocument), RuntimeStoreError> {
+        let document: PartDocument = from_json(&self.document, "part document")?;
+        let call = document.tool_call.ok_or_else(|| {
+            RuntimeStoreError::invalid(format!("the task part {} has no call", self.id))
+        })?;
+        Ok((call, document.task.unwrap_or_default()))
+    }
+
+    /// Whether the part is a call, whose arguments subscribers do not receive
+    /// as deltas.
+    pub(crate) fn is_call(&self) -> bool {
+        PartKind::parse(&self.kind).is_some_and(PartKind::is_call)
+    }
+
     /// The part as the UI shows it, or `None` when the owner does not see it.
     /// A streaming part's text is rebuilt from its delta events.
     pub(crate) fn view(
@@ -307,6 +329,12 @@ impl PartRow {
                 let call = self.tool_call()?;
                 PartContent::ToolCall {
                     call: Box::new(call.view(&text)),
+                }
+            }
+            Some(PartKind::Task) => {
+                let (call, task) = self.task_call()?;
+                PartContent::Task {
+                    call: Box::new(task.view(&call)),
                 }
             }
             None => PartContent::Unknown {
@@ -380,6 +408,9 @@ pub(crate) struct RawSummary {
     awaiting_approval: bool,
     workspace: Option<String>,
     project_id: Option<String>,
+    parent_conversation_id: Option<String>,
+    task_number: Option<i64>,
+    task_agent: Option<String>,
 }
 
 /// Reads the columns of [`summary_columns`].
@@ -395,6 +426,9 @@ pub(crate) fn summary_from_row(row: &Row<'_>) -> rusqlite::Result<RawSummary> {
         awaiting_approval: row.get(7)?,
         workspace: row.get(8)?,
         project_id: row.get(9)?,
+        parent_conversation_id: row.get(10)?,
+        task_number: row.get(11)?,
+        task_agent: row.get(12)?,
     })
 }
 
@@ -402,6 +436,14 @@ impl RawSummary {
     pub(crate) fn into_summary(self) -> Result<ConversationSummary, RuntimeStoreError> {
         // A title source this version does not know shows as the owner's.
         let title_source = TitleSource::parse(&self.title_source).unwrap_or(TitleSource::Owner);
+        let task = match self.parent_conversation_id.as_deref() {
+            Some(parent) => Some(TaskConversation {
+                parent_id: parse_id(parent, ConversationId::parse)?,
+                number: position(self.task_number.unwrap_or(0), "a task number")?,
+                agent: self.task_agent.unwrap_or_default(),
+            }),
+            None => None,
+        };
         Ok(ConversationSummary {
             id: parse_id(&self.id, ConversationId::parse)?,
             title: self.title,
@@ -419,6 +461,7 @@ impl RawSummary {
                 .map(|project| parse_id(project, ProjectId::parse))
                 .transpose()?,
             workspace: self.workspace,
+            task,
             created_at: millis(self.created_at),
             updated_at: millis(self.updated_at),
         })
@@ -539,12 +582,11 @@ pub(crate) fn hydrate(
         }
         kinds::PART_DELTA => {
             let part_id = required(stored.part_id.as_ref(), "a delta without a part")?;
-            // A tool call's arguments arrive in one delta that can be large;
-            // subscribers get them with the part's next update instead, cut to
-            // what the view shows.
-            let audience_includes_owner = part_row(connection, part_id)?.is_some_and(|row| {
-                row.audience().includes_owner() && row.kind != PartKind::ToolCall.as_str()
-            });
+            // A call's arguments arrive in one delta that can be large;
+            // subscribers get the call with the part's next update instead,
+            // cut to what the view shows, and a task part's view has none.
+            let audience_includes_owner = part_row(connection, part_id)?
+                .is_some_and(|row| row.audience().includes_owner() && !row.is_call());
             if audience_includes_owner {
                 Some(ConversationEvent::PartDelta {
                     part_id: parse_id(part_id, PartId::parse)?,

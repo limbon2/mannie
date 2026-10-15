@@ -3,24 +3,37 @@
 //! the model's tool calls, retries transient failures, compacts when the
 //! context runs low, and ends the run. Stop and Shutdown arrive through its
 //! mailbox and take effect at every wait.
+//!
+//! A run can give tasks to child agents, which run as runs of their own
+//! (ADR-0024): `tasks.rs` holds the parent's side, and `child.rs` the side of
+//! a run that works on a task.
 
+mod child;
 mod operations;
+mod tasks;
 
 use std::future::Future;
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
 use mannie_provider::{EventStream, ProviderError, ProviderEvent};
-use mannie_store::{Change, Durability, NewPart, ProviderItem, RuntimeStoreError};
-use mannie_tools::split_activity;
+use mannie_store::{
+    Applied, Change, Durability, NewArchive, NewPart, ProviderItem, RuntimeStoreError,
+};
+use mannie_tools::{result_limit, split_activity};
 use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{ConversationId, PartId, ProfileId, RunId, TurnId};
 use mannie_types::run::{FinishReason, RunActivity, RunFailure, RunOutcome, RunState, Usage};
+use mannie_types::tasks::TaskPartDocument;
 use mannie_types::tools::{NotRunReason, ToolCallDocument, ToolCallStatus};
 use mannie_types::transcript::{PartKind, PartState};
 use tokio::sync::{OwnedSemaphorePermit, mpsc, watch};
 use tokio::time::Instant;
 
+pub(crate) use self::child::ChildLink;
+use self::child::ChildRun;
+use self::tasks::TaskLane;
 use crate::budget::{Ledger, estimate_text, usage};
 use crate::calls::{CallError, CallOptions, Prepared, Setup};
 use crate::compaction::{self, ContextSize, Trigger};
@@ -33,6 +46,10 @@ const MAILBOX: usize = 8;
 /// The bytes at the end of a model call's text that the early-stop checks
 /// read.
 const TEXT_TAIL_BYTES: usize = 512;
+
+/// The most characters of a parser's message about invalid arguments that
+/// the journal and the model keep.
+const MAX_DETAIL_CHARS: usize = 1_000;
 
 /// Signs of a tool call that a model wrote as text instead of calling the
 /// tool, for servers whose quirks do not turn such text into calls.
@@ -47,7 +64,7 @@ const TEXT_CALL_SIGNS: [&str; 5] = [
 /// What a run's mailbox carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Command {
-    /// The owner stopped the reply.
+    /// The owner stopped the reply, or the parent run ended.
     Stop,
     /// Mannie quits.
     Shutdown,
@@ -102,6 +119,9 @@ enum AfterStep {
     Continue,
     /// The model's tool calls run, then another model call follows.
     RunTools(Vec<StepCall>),
+    /// The reply would end, but tasks it gave still run or reported unread:
+    /// the run waits for them, without a model slot.
+    AwaitTasks,
 }
 
 /// The part that is streaming.
@@ -113,8 +133,8 @@ struct OpenPart {
     unstored: String,
 }
 
-/// A tool call of the current model call. Tool calls never stream into
-/// `RunActor::open`: their arguments arrive whole.
+/// A call of the current model call, of a tool or of a task tool. Calls
+/// never stream into `RunActor::open`: their arguments arrive whole.
 #[derive(Debug)]
 struct StepCall {
     part_id: PartId,
@@ -123,6 +143,32 @@ struct StepCall {
     /// The arguments that the tool reads, once the call is complete: as the
     /// model wrote them, without the activity.
     arguments: Option<String>,
+    /// The arguments as the model wrote them, with the activity: the part's
+    /// text.
+    text: String,
+    /// The task section of a call of a task tool, which makes its part a
+    /// `task` part; `None` for a tool call.
+    task: Option<TaskPartDocument>,
+}
+
+impl StepCall {
+    /// The change that stores the call's documents as they are now, with
+    /// outputs to archive.
+    fn update(&self, archives: Vec<NewArchive>) -> Change {
+        match &self.task {
+            None => Change::UpdatePart {
+                part_id: self.part_id.clone(),
+                tool_call: self.document.clone(),
+                archives,
+            },
+            Some(section) => Change::UpdateTaskPart {
+                part_id: self.part_id.clone(),
+                tool_call: self.document.clone(),
+                task: Box::new(section.clone()),
+                archives,
+            },
+        }
+    }
 }
 
 /// What one model call has produced so far. Each call starts from nothing.
@@ -132,6 +178,9 @@ struct StepState {
     visible: bool,
     /// The end of the call's text, for the early-stop checks.
     text_tail: String,
+    /// The call's whole text, kept only by a child agent, whose last call's
+    /// text is its report.
+    text: String,
     /// The token counts the call reported.
     usage: Option<Usage>,
     /// The estimated tokens of the call's text.
@@ -142,6 +191,10 @@ struct StepState {
 pub(crate) struct RunActor {
     runtime: Runtime,
     conversation: ConversationId,
+    /// The conversation whose workspace, project, grants and rules the run's
+    /// tools work under: the parent's for a child agent, the run's own
+    /// otherwise (ADR-0024, decision 3).
+    authority: ConversationId,
     turn: TurnId,
     run: RunId,
     profile: ProfileId,
@@ -149,6 +202,9 @@ pub(crate) struct RunActor {
     commands: mpsc::Receiver<Command>,
     /// The binding that provider-private data of this run is stored with.
     binding: String,
+    /// The task tools that the run is offered, whose calls become `task`
+    /// parts.
+    task_tools: Vec<String>,
     /// The model calls so far. Each call is an attempt with its own number,
     /// so a failed one can be discarded without touching the others.
     attempt: u32,
@@ -161,7 +217,7 @@ pub(crate) struct RunActor {
     open: Option<OpenPart>,
     /// What the current model call has produced.
     step: StepState,
-    /// The tool calls of the current model call, in order.
+    /// The calls of the current model call, in order.
     calls: Vec<StepCall>,
     /// The model calls of this run that made tool calls.
     tool_rounds: u32,
@@ -173,6 +229,10 @@ pub(crate) struct RunActor {
     compacted_after_overflow: bool,
     /// Whether the server reported a shorter request than a call sent.
     prompt_cut: bool,
+    /// The tasks that the run gave to child agents.
+    tasks: TaskLane,
+    /// The task that the run works on, when it is a child agent's.
+    child: Option<ChildRun>,
 }
 
 /// Waits until `due`, or forever without a time.
@@ -219,9 +279,16 @@ fn keep_tail(text: &mut String) {
     text.drain(..start);
 }
 
+/// The bytes of a context budget in tokens, the inverse of the estimate of
+/// two tokens for every five bytes.
+fn budget_bytes(tokens: u32) -> usize {
+    usize::try_from(u64::from(tokens) * 5 / 2).unwrap_or(usize::MAX)
+}
+
 impl Runtime {
-    /// Starts the actor of a stored run. The conversation was reserved by the
-    /// command that stored the run.
+    /// Starts the actor of a stored run, and returns its mailbox. The
+    /// conversation was reserved by the command that stored the run, or it
+    /// is the task conversation of the parent run that `link` names.
     pub(crate) fn spawn_run(
         &self,
         conversation: ConversationId,
@@ -229,25 +296,33 @@ impl Runtime {
         run: RunId,
         profile: ProfileId,
         agent: String,
-    ) {
+        link: Option<ChildLink>,
+    ) -> mpsc::Sender<Command> {
         let (mailbox, commands) = mpsc::channel(MAILBOX);
         let (ended_sender, ended) = watch::channel(false);
         let handle = RunHandle {
             run_id: run.clone(),
             profile_id: profile.clone(),
-            mailbox,
+            parent: link.as_ref().map(|link| link.parent.clone()),
+            mailbox: mailbox.clone(),
             ended,
         };
         lock(&self.inner.busy).insert(conversation.clone(), Busy::Running(handle));
+        let (authority, child) = match link {
+            Some(link) => (link.parent, Some(ChildRun::new(link.guard))),
+            None => (conversation.clone(), None),
+        };
         let actor = RunActor {
             runtime: self.clone(),
             conversation: conversation.clone(),
+            authority,
             turn: turn.clone(),
             run: run.clone(),
             profile,
             agent,
             commands,
             binding: String::new(),
+            task_tools: Vec::new(),
             attempt: 0,
             attempt_stored: false,
             pending: Vec::new(),
@@ -261,6 +336,8 @@ impl Runtime {
             notes: 0,
             compacted_after_overflow: false,
             prompt_cut: false,
+            tasks: TaskLane::default(),
+            child,
         };
         let task = tokio::spawn(actor.run());
         let runtime = self.clone();
@@ -269,11 +346,15 @@ impl Runtime {
         tokio::spawn(async move {
             if let Err(error) = task.await {
                 tracing::error!(run = %run, panicked = error.is_panic(), "a run ended unexpectedly");
+                // Its end did not stop its children, so they are stopped
+                // here; each ends on its own.
+                runtime.stop_children_of(&conversation);
                 runtime.fail_abandoned_run(&conversation, &turn, &run).await;
             }
             runtime.release_run(&conversation, &run);
             ended_sender.send_replace(true);
         });
+        mailbox
     }
 
     /// Removes a run from the busy map, if it is still there.
@@ -283,6 +364,19 @@ impl Runtime {
             matches!(busy.get(conversation), Some(Busy::Running(handle)) if handle.run_id == *run);
         if is_this_run {
             busy.remove(conversation);
+        }
+    }
+
+    /// Stops the runs of a conversation's children.
+    fn stop_children_of(&self, parent: &ConversationId) {
+        let busy = lock(&self.inner.busy);
+        for entry in busy.values() {
+            if let Busy::Running(handle) = entry
+                && handle.parent.as_ref() == Some(parent)
+            {
+                // A full mailbox already holds a command that ends the run.
+                let _delivered = handle.mailbox.try_send(Command::Stop);
+            }
         }
     }
 
@@ -309,6 +403,7 @@ impl Runtime {
                     failure: Some(failure),
                     ..RunOutcome::default()
                 },
+                task: None,
             },
         ];
         let ended = self
@@ -334,31 +429,54 @@ impl RunActor {
         self.end(result).await;
     }
 
-    async fn drive(&mut self) -> Result<FinishReason, Ending> {
+    /// Starts the run: a child's slot first, then a model slot, the stored
+    /// start, and the setup of its calls.
+    async fn begin(&mut self) -> Result<(Setup, OwnedSemaphorePermit), Ending> {
         if self.runtime.is_shutting_down() {
             return Err(Ending::Interrupted);
         }
-        let mut permit = Some(self.acquire_slot().await?);
+        // A child takes its slot among the children before a model slot, so
+        // that it never holds a model slot while it waits for one.
+        if self.child.is_some() {
+            self.acquire_child_slot().await?;
+        }
+        let permit = self.acquire_slot().await?;
+        let preparing = self.activity(RunActivity::Preparing);
         self.apply(
             vec![
                 Change::StartRun {
                     run_id: self.run.clone(),
                 },
-                self.activity(RunActivity::Preparing),
+                preparing,
             ],
             Durability::Full,
         )
         .await?;
+        self.child_started();
         let setup = {
             let runtime = self.runtime.clone();
             let profile = self.profile.clone();
             let agent = self.agent.clone();
-            self.wait(async move { runtime.load_setup(&profile, &agent).await })
+            let task = self.child.is_some();
+            self.wait(async move { runtime.load_setup(&profile, &agent, task).await })
                 .await?
                 .map_err(Ending::Failed)?
         };
         self.binding.clone_from(&setup.binding);
-        tracing::info!(run = %self.run, conversation = %self.conversation, binding = %setup.binding, tools = setup.tools.len(), "a run started");
+        self.task_tools = setup
+            .task_definitions
+            .iter()
+            .map(|definition| definition.name.clone())
+            .collect();
+        self.tasks
+            .set_result_limit(result_limit(budget_bytes(setup.budget)));
+        tracing::info!(run = %self.run, conversation = %self.conversation, binding = %setup.binding, tools = setup.tools.len(), task_tools = self.task_tools.len(), "a run started");
+        Ok((setup, permit))
+    }
+
+    async fn drive(&mut self) -> Result<FinishReason, Ending> {
+        let (setup, permit) = self.begin().await?;
+        let mut permit = Some(permit);
         let mut tries = 0;
         loop {
             if permit.is_none() {
@@ -368,11 +486,8 @@ impl RunActor {
             self.attempt += 1;
             self.attempt_stored = false;
             tries += 1;
-            self.apply(
-                vec![self.activity(RunActivity::Writing)],
-                Durability::Normal,
-            )
-            .await?;
+            let writing = self.activity(RunActivity::Writing);
+            self.apply(vec![writing], Durability::Normal).await?;
             tracing::debug!(run = %self.run, attempt = self.attempt, tokens = prepared.size.projected, "calling the model");
             let stream = setup
                 .adapter
@@ -385,10 +500,18 @@ impl RunActor {
                         AfterStep::End => return Ok(finish),
                         AfterStep::Continue => {}
                         AfterStep::RunTools(calls) => {
-                            // Tools run without a model slot.
+                            // Tools and tasks run without a model slot.
                             permit = None;
-                            self.run_calls(&setup, calls).await?;
+                            Box::pin(self.run_calls(&setup, calls)).await?;
                             self.compacted_after_overflow = false;
+                        }
+                        AfterStep::AwaitTasks => {
+                            // Children may need the model slot that the
+                            // reply would hold while it waits for them.
+                            permit = None;
+                            if !self.await_reply_tasks(&setup).await? {
+                                return Ok(finish);
+                            }
                         }
                     }
                 }
@@ -426,7 +549,8 @@ impl RunActor {
     }
 
     /// Decides what follows a model call that finished: a note that sends
-    /// the model on, its tool calls, or the end of the reply.
+    /// the model on, its tool calls, a wait for the reply's tasks, or the
+    /// end of the reply.
     async fn after_step(
         &mut self,
         setup: &Setup,
@@ -434,13 +558,15 @@ impl RunActor {
     ) -> Result<AfterStep, Ending> {
         let calls = self.take_calls();
         if calls.is_empty() {
-            return Ok(match self.note_for(setup, finish) {
-                Some(note) => {
-                    self.add_note(note).await?;
-                    AfterStep::Continue
-                }
-                None => AfterStep::End,
-            });
+            if let Some(note) = self.note_for(setup, finish) {
+                self.add_note(note, true).await?;
+                return Ok(AfterStep::Continue);
+            }
+            if self.confirmation_due(finish) {
+                self.confirm().await?;
+                return Ok(AfterStep::Continue);
+            }
+            return self.end_of_reply().await;
         }
         if !setup.uses_tools() || self.tools_used_up(setup) {
             // The request offered no tools, or asked for none, and the server
@@ -454,7 +580,7 @@ impl RunActor {
                 self.end_call(call, reason.clone());
             }
             self.flush(Durability::Full).await?;
-            return Ok(AfterStep::End);
+            return self.end_of_reply().await;
         }
         self.tool_rounds += 1;
         // The calls are stored before any of them runs.
@@ -462,17 +588,34 @@ impl RunActor {
         Ok(AfterStep::RunTools(calls))
     }
 
-    /// Waits for `future`, unless a command arrives first.
+    /// The end of the reply, or a wait for the tasks it gave first.
+    async fn end_of_reply(&mut self) -> Result<AfterStep, Ending> {
+        if !self.tasks.has_work_left() {
+            return Ok(AfterStep::End);
+        }
+        // What the model wrote is stored before the wait, which can be long.
+        self.flush(Durability::Full).await?;
+        Ok(AfterStep::AwaitTasks)
+    }
+
+    /// Waits for `future`, unless a command arrives first. Meanwhile, the
+    /// states that the run's children publish are stored.
     async fn wait<F: Future>(&mut self, future: F) -> Result<F::Output, Ending> {
-        tokio::select! {
-            biased;
-            command = self.commands.recv() => Err(halt(command)),
-            output = future => Ok(output),
+        let mut future = std::pin::pin!(future);
+        let board = Arc::clone(self.tasks.board());
+        loop {
+            tokio::select! {
+                biased;
+                command = self.commands.recv() => return Err(halt(command)),
+                output = &mut future => return Ok(output),
+                () = board.changed() => self.mirror_children().await?,
+            }
         }
     }
 
-    async fn apply(&self, changes: Vec<Change>, durability: Durability) -> Result<(), Ending> {
-        self.runtime
+    async fn apply(&self, changes: Vec<Change>, durability: Durability) -> Result<Applied, Ending> {
+        let applied = self
+            .runtime
             .inner
             .hubs
             .apply(
@@ -482,13 +625,23 @@ impl RunActor {
                 durability,
             )
             .await?;
-        Ok(())
+        Ok(applied)
     }
 
-    fn activity(&self, activity: RunActivity) -> Change {
+    /// The change that shows what the run does now: `activity`, unless a
+    /// child waits for the owner while the run's own work does not
+    /// (docs/features/child-agents/tasks.md, what the parent shows).
+    fn activity(&mut self, activity: RunActivity) -> Change {
+        self.tasks.set_activity(activity);
+        self.shown_activity()
+    }
+
+    /// The change that shows what the run does now, as the run's own work
+    /// and its children's approvals make it.
+    fn shown_activity(&self) -> Change {
         Change::SetActivity {
             run_id: self.run.clone(),
-            activity,
+            activity: self.tasks.shown_activity(),
         }
     }
 
@@ -497,15 +650,12 @@ impl RunActor {
     }
 
     async fn acquire_slot(&mut self) -> Result<OwnedSemaphorePermit, Ending> {
-        let slots = std::sync::Arc::clone(&self.runtime.inner.slots);
-        if let Ok(permit) = std::sync::Arc::clone(&slots).try_acquire_owned() {
+        let slots = Arc::clone(&self.runtime.inner.slots);
+        if let Ok(permit) = Arc::clone(&slots).try_acquire_owned() {
             return Ok(permit);
         }
-        self.apply(
-            vec![self.activity(RunActivity::WaitingForSlot)],
-            Durability::Normal,
-        )
-        .await?;
+        let waiting = self.activity(RunActivity::WaitingForSlot);
+        self.apply(vec![waiting], Durability::Normal).await?;
         // The runtime never closes the semaphore.
         self.wait(slots.acquire_owned())
             .await?
@@ -528,7 +678,7 @@ impl RunActor {
         };
         let mut prepared = self
             .runtime
-            .prepare_call(&self.conversation, setup, options)
+            .prepare_call(&self.conversation, &self.authority, setup, options)
             .await?;
         if !compaction::needed(prepared.size.projected, setup.budget) {
             return Ok(prepared);
@@ -539,7 +689,7 @@ impl RunActor {
         {
             prepared = self
                 .runtime
-                .prepare_call(&self.conversation, setup, options)
+                .prepare_call(&self.conversation, &self.authority, setup, options)
                 .await?;
         }
         if setup.uses_tools() && compaction::needed(prepared.size.projected, setup.budget) {
@@ -549,7 +699,7 @@ impl RunActor {
             };
             prepared = self
                 .runtime
-                .prepare_call(&self.conversation, setup, leave_out)
+                .prepare_call(&self.conversation, &self.authority, setup, leave_out)
                 .await?;
         }
         Ok(prepared)
@@ -562,33 +712,29 @@ impl RunActor {
         trigger: Trigger,
         size: ContextSize,
     ) -> Result<bool, Ending> {
-        self.apply(
-            vec![self.activity(RunActivity::Compacting)],
-            Durability::Normal,
-        )
-        .await?;
+        let compacting = self.activity(RunActivity::Compacting);
+        self.apply(vec![compacting], Durability::Normal).await?;
         let runtime = self.runtime.clone();
         let conversation = self.conversation.clone();
         let written = self
             .wait(runtime.write_checkpoint(&conversation, setup, prepared, trigger, size))
             .await??;
-        self.apply(
-            vec![self.activity(RunActivity::Preparing)],
-            Durability::Normal,
-        )
-        .await?;
+        let preparing = self.activity(RunActivity::Preparing);
+        self.apply(vec![preparing], Durability::Normal).await?;
         Ok(written)
     }
 
     /// Streams one call into parts until it finishes or fails.
     async fn stream_step(&mut self, mut stream: EventStream) -> Result<StepEnd, Ending> {
         self.step = StepState::default();
+        let board = Arc::clone(self.tasks.board());
         loop {
             let flush_due = self.flush_due;
             tokio::select! {
                 biased;
                 command = self.commands.recv() => return Err(halt(command)),
                 () = until(flush_due) => self.flush(Durability::Normal).await?,
+                () = board.changed() => self.mirror_children().await?,
                 item = stream.next() => match item {
                     Some(Ok(event)) => {
                         if let Some(finish) = self.on_event(event) {
@@ -616,6 +762,9 @@ impl RunActor {
                 self.step.output = self.step.output.saturating_add(estimate_text(&text));
                 self.step.text_tail.push_str(&text);
                 keep_tail(&mut self.step.text_tail);
+                if self.child.is_some() {
+                    self.step.text.push_str(&text);
+                }
                 self.append(PartKind::Text, &text);
             }
             ProviderEvent::ReasoningDelta(text) => self.append(PartKind::Reasoning, &text),
@@ -670,10 +819,12 @@ impl RunActor {
         });
     }
 
-    /// Starts the part of a tool call that the model began to write.
+    /// Starts the part of a call that the model began to write: a `task`
+    /// part for a task tool that the run is offered, a tool call otherwise.
     fn start_call(&mut self, call_id: String, name: String) {
         self.close_open(PartState::Complete, None);
         let part_id = self.runtime.inner.ids.part();
+        let is_task = self.task_tools.contains(&name);
         let document = ToolCallDocument::receiving(call_id, name);
         self.pending.push(Change::StartPart {
             part: NewPart {
@@ -681,7 +832,11 @@ impl RunActor {
                 turn_id: self.turn.clone(),
                 run_id: self.run.clone(),
                 attempt: self.attempt,
-                kind: PartKind::ToolCall,
+                kind: if is_task {
+                    PartKind::Task
+                } else {
+                    PartKind::ToolCall
+                },
                 failure: None,
                 tool_call: Some(document.clone()),
             },
@@ -690,11 +845,13 @@ impl RunActor {
             part_id,
             document,
             arguments: None,
+            text: String::new(),
+            task: is_task.then(TaskPartDocument::default),
         });
         self.schedule_flush();
     }
 
-    /// Stores a tool call's complete arguments as its part's text, and its
+    /// Stores a call's complete arguments as its part's text, and its
     /// activity in its document.
     fn complete_arguments(&mut self, call_id: &str, name: &str, arguments: String) {
         if !self
@@ -719,20 +876,18 @@ impl RunActor {
         let split = split_activity(&arguments);
         call.document.activity = split.activity;
         call.document.status = ToolCallStatus::Pending;
+        call.text.clone_from(&arguments);
+        call.arguments = Some(split.arguments);
         self.pending.push(Change::Delta {
             part_id: call.part_id.clone(),
             text: arguments,
         });
-        self.pending.push(Change::UpdatePart {
-            part_id: call.part_id.clone(),
-            tool_call: call.document.clone(),
-            archives: Vec::new(),
-        });
-        call.arguments = Some(split.arguments);
+        let update = call.update(Vec::new());
+        self.pending.push(update);
         self.schedule_flush();
     }
 
-    /// The complete tool calls of the call that finished. A call without its
+    /// The complete calls of the call that finished. A call without its
     /// arguments was cut off and does not run.
     fn take_calls(&mut self) -> Vec<StepCall> {
         let mut complete = Vec::new();
@@ -746,7 +901,7 @@ impl RunActor {
         complete
     }
 
-    /// Ends a tool call that never starts.
+    /// Ends a call that never starts.
     fn end_call(&mut self, mut call: StepCall, reason: NotRunReason) {
         tracing::info!(run = %self.run, part = %call.part_id, tool = %call.document.tool, reason = ?reason, "a tool call does not run");
         call.document.status = ToolCallStatus::NotRun;
@@ -755,13 +910,9 @@ impl RunActor {
         self.finish_call(&call);
     }
 
-    /// Stores a tool call's final document and finishes its part.
+    /// Stores a call's final documents and finishes its part.
     fn finish_call(&mut self, call: &StepCall) {
-        self.pending.push(Change::UpdatePart {
-            part_id: call.part_id.clone(),
-            tool_call: call.document.clone(),
-            archives: Vec::new(),
-        });
+        self.pending.push(call.update(Vec::new()));
         self.pending.push(Change::FinishPart {
             part_id: call.part_id.clone(),
             state: PartState::Complete,
@@ -811,6 +962,12 @@ impl RunActor {
     /// Stores the pending changes and the text of the open part. A batch that
     /// finishes a part is stored with full durability.
     async fn flush(&mut self, durability: Durability) -> Result<(), Ending> {
+        self.flush_applied(durability).await.map(drop)
+    }
+
+    /// Stores what [`Self::flush`] stores, and returns what the store made of
+    /// it.
+    async fn flush_applied(&mut self, durability: Durability) -> Result<Applied, Ending> {
         self.flush_due = None;
         let mut changes = std::mem::take(&mut self.pending);
         if let Some(open) = &mut self.open
@@ -822,7 +979,7 @@ impl RunActor {
             });
         }
         if changes.is_empty() {
-            return Ok(());
+            return Ok(Applied::default());
         }
         let finishes = changes
             .iter()
@@ -891,27 +1048,35 @@ impl RunActor {
     /// calls, if one is due (docs/architecture/agent-runtime.md, model quirks
     /// and early stops): after an empty answer; after a tool call written as
     /// text; and, once tools were used, after an answer that stops at a
-    /// colon. Plain chat without tools is as it was.
+    /// colon. Plain chat without tools is as it was. A child's notes speak of
+    /// its task (docs/features/child-agents/tasks.md, the text the model
+    /// sees).
     fn note_for(&self, setup: &Setup, finish: FinishReason) -> Option<&'static str> {
         let may_continue = matches!(finish, FinishReason::Stop | FinishReason::Other);
         if !may_continue || self.notes >= setup.agent.max_continuation_notes {
             return None;
         }
         if !self.step.visible {
-            return Some(texts::CONTINUATION_NOTE);
+            return Some(texts::continuation_note(setup.requester()));
         }
         let tail = &self.step.text_tail;
         if setup.uses_tools() && TEXT_CALL_SIGNS.iter().any(|sign| tail.contains(sign)) {
             return Some(texts::USE_TOOL_INTERFACE);
         }
         if self.tool_rounds > 0 && tail.trim_end().ends_with(':') {
-            return Some(texts::CONTINUE_NOTE);
+            return Some(texts::continue_note(setup.requester()));
         }
         None
     }
 
-    async fn add_note(&mut self, note: &'static str) -> Result<(), Ending> {
-        self.notes += 1;
+    /// Adds a note of Mannie's own that only the model reads, and continues.
+    /// A counted note is a continuation note, of which a turn has a limited
+    /// number; the confirmation and the note about unread reports have their
+    /// own limits.
+    async fn add_note(&mut self, note: &str, counted: bool) -> Result<(), Ending> {
+        if counted {
+            self.notes += 1;
+        }
         let part = NewPart {
             id: self.runtime.inner.ids.part(),
             turn_id: self.turn.clone(),
@@ -925,8 +1090,9 @@ impl RunActor {
             part,
             text: note.to_owned(),
         });
-        self.pending.push(self.activity(RunActivity::Preparing));
-        tracing::debug!(run = %self.run, notes = self.notes, "the model stopped early; continuing with a note");
+        let preparing = self.activity(RunActivity::Preparing);
+        self.pending.push(preparing);
+        tracing::debug!(run = %self.run, notes = self.notes, counted, "continuing with a note");
         self.flush(Durability::Full).await
     }
 
@@ -946,7 +1112,7 @@ impl RunActor {
 
     async fn discard_attempt(&mut self) -> Result<(), Ending> {
         match self.forget_attempt() {
-            Some(discard) => self.apply(vec![discard], Durability::Full).await,
+            Some(discard) => self.apply(vec![discard], Durability::Full).await.map(drop),
             None => Ok(()),
         }
     }
@@ -983,19 +1149,19 @@ impl RunActor {
         self.apply(changes, Durability::Full).await?;
         self.wait(tokio::time::sleep(delay)).await?;
         let permit = self.acquire_slot().await?;
-        self.apply(
-            vec![self.activity(RunActivity::Preparing)],
-            Durability::Normal,
-        )
-        .await?;
+        let preparing = self.activity(RunActivity::Preparing);
+        self.apply(vec![preparing], Durability::Normal).await?;
         Ok(permit)
     }
 
-    /// Ends the run: finishes its open part, stores what is pending, adds an
-    /// error part for a failure, and stores the final state, in one batch.
-    /// The store ends the tool calls that are still open: an operation that
-    /// was executing becomes uncertain, every other call canceled.
+    /// Ends the run: stops its children and waits for them, finishes its
+    /// open part, stores what is pending, adds an error part for a failure,
+    /// and stores the final state, in one batch. The store ends the calls
+    /// that are still open: an operation that was executing becomes
+    /// uncertain, every other call canceled.
     async fn end(mut self, result: Result<FinishReason, Ending>) {
+        // A run ends only after its children ended (ADR-0024, decision 9).
+        self.end_children(&result).await;
         let (state, part_state, failure, finish) = match result {
             Ok(finish) => (RunState::Completed, PartState::Complete, None, Some(finish)),
             Err(Ending::Failed(failure)) => {
@@ -1005,6 +1171,8 @@ impl RunActor {
             Err(Ending::Interrupted) => (RunState::Interrupted, PartState::Interrupted, None, None),
             Err(Ending::Gone) => {
                 tracing::info!(run = %self.run, "the conversation of a run was deleted");
+                // A child's parent learns of the end from the child's guard,
+                // when the actor is dropped.
                 self.runtime.release_run(&self.conversation, &self.run);
                 return;
             }
@@ -1035,6 +1203,11 @@ impl RunActor {
             });
         }
         let failure_code = failure.as_ref().map(RunFailure::code);
+        // A child's task ends with its run, with the report when it has one.
+        let task = self
+            .child
+            .is_some()
+            .then(|| child::task_ending(state, failure.as_ref(), &self.step.text));
         let end_run = Change::EndRun {
             run_id: self.run.clone(),
             state,
@@ -1044,13 +1217,16 @@ impl RunActor {
                 usage: self.usage,
                 prompt_cut: self.prompt_cut,
             },
+            task: task.clone(),
         };
         changes.push(end_run.clone());
+        let mut stored = true;
         if let Err(error) = self.apply(changes, Durability::Full).await {
             // What was pending may be what the store refused; the final
             // state alone still ends the run.
             tracing::warn!(error = ?error, run = %self.run, "could not store the end of a run with its parts");
             if let Err(error) = self.apply(vec![end_run], Durability::Full).await {
+                stored = false;
                 tracing::error!(error = ?error, run = %self.run, "could not store the end of a run; the next start marks it as interrupted");
             }
         }
@@ -1065,7 +1241,13 @@ impl RunActor {
             output_tokens = self.usage.map(|usage| usage.output),
             "a run ended"
         );
-        // The busy map lets the next command in once the end is stored.
+        // The busy map lets the next command in once the end is stored. A
+        // child frees its slot and its conversation before its parent learns
+        // that it ended, so that a follow-up finds both free.
+        let child = self.child.take();
         self.runtime.release_run(&self.conversation, &self.run);
+        if let Some(child) = child {
+            child.finish(task.filter(|_ending| stored));
+        }
     }
 }

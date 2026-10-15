@@ -15,8 +15,18 @@ describe('typed IPC (V2, V3)', () => {
     await browser.keys([Key.Ctrl, ',']);
     await waitForShownText('#interface-language', /System language/);
 
+    // Changing the language reloads the window. Its document is marked, so
+    // that the test waits for the new one: the select shows the new language
+    // before the reload starts.
+    await browser.execute(() => {
+      document.documentElement.dataset.beforeReload = '';
+    });
     await $('#interface-language').click();
     await $('[data-slot="select-item"][data-value="en"]').click();
+    await browser.waitUntil(
+      async () => browser.execute(() => document.documentElement.dataset.beforeReload === undefined),
+      { timeout: 15_000, timeoutMsg: 'the window did not reload in the new language' },
+    );
     await waitForApp();
     await browser.keys([Key.Ctrl, ',']);
 

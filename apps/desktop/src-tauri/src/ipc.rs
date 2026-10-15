@@ -14,7 +14,9 @@ use specta_typescript::Typescript;
 use tauri::Wry;
 use tauri_specta::{Builder, ErrorHandlingMode, collect_commands};
 
-use crate::commands::{chat, interface, links, projects, providers, startup, tools, window};
+use crate::commands::{
+    chat, child_agents, interface, links, projects, providers, startup, tools, window,
+};
 
 /// The first line of every generated file.
 const HEADER: &str =
@@ -97,6 +99,8 @@ macro_rules! app_commands {
             tools::list_shared_grants,
             tools::revoke_shared_grant,
             tools::read_tool_output,
+            child_agents::get_child_agents_settings,
+            child_agents::update_child_agents_settings,
             $($extra)*
         ]
     };

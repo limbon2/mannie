@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                     |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                    |
-| Last updated | 2026-10-13                                                                                                                                                          |
+| Last updated | 2026-10-15                                                                                                                                                          |
 | Related      | [Domain model](domain-model.md), [Extension points](extension-points.md), [Orchestration](orchestration.md), [Security](security.md), [ADR index](../adr/README.md) |
 
 ## 1. Reading guide
@@ -115,7 +115,7 @@ sequenceDiagram
 
 ### 5.3 A task for a child agent
 
-The conversation agent calls the task tool. The runtime creates a child conversation and a run on the same machine, the parent's transcript shows the child's progress as task events, and the child's confirmed report returns as the tool result ([orchestration](orchestration.md#3-child-agents)).
+The conversation agent calls `start_task`. The parent's run stores a `task` part, creates a task conversation with the instruction, and starts the child's run on the same machine, which waits for a slot of the machine's pool. The parent's run writes the child's state, its activity and its approval requests into the task part, and the child's confirmed report returns as the result of the call, or of `wait_for_tasks` for a task in the background ([orchestration](orchestration.md#3-child-agents), [ADR-0024](../adr/0024-run-child-agent-tasks-in-the-parent-run.md)). The owner can open the child's conversation in a side panel beside the parent's.
 
 ### 5.4 Delegating a task to a worker
 

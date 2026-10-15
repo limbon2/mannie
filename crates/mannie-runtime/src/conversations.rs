@@ -14,7 +14,7 @@ use mannie_types::chat::{
     check_message, check_title, title_from_message,
 };
 use mannie_types::ids::{ConversationId, ProfileId};
-use mannie_types::transcript::Checkpoint;
+use mannie_types::transcript::{Checkpoint, ConversationSummary};
 
 use crate::agents::CONVERSATION_AGENT;
 use crate::calls::CallOptions;
@@ -53,6 +53,16 @@ fn store_failure(error: RuntimeStoreError) -> ChatError {
             ChatError::StorageFailed
         }
     }
+}
+
+/// Refuses the owner's commands on a task conversation, whose turns its
+/// parent's agent writes (ADR-0024, decision 3). Stop works on any
+/// conversation.
+fn refuse_task_conversation(summary: &ConversationSummary) -> Result<(), ChatError> {
+    if summary.task.is_some() {
+        return Err(ChatError::TaskConversation);
+    }
+    Ok(())
 }
 
 fn profile_store_failure(error: &ProfileStoreError) -> ChatError {
@@ -133,12 +143,13 @@ impl Runtime {
         turn: &mannie_types::ids::TurnId,
         run: &NewRun,
     ) {
-        self.spawn_run(
+        let _mailbox = self.spawn_run(
             reservation.conversation.clone(),
             turn.clone(),
             run.id.clone(),
             run.profile_id.clone(),
             run.agent.clone(),
+            None,
         );
         // The run holds the conversation now; the reservation's drop leaves
         // it alone.
@@ -181,6 +192,7 @@ impl Runtime {
                     title: title_from_message(&input.text),
                     profile_id: input.profile_id,
                     project_id: input.project_id,
+                    task: None,
                 },
             },
             Change::StartTurn {
@@ -188,6 +200,7 @@ impl Runtime {
                 user_part_id: self.inner.ids.part(),
                 text: input.text,
                 run: run.clone(),
+                task: None,
             },
         ];
         self.inner
@@ -220,6 +233,7 @@ impl Runtime {
             .await
             .map_err(store_failure)?
             .ok_or(ChatError::ConversationNotFound)?;
+        refuse_task_conversation(&summary)?;
         let profile = self.profile_for(summary.profile_id.as_ref()).await?;
         let turn_id = self.inner.ids.turn();
         let run = self.new_run(&profile);
@@ -228,6 +242,7 @@ impl Runtime {
             user_part_id: self.inner.ids.part(),
             text: input.text,
             run: run.clone(),
+            task: None,
         };
         self.inner
             .hubs
@@ -261,6 +276,7 @@ impl Runtime {
             .await
             .map_err(store_failure)?
             .ok_or(ChatError::ConversationNotFound)?;
+        refuse_task_conversation(&summary)?;
         let latest = self
             .inner
             .store
@@ -326,6 +342,8 @@ impl Runtime {
     /// Renames a conversation.
     pub async fn rename_conversation(&self, input: RenameConversation) -> Result<(), ChatError> {
         let title = check_title(&input.title)?;
+        self.refuse_when_task_conversation(&input.conversation_id)
+            .await?;
         self.inner
             .hubs
             .apply(
@@ -344,6 +362,8 @@ impl Runtime {
         &self,
         input: SetConversationProfile,
     ) -> Result<(), ChatError> {
+        self.refuse_when_task_conversation(&input.conversation_id)
+            .await?;
         if let Some(id) = &input.profile_id {
             self.inner
                 .store
@@ -367,12 +387,14 @@ impl Runtime {
         Ok(())
     }
 
-    /// Deletes a conversation with everything in it. An active reply is
-    /// stopped first.
+    /// Deletes a conversation with everything in it, its children's task
+    /// conversations too. An active reply is stopped first, which stops its
+    /// children.
     pub async fn delete_conversation(
         &self,
         conversation: &ConversationId,
     ) -> Result<(), ChatError> {
+        self.refuse_when_task_conversation(conversation).await?;
         let running = {
             let busy = lock(&self.inner.busy);
             match busy.get(conversation) {
@@ -385,6 +407,12 @@ impl Runtime {
         if running {
             self.stop_reply(conversation).await;
         }
+        let children = self
+            .inner
+            .store
+            .task_conversations(conversation)
+            .await
+            .map_err(store_failure)?;
         let deleted = self
             .inner
             .store
@@ -395,7 +423,10 @@ impl Runtime {
             return Err(ChatError::ConversationNotFound);
         }
         self.inner.hubs.deleted(conversation).await;
-        tracing::info!(conversation = %conversation, "deleted a conversation");
+        for child in &children {
+            self.inner.hubs.ended_task_conversation(child).await;
+        }
+        tracing::info!(conversation = %conversation, task_conversations = children.len(), "deleted a conversation");
         Ok(())
     }
 
@@ -413,13 +444,14 @@ impl Runtime {
             .await
             .map_err(store_failure)?
             .ok_or(ChatError::ConversationNotFound)?;
+        refuse_task_conversation(&summary)?;
         let profile = self.profile_for(summary.profile_id.as_ref()).await?;
         let setup = self
-            .setup_for(&profile, CONVERSATION_AGENT)
+            .setup_for(&profile, CONVERSATION_AGENT, false)
             .await
             .map_err(|failure| ChatError::CompactionFailed { failure })?;
         let prepared = self
-            .prepare_call(conversation, &setup, CallOptions::default())
+            .prepare_call(conversation, conversation, &setup, CallOptions::default())
             .await
             .map_err(call_failure)?;
         if prepared.turns.len() < 2 {
@@ -445,6 +477,24 @@ impl Runtime {
             Ok(())
         } else {
             Err(ChatError::NothingToCompact)
+        }
+    }
+
+    /// Refuses a command of the owner on a task conversation. A conversation
+    /// that does not exist is left to the command, which reports it.
+    async fn refuse_when_task_conversation(
+        &self,
+        conversation: &ConversationId,
+    ) -> Result<(), ChatError> {
+        let summary = self
+            .inner
+            .store
+            .conversation_summary(conversation)
+            .await
+            .map_err(store_failure)?;
+        match summary {
+            Some(summary) => refuse_task_conversation(&summary),
+            None => Ok(()),
         }
     }
 

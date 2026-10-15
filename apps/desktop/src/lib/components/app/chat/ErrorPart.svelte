@@ -6,13 +6,16 @@
   import { Button } from '#lib/components/ui/button/index.js';
   import { m } from '#lib/paraglide/messages.js';
   import { chatActions } from '#lib/state/chat-actions.svelte.js';
+  import { getConversationContext } from '#lib/state/conversation-context.js';
   import type { ChatFailure } from '#lib/types/chat.js';
   import type { PartRendererProps } from '#lib/types/shell-slots.js';
   import { chatFailureMessage, runFailureMessage } from '#lib/utils/chat-errors.js';
 
   // A failed reply: what failed, what the owner can do, and Retry for the
-  // latest turn.
+  // latest turn, unless the conversation shows read-only.
   let { conversationId, latest, part }: PartRendererProps = $props();
+
+  const context = getConversationContext();
 
   let retrying = $state(false);
   let retryFailure = $state<ChatFailure | null>(null);
@@ -35,7 +38,7 @@
       <p>{chatFailureMessage(retryFailure)}</p>
     {/if}
   </Alert.Description>
-  {#if latest}
+  {#if latest && !context.readOnly}
     <Alert.Action>
       <Button disabled={retrying} size="sm" variant="outline" onclick={retry}>
         <RotateCcwIcon data-icon="inline-start" />

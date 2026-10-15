@@ -4,7 +4,8 @@
 
 use mannie_types::ids::{ConversationId, PartId, ProjectId, RunId, TurnId};
 use mannie_types::run::{RunActivity, RunOutcome, RunState};
-use mannie_types::tools::ToolCallDocument;
+use mannie_types::tasks::{TaskPartDocument, TaskRefusal, TaskState};
+use mannie_types::tools::{ToolCallDocument, ToolCallStatus};
 use mannie_types::transcript::{ContextUsage, ConversationEvent, PartKind, PartState};
 use rusqlite::{OptionalExtension, Transaction, params};
 
@@ -13,16 +14,17 @@ use super::rows::{
 };
 use super::{
     Applied, Change, DOCUMENT_VERSION, NewArchive, NewCheckpoint, NewConversation, NewPart, NewRun,
-    ProviderItem, RuntimeStoreError, archives,
+    NewTask, ProviderItem, RuntimeStoreError, TaskEnding, archives, tasks,
 };
 use crate::writer::TransactError;
 use crate::{Durability, Store};
 
 const SELECT_CONVERSATION_EXISTS: &str = "SELECT 1 FROM runtime_conversations WHERE id = ?1";
 const INSERT_CONVERSATION: &str = "INSERT INTO runtime_conversations \
-     (id, title, title_source, profile_id, project_id, workspace, created_at, updated_at) \
+     (id, title, title_source, profile_id, project_id, workspace, parent_conversation_id, \
+     task_number, task_agent, created_at, updated_at) \
      VALUES (?1, ?2, 'first_message', ?3, ?5, \
-     (SELECT folder FROM runtime_projects WHERE id = ?5), ?4, ?4)";
+     (SELECT folder FROM runtime_projects WHERE id = ?5), ?6, ?7, ?8, ?4, ?4)";
 const SELECT_PROJECT_EXISTS: &str = "SELECT 1 FROM runtime_projects WHERE id = ?1";
 const SELECT_CONVERSATION_PROJECT: &str =
     "SELECT project_id FROM runtime_conversations WHERE id = ?1";
@@ -48,12 +50,13 @@ const SELECT_LATEST_TURN: &str = "SELECT t.id, r.state FROM runtime_turns t \
      LEFT JOIN runtime_runs r ON r.id = t.current_run_id \
      WHERE t.conversation_id = ?1 ORDER BY t.position DESC LIMIT 1";
 const SET_CURRENT_RUN: &str = "UPDATE runtime_turns SET current_run_id = ?2 WHERE id = ?1";
-// A run that made tool calls stays in its turn when a retry replaces it
-// (docs/features/system-tools/tool-calls.md, retry).
+// A run that made calls, of tools or of task tools, stays in its turn when a
+// retry replaces it (docs/features/system-tools/tool-calls.md, retry), so its
+// operations and its tasks are never assigned again.
 const KEEP_CURRENT_RUN: &str = "UPDATE runtime_runs SET kept = 1 \
      WHERE id = (SELECT current_run_id FROM runtime_turns WHERE id = ?1) \
      AND EXISTS (SELECT 1 FROM runtime_parts p WHERE p.run_id = runtime_runs.id \
-     AND p.kind = 'tool_call' AND p.state <> 'discarded')";
+     AND p.kind IN ('tool_call', 'task') AND p.state <> 'discarded')";
 const START_RUN: &str = "UPDATE runtime_runs SET state = 'running', started_at = ?3 \
      WHERE id = ?1 AND conversation_id = ?2 AND state = 'queued'";
 const SET_ACTIVITY: &str = "UPDATE runtime_runs SET activity = ?3 \
@@ -204,7 +207,10 @@ fn apply_in(
     let last_seq: i64 = transaction
         .prepare_cached(SELECT_LAST_SEQ)?
         .query_row([conversation], |row| row.get(0))?;
-    let summary = if batch.summary_changed {
+    // The conversation list never shows a task conversation
+    // (docs/features/child-agents/tasks.md, task conversations).
+    let listed = batch.summary_changed && !tasks::is_task_conversation(transaction, conversation)?;
+    let summary = if listed {
         rows::conversation_summary(transaction, conversation)?
     } else {
         None
@@ -225,7 +231,8 @@ impl Batch<'_> {
                 user_part_id,
                 text,
                 run,
-            } => self.start_turn(turn_id, &user_part_id, &text, run),
+                task,
+            } => self.start_turn(turn_id, &user_part_id, &text, run, task.as_ref()),
             Change::RetryTurn { turn_id, run } => self.retry_turn(&turn_id, run),
             Change::StartRun { run_id } => self.start_run(run_id),
             Change::SetActivity { run_id, activity } => self.set_activity(run_id, &activity),
@@ -233,7 +240,8 @@ impl Batch<'_> {
                 run_id,
                 state,
                 outcome,
-            } => self.end_run(run_id, state, &outcome),
+                task,
+            } => self.end_run(run_id, state, &outcome, task.as_ref()),
             Change::StartPart { part } => {
                 self.insert_part(&part, PartState::Streaming, "")?;
                 self.append(
@@ -264,6 +272,12 @@ impl Batch<'_> {
                 tool_call,
                 archives,
             } => self.update_part(&part_id, &tool_call, &archives),
+            Change::UpdateTaskPart {
+                part_id,
+                tool_call,
+                task,
+                archives,
+            } => self.update_task_part(&part_id, tool_call, *task, &archives),
             Change::DiscardAttempt { run_id, attempt } => self.discard_attempt(run_id, attempt),
             Change::AddCheckpoint { checkpoint } => self.add_checkpoint(checkpoint),
             Change::UpdateContext { ledger, usage } => self.update_context(&ledger, usage),
@@ -303,6 +317,7 @@ impl Batch<'_> {
         if let Some(project) = &project {
             self.require_project(project)?;
         }
+        let task = conversation.task.as_ref();
         self.transaction
             .prepare_cached(INSERT_CONVERSATION)?
             .execute(params![
@@ -310,7 +325,10 @@ impl Batch<'_> {
                 conversation.title,
                 profile,
                 self.now,
-                project
+                project,
+                task.map(|origin| origin.parent_id.as_str()),
+                task.map(|origin| origin.number),
+                task.map(|origin| origin.agent.as_str())
             ])?;
         self.summary_changed = true;
         Ok(())
@@ -355,6 +373,7 @@ impl Batch<'_> {
         user_part_id: &PartId,
         text: &str,
         run: NewRun,
+        task: Option<&NewTask>,
     ) -> Result<(), RuntimeStoreError> {
         self.refuse_active_run()?;
         let position: i64 = self
@@ -389,6 +408,17 @@ impl Batch<'_> {
                 self.now,
                 self.now
             ])?;
+        // A task is stored with the turn that works on it, in the same
+        // transaction (ADR-0024, decision 4).
+        if let Some(task) = task {
+            tasks::insert(
+                self.transaction,
+                self.conversation,
+                turn_id.as_str(),
+                task,
+                self.now,
+            )?;
+        }
         self.touch()?;
         let body = EventBody {
             turn_id: Some(turn_id),
@@ -443,6 +473,8 @@ impl Batch<'_> {
         if updated == 0 {
             return Err(RuntimeStoreError::RunNotActive { run: run_id });
         }
+        // The task of a task conversation runs once its turn's run does.
+        tasks::start(self.transaction, self.conversation)?;
         self.append_run_updated(run_id)
     }
 
@@ -485,6 +517,7 @@ impl Batch<'_> {
         run_id: RunId,
         state: RunState,
         outcome: &RunOutcome,
+        task: Option<&TaskEnding>,
     ) -> Result<(), RuntimeStoreError> {
         if state.is_active() {
             return Err(RuntimeStoreError::invalid(
@@ -494,6 +527,18 @@ impl Batch<'_> {
         // The runtime finishes its parts before it ends a run; parts that are
         // still streaming end with the run, so none stays streaming forever.
         self.finish_streaming_parts(&run_id, part_state_for(state))?;
+        // In a task conversation, the task ends with its run: with the
+        // child's report when the runtime gives one, or with the state that
+        // the run's end implies, as when recovery ends it.
+        let ending = match task {
+            Some(ending) => ending.clone(),
+            None => TaskEnding {
+                state: task_state_for(state),
+                report: None,
+                failure: outcome.failure.clone(),
+            },
+        };
+        tasks::end_active(self.transaction, self.conversation, &ending, self.now)?;
         let updated = self.transaction.prepare_cached(END_RUN)?.execute(params![
             run_id.as_str(),
             self.conversation,
@@ -574,6 +619,56 @@ impl Batch<'_> {
         let document = PartDocument {
             failure: None,
             tool_call: Some(tool_call.clone()),
+            task: None,
+        };
+        self.transaction
+            .prepare_cached(UPDATE_PART_DOCUMENT)?
+            .execute(params![
+                part_id.as_str(),
+                DOCUMENT_VERSION,
+                to_json(&document)?
+            ])?;
+        for archive in archives {
+            archives::insert(
+                self.transaction,
+                self.conversation,
+                part_id.as_str(),
+                archive,
+                self.now,
+            )?;
+        }
+        self.append(
+            kinds::PART_UPDATED,
+            Some(part_id.as_str()),
+            &EventBody::empty(),
+        )?;
+        Ok(())
+    }
+
+    /// Stores a task part's call record and task section, with the outputs
+    /// it archives, such as a long report.
+    fn update_task_part(
+        &mut self,
+        part_id: &PartId,
+        tool_call: ToolCallDocument,
+        task: TaskPartDocument,
+        archives: &[NewArchive],
+    ) -> Result<(), RuntimeStoreError> {
+        self.require_streaming(part_id)?;
+        let kind: Option<String> = self
+            .transaction
+            .prepare_cached(SELECT_PART_KIND)?
+            .query_row([part_id.as_str(), self.conversation], |row| row.get(0))
+            .optional()?;
+        if kind.as_deref() != Some(PartKind::Task.as_str()) {
+            return Err(RuntimeStoreError::NotATaskPart {
+                part: part_id.clone(),
+            });
+        }
+        let document = PartDocument {
+            failure: None,
+            tool_call: Some(tool_call),
+            task: Some(task),
         };
         self.transaction
             .prepare_cached(UPDATE_PART_DOCUMENT)?
@@ -778,6 +873,7 @@ impl Batch<'_> {
         let document = PartDocument {
             failure: part.failure.clone(),
             tool_call: part.tool_call.clone(),
+            task: None,
         };
         let finished_at = (state != PartState::Streaming).then_some(self.now);
         self.transaction
@@ -859,12 +955,32 @@ impl Batch<'_> {
             let rows = select.query_map([run_id.as_str()], |row| row.get(0))?;
             rows.collect::<Result<_, _>>()?
         };
+        // A task that has not ended when its parent's run ends ends with it:
+        // interrupted when Mannie quits, canceled otherwise.
+        let unfinished = if state == PartState::Interrupted {
+            TaskState::Interrupted
+        } else {
+            TaskState::Canceled
+        };
         for part_id in streaming {
-            self.end_tool_call(&part_id)?;
+            self.end_call(&part_id, unfinished)?;
             self.finish_part(&part_id, state, "")?;
             self.append(kinds::PART_FINISHED, Some(&part_id), &EventBody::empty())?;
         }
         Ok(())
+    }
+
+    /// Ends a call that ends with its run, unfinished: a tool call or a task
+    /// part.
+    fn end_call(&self, part_id: &str, unfinished: TaskState) -> Result<(), RuntimeStoreError> {
+        let Some(row) = rows::part_row(self.transaction, part_id)? else {
+            return Ok(());
+        };
+        match PartKind::parse(&row.kind) {
+            Some(PartKind::ToolCall) => self.end_tool_call(&row),
+            Some(PartKind::Task) => self.end_task_part(&row, unfinished),
+            _ => Ok(()),
+        }
     }
 
     /// Gives a tool call that ends with its run, unfinished, the status that
@@ -873,13 +989,8 @@ impl Batch<'_> {
     /// (docs/features/system-tools/operations-and-approvals.md, recovery).
     /// The status is stored in the same transaction as the end of the part
     /// and of the run.
-    fn end_tool_call(&self, part_id: &str) -> Result<(), RuntimeStoreError> {
-        let Some(row) = rows::part_row(self.transaction, part_id)? else {
-            return Ok(());
-        };
-        if row.kind != PartKind::ToolCall.as_str() {
-            return Ok(());
-        }
+    fn end_tool_call(&self, row: &rows::PartRow) -> Result<(), RuntimeStoreError> {
+        let part_id = row.id.as_str();
         let mut document: PartDocument = rows::from_json(&row.document, "part document")?;
         let Some(tool_call) = document.tool_call.as_mut() else {
             return Ok(());
@@ -893,6 +1004,83 @@ impl Batch<'_> {
             .prepare_cached(UPDATE_PART_DOCUMENT)?
             .execute(params![part_id, DOCUMENT_VERSION, to_json(&document)?])?;
         Ok(())
+    }
+
+    /// Ends a task part whose parent's run ends before the part did
+    /// (docs/features/child-agents/tasks.md, recovery). A task that ended
+    /// already, such as a report stored just before Mannie ended, gives the
+    /// part its ending; a task that still runs ends as `unfinished`; a task
+    /// that was never stored did not start. A task that ended keeps the first
+    /// ending stored, whichever run stored it.
+    fn end_task_part(
+        &self,
+        row: &rows::PartRow,
+        unfinished: TaskState,
+    ) -> Result<(), RuntimeStoreError> {
+        let mut document: PartDocument = rows::from_json(&row.document, "part document")?;
+        let Some(call) = document.tool_call.as_mut() else {
+            return Ok(());
+        };
+        let now = rows::millis(self.now);
+        let mut section = document.task.take().unwrap_or_default();
+        let mut ended_from_row = false;
+        if let Some(task) = section.task.as_mut().filter(|task| task.state.is_active()) {
+            match tasks::of_part(self.transaction, &row.id)? {
+                Some(stored) if !stored.state.is_active() => {
+                    let ending = stored.ending.unwrap_or(TaskEnding {
+                        state: stored.state,
+                        report: None,
+                        failure: None,
+                    });
+                    task.state = ending.state;
+                    task.report = ending.report;
+                    task.failure = ending.failure;
+                    task.ended_at = stored.ended_at.or(Some(now));
+                    ended_from_row = true;
+                }
+                Some(stored) => {
+                    let ending = TaskEnding {
+                        state: unfinished,
+                        report: None,
+                        failure: None,
+                    };
+                    tasks::end(self.transaction, stored.id.as_str(), &ending, self.now)?;
+                    task.state = unfinished;
+                    task.ended_at = Some(now);
+                }
+                None => {
+                    task.state = TaskState::Interrupted;
+                    task.ended_at = Some(now);
+                    section.refusal = Some(TaskRefusal::NotStarted);
+                }
+            }
+            task.activity = None;
+            task.approval = None;
+        }
+        if !call.status.is_final() {
+            call.status = if ended_from_row {
+                ToolCallStatus::Completed
+            } else {
+                call.status.after_interruption()
+            };
+            call.ended_at = Some(now);
+        }
+        document.task = Some(section);
+        self.transaction
+            .prepare_cached(UPDATE_PART_DOCUMENT)?
+            .execute(params![row.id, DOCUMENT_VERSION, to_json(&document)?])?;
+        Ok(())
+    }
+}
+
+/// The state of a task whose run ended without saying how the task ended, as
+/// when recovery ends it.
+fn task_state_for(run: RunState) -> TaskState {
+    match run {
+        RunState::Completed => TaskState::Reported,
+        RunState::Failed => TaskState::Failed,
+        RunState::Stopped => TaskState::Canceled,
+        RunState::Interrupted | RunState::Queued | RunState::Running => TaskState::Interrupted,
     }
 }
 
