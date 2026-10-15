@@ -7,13 +7,16 @@
 //! owner can do, instead of the views.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
 use mannie_logging::{ErrorChain, LogConfig, LoggingGuard, Redactor};
 use mannie_provider::{HttpClient, ProviderRegistry};
-use mannie_runtime::{AgentRegistry, InstructionRegistry, Runtime, RuntimeConfig, RuntimeDeps};
+use mannie_runtime::{
+    AgentRegistry, InstructionRegistry, Runtime, RuntimeConfig, RuntimeDeps, ToolsDeps,
+};
 use mannie_store::{Store, StoreError, StoreOptions};
+use mannie_tools::{MutationLock, SystemFacts, ToolRegistry};
 use mannie_types::clock::{Clock, SystemClock};
 use mannie_types::startup::StartupProblem;
 use mannie_types::window::WindowSettings;
@@ -46,6 +49,20 @@ struct Inner {
     /// The links that validation builds record instead of opening.
     #[cfg(feature = "validation")]
     opened_links: Mutex<Vec<String>>,
+    /// The answer that the next folder dialog of a validation build gives
+    /// instead of opening.
+    #[cfg(feature = "validation")]
+    folder_choice: Mutex<Option<FolderChoice>>,
+}
+
+/// What the next folder dialog of a validation build answers.
+#[cfg(feature = "validation")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum FolderChoice {
+    /// The owner closed the dialog.
+    Closed,
+    /// The owner chose this folder.
+    Folder(String),
 }
 
 /// The core's state, shared by the commands. Cloning is cheap; every clone
@@ -140,6 +157,18 @@ impl Core {
         lock(&self.inner.opened_links).clone()
     }
 
+    /// Sets the answer of the next folder dialog of a validation build.
+    #[cfg(feature = "validation")]
+    pub(crate) fn set_folder_choice(&self, choice: FolderChoice) {
+        *lock(&self.inner.folder_choice) = Some(choice);
+    }
+
+    /// Takes the answer of the next folder dialog, if a test set one.
+    #[cfg(feature = "validation")]
+    pub(crate) fn take_folder_choice(&self) -> Option<FolderChoice> {
+        lock(&self.inner.folder_choice).take()
+    }
+
     /// Stops the core: the runtime marks active replies as interrupted and
     /// waits for them, the store makes everything durable, and the logs are
     /// written out. Mannie quits afterwards.
@@ -178,6 +207,8 @@ pub(crate) fn start(app: &App) -> Core {
             logging: Mutex::new(logging),
             #[cfg(feature = "validation")]
             opened_links: Mutex::default(),
+            #[cfg(feature = "validation")]
+            folder_choice: Mutex::default(),
         }),
     }
 }
@@ -254,6 +285,7 @@ fn start_runtime(
         clock,
         agents: AgentRegistry::with_builtin(),
         instructions: InstructionRegistry::with_builtin(),
+        tools: tools(app),
     };
     let runtime = tauri::async_runtime::block_on(Runtime::start(deps, RuntimeConfig::default()))
         .map_err(|error| {
@@ -263,6 +295,46 @@ fn start_runtime(
             }
         })?;
     Ok(Services { store, runtime })
+}
+
+/// The system tools of the master. Mannie's data and log folders are
+/// protected: every access inside them asks the owner, so no grant or setting
+/// lets the model change the data that holds the policy (T-18).
+fn tools(app: &App) -> ToolsDeps {
+    let folders = [app.path().app_local_data_dir(), app.path().app_log_dir()];
+    let protected = folders
+        .into_iter()
+        .filter_map(|folder| {
+            folder
+                .inspect_err(|error| tracing::warn!(%error, "a folder of Mannie's own is unknown"))
+                .ok()
+        })
+        .map(|folder| protected_folder(&folder))
+        .collect();
+    ToolsDeps {
+        registry: ToolRegistry::with_system_tools(),
+        protected,
+        mutations: MutationLock::new(),
+        system: Arc::new(SystemFacts::detect()),
+    }
+}
+
+/// A folder of Mannie's own, in the canonical form that the policy compares.
+/// It is created first, so that it has one.
+fn protected_folder(folder: &Path) -> PathBuf {
+    if let Err(error) = create_private_directory(folder) {
+        tracing::warn!(error = %ErrorChain(&error), "could not create a folder of Mannie's own");
+    }
+    match mannie_tools::canonical_folder(folder) {
+        Ok(canonical) => PathBuf::from(canonical),
+        Err(error) => {
+            tracing::warn!(
+                error.code = error.code(),
+                "could not resolve a folder of Mannie's own; it is protected as it is named"
+            );
+            folder.to_path_buf()
+        }
+    }
 }
 
 /// The stored window settings, or the defaults when they cannot be read.

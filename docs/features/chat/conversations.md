@@ -4,7 +4,7 @@
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Building                                                                                                                                                                                                                                                                                            |
 | Milestone    | M1                                                                                                                                                                                                                                                                                                  |
-| Last updated | 2026-10-14                                                                                                                                                                                                                                                                                          |
+| Last updated | 2026-10-15                                                                                                                                                                                                                                                                                          |
 | Part of      | [Chat](README.md)                                                                                                                                                                                                                                                                                   |
 | Related      | [ADR-0012](../../adr/0012-run-agents-as-durable-actors.md), [ADR-0009](../../adr/0009-persist-state-in-sqlite.md), [Agent runtime](../../architecture/agent-runtime.md), [Domain model](../../architecture/domain-model.md), [Desktop app](../../architecture/desktop-app.md#3-streaming-to-the-ui) |
 
@@ -14,30 +14,30 @@
 
 - `mannie-runtime` runs each reply as an actor: a tokio task with a mailbox for Stop and Shutdown ([ADR-0012](../../adr/0012-run-agents-as-durable-actors.md)). The run continues whether or not a window follows it.
 - A conversation has at most one active run, which the store enforces. At most eight model calls run at once across all conversations, and runs over the limit wait in order with the status "waiting for a free slot".
-- The conversation agent is the built-in agent definition of M1: its instructions, no tools, at most two continuation notes per turn, and the conversation's provider profile.
+- The conversation agent is the built-in agent definition of M1: its instructions, no tools, at most two continuation notes per turn, and the conversation's provider profile. [System tools](../system-tools/tool-calls.md#the-loop) give it its tools and their budgets.
 - Each run is a sequence of steps, one model call each. A step that ends without any visible text gets a continuation note and one more call, up to the limit. A step that ends at the output limit completes the reply and marks it as cut at the output limit.
 
-| State       | Entered when                                                                                 |
-| ----------- | -------------------------------------------------------------------------------------------- |
-| Queued      | The owner sent a message or retried a reply                                                  |
-| Running     | The run holds a model slot: preparing the context, compacting, streaming or waiting to retry |
-| Completed   | The model finished the reply                                                                 |
-| Failed      | A permanent error, a second context overflow or the last automatic retry failed              |
-| Stopped     | The owner stopped the reply                                                                  |
-| Interrupted | Mannie quit or ended while the run was active                                                |
+| State       | Entered when                                                                                                                                                                 |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Queued      | The owner sent a message or retried a reply                                                                                                                                  |
+| Running     | The run holds a model slot: preparing the context, compacting, streaming or waiting to retry. With system tools, it also runs tools or waits for an approval, without a slot |
+| Completed   | The model finished the reply                                                                                                                                                 |
+| Failed      | A permanent error, a second context overflow or the last automatic retry failed                                                                                              |
+| Stopped     | The owner stopped the reply                                                                                                                                                  |
+| Interrupted | Mannie quit or ended while the run was active                                                                                                                                |
 
 ### Stop, retry and recovery
 
 - Stop reaches the run through its mailbox, cancels the model call, keeps the streamed text marked as stopped, and ends the run within one second. Stopping a reply that already ended changes nothing.
 - A transient failure discards the text of the failed attempt, shows the retry with its cause and the time of the next attempt, and tries again: up to six attempts, after a randomized delay between one second and one minute, or after `Retry-After` when the provider sends one. A `Retry-After` of more than ten minutes ends the reply with the time of the next possible attempt.
 - A context overflow forces one compaction and one more attempt. A second overflow fails the reply.
-- Retry starts a new run for the latest turn when its reply failed, was stopped or was interrupted. The new attempt replaces the old one on screen and in the model's context; the old parts stay in the database.
+- Retry starts a new run for the latest turn when its reply failed, was stopped or was interrupted. The new attempt replaces the old one on screen and in the model's context; the old parts stay in the database. A reply that made tool calls is kept instead, and the new attempt continues after it ([tool calls](../system-tools/tool-calls.md#retry)).
 - At startup, before any command runs, runs that were active become interrupted, and their streamed text is kept up to the last stored batch.
 - Quitting stops every active run as interrupted, waits up to three seconds for them, and then closes the store.
 
 ### Transcript and events
 
-- The transcript is a list of parts per turn: the owner's text, the reply's text, reasoning, errors, continuation notes and checkpoint markers. Parts are appended and never edited. A part's text grows while it streams and is final once the part is finished.
+- The transcript is a list of parts per turn: the owner's text, the reply's text, reasoning, errors, continuation notes and checkpoint markers. Parts are appended. A part's text grows while it streams, a tool call's document changes while Mannie handles it, and both are final once the part is finished.
 - Each part has an audience: the owner and the model, only the model (continuation notes), or only the owner (errors).
 - Every change is an event with the conversation's next sequence number, stored before it is published. Streamed text is stored in batches every 50 ms with normal durability; every other change is stored with full durability ([ADR-0009](../../adr/0009-persist-state-in-sqlite.md)).
 - When a part finishes, its full text is stored with the part and its streamed deltas are dropped from the event log. The finished event carries the whole text, so replaying the log from any cursor still reproduces the conversation ([ADR-0012](../../adr/0012-run-agents-as-durable-actors.md), decision 9).
@@ -60,7 +60,7 @@
 
 ### The text the model sees
 
-The system prompt is assembled from instruction sections in a fixed order: the base instructions, the agent's instructions, the owner's instructions, and then the checkpoint, which changes more often than the sections before it. This text is a contract with the model and is reviewed like code. It lives in `crates/mannie-runtime/src/texts.rs`:
+The system prompt is assembled from instruction sections in a fixed order: the base instructions, the agent's instructions, the owner's instructions, and then the checkpoint, which changes more often than the sections before it. [System tools](../system-tools/tool-calls.md#the-text-the-model-sees) add the tool guidance after the agent's instructions and the environment after the owner's. This text is a contract with the model and is reviewed like code. It lives in `crates/mannie-runtime/src/texts.rs`:
 
 | Text                     | Wording                                                                                                                                                             |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -76,11 +76,11 @@ The compaction request has instructions of its own. They ask for a checkpoint th
 
 ### Errors
 
-A failed reply shows the cause from the run failure codes: `invalid_credential`, `permission_denied`, `quota_exceeded`, `model_not_found`, `endpoint_not_found`, `rate_limited` (with the time of the next possible attempt), `server_error`, `context_overflow`, `request_too_large`, `bad_request`, `content_filtered`, `connection_failed`, `timed_out`, `broken_stream`, `invalid_response`, `redirect_refused`, `credential_missing`, `credential_store_unavailable`, `profile_missing`, `no_profile` and `internal`. The commands report their own codes through `ChatError`: `message_empty`, `message_too_long`, `title_empty`, `title_too_long`, `instructions_too_long`, `conversation_not_found`, `checkpoint_not_found`, `run_active`, `nothing_to_retry`, `nothing_to_compact`, `compacting` (a compaction of the conversation is running), `compaction_failed` (with the run failure that ended it), `profile_not_found`, `written_by_newer_version`, `storage_failed` and `shutting_down`.
+A failed reply shows the cause from the run failure codes: `invalid_credential`, `permission_denied`, `quota_exceeded`, `model_not_found`, `endpoint_not_found`, `rate_limited` (with the time of the next possible attempt), `server_error`, `context_overflow`, `request_too_large`, `bad_request`, `content_filtered`, `connection_failed`, `timed_out`, `broken_stream`, `invalid_response`, `redirect_refused`, `credential_missing`, `credential_store_unavailable`, `profile_missing`, `no_profile`, `tools_unsupported` (the server refused tools; see [system tools](../system-tools/tool-calls.md#use-tools)) and `internal`. The commands report their own codes through `ChatError`: `message_empty`, `message_too_long`, `title_empty`, `title_too_long`, `instructions_too_long`, `conversation_not_found`, `checkpoint_not_found`, `run_active`, `nothing_to_retry`, `nothing_to_compact`, `compacting` (a compaction of the conversation is running), `compaction_failed` (with the run failure that ended it), `profile_not_found`, `written_by_newer_version`, `storage_failed` and `shutting_down`.
 
 ### Contracts
 
-- Commands (`apps/desktop/src-tauri/src/commands/chat.rs`): `subscribe_conversations`, `subscribe_conversation`, `unsubscribe`, `load_earlier_turns`, `start_conversation` (with the first message), `send_message`, `stop_reply`, `retry_reply`, `rename_conversation`, `delete_conversation`, `set_conversation_profile`, `compact_conversation`, `get_checkpoint`, `get_chat_settings` and `update_chat_settings`.
+- Commands (`apps/desktop/src-tauri/src/commands/chat.rs`): `subscribe_conversations`, `subscribe_conversation`, `unsubscribe`, `load_earlier_turns`, `start_conversation` (with the first message, and the project of a conversation that starts in one), `send_message`, `stop_reply`, `retry_reply`, `rename_conversation`, `delete_conversation`, `set_conversation_profile`, `compact_conversation`, `get_checkpoint`, `get_chat_settings` and `update_chat_settings`.
 - Channels carry `ChannelBatch<ConversationUpdate>` and `ChannelBatch<ConversationListUpdate>`. The batch's own counter detects lost batches; each conversation event carries the conversation's sequence number, which is the cursor.
 - Limits: a message is at most 256 KiB, a title at most 200 characters, and instructions at most 32 KiB.
 - Numbers that cross IPC are 32-bit integers, and times are milliseconds since the Unix epoch as JSON numbers.

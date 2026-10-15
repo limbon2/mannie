@@ -1,0 +1,22 @@
+{
+  "error": null,
+  "events": [
+    {
+      "toolCallStarted": {
+        "callId": "call_c1",
+        "name": "read_file"
+      }
+    },
+    {
+      "usage": {
+        "cachedInput": null,
+        "input": 120,
+        "output": 18,
+        "reasoning": null
+      }
+    },
+    {
+      "finished": "output_limit"
+    }
+  ]
+}

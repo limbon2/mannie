@@ -4,7 +4,7 @@
 // pseudo-locale.
 import { Key } from 'webdriverio';
 
-import { createProviderProfile, type ProfileInput } from './harness.ts';
+import { createProviderProfile, type ProfileInput, setFolderChoice } from './harness.ts';
 import { leaveSettings, waitForAnimations } from './page.ts';
 
 /** The message box. */
@@ -21,6 +21,12 @@ export interface ProfileOptions {
   readonly model: string;
   readonly name?: string;
   readonly outputLimit?: number;
+  /**
+   * Whether the model gets tools. Off unless a test asks, so that the chat
+   * tests send what chat sent before system tools, as a profile without tools
+   * does (docs/features/system-tools/README.md, fit).
+   */
+  readonly useTools?: boolean;
 }
 
 /** A part as the transcript shows it. */
@@ -78,6 +84,7 @@ export async function addProfile(baseUrl: string, options: ProfileOptions): Prom
       name: options.name ?? options.model,
       outputLimit: options.outputLimit ?? 4_096,
       reasoningEffort: 'server_default',
+      useTools: options.useTools ?? false,
     },
   });
 }
@@ -97,15 +104,84 @@ export async function waitForComposer(): Promise<void> {
   );
 }
 
-/** Starts a new conversation with the main sidebar's button, leaving the settings first when they are open. */
-export async function startNewConversation(): Promise<void> {
-  await leaveSettings();
-  await $('[data-slot="sidebar-group-action"]').click();
+/** Waits until the pane of a new conversation shows, with the message box ready. */
+async function waitForNewConversation(): Promise<void> {
   await browser.waitUntil(async () => browser.execute(() => document.querySelectorAll('main article').length === 0), {
     timeout: 10_000,
     timeoutMsg: 'the new conversation did not open',
   });
   await waitForComposer();
+}
+
+/**
+ * Starts a new general conversation with the "+" of the sidebar's
+ * "Conversations" group, leaving the settings first when they are open.
+ */
+export async function startNewConversation(): Promise<void> {
+  await leaveSettings();
+  await $('[data-new-conversation]').click();
+  await waitForNewConversation();
+}
+
+/** The project in the address of the new conversation's pane, if it names one. */
+async function shownProject(): Promise<string | null> {
+  return browser.execute(() => new URLSearchParams(location.search).get('project'));
+}
+
+/**
+ * Adds a folder as a project with the "+" of the sidebar's "Projects" group,
+ * answering the folder dialog with `folder`, and returns the project's ID once
+ * its new conversation opened.
+ */
+export async function addProject(folder: string): Promise<string> {
+  await leaveSettings();
+  await setFolderChoice(folder);
+  await $('[data-add-project]').click();
+  await browser.waitUntil(async () => (await shownProject()) !== null, {
+    timeout: 10_000,
+    timeoutMsg: 'the project did not open',
+  });
+  await waitForNewConversation();
+  const project = await shownProject();
+  if (project === null) {
+    throw new Error('the project did not open');
+  }
+  return project;
+}
+
+/** The row of a project in the sidebar. */
+export function projectRow(projectId: string): ReturnType<typeof $> {
+  return $(`[data-project="${projectId}"]`);
+}
+
+/** The button that collapses and expands a project. */
+export function projectToggle(projectId: string): ReturnType<typeof $> {
+  return $(`[data-project="${projectId}"] [data-project-toggle]`);
+}
+
+/**
+ * Starts a new conversation in a project with the button that its row shows
+ * on hover, leaving the settings first when they are open.
+ */
+export async function startConversationIn(projectId: string): Promise<void> {
+  await leaveSettings();
+  await waitForPointerInput();
+  await projectToggle(projectId).moveTo();
+  await $(`[data-new-conversation-in="${projectId}"]`).click();
+  await browser.waitUntil(async () => (await shownProject()) === projectId, {
+    timeout: 10_000,
+    timeoutMsg: 'the new conversation of the project did not open',
+  });
+  await waitForNewConversation();
+}
+
+/** Chooses how long the latest turn's waiting request is allowed, from its "Allow for…" menu. */
+export async function allowFor(label: string): Promise<void> {
+  await waitForPointerInput();
+  const trigger = $('main article:last-of-type [data-allow-for]');
+  await trigger.scrollIntoView({ block: 'center' });
+  await trigger.click();
+  await clickWithText('[data-slot="dropdown-menu-item"]', label);
 }
 
 /** Clicks Retry below the latest reply's status, a button that shows only its icon. */
@@ -198,4 +274,75 @@ export async function listedConversations(): Promise<string[]> {
       link.textContent.trim(),
     ),
   );
+}
+
+/** A message that makes the tools scenario call one tool. */
+export function callMessage(tool: string, args: Record<string, unknown>): string {
+  return `call ${tool} ${JSON.stringify(args)}`;
+}
+
+/** Waits until the transcript shows more turns than `before`, so that later waits read the new turn. */
+export async function waitForNewTurn(before: number): Promise<void> {
+  await browser.waitUntil(async () => (await turnCount()) > before, {
+    timeout: 10_000,
+    timeoutMsg: 'the message did not show in the transcript',
+  });
+}
+
+/** Sends a message and waits until its turn shows. */
+export async function send(text: string): Promise<void> {
+  const before = await turnCount();
+  await sendMessage(text);
+  await waitForNewTurn(before);
+}
+
+/** The status of the latest tool call in the latest turn, or `null` when it has none. */
+export async function latestToolStatus(): Promise<string | null> {
+  return browser.execute(() => {
+    const cards = document.querySelectorAll<HTMLElement>('main article:last-of-type [data-tool-status]');
+    return cards[cards.length - 1]?.dataset.toolStatus ?? null;
+  });
+}
+
+/** Waits until the latest tool call of the latest turn has `status`. */
+export async function waitForToolStatus(status: string, timeout = 30_000): Promise<void> {
+  let last: string | null = null;
+  await browser.waitUntil(
+    async () => {
+      last = await latestToolStatus();
+      return last === status;
+    },
+    { timeout, timeoutMsg: `the latest tool call did not become ${status}; it is ${String(last)}` },
+  );
+}
+
+/**
+ * Clicks a button of the latest turn by its text, such as the approval's
+ * "Allow once". The button moves to the middle of the transcript first, as
+ * the owner would scroll to it, so that the button that jumps to the newest
+ * message never covers it.
+ */
+export async function clickInLatestTurn(label: string): Promise<void> {
+  await browser.execute((text: string) => {
+    const buttons = [...document.querySelectorAll<HTMLButtonElement>('main article:last-of-type button')];
+    buttons.find((button) => button.textContent.trim() === text)?.scrollIntoView({ block: 'center' });
+  }, label);
+  await clickWithText('main article:last-of-type button', label);
+}
+
+/** Sends a message of several lines, typed with Shift+Enter between them as the owner would, and waits until its turn shows. */
+export async function sendLines(lines: readonly string[]): Promise<void> {
+  const before = await turnCount();
+  await waitForComposer();
+  await waitForPointerInput();
+  const box = await $(COMPOSER);
+  await box.click();
+  for (const [index, line] of lines.entries()) {
+    if (index > 0) {
+      await browser.keys([Key.Shift, Key.Enter]);
+    }
+    await box.addValue(line);
+  }
+  await browser.keys(Key.Enter);
+  await waitForNewTurn(before);
 }

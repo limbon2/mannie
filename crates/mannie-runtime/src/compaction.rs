@@ -4,14 +4,21 @@
 //! covers, renders the covered turns for the summary call, and hashes them;
 //! `calls.rs` makes the calls and stores the checkpoint.
 
-use mannie_provider::{Message, ModelRequest, Role};
-use mannie_store::ModelTurn;
+use std::collections::HashSet;
+
+use mannie_provider::{Message, ModelRequest, Role, ToolChoice};
+use mannie_store::{ModelPart, ModelTurn};
 use mannie_types::provider::ReasoningEffort;
 use mannie_types::transcript::PartKind;
 use sha2::{Digest, Sha256};
 
 use crate::budget::{estimate_message, estimate_text};
+use crate::context::call_result;
 use crate::texts;
+
+/// The most characters of a tool call's arguments, and of its result, that a
+/// summary call reads.
+const MAX_SUMMARY_CALL_CHARS: usize = 500;
 
 /// Compaction starts when the projected context passes this share of the
 /// budget, in percent.
@@ -137,13 +144,25 @@ pub(crate) fn plan(
     worth_it.then_some(Plan { covered, after })
 }
 
-/// The estimated tokens of turns as the model reads them.
+/// The estimated tokens of turns as the model reads them. A tool call counts
+/// its arguments and its result.
 pub(crate) fn turns_estimate(turns: &[ModelTurn]) -> u32 {
     turns
         .iter()
         .flat_map(|turn| &turn.parts)
-        .map(|part| estimate_message(&Message::text(Role::User, part.text.clone())))
+        .map(|part| {
+            let text = estimate_message(&Message::text(Role::User, part.text.clone()));
+            let result = tool_result(part).map_or(0, |result| estimate_text(&result));
+            text.saturating_add(result)
+        })
         .fold(0, u32::saturating_add)
+}
+
+/// What the model reads as the result of a tool call part.
+fn tool_result(part: &ModelPart) -> Option<String> {
+    part.tool_call
+        .as_ref()
+        .map(|call| call_result(&part.id, call, &HashSet::new()))
 }
 
 /// The covered turns as the summary call reads them: the owner's lines and
@@ -157,6 +176,16 @@ pub(crate) fn render_turns(turns: &[ModelTurn]) -> Vec<String> {
                 let speaker = match part.kind {
                     Some(PartKind::UserText) => texts::COMPACTION_OWNER,
                     Some(PartKind::Text) => texts::COMPACTION_ASSISTANT,
+                    Some(PartKind::ToolCall) => {
+                        if let (Some(call), Some(result)) = (&part.tool_call, tool_result(part)) {
+                            lines.push(texts::compaction_tool_call(
+                                &call.tool,
+                                &cut(&part.text),
+                                &cut(&result),
+                            ));
+                        }
+                        continue;
+                    }
                     _ => continue,
                 };
                 if !part.text.trim().is_empty() {
@@ -253,6 +282,19 @@ pub(crate) fn summary_request(
         // A summary needs no deliberate reasoning; the server's default keeps
         // the call as the server would answer any request.
         reasoning_effort: ReasoningEffort::ServerDefault,
+        tools: Vec::new(),
+        tool_choice: ToolChoice::Auto,
+    }
+}
+
+/// A text cut for a summary call.
+fn cut(text: &str) -> String {
+    let mut characters = text.trim().chars();
+    let kept: String = characters.by_ref().take(MAX_SUMMARY_CALL_CHARS).collect();
+    if characters.next().is_some() {
+        format!("{kept} [...]")
+    } else {
+        kept
     }
 }
 
@@ -291,6 +333,16 @@ pub(crate) fn content_hash(previous: Option<&str>, turns: &[ModelTurn]) -> Strin
             hasher.update(part.state.as_str().as_bytes());
             hasher.update([0x1f]);
             hasher.update(part.text.as_bytes());
+            // A tool call also covers what it did. Other parts hash as they
+            // did before tools existed, so older checkpoints stay valid.
+            if let Some(call) = &part.tool_call {
+                hasher.update([0x1f]);
+                hasher.update(serde_json::to_vec(&call.status).unwrap_or_default());
+                hasher.update([0x1f]);
+                if let Some(result) = &call.result {
+                    hasher.update(result.output.as_bytes());
+                }
+            }
             hasher.update([0x1e]);
         }
         hasher.update([0x1d]);

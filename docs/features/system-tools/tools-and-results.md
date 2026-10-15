@@ -1,0 +1,134 @@
+# Tools and results
+
+|              |                                                                                                                                                                                                                                                            |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status       | Building                                                                                                                                                                                                                                                   |
+| Milestone    | M2                                                                                                                                                                                                                                                         |
+| Last updated | 2026-10-15                                                                                                                                                                                                                                                 |
+| Part of      | [System tools](README.md)                                                                                                                                                                                                                                  |
+| Related      | [Tools](../../architecture/tools.md), [ADR-0013](../../adr/0013-journal-every-side-effect.md), [Operations and approvals](operations-and-approvals.md), [Commands](commands.md), [Agent runtime](../../architecture/agent-runtime.md#7-context-management) |
+
+## Design
+
+### The tools
+
+The tools live in the `mannie-tools` crate, and the desktop app registers them in its tool registry. Each tool declares its name, its description for the model, the schema of its arguments, its permission class, a prepare step that computes its accesses without side effects, and an execute step.
+
+| Tool               | Class        | Arguments                                                                                                   | Accesses                                                         |
+| ------------------ | ------------ | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `system_info`      | Read-only    | None                                                                                                        | None                                                             |
+| `list_directory`   | Read-only    | `path`, `offset`, `limit` (200 by default, at most 500)                                                     | Read the folder                                                  |
+| `file_info`        | Read-only    | `path`                                                                                                      | Read the path                                                    |
+| `find_files`       | Read-only    | `pattern` (a glob), `path`, `include_ignored`, `offset`, `limit` (200, at most 500)                         | Read the folder                                                  |
+| `search_text`      | Read-only    | `query`, `regex`, `path`, `glob`, `case_sensitive`, `include_ignored`, `offset`, `limit` (100, at most 200) | Read the file or folder                                          |
+| `read_file`        | Read-only    | `path`, `offset` (the first line is 1), `limit` (2,000 lines at most)                                       | Read the file                                                    |
+| `write_file`       | Side effects | `path`, `content` (at most 1 MiB), `expected_revision`                                                      | Create the file, or write it when a revision is given            |
+| `edit_file`        | Side effects | `path`, `expected_revision`, `edits` (1 to 50 pairs of `old_text` and `new_text`)                           | Write the file                                                   |
+| `create_directory` | Side effects | `path`                                                                                                      | Create each missing folder                                       |
+| `copy_path`        | Side effects | `source`, `destination`                                                                                     | Read the source, create the destination                          |
+| `move_path`        | Side effects | `source`, `destination`                                                                                     | Delete the source, create the destination                        |
+| `delete_path`      | Side effects | `path`, `recursive`                                                                                         | Delete the path, with the number of files and folders inside     |
+| `run_command`      | Side effects | `command`, `working_directory`, `timeout_seconds`                                                           | Run the command ([commands](commands.md))                        |
+| `read_tool_output` | Read-only    | `output_id`, `offset`, `limit`                                                                              | None: the output belongs to the same conversation                |
+| `move_to_project`  | Side effects | `project`: its folder, or its name when no other project has it                                             | Move the conversation into the project, with its name and folder |
+
+Arguments without a default are required. A path is absolute or relative to the conversation's workspace, and a folder argument defaults to the workspace. `write_file` creates the missing folders above a new file, which its access to create the file covers.
+
+`move_to_project` is offered only to a general conversation while the owner has projects, and the runtime moves the conversation for it, since a move changes the conversation ([projects](../chat/projects.md#moving-a-conversation-into-a-project)). It learns the projects from the call's surroundings, and fails with `already_in_project` in a conversation that belongs to one.
+
+### Arguments and schemas
+
+- Each tool's arguments are a Rust type with `serde` and `schemars`. Unknown fields are refused, and the type is checked before anything else happens. Empty arguments, and `null`, read as an empty object.
+- The schemas sent to the model are self-contained, without references or a `$schema` keyword, and they work in strict mode: every property is listed as required, optional ones accept `null`, and no other properties are allowed. Mannie still accepts an optional property that a model leaves out. Keywords that strict mode refuses, such as `format`, `pattern` and the limits of numbers and lengths, are left out; the tool checks those itself.
+- Every schema that a model receives also has the argument `activity`, which the runtime adds and takes out again before the tool reads the arguments ([tool calls](tool-calls.md#the-activity-of-a-call)). No tool may have an argument of that name.
+- Arguments are at most 1 MiB, which is the size of one event of a provider's stream.
+
+### Paths
+
+- Mannie checks the text of a path before it touches the file system, and refuses: empty paths and paths with a control character; UNC paths and other paths that start with two separators; device and verbatim paths (`\\.\`, `\\?\` and `\??\`); alternate data streams; reserved device names such as `CON` or `COM1`, with or without an extension; components that end in a dot or a space; paths relative to the current folder of a drive, such as `C:file`, and paths that start with a single separator, such as `\file`, which Windows reads on the current drive; and paths longer than 32,767 characters. A refused path never reaches a network host, so preparing an operation cannot leak credentials over SMB.
+- A relative path is joined to the workspace, and `.` and `..` are resolved in the text. A path that `..` leads out of the workspace is a path outside it, which the policy treats as such.
+- Reading resolves the path to its canonical form and follows links, so the policy sees where the read really goes. Mannie reads each link target itself and checks it like a path the model wrote, so a link to a network path or a device is refused too; a junction that mounts a volume counts as a device path. Windows paths are compared without regard to case.
+- Changes refuse links and junctions at every level of the path. An absolute path that goes through a link is refused with the resolved path in the error, so the model can use that path instead. A workspace is stored with its links resolved, so paths relative to it contain none.
+
+### File safety
+
+- A revision is the SHA-256 of the file's bytes, written as `sha256:` and the hexadecimal digest.
+- `write_file` without a revision creates the file and fails when it exists. With a revision, it replaces the file only when the revision still matches.
+- `edit_file` needs the revision. Each `old_text` must match exactly once in the file as it was, edits must not overlap, and either every edit applies or none does.
+- A change writes the new content to a temporary file in the same folder, flushes it to the disk, and renames it over the target. Creating never overwrites, even when another program creates the file in the meantime. A replaced file keeps its permissions on Unix, and a read-only file is refused.
+- Under the lock, just before it starts, a change prepares its accesses again and compares them with the accesses that were authorized. When they differ, because another program replaced a file or a folder meanwhile, nothing changes and the call fails with `path_changed`.
+- Linux: Mannie opens the parent folder without following links, with `openat2` and `RESOLVE_NO_SYMLINKS`, or component by component with `O_NOFOLLOW` on older kernels and other Unix systems. It then works relative to that folder and flushes the folder after a rename.
+- Windows: Mannie opens every folder of the path without following reparse points and keeps them open until the change is done, sharing reading and writing but not deleting, so no folder of the path can be renamed or replaced meanwhile. Only symbolic links and junctions count as links, so cloud files such as OneDrive placeholders keep working.
+- File changes run one at a time on the machine, under one lock that the desktop app creates and hands to the tools.
+- `copy_path` refuses a source with links inside it, refuses a destination inside the source, and copies at most 10,000 entries. `move_path` works within one volume. `delete_path` deletes links without following them, refuses a folder that is not empty unless `recursive` is true, and deletes at most 100,000 entries.
+
+### Text
+
+- `read_file`, `write_file` and `edit_file` handle UTF-8, and UTF-16 when the file starts with a byte order mark. A file is binary when the first 8 KiB of its UTF-8 contain a NUL byte, or its UTF-16 text contains one; text that is not valid UTF-8 without a byte order mark has an unsupported encoding. These tools refuse both, with `binary_file` and `unsupported_encoding`.
+- `read_file` and `edit_file` read files of at most 16 MiB.
+- A byte order mark is kept. A file whose lines all end in CRLF is shown with LF and written back with CRLF, and a file with mixed line endings is shown and changed as it is. A new file gets LF.
+- `read_file` numbers its lines the way `cat -n` does and cuts lines longer than 2,000 characters, which it marks.
+- `find_files` and `search_text` walk folders without following links, honor `.gitignore` files without needing a Git repository, never read the owner's global ignore file, always skip `.git` folders, and sort by name. A glob pattern without a slash matches file names at any depth; on Windows it matches without regard to case and accepts `\` as a separator.
+
+### Results and limits
+
+- A result is a typed value. The tool call's document stores it once, with the rendering that the model sees. The UI builds its summary from the result's codes and numbers.
+- A rendering fits in the result limit: 64 KiB, or a quarter of the context budget when that is smaller, but never less than 4 KiB. Tools that page end a page at the limit and say where the next page starts.
+- Command output keeps a head and a tail within the limit, and its whole captured output is archived ([commands](commands.md#output)).
+- An archived output is stored with its tool call and deleted with its conversation. The model reads it in pages of lines with `read_tool_output` and its reference, and the owner opens it from the tool call.
+
+### The descriptions the model sees
+
+The descriptions live in `crates/mannie-tools/src/texts.rs`, with the wording of failures, and are reviewed like code. Each tool renders its own results in its module. The descriptions name arguments without code formatting, because models read them as plain text.
+
+| Tool               | Description                                                                                                                                                                                                                                                                                       |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `system_info`      | Shows the operating system with its version and architecture, the shell that run_command uses, and the conversation's workspace.                                                                                                                                                                  |
+| `list_directory`   | Lists the entries of a folder with their kind, size and time of change, sorted by name, in pages.                                                                                                                                                                                                 |
+| `file_info`        | Shows the kind, size and times of a file or folder, whether it is read-only, and where a link points, without following it.                                                                                                                                                                       |
+| `find_files`       | Finds files below a folder whose path matches a glob pattern, such as \*\*/\*.rs or src/\*.toml. A pattern without a slash matches file names at any depth. Skips hidden files and files that .gitignore excludes unless include_ignored is true. Returns paths relative to the folder, in pages. |
+| `search_text`      | Searches a file, or every file below a folder, for text or a regular expression, and returns the matching lines with their path and line number, in pages. Skips binary files, files over 16 MiB, and hidden or ignored files unless include_ignored is true.                                     |
+| `read_file`        | Reads lines of a text file, numbered from 1, with the file's revision. The numbers are not part of the file. Pass the revision to write_file or edit_file.                                                                                                                                        |
+| `write_file`       | Writes a whole text file. Without expected_revision it creates a new file and fails if one exists; with it, it replaces the file only when the revision still matches.                                                                                                                            |
+| `edit_file`        | Replaces exact text in a file. Each old_text must appear exactly once, copied without line numbers, and edits must not overlap. Either every edit applies or none. expected_revision is the revision of your latest read.                                                                         |
+| `create_directory` | Creates a folder and any missing folders above it.                                                                                                                                                                                                                                                |
+| `copy_path`        | Copies a file, or a folder with its contents, to a path that does not exist yet.                                                                                                                                                                                                                  |
+| `move_path`        | Moves or renames a file or folder on the same volume, to a path that does not exist yet.                                                                                                                                                                                                          |
+| `delete_path`      | Deletes a file or folder for good. A folder that is not empty needs recursive set to true.                                                                                                                                                                                                        |
+| `run_command`      | Runs a command in the shell that system_info names, without a terminal or input, in working_directory or the workspace. It ends after timeout_seconds (60 by default, at most 600), and every process it started ends with it. Returns the exit code and the output.                              |
+| `read_tool_output` | Reads lines of an archived tool output by its reference.                                                                                                                                                                                                                                          |
+| `move_to_project`  | Moves this conversation into one of the owner's projects, so that the tools work in the project's folder from the next call on. Call it first when the owner's request is about a project that the environment lists. A conversation moves once and never leaves its project.                     |
+
+A result starts with a short header, such as the canonical path, the revision, the lines shown and where the next page starts, followed by the content. An error result names its code and what the model can do about it.
+
+### Errors
+
+A call that never ran says why: `unknown_tool`, `invalid_arguments` (with what the parser said), `cut_off`, `earlier_call_denied`, `over_budget` or `tools_off` ([tool calls](tool-calls.md)). A call that ran and failed has a result with one of these codes, which the model sees in its rendering and the UI shows through its message: `no_workspace`, `path_refused` (with the reason), `path_through_link` (with the resolved path), `not_found`, `not_a_file`, `not_a_folder`, `already_exists`, `permission_denied`, `in_use`, `revision_mismatch` (with the current revision), `edit_not_found`, `edit_ambiguous` (with the number of matches), `edits_overlap`, `too_large` (with the limit), `binary_file`, `unsupported_encoding`, `link_in_source`, `different_volume`, `folder_not_empty`, `too_many_entries`, `invalid_pattern`, `output_not_found`, `project_not_found` (with the project as the call named it), `already_in_project` (with the project's name), `path_changed` and `io_error` (with what the operating system reported). Commands add theirs in [commands](commands.md). The UI never shows the operating system's or a parser's English text; the model reads it.
+
+### Data
+
+Migration `0009` creates `runtime_archives`: the conversation, the tool call's part, the name of the output (such as `stdout`), its text, and its size in bytes and lines. A foreign key to `runtime_parts` deletes an archive with its part, and so with its conversation.
+
+### Threat notes
+
+- File contents and command output are untrusted. The model sees them as data, the UI shows them as text, and nothing in them grants a permission.
+- Paths that would reach the network are refused before any access, so a prompt injection cannot make Mannie authenticate to a remote host while it prepares an operation.
+- A path swapped for a link between the approval and the execution is caught twice: the second preparation sees a different access, and the change refuses links ([operations and approvals](operations-and-approvals.md#accesses)).
+
+### Platform differences
+
+| Topic         | Windows                                                                                                       | Linux                                                             |
+| ------------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Links         | Symbolic links and junctions; other reparse points, such as cloud files, are ordinary files                   | Symbolic links                                                    |
+| Change safety | The folders of the path stay open, sharing reading and writing but not deleting                               | `openat2` with `RESOLVE_NO_SYMLINKS`, or a walk with `O_NOFOLLOW` |
+| Case of paths | Compared without regard to case                                                                               | Compared exactly                                                  |
+| File identity | Volume serial number and file index                                                                           | Device and inode                                                  |
+| Refused paths | UNC, device and verbatim paths, streams, reserved names, trailing dots and spaces, paths on the current drive | None beyond the rules for links                                   |
+
+## Acceptance
+
+- Every tool passes the conformance suite on Windows and Linux against real folders: each success path and each error code, encodings with their byte order marks and line endings, pages, the result limit and archived outputs.
+- Refused paths are refused by a check of their text alone, before any access to the file system (unit tests).
+- A path swapped for a link or a junction between the approval and the execution, and a file replaced in the meantime, never get changed (unit tests, and a runtime test through the lifecycle).
+- A write or an edit with an old revision changes nothing, and an edit that fails leaves the file as it was (conformance suite).
+- Archived output reads back in pages and disappears with its conversation, together with a planted string in it (store and runtime tests).

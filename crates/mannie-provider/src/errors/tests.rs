@@ -278,3 +278,33 @@ fn error_details_come_from_every_shape_servers_use() {
     assert_eq!(string.message.as_deref(), Some("m"));
     assert_eq!(text.message.as_deref(), Some("upstream timeout"));
 }
+
+#[test]
+fn servers_that_refuse_tools_say_so_with_their_own_words() {
+    let tools_unsupported = ProviderError::Permanent(RunFailure::ToolsUnsupported);
+    let cases = [
+        (
+            400,
+            r#"{"object":"error","message":"\"auto\" tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set","code":400}"#,
+        ),
+        (
+            400,
+            r#"{"error":{"message":"registry.ollama.ai/library/gemma:2b does not support tools"}}"#,
+        ),
+        (
+            404,
+            r#"{"error":{"message":"No endpoints found that support tool use. To learn more about provider routing, visit: https://openrouter.ai/docs/provider-routing","code":404}}"#,
+        ),
+        (
+            400,
+            r#"{"error":{"message":"tools param requires --jinja flag"}}"#,
+        ),
+    ];
+    for (status, body) in cases {
+        assert_eq!(classify(status, body, &[]), tools_unsupported, "{body}");
+    }
+    assert_eq!(
+        classify(400, r#"{"error":{"message":"bad tool name"}}"#, &[]),
+        ProviderError::Permanent(RunFailure::BadRequest { status: 400 })
+    );
+}

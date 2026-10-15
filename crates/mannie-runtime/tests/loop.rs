@@ -35,6 +35,7 @@ async fn start(harness: &Harness, text: &str) -> StartedConversation {
         .start_conversation(StartConversation {
             text: text.to_owned(),
             profile_id: None,
+            project_id: None,
         })
         .await
         .unwrap()
@@ -222,6 +223,7 @@ fn draft(interface: ApiInterface) -> ProfileDraft {
         context_window: 128_000,
         output_limit: 16_384,
         reasoning_effort: ReasoningEffort::ServerDefault,
+        use_tools: false,
     }
 }
 
@@ -818,6 +820,7 @@ async fn a_run_that_panics_fails_as_internal_and_frees_the_conversation() {
         .start_conversation(StartConversation {
             text: "Question".to_owned(),
             profile_id: None,
+            project_id: None,
         })
         .await
         .unwrap();
@@ -858,12 +861,14 @@ async fn a_new_conversation_needs_a_profile() {
         .start_conversation(StartConversation {
             text: "Question".to_owned(),
             profile_id: None,
+            project_id: None,
         })
         .await;
     let empty = runtime
         .start_conversation(StartConversation {
             text: " \n".to_owned(),
             profile_id: None,
+            project_id: None,
         })
         .await;
 

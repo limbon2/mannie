@@ -6,6 +6,7 @@ import type {
   CheckKind,
   CheckNote,
   CredentialStoreProblem,
+  PathRefusal,
   ProviderProfileError,
   RunFailure,
   SkipReason,
@@ -15,6 +16,7 @@ import {
   checkLabel,
   checkNoteMessage,
   credentialStoreMessage,
+  folderRefusalMessage,
   profileFailureMessage,
   runFailureMessage,
   skipReasonMessage,
@@ -42,6 +44,7 @@ const RUN_FAILURES: RunFailure[] = [
   { code: 'credential_store_unavailable' },
   { code: 'profile_missing' },
   { code: 'no_profile' },
+  { code: 'tools_unsupported' },
   { code: 'internal' },
 ];
 
@@ -59,6 +62,15 @@ const CHAT_ERRORS: ChatError[] = [
   { code: 'compacting' },
   { code: 'compaction_failed', failure: { code: 'timed_out' } },
   { code: 'profile_not_found' },
+  { code: 'project_not_found' },
+  { code: 'project_name_invalid', maxCharacters: 100 },
+  { code: 'project_busy' },
+  { code: 'project_changed', conversations: 3 },
+  { code: 'path_refused', reason: 'network_path' },
+  { code: 'folder_not_found' },
+  { code: 'not_a_folder' },
+  { code: 'folder_unreadable', kind: 'PermissionDenied' },
+  { code: 'folder_dialog_failed' },
   { code: 'written_by_newer_version' },
   { code: 'storage_failed' },
   { code: 'shutting_down' },
@@ -101,6 +113,25 @@ describe('chat messages', () => {
     expect(chatFailureMessage({ kind: 'ipc' })).not.toBe('');
   });
 
+  it('say why Mannie refused a project’s folder', () => {
+    const reasons: PathRefusal[] = [
+      'empty',
+      'network_path',
+      'device_path',
+      'alternate_stream',
+      'reserved_name',
+      'trailing_dot_or_space',
+      'drive_relative',
+      'too_long',
+      'not_absolute',
+    ];
+
+    expectDistinct(reasons.map((reason) => folderRefusalMessage(reason)));
+    expect(chatFailureMessage({ error: { code: 'path_refused', reason: 'network_path' }, kind: 'core' })).toContain(
+      folderRefusalMessage('network_path'),
+    );
+  });
+
   it('say what each provider profile error and credential store problem means', () => {
     const problems: CredentialStoreProblem[] = ['no_secret_service', 'unsupported_platform', 'access_denied', 'other'];
 
@@ -109,14 +140,21 @@ describe('chat messages', () => {
   });
 
   it('label every check, note and skip reason of the provider test', () => {
-    const checks: CheckKind[] = ['credential', 'server', 'model', 'reply', 'usage', 'reasoning'];
+    const checks: CheckKind[] = ['credential', 'server', 'model', 'reply', 'usage', 'reasoning', 'tools'];
     const notes: CheckNote[] = [
       'model_not_listed',
       'model_list_unavailable',
       'no_usage_reported',
       'no_reasoning_returned',
+      'no_tool_call',
     ];
-    const reasons: SkipReason[] = ['no_credential', 'earlier_check_failed', 'no_reasoning_effort', 'no_model_list'];
+    const reasons: SkipReason[] = [
+      'no_credential',
+      'earlier_check_failed',
+      'no_reasoning_effort',
+      'no_model_list',
+      'tools_off',
+    ];
 
     expectDistinct(checks.map((check) => checkLabel(check)));
     expectDistinct(notes.map((note) => checkNoteMessage(note)));

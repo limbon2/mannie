@@ -1,0 +1,91 @@
+# Evaluations of the system tools (docs/features/system-tools/README.md,
+# acceptance): every week and on demand, the evaluations run with each model
+# that the repository's variables and secrets name, and with the scripted
+# oracle, which checks the harness without a model. The owner decided that
+# the evaluations pass at least 90% of their tasks with an OpenAI model and
+# an open-weight model, and every injection task. A model without its
+# variables is reported as not configured. The workflow is not part of the
+# release, so that a provider's outage never blocks one. Actions are pinned by
+# commit SHA.
+#
+# For each model NAME of the matrix, the repository needs the variables
+# MANNIE_EVAL_<NAME>_BASE_URL and MANNIE_EVAL_<NAME>_MODEL, the secret
+# MANNIE_EVAL_<NAME>_API_KEY when the server needs a key, and, where they
+# apply, the variables MANNIE_EVAL_<NAME>_INTERFACE, _REASONING_EFFORT,
+# _CONTEXT_WINDOW and _OUTPUT_LIMIT (crates/mannie-runtime/tests/evals.rs).
+name: Evaluations
+
+on:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  oracle:
+    name: Evaluations (oracle)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install the Rust toolchain from rust-toolchain.toml
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: evals
+      - name: Run the evaluations with the scripted model
+        env:
+          MANNIE_EVAL_MODEL: oracle
+        run: cargo test --locked -p mannie-runtime --features testing --test evals -- --ignored --nocapture
+
+  models:
+    name: Evaluations (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [OPENAI, OPEN_WEIGHT]
+    env:
+      MANNIE_EVAL_MODEL: ${{ vars[format('MANNIE_EVAL_{0}_MODEL', matrix.name)] }}
+      MANNIE_EVAL_BASE_URL: ${{ vars[format('MANNIE_EVAL_{0}_BASE_URL', matrix.name)] }}
+      MANNIE_EVAL_INTERFACE: ${{ vars[format('MANNIE_EVAL_{0}_INTERFACE', matrix.name)] }}
+      MANNIE_EVAL_REASONING_EFFORT: ${{ vars[format('MANNIE_EVAL_{0}_REASONING_EFFORT', matrix.name)] }}
+      MANNIE_EVAL_CONTEXT_WINDOW: ${{ vars[format('MANNIE_EVAL_{0}_CONTEXT_WINDOW', matrix.name)] }}
+      MANNIE_EVAL_OUTPUT_LIMIT: ${{ vars[format('MANNIE_EVAL_{0}_OUTPUT_LIMIT', matrix.name)] }}
+    steps:
+      - name: Check that the model is configured
+        id: settings
+        run: |
+          if [ -z "$MANNIE_EVAL_BASE_URL" ] || [ -z "$MANNIE_EVAL_MODEL" ]; then
+            echo "::notice::${{ matrix.name }} is not configured: set MANNIE_EVAL_${{ matrix.name }}_BASE_URL and MANNIE_EVAL_${{ matrix.name }}_MODEL"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.settings.outputs.configured == 'true'
+      - name: Install the Rust toolchain from rust-toolchain.toml
+        if: steps.settings.outputs.configured == 'true'
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: steps.settings.outputs.configured == 'true'
+        with:
+          key: evals
+      - name: Run the evaluations
+        if: steps.settings.outputs.configured == 'true'
+        env:
+          MANNIE_EVAL_API_KEY: ${{ secrets[format('MANNIE_EVAL_{0}_API_KEY', matrix.name)] }}
+        run: cargo test --locked -p mannie-runtime --features testing --test evals -- --ignored --nocapture
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && steps.settings.outputs.configured == 'true'
+        with:
+          name: evals-${{ matrix.name }}
+          path: target/evals/*.json
+          if-no-files-found: ignore

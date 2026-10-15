@@ -14,7 +14,7 @@ use specta_typescript::Typescript;
 use tauri::Wry;
 use tauri_specta::{Builder, ErrorHandlingMode, collect_commands};
 
-use crate::commands::{chat, interface, links, providers, startup, window};
+use crate::commands::{chat, interface, links, projects, providers, startup, tools, window};
 
 /// The first line of every generated file.
 const HEADER: &str =
@@ -67,6 +67,10 @@ macro_rules! app_commands {
             chat::get_checkpoint,
             chat::get_chat_settings,
             chat::update_chat_settings,
+            projects::add_project,
+            projects::add_project_from_path,
+            projects::rename_project,
+            projects::remove_project,
             providers::list_provider_profiles,
             providers::create_provider_profile,
             providers::update_provider_profile,
@@ -83,6 +87,16 @@ macro_rules! app_commands {
             window::get_window_settings,
             window::update_window_settings,
             window::set_tray_labels,
+            tools::decide_approval,
+            tools::get_tools_settings,
+            tools::update_tools_settings,
+            tools::list_command_rules,
+            tools::delete_command_rule,
+            tools::list_conversation_grants,
+            tools::revoke_conversation_grant,
+            tools::list_shared_grants,
+            tools::revoke_shared_grant,
+            tools::read_tool_output,
             $($extra)*
         ]
     };
@@ -117,6 +131,7 @@ fn validation_builder() -> Builder<Wry> {
             crate::commands::validation::validation_process_id,
             crate::commands::validation::validation_seed_conversation,
             crate::commands::validation::validation_opened_links,
+            crate::commands::validation::validation_set_folder_choice,
         ])
 }
 
@@ -147,6 +162,7 @@ pub(crate) fn runtime_builder() -> Builder<Wry> {
                 crate::commands::validation::validation_process_id,
                 crate::commands::validation::validation_seed_conversation,
                 crate::commands::validation::validation_opened_links,
+                crate::commands::validation::validation_set_folder_choice,
             ])
     }
 }

@@ -3,7 +3,7 @@
 //! counts the provider reported after it, which are the truth (ADR-0012,
 //! decision 7).
 
-use mannie_provider::{Content, Message, ModelRequest};
+use mannie_provider::{Content, Message, ModelRequest, ToolDefinition};
 use mannie_types::transcript::ContextUsage;
 use serde::{Deserialize, Serialize};
 
@@ -30,14 +30,41 @@ pub(crate) fn estimate_message(message: &Message) -> u32 {
         .iter()
         .map(|content| match content {
             Content::Text(text) | Content::ProviderItem(text) => estimate_text(text),
+            Content::ToolCall {
+                call_id,
+                name,
+                arguments,
+            } => estimate_text(call_id)
+                .saturating_add(estimate_text(name))
+                .saturating_add(estimate_text(arguments))
+                .saturating_add(MESSAGE_OVERHEAD),
+            Content::ToolResult { call_id, output } => estimate_text(call_id)
+                .saturating_add(estimate_text(output))
+                .saturating_add(MESSAGE_OVERHEAD),
         })
         .fold(MESSAGE_OVERHEAD, u32::saturating_add)
 }
 
+/// The estimated tokens of a tool definition, which every request with tools
+/// carries.
+pub(crate) fn estimate_tool(tool: &ToolDefinition) -> u32 {
+    estimate_text(&tool.name)
+        .saturating_add(estimate_text(&tool.description))
+        .saturating_add(estimate_text(&tool.parameters.to_string()))
+        .saturating_add(MESSAGE_OVERHEAD)
+}
+
 /// The estimated tokens of a whole request's input.
 pub(crate) fn estimate_request(request: &ModelRequest) -> u32 {
+    let tools = request
+        .tools
+        .iter()
+        .map(estimate_tool)
+        .fold(0, u32::saturating_add);
     request.messages.iter().map(estimate_message).fold(
-        estimate_text(&request.instructions).saturating_add(MESSAGE_OVERHEAD),
+        estimate_text(&request.instructions)
+            .saturating_add(MESSAGE_OVERHEAD)
+            .saturating_add(tools),
         u32::saturating_add,
     )
 }
@@ -126,7 +153,7 @@ pub(crate) fn usage(used: u32, budget: u32, estimated: bool) -> ContextUsage {
 
 #[cfg(test)]
 mod tests {
-    use mannie_provider::{Message, ModelRequest, Role};
+    use mannie_provider::{Content, Message, ModelRequest, Role, ToolChoice, ToolDefinition};
     use mannie_types::provider::ReasoningEffort;
 
     use super::{Ledger, estimate_request, estimate_text};
@@ -150,9 +177,51 @@ mod tests {
             ],
             max_output_tokens: 1,
             reasoning_effort: ReasoningEffort::ServerDefault,
+            tools: Vec::new(),
+            tool_choice: ToolChoice::Auto,
         };
 
         assert_eq!(estimate_request(&request), (2 + 4) + (2 + 4) + 4);
+    }
+
+    #[test]
+    fn a_request_counts_its_tools_their_calls_and_their_results() {
+        let plain = ModelRequest {
+            model: "m".to_owned(),
+            instructions: String::new(),
+            messages: Vec::new(),
+            max_output_tokens: 1,
+            reasoning_effort: ReasoningEffort::ServerDefault,
+            tools: Vec::new(),
+            tool_choice: ToolChoice::Auto,
+        };
+        let with_tools = ModelRequest {
+            tools: vec![ToolDefinition {
+                name: "read_file".to_owned(),
+                description: "Reads lines of a text file.".to_owned(),
+                parameters: serde_json::json!({ "type": "object", "properties": {} }),
+            }],
+            messages: vec![
+                Message {
+                    role: Role::Assistant,
+                    content: vec![Content::ToolCall {
+                        call_id: "call_1".to_owned(),
+                        name: "read_file".to_owned(),
+                        arguments: "{}".to_owned(),
+                    }],
+                },
+                Message {
+                    role: Role::Tool,
+                    content: vec![Content::ToolResult {
+                        call_id: "call_1".to_owned(),
+                        output: "x".repeat(1_000),
+                    }],
+                },
+            ],
+            ..plain.clone()
+        };
+
+        assert!(estimate_request(&with_tools) > estimate_request(&plain) + 400);
     }
 
     #[test]

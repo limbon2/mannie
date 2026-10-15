@@ -25,6 +25,7 @@ members = [
   "crates/mannie-runtime",
   "crates/mannie-secrets",
   "crates/mannie-store",
+  "crates/mannie-tools",
   "crates/mannie-types",
 ]
 
@@ -47,22 +48,37 @@ bytes = "1.12.1"
 clap = { version = "4.6.7", features = ["derive"] }
 fastrand = "2.5.0"
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+# Glob patterns of `find_files`, as the `ignore` crate matches them.
+globset = "0.4.20"
+# Walking folders the way `.gitignore` files say, for `find_files` and
+# `search_text`.
+ignore = "0.4.33"
 keyring-core = "1.0.1"
 mannie-logging = { path = "crates/mannie-logging" }
 mannie-provider = { path = "crates/mannie-provider" }
 mannie-runtime = { path = "crates/mannie-runtime" }
 mannie-secrets = { path = "crates/mannie-secrets" }
 mannie-store = { path = "crates/mannie-store" }
+mannie-tools = { path = "crates/mannie-tools" }
 mannie-types = { path = "crates/mannie-types" }
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 regex = "1.13.1"
 # Without the default TLS feature, which brings the aws-lc crypto provider that
 # deny.toml bans: rustls with ring only (ADR-0008, ADR-0011).
 reqwest = { version = "0.13.5", default-features = false }
+# The system's folder dialog, which the core opens when the owner adds a
+# project (ADR-0023). On Linux it goes through the XDG desktop portal: the GTK
+# backend would run GTK on a thread of its own, beside Tauri's.
+rfd = { version = "0.17.2", default-features = false, features = ["wayland", "xdg-portal"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
+# Safe calls of Unix file and process functions: `openat` without following
+# links, child subreapers and process file descriptors (ADR-0014).
+rustix = "1.1.5"
 # ring is the only crypto provider (ADR-0008); rustls's default features would
 # add aws-lc.
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+# The JSON Schemas of tool arguments, generated from their Rust types.
+schemars = "1.2.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.10.9"
@@ -77,13 +93,22 @@ tempfile = "3.27.0"
 thiserror = "2.0.21"
 time = { version = "0.3.55", features = ["formatting", "macros"] }
 tokio = "1.53.2"
+# Cancellation tokens for running tools (engineering standards, async).
+tokio-util = "0.7.20"
 tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 url = "2.5.8"
 uuid = { version = "1.28.0", features = ["v7"] }
+# The identity of a file on Windows: its volume serial number and file index.
+winapi-util = "0.1.11"
 windows-native-keyring-store = "1.1.0"
 windows-service = "0.8.1"
+# Job Objects and the other Windows calls of the process supervisor
+# (ADR-0014).
+windows-sys = "0.61.2"
+# The version of Windows that `system_info` reports.
+windows-version = "0.1.7"
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-tokio-crypto-rust"] }
 zeroize = "1.9.1"
 

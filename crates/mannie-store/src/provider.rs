@@ -61,6 +61,14 @@ struct ProfileDocument {
     reasoning_effort: ReasoningEffort,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     server: Option<ServerKind>,
+    /// Whether the model gets tools. Profiles stored before system tools
+    /// read it as on, the default.
+    #[serde(default = "uses_tools_by_default")]
+    use_tools: bool,
+}
+
+fn uses_tools_by_default() -> bool {
+    true
 }
 
 /// A provider profile as the store keeps it.
@@ -89,6 +97,8 @@ pub struct StoredProfile {
     pub output_limit: u32,
     /// The reasoning effort.
     pub reasoning_effort: ReasoningEffort,
+    /// Whether the model gets tools.
+    pub use_tools: bool,
     /// The server the provider test recognized.
     pub server: Option<ServerKind>,
     /// When it was created.
@@ -110,6 +120,7 @@ impl StoredProfile {
             context_window: self.context_window,
             output_limit: self.output_limit,
             reasoning_effort: self.reasoning_effort,
+            use_tools: self.use_tools,
             is_default: self.is_default,
             server: self.server,
             created_at: self.created_at,
@@ -143,6 +154,8 @@ pub struct ProfileFields {
     pub output_limit: u32,
     /// The reasoning effort.
     pub reasoning_effort: ReasoningEffort,
+    /// Whether the model gets tools.
+    pub use_tools: bool,
 }
 
 /// Why a profile could not be saved or deleted.
@@ -251,6 +264,7 @@ impl RawProfile {
             context_window: document.context_window,
             output_limit: document.output_limit,
             reasoning_effort: document.reasoning_effort,
+            use_tools: document.use_tools,
             server: document.server,
             created_at: UtcMillis::from_millis(self.created_at),
             updated_at: UtcMillis::from_millis(self.updated_at),
@@ -297,6 +311,7 @@ fn document_json(
         output_limit: fields.output_limit,
         reasoning_effort: fields.reasoning_effort,
         server,
+        use_tools: fields.use_tools,
     };
     serde_json::to_string(&document).map_err(|error| ProfileStoreError::InvalidData {
         what: error.to_string(),
@@ -498,6 +513,7 @@ impl Store {
                 context_window: profile.context_window,
                 output_limit: profile.output_limit,
                 reasoning_effort: profile.reasoning_effort,
+                use_tools: profile.use_tools,
             };
             let document = document_json(&fields, Some(server)).map_err(TransactError::Rejected)?;
             transaction

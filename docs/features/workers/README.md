@@ -27,9 +27,9 @@ The owner has several machines, and each host may serve a purpose. A worker runs
 
 ## Fit
 
-- Extension points: link services (introduced by this feature), the task and report contract from [child agents](../child-agents.md), the worker agent definition, instruction sections for the host instructions and host facts, the tool registry on the worker (the same tools as [system tools](../system-tools.md)), the store on the worker, UI shell slots for the list of workers, pairing and the delegated task card, and the settings section for workers.
+- Extension points: link services (introduced by this feature), the task and report contract from [child agents](../child-agents.md), the worker agent definition, instruction sections for the host instructions and host facts, the tool registry on the worker (the same tools as [system tools](../system-tools/README.md)), the store on the worker, UI shell slots for the list of workers, pairing and the delegated task card, and the settings section for workers.
 - Follows [ADR-0008](../../adr/0008-one-workspace-two-binaries.md), [ADR-0010](../../adr/0010-keep-provider-credentials-on-the-master.md), [ADR-0015](../../adr/0015-run-an-agent-runtime-on-every-machine.md), [ADR-0016](../../adr/0016-link-machines-over-pinned-mtls-grpc.md) and [ADR-0018](../../adr/0018-release-from-tagged-builds.md).
-- Must not change: [system tools](../system-tools.md) and [child agents](../child-agents.md) on the master behave the same whether or not workers are paired.
+- Must not change: [system tools](../system-tools/README.md) and [child agents](../child-agents.md) on the master behave the same whether or not workers are paired.
 
 ## Open questions
 

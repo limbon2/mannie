@@ -5,8 +5,10 @@
 pub(crate) mod chat;
 pub(crate) mod interface;
 pub(crate) mod links;
+pub(crate) mod projects;
 pub(crate) mod providers;
 pub(crate) mod startup;
+pub(crate) mod tools;
 #[cfg(feature = "validation")]
 pub(crate) mod validation;
 pub(crate) mod window;

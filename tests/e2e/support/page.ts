@@ -200,6 +200,16 @@ export async function uncataloguedText(): Promise<string[]> {
   });
 }
 
+/** Runs a command of the command palette by typing its label, as the owner would. */
+export async function runCommand(label: string): Promise<void> {
+  await browser.keys([Key.Ctrl, 'k']);
+  const input = await $('[data-slot="command-input"]');
+  await input.waitForDisplayed();
+  await browser.keys(label.split(''));
+  await browser.keys(Key.Enter);
+  await $('[data-slot="command-input"]').waitForDisplayed({ reverse: true });
+}
+
 /** The element that has the keyboard focus, described for assertions. */
 export async function focusedElement(): Promise<{ label: string; tag: string }> {
   return browser.execute(() => {

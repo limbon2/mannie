@@ -6,6 +6,7 @@ use specta::Type;
 use crate::clock::UtcMillis;
 use crate::ids::{PartId, RunId, TurnId};
 use crate::run::RunFailure;
+use crate::tools::ToolCallView;
 
 /// What a part is. Features add kinds; a reader that meets a kind it does not
 /// know shows a generic placeholder instead of failing.
@@ -22,16 +23,20 @@ pub enum PartKind {
     Error,
     /// A note that asks the model to continue, for the model only.
     ContinuationNote,
+    /// A tool call and everything Mannie did with it
+    /// (docs/features/system-tools/tool-calls.md).
+    ToolCall,
 }
 
 impl PartKind {
     /// Every kind this version knows.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::UserText,
         Self::Text,
         Self::Reasoning,
         Self::Error,
         Self::ContinuationNote,
+        Self::ToolCall,
     ];
 
     /// The kind's name as the store and the UI know it.
@@ -42,6 +47,7 @@ impl PartKind {
             Self::Reasoning => "reasoning",
             Self::Error => "error",
             Self::ContinuationNote => "continuation_note",
+            Self::ToolCall => "tool_call",
         }
     }
 
@@ -54,7 +60,7 @@ impl PartKind {
     /// Who the part is for.
     pub fn audience(self) -> Audience {
         match self {
-            Self::UserText | Self::Text | Self::Reasoning => Audience::Both,
+            Self::UserText | Self::Text | Self::Reasoning | Self::ToolCall => Audience::Both,
             Self::Error => Audience::Owner,
             Self::ContinuationNote => Audience::Model,
         }
@@ -177,6 +183,11 @@ pub enum PartContent {
         /// The cause.
         failure: RunFailure,
     },
+    /// A tool call.
+    ToolCall {
+        /// The call, its status and its result.
+        call: Box<ToolCallView>,
+    },
     /// A kind of part that this version does not know.
     Unknown {
         /// The kind's name.
@@ -213,7 +224,7 @@ mod tests {
         for kind in PartKind::ALL {
             assert_eq!(PartKind::parse(kind.as_str()), Some(kind));
         }
-        assert_eq!(PartKind::parse("tool_call"), None);
+        assert_eq!(PartKind::parse("task_report"), None);
     }
 
     #[test]
@@ -241,7 +252,7 @@ mod tests {
             text: "Hello".to_owned(),
         };
         let unknown = PartContent::Unknown {
-            name: "tool_call".to_owned(),
+            name: "task_report".to_owned(),
         };
 
         assert_eq!(
@@ -250,7 +261,7 @@ mod tests {
         );
         assert_eq!(
             serde_json::to_value(&unknown).unwrap(),
-            serde_json::json!({ "kind": "unknown", "name": "tool_call" })
+            serde_json::json!({ "kind": "unknown", "name": "task_report" })
         );
     }
 }

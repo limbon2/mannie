@@ -70,6 +70,54 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         description: "create the provider profiles table",
         sql: include_str!("provider/migrations/0006_create_profiles.sql"),
     },
+    Migration {
+        version: 7,
+        module: "runtime",
+        description: "mark the runs that a retry keeps",
+        sql: include_str!("runtime/migrations/0007_add_kept_runs.sql"),
+    },
+    Migration {
+        version: 8,
+        module: "runtime",
+        description: "add the workspace of a conversation",
+        sql: include_str!("runtime/migrations/0008_add_conversation_workspaces.sql"),
+    },
+    Migration {
+        version: 9,
+        module: "runtime",
+        description: "create the archives of tool outputs",
+        sql: include_str!("runtime/migrations/0009_create_archives.sql"),
+    },
+    Migration {
+        version: 10,
+        module: "tools",
+        description: "create the grants table",
+        sql: include_str!("tools/migrations/0010_create_grants.sql"),
+    },
+    Migration {
+        version: 11,
+        module: "tools",
+        description: "create the command rules table",
+        sql: include_str!("tools/migrations/0011_create_rules.sql"),
+    },
+    Migration {
+        version: 12,
+        module: "runtime",
+        description: "create the projects table",
+        sql: include_str!("runtime/migrations/0012_create_projects.sql"),
+    },
+    Migration {
+        version: 13,
+        module: "runtime",
+        description: "add the project of a conversation and turn workspaces into projects",
+        sql: include_str!("runtime/migrations/0013_add_conversation_projects.sql"),
+    },
+    Migration {
+        version: 14,
+        module: "tools",
+        description: "create the shared grants table",
+        sql: include_str!("tools/migrations/0014_create_shared_grants.sql"),
+    },
 ];
 
 /// How many backups of earlier schema versions the store keeps.

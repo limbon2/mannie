@@ -469,3 +469,158 @@ async fn a_database_from_the_first_schema_is_upgraded_and_keeps_its_settings() {
     assert_eq!(backups.len(), 1, "{backups:?}");
     assert_eq!(user_version(&backups[0]), 1);
 }
+
+/// The schema of M1 (version 6) holds conversations, runs, parts and
+/// profiles. M2's migrations add kept runs, workspaces, archives, grants and
+/// rules; the stored conversation and profile read as before, without a
+/// workspace and with tools on (engineering standards, data). A fixture
+/// database of v0.1.0 replaces this seed once that release exists.
+#[tokio::test]
+async fn a_database_from_the_chat_schema_is_upgraded_and_keeps_its_conversations() {
+    let fixture = Fixture::new();
+    let chat_schema = &MIGRATIONS[..6];
+    let older = fixture.open(chat_schema).unwrap();
+    older
+        .write(Durability::Full, |transaction| {
+            transaction.execute_batch(
+                "INSERT INTO runtime_conversations (id, title, title_source, profile_id, last_seq, created_at, updated_at) \
+                 VALUES ('0199e0f2-7a1b-7c3d-8e4f-000000000001', 'Older chat', 'first_message', NULL, 0, 1, 1); \
+                 INSERT INTO runtime_turns (id, conversation_id, position, current_run_id, created_at) \
+                 VALUES ('0199e0f2-7a1b-7c3d-8e4f-000000000002', '0199e0f2-7a1b-7c3d-8e4f-000000000001', 0, \
+                 '0199e0f2-7a1b-7c3d-8e4f-000000000003', 1); \
+                 INSERT INTO runtime_runs (id, conversation_id, turn_id, agent, profile_id, binding, state, version, \
+                 outcome, created_at, started_at, ended_at) \
+                 VALUES ('0199e0f2-7a1b-7c3d-8e4f-000000000003', '0199e0f2-7a1b-7c3d-8e4f-000000000001', \
+                 '0199e0f2-7a1b-7c3d-8e4f-000000000002', 'conversation', '0199e0f2-0000-7000-8000-000000000001', \
+                 '0199e0f2-0000-7000-8000-000000000001:1', 'completed', 1, '{}', 1, 1, 2); \
+                 INSERT INTO runtime_parts (id, conversation_id, turn_id, run_id, attempt, position, kind, audience, \
+                 state, text, version, document, created_at, finished_at) \
+                 VALUES ('0199e0f2-7a1b-7c3d-8e4f-000000000004', '0199e0f2-7a1b-7c3d-8e4f-000000000001', \
+                 '0199e0f2-7a1b-7c3d-8e4f-000000000002', NULL, NULL, 0, 'user_text', 'both', 'complete', 'Hello', \
+                 1, '{}', 1, 1), \
+                 ('0199e0f2-7a1b-7c3d-8e4f-000000000005', '0199e0f2-7a1b-7c3d-8e4f-000000000001', \
+                 '0199e0f2-7a1b-7c3d-8e4f-000000000002', '0199e0f2-7a1b-7c3d-8e4f-000000000003', 1, 1, 'text', \
+                 'both', 'complete', 'Hi there', 1, '{}', 1, 2); \
+                 INSERT INTO provider_profiles (id, name, interface, base_url, model, credential_ref, is_default, \
+                 config_revision, version, document, created_at, updated_at) \
+                 VALUES ('0199e0f2-0000-7000-8000-000000000001', 'Local', 'chat_completions', \
+                 'http://127.0.0.1:8000/v1', 'qwen3', NULL, 1, 1, 1, \
+                 '{\"contextWindow\":32768,\"outputLimit\":4096,\"reasoningEffort\":\"server_default\"}', 1, 1);",
+            )
+        })
+        .await
+        .unwrap();
+    drop(older);
+    assert_eq!(user_version(&fixture.database()), 6);
+
+    let upgraded = fixture.open(MIGRATIONS).unwrap();
+
+    assert_eq!(user_version(&fixture.database()), Store::schema_version());
+    let conversations = upgraded.list_conversations().await.unwrap();
+    let [conversation] = conversations.as_slice() else {
+        panic!("{conversations:?}");
+    };
+    assert_eq!(conversation.title, "Older chat");
+    assert_eq!(conversation.workspace, None);
+    assert!(!conversation.awaiting_approval);
+    let turns = upgraded.model_turns(&conversation.id, None).await.unwrap();
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0].kept_runs, Vec::new());
+    assert_eq!(turns[0].parts.len(), 2);
+    let profiles = upgraded.list_profiles().await.unwrap();
+    assert_eq!(profiles.len(), 1);
+    assert!(profiles[0].use_tools);
+    assert_eq!(upgraded.rules().await.unwrap(), Vec::new());
+    assert_eq!(fixture.backup_files().len(), 1);
+}
+
+/// The schema before projects (version 11) keeps a workspace on each
+/// conversation. Migration 13 turns each workspace into a project with the ID
+/// and time of its earliest conversation, and moves the conversations into
+/// it (docs/features/chat/projects.md, data).
+#[tokio::test]
+async fn a_database_with_workspaces_is_upgraded_into_projects() {
+    let fixture = Fixture::new();
+    let workspace_schema = &MIGRATIONS[..11];
+    let older = fixture.open(workspace_schema).unwrap();
+    older
+        .write(Durability::Full, |transaction| {
+            transaction.execute_batch(
+                "INSERT INTO runtime_conversations (id, title, title_source, profile_id, last_seq, \
+                 workspace, created_at, updated_at) VALUES \
+                 ('0199e0f2-7a1b-7c3d-8e4f-000000000002', 'Later in A', 'first_message', NULL, 0, '/work/a', 20, 20), \
+                 ('0199e0f2-7a1b-7c3d-8e4f-000000000001', 'First in A', 'first_message', NULL, 0, '/work/a', 10, 10), \
+                 ('0199e0f2-7a1b-7c3d-8e4f-000000000003', 'Only in B', 'first_message', NULL, 0, '/work/b', 30, 30), \
+                 ('0199e0f2-7a1b-7c3d-8e4f-000000000004', 'General', 'first_message', NULL, 0, NULL, 40, 40);",
+            )
+        })
+        .await
+        .unwrap();
+    drop(older);
+    assert_eq!(user_version(&fixture.database()), 11);
+
+    let upgraded = fixture.open(MIGRATIONS).unwrap();
+
+    assert_eq!(user_version(&fixture.database()), Store::schema_version());
+    let projects = upgraded.projects().await.unwrap();
+    let summary = |project: &mannie_types::projects::ProjectView| {
+        (
+            project.id.to_string(),
+            project.name.clone(),
+            project.folder.clone(),
+            project.created_at.as_millis(),
+        )
+    };
+    assert_eq!(
+        projects.iter().map(summary).collect::<Vec<_>>(),
+        [
+            (
+                "0199e0f2-7a1b-7c3d-8e4f-000000000001".to_owned(),
+                "a".to_owned(),
+                "/work/a".to_owned(),
+                10
+            ),
+            (
+                "0199e0f2-7a1b-7c3d-8e4f-000000000003".to_owned(),
+                "b".to_owned(),
+                "/work/b".to_owned(),
+                30
+            ),
+        ]
+    );
+    let conversations = upgraded.list_conversations().await.unwrap();
+    let placed: Vec<(String, Option<String>, Option<String>)> = conversations
+        .iter()
+        .map(|conversation| {
+            (
+                conversation.title.clone(),
+                conversation.project_id.as_ref().map(ToString::to_string),
+                conversation.workspace.clone(),
+            )
+        })
+        .collect();
+    let in_a = Some("0199e0f2-7a1b-7c3d-8e4f-000000000001".to_owned());
+    let in_b = Some("0199e0f2-7a1b-7c3d-8e4f-000000000003".to_owned());
+    assert_eq!(
+        placed,
+        [
+            ("General".to_owned(), None, None),
+            ("Only in B".to_owned(), in_b, Some("/work/b".to_owned())),
+            (
+                "Later in A".to_owned(),
+                in_a.clone(),
+                Some("/work/a".to_owned())
+            ),
+            ("First in A".to_owned(), in_a, Some("/work/a".to_owned())),
+        ]
+    );
+    let violations: Vec<String> = upgraded
+        .read(|connection| {
+            let mut check = connection.prepare("PRAGMA foreign_key_check")?;
+            let rows = check.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect()
+        })
+        .await
+        .unwrap();
+    assert_eq!(violations, Vec::<String>::new());
+}

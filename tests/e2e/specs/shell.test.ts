@@ -10,18 +10,10 @@ import {
   isDark,
   leaveSettings,
   openSettings,
+  runCommand,
   waitForApp,
   waitForShownText,
 } from '../support/page.ts';
-
-async function runCommand(label: string): Promise<void> {
-  await browser.keys([Key.Ctrl, 'k']);
-  const input = await $('[data-slot="command-input"]');
-  await input.waitForDisplayed();
-  await browser.keys(label.split(''));
-  await browser.keys(Key.Enter);
-  await $('[data-slot="command-input"]').waitForDisplayed({ reverse: true });
-}
 
 describe('the shell', () => {
   before(async () => {
@@ -32,13 +24,14 @@ describe('the shell', () => {
     await expect($('[data-slot="sidebar"]')).toBeDisplayed();
     await expect($('main#main textarea[aria-describedby="composer-hint"]')).toBeDisplayed();
     // Without navigation entries, the sidebar shows no navigation group, only
-    // the chat feature's panel (ADR-0020).
+    // the chat feature's panels: the projects and the conversations (ADR-0020,
+    // ADR-0023).
     const labels = await browser.execute(() =>
       [...document.querySelectorAll('[data-slot="sidebar"] [data-slot="sidebar-group-label"]')].map((label) =>
         label.textContent.trim(),
       ),
     );
-    expect(labels).toEqual(['Conversations']);
+    expect(labels).toEqual(['Projects', 'Conversations']);
   });
 
   it('passes the WCAG 2.1 AA checks in the light theme', async () => {
@@ -86,7 +79,7 @@ describe('the shell', () => {
     // The previous test left the settings open. A new conversation gives the
     // main view search parameters, which the way back restores.
     await leaveSettings();
-    await $('[data-slot="sidebar-group-action"]').click();
+    await $('[data-new-conversation]').click();
     await browser.waitUntil(async () => browser.execute(() => location.search === '?view=chat'), {
       timeoutMsg: 'the new conversation did not open',
     });
@@ -98,7 +91,7 @@ describe('the shell', () => {
         entry.textContent.trim(),
       ),
     );
-    expect(entries).toEqual(['Back', 'Interface', 'Providers', 'Instructions', 'Window']);
+    expect(entries).toEqual(['Back', 'Interface', 'Providers', 'Instructions', 'Tools', 'Window']);
     await waitForShownText('[id="settings-section-window.behavior"]', 'Window');
     await expect($('#interface-theme-system')).not.toBeExisting();
     await expect($('main#main textarea[aria-describedby="composer-hint"]')).not.toBeExisting();

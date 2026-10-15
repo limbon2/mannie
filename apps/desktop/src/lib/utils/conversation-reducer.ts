@@ -75,6 +75,14 @@ function turnOfPart(state: TranscriptState, part: PartView): TurnView | undefine
   });
 }
 
+/** Whether a part stays when a retry starts a new run: the owner's message, and the parts of the runs the turn keeps. */
+function staysOnRetry(part: PartView, kept: ReadonlySet<RunId>): boolean {
+  if (part.runId === null) {
+    return true;
+  }
+  return kept.has(part.runId);
+}
+
 function appendText(part: PartView, text: string): void {
   const content = part.content;
   switch (content.kind) {
@@ -85,7 +93,9 @@ function appendText(part: PartView, text: string): void {
       return;
     }
     case 'error':
+    case 'tool_call':
     case 'unknown': {
+      // A tool call's arguments arrive whole, with the part's next update.
       return;
     }
   }
@@ -98,11 +108,14 @@ function applyEvent(state: TranscriptState, event: ConversationEvent): void {
       return;
     }
     case 'run_started': {
-      // A retry replaces every part of the turn but the owner's message.
+      // A retry replaces the parts of the turn's earlier runs. The owner's
+      // message stays, and so do the parts of the runs that the turn keeps
+      // because they made tool calls.
       const turn = state.turns.find((candidate) => candidate.id === event.run.turnId);
       if (turn !== undefined) {
+        const kept = new Set(event.keptRunIds ?? []);
         turn.run = event.run;
-        turn.parts = turn.parts.filter((part) => part.runId === null);
+        turn.parts = turn.parts.filter((part) => staysOnRetry(part, kept));
       }
       return;
     }
@@ -114,7 +127,8 @@ function applyEvent(state: TranscriptState, event: ConversationEvent): void {
       return;
     }
     case 'part_finished':
-    case 'part_started': {
+    case 'part_started':
+    case 'part_updated': {
       const turn = turnOfPart(state, event.part);
       if (turn === undefined) {
         return;

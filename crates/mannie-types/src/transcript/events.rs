@@ -25,10 +25,15 @@ pub enum ConversationEvent {
         turn: TurnView,
     },
     /// A new run replaces the turn's reply, after the owner retried it. The
-    /// parts of the previous run are no longer shown.
+    /// parts of the previous runs are no longer shown, except those of the
+    /// runs that the turn keeps, because they made tool calls.
     RunStarted {
         /// The new run.
         run: RunView,
+        /// The earlier runs of the turn whose parts stay. Events stored before
+        /// runs were kept read it as empty.
+        #[serde(default)]
+        kept_run_ids: Vec<RunId>,
     },
     /// A run changed: it started, does something else, or ended.
     RunUpdated {
@@ -50,6 +55,12 @@ pub enum ConversationEvent {
     /// A part is finished. Its content replaces everything the deltas wrote.
     PartFinished {
         /// The finished part.
+        part: PartView,
+    },
+    /// A part that is not finished changed, as a tool call does while Mannie
+    /// handles it. Its content replaces the part's earlier content.
+    PartUpdated {
+        /// The part as it is now.
         part: PartView,
     },
     /// An attempt failed and will be retried; its parts are no longer shown.
@@ -91,6 +102,7 @@ impl ConversationEvent {
             Self::PartStarted { .. } => "part_started",
             Self::PartDelta { .. } => "part_delta",
             Self::PartFinished { .. } => "part_finished",
+            Self::PartUpdated { .. } => "part_updated",
             Self::AttemptDiscarded { .. } => "attempt_discarded",
             Self::CheckpointCreated { .. } => "checkpoint_created",
             Self::ContextUsageChanged { .. } => "context_usage_changed",

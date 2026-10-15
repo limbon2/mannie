@@ -1,0 +1,42 @@
+{
+  "server": "open_ai",
+  "interface": "chat_completions",
+  "provenance": "constructed",
+  "sources": [
+    "https://developers.openai.com/api/docs/guides/function-calling",
+    "https://developers.openai.com/api/reference/chat/streaming"
+  ],
+  "verifiedOn": "2026-10-14",
+  "request": {
+    "model": "gpt-5-mini",
+    "instructions": "",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What does notes.txt say?"
+      }
+    ],
+    "maxOutputTokens": 8,
+    "reasoningEffort": "server_default",
+    "tools": [
+      {
+        "name": "read_file",
+        "description": "Reads lines of a text file.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "The file."
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "toolChoice": "auto"
+  }
+}

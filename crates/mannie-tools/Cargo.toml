@@ -1,0 +1,56 @@
+[package]
+name = "mannie-tools"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Mannie's system tools: the tool registry, the file and command tools, the policy that authorizes them, file safety and the process supervisor (ADR-0013, ADR-0014)."
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The names of temporary files of atomic writes.
+fastrand = { workspace = true }
+# Boxed futures, so that the registry holds tools as trait objects.
+futures-util = { workspace = true }
+globset = { workspace = true }
+ignore = { workspace = true }
+mannie-store = { workspace = true }
+mannie-types = { workspace = true }
+regex = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# Revisions of files and digests of accesses.
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+# The times of files, in the results that the model reads.
+time = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "process", "rt", "sync", "time"] }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "process", "rt", "rt-multi-thread", "sync", "time"] }
+
+[target."cfg(unix)".dependencies]
+rustix = { workspace = true, features = ["fs", "pipe", "process", "system"] }
+
+[target."cfg(windows)".dependencies]
+winapi-util = { workspace = true }
+windows-sys = {
+  workspace = true,
+  features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+  ]
+}
+windows-version = { workspace = true }
+
+[lints]
+workspace = true

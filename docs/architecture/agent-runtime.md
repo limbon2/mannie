@@ -37,12 +37,12 @@ flowchart TD
   I --> J[Store the results]
   J --> K{Budget left?}
   K -- yes --> A
-  K -- no --> L[Remove the tools and ask for a final answer] --> A
+  K -- no --> L[Forbid tool calls and ask for a final answer] --> A
 ```
 
 - Every step makes exactly one model call. The runtime never lets a provider or a library run tool calls on its own.
-- Budgets come from the agent definition: the number of rounds with tool calls, the number of tool calls in a turn, and per-tool limits such as the number of child agents. When a budget runs out, the runtime removes the tools and tells the model to give its final answer.
-- Tool calls in one step run through lanes. Calls without a lane run one after another. Calls with independent lanes, such as tasks for different child agents or workers, run in parallel. On one machine, operations that change files are always serialized.
+- Budgets come from the agent definition: the number of rounds with tool calls, the number of tool calls in a turn, and per-tool limits such as the number of child agents. When a budget runs out, the next request keeps the tools, so the model still reads its earlier calls, but sets the tool choice to `none` and tells the model to give its final answer. A call that a server returns anyway is not run.
+- Tool calls in one step run through lanes. Calls without a lane run one after another. Calls with independent lanes, such as tasks for different child agents or workers, run in parallel. On one machine, operations that change files are always serialized. Until lanes arrive with child agents, every call of a step runs after the other, and the run gives up its model slot while its tools run ([tool calls](../features/system-tools/tool-calls.md#the-loop)).
 
 ## 4. Model calls
 
@@ -77,7 +77,8 @@ The number of continuation notes per turn is limited. Continuation notes are rec
 - The token counts that the provider reports after each call are the truth. Before a conversation's first response, the runtime estimates conservatively, at 2 tokens for every 5 bytes and 4 more for each message, and later it calibrates the estimate of new text on the counts it received.
 - When the projected context passes 80% of the budget, the runtime compacts the oldest whole turns into a checkpoint and aims for 30%, keeping the two latest completed turns, then one, then none until it gets there. It never covers the latest turn, whose request is being answered. An automatic compaction that would free less than 10% is skipped, unless the request would not fit otherwise. The owner can also compact a conversation at any time.
 - A checkpoint is a summary written by the same profile's model without tools. It records which turns it covers and a hash of their content, chained to the previous checkpoint's hash, and it becomes invalid if those turns change. It reaches the model as an instruction section after the stable ones.
-- Tool results larger than a fixed limit are archived outside the transcript. The model sees an excerpt and a reference, and a read-back tool returns the rest in pages. Archived outputs arrive with the first tool results, in M2.
+- A tool result fits in the result limit, 64 KiB or a quarter of the budget. Longer command output is archived outside the transcript: the model sees a head and a tail with a reference, and `read_tool_output` returns the rest in pages. Inside the turn being answered, when a compacted context still needs more than 80% of the budget, older results become short notes that carry their reference.
+- Each model call of a reply reaches the model as an assistant message of its own, followed by the results of its tool calls, so the model reads its steps in the order it made them.
 - The system prompt is assembled from [instruction sections](extension-points.md#34-instruction-sections). Stable sections come first, so providers can cache the prefix, and context that changes every turn goes into the latest user message.
 
 ## 8. Stop, retry and recovery
@@ -95,4 +96,4 @@ The number of continuation notes per turn is limited. Continuation notes are rec
 - The compaction tests run at the limits of every model that Mannie knows and at 4K, 8K, 32K and 128K tokens, and check that no request exceeds its budget and that the transcript stays whole.
 - Recorded streams from each supported server test the adapters and their quirk profiles (V8).
 - Crash tests stop the process at each point where the loop persists something and check the recovered state.
-- Model evaluations check that prompts and tool descriptions still work with real models. They run on demand and every night.
+- Model evaluations check that prompts and tool descriptions still work with real models: `task tools:eval` and a weekly workflow run them, and a scripted oracle checks the harness and its checks without a model ([system tools](../features/system-tools/README.md#acceptance)).

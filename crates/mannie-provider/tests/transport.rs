@@ -35,6 +35,8 @@ fn request() -> ModelRequest {
         messages: vec![Message::text(Role::User, "Hello")],
         max_output_tokens: 64,
         reasoning_effort: ReasoningEffort::ServerDefault,
+        tools: Vec::new(),
+        tool_choice: mannie_provider::ToolChoice::Auto,
     }
 }
 

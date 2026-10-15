@@ -24,6 +24,7 @@ A profile names one model on one server. The core validates every field; the web
 | Context window   | 1,024 to 10,000,000 tokens                                                                                                                                                       |
 | Output limit     | At least 16 tokens, and small enough that the context budget keeps at least 1,024 tokens ([conversations](conversations.md#context-budget-and-compaction))                       |
 | Reasoning effort | The server's default, or one of the efforts the API defines. The server's default sends no effort at all.                                                                        |
+| Use tools        | On by default. When it is off, the model gets no tools ([system tools](../system-tools/tool-calls.md#use-tools)).                                                                |
 
 - Known models have defaults for the context window and the output limit, kept with their verification dates in `crates/mannie-provider/src/models.rs`. When the server reports a model's limits, the provider test shows them, and the owner can apply them.
 - One profile is the default. A conversation uses the default unless the owner chose another profile for it. Deleting the default profile makes the oldest remaining profile the default. A profile that a running reply uses cannot be deleted until the reply ends; conversations that used a deleted profile fall back to the default.
@@ -41,14 +42,15 @@ A profile names one model on one server. The core validates every field; the web
 
 The test runs these checks in order and reports each one as passed, failed with a cause, skipped or worth a warning:
 
-| Check      | What it does                                                                                                            |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Credential | Reads the stored credential, or skips when the profile has none                                                         |
-| Server     | Lists the models at `/models` and identifies the server. Fails on an unreachable server or a refused credential.        |
-| Model      | Checks that the server lists the model, and reports the context window and output limit the server gives for it, if any |
-| Reply      | Streams a short request ("Reply with the single word: ready") and checks that text and a finish reason arrive           |
-| Usage      | Checks that the server reported token counts, which the context budget relies on                                        |
-| Reasoning  | When the profile sets a reasoning effort, checks that the server accepted it and reports whether reasoning arrived      |
+| Check      | What it does                                                                                                                                                                                                              |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Credential | Reads the stored credential, or skips when the profile has none                                                                                                                                                           |
+| Server     | Lists the models at `/models` and identifies the server. Fails on an unreachable server or a refused credential.                                                                                                          |
+| Model      | Checks that the server lists the model, and reports the context window and output limit the server gives for it, if any                                                                                                   |
+| Reply      | Streams a short request ("Reply with the single word: ready") and checks that text and a finish reason arrive                                                                                                             |
+| Usage      | Checks that the server reported token counts, which the context budget relies on                                                                                                                                          |
+| Reasoning  | When the profile sets a reasoning effort, checks that the server accepted it and reports whether reasoning arrived                                                                                                        |
+| Tools      | When the profile uses tools, offers one tool and checks that a well-formed call arrives and that the model answers after its result. A server that refuses tools fails the check with the advice to turn "Use tools" off. |
 
 ### Adapters
 

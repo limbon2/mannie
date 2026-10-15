@@ -4,7 +4,7 @@
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Building                                                                                                                                                                                                                                                                                                                                                        |
 | Milestone    | M1                                                                                                                                                                                                                                                                                                                                                              |
-| Last updated | 2026-10-14                                                                                                                                                                                                                                                                                                                                                      |
+| Last updated | 2026-10-15                                                                                                                                                                                                                                                                                                                                                      |
 | Part of      | [Chat](README.md)                                                                                                                                                                                                                                                                                                                                               |
 | Related      | [ADR-0020](../../adr/0020-complete-the-ui-shell-slots.md), [ADR-0021](../../adr/0021-render-model-output-as-markdown-with-micromark.md), [ADR-0004](../../adr/0004-keep-system-access-in-the-rust-core.md), [ADR-0019](../../adr/0019-keep-visible-text-in-message-catalogs.md), [Desktop app](../../architecture/desktop-app.md#5-rendering-untrusted-content) |
 
@@ -12,10 +12,10 @@
 
 ### Layout
 
-- The conversation list is a sidebar panel ([ADR-0020](../../adr/0020-complete-the-ui-shell-slots.md)): a "New conversation" action and the conversations, most recent first. A conversation with a running reply shows it. Each entry has a menu to rename or delete it; deleting asks for confirmation.
+- The conversation list is a sidebar panel ([ADR-0020](../../adr/0020-complete-the-ui-shell-slots.md)) with two groups: the projects with their conversations ([projects](projects.md#the-sidebar)), and the general conversations with a "New conversation" action, most recent first. A conversation with a running reply shows it. Each entry has a menu to rename or delete it; deleting asks for confirmation.
 - The conversation view is the app's first view, so Mannie opens into it. It opens the conversation the owner had open last, or the most recent one. Its address names the conversation: `?view=chat&conversation=<id>`.
 - The view's header shows the conversation's title, the provider profile it uses, with a menu to choose another, and the context meter. The meter shows the share of the context budget in use, with the exact counts, whether they are estimated, a link to the latest checkpoint and "Compact now".
-- The transcript scrolls by itself, and the message box stays at the bottom. While a reply streams, the transcript follows it as long as the owner is at the bottom; a button brings the owner back to the newest text. Earlier turns load when the owner scrolls to the top.
+- The transcript scrolls by itself, and only the transcript: nothing in a reply makes the pane around it scroll. The message box stays at the bottom. While a reply streams or works with tools, the transcript follows it as long as the owner is at the bottom, also when the window or the message box changes size. Only the owner scrolling up, with the wheel, a touch, a key or the pointer, ends the following. Content that grows never ends it, however much it grows at once, and neither does the transcript moving up because the message box shrank or the window grew. A button brings the owner back to the newest message, and while a tool call waits for approval it reads "Jump to the approval request". Earlier turns load when the owner scrolls to the top.
 
 ### Parts
 
@@ -60,7 +60,7 @@ Each section is a page of the settings ([ADR-0020](../../adr/0020-complete-the-u
 
 ### Commands
 
-The command palette offers "New conversation", and, while a conversation is open, "Rename the conversation" and "Compact the conversation".
+The command palette offers "New conversation", the commands of [projects](projects.md#commands), and, while a conversation is open, "Rename the conversation" and "Compact the conversation".
 
 ### Message keys
 

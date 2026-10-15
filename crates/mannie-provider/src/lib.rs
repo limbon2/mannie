@@ -26,18 +26,19 @@ mod sse;
 mod stream;
 #[cfg(feature = "testing")]
 pub mod testing;
+mod tool_calls;
 mod transport;
 
 pub use chat_completions::ChatCompletionsAdapter;
 pub use detect::{ListedModel, ModelList, detect_server, list_models, server_from_host};
 pub use models::{KnownModel, known_model, known_models};
-pub use probe::{TEST_PROMPT, TestInput, test_profile};
+pub use probe::{TEST_PROMPT, TOOL_PROMPT, TestInput, test_profile};
 pub use profile::{MAX_BASE_URL_BYTES, check_base_url, credential_transport_allowed};
 pub use provider::{
     Content, EventStream, Message, ModelRequest, Provider, ProviderError, ProviderEvent, Role,
-    Target,
+    Target, ToolChoice, ToolDefinition,
 };
-pub use quirks::{EffortShape, OutputLimitField, Quirks, quirks_for};
+pub use quirks::{EffortShape, OutputLimitField, Quirks, ToolQuirks, quirks_for};
 pub use registry::{DuplicateAdapter, ProviderRegistry};
 pub use reqwest::Url;
 pub use responses::ResponsesAdapter;

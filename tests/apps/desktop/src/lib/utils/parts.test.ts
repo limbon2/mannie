@@ -22,6 +22,6 @@ describe('partKind', () => {
   });
 
   it('is the name of a kind that the core does not know', () => {
-    expect(partKind(part({ kind: 'unknown', name: 'tool_call' }))).toBe('tool_call');
+    expect(partKind(part({ kind: 'unknown', name: 'task_report' }))).toBe('task_report');
   });
 });

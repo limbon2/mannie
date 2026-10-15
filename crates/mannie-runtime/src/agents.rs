@@ -14,19 +14,49 @@ pub struct AgentDefinition {
     /// Its own instruction section, after the base instructions. Empty for
     /// none.
     pub instructions: &'static str,
-    /// The names of the tools it may use. M1 has no tools.
+    /// The names of the tools it may use, of those the registry holds.
     pub tools: &'static [&'static str],
     /// The most continuation notes in one turn (docs/architecture/
     /// agent-runtime.md, model quirks and early stops).
     pub max_continuation_notes: u32,
+    /// The most model calls with tool calls in one reply.
+    pub max_tool_rounds: u32,
+    /// The most tool calls in one reply.
+    pub max_tool_calls: u32,
 }
 
-/// The conversation agent of M1: the base instructions, no tools.
+/// The system tools (docs/features/system-tools/tools-and-results.md).
+/// `run_command` exists only where the registry holds it, and
+/// `move_to_project` is offered only to a general conversation while the
+/// owner has projects.
+pub const SYSTEM_TOOLS: [&str; 15] = [
+    "system_info",
+    "list_directory",
+    "file_info",
+    "find_files",
+    "search_text",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "create_directory",
+    "copy_path",
+    "move_path",
+    "delete_path",
+    "run_command",
+    "read_tool_output",
+    "move_to_project",
+];
+
+/// The conversation agent: the base instructions and the system tools, with
+/// 100 rounds and 250 calls of tools in one reply (owner decision of
+/// 2026-10-14).
 pub const CONVERSATION: AgentDefinition = AgentDefinition {
     name: CONVERSATION_AGENT,
     instructions: "",
-    tools: &[],
+    tools: &SYSTEM_TOOLS,
     max_continuation_notes: 2,
+    max_tool_rounds: 100,
+    max_tool_calls: 250,
 };
 
 /// A definition whose name is already registered.
@@ -87,6 +117,8 @@ mod tests {
             instructions: "Do fake things.",
             tools: &[],
             max_continuation_notes: 0,
+            max_tool_rounds: 0,
+            max_tool_calls: 0,
         };
 
         registry.register(fake.clone()).unwrap();

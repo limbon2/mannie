@@ -50,7 +50,10 @@ fn mentions(request: &mannie_provider::ModelRequest, marker: &str) -> bool {
     request.instructions.contains(marker)
         || request.messages.iter().any(|message| {
             message.content.iter().any(|content| match content {
-                Content::Text(text) | Content::ProviderItem(text) => text.contains(marker),
+                Content::Text(text)
+                | Content::ProviderItem(text)
+                | Content::ToolResult { output: text, .. } => text.contains(marker),
+                Content::ToolCall { arguments, .. } => arguments.contains(marker),
             })
         })
 }
@@ -83,6 +86,7 @@ async fn check(window: u32, output: u32) {
         .start_conversation(StartConversation {
             text: messages[0].clone(),
             profile_id: None,
+            project_id: None,
         })
         .await
         .unwrap();
@@ -177,6 +181,7 @@ async fn the_owner_can_compact_by_hand_and_read_the_checkpoint() {
         .start_conversation(StartConversation {
             text: "First".to_owned(),
             profile_id: None,
+            project_id: None,
         })
         .await
         .unwrap();
@@ -230,7 +235,7 @@ async fn the_owner_can_compact_by_hand_and_read_the_checkpoint() {
     let summary_request = &harness.model.summary_requests()[0];
     let summarized = match &summary_request.messages[0].content[0] {
         Content::Text(text) => text.clone(),
-        Content::ProviderItem(_) => String::new(),
+        _ => String::new(),
     };
     assert!(summarized.contains("Owner: First"), "{summarized}");
     assert!(summarized.contains("Assistant: One"), "{summarized}");

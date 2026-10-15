@@ -5,13 +5,20 @@
 //!   part of the migrated schema, so it never appears in a real database.
 //! - Long conversations (NFR-PERF-04): [`seed_conversation`] writes real turns,
 //!   so the snapshot benchmark and the end-to-end performance checks open a
-//!   conversation of 10,000 parts.
+//!   conversation of 10,000 parts, and [`seed_conversation_with_tool_calls`]
+//!   adds a completed tool call to each turn.
 //!
 //! Only the `validation` feature compiles this module. Release builds of the
 //! desktop app and the worker never enable it.
 
+use std::fmt::Write as _;
+
+use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{ConversationId, PartId, ProfileId, RunId, TurnId};
 use mannie_types::run::{FinishReason, RunOutcome, RunState};
+use mannie_types::tools::{
+    AccessMode, Decision, ToolCallDocument, ToolCallStatus, ToolOutcome, ToolResult,
+};
 use mannie_types::transcript::PartKind;
 use rusqlite::params;
 
@@ -36,6 +43,9 @@ fn main() {
 
 A closing paragraph that repeats the idea in other words, so that the text is about as long as a typical reply of a chat model, with a [link](https://example.com) at the end."#;
 
+/// How many numbered lines the result of a seeded tool call holds.
+const SEED_RESULT_LINES: usize = 60;
+
 /// Seeds a conversation of `turns` turns, each the owner's message and a
 /// completed reply, written with normal durability in batches. `next_id`
 /// supplies a new UUID each time it is called.
@@ -44,6 +54,68 @@ pub async fn seed_conversation(
     conversation: &ConversationId,
     profile: &ProfileId,
     turns: u32,
+    next_id: impl FnMut() -> String,
+) -> Result<(), RuntimeStoreError> {
+    seed(store, conversation, profile, turns, false, next_id).await
+}
+
+/// Seeds a conversation as [`seed_conversation`] does, with a completed
+/// `read_file` call before each reply, whose result is a page of a file.
+pub async fn seed_conversation_with_tool_calls(
+    store: &Store,
+    conversation: &ConversationId,
+    profile: &ProfileId,
+    turns: u32,
+    next_id: impl FnMut() -> String,
+) -> Result<(), RuntimeStoreError> {
+    seed(store, conversation, profile, turns, true, next_id).await
+}
+
+/// The document of a seeded tool call: a read of a file, allowed by the
+/// workspace, with a page of numbered lines as its result.
+fn seeded_call(call_id: String) -> ToolCallDocument {
+    let path = "/home/owner/projects/app/src/main.rs".to_owned();
+    let mut output = format!("File: {path}\nRevision: sha256:{}\n", "0".repeat(64));
+    for line in 1..=SEED_RESULT_LINES {
+        writeln!(output, "{line:6}\tlet value_{line} = compute({line});")
+            .expect("writing to a String cannot fail");
+    }
+    let at = UtcMillis::from_millis(1_791_892_800_000);
+    let total_lines = u32::try_from(SEED_RESULT_LINES).unwrap_or(u32::MAX);
+    ToolCallDocument {
+        status: ToolCallStatus::Completed,
+        accesses: vec![mannie_types::tools::Access::Path {
+            path: path.clone(),
+            mode: AccessMode::Read,
+            folder: false,
+            exists: true,
+            identity: "2049:131074".to_owned(),
+            entries: None,
+        }],
+        decision: Some(Decision::Workspace),
+        decided_at: Some(at),
+        started_at: Some(at),
+        ended_at: Some(at),
+        result: Some(ToolResult {
+            outcome: ToolOutcome::Read {
+                path,
+                first_line: 1,
+                last_line: total_lines,
+                total_lines,
+            },
+            output,
+            archives: Vec::new(),
+        }),
+        ..ToolCallDocument::receiving(call_id, "read_file".to_owned())
+    }
+}
+
+async fn seed(
+    store: &Store,
+    conversation: &ConversationId,
+    profile: &ProfileId,
+    turns: u32,
+    tool_calls: bool,
     mut next_id: impl FnMut() -> String,
 ) -> Result<(), RuntimeStoreError> {
     let mut written = 0;
@@ -56,6 +128,7 @@ pub async fn seed_conversation(
                     id: conversation.clone(),
                     title: "A long conversation".to_owned(),
                     profile_id: None,
+                    project_id: None,
                 },
             });
             created = true;
@@ -79,14 +152,30 @@ pub async fn seed_conversation(
             changes.push(Change::StartRun {
                 run_id: run_id.clone(),
             });
+            if tool_calls {
+                let call_id = next_id();
+                changes.push(Change::AddPart {
+                    part: NewPart {
+                        id: PartId::parse(&next_id())?,
+                        turn_id: turn_id.clone(),
+                        run_id: run_id.clone(),
+                        attempt: 1,
+                        kind: PartKind::ToolCall,
+                        failure: None,
+                        tool_call: Some(seeded_call(format!("call_{call_id}"))),
+                    },
+                    text: r#"{"path":"src/main.rs","offset":null,"limit":null}"#.to_owned(),
+                });
+            }
             changes.push(Change::AddPart {
                 part: NewPart {
                     id: reply_id,
                     turn_id,
                     run_id: run_id.clone(),
-                    attempt: 1,
+                    attempt: if tool_calls { 2 } else { 1 },
                     kind: PartKind::Text,
                     failure: None,
+                    tool_call: None,
                 },
                 text: SEED_REPLY.to_owned(),
             });

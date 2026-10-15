@@ -13,11 +13,13 @@ pub mod ids;
 pub mod interface;
 pub mod ipc;
 pub mod links;
+pub mod projects;
 pub mod provider;
 pub mod run;
 pub mod secret;
 pub mod settings;
 pub mod startup;
+pub mod tools;
 pub mod transcript;
 #[cfg(feature = "validation")]
 pub mod validation;

@@ -1,8 +1,10 @@
 //! The run actor (ADR-0012, decisions 1 and 2): one task per run. It waits
-//! for a model slot, prepares each call, streams the answer into parts,
-//! retries transient failures, compacts when the context runs low, and ends
-//! the run. Stop and Shutdown arrive through its mailbox and take effect at
-//! every wait.
+//! for a model slot, prepares each call, streams the answer into parts, runs
+//! the model's tool calls, retries transient failures, compacts when the
+//! context runs low, and ends the run. Stop and Shutdown arrive through its
+//! mailbox and take effect at every wait.
+
+mod operations;
 
 use std::future::Future;
 use std::time::Duration;
@@ -10,20 +12,37 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use mannie_provider::{EventStream, ProviderError, ProviderEvent};
 use mannie_store::{Change, Durability, NewPart, ProviderItem, RuntimeStoreError};
+use mannie_tools::split_activity;
+use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{ConversationId, PartId, ProfileId, RunId, TurnId};
 use mannie_types::run::{FinishReason, RunActivity, RunFailure, RunOutcome, RunState, Usage};
+use mannie_types::tools::{NotRunReason, ToolCallDocument, ToolCallStatus};
 use mannie_types::transcript::{PartKind, PartState};
 use tokio::sync::{OwnedSemaphorePermit, mpsc, watch};
 use tokio::time::Instant;
 
 use crate::budget::{Ledger, estimate_text, usage};
-use crate::calls::{CallError, Prepared, Setup};
+use crate::calls::{CallError, CallOptions, Prepared, Setup};
 use crate::compaction::{self, ContextSize, Trigger};
 use crate::retry::RetryDecision;
 use crate::{Busy, RunHandle, Runtime, lock, texts};
 
 /// How many commands a run's mailbox holds.
 const MAILBOX: usize = 8;
+
+/// The bytes at the end of a model call's text that the early-stop checks
+/// read.
+const TEXT_TAIL_BYTES: usize = 512;
+
+/// Signs of a tool call that a model wrote as text instead of calling the
+/// tool, for servers whose quirks do not turn such text into calls.
+const TEXT_CALL_SIGNS: [&str; 5] = [
+    "<tool_call>",
+    "<function_call>",
+    "<function=",
+    "[TOOL_CALLS]",
+    "<|tool_call",
+];
 
 /// What a run's mailbox carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +93,17 @@ enum StepEnd {
     Failed(ProviderError),
 }
 
+/// What comes after a model call that finished.
+#[derive(Debug)]
+enum AfterStep {
+    /// The reply is complete.
+    End,
+    /// Another model call follows, after a note.
+    Continue,
+    /// The model's tool calls run, then another model call follows.
+    RunTools(Vec<StepCall>),
+}
+
 /// The part that is streaming.
 #[derive(Debug)]
 struct OpenPart {
@@ -83,11 +113,25 @@ struct OpenPart {
     unstored: String,
 }
 
+/// A tool call of the current model call. Tool calls never stream into
+/// `RunActor::open`: their arguments arrive whole.
+#[derive(Debug)]
+struct StepCall {
+    part_id: PartId,
+    /// The journal record of the call (ADR-0013, decision 1).
+    document: ToolCallDocument,
+    /// The arguments that the tool reads, once the call is complete: as the
+    /// model wrote them, without the activity.
+    arguments: Option<String>,
+}
+
 /// What one model call has produced so far. Each call starts from nothing.
 #[derive(Debug, Default)]
 struct StepState {
     /// Whether the call wrote visible text.
     visible: bool,
+    /// The end of the call's text, for the early-stop checks.
+    text_tail: String,
     /// The token counts the call reported.
     usage: Option<Usage>,
     /// The estimated tokens of the call's text.
@@ -117,6 +161,12 @@ pub(crate) struct RunActor {
     open: Option<OpenPart>,
     /// What the current model call has produced.
     step: StepState,
+    /// The tool calls of the current model call, in order.
+    calls: Vec<StepCall>,
+    /// The model calls of this run that made tool calls.
+    tool_rounds: u32,
+    /// The tool calls of this run that counted against its budget.
+    tool_calls: u32,
     /// The token counts of every call of the run together.
     usage: Option<Usage>,
     notes: u32,
@@ -157,6 +207,18 @@ fn add_usage(total: Option<Usage>, call: Usage) -> Usage {
     }
 }
 
+/// Keeps the last `TEXT_TAIL_BYTES` bytes of a text, at a character boundary.
+fn keep_tail(text: &mut String) {
+    if text.len() <= TEXT_TAIL_BYTES {
+        return;
+    }
+    let mut start = text.len() - TEXT_TAIL_BYTES;
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    text.drain(..start);
+}
+
 impl Runtime {
     /// Starts the actor of a stored run. The conversation was reserved by the
     /// command that stored the run.
@@ -192,6 +254,9 @@ impl Runtime {
             flush_due: None,
             open: None,
             step: StepState::default(),
+            calls: Vec::new(),
+            tool_rounds: 0,
+            tool_calls: 0,
             usage: None,
             notes: 0,
             compacted_after_overflow: false,
@@ -233,6 +298,7 @@ impl Runtime {
                     attempt: 1,
                     kind: PartKind::Error,
                     failure: Some(failure.clone()),
+                    tool_call: None,
                 },
                 text: String::new(),
             },
@@ -272,7 +338,7 @@ impl RunActor {
         if self.runtime.is_shutting_down() {
             return Err(Ending::Interrupted);
         }
-        let mut permit = self.acquire_slot().await?;
+        let mut permit = Some(self.acquire_slot().await?);
         self.apply(
             vec![
                 Change::StartRun {
@@ -292,9 +358,12 @@ impl RunActor {
                 .map_err(Ending::Failed)?
         };
         self.binding.clone_from(&setup.binding);
-        tracing::info!(run = %self.run, conversation = %self.conversation, binding = %setup.binding, "a run started");
+        tracing::info!(run = %self.run, conversation = %self.conversation, binding = %setup.binding, tools = setup.tools.len(), "a run started");
         let mut tries = 0;
         loop {
+            if permit.is_none() {
+                permit = Some(self.acquire_slot().await?);
+            }
             let prepared = self.prepare(&setup).await?;
             self.attempt += 1;
             self.attempt_stored = false;
@@ -312,17 +381,22 @@ impl RunActor {
                 StepEnd::Finished(finish) => {
                     tries = 0;
                     self.record_step(&setup, &prepared);
-                    let may_continue = matches!(finish, FinishReason::Stop | FinishReason::Other);
-                    let wants_note = !self.step.visible
-                        && may_continue
-                        && self.notes < setup.agent.max_continuation_notes;
-                    if !wants_note {
-                        return Ok(finish);
+                    match self.after_step(&setup, finish).await? {
+                        AfterStep::End => return Ok(finish),
+                        AfterStep::Continue => {}
+                        AfterStep::RunTools(calls) => {
+                            // Tools run without a model slot.
+                            permit = None;
+                            self.run_calls(&setup, calls).await?;
+                            self.compacted_after_overflow = false;
+                        }
                     }
-                    self.add_continuation_note().await?;
                 }
                 StepEnd::Failed(ProviderError::Transient { cause, retry_after }) => {
-                    permit = self.back_off(permit, tries, cause, retry_after).await?;
+                    permit = Some(
+                        self.back_off(permit.take(), tries, cause, retry_after)
+                            .await?,
+                    );
                 }
                 StepEnd::Failed(ProviderError::ContextOverflow) => {
                     if self.compacted_after_overflow {
@@ -349,6 +423,43 @@ impl RunActor {
                 }
             }
         }
+    }
+
+    /// Decides what follows a model call that finished: a note that sends
+    /// the model on, its tool calls, or the end of the reply.
+    async fn after_step(
+        &mut self,
+        setup: &Setup,
+        finish: FinishReason,
+    ) -> Result<AfterStep, Ending> {
+        let calls = self.take_calls();
+        if calls.is_empty() {
+            return Ok(match self.note_for(setup, finish) {
+                Some(note) => {
+                    self.add_note(note).await?;
+                    AfterStep::Continue
+                }
+                None => AfterStep::End,
+            });
+        }
+        if !setup.uses_tools() || self.tools_used_up(setup) {
+            // The request offered no tools, or asked for none, and the server
+            // sent calls anyway: they do not run, and the reply ends.
+            let reason = if setup.uses_tools() {
+                NotRunReason::OverBudget
+            } else {
+                NotRunReason::ToolsOff
+            };
+            for call in calls {
+                self.end_call(call, reason.clone());
+            }
+            self.flush(Durability::Full).await?;
+            return Ok(AfterStep::End);
+        }
+        self.tool_rounds += 1;
+        // The calls are stored before any of them runs.
+        self.flush(Durability::Full).await?;
+        Ok(AfterStep::RunTools(calls))
     }
 
     /// Waits for `future`, unless a command arrives first.
@@ -381,6 +492,10 @@ impl RunActor {
         }
     }
 
+    fn now(&self) -> UtcMillis {
+        self.runtime.inner.clock.now()
+    }
+
     async fn acquire_slot(&mut self) -> Result<OwnedSemaphorePermit, Ending> {
         let slots = std::sync::Arc::clone(&self.runtime.inner.slots);
         if let Ok(permit) = std::sync::Arc::clone(&slots).try_acquire_owned() {
@@ -397,19 +512,47 @@ impl RunActor {
             .map_err(|_closed| Ending::Interrupted)
     }
 
-    /// Prepares a call, and compacts first when the context runs low.
+    /// Whether the reply used up its tool rounds or its tool calls.
+    fn tools_used_up(&self, setup: &Setup) -> bool {
+        self.tool_rounds >= setup.agent.max_tool_rounds
+            || self.tool_calls >= setup.agent.max_tool_calls
+    }
+
+    /// Prepares a call, and compacts first when the context runs low. When a
+    /// compacted context still runs low, the latest turn's older tool results
+    /// are left out.
     async fn prepare(&mut self, setup: &Setup) -> Result<Prepared, Ending> {
-        let prepared = self.runtime.prepare_call(&self.conversation, setup).await?;
+        let options = CallOptions {
+            tools_used_up: setup.uses_tools() && self.tools_used_up(setup),
+            leave_out_results: false,
+        };
+        let mut prepared = self
+            .runtime
+            .prepare_call(&self.conversation, setup, options)
+            .await?;
         if !compaction::needed(prepared.size.projected, setup.budget) {
             return Ok(prepared);
         }
-        if !self
+        if self
             .compact(setup, &prepared, Trigger::Automatic, prepared.size)
             .await?
         {
-            return Ok(prepared);
+            prepared = self
+                .runtime
+                .prepare_call(&self.conversation, setup, options)
+                .await?;
         }
-        Ok(self.runtime.prepare_call(&self.conversation, setup).await?)
+        if setup.uses_tools() && compaction::needed(prepared.size.projected, setup.budget) {
+            let leave_out = CallOptions {
+                leave_out_results: true,
+                ..options
+            };
+            prepared = self
+                .runtime
+                .prepare_call(&self.conversation, setup, leave_out)
+                .await?;
+        }
+        Ok(prepared)
     }
 
     async fn compact(
@@ -471,10 +614,18 @@ impl RunActor {
                     self.step.visible = true;
                 }
                 self.step.output = self.step.output.saturating_add(estimate_text(&text));
+                self.step.text_tail.push_str(&text);
+                keep_tail(&mut self.step.text_tail);
                 self.append(PartKind::Text, &text);
             }
             ProviderEvent::ReasoningDelta(text) => self.append(PartKind::Reasoning, &text),
             ProviderEvent::ProviderItem(item) => self.attach_item(item),
+            ProviderEvent::ToolCallStarted { call_id, name } => self.start_call(call_id, name),
+            ProviderEvent::ToolCall {
+                call_id,
+                name,
+                arguments,
+            } => self.complete_arguments(&call_id, &name, arguments),
             ProviderEvent::Usage(usage) => self.step.usage = Some(usage),
             ProviderEvent::Finished(finish) => {
                 self.close_open(PartState::Complete, None);
@@ -509,6 +660,7 @@ impl RunActor {
                 attempt: self.attempt,
                 kind,
                 failure: None,
+                tool_call: None,
             },
         });
         self.open = Some(OpenPart {
@@ -516,6 +668,107 @@ impl RunActor {
             kind,
             unstored: String::new(),
         });
+    }
+
+    /// Starts the part of a tool call that the model began to write.
+    fn start_call(&mut self, call_id: String, name: String) {
+        self.close_open(PartState::Complete, None);
+        let part_id = self.runtime.inner.ids.part();
+        let document = ToolCallDocument::receiving(call_id, name);
+        self.pending.push(Change::StartPart {
+            part: NewPart {
+                id: part_id.clone(),
+                turn_id: self.turn.clone(),
+                run_id: self.run.clone(),
+                attempt: self.attempt,
+                kind: PartKind::ToolCall,
+                failure: None,
+                tool_call: Some(document.clone()),
+            },
+        });
+        self.calls.push(StepCall {
+            part_id,
+            document,
+            arguments: None,
+        });
+        self.schedule_flush();
+    }
+
+    /// Stores a tool call's complete arguments as its part's text, and its
+    /// activity in its document.
+    fn complete_arguments(&mut self, call_id: &str, name: &str, arguments: String) {
+        if !self
+            .calls
+            .iter()
+            .any(|call| call.document.call_id == call_id)
+        {
+            self.start_call(call_id.to_owned(), name.to_owned());
+        }
+        self.step.output = self.step.output.saturating_add(estimate_text(&arguments));
+        let Some(call) = self
+            .calls
+            .iter_mut()
+            .find(|call| call.document.call_id == call_id)
+        else {
+            return;
+        };
+        // The part keeps the arguments as the model wrote them, so the model
+        // reads its calls back unchanged. The tool reads them without the
+        // activity, which is for the owner (docs/features/system-tools/
+        // tool-calls.md, the activity of a call).
+        let split = split_activity(&arguments);
+        call.document.activity = split.activity;
+        call.document.status = ToolCallStatus::Pending;
+        self.pending.push(Change::Delta {
+            part_id: call.part_id.clone(),
+            text: arguments,
+        });
+        self.pending.push(Change::UpdatePart {
+            part_id: call.part_id.clone(),
+            tool_call: call.document.clone(),
+            archives: Vec::new(),
+        });
+        call.arguments = Some(split.arguments);
+        self.schedule_flush();
+    }
+
+    /// The complete tool calls of the call that finished. A call without its
+    /// arguments was cut off and does not run.
+    fn take_calls(&mut self) -> Vec<StepCall> {
+        let mut complete = Vec::new();
+        for call in std::mem::take(&mut self.calls) {
+            if call.arguments.is_some() {
+                complete.push(call);
+            } else {
+                self.end_call(call, NotRunReason::CutOff);
+            }
+        }
+        complete
+    }
+
+    /// Ends a tool call that never starts.
+    fn end_call(&mut self, mut call: StepCall, reason: NotRunReason) {
+        tracing::info!(run = %self.run, part = %call.part_id, tool = %call.document.tool, reason = ?reason, "a tool call does not run");
+        call.document.status = ToolCallStatus::NotRun;
+        call.document.not_run = Some(reason);
+        call.document.ended_at = Some(self.now());
+        self.finish_call(&call);
+    }
+
+    /// Stores a tool call's final document and finishes its part.
+    fn finish_call(&mut self, call: &StepCall) {
+        self.pending.push(Change::UpdatePart {
+            part_id: call.part_id.clone(),
+            tool_call: call.document.clone(),
+            archives: Vec::new(),
+        });
+        self.pending.push(Change::FinishPart {
+            part_id: call.part_id.clone(),
+            state: PartState::Complete,
+            tail: String::new(),
+            provider_item: None,
+        });
+        self.schedule_flush();
     }
 
     fn close_open(&mut self, state: PartState, provider_item: Option<ProviderItem>) {
@@ -634,7 +887,30 @@ impl RunActor {
         });
     }
 
-    async fn add_continuation_note(&mut self) -> Result<(), Ending> {
+    /// The note that sends the model on after a model call without tool
+    /// calls, if one is due (docs/architecture/agent-runtime.md, model quirks
+    /// and early stops): after an empty answer; after a tool call written as
+    /// text; and, once tools were used, after an answer that stops at a
+    /// colon. Plain chat without tools is as it was.
+    fn note_for(&self, setup: &Setup, finish: FinishReason) -> Option<&'static str> {
+        let may_continue = matches!(finish, FinishReason::Stop | FinishReason::Other);
+        if !may_continue || self.notes >= setup.agent.max_continuation_notes {
+            return None;
+        }
+        if !self.step.visible {
+            return Some(texts::CONTINUATION_NOTE);
+        }
+        let tail = &self.step.text_tail;
+        if setup.uses_tools() && TEXT_CALL_SIGNS.iter().any(|sign| tail.contains(sign)) {
+            return Some(texts::USE_TOOL_INTERFACE);
+        }
+        if self.tool_rounds > 0 && tail.trim_end().ends_with(':') {
+            return Some(texts::CONTINUE_NOTE);
+        }
+        None
+    }
+
+    async fn add_note(&mut self, note: &'static str) -> Result<(), Ending> {
         self.notes += 1;
         let part = NewPart {
             id: self.runtime.inner.ids.part(),
@@ -643,13 +919,14 @@ impl RunActor {
             attempt: self.attempt,
             kind: PartKind::ContinuationNote,
             failure: None,
+            tool_call: None,
         };
         self.pending.push(Change::AddPart {
             part,
-            text: texts::CONTINUATION_NOTE.to_owned(),
+            text: note.to_owned(),
         });
         self.pending.push(self.activity(RunActivity::Preparing));
-        tracing::debug!(run = %self.run, notes = self.notes, "the model wrote no text; continuing");
+        tracing::debug!(run = %self.run, notes = self.notes, "the model stopped early; continuing with a note");
         self.flush(Durability::Full).await
     }
 
@@ -658,6 +935,7 @@ impl RunActor {
     fn forget_attempt(&mut self) -> Option<Change> {
         self.pending.clear();
         self.open = None;
+        self.calls.clear();
         self.flush_due = None;
         let stored = std::mem::replace(&mut self.attempt_stored, false);
         stored.then(|| Change::DiscardAttempt {
@@ -676,7 +954,7 @@ impl RunActor {
     /// Waits before the next attempt of a call, without holding a model slot.
     async fn back_off(
         &mut self,
-        permit: OwnedSemaphorePermit,
+        permit: Option<OwnedSemaphorePermit>,
         tries: u32,
         cause: RunFailure,
         retry_after: Option<Duration>,
@@ -715,6 +993,8 @@ impl RunActor {
 
     /// Ends the run: finishes its open part, stores what is pending, adds an
     /// error part for a failure, and stores the final state, in one batch.
+    /// The store ends the tool calls that are still open: an operation that
+    /// was executing becomes uncertain, every other call canceled.
     async fn end(mut self, result: Result<FinishReason, Ending>) {
         let (state, part_state, failure, finish) = match result {
             Ok(finish) => (RunState::Completed, PartState::Complete, None, Some(finish)),
@@ -749,6 +1029,7 @@ impl RunActor {
                     attempt: self.attempt.max(1),
                     kind: PartKind::Error,
                     failure: Some(failure.clone()),
+                    tool_call: None,
                 },
                 text: String::new(),
             });
@@ -778,6 +1059,8 @@ impl RunActor {
             state = state.as_str(),
             failure = failure_code,
             attempts = self.attempt,
+            tool_rounds = self.tool_rounds,
+            tool_calls = self.tool_calls,
             input_tokens = self.usage.map(|usage| usage.input),
             output_tokens = self.usage.map(|usage| usage.output),
             "a run ended"

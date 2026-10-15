@@ -18,6 +18,9 @@ fn part(id: u32, kind: PartKind, text: &str) -> ModelPart {
         state: PartState::Complete,
         text: text.to_owned(),
         provider_item: None,
+        run_id: None,
+        tool_call: None,
+        attempt: 1,
     }
 }
 
@@ -26,7 +29,9 @@ fn turn(position: u32, bytes: usize) -> ModelTurn {
     ModelTurn {
         turn_id: TurnId::parse(&format!("0199e0f2-0000-7000-9000-{position:012}")).unwrap(),
         position,
+        run_id: None,
         run_state: Some(RunState::Completed),
+        kept_runs: Vec::new(),
         parts: vec![
             part(position * 10, PartKind::UserText, &"q".repeat(bytes)),
             part(position * 10 + 1, PartKind::Text, &"a".repeat(bytes)),
@@ -258,4 +263,42 @@ fn the_hash_covers_every_part_and_chains_the_previous_checkpoint() {
     assert_ne!(hash, content_hash(None, &changed));
     assert_ne!(hash, content_hash(None, &stopped));
     assert_ne!(hash, content_hash(Some("previous"), &original));
+}
+
+#[test]
+fn tool_calls_count_and_hash_their_results_and_reach_summaries() {
+    use mannie_types::tools::{ToolCallDocument, ToolCallStatus, ToolOutcome, ToolResult};
+
+    let call = |output: &str| ModelPart {
+        tool_call: Some(ToolCallDocument {
+            status: ToolCallStatus::Completed,
+            result: Some(ToolResult {
+                outcome: ToolOutcome::Unknown,
+                output: output.to_owned(),
+                archives: Vec::new(),
+            }),
+            ..ToolCallDocument::receiving("call_1".to_owned(), "read_file".to_owned())
+        }),
+        ..part(2, PartKind::ToolCall, r#"{"path":"a.txt"}"#)
+    };
+    let with_result = |output: &str| {
+        let mut turn = turn(0, 10);
+        turn.parts.push(call(output));
+        vec![turn]
+    };
+
+    let short = with_result("short");
+    let long = with_result(&"x".repeat(10_000));
+
+    assert!(turns_estimate(&long) > turns_estimate(&short) + 3_000);
+    assert_ne!(content_hash(None, &short), content_hash(None, &long));
+    assert!(
+        render_turns(&short)[0].contains(&texts::compaction_tool_call(
+            "read_file",
+            r#"{"path":"a.txt"}"#,
+            "short"
+        )),
+        "{:?}",
+        render_turns(&short)
+    );
 }

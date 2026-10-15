@@ -1,7 +1,14 @@
 // Messages for the codes of the chat feature (ADR-0019): run failures, the
 // chat commands' errors, provider profile errors and the provider test. The UI
 // shows the catalog's message for a code and never the core's description.
-import type { CheckKind, CheckNote, CredentialStoreProblem, RunFailure, SkipReason } from '#lib/generated/bindings.js';
+import type {
+  CheckKind,
+  CheckNote,
+  CredentialStoreProblem,
+  PathRefusal,
+  RunFailure,
+  SkipReason,
+} from '#lib/generated/bindings.js';
 import { m } from '#lib/paraglide/messages.js';
 import type { ChatFailure, ProfileFailure } from '#lib/types/chat.js';
 
@@ -85,6 +92,9 @@ export function runFailureMessage(failure: RunFailure): string {
     case 'timed_out': {
       return m.chat_failure_timed_out();
     }
+    case 'tools_unsupported': {
+      return m.chat_failure_tools_unsupported();
+    }
   }
 }
 
@@ -107,6 +117,15 @@ export function chatFailureMessage(failure: ChatFailure): string {
     case 'conversation_not_found': {
       return m.chat_error_conversation_not_found();
     }
+    case 'folder_dialog_failed': {
+      return m.chat_error_folder_dialog_failed();
+    }
+    case 'folder_not_found': {
+      return m.chat_error_folder_not_found();
+    }
+    case 'folder_unreadable': {
+      return m.chat_error_folder_unreadable();
+    }
     case 'instructions_too_long': {
       return m.chat_error_instructions_too_long({ maxBytes: formatCount(error.maxBytes) });
     }
@@ -119,14 +138,32 @@ export function chatFailureMessage(failure: ChatFailure): string {
     case 'no_profile': {
       return m.chat_failure_no_profile();
     }
+    case 'not_a_folder': {
+      return m.chat_error_not_a_folder();
+    }
     case 'nothing_to_compact': {
       return m.chat_error_nothing_to_compact();
     }
     case 'nothing_to_retry': {
       return m.chat_error_nothing_to_retry();
     }
+    case 'path_refused': {
+      return m.chat_error_path_refused({ reason: folderRefusalMessage(error.reason) });
+    }
     case 'profile_not_found': {
       return m.chat_error_profile_not_found();
+    }
+    case 'project_busy': {
+      return m.chat_error_project_busy();
+    }
+    case 'project_changed': {
+      return m.chat_error_project_changed({ count: error.conversations });
+    }
+    case 'project_name_invalid': {
+      return m.chat_error_project_name_invalid({ maxCharacters: formatCount(error.maxCharacters) });
+    }
+    case 'project_not_found': {
+      return m.chat_error_project_not_found();
     }
     case 'run_active': {
       return m.chat_error_run_active();
@@ -148,6 +185,39 @@ export function chatFailureMessage(failure: ChatFailure): string {
     }
     case 'written_by_newer_version': {
       return m.chat_error_written_by_newer_version();
+    }
+  }
+}
+
+/** Why Mannie refused a project's folder, as a sentence. */
+export function folderRefusalMessage(reason: PathRefusal): string {
+  switch (reason) {
+    case 'alternate_stream': {
+      return m.chat_folder_refusal_alternate_stream();
+    }
+    case 'device_path': {
+      return m.chat_folder_refusal_device_path();
+    }
+    case 'drive_relative': {
+      return m.chat_folder_refusal_drive_relative();
+    }
+    case 'empty': {
+      return m.chat_folder_refusal_empty();
+    }
+    case 'network_path': {
+      return m.chat_folder_refusal_network_path();
+    }
+    case 'not_absolute': {
+      return m.chat_folder_refusal_not_absolute();
+    }
+    case 'reserved_name': {
+      return m.chat_folder_refusal_reserved_name();
+    }
+    case 'too_long': {
+      return m.chat_folder_refusal_too_long();
+    }
+    case 'trailing_dot_or_space': {
+      return m.chat_folder_refusal_trailing_dot_or_space();
     }
   }
 }
@@ -238,6 +308,9 @@ export function checkLabel(check: CheckKind): string {
     case 'server': {
       return m.chat_providers_check_server();
     }
+    case 'tools': {
+      return m.chat_providers_check_tools();
+    }
     case 'usage': {
       return m.chat_providers_check_usage();
     }
@@ -255,6 +328,9 @@ export function checkNoteMessage(note: CheckNote): string {
     }
     case 'no_reasoning_returned': {
       return m.chat_providers_note_no_reasoning_returned();
+    }
+    case 'no_tool_call': {
+      return m.chat_providers_note_no_tool_call();
     }
     case 'no_usage_reported': {
       return m.chat_providers_note_no_usage_reported();
@@ -276,6 +352,9 @@ export function skipReasonMessage(reason: SkipReason): string {
     }
     case 'no_reasoning_effort': {
       return m.chat_providers_skip_no_reasoning_effort();
+    }
+    case 'tools_off': {
+      return m.chat_providers_skip_tools_off();
     }
   }
 }

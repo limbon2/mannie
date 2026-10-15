@@ -159,3 +159,11 @@ jobs:
       # The worker's tests run on FreeBSD every night (nightly.yml).
       - name: Cross-build the FreeBSD worker
         run: cross build --locked --release -p mannie-worker --target x86_64-unknown-freebsd
+      # The worker will run the system tools on FreeBSD (M4); until then,
+      # their Unix file safety must at least build there, without warnings.
+      # Clippy links nothing, so it needs FreeBSD's standard library but not
+      # cross.
+      - name: Lint the system tools for FreeBSD
+        run: |
+          rustup target add x86_64-unknown-freebsd
+          cargo clippy --locked -p mannie-tools --all-targets --target x86_64-unknown-freebsd -- -D warnings

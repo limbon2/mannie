@@ -4,13 +4,15 @@
 //! cursor.
 //!
 //! The runtime decides what happens in a run: it assembles the model's
-//! context, calls the provider adapters of `mannie-provider`, retries
-//! transient failures, compacts long conversations into checkpoints, and
-//! handles Stop, Shutdown and recovery after a crash. It never runs on a
+//! context, calls the provider adapters of `mannie-provider`, runs the tool
+//! calls of the model through the operation lifecycle of `mannie-tools`,
+//! retries transient failures, compacts long conversations into checkpoints,
+//! and handles Stop, Shutdown and recovery after a crash. It never runs on a
 //! window's behalf; a window only sends commands and follows events.
 
 mod actor;
 mod agents;
+mod approvals;
 mod budget;
 mod calls;
 mod compaction;
@@ -20,37 +22,57 @@ mod hub;
 mod ids;
 mod instructions;
 mod profiles;
+mod projects;
 mod retry;
 #[cfg(feature = "testing")]
 pub mod testing;
 pub mod texts;
+mod tools;
 #[cfg(feature = "validation")]
 mod validation;
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use mannie_provider::{HttpClient, ProviderRegistry};
 use mannie_store::{RuntimeStoreError, Store};
+use mannie_tools::{MutationLock, SystemFacts, ToolRegistry};
 use mannie_types::clock::Clock;
-use mannie_types::ids::{CheckpointId, ConversationId, ProfileId, RunId};
+use mannie_types::ids::{CheckpointId, ConversationId, ProfileId, ProjectId, RunId};
 use tokio::sync::{Semaphore, mpsc, watch};
 
 pub use agents::{
-    AgentDefinition, AgentRegistry, CONVERSATION, CONVERSATION_AGENT, DuplicateAgent,
+    AgentDefinition, AgentRegistry, CONVERSATION, CONVERSATION_AGENT, DuplicateAgent, SYSTEM_TOOLS,
 };
 pub use hub::{ConversationSubscription, ListSubscription, SubscriptionLimits};
 pub use instructions::{
-    BUILTIN_SECTIONS, DuplicateSection, InstructionContext, InstructionRegistry, InstructionSection,
+    BUILTIN_SECTIONS, DuplicateSection, InstructionContext, InstructionRegistry,
+    InstructionSection, ToolEnvironment,
 };
 pub use profiles::{CredentialVault, VaultError};
 pub use retry::RetryPolicy;
 
 use crate::actor::Command;
+use crate::approvals::Pending;
 use crate::hub::Hubs;
 use crate::ids::IdGenerator;
+
+/// What the system tools work with. The composition root builds it once.
+#[derive(Debug, Clone)]
+pub struct ToolsDeps {
+    /// The tools that runs may use, of those their agent names.
+    pub registry: ToolRegistry,
+    /// Mannie's data and log folders, in canonical form. Every access inside
+    /// them asks the owner (T-18).
+    pub protected: Vec<PathBuf>,
+    /// The lock that makes file changes run one at a time on the machine.
+    pub mutations: MutationLock,
+    /// What the tools report about the machine.
+    pub system: Arc<SystemFacts>,
+}
 
 /// What the runtime works with. The composition root builds these and hands
 /// them over once.
@@ -70,6 +92,8 @@ pub struct RuntimeDeps {
     pub agents: AgentRegistry,
     /// The instruction sections.
     pub instructions: InstructionRegistry,
+    /// The system tools.
+    pub tools: ToolsDeps,
 }
 
 /// The runtime's limits and timings.
@@ -123,6 +147,10 @@ struct Inner {
     ids: IdGenerator,
     agents: AgentRegistry,
     instructions: InstructionRegistry,
+    tools: ToolsDeps,
+    /// The approvals that runs wait for, one per conversation at most, since
+    /// a conversation runs its tool calls one at a time.
+    approvals: Mutex<HashMap<ConversationId, Pending>>,
     hubs: Hubs,
     /// What each conversation is busy with. The store refuses a second active
     /// run on its own; this map also covers compactions and the moments before
@@ -130,6 +158,9 @@ struct Inner {
     busy: Mutex<HashMap<ConversationId, Busy>>,
     /// Checkpoints whose hash matched the turns they cover in this process.
     verified_checkpoints: Mutex<HashSet<CheckpointId>>,
+    /// The projects that are being removed: no conversation starts in them or
+    /// moves into them.
+    removing_projects: Mutex<HashSet<ProjectId>>,
     slots: Arc<Semaphore>,
     config: RuntimeConfig,
     shutting_down: AtomicBool,
@@ -176,6 +207,20 @@ impl Runtime {
                 "recovered runs that were active when Mannie ended"
             );
         }
+        // What is left of commands that ran when Mannie ended is ended in the
+        // background, as a best effort; their calls are uncertain already.
+        let leftovers: Vec<_> = recovered
+            .iter()
+            .flat_map(|run| &run.uncertain)
+            .filter_map(|call| call.process.clone())
+            .collect();
+        if !leftovers.is_empty() {
+            tokio::spawn(async move {
+                for record in &leftovers {
+                    mannie_tools::end_leftover_command(record).await;
+                }
+            });
+        }
         let random = config
             .random_seed
             .map_or_else(fastrand::Rng::new, fastrand::Rng::with_seed);
@@ -188,9 +233,12 @@ impl Runtime {
             clock: deps.clock,
             agents: deps.agents,
             instructions: deps.instructions,
+            tools: deps.tools,
+            approvals: Mutex::default(),
             hubs: Hubs::default(),
             busy: Mutex::default(),
             verified_checkpoints: Mutex::default(),
+            removing_projects: Mutex::default(),
             slots: Arc::new(Semaphore::new(config.max_concurrent_calls)),
             config,
             shutting_down: AtomicBool::new(false),

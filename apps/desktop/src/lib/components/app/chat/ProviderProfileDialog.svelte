@@ -9,6 +9,7 @@
   import { Input } from '#lib/components/ui/input/index.js';
   import * as RadioGroup from '#lib/components/ui/radio-group/index.js';
   import * as Select from '#lib/components/ui/select/index.js';
+  import { Switch } from '#lib/components/ui/switch/index.js';
   import type { ApiInterface } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
   import type { ProviderProfileForm } from '#lib/state/provider-profile-form.svelte.js';
@@ -213,6 +214,13 @@
                 </Select.Content>
               </Select.Root>
               <Field.Description>{m.chat_providers_field_effort_description()}</Field.Description>
+            </Field.Field>
+            <Field.Field orientation="horizontal">
+              <Field.Content>
+                <Field.Label for="profile-use-tools">{m.chat_providers_field_use_tools()}</Field.Label>
+                <Field.Description>{m.chat_providers_field_use_tools_description()}</Field.Description>
+              </Field.Content>
+              <Switch id="profile-use-tools" bind:checked={form.useTools} />
             </Field.Field>
           </Field.Group>
         </div>

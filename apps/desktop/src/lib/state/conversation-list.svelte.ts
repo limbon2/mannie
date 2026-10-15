@@ -1,15 +1,18 @@
-// The conversation list (docs/features/chat/conversation-view.md, layout):
-// the whole list from the core first, then each conversation that is
-// created, changed or deleted. The window follows it for as long as it runs.
+// The conversation list (docs/features/chat/conversation-view.md, layout;
+// projects.md): the whole list and the projects from the core first, then
+// each conversation and project that is created, changed or deleted. The
+// window follows it for as long as it runs.
 import {
   type ChatError,
   commands,
   type ConversationListUpdate,
   type ConversationSummary,
+  type ProjectView,
   type SubscriptionId,
 } from '#lib/generated/bindings.js';
 import type { Failure } from '#lib/types/calls.js';
 import { batchChannel, call } from '#lib/utils/calls.js';
+import { groupConversations, type GroupedConversations } from '#lib/utils/project-groups.js';
 
 /** The most recently changed first, as the core sorts them. */
 function newestFirst(left: ConversationSummary, right: ConversationSummary): number {
@@ -20,12 +23,25 @@ function newestFirst(left: ConversationSummary, right: ConversationSummary): num
   return right.id.localeCompare(left.id);
 }
 
+/** The oldest first, as the core sorts them. */
+function oldestFirst(left: ProjectView, right: ProjectView): number {
+  const byTime = left.createdAt - right.createdAt;
+  if (byTime !== 0) {
+    return byTime;
+  }
+  return left.id.localeCompare(right.id);
+}
+
 /** The window's conversation list. */
 export class ConversationList {
   conversations: ConversationSummary[] = $state([]);
   /** Why the list could not be read, if it could not. */
   failure: Failure<ChatError> | null = $state(null);
+  /** The owner's projects, the oldest first. */
+  projects: ProjectView[] = $state([]);
   status: 'error' | 'loading' | 'ready' = $state('loading');
+  /** The conversations by project, as the sidebar shows them. */
+  readonly grouped: GroupedConversations = $derived(groupConversations(this.conversations, this.projects));
   /** Counts subscriptions, so that the updates of an ended one change nothing. */
   #generation = 0;
   #started = false;
@@ -34,6 +50,17 @@ export class ConversationList {
   /** The conversation with this ID, if the list has it. */
   find(id: string): ConversationSummary | undefined {
     return this.conversations.find((conversation) => conversation.id === id);
+  }
+
+  /** The project with this ID, if the list has it. */
+  findProject(id: string): ProjectView | undefined {
+    return this.projects.find((project) => project.id === id);
+  }
+
+  /** Adds or replaces a project that a command returned, before its update arrives through the channel. */
+  upsertProject(project: ProjectView): void {
+    const others = this.projects.filter((existing) => existing.id !== project.id);
+    this.projects = [...others, project].sort(oldestFirst);
   }
 
   /** Follows the list again after a failure. */
@@ -60,12 +87,21 @@ export class ConversationList {
         }
         return;
       }
+      case 'project_removed': {
+        this.projects = this.projects.filter((project) => project.id !== update.id);
+        return;
+      }
+      case 'project_upserted': {
+        this.upsertProject(update.project);
+        return;
+      }
       case 'removed': {
         this.conversations = this.conversations.filter((conversation) => conversation.id !== update.id);
         return;
       }
       case 'snapshot': {
         this.conversations = [...update.conversations].sort(newestFirst);
+        this.projects = [...update.projects].sort(oldestFirst);
         this.status = 'ready';
         this.failure = null;
         return;

@@ -4,8 +4,9 @@
 //! turns load page by page (docs/features/chat/conversations.md). This
 //! benchmark seeds 5,000 turns, each the owner's message and a reply, and
 //! measures the snapshot, a page of earlier turns and a replay of recent
-//! events. It fails when the snapshot takes longer than its share of the one
-//! second that opening the conversation may take.
+//! events. It does the same for 5,000 turns that each make a tool call, whose
+//! documents the snapshot reads too. It fails when a snapshot takes longer
+//! than its share of the one second that opening the conversation may take.
 //!
 //! Run it with `cargo bench -p mannie-store --features validation`.
 
@@ -13,7 +14,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use mannie_store::validation::seed_conversation;
+use mannie_store::validation::{seed_conversation, seed_conversation_with_tool_calls};
 use mannie_store::{EventsAfter, Store, StoreOptions};
 use mannie_types::clock::SystemClock;
 use mannie_types::ids::{ConversationId, ProfileId};
@@ -78,11 +79,20 @@ fn report(name: &str, durations: &[Duration]) {
     );
 }
 
+/// What a scenario seeds.
+#[derive(Debug, Clone, Copy)]
+enum Shape {
+    /// The owner's message and a reply.
+    Chat,
+    /// The owner's message, a tool call and a reply.
+    ToolCalls,
+}
+
 #[expect(
     clippy::print_stdout,
     reason = "the benchmark reports its results on the console"
 )]
-async fn run() -> bool {
+async fn run(shape: Shape) -> bool {
     let directory = tempfile::tempdir().expect("a temporary folder for the benchmark database");
     let options = StoreOptions::new(directory.path().join("backups"), Arc::new(SystemClock));
     let store =
@@ -91,14 +101,23 @@ async fn run() -> bool {
         ConversationId::parse("01928c4f-0000-7000-8000-000000000001").expect("a valid ID");
     let profile = ProfileId::parse("01928c4f-0000-7000-8000-000000000002").expect("a valid ID");
     let mut counter = 0_u64;
-    let seeding = Instant::now();
-    seed_conversation(&store, &conversation, &profile, TURNS, || {
+    let next_id = || {
         counter += 1;
         format!("01928c4f-0001-7000-8000-{counter:012x}")
-    })
-    .await
+    };
+    let seeding = Instant::now();
+    match shape {
+        Shape::Chat => seed_conversation(&store, &conversation, &profile, TURNS, next_id).await,
+        Shape::ToolCalls => {
+            seed_conversation_with_tool_calls(&store, &conversation, &profile, TURNS, next_id).await
+        }
+    }
     .expect("the conversation is seeded");
     let seeded_in = seeding.elapsed();
+    let parts_per_turn = match shape {
+        Shape::Chat => 2,
+        Shape::ToolCalls => 3,
+    };
 
     let snapshots = measure(|| async {
         let snapshot = store
@@ -131,7 +150,16 @@ async fn run() -> bool {
     })
     .await;
 
-    println!("## Opening a conversation of {} parts", TURNS * 2);
+    match shape {
+        Shape::Chat => println!(
+            "## Opening a conversation of {} parts",
+            TURNS * parts_per_turn
+        ),
+        Shape::ToolCalls => println!(
+            "## Opening a conversation of {} parts, a third of them tool calls",
+            TURNS * parts_per_turn
+        ),
+    }
     println!();
     println!("Seeded in {}.", milliseconds(seeded_in));
     println!();
@@ -158,7 +186,9 @@ fn main() -> ExitCode {
         .enable_all()
         .build()
         .expect("a tokio runtime");
-    if runtime.block_on(run()) {
+    let chat = runtime.block_on(run(Shape::Chat));
+    let tool_calls = runtime.block_on(run(Shape::ToolCalls));
+    if chat && tool_calls {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE

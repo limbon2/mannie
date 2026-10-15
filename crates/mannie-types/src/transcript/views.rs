@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::clock::UtcMillis;
-use crate::ids::{CheckpointId, ConversationId, ProfileId, TurnId};
+use crate::ids::{CheckpointId, ConversationId, ProfileId, ProjectId, TurnId};
 use crate::run::RunView;
 
 use super::parts::PartView;
@@ -51,6 +51,14 @@ pub struct ConversationSummary {
     pub profile_id: Option<ProfileId>,
     /// Whether a reply is being written.
     pub has_active_run: bool,
+    /// Whether the reply waits for the owner to decide about a tool call.
+    pub awaiting_approval: bool,
+    /// The project the conversation belongs to, or `None` for a general
+    /// conversation.
+    pub project_id: Option<ProjectId>,
+    /// The conversation's workspace folder: its project's folder, or `None`
+    /// for a general conversation.
+    pub workspace: Option<String>,
     /// When it was created.
     pub created_at: UtcMillis,
     /// When it last changed. The list shows the most recent first.

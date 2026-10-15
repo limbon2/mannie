@@ -5,9 +5,10 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use specta::Type;
 
-use crate::ids::{CheckpointId, ConversationId, ProfileId, RunId, TurnId};
+use crate::ids::{CheckpointId, ConversationId, ProfileId, ProjectId, RunId, TurnId};
 use crate::run::RunFailure;
 use crate::settings::SettingsSection;
+use crate::tools::PathRefusal;
 use crate::transcript::{SubscriptionId, TurnView};
 
 /// The longest message the owner can send, in bytes of UTF-8.
@@ -164,6 +165,9 @@ pub struct StartConversation {
     pub text: String,
     /// The provider profile to use, or `None` for the default profile.
     pub profile_id: Option<ProfileId>,
+    /// The project the conversation starts in, or `None` for a general
+    /// conversation.
+    pub project_id: Option<ProjectId>,
 }
 
 /// The result of `start_conversation`.
@@ -356,6 +360,47 @@ pub enum ChatError {
     /// The chosen provider profile does not exist.
     #[error("the provider profile does not exist")]
     ProfileNotFound,
+    /// The project does not exist, for example because it was removed.
+    #[error("the project does not exist")]
+    ProjectNotFound,
+    /// The project's name is empty or longer than Mannie accepts.
+    #[error("a project's name has 1 to {max_characters} characters")]
+    ProjectNameInvalid {
+        /// The limit.
+        max_characters: u32,
+    },
+    /// A conversation of the project is starting a reply or being compacted,
+    /// so the project cannot be removed until that ends.
+    #[error("a conversation of the project is busy")]
+    ProjectBusy,
+    /// The project has a different number of conversations than the owner
+    /// confirmed to delete, so nothing was removed.
+    #[error("the project has {conversations} conversations now")]
+    ProjectChanged {
+        /// The number of its conversations now.
+        conversations: u32,
+    },
+    /// The folder's path was refused before any access to the file system.
+    #[error("the path is not allowed: {reason:?}")]
+    PathRefused {
+        /// Why.
+        reason: PathRefusal,
+    },
+    /// The folder does not exist.
+    #[error("the folder does not exist")]
+    FolderNotFound,
+    /// The path is not a folder.
+    #[error("the path is not a folder")]
+    NotAFolder,
+    /// The folder could not be opened or resolved.
+    #[error("the folder could not be read: {kind}")]
+    FolderUnreadable {
+        /// What failed, in English, for logs.
+        kind: String,
+    },
+    /// The system's folder dialog failed.
+    #[error("the folder dialog failed")]
+    FolderDialogFailed,
     /// The settings were written by a newer version of Mannie, which this
     /// version does not overwrite.
     #[error("the chat settings were written by a newer version of Mannie")]
@@ -389,6 +434,15 @@ impl ChatError {
             Self::CompactionFailed { .. } => "chat.compaction_failed",
             Self::NoProfile => "chat.no_profile",
             Self::ProfileNotFound => "chat.profile_not_found",
+            Self::ProjectNotFound => "chat.project_not_found",
+            Self::ProjectNameInvalid { .. } => "chat.project_name_invalid",
+            Self::ProjectBusy => "chat.project_busy",
+            Self::ProjectChanged { .. } => "chat.project_changed",
+            Self::PathRefused { .. } => "chat.path_refused",
+            Self::FolderNotFound => "chat.folder_not_found",
+            Self::NotAFolder => "chat.not_a_folder",
+            Self::FolderUnreadable { .. } => "chat.folder_unreadable",
+            Self::FolderDialogFailed => "chat.folder_dialog_failed",
             Self::WrittenByNewerVersion => "chat.written_by_newer_version",
             Self::StorageFailed => "chat.storage_failed",
             Self::StoreUnavailable => "chat.store_unavailable",
@@ -477,5 +531,12 @@ mod tests {
             serde_json::json!({ "code": "run_active" })
         );
         assert_eq!(ChatError::RunActive.code(), "chat.run_active");
+        assert_eq!(
+            serde_json::to_value(ChatError::PathRefused {
+                reason: crate::tools::PathRefusal::NetworkPath
+            })
+            .unwrap(),
+            serde_json::json!({ "code": "path_refused", "reason": "network_path" })
+        );
     }
 }

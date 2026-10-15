@@ -122,6 +122,12 @@ async fn start_with_adapters(store: mannie_store::Store, base_url: &str) -> Runt
             clock,
             agents: AgentRegistry::with_builtin(),
             instructions: InstructionRegistry::with_builtin(),
+            tools: mannie_runtime::ToolsDeps {
+                registry: mannie_tools::ToolRegistry::with_system_tools(),
+                protected: Vec::new(),
+                mutations: mannie_tools::MutationLock::new(),
+                system: Arc::new(mannie_tools::SystemFacts::detect()),
+            },
         },
         fast_config(),
     )
@@ -137,6 +143,7 @@ async fn start_with_adapters(store: mannie_store::Store, base_url: &str) -> Runt
                 context_window: 32_768,
                 output_limit: 4_096,
                 reasoning_effort: ReasoningEffort::ServerDefault,
+                use_tools: false,
             },
             credential: Some(Secret::new(PLANTED.to_owned())),
         })
@@ -167,6 +174,7 @@ async fn a_planted_credential_reaches_only_the_authorization_header() {
         .start_conversation(StartConversation {
             text: "Hello".to_owned(),
             profile_id: None,
+            project_id: None,
         })
         .await
         .unwrap();

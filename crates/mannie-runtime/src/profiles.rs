@@ -107,6 +107,7 @@ fn fields(draft: &ProfileDraft, checked: Checked, credential_ref: Option<String>
         context_window: draft.context_window,
         output_limit: draft.output_limit,
         reasoning_effort: draft.reasoning_effort,
+        use_tools: draft.use_tools,
     }
 }
 
@@ -301,6 +302,7 @@ impl Runtime {
             reasoning_effort: profile.reasoning_effort,
             output_limit: profile.output_limit,
             credential_check,
+            use_tools: profile.use_tools,
         };
         let report = test_profile(&self.inner.client, &self.inner.registry, input).await;
         if let Some(server) = report.server

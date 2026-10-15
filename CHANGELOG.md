@@ -4,6 +4,23 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+### Added
+
+- System tools for the model on the owner's computer: system information, listing, finding and searching files, reading, writing and editing text files with revisions, creating, copying, moving and deleting files and folders, running commands in Windows PowerShell or `/bin/sh`, and reading back long outputs.
+- Projects in the sidebar: "+" turns a folder into a project, its conversations work in that folder, a general conversation moves into a project when the owner's request is about it, and removing a project deletes its conversations; reads inside a project's folder run without asking, and changes ask unless the settings allow them.
+- Approvals that show exactly what will happen, with Allow once, Allow for this conversation, this project or always, Save rule… and Deny, and lists of the permissions that apply, which the owner can revoke.
+- Tool calls in the reply as compact rows that the model names in a few words, such as "Reading package.json", with their details and full output on demand; the status line and the conversation list say when a reply waits for an approval.
+- Commands that end with every process they started, through Job Objects on Windows and a subreaper on Linux, and Stop that ends a running command within a second.
+- A journal of every operation, so that a crash never repeats one and an operation that may have run is shown as such.
+- The Tools settings: changes inside the workspace without asking, the command rules, the grants for projects and every conversation, and the environment variables that commands receive.
+- A "Use tools" switch for each provider profile, and a Tools check in the provider test.
+- Evaluations of the system tools with real models and with a scripted oracle, `task tools:eval` and a weekly workflow.
+
+### Fixed
+
+- The conversation view stops following a reply only when the owner scrolls up; a tool call or an approval request that appeared at once, or a message box that shrank after sending, could end the following and leave the newest activity out of view.
+- A long reply no longer stretches the pane around the conversation: the text that only screen readers read escaped the transcript's scrolling, so the wheel could scroll the whole view away into empty space.
+
 ### Security
 
 - rustls 0.23.46, which fixes the advisories RUSTSEC-2026-0346, RUSTSEC-2026-0347, RUSTSEC-2026-0348 and RUSTSEC-2026-0349.

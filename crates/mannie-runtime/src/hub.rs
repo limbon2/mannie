@@ -13,7 +13,8 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use mannie_store::{Applied, Change, Durability, EventsAfter, RuntimeStoreError, Store};
-use mannie_types::ids::ConversationId;
+use mannie_types::ids::{ConversationId, ProjectId};
+use mannie_types::projects::ProjectView;
 use mannie_types::transcript::{
     ConversationEvent, ConversationListUpdate, ConversationSummary, ConversationUpdate,
     SubscriptionEnd,
@@ -33,6 +34,8 @@ enum HubMessage {
 enum ListMessage {
     Upserted(ConversationSummary),
     Removed(ConversationId),
+    ProjectUpserted(ProjectView),
+    ProjectRemoved(ProjectId),
     End(SubscriptionEnd),
 }
 
@@ -154,11 +157,14 @@ impl Hubs {
         // The list's lock stays held while the list is read, so no change
         // lands between the read and the registration.
         let mut list = self.list.lock().await;
-        let conversations = store.list_conversations().await?;
+        let read = store.conversation_list().await?;
         list.push(sender);
         drop(list);
         Ok(ListSubscription {
-            initial: Some(ConversationListUpdate::Snapshot { conversations }),
+            initial: Some(ConversationListUpdate::Snapshot {
+                conversations: read.conversations,
+                projects: read.projects,
+            }),
             receiver,
             ended: false,
         })
@@ -170,6 +176,15 @@ impl Hubs {
     pub(crate) async fn announce(&self, summary: ConversationSummary) {
         let mut list = self.list.lock().await;
         publish(&mut list, &ListMessage::Upserted(summary));
+    }
+
+    /// Holds the conversation list while a project changes: the caller
+    /// stores the change and publishes it through the guard, so the list
+    /// receives the changes of projects in their order.
+    pub(crate) async fn project_changes(&self) -> ProjectChanges<'_> {
+        ProjectChanges {
+            list: self.list.lock().await,
+        }
     }
 
     /// Ends the subscriptions of a deleted conversation and removes it from
@@ -208,6 +223,23 @@ impl Hubs {
         let mut list = self.list.lock().await;
         publish(&mut list, &ListMessage::End(SubscriptionEnd::Shutdown));
         list.clear();
+    }
+}
+
+/// The conversation list's subscribers, held while a project changes.
+pub(crate) struct ProjectChanges<'a> {
+    list: tokio::sync::MutexGuard<'a, Vec<mpsc::Sender<ListMessage>>>,
+}
+
+impl ProjectChanges<'_> {
+    /// A project was added or renamed.
+    pub(crate) fn upserted(&mut self, project: ProjectView) {
+        publish(&mut self.list, &ListMessage::ProjectUpserted(project));
+    }
+
+    /// A project was removed, after its conversations.
+    pub(crate) fn removed(&mut self, project: ProjectId) {
+        publish(&mut self.list, &ListMessage::ProjectRemoved(project));
     }
 }
 
@@ -315,6 +347,10 @@ impl ListSubscription {
                 ConversationListUpdate::Upserted { conversation }
             }
             Some(ListMessage::Removed(id)) => ConversationListUpdate::Removed { id },
+            Some(ListMessage::ProjectUpserted(project)) => {
+                ConversationListUpdate::ProjectUpserted { project }
+            }
+            Some(ListMessage::ProjectRemoved(id)) => ConversationListUpdate::ProjectRemoved { id },
             Some(ListMessage::End(reason)) => {
                 self.ended = true;
                 ConversationListUpdate::Ended { reason }

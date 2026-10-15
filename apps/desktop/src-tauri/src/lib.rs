@@ -7,6 +7,7 @@
 
 mod commands;
 mod credentials;
+mod folder_dialog;
 mod ipc;
 mod links;
 mod state;

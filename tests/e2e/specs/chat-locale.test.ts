@@ -2,16 +2,24 @@
 // string they show comes from the catalog, apart from the owner's and the
 // model's content, and the layout survives the longer text. The selectors use
 // structure only, because every catalog string is pseudo-localized.
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { Key } from 'webdriverio';
 
 import {
   addProfile,
+  addProject,
+  clickWithText,
+  COMPOSER,
+  projectToggle,
   sendMessage,
   startNewConversation,
   waitForCompleteReply,
   waitForPointerInput,
 } from '../support/chat.ts';
-import { closeMainWindow, deleteProviderProfiles } from '../support/harness.ts';
+import { closeMainWindow, deleteProviderProfiles, setFolderChoice } from '../support/harness.ts';
 import { axeViolations, openSettings, uncataloguedText, waitForAnimations, waitForApp } from '../support/page.ts';
 import { MODELS, type ProviderServer, startProviderServer } from '../support/provider-server.ts';
 
@@ -25,7 +33,10 @@ async function overflowsHorizontally(): Promise<boolean> {
   return browser.execute(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
 }
 
-/** Opens the menu of the toolbar's trigger at `index`: the profile, the context or the conversation's actions. */
+/**
+ * Opens the menu of the toolbar's trigger at `index`: the profile, the
+ * context or the conversation's actions.
+ */
 async function openToolbarMenu(index: number): Promise<void> {
   await waitForPointerInput();
   const triggers = await $$('main button[aria-haspopup="menu"]');
@@ -59,6 +70,7 @@ describe('the chat and window views in the pseudo-locale', () => {
     provider = await startProviderServer();
     await waitForApp();
     await addProfile(provider.baseUrl, { model: MODELS.reasoning, name: 'Profile', interface: 'responses' });
+    await addProfile(provider.baseUrl, { model: MODELS.tools, name: 'Tools', useTools: true });
     await openInterfaceSettings();
     await $('#interface-language').click();
     await $(`[data-slot="select-item"][data-value="${PSEUDO_LOCALE}"]`).click();
@@ -103,8 +115,88 @@ describe('the chat and window views in the pseudo-locale', () => {
     }
   });
 
+  it('shows only catalog text in a tool call that waits for approval, and in its details', async () => {
+    // The profile menu's items show the profiles' names, which are content.
+    await openToolbarMenu(0);
+    await clickWithText('[data-slot="dropdown-menu-radio-item"]', 'Tools');
+    await waitForPointerInput();
+    // Without a workspace, a change asks the owner.
+    const path = join(tmpdir(), 'mannie-e2e-pseudo-locale.txt');
+    // The activity is the model's content, outside the catalog.
+    await sendMessage(`call write_file ${JSON.stringify({ activity: 'Writing a note', content: 'x', path })}`);
+    const waiting = await $('main [data-tool-status="awaiting_approval"]');
+    await waiting.waitForDisplayed({ timeout: 30_000 });
+    await $('main [data-tool-status="awaiting_approval"] [data-tool-toggle]').click();
+    await waitForAnimations();
+
+    expect(await uncataloguedText()).toEqual([]);
+    expect(await overflowsHorizontally()).toBe(false);
+    expect(await axeViolations()).toEqual([]);
+
+    // The scopes of "Allow for…".
+    await $('main [data-allow-for]').click();
+    await $('[data-slot="dropdown-menu-content"]').waitForDisplayed();
+    await waitForAnimations();
+    expect(await uncataloguedText()).toEqual([]);
+    await closeOverlays();
+
+    // Stopping the reply cancels the request.
+    await $(COMPOSER).click();
+    await browser.keys(Key.Escape);
+    await $('main [data-tool-status="canceled"]').waitForDisplayed({ timeout: 10_000 });
+    expect(await uncataloguedText()).toEqual([]);
+  });
+
+  it('shows only catalog text in the projects of the sidebar, their menu and their dialogs', async () => {
+    const folder = realpathSync.native(mkdtempSync(join(tmpdir(), 'mannie-e2e-locale-')));
+    try {
+      const project = await addProject(folder);
+      await waitForAnimations();
+      expect(await uncataloguedText()).toEqual([]);
+      expect(await overflowsHorizontally()).toBe(false);
+
+      await waitForPointerInput();
+      await projectToggle(project).moveTo();
+      await $(`[data-project="${project}"] [data-project-menu]`).click();
+      await $('[data-slot="dropdown-menu-content"]').waitForDisplayed();
+      await waitForAnimations();
+      expect(await uncataloguedText()).toEqual([]);
+      for (const item of [0, 1]) {
+        if (item > 0) {
+          await projectToggle(project).moveTo();
+          await $(`[data-project="${project}"] [data-project-menu]`).click();
+          await $('[data-slot="dropdown-menu-content"]').waitForDisplayed();
+        }
+        const items = await $$('[data-slot="dropdown-menu-item"]');
+        await items[item]?.click();
+        await $('[role="dialog"], [role="alertdialog"]').waitForDisplayed();
+        await waitForAnimations();
+        expect(await uncataloguedText()).toEqual([]);
+        expect(await overflowsHorizontally()).toBe(false);
+        await closeOverlays();
+      }
+
+      // A folder that Mannie refuses opens the dialog for a typed folder, with the cause.
+      await setFolderChoice('relative-folder');
+      await $('[data-add-project]').click();
+      await $('[role="dialog"]').waitForDisplayed();
+      await waitForAnimations();
+      expect(await uncataloguedText()).toEqual([]);
+      expect(await axeViolations()).toEqual([]);
+      await closeOverlays();
+    } finally {
+      rmSync(folder, { force: true, recursive: true });
+    }
+  });
+
   it('shows only catalog text on every page of the settings', async () => {
-    for (const section of ['shell.interface', 'chat.providers', 'chat.instructions', 'window.behavior']) {
+    for (const section of [
+      'shell.interface',
+      'chat.providers',
+      'chat.instructions',
+      'window.behavior',
+      'tools.settings',
+    ]) {
       await openSettings(section);
 
       expect(await uncataloguedText()).toEqual([]);
@@ -114,14 +206,16 @@ describe('the chat and window views in the pseudo-locale', () => {
 
   it('shows only catalog text in the provider dialogs', async () => {
     await openSettings('chat.providers');
-    // The profile row's button without a menu runs the provider test.
-    await $('main li button:not([aria-haspopup])').click();
+    // The first profile row's button without a menu runs the provider test.
+    const testButtons = await $$('main li button:not([aria-haspopup])');
+    await testButtons[0]?.click();
     await $('[role="dialog"] ul').waitForDisplayed({ timeout: 20_000 });
     await waitForAnimations();
     expect(await uncataloguedText()).toEqual([]);
     await closeOverlays();
 
-    await $('main li button[aria-haspopup="menu"]').click();
+    const menuButtons = await $$('main li button[aria-haspopup="menu"]');
+    await menuButtons[0]?.click();
     await $('[data-slot="dropdown-menu-content"]').waitForDisplayed();
     await waitForAnimations();
     expect(await uncataloguedText()).toEqual([]);

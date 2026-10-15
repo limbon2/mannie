@@ -1,0 +1,35 @@
+{
+  "error": null,
+  "events": [
+    {
+      "text": "I will re"
+    },
+    {
+      "text": "ad it.\n"
+    },
+    {
+      "toolCallStarted": {
+        "callId": "call_mannie_1",
+        "name": "read_file"
+      }
+    },
+    {
+      "toolCall": {
+        "arguments": "{\"path\":\"notes.txt\"}",
+        "callId": "call_mannie_1",
+        "name": "read_file"
+      }
+    },
+    {
+      "usage": {
+        "cachedInput": null,
+        "input": 150,
+        "output": 30,
+        "reasoning": null
+      }
+    },
+    {
+      "finished": "stop"
+    }
+  ]
+}

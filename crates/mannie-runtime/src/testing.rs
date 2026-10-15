@@ -7,7 +7,7 @@
 //! worker never enable it.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -17,6 +17,7 @@ use mannie_provider::{
     ProviderRegistry, Target,
 };
 use mannie_store::{Store, StoreOptions};
+use mannie_tools::{MutationLock, SystemFacts, ToolRegistry};
 use mannie_types::clock::{Clock, SystemClock};
 use mannie_types::ids::{ConversationId, PartId, RunId, TurnId};
 use mannie_types::provider::{
@@ -25,13 +26,14 @@ use mannie_types::provider::{
 };
 use mannie_types::run::{FinishReason, RunFailure, RunState, RunView, Usage};
 use mannie_types::secret::Secret;
+use mannie_types::tools::ToolCallView;
 use mannie_types::transcript::{
     ConversationEvent, ConversationUpdate, PartContent, PartState, TurnView,
 };
 
 use crate::{
     AgentRegistry, CredentialVault, InstructionRegistry, RetryPolicy, Runtime, RuntimeConfig,
-    RuntimeDeps, VaultError, texts,
+    RuntimeDeps, ToolsDeps, VaultError, texts,
 };
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -252,6 +254,41 @@ pub fn failure(error: ProviderError) -> Vec<Step> {
     vec![Step::Error(error)]
 }
 
+/// The steps of a model call that calls tools: each `(call ID, tool,
+/// arguments)` in order, then the finish that servers send after tool calls.
+pub fn tool_calls(calls: &[(&str, &str, &str)]) -> Vec<Step> {
+    let mut steps = Vec::new();
+    for (call_id, name, arguments) in calls {
+        steps.push(Step::Event(ProviderEvent::ToolCallStarted {
+            call_id: (*call_id).to_owned(),
+            name: (*name).to_owned(),
+        }));
+        steps.push(Step::Event(ProviderEvent::ToolCall {
+            call_id: (*call_id).to_owned(),
+            name: (*name).to_owned(),
+            arguments: (*arguments).to_owned(),
+        }));
+    }
+    steps.push(Step::Event(ProviderEvent::Finished(FinishReason::Other)));
+    steps
+}
+
+/// The system tools for a test runtime, with `protected` as Mannie's data
+/// folder.
+///
+/// # Panics
+///
+/// When the folder cannot be resolved, which fails the test.
+pub fn test_tools(protected: &Path) -> ToolsDeps {
+    let protected = mannie_tools::canonical_folder(protected).expect("the data folder exists");
+    ToolsDeps {
+        registry: ToolRegistry::with_system_tools(),
+        protected: vec![PathBuf::from(protected)],
+        mutations: MutationLock::new(),
+        system: Arc::new(SystemFacts::detect()),
+    }
+}
+
 /// A transient server error.
 pub fn server_error() -> ProviderError {
     ProviderError::Transient {
@@ -339,6 +376,12 @@ pub struct HarnessOptions {
     pub enforce_context_window: bool,
     /// Whether the fake model's summaries use their whole output limit.
     pub full_summaries: bool,
+    /// Whether the profile uses tools. Off by default, so the tests of chat
+    /// see what a profile without tools sends, which is what M1 sent.
+    pub use_tools: bool,
+    /// The agent definitions, such as a conversation agent with smaller
+    /// budgets.
+    pub agents: AgentRegistry,
     /// The runtime's configuration.
     pub config: RuntimeConfig,
 }
@@ -352,6 +395,8 @@ impl Default for HarnessOptions {
             credential: Some("sk-test-credential".to_owned()),
             enforce_context_window: false,
             full_summaries: false,
+            use_tools: false,
+            agents: AgentRegistry::with_builtin(),
             config: fast_config(),
         }
     }
@@ -395,14 +440,14 @@ pub struct Harness {
 /// # Panics
 ///
 /// When the store cannot be opened, which fails the test.
-pub fn open_store(database: &std::path::Path) -> Store {
+pub fn open_store(database: &Path) -> Store {
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let options = StoreOptions::new(database.with_file_name("backups"), clock);
     Store::open(database, &options).expect("the test store opens")
 }
 
 /// Starts a runtime on `store` with `provider` behind every profile of its
-/// interface.
+/// interface, and the system tools without protected folders.
 ///
 /// # Panics
 ///
@@ -412,6 +457,36 @@ pub async fn start_runtime(
     provider: Arc<dyn Provider>,
     vault: Arc<MemoryVault>,
     config: RuntimeConfig,
+) -> Runtime {
+    let tools = ToolsDeps {
+        registry: ToolRegistry::with_system_tools(),
+        protected: Vec::new(),
+        mutations: MutationLock::new(),
+        system: Arc::new(SystemFacts::detect()),
+    };
+    start_runtime_with_tools(
+        store,
+        provider,
+        vault,
+        config,
+        tools,
+        AgentRegistry::with_builtin(),
+    )
+    .await
+}
+
+/// Starts a runtime as [`start_runtime`] does, with these tools and agents.
+///
+/// # Panics
+///
+/// When the runtime cannot start, which fails the test.
+pub async fn start_runtime_with_tools(
+    store: Store,
+    provider: Arc<dyn Provider>,
+    vault: Arc<MemoryVault>,
+    config: RuntimeConfig,
+    tools: ToolsDeps,
+    agents: AgentRegistry,
 ) -> Runtime {
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let client = HttpClient::new(Arc::clone(&clock)).expect("the HTTP client builds");
@@ -425,8 +500,9 @@ pub async fn start_runtime(
         registry,
         vault,
         clock,
-        agents: AgentRegistry::with_builtin(),
+        agents,
         instructions: InstructionRegistry::with_builtin(),
+        tools,
     };
     Runtime::start(deps, config)
         .await
@@ -456,11 +532,13 @@ impl Harness {
             model.write_full_summaries();
         }
         let vault = Arc::new(MemoryVault::new());
-        let runtime = start_runtime(
+        let runtime = start_runtime_with_tools(
             store.clone(),
             Arc::new(model.clone()),
             Arc::clone(&vault),
             options.config.clone(),
+            test_tools(directory.path()),
+            options.agents.clone(),
         )
         .await;
         let profile = runtime
@@ -473,6 +551,7 @@ impl Harness {
                     context_window: options.context_window,
                     output_limit: options.output_limit,
                     reasoning_effort: ReasoningEffort::ServerDefault,
+                    use_tools: options.use_tools,
                 },
                 credential: options.credential.clone().map(Secret::new),
             })
@@ -498,14 +577,22 @@ impl Harness {
     /// restart of Mannie does.
     pub async fn restart(mut self) -> Self {
         self.runtime.shutdown().await;
-        self.runtime = start_runtime(
+        self.runtime = start_runtime_with_tools(
             self.store.clone(),
             Arc::new(self.model.clone()),
             Arc::clone(&self.vault),
             self.options.config.clone(),
+            test_tools(self.directory.path()),
+            self.options.agents.clone(),
         )
         .await;
         self
+    }
+
+    /// The folder that holds the store, which the policy protects as
+    /// Mannie's data folder.
+    pub fn data_folder(&self) -> &Path {
+        self.directory.path()
     }
 
     /// Follows a conversation from its first event until `done` holds, and
@@ -583,6 +670,8 @@ impl Harness {
 pub struct SeenPart {
     /// The part.
     pub id: PartId,
+    /// The run that wrote it, or `None` for the owner's message.
+    pub run_id: Option<RunId>,
     /// Its state.
     pub state: PartState,
     /// Its content, with the text that streamed so far.
@@ -623,7 +712,8 @@ fn append_text(content: &mut PartContent, delta: &str) {
         | PartContent::Reasoning { text } => {
             text.push_str(delta);
         }
-        PartContent::Error { .. } | PartContent::Unknown { .. } => {}
+        // A tool call's arguments arrive with the part's next update.
+        PartContent::ToolCall { .. } | PartContent::Error { .. } | PartContent::Unknown { .. } => {}
     }
 }
 
@@ -654,6 +744,7 @@ impl Transcript {
             .map(|part| {
                 let seen = SeenPart {
                     id: part.id.clone(),
+                    run_id: part.run_id.clone(),
                     state: part.state,
                     content: part.content.clone(),
                 };
@@ -673,12 +764,19 @@ impl Transcript {
     fn apply_event(&mut self, event: &ConversationEvent) {
         match event {
             ConversationEvent::TurnStarted { turn } => self.insert_turn(turn),
-            ConversationEvent::RunStarted { run } => {
+            ConversationEvent::RunStarted { run, kept_run_ids } => {
                 for turn in self.turns.values_mut() {
                     if turn.id == run.turn_id {
                         turn.run = Some(run.clone());
-                        // A retry replaces every part but the owner's message.
-                        turn.parts.retain(|position, _| *position == 0);
+                        // A retry replaces every part but the owner's message
+                        // and the parts of runs that made tool calls.
+                        turn.parts.retain(|position, part| {
+                            let kept = part
+                                .run_id
+                                .as_ref()
+                                .is_some_and(|run| kept_run_ids.contains(run));
+                            *position == 0 || kept
+                        });
                     }
                 }
             }
@@ -693,7 +791,9 @@ impl Transcript {
                     }
                 }
             }
-            ConversationEvent::PartStarted { part } | ConversationEvent::PartFinished { part } => {
+            ConversationEvent::PartStarted { part }
+            | ConversationEvent::PartUpdated { part }
+            | ConversationEvent::PartFinished { part } => {
                 for turn in self.turns.values_mut() {
                     let belongs = turn.id == part.turn_id
                         && turn
@@ -708,6 +808,7 @@ impl Transcript {
                     } else {
                         let seen = SeenPart {
                             id: part.id.clone(),
+                            run_id: part.run_id.clone(),
                             state: part.state,
                             content: part.content.clone(),
                         };
@@ -763,6 +864,17 @@ impl Transcript {
             .iter()
             .filter_map(|part| match &part.content {
                 PartContent::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The tool calls of the turn at `position`, in order.
+    pub fn tool_calls(&self, position: u32) -> Vec<ToolCallView> {
+        self.parts(position)
+            .into_iter()
+            .filter_map(|part| match part.content {
+                PartContent::ToolCall { call } => Some(*call),
                 _ => None,
             })
             .collect()

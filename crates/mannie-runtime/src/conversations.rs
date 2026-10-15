@@ -17,6 +17,7 @@ use mannie_types::ids::{ConversationId, ProfileId};
 use mannie_types::transcript::Checkpoint;
 
 use crate::agents::CONVERSATION_AGENT;
+use crate::calls::CallOptions;
 use crate::compaction::Trigger;
 use crate::hub::{ConversationSubscription, ListSubscription};
 use crate::{Busy, Runtime, lock};
@@ -46,6 +47,7 @@ fn store_failure(error: RuntimeStoreError) -> ChatError {
         RuntimeStoreError::ConversationNotFound => ChatError::ConversationNotFound,
         RuntimeStoreError::RunActive => ChatError::RunActive,
         RuntimeStoreError::NothingToRetry => ChatError::NothingToRetry,
+        RuntimeStoreError::ProjectNotFound => ChatError::ProjectNotFound,
         other => {
             tracing::error!(error = %other, error.code = other.code(), "a conversation could not be read or saved");
             ChatError::StorageFailed
@@ -144,7 +146,7 @@ impl Runtime {
     }
 
     /// Creates a conversation with the owner's first message and starts the
-    /// reply.
+    /// reply. A conversation in a project works in the project's folder.
     pub async fn start_conversation(
         &self,
         input: StartConversation,
@@ -161,6 +163,13 @@ impl Runtime {
                 .ok_or(ChatError::ProfileNotFound)?,
             None => self.profile_for(None).await?,
         };
+        if input
+            .project_id
+            .as_ref()
+            .is_some_and(|project| self.is_being_removed(project))
+        {
+            return Err(ChatError::ProjectNotFound);
+        }
         let conversation_id = self.inner.ids.conversation();
         let reservation = self.reserve(&conversation_id, Busy::Starting)?;
         let turn_id = self.inner.ids.turn();
@@ -171,6 +180,7 @@ impl Runtime {
                     id: conversation_id.clone(),
                     title: title_from_message(&input.text),
                     profile_id: input.profile_id,
+                    project_id: input.project_id,
                 },
             },
             Change::StartTurn {
@@ -409,7 +419,7 @@ impl Runtime {
             .await
             .map_err(|failure| ChatError::CompactionFailed { failure })?;
         let prepared = self
-            .prepare_call(conversation, &setup)
+            .prepare_call(conversation, &setup, CallOptions::default())
             .await
             .map_err(call_failure)?;
         if prepared.turns.len() < 2 {

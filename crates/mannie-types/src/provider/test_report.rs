@@ -57,6 +57,8 @@ pub enum CheckKind {
     Usage,
     /// The server accepts the reasoning effort and returns reasoning.
     Reasoning,
+    /// The model calls a tool and answers after its result.
+    Tools,
 }
 
 /// The outcome of one check.
@@ -99,6 +101,9 @@ pub enum CheckNote {
     NoUsageReported,
     /// The server accepted the reasoning effort, but returned no reasoning.
     NoReasoningReturned,
+    /// The model answered without calling the tool it was asked to call, so it
+    /// may not use tools reliably.
+    NoToolCall,
 }
 
 /// Why a check did not run.
@@ -113,6 +118,8 @@ pub enum SkipReason {
     NoReasoningEffort,
     /// The server has no list of models to look the model up in.
     NoModelList,
+    /// The profile does not use tools.
+    ToolsOff,
 }
 
 #[cfg(test)]

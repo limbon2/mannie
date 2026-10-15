@@ -107,7 +107,9 @@ describe('provider profiles', () => {
     const dialog = await $(DIALOG);
     await expect(dialog).toHaveText(expect.stringContaining('Server: Other server'));
     const text = await dialog.getText();
-    expect(text.match(/Passed\./gu)?.length).toBe(5);
+    // Every check passes but reasoning, including the Tools check, which the
+    // test provider answers with a call of its tool.
+    expect(text.match(/Passed\./gu)?.length).toBe(6);
     expect(text).toContain('Skipped because the profile sets no reasoning effort.');
     expect(text).toContain('The server reports a context window of 65,536 tokens.');
     const reply = provider.requests().find((request) => {

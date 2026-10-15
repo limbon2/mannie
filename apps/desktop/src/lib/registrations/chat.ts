@@ -1,7 +1,7 @@
 // The chat feature's entries in the shell's slots (docs/features/chat/
-// conversation-view.md; ADR-0020): the conversation view, which Mannie opens
-// into, the conversation list, the part renderers, the dialogs, the commands
-// and the settings sections.
+// conversation-view.md, projects.md; ADR-0020): the conversation view, which
+// Mannie opens into, the projects and the conversation list in the sidebar,
+// the part renderers, the dialogs, the commands and the settings sections.
 import ScrollTextIcon from '@lucide/svelte/icons/scroll-text';
 import ServerIcon from '@lucide/svelte/icons/server';
 
@@ -10,6 +10,7 @@ import ConversationListPanel from '#lib/components/app/chat/ConversationListPane
 import ConversationView from '#lib/components/app/chat/ConversationView.svelte';
 import ErrorPart from '#lib/components/app/chat/ErrorPart.svelte';
 import InstructionsSettingsSection from '#lib/components/app/chat/InstructionsSettingsSection.svelte';
+import ProjectsPanel from '#lib/components/app/chat/ProjectsPanel.svelte';
 import ProviderSettingsSection from '#lib/components/app/chat/ProviderSettingsSection.svelte';
 import ReasoningPart from '#lib/components/app/chat/ReasoningPart.svelte';
 import TextPart from '#lib/components/app/chat/TextPart.svelte';
@@ -17,6 +18,7 @@ import UserTextPart from '#lib/components/app/chat/UserTextPart.svelte';
 import { m } from '#lib/paraglide/messages.js';
 import { chatActions } from '#lib/state/chat-actions.svelte.js';
 import { conversationList } from '#lib/state/conversation-list.svelte.js';
+import { projectActions } from '#lib/state/project-actions.svelte.js';
 import type { ShellSlots } from '#lib/state/shell-slots.svelte.js';
 import {
   CHAT_VIEW,
@@ -39,7 +41,8 @@ export function registerChat(slots: ShellSlots): void {
     title: () => openSummary()?.title ?? m.chat_view_title(),
     titleIsContent: () => openSummary() !== undefined,
   });
-  slots.sidebarPanels.register({ component: ConversationListPanel, id: 'chat.conversations', order: 0 });
+  slots.sidebarPanels.register({ component: ProjectsPanel, id: 'chat.projects', order: 0 });
+  slots.sidebarPanels.register({ component: ConversationListPanel, id: 'chat.conversations', order: 10 });
   slots.overlays.register({ component: ChatDialogs, id: 'chat.dialogs' });
   slots.partRenderers.register({ component: UserTextPart, id: 'user_text' });
   slots.partRenderers.register({ component: TextPart, id: 'text' });
@@ -77,6 +80,20 @@ export function registerChat(slots: ShellSlots): void {
         void chatActions.compact(id);
       }
     },
+  });
+  slots.commands.register({
+    group: m.chat_command_group,
+    id: 'chat.add-project',
+    label: m.chat_command_add_project,
+    order: 3,
+    run: () => void projectActions.add(),
+  });
+  slots.commands.register({
+    group: m.chat_command_group,
+    id: 'chat.add-project-from-path',
+    label: m.chat_command_add_project_from_path,
+    order: 4,
+    run: () => projectActions.startAddFromPath(),
   });
   slots.settingsSections.register({
     component: ProviderSettingsSection,

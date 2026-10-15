@@ -165,6 +165,11 @@ tasks:
     cmds:
       - cargo test --locked -p mannie-provider --features testing --test live -- --ignored --nocapture
 
+  tools:eval:
+    desc: Run the system tools' evaluations with the model that the MANNIE_EVAL_* variables name, or with MANNIE_EVAL_MODEL=oracle to check the harness without one
+    cmds:
+      - cargo test --locked -p mannie-runtime --features testing --test evals -- --ignored --nocapture
+
   provider:record:
     desc: Record the fixtures of the server that the MANNIE_LIVE_* variables name, as the live tests run
     env:
@@ -176,6 +181,17 @@ tasks:
     desc: Run the tests of the repository scripts, such as the local ESLint rules
     cmds:
       - node --test "tests/scripts/**/*.test.mjs"
+
+  test:linux:
+    desc: Run Clippy and the Rust tests on Linux in Docker, without the desktop crate, with the repository mounted read-only and the build output in a volume
+    # The owner's workstation runs Windows; the Linux halves of the tools and
+    # the process supervisor need Linux (owner decision of 2026-10-14). The
+    # desktop crate needs WebKitGTK, which CI provides.
+    vars:
+      LINUX_RUN: docker run --rm -v "{{.ROOT_DIR}}:/src:ro" -v mannie-linux-target:/target -v mannie-linux-cargo:/usr/local/cargo/registry -e CARGO_TARGET_DIR=/target -w /src rust:1.99
+    cmds:
+      - "{{.LINUX_RUN}} cargo clippy --workspace --all-targets --all-features --locked --exclude mannie-desktop -- -D warnings"
+      - "{{.LINUX_RUN}} cargo test --workspace --all-features --locked --exclude mannie-desktop"
 
   e2e:
     desc: Build the validation app and run the end-to-end tests (V1, V2, V3, V11) through tauri-driver

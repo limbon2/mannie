@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                          |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Status       | Draft for review                                                                                                                                                         |
-| Last updated | 2026-10-14                                                                                                                                                               |
+| Last updated | 2026-10-15                                                                                                                                                               |
 | Related      | [ADR-0002](../adr/0002-grow-through-extension-points.md), [Feature protocol](../features/README.md), [Repository](../engineering/repository.md), [Overview](overview.md) |
 
 Mannie adds features by registration. A feature is a vertical slice: Rust modules, IPC types, UI components, migrations and tests, plus its feature document. The slice plugs into the extension points below and leaves other features alone ([ADR-0002](../adr/0002-grow-through-extension-points.md)).
@@ -36,7 +36,7 @@ Mannie adds features by registration. A feature is a vertical slice: Rust module
 
 ### 3.1 Tool registry
 
-A tool implements the `Tool` trait. It declares its name, a description written for the model, an input schema generated from a Rust type with schemars, the agent definitions and machine roles it is available to, and its permission class: read-only, or with side effects. Its executor follows the operation lifecycle ([ADR-0013](../adr/0013-journal-every-side-effect.md)): prepare, then execute after authorization. Results are typed values with a rendering for the model. The registry rejects duplicate names at startup. [Tools](tools.md) has the contract in full.
+A tool implements the `Tool` trait. It declares its name, a description written for the model, an input schema generated from a Rust type with schemars, its permission class: read-only, or with side effects, and whether a model call is offered it, which can depend on the conversation's project and the owner's projects. Its executor follows the operation lifecycle ([ADR-0013](../adr/0013-journal-every-side-effect.md)): prepare, then execute after authorization. Results are typed values with a rendering for the model. An agent definition names the tools its agent may use, and a run gets those of them that the registry holds, so a tool that a platform's composition root does not register, such as `run_command` on FreeBSD until workers bring it, is not offered there. The registry rejects duplicate names when tools register. [Tools](tools.md) has the contract in full.
 
 ### 3.2 Agent definitions
 
@@ -65,7 +65,7 @@ Each feature defines its command arguments, results, errors and channel messages
 The shell defines typed slots in `apps/desktop/src/lib/state/shell-slots.svelte.ts`, with their entry types in `types/shell-slots.ts` ([ADR-0020](../adr/0020-complete-the-ui-shell-slots.md)):
 
 - navigation entries and views; a view's title can be content, such as a conversation's title, which the pseudo-locale check then skips;
-- sidebar panels, below the navigation, such as the conversation list;
+- sidebar panels, below the navigation, such as the projects and the conversation list;
 - overlays, mounted once at the shell's root, such as dialogs that several places open;
 - settings sections, each a page of the settings that the settings sidebar lists by its icon and title;
 - command palette actions, which can say when they are available;

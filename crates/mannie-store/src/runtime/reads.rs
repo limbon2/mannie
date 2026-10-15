@@ -3,16 +3,19 @@
 //! transcript as the model reads it.
 
 use mannie_types::clock::UtcMillis;
-use mannie_types::ids::{CheckpointId, ConversationId, PartId, TurnId};
+use mannie_types::ids::{CheckpointId, ConversationId, PartId, RunId, TurnId};
 use mannie_types::run::RunState;
+use mannie_types::tools::ToolCallDocument;
 use mannie_types::transcript::{
     Audience, Checkpoint, ContextUsage, ConversationEvent, ConversationSnapshot,
     ConversationSummary, PartKind, PartState, PartView, TurnView,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 
+use super::projects::{self, ConversationList};
 use super::rows::{
-    self, StoredRow, from_json, millis, parse_id, part_from_row, run_view, turn_from_row,
+    self, PartDocument, StoredRow, from_json, millis, parse_id, part_from_row, position, run_view,
+    summary_columns, turn_from_row,
 };
 use super::{ProviderItem, RuntimeStoreError};
 use crate::Store;
@@ -22,8 +25,11 @@ const SELECT_LATEST_TURNS: &str = "SELECT id, position, current_run_id, created_
      WHERE conversation_id = ?1 ORDER BY position DESC LIMIT ?2";
 const SELECT_TURNS_BEFORE: &str = "SELECT id, position, current_run_id, created_at FROM runtime_turns \
      WHERE conversation_id = ?1 AND position < ?2 ORDER BY position DESC LIMIT ?3";
+// A turn shows the owner's message, the parts of its current run, and the parts
+// of the earlier runs it keeps because they made tool calls.
 const SELECT_TURN_PARTS: &str = "SELECT id, turn_id, run_id, position, kind, audience, state, text, document, created_at \
-     FROM runtime_parts WHERE turn_id = ?1 AND (run_id IS NULL OR run_id = ?2) AND state <> 'discarded' \
+     FROM runtime_parts WHERE turn_id = ?1 AND (run_id IS NULL OR run_id = ?2 \
+     OR run_id IN (SELECT id FROM runtime_runs WHERE turn_id = ?1 AND kept = 1)) AND state <> 'discarded' \
      ORDER BY position";
 const SELECT_LATEST_CHECKPOINT: &str = "SELECT id FROM runtime_checkpoints WHERE conversation_id = ?1 \
      ORDER BY covers_through_turn DESC, created_at DESC LIMIT 1";
@@ -31,9 +37,11 @@ const SELECT_CONTEXT_USAGE: &str = "SELECT context_usage FROM runtime_conversati
 const SELECT_CONTEXT_LEDGER: &str = "SELECT context FROM runtime_conversations WHERE id = ?1";
 const SELECT_EVENTS_AFTER: &str = "SELECT seq, kind, part_id, body FROM runtime_events \
      WHERE conversation_id = ?1 AND seq > ?2 ORDER BY seq";
-const SELECT_ALL_SUMMARIES: &str = "SELECT c.id, c.title, c.title_source, c.profile_id, c.created_at, c.updated_at, \
-     EXISTS (SELECT 1 FROM runtime_runs r WHERE r.conversation_id = c.id AND r.state IN ('queued', 'running')) \
-     FROM runtime_conversations c ORDER BY c.updated_at DESC, c.id DESC";
+const SELECT_ALL_SUMMARIES: &str = concat!(
+    "SELECT ",
+    summary_columns!(),
+    " FROM runtime_conversations c ORDER BY c.updated_at DESC, c.id DESC"
+);
 const SELECT_CHECKPOINTS: &str = "SELECT id, covers_through_turn, content_hash, summary, created_at \
      FROM runtime_checkpoints WHERE conversation_id = ?1 \
      ORDER BY covers_through_turn DESC, created_at DESC";
@@ -42,14 +50,20 @@ const SELECT_CHECKPOINT_SUMMARY: &str =
 const SELECT_MODEL_TURNS: &str = "SELECT t.id, t.position, t.current_run_id, r.state FROM runtime_turns t \
      LEFT JOIN runtime_runs r ON r.id = t.current_run_id \
      WHERE t.conversation_id = ?1 AND t.position > ?2 ORDER BY t.position";
-const SELECT_MODEL_PARTS: &str = "SELECT p.id, p.kind, p.audience, p.state, p.text, i.binding, i.item \
+const SELECT_MODEL_PARTS: &str = "SELECT p.id, p.kind, p.audience, p.state, p.text, i.binding, i.item, \
+     p.run_id, p.document, p.attempt \
      FROM runtime_parts p LEFT JOIN runtime_provider_items i ON i.part_id = p.id \
-     WHERE p.turn_id = ?1 AND (p.run_id IS NULL OR p.run_id = ?2) \
+     WHERE p.turn_id = ?1 AND (p.run_id IS NULL OR p.run_id = ?2 \
+     OR p.run_id IN (SELECT id FROM runtime_runs WHERE turn_id = ?1 AND kept = 1)) \
      AND p.state NOT IN ('discarded', 'streaming') ORDER BY p.position";
+const SELECT_KEPT_RUNS_OF_TURN: &str = "SELECT id, state FROM runtime_runs \
+     WHERE turn_id = ?1 AND kept = 1 ORDER BY created_at, id";
 const SELECT_LATEST_TURN: &str = "SELECT t.id, r.state FROM runtime_turns t \
      LEFT JOIN runtime_runs r ON r.id = t.current_run_id \
      WHERE t.conversation_id = ?1 ORDER BY t.position DESC LIMIT 1";
 const DELETE_CONVERSATION: &str = "DELETE FROM runtime_conversations WHERE id = ?1";
+const SELECT_TURN_REQUEST: &str = "SELECT text FROM runtime_parts      WHERE turn_id = ?1 AND run_id IS NULL ORDER BY position LIMIT 1";
+const SELECT_TOOL_CALLS_BEFORE: &str = "SELECT COUNT(*) FROM runtime_parts p      JOIN runtime_parts c ON c.turn_id = p.turn_id      WHERE c.id = ?1 AND p.kind = 'tool_call' AND p.position < c.position";
 const SELECT_ACTIVE_RUN_COUNT: &str =
     "SELECT COUNT(*) FROM runtime_runs WHERE state IN ('queued', 'running')";
 
@@ -69,8 +83,11 @@ pub(crate) const STATEMENTS: &[&str] = &[
     SELECT_CHECKPOINT_SUMMARY,
     SELECT_MODEL_TURNS,
     SELECT_MODEL_PARTS,
+    SELECT_KEPT_RUNS_OF_TURN,
     SELECT_LATEST_TURN,
     DELETE_CONVERSATION,
+    SELECT_TURN_REQUEST,
+    SELECT_TOOL_CALLS_BEFORE,
     SELECT_ACTIVE_RUN_COUNT,
 ];
 
@@ -108,18 +125,32 @@ pub struct StoredCheckpoint {
     pub created_at: UtcMillis,
 }
 
-/// A turn as the model reads it: the owner's message and the parts of the
-/// current run that the model sees.
+/// A turn as the model reads it: the owner's message, the parts of the
+/// earlier runs that the turn keeps, and the parts of the current run that the
+/// model sees.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelTurn {
     /// The turn.
     pub turn_id: TurnId,
     /// Its position.
     pub position: u32,
+    /// Its current run, if it has one.
+    pub run_id: Option<RunId>,
     /// The state of its current run, if it has one.
     pub run_state: Option<RunState>,
+    /// The earlier runs that the turn keeps, oldest first.
+    pub kept_runs: Vec<KeptRun>,
     /// Its parts for the model, in order.
     pub parts: Vec<ModelPart>,
+}
+
+/// An earlier run whose parts a turn keeps, because it made tool calls.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeptRun {
+    /// The run.
+    pub run_id: RunId,
+    /// How it ended.
+    pub state: RunState,
 }
 
 /// A part as the model reads it.
@@ -127,6 +158,8 @@ pub struct ModelTurn {
 pub struct ModelPart {
     /// The part.
     pub id: PartId,
+    /// The run that wrote it, or `None` for the owner's message.
+    pub run_id: Option<RunId>,
     /// What it is, or `None` for a kind this version does not know.
     pub kind: Option<PartKind>,
     /// The kind's name, also for unknown kinds.
@@ -137,6 +170,11 @@ pub struct ModelPart {
     pub text: String,
     /// Its provider-private data, if any.
     pub provider_item: Option<ProviderItem>,
+    /// The call of a tool call part.
+    pub tool_call: Option<ToolCallDocument>,
+    /// The model call of its run that wrote it, counting from 1, which tells
+    /// the steps of a reply apart; 0 for the owner's message.
+    pub attempt: u32,
 }
 
 impl Store {
@@ -216,7 +254,7 @@ impl Store {
             let mut events = Vec::with_capacity(stored.len());
             for row in &stored {
                 if let Some(event) = rows::hydrate(connection, &conversation, row)? {
-                    events.push((rows::position(row.seq, "a sequence number")?, event));
+                    events.push((position(row.seq, "a sequence number")?, event));
                 }
             }
             Ok(EventsAfter::Events { events, last_seq })
@@ -235,6 +273,28 @@ impl Store {
             raw.into_iter()
                 .map(rows::RawSummary::into_summary)
                 .collect()
+        })
+        .await
+    }
+
+    /// Every conversation and every project, as one read sees them, for a
+    /// new subscriber of the conversation list.
+    pub async fn conversation_list(&self) -> Result<ConversationList, RuntimeStoreError> {
+        read_consistently(self, |connection| {
+            let raw: Vec<rows::RawSummary> = {
+                let mut select = connection.prepare_cached(SELECT_ALL_SUMMARIES)?;
+                let rows = select.query_map([], rows::summary_from_row)?;
+                rows.collect::<Result<_, _>>()?
+            };
+            let conversations = raw
+                .into_iter()
+                .map(rows::RawSummary::into_summary)
+                .collect::<Result<_, _>>()?;
+            let projects = projects::projects_in(connection)?;
+            Ok(ConversationList {
+                conversations,
+                projects,
+            })
         })
         .await
     }
@@ -275,7 +335,7 @@ impl Store {
                 .map(|(id, covers, content_hash, summary, created_at)| {
                     Ok(StoredCheckpoint {
                         id: parse_id(&id, CheckpointId::parse)?,
-                        covers_through_turn: rows::position(covers, "a checkpoint's turn")?,
+                        covers_through_turn: position(covers, "a checkpoint's turn")?,
                         content_hash,
                         summary,
                         created_at: millis(created_at),
@@ -328,10 +388,16 @@ impl Store {
             let mut model_turns = Vec::with_capacity(turns.len());
             for (turn_id, position, current_run, run_state) in turns {
                 let parts = model_parts(connection, &turn_id, current_run.as_deref())?;
+                let kept_runs = kept_runs_of_turn(connection, &turn_id, current_run.as_deref())?;
                 model_turns.push(ModelTurn {
                     turn_id: parse_id(&turn_id, TurnId::parse)?,
                     position: rows::position(position, "a turn's position")?,
+                    run_id: current_run
+                        .as_deref()
+                        .map(|run| parse_id(run, RunId::parse))
+                        .transpose()?,
                     run_state: run_state.as_deref().and_then(RunState::parse),
+                    kept_runs,
                     parts,
                 });
             }
@@ -382,9 +448,41 @@ impl Store {
             let count: i64 = connection
                 .prepare_cached(SELECT_ACTIVE_RUN_COUNT)?
                 .query_row([], |row| row.get(0))?;
-            rows::position(count, "the number of active runs")
+            position(count, "the number of active runs")
         })
         .await
+    }
+
+    /// The owner's message of a turn, as the owner wrote it. The model never
+    /// writes it, unlike a checkpoint's summary.
+    pub async fn turn_request(
+        &self,
+        turn_id: &TurnId,
+    ) -> Result<Option<String>, RuntimeStoreError> {
+        let turn = turn_id.as_str().to_owned();
+        let text = self
+            .read(move |connection| {
+                connection
+                    .prepare_cached(SELECT_TURN_REQUEST)?
+                    .query_row([turn], |row| row.get(0))
+                    .optional()
+            })
+            .await?;
+        Ok(text)
+    }
+
+    /// How many tool calls of its turn come before a part, in every run of
+    /// the turn.
+    pub async fn tool_calls_before(&self, part_id: &PartId) -> Result<u32, RuntimeStoreError> {
+        let part = part_id.as_str().to_owned();
+        let count: i64 = self
+            .read(move |connection| {
+                connection
+                    .prepare_cached(SELECT_TOOL_CALLS_BEFORE)?
+                    .query_row([part], |row| row.get(0))
+            })
+            .await?;
+        position(count, "the number of tool calls")
     }
 
     /// Deletes a conversation with everything that belongs to it. Returns
@@ -432,7 +530,7 @@ fn last_seq(connection: &Connection, conversation: &str) -> Result<Option<u32>, 
         .prepare_cached(SELECT_LAST_SEQ)?
         .query_row([conversation], |row| row.get(0))
         .optional()?;
-    last.map(|seq| rows::position(seq, "the last sequence number"))
+    last.map(|seq| position(seq, "the last sequence number"))
         .transpose()
 }
 
@@ -530,6 +628,10 @@ struct ModelPartRow {
     text: String,
     binding: Option<String>,
     item: Option<String>,
+    run_id: Option<String>,
+    document: String,
+    /// `NULL` for the owner's message, which no model call wrote.
+    attempt: Option<i64>,
 }
 
 fn model_parts(
@@ -548,6 +650,9 @@ fn model_parts(
                 text: row.get(4)?,
                 binding: row.get(5)?,
                 item: row.get(6)?,
+                run_id: row.get(7)?,
+                document: row.get(8)?,
+                attempt: row.get(9)?,
             })
         })?;
         rows.collect::<Result<_, _>>()?
@@ -565,14 +670,55 @@ fn model_parts(
             .binding
             .zip(row.item)
             .map(|(binding, item)| ProviderItem { binding, item });
+        let kind = PartKind::parse(&row.kind);
+        let tool_call = if kind == Some(PartKind::ToolCall) {
+            let document: PartDocument = from_json(&row.document, "part document")?;
+            document.tool_call
+        } else {
+            None
+        };
         parts.push(ModelPart {
             id: parse_id(&row.id, PartId::parse)?,
-            kind: PartKind::parse(&row.kind),
+            run_id: row
+                .run_id
+                .as_deref()
+                .map(|run| parse_id(run, RunId::parse))
+                .transpose()?,
+            kind,
             kind_name: row.kind,
             state,
             text: row.text,
             provider_item,
+            tool_call,
+            attempt: position(row.attempt.unwrap_or(0), "a part's attempt")?,
         });
     }
     Ok(parts)
+}
+
+/// The earlier runs of a turn that it keeps, oldest first, without its
+/// current run.
+fn kept_runs_of_turn(
+    connection: &Connection,
+    turn_id: &str,
+    current_run: Option<&str>,
+) -> Result<Vec<KeptRun>, RuntimeStoreError> {
+    let raw: Vec<(String, String)> = {
+        let mut select = connection.prepare_cached(SELECT_KEPT_RUNS_OF_TURN)?;
+        let rows = select.query_map([turn_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect::<Result<_, _>>()?
+    };
+    let mut kept = Vec::with_capacity(raw.len());
+    for (run, state) in raw {
+        if Some(run.as_str()) == current_run {
+            continue;
+        }
+        let state = RunState::parse(&state)
+            .ok_or_else(|| RuntimeStoreError::invalid(format!("unknown run state {state:?}")))?;
+        kept.push(KeptRun {
+            run_id: parse_id(&run, RunId::parse)?,
+            state,
+        });
+    }
+    Ok(kept)
 }

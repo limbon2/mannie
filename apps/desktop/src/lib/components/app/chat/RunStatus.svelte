@@ -4,7 +4,7 @@
   import { Button } from '#lib/components/ui/button/index.js';
   import { Spinner } from '#lib/components/ui/spinner/index.js';
   import * as Tooltip from '#lib/components/ui/tooltip/index.js';
-  import type { RunView } from '#lib/generated/bindings.js';
+  import type { PartId, PartView, RunView } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
   import { chatActions } from '#lib/state/chat-actions.svelte.js';
   import { secondClock } from '#lib/state/second-clock.js';
@@ -13,19 +13,34 @@
   import { formatSeconds, secondsUntil } from '#lib/utils/durations.js';
 
   // What the latest reply is doing, below it (docs/features/chat/
-  // conversation-view.md, parts). The transcript announces the end of a reply.
+  // conversation-view.md, parts; docs/features/system-tools/tool-activity.md,
+  // status). The transcript announces the end of a reply.
   interface StatusLine {
     readonly busy: boolean;
     readonly retryable: boolean;
     readonly text: string;
   }
 
-  let { conversationId, run }: { conversationId: string; run: RunView | null } = $props();
+  interface Props {
+    conversationId: string;
+    /** The parts of the reply's turn, among them the tool call that runs. */
+    parts: readonly PartView[];
+    run: RunView | null;
+  }
+
+  let { conversationId, parts, run }: Props = $props();
 
   let retrying = $state(false);
   let retryFailure = $state<ChatFailure | null>(null);
 
   const line: StatusLine | null = $derived(statusLine(run));
+
+  /** Whether the tool call in a part runs a command, which the status line names. */
+  function runsCommand(partId: PartId): boolean {
+    const content = parts.find((part) => part.id === partId)?.content;
+    const isCommand = content?.kind === 'tool_call' && content.call.tool === 'run_command';
+    return isCommand;
+  }
 
   function activeLine(current: RunView): StatusLine {
     const activity = current.activity;
@@ -33,11 +48,18 @@
       return { busy: true, retryable: false, text: m.chat_status_writing() };
     }
     switch (activity.kind) {
+      case 'awaiting_approval': {
+        return { busy: false, retryable: false, text: m.chat_status_awaiting_approval() };
+      }
       case 'compacting': {
         return { busy: true, retryable: false, text: m.chat_status_compacting() };
       }
       case 'preparing': {
         return { busy: true, retryable: false, text: m.chat_status_preparing() };
+      }
+      case 'running_tool': {
+        const text = runsCommand(activity.partId) ? m.chat_status_running_command() : m.chat_status_running_tool();
+        return { busy: true, retryable: false, text };
       }
       case 'retrying': {
         // The countdown ticks once a second while it shows.

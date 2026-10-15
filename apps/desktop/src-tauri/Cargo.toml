@@ -32,7 +32,13 @@ mannie-runtime = { workspace = true }
 # Provider credentials in the operating system's credential store (ADR-0010).
 mannie-secrets = { workspace = true }
 mannie-store = { workspace = true }
+# The system tools, which the composition root registers and hands to the
+# runtime.
+mannie-tools = { workspace = true }
 mannie-types = { workspace = true }
+# The system's folder dialog. The core opens it, so the webview gets no access
+# to the file system (ADR-0004).
+rfd = { workspace = true }
 serde = { workspace = true }
 specta = { workspace = true }
 specta-typescript = { workspace = true }

@@ -15,6 +15,7 @@ mod runtime;
 mod schema;
 mod settings;
 mod store;
+mod tools;
 #[cfg(feature = "validation")]
 pub mod validation;
 mod writer;
@@ -22,11 +23,13 @@ mod writer;
 pub use error::{DatabaseError, StoreError};
 pub use provider::{ProfileFields, ProfileStoreError, StoredProfile};
 pub use runtime::{
-    Applied, Change, EventsAfter, ModelPart, ModelTurn, NewCheckpoint, NewConversation, NewPart,
-    NewRun, ProviderItem, Recovered, RuntimeStoreError, StoredCheckpoint,
+    AddedProject, Applied, Change, ConversationList, EventsAfter, KeptRun, ModelPart, ModelTurn,
+    NewArchive, NewCheckpoint, NewConversation, NewPart, NewRun, ProjectDeletion, ProviderItem,
+    Recovered, RuntimeStoreError, StoredArchive, StoredCheckpoint, UncertainCall,
 };
 pub use settings::SettingsStoreError;
 pub use store::{Store, StoreOptions};
+pub use tools::ToolsStoreError;
 
 /// How durable a write is once its future resolves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +51,7 @@ pub(crate) fn all_statements() -> impl Iterator<Item = &'static str> {
     settings::STATEMENTS
         .iter()
         .chain(provider::STATEMENTS)
+        .chain(tools::STATEMENTS)
         .copied()
         .chain(runtime::statements())
 }

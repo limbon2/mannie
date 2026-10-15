@@ -3,7 +3,10 @@
 // lists its models, and answers each request after the scenario that the
 // request's model names. It records every request, so that a test can check
 // what the app sent, and it answers the probes for known servers with 404, so
-// the app treats it as a server that it does not recognize.
+// the app treats it as a server that it does not recognize. Every model calls
+// the tool of the provider test's Tools check when a request offers it, and
+// the tools scenario calls the tools that the owner's message lists
+// (docs/features/system-tools/tool-activity.md, tests).
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 
 /** The scenarios, by model name. */
@@ -28,6 +31,13 @@ export const MODELS = {
   slow: 'e2e-slow',
   /** Answers with pieces that carry the time they were sent: `[t=<ms since the epoch>]`. */
   timed: 'e2e-timed',
+  /**
+   * Calls the tools that the owner's message lists, one `call <tool> <JSON
+   * arguments>` line each, with `next` between the steps of the reply. After
+   * the last step it answers with `TOOLS_DONE` and the last result it read.
+   * A checkpoint request gets a summary.
+   */
+  tools: 'e2e-tools',
   /** Refuses every request as if the credential were wrong, and repeats the credential as some servers do. */
   unauthorized: 'e2e-unauthorized',
 } as const;
@@ -55,6 +65,19 @@ export const SUMMARY_PREFIX = 'Checkpoint written by the test provider';
 
 /** The size of the fast scenario's reply. */
 export const FAST_REPLY_BYTES = 32 * 1_024;
+
+/** What the tools scenario's last answer starts with. */
+export const TOOLS_DONE = 'Tools done.';
+
+/** The tool of the provider test's Tools check (crates/mannie-provider/src/probe.rs). */
+const PROBE_TOOL = 'report_status';
+
+/** A tool call that a scenario makes. */
+interface ScriptedCall {
+  /** The arguments as JSON text. */
+  readonly arguments: string;
+  readonly name: string;
+}
 
 /** The fast scenario's reply: Markdown with emphasis, code and lists, in pieces of up to four characters. */
 function fastPieces(): string[] {
@@ -124,8 +147,8 @@ class ReplyWriter {
     return this.#response.destroyed || this.#response.writableEnded;
   }
 
-  /** Ends the reply with the usage figures. */
-  finish(usage: { input: number; output: number }): void {
+  /** Ends the reply with the usage figures, and on Chat Completions with the reason it ended. */
+  finish(usage: { input: number; output: number }, reason: 'stop' | 'tool_calls' = 'stop'): void {
     if (this.#interface === 'responses') {
       this.#event({
         response: {
@@ -136,7 +159,7 @@ class ReplyWriter {
         type: 'response.completed',
       });
     } else {
-      this.#chunk({ choices: [{ delta: {}, finish_reason: 'stop', index: 0 }] });
+      this.#chunk({ choices: [{ delta: {}, finish_reason: reason, index: 0 }] });
       this.#chunk({ choices: [], usage: { completion_tokens: usage.output, prompt_tokens: usage.input } });
       this.#response.write('data: [DONE]\n\n');
     }
@@ -160,6 +183,45 @@ class ReplyWriter {
       });
     } else {
       this.#chunk({ choices: [{ delta: { reasoning_content: text }, finish_reason: null, index: 0 }] });
+    }
+  }
+
+  /**
+   * Sends a complete tool call: on the Responses API an item that is added,
+   * gets its arguments and is done; on Chat Completions one delta at the
+   * call's index.
+   */
+  toolCall(call: ScriptedCall, id: string, index: number): void {
+    if (this.#interface === 'responses') {
+      const item = { arguments: '', call_id: id, id: `fc_${id}`, name: call.name, type: 'function_call' };
+      this.#event({
+        item: { ...item, status: 'in_progress' },
+        output_index: index,
+        type: 'response.output_item.added',
+      });
+      this.#event({
+        delta: call.arguments,
+        item_id: item.id,
+        output_index: index,
+        type: 'response.function_call_arguments.delta',
+      });
+      this.#event({
+        item: { ...item, arguments: call.arguments, status: 'completed' },
+        output_index: index,
+        type: 'response.output_item.done',
+      });
+    } else {
+      this.#chunk({
+        choices: [
+          {
+            delta: {
+              tool_calls: [{ function: { arguments: call.arguments, name: call.name }, id, index, type: 'function' }],
+            },
+            finish_reason: null,
+            index: 0,
+          },
+        ],
+      });
     }
   }
 
@@ -195,6 +257,75 @@ function latestOwnerText(body: Record<string, unknown>): string {
     return content.map((part: { text?: string }) => part.text ?? '').join('');
   }
   return '';
+}
+
+/** The names of the tools that a request offers, in either interface. */
+function offeredTools(body: Record<string, unknown>): string[] {
+  const tools = body.tools as { function?: { name?: string }; name?: string }[] | undefined;
+  return (tools ?? []).map((tool) => tool.function?.name ?? tool.name ?? '');
+}
+
+/** The entries of a request after the owner's latest message, in either interface. */
+function entriesAfterOwner(body: Record<string, unknown>): Record<string, unknown>[] {
+  const entries = (body.messages ?? body.input ?? []) as Record<string, unknown>[];
+  const latest = entries.findLastIndex((entry) => entry.role === 'user');
+  return entries.slice(latest + 1);
+}
+
+/**
+ * How many steps with tool calls the model made since the owner's latest
+ * message: assistant messages with tool calls on Chat Completions, and runs
+ * of function call items on the Responses API.
+ */
+function toolSteps(body: Record<string, unknown>): number {
+  let steps = 0;
+  let previousWasCall = false;
+  for (const entry of entriesAfterOwner(body)) {
+    const calls = entry.tool_calls;
+    const isChatStep = entry.role === 'assistant' && Array.isArray(calls) && calls.length > 0;
+    const isResponsesCall = entry.type === 'function_call';
+    if (isChatStep) {
+      steps += 1;
+    }
+    const startsResponsesStep = isResponsesCall && !previousWasCall;
+    if (startsResponsesStep) {
+      steps += 1;
+    }
+    previousWasCall = isResponsesCall;
+  }
+  return steps;
+}
+
+/** The latest tool result that a request sends back, in either interface. */
+function latestToolResult(body: Record<string, unknown>): string {
+  for (const entry of entriesAfterOwner(body).toReversed()) {
+    const isChatResult = entry.role === 'tool' && typeof entry.content === 'string';
+    if (isChatResult) {
+      return String(entry.content);
+    }
+    const isResponsesResult = entry.type === 'function_call_output' && typeof entry.output === 'string';
+    if (isResponsesResult) {
+      return String(entry.output);
+    }
+  }
+  return '';
+}
+
+/** The steps that the owner's message lists for the tools scenario. */
+function scriptedSteps(text: string): ScriptedCall[][] {
+  const steps: ScriptedCall[][] = [[]];
+  for (const line of text.split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (trimmed === 'next') {
+      steps.push([]);
+      continue;
+    }
+    const match = /^call (\S+) (.+)$/u.exec(trimmed);
+    if (match !== null) {
+      steps.at(-1)?.push({ arguments: match[2] ?? '{}', name: match[1] ?? '' });
+    }
+  }
+  return steps.filter((step) => step.length > 0);
 }
 
 /** The interface that a path belongs to, if any. */
@@ -246,10 +377,31 @@ export async function startProviderServer(): Promise<ProviderServer> {
   const attemptsByModel = new Map<string, number>();
   const longReplies = { count: 0 };
   let hostileText = '';
+  let callCount = 0;
+
+  /** Sends the calls of one step, each with an ID of its own, and ends the reply. */
+  function callTools(writer: ReplyWriter, calls: readonly ScriptedCall[], input: number): void {
+    for (const [index, scripted] of calls.entries()) {
+      callCount += 1;
+      writer.toolCall(scripted, `call_e2e_${String(callCount)}`, index);
+    }
+    writer.finish({ input, output: tokens(calls) }, 'tool_calls');
+  }
 
   async function answer(writer: ReplyWriter, body: Record<string, unknown>): Promise<void> {
     const model = String(body.model);
     const input = tokens(body.messages ?? body.input);
+    const steps = toolSteps(body);
+    // The provider test's Tools check: call its tool once, then answer.
+    if (offeredTools(body).includes(PROBE_TOOL)) {
+      if (steps === 0) {
+        callTools(writer, [{ arguments: '{"status":"ready"}', name: PROBE_TOOL }], input);
+      } else {
+        writer.text('done');
+        writer.finish({ input, output: 1 });
+      }
+      return;
+    }
     switch (model) {
       case MODELS.hang: {
         writer.text('Started.');
@@ -326,6 +478,25 @@ export async function startProviderServer(): Promise<ProviderServer> {
         writer.reasoning('Thinking about the question.');
         writer.text('The answer after reasoning.');
         writer.finish({ input, output: 12 });
+        return;
+      }
+      case MODELS.tools: {
+        // A long conversation of tools is compacted like any other.
+        if (isSummaryRequest(body)) {
+          const summary = `${SUMMARY_PREFIX}: the owner asked for tool calls, and the assistant made them.`;
+          writer.text(summary);
+          writer.finish({ input, output: tokens(summary) });
+          return;
+        }
+        const script = scriptedSteps(latestOwnerText(body));
+        const step = script[steps];
+        if (step !== undefined) {
+          callTools(writer, step, input);
+          return;
+        }
+        const reply = `${TOOLS_DONE} Last result: ${latestToolResult(body)}`;
+        writer.text(reply);
+        writer.finish({ input, output: tokens(reply) });
         return;
       }
       default: {

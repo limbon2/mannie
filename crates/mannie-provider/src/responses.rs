@@ -12,10 +12,12 @@ use serde_json::{Map, Value, json};
 use crate::errors::{self, Context, ErrorDetails};
 use crate::provider::{
     Content, EventStream, ModelRequest, Provider, ProviderError, ProviderEvent, Role, Target,
+    ToolChoice,
 };
 use crate::quirks::Quirks;
 use crate::sse::SseEvent;
 use crate::stream::{self, Call, Flow, Translator};
+use crate::tool_calls::ToolCalls;
 use crate::transport::{HttpClient, endpoint};
 
 /// The Responses API adapter.
@@ -37,7 +39,7 @@ impl Provider for ResponsesAdapter {
     }
 
     fn stream(&self, target: &Target, request: ModelRequest) -> EventStream {
-        let body = request_body(&request);
+        let body = request_body(&request, &target.quirks);
         let url = endpoint(&target.base_url, &["responses"]);
         let http = self.client.post(
             url,
@@ -59,29 +61,53 @@ impl Provider for ResponsesAdapter {
 }
 
 /// The request body of a call.
-pub(crate) fn request_body(request: &ModelRequest) -> Value {
+pub(crate) fn request_body(request: &ModelRequest, quirks: &Quirks) -> Value {
     let mut input = Vec::new();
     for message in &request.messages {
         let (role, text_type) = match message.role {
-            Role::User => ("user", "input_text"),
+            Role::User | Role::Tool => ("user", "input_text"),
             Role::Assistant => ("assistant", "output_text"),
         };
         let mut parts = Vec::new();
         for content in &message.content {
             match content {
                 Content::Text(text) => parts.push(json!({ "type": text_type, "text": text })),
-                // Reasoning items precede the message they led to.
+                // Reasoning items precede the message or the calls they led
+                // to; the API wants them back with the calls when tools are
+                // used.
                 Content::ProviderItem(item) => match serde_json::from_str::<Value>(item) {
                     Ok(item) => input.push(item),
                     Err(error) => {
                         tracing::warn!(%error, "skipped a stored reasoning item that is not JSON");
                     }
                 },
+                Content::ToolCall {
+                    call_id,
+                    name,
+                    arguments,
+                } => {
+                    // The text written before a call comes before it. The
+                    // item ID is left out, because it would tie the call to a
+                    // reasoning item that may not be sent.
+                    flush_message(&mut input, role, &mut parts);
+                    input.push(json!({
+                        "type": "function_call",
+                        "call_id": call_id,
+                        "name": name,
+                        "arguments": arguments,
+                    }));
+                }
+                Content::ToolResult { call_id, output } => {
+                    flush_message(&mut input, role, &mut parts);
+                    input.push(json!({
+                        "type": "function_call_output",
+                        "call_id": call_id,
+                        "output": output,
+                    }));
+                }
             }
         }
-        if !parts.is_empty() {
-            input.push(json!({ "role": role, "content": parts }));
-        }
+        flush_message(&mut input, role, &mut parts);
     }
     let mut body = Map::new();
     body.insert("model".to_owned(), json!(request.model));
@@ -102,7 +128,35 @@ pub(crate) fn request_body(request: &ModelRequest) -> Value {
         );
         body.insert("include".to_owned(), json!(["reasoning.encrypted_content"]));
     }
+    if !request.tools.is_empty() {
+        let tools: Vec<Value> = request
+            .tools
+            .iter()
+            .map(|tool| {
+                json!({
+                    "type": "function",
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters,
+                    "strict": quirks.tools.strict,
+                })
+            })
+            .collect();
+        body.insert("tools".to_owned(), Value::Array(tools));
+        let choice = match request.tool_choice {
+            ToolChoice::Auto => "auto",
+            ToolChoice::None => "none",
+        };
+        body.insert("tool_choice".to_owned(), json!(choice));
+    }
     Value::Object(body)
+}
+
+/// Adds the text parts collected so far as one message.
+fn flush_message(input: &mut Vec<Value>, role: &str, parts: &mut Vec<Value>) {
+    if !parts.is_empty() {
+        input.push(json!({ "role": role, "content": std::mem::take(parts) }));
+    }
 }
 
 /// Turns the events of the Responses API into normalized events.
@@ -113,6 +167,8 @@ struct ResponsesTranslator {
     /// The reasoning item and summary part that text last arrived for, so
     /// that parts of a summary are separated by a blank line.
     last_summary: Option<(String, u64)>,
+    /// The function calls of the response, by their item.
+    calls: ToolCalls,
 }
 
 impl ResponsesTranslator {
@@ -122,7 +178,28 @@ impl ResponsesTranslator {
             model: model.to_owned(),
             quirks,
             last_summary: None,
+            calls: ToolCalls::new(),
         }
+    }
+
+    /// Records a function call item as it was added or finished, and returns
+    /// the key it is tracked under.
+    fn function_call(&mut self, item: &Value, out: &mut Vec<ProviderEvent>) -> Option<String> {
+        if item.get("type").and_then(Value::as_str) != Some("function_call") {
+            return None;
+        }
+        let call_id = item.get("call_id").and_then(Value::as_str);
+        let key = item
+            .get("id")
+            .and_then(Value::as_str)
+            .or(call_id)?
+            .to_owned();
+        let name = item.get("name").and_then(Value::as_str);
+        self.calls.update(&key, call_id, name, "", out);
+        if let Some(arguments) = item.get("arguments").and_then(Value::as_str) {
+            self.calls.set_arguments(&key, arguments);
+        }
+        Some(key)
     }
 
     fn context(&self) -> Context<'_> {
@@ -194,13 +271,36 @@ impl Translator for ResponsesTranslator {
                     out.push(ProviderEvent::ReasoningDelta(delta.to_owned()));
                 }
             }
+            "response.output_item.added" => {
+                if let Some(item) = data.get("item") {
+                    self.function_call(item, out);
+                }
+            }
+            "response.function_call_arguments.delta" => {
+                let key = data.get("item_id").and_then(Value::as_str);
+                let delta = data.get("delta").and_then(Value::as_str);
+                if let (Some(key), Some(delta)) = (key, delta) {
+                    self.calls.update(key, None, None, delta, out);
+                }
+            }
+            "response.function_call_arguments.done" => {
+                let key = data.get("item_id").and_then(Value::as_str);
+                let arguments = data.get("arguments").and_then(Value::as_str);
+                if let (Some(key), Some(arguments)) = (key, arguments) {
+                    self.calls.set_arguments(key, arguments);
+                }
+            }
             "response.output_item.done" => {
-                if let Some(item) = data.get("item").and_then(reasoning_item) {
-                    out.push(ProviderEvent::ProviderItem(item.to_string()));
+                let item = data.get("item").unwrap_or(&Value::Null);
+                if let Some(reasoning) = reasoning_item(item) {
+                    out.push(ProviderEvent::ProviderItem(reasoning.to_string()));
+                } else if let Some(key) = self.function_call(item, out) {
+                    self.calls.end(&key, out);
                 }
             }
             "response.completed" => {
                 let response = data.get("response").unwrap_or(&Value::Null);
+                self.calls.end_all(false, out);
                 Self::finish(response, FinishReason::Stop, out);
                 return Ok(Flow::Finished);
             }

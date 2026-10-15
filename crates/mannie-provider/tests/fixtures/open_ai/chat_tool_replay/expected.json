@@ -1,0 +1,19 @@
+{
+  "error": null,
+  "events": [
+    {
+      "text": "It says hello."
+    },
+    {
+      "usage": {
+        "cachedInput": null,
+        "input": 170,
+        "output": 6,
+        "reasoning": null
+      }
+    },
+    {
+      "finished": "stop"
+    }
+  ]
+}

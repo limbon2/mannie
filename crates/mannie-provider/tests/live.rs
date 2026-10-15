@@ -26,7 +26,8 @@ use futures_util::StreamExt;
 use mannie_provider::testing::{Exchange, RecordingProxy};
 use mannie_provider::{
     Content, HttpClient, Message, ModelList, ModelRequest, ProviderError, ProviderEvent,
-    ProviderRegistry, Role, Target, list_models, quirks_for,
+    ProviderRegistry, Role, TOOL_PROMPT, Target, ToolChoice, ToolDefinition, list_models,
+    quirks_for,
 };
 use mannie_types::clock::{Clock, SystemClock};
 use mannie_types::provider::{ApiInterface, ReasoningEffort, ServerKind};
@@ -89,7 +90,25 @@ impl Live {
             messages: vec![Message::text(Role::User, prompt)],
             max_output_tokens,
             reasoning_effort: effort,
+            tools: Vec::new(),
+            tool_choice: ToolChoice::Auto,
         }
+    }
+}
+
+/// The tool of the tool scenarios, as the provider test offers it.
+fn status_tool() -> ToolDefinition {
+    ToolDefinition {
+        name: "report_status".to_owned(),
+        description: "Reports the status of the test.".to_owned(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "status": { "type": "string", "description": "The status to report." },
+            },
+            "required": ["status"],
+            "additionalProperties": false,
+        }),
     }
 }
 
@@ -121,6 +140,17 @@ impl Outcome {
     fn item(&self) -> Option<String> {
         self.events.iter().find_map(|event| match event {
             ProviderEvent::ProviderItem(item) => Some(item.clone()),
+            _ => None,
+        })
+    }
+
+    fn tool_call(&self) -> Option<(String, String, String)> {
+        self.events.iter().find_map(|event| match event {
+            ProviderEvent::ToolCall {
+                call_id,
+                name,
+                arguments,
+            } => Some((call_id.clone(), name.clone(), arguments.clone())),
             _ => None,
         })
     }
@@ -208,15 +238,34 @@ impl Runner {
                 let role = match message.role {
                     Role::User => "user",
                     Role::Assistant => "assistant",
+                    Role::Tool => "tool",
                 };
                 let mut entry = json!({ "role": role });
+                let mut calls = Vec::new();
+                let mut results = Vec::new();
                 for content in &message.content {
                     match content {
                         Content::Text(text) => entry["text"] = json!(text),
                         Content::ProviderItem(item) => {
                             entry["item"] = serde_json::from_str(item).unwrap();
                         }
+                        Content::ToolCall {
+                            call_id,
+                            name,
+                            arguments,
+                        } => calls.push(
+                            json!({ "callId": call_id, "name": name, "arguments": arguments }),
+                        ),
+                        Content::ToolResult { call_id, output } => {
+                            results.push(json!({ "callId": call_id, "output": output }));
+                        }
                     }
+                }
+                if !calls.is_empty() {
+                    entry["toolCalls"] = json!(calls);
+                }
+                if !results.is_empty() {
+                    entry["toolResults"] = json!(results);
                 }
                 entry
             })
@@ -233,6 +282,15 @@ impl Runner {
                 "messages": messages,
                 "maxOutputTokens": request.max_output_tokens,
                 "reasoningEffort": request.reasoning_effort,
+                "tools": request.tools.iter().map(|tool| json!({
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters,
+                })).collect::<Vec<_>>(),
+                "toolChoice": match request.tool_choice {
+                    ToolChoice::Auto => "auto",
+                    ToolChoice::None => "none",
+                },
             },
         });
         let headers: serde_json::Map<String, Value> = exchange
@@ -416,6 +474,52 @@ impl Runner {
         }
     }
 
+    /// A tool call, and the answer after its result.
+    async fn check_tools(&self) {
+        let live = &self.live;
+        let asking = Message::text(Role::User, TOOL_PROMPT);
+        let call = self
+            .scenario(
+                "tool_call",
+                live.credential.clone(),
+                ModelRequest {
+                    messages: vec![asking.clone()],
+                    tools: vec![status_tool()],
+                    ..live.request("", 2_048, ReasoningEffort::ServerDefault)
+                },
+            )
+            .await;
+        assert_eq!(call.error, None, "tool call");
+        let (call_id, name, arguments) = call.tool_call().expect("the model called the tool");
+        let replay = ModelRequest {
+            messages: vec![
+                asking,
+                Message {
+                    role: Role::Assistant,
+                    content: vec![Content::ToolCall {
+                        call_id: call_id.clone(),
+                        name,
+                        arguments,
+                    }],
+                },
+                Message {
+                    role: Role::Tool,
+                    content: vec![Content::ToolResult {
+                        call_id,
+                        output: "The status was received. Now reply with the single word: done"
+                            .to_owned(),
+                    }],
+                },
+            ],
+            tools: vec![status_tool()],
+            ..live.request("", 2_048, ReasoningEffort::ServerDefault)
+        };
+        let answered = self
+            .scenario("tool_replay", live.credential.clone(), replay)
+            .await;
+        assert_eq!(answered.error, None, "tool replay");
+    }
+
     async fn check_model_list(&self) {
         let listed = list_models(
             &self.client,
@@ -442,5 +546,6 @@ async fn the_live_server_behaves_as_the_fixtures_say() {
     runner.check_refusals().await;
     runner.check_reasoning().await;
     runner.check_overflow().await;
+    runner.check_tools().await;
     runner.check_model_list().await;
 }

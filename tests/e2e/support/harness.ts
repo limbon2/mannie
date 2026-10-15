@@ -50,6 +50,7 @@ export interface ProfileInput {
     readonly name: string;
     readonly outputLimit: number;
     readonly reasoningEffort: 'high' | 'low' | 'max' | 'medium' | 'minimal' | 'none' | 'server_default' | 'xhigh';
+    readonly useTools: boolean;
   };
 }
 
@@ -71,6 +72,7 @@ interface Harness {
   processId(): Promise<number>;
   runChannelLoad(load: ChannelLoad): Promise<ChannelLoadReport>;
   seedConversation(turns: number): Promise<string>;
+  setFolderChoice(folder: string | null): Promise<void>;
   trayMenu(item: 'open' | 'quit'): Promise<void>;
   windowState(): Promise<WindowState>;
 }
@@ -224,6 +226,20 @@ export async function seedConversation(turns: number): Promise<string> {
     }
     return harness.seedConversation(count);
   }, turns);
+}
+
+/**
+ * Sets what the next folder dialog answers, since WebDriver cannot reach the
+ * system's dialog: a folder, or `null` for a dialog that the owner closed.
+ */
+export async function setFolderChoice(folder: string | null): Promise<void> {
+  await browser.execute(async (chosen) => {
+    const harness = window.mannieValidation;
+    if (harness === undefined) {
+      throw new Error('the validation harness is missing: run the validation build');
+    }
+    await harness.setFolderChoice(chosen);
+  }, folder);
 }
 
 /**

@@ -1,0 +1,47 @@
+# ADR-0023: Organize conversations into projects
+
+|          |                                                                                                                                                                                                                                                                                                                                                                                                       |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status   | Accepted                                                                                                                                                                                                                                                                                                                                                                                              |
+| Date     | 2026-10-15                                                                                                                                                                                                                                                                                                                                                                                            |
+| Deciders | Owner                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Related  | [ADR-0002](0002-grow-through-extension-points.md), [ADR-0013](0013-journal-every-side-effect.md), [ADR-0020](0020-complete-the-ui-shell-slots.md), [ADR-0022](0022-add-conversation-controls-to-the-shell.md), [Projects](../features/chat/projects.md), [System tools](../features/system-tools/README.md), [Domain model](../architecture/domain-model.md), [Security](../architecture/security.md) |
+
+## Context
+
+- System tools gave each conversation a workspace folder. The owner chose it in the conversation's toolbar, through the conversation controls of [ADR-0022](0022-add-conversation-controls-to-the-shell.md), and new conversations started with a default from the Tools settings.
+- On 2026-10-15 the owner decided to organize work the way the Codex and Claude desktop apps do: a "Projects" section in the sidebar, above the general conversations, where "+" turns a folder into a project, and the conversations of a project work in its folder. The workspace control and the default go ([chat decisions](../features/chat/README.md#decisions)).
+- The conversation list belongs to the chat feature. System tools read a conversation's workspace when they authorize and run a call, and nothing else about where the folder came from. Chat checks a project's folder with the check that system tools use for paths.
+- The owner also wants a general conversation to move into a project when the request is about it, decided by the model, and approvals that last for a conversation, a project or every conversation.
+- None of this is released: v0.1.0 has no system tools, and M2 is not released.
+
+## Decision
+
+1. A project is a folder on the master that the owner added, with a name: the folder's name until the owner renames it. The chat feature owns projects: their table in the runtime module, their commands, and their place in the conversation list, which lists the projects with their conversations above the general conversations.
+2. A conversation belongs to at most one project, from its start or from the moment it moves into one. Its workspace is its project's folder, which the store copies onto the conversation, so system tools read it unchanged. A general conversation has no workspace.
+3. A general conversation moves into a project through the system tool `move_to_project`, which goes through the policy, the approvals and the journal like every tool call ([ADR-0013](0013-journal-every-side-effect.md)). The policy allows a move without a question only when the owner's message of the turn names the project and no other tool call of the turn came before it, so content the model read cannot move it; otherwise the owner decides, and no grant or rule covers a move. A conversation never leaves its project.
+4. Removing a project deletes its conversations, after the owner confirms a question that says how many. The core removes nothing when the project has another number of conversations by then.
+5. A grant lasts for its conversation, for its project, or for every conversation, as the owner chooses in the approval request. Accesses to Mannie's own folders still always ask.
+6. Extension points grow by addition ([ADR-0002](0002-grow-through-extension-points.md)): a tool says whether a model call is offered it, and a call's surroundings hold the conversation's project, the owner's projects and the move, which the runtime provides because a move changes the conversation; the policy's inputs hold the grants by their reach, the project and the owner's message; the environment section lists the projects; and the conversation list's channel carries the projects.
+7. The conversation controls slot of [ADR-0022](0022-add-conversation-controls-to-the-shell.md) has no control left and is removed, so this ADR supersedes ADR-0022. A later control near the conversation would come back with an ADR of its own. The removed contracts, `set_conversation_workspace`, `choose_folder`, the default workspace of the Tools settings and the slot, were never released, so they need no period of deprecation.
+
+## Consequences
+
+- Positive: the owner sees the work grouped by folder and chooses a folder once per project. System tools and their policy keep their shape, and the move uses the same lifecycle as every other call. The approvals match how the owner works across conversations.
+- Negative: one more concept and table, and the sidebar grows a group. Removing a project deletes data. A grant for a project or for every conversation reaches further than one for a conversation. System tools read projects, which chat owns, through the facts of a call's surroundings.
+- Risks: a prompt injection that tries to move a conversation into a project, which decision 3 limits to the owner's own words or the owner's answer; a project named like a common word, which the owner's message may name without meaning it, so that a move the model made runs without a question; a broad grant that a misled model uses, which the owner chose in the request and can revoke from the settings; a project folder that disappears, whose tools then fail with "not found" until the owner removes the project.
+
+## Alternatives considered
+
+| Option                                                          | Why not chosen                                                                                                                                 |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Keep a workspace per conversation, chosen in the toolbar        | The owner wants the folder chosen once, in the sidebar                                                                                         |
+| Projects owned by system tools, in a sidebar panel of their own | The conversation rows belong to chat's list, so a second panel would show conversations twice or need a new extension point into the chat list |
+| Projects derived from the folders of the conversations          | A project could not exist before its first conversation, and "+" adds one before any                                                           |
+| Moves by matching project names in the owner's message          | A project named like a common word, such as "work", would catch ordinary sentences                                                             |
+| Moves only through a "Move to project…" menu                    | The owner wants the conversation to move when the request is about a project                                                                   |
+| A move that the runtime handles outside the tool registry       | It would repeat the policy, the approvals and the journal of every other call, and escape the reviewed list of tool definitions                |
+
+## Validation
+
+M2: the end-to-end tests of projects (adding, working in, collapsing, renaming and removing a project, a move that the owner's message names and one that asks, the grants for a project and for every conversation); the runtime tests of the move, including one where another tool call came first; the injection corpus with a hostile move; the evaluation with a scripted model that moves into a named project; and the store's upgrade test from schema 11, which turns existing workspaces into projects.

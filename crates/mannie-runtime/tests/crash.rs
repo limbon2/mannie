@@ -46,6 +46,7 @@ fn draft() -> ProfileDraft {
         context_window: 128_000,
         output_limit: 16_384,
         reasoning_effort: ReasoningEffort::ServerDefault,
+        use_tools: false,
     }
 }
 
@@ -96,6 +97,7 @@ fn child_reply() {
             .start_conversation(StartConversation {
                 text: "Question".to_owned(),
                 profile_id: None,
+                project_id: None,
             })
             .await
             .unwrap();

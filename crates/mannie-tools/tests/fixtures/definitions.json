@@ -1,0 +1,428 @@
+[
+  {
+    "class": "read_only",
+    "description": "Shows the operating system with its version and architecture, the shell that run_command uses, and the conversation's workspace.",
+    "name": "system_info",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "activity": {
+          "description": "A few words for the owner that say what this call does, as an ongoing action, such as \"Reading package.json\" or \"Counting the failed tests\".",
+          "type": "string"
+        }
+      },
+      "required": ["activity"],
+      "type": "object"
+    }
+  },
+  {
+    "class": "read_only",
+    "description": "Lists the entries of a folder with their kind, size and time of change, sorted by name, in pages.",
+    "name": "list_directory",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "activity": {
+          "description": "A few words for the owner that say what this call does, as an ongoing action, such as \"Reading package.json\" or \"Counting the failed tests\".",
+          "type": "string"
+        },
+        "limit": {
+          "description": "How many entries to show: 200 when null, at most 500.",
+          "type": ["integer", "null"]
+        },
+        "offset": {
+          "description": "How many entries to skip, to read the next page. 0 when null.",
+          "type": ["integer", "null"]
+        },
+        "path": {
+          "description": "The folder, absolute or relative to the workspace. The workspace when null.",
+          "type": ["string", "null"]
+        }
+      },
+      "required": ["activity", "limit", "offset", "path"],
+      "type": "object"
+    }
+  },
+  {
+    "class": "read_only",
+    "description": "Shows the kind, size and times of a file or folder, whether it is read-only, and where a link points, without following it.",
+    "name": "file_info",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "activity": {
+          "description": "A few words for the owner that say what this call does, as an ongoing action, such as \"Reading package.json\" or \"Counting the failed tests\".",
+          "type": "string"
+        },
+        "path": {
+          "description": "The file, folder or link, absolute or relative to the workspace.",
+          "type": "string"
+        }
+      },
+      "required": ["activity", "path"],
+      "type": "object"
+    }
+  },
+  {
+    "class": "read_only",
+    "description": "Finds files below a folder whose path matches a glob pattern, such as **/*.rs or src/*.toml. A pattern without a slash matches file names at any depth. Skips hidden files and files that .gitignore excludes unless include_ignored is true. Returns paths relative to the folder, in pages.",
+    "name": "find_files",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "activity": {
+          "description": "A few words for the owner that say what this call does, as an ongoing action, such as \"Reading package.json\" or \"Counting the failed tests\".",
+          "type": "string"
+        },
+        "include_ignored": {
+          "description": "Whether to include hidden files and files that .gitignore excludes. False when null.",
+          "type": ["boolean", "null"]
+        },
+        "limit": {
+          "description": "How many matches to show: 200 when null, at most 500.",
+          "type": ["integer", "null"]
+        },
+        "offset": {
+          "description": "How many matches to skip, to read the next page. 0 when null.",
+          "type": ["integer", "null"]
+        },
+        "path": {
+          "description": "The folder to search, absolute or relative to the workspace. The workspace when null.",
+          "type": ["string", "null"]
+        },
+        "pattern": {
+          "description": "A glob pattern, such as **/*.rs or src/*.toml. A pattern without a slash matches file names at any depth.",
+          "type": "string"
+        }
+      },
+      "required": ["activity", "include_ignored", "limit", "offset", "path", "pattern"],
+      "type": "object"
+    }
+  },
+  {
+    "class": "read_only",
+    "description": "Searches a file, or every file below a folder, for text or a regular expression, and returns the matching lines with their path and line number, in pages. Skips binary files, files over 16 MiB, and hidden or ignored files unless include_ignored is true.",
+    "name": "search_text",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "activity": {
+          "description": "A few words for the owner that say what this call does, as an ongoing action, such as \"Reading package.json\" or \"Counting the failed tests\".",
+          "type": "string"
+        },
+        "case_sensitive": {
+          "description": "Whether upper and lower case must match. False when null.",
+          "type": ["boolean", "null"]
+        },
+        "glob": {
+          "description": "A glob pattern that limits which files below the folder are searched, such as *.rs. A pattern without a slash matches file names at any depth. Every file when null.",
+          "type": ["string", "null"]
+        },
+        "include_ignored": {
+          "description": "Whether to search hidden files and files that .gitignore excludes. False when null.",
+          "type": ["boolean", "null"]
+        },
+        "limit": {
+          "description": "How many matches to show: 100 when null, at most 200.",
+          "type": ["integer", "null"]
+        },
+        "offset": {
+          "description": "How many matches to skip, to read the next page. 0 when null.",
+          "type": ["integer", "null"]
+        },
+        "path": {
+          "description": "The file or folder to search, absolute or relative to the workspace. The workspace when null.",
+          "type": ["string", "null"]
+        },
+        "query": {
+          "description": "The text to find, or a regular expression when regex is true.",
+          "type": "string"
+        },
+        "regex": {
+          "description": "Whether the query is a regular expression in Rust's syntax. False when null.",
+          "type": ["boolean", "null"]
+        }
+      },
+      "required": [
+        "activity",
+        "case_sensitive",
+        "glob",
+        "include_ignored",
+        "limit",
+        "offset",
+        "path",
+        "query",
+        "regex"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "class": "read_only",
+    "description": "Reads lines of a text file, numbered from 1, with the file's revision. The numbers are not part of the file. Pass the revision to write_file or edit_file.",
+    "name": "read_file",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "activity": {
+          "description": "A few words for the owner that say what this call does, as an ongoing action, such as \"Reading package.json\" or \"Counting the failed tests\".",
+          "type": "string"
+        },
+        "limit": {
+          "description": "How many lines to read: 2000 when null, at most 2000.",
+          "type": ["integer", "null"]
+        },
+        "offset": {
+          "description": "The first line to read, counting from 1. 1 when null.",
+          "type": ["integer", "null"]
+        },
+        "path": {
+          "description": "The file, absolute or relative to the workspace.",
+          "type": "string"
+        }
+      },
+      "required": ["activity", "limit", "offset", "path"],
+      "type": "object"
+    }
+  },
+  {
+    "class": "side_effects",
+    "description": "Writes a whole text file. Without expected_revision it creates a new file and fails if one exists; with it, it replaces the file only when the revision still matches.",
+    "name": "write_file",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "activity": {
+          "description": "A few words for the owner that say what this call does, as an ongoing action, such as \"Reading package.json\" or \"Counting the failed tests\".",
+          "type": "string"
+        },
+        "content": {
+          "description": "The whole content of the file, at most 1 MiB.",
+          "type": "string"
+        },
+        "expected_revision": {
+          "description": "The revision from your latest `read_file` of this file, to replace it. Null to create a new file, which fails if the file exists.",
+          "type": ["string", "null"]
+        },
+        "path": {
+          "description": "The file, absolute or relative to the workspace. Missing folders above a new file are created.",
+          "type": "string"
+        }
+      },
+      "required": ["activity", "content", "expected_revision", "path"],
+      "type": "object"
+    }
+  },
+  {
+    "class": "side_effects",
+    "description": "Replaces exact text in a file. Each old_text must appear exactly once, copied without line numbers, and edits must not overlap. Either every edit applies or none. expected_revision is the revision of your latest read.",
+    "name": "edit_file",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "activity": {
+          "description": "A few words for the owner that say what this call does, as an ongoing action, such as \"Reading package.json\" or \"Counting the failed tests\".",
+          "type": "string"
+        },
+        "edits": {
+          "description": "From 1 to 50 replacements, applied together.",
+          "items": {
+            "additionalProperties": false,
+            "description": "One replacement.",
+            "properties": {
+              "new_text": {
+                "description": "The text that replaces it.",
+                "type": "string"
+              },
+              "old_text": {
+                "description": "The exact text to replace, without line numbers. It must appear exactly once in the file.",
+                "type": "string"
+              }
+            },
+            "required": ["new_text", "old_text"],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "expected_revision": {
+          "description": "The revision from your latest `read_file` of this file.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The file, absolute or relative to the workspace.",
+          "type": "string"
+        }
+      },
+      "required": ["activity", "edits", "expected_revision", "path"],
+      "type": "object"
+    }
+  },
+  {
+    "class": "side_effects",
+    "description": "Creates a folder and any missing folders above it.",
+    "name": "create_directory",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "activity": {
+          "description": "A few words for the owner that say what this call does, as an ongoing action, such as \"Reading package.json\" or \"Counting the failed tests\".",
+          "type": "string"
+        },
+        "path": {
+          "description": "The folder, absolute or relative to the workspace.",
+          "type": "string"
+        }
+      },
+      "required": ["activity", "path"],
+      "type": "object"
+    }
+  },
+  {
+    "class": "side_effects",
+    "description": "Copies a file, or a folder with its contents, to a path that does not exist yet.",
+    "name": "copy_path",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "activity": {
+          "description": "A few words for the owner that say what this call does, as an ongoing action, such as \"Reading package.json\" or \"Counting the failed tests\".",
+          "type": "string"
+        },
+        "destination": {
+          "description": "The new path, which must not exist yet. The folder above it must exist.",
+          "type": "string"
+        },
+        "source": {
+          "description": "The file or folder to copy, absolute or relative to the workspace.",
+          "type": "string"
+        }
+      },
+      "required": ["activity", "destination", "source"],
+      "type": "object"
+    }
+  },
+  {
+    "class": "side_effects",
+    "description": "Moves or renames a file or folder on the same volume, to a path that does not exist yet.",
+    "name": "move_path",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "activity": {
+          "description": "A few words for the owner that say what this call does, as an ongoing action, such as \"Reading package.json\" or \"Counting the failed tests\".",
+          "type": "string"
+        },
+        "destination": {
+          "description": "The new path, which must not exist yet. The folder above it must exist.",
+          "type": "string"
+        },
+        "source": {
+          "description": "The file, folder or link to move, absolute or relative to the workspace. A link is moved, never what it points to.",
+          "type": "string"
+        }
+      },
+      "required": ["activity", "destination", "source"],
+      "type": "object"
+    }
+  },
+  {
+    "class": "side_effects",
+    "description": "Deletes a file or folder for good. A folder that is not empty needs recursive set to true.",
+    "name": "delete_path",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "activity": {
+          "description": "A few words for the owner that say what this call does, as an ongoing action, such as \"Reading package.json\" or \"Counting the failed tests\".",
+          "type": "string"
+        },
+        "path": {
+          "description": "The file, link or folder, absolute or relative to the workspace. A link is deleted, never what it points to.",
+          "type": "string"
+        },
+        "recursive": {
+          "description": "Whether to delete a folder that is not empty with everything inside it. False when null.",
+          "type": ["boolean", "null"]
+        }
+      },
+      "required": ["activity", "path", "recursive"],
+      "type": "object"
+    }
+  },
+  {
+    "class": "side_effects",
+    "description": "Runs a command in the shell that system_info names, without a terminal or input, in working_directory or the workspace. It ends after timeout_seconds (60 by default, at most 600), and every process it started ends with it. Returns the exit code and the output.",
+    "name": "run_command",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "activity": {
+          "description": "A few words for the owner that say what this call does, as an ongoing action, such as \"Reading package.json\" or \"Counting the failed tests\".",
+          "type": "string"
+        },
+        "command": {
+          "description": "The command, in the shell that `system_info` names. It runs without a terminal and without input.",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "description": "How many seconds the command may run: 60 when null, at most 600.",
+          "type": ["integer", "null"]
+        },
+        "working_directory": {
+          "description": "The folder the command runs in, absolute or relative to the workspace. The workspace when null.",
+          "type": ["string", "null"]
+        }
+      },
+      "required": ["activity", "command", "timeout_seconds", "working_directory"],
+      "type": "object"
+    }
+  },
+  {
+    "class": "read_only",
+    "description": "Reads lines of an archived tool output by its reference.",
+    "name": "read_tool_output",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "activity": {
+          "description": "A few words for the owner that say what this call does, as an ongoing action, such as \"Reading package.json\" or \"Counting the failed tests\".",
+          "type": "string"
+        },
+        "limit": {
+          "description": "How many lines to read: 2000 when null, at most 2000.",
+          "type": ["integer", "null"]
+        },
+        "offset": {
+          "description": "The first line to read, counting from 1. 1 when null.",
+          "type": ["integer", "null"]
+        },
+        "output_id": {
+          "description": "The reference of the archived output, as a tool result named it.",
+          "type": "string"
+        }
+      },
+      "required": ["activity", "limit", "offset", "output_id"],
+      "type": "object"
+    }
+  },
+  {
+    "class": "side_effects",
+    "description": "Moves this conversation into one of the owner's projects, so that the tools work in the project's folder from the next call on. Call it first when the owner's request is about a project that the environment lists. A conversation moves once and never leaves its project.",
+    "name": "move_to_project",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "activity": {
+          "description": "A few words for the owner that say what this call does, as an ongoing action, such as \"Reading package.json\" or \"Counting the failed tests\".",
+          "type": "string"
+        },
+        "project": {
+          "description": "The project's folder as the environment lists it, or its name when no other project has the same name.",
+          "type": "string"
+        }
+      },
+      "required": ["activity", "project"],
+      "type": "object"
+    }
+  }
+]

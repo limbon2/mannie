@@ -9,11 +9,17 @@ use serde_json::{Map, Value, json};
 use crate::errors::{self, Context, ErrorDetails};
 use crate::provider::{
     Content, EventStream, ModelRequest, Provider, ProviderError, ProviderEvent, Role, Target,
+    ToolChoice,
 };
 use crate::quirks::{EffortShape, OutputLimitField, Quirks};
 use crate::sse::SseEvent;
 use crate::stream::{self, Call, Flow, Translator};
+use crate::tool_calls::ToolCalls;
 use crate::transport::{HttpClient, endpoint};
+
+mod tool_text;
+
+use tool_text::{Stream as TextStream, ToolTextSplitter};
 
 /// The Chat Completions adapter.
 #[derive(Debug, Clone)]
@@ -41,7 +47,12 @@ impl Provider for ChatCompletionsAdapter {
             target.credential.as_ref(),
             body.to_string().into_bytes(),
         );
-        let translator = ChatTranslator::new(&self.client, &request.model, target.quirks);
+        let translator = ChatTranslator::new(
+            &self.client,
+            &request.model,
+            target.quirks,
+            !request.tools.is_empty(),
+        );
         stream::drive(
             self.client.clone(),
             Call {
@@ -55,43 +66,96 @@ impl Provider for ChatCompletionsAdapter {
     }
 }
 
-/// The request body of a call.
-pub(crate) fn request_body(request: &ModelRequest, quirks: &Quirks) -> Value {
-    let mut messages: Vec<(Role, String)> = Vec::new();
+/// A message as Chat Completions takes it.
+enum Wire {
+    /// Text of the owner or the model.
+    Text { role: Role, text: String },
+    /// The model's tool calls, with the text it wrote before them.
+    Calls { text: String, calls: Vec<Value> },
+    /// The result of one tool call.
+    Result { call_id: String, output: String },
+}
+
+/// The messages of a request in the shape Chat Completions takes.
+fn wire_messages(request: &ModelRequest) -> Vec<Wire> {
+    let mut wire: Vec<Wire> = Vec::new();
     for message in &request.messages {
-        let text = message
-            .content
-            .iter()
-            .filter_map(|content| match content {
-                Content::Text(text) => Some(text.as_str()),
+        let mut texts = Vec::new();
+        let mut calls = Vec::new();
+        for content in &message.content {
+            match content {
+                Content::Text(text) => texts.push(text.as_str()),
                 // Provider-private data belongs to the Responses API.
-                Content::ProviderItem(_) => None,
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n");
+                Content::ProviderItem(_) => {}
+                Content::ToolCall {
+                    call_id,
+                    name,
+                    arguments,
+                } => calls.push(json!({
+                    "id": call_id,
+                    "type": "function",
+                    "function": { "name": name, "arguments": arguments },
+                })),
+                // Each result is a message of its own, and is never merged or
+                // dropped: a call without its result is refused.
+                Content::ToolResult { call_id, output } => wire.push(Wire::Result {
+                    call_id: call_id.clone(),
+                    output: output.clone(),
+                }),
+            }
+        }
+        let text = texts.join("\n\n");
+        if !calls.is_empty() {
+            wire.push(Wire::Calls { text, calls });
+            continue;
+        }
         if text.is_empty() {
             continue;
         }
         // Some chat templates refuse two messages of the same role in a row,
-        // so consecutive messages of one role become one message.
-        match messages.last_mut() {
-            Some((role, existing)) if *role == message.role => {
+        // so consecutive text messages of one role become one message.
+        match wire.last_mut() {
+            Some(Wire::Text {
+                role,
+                text: existing,
+            }) if *role == message.role => {
                 existing.push_str("\n\n");
                 existing.push_str(&text);
             }
-            _ => messages.push((message.role, text)),
+            _ => wire.push(Wire::Text {
+                role: message.role,
+                text,
+            }),
         }
     }
+    wire
+}
+
+/// The request body of a call.
+pub(crate) fn request_body(request: &ModelRequest, quirks: &Quirks) -> Value {
+    let messages = wire_messages(request);
     let mut wire = Vec::with_capacity(messages.len() + 1);
     if !request.instructions.is_empty() {
         wire.push(json!({ "role": "system", "content": request.instructions }));
     }
-    for (role, text) in messages {
-        let role = match role {
-            Role::User => "user",
-            Role::Assistant => "assistant",
-        };
-        wire.push(json!({ "role": role, "content": text }));
+    for message in messages {
+        wire.push(match message {
+            Wire::Text { role, text } => {
+                let role = match role {
+                    Role::User | Role::Tool => "user",
+                    Role::Assistant => "assistant",
+                };
+                json!({ "role": role, "content": text })
+            }
+            // Some chat templates fail on a null content, so a call without
+            // text has an empty one.
+            Wire::Calls { text, calls } => {
+                json!({ "role": "assistant", "content": text, "tool_calls": calls })
+            }
+            Wire::Result { call_id, output } => {
+                json!({ "role": "tool", "tool_call_id": call_id, "content": output })
+            }
+        });
     }
     let mut body = Map::new();
     body.insert("model".to_owned(), json!(request.model));
@@ -119,6 +183,28 @@ pub(crate) fn request_body(request: &ModelRequest, quirks: &Quirks) -> Value {
             EffortShape::Omitted => {}
         }
     }
+    if !request.tools.is_empty() {
+        let tools: Vec<Value> = request
+            .tools
+            .iter()
+            .map(|tool| {
+                let mut function = Map::new();
+                function.insert("name".to_owned(), json!(tool.name));
+                function.insert("description".to_owned(), json!(tool.description));
+                function.insert("parameters".to_owned(), tool.parameters.clone());
+                if quirks.tools.strict {
+                    function.insert("strict".to_owned(), json!(true));
+                }
+                json!({ "type": "function", "function": function })
+            })
+            .collect();
+        body.insert("tools".to_owned(), Value::Array(tools));
+        let choice = match request.tool_choice {
+            ToolChoice::Auto => "auto",
+            ToolChoice::None => "none",
+        };
+        body.insert("tool_choice".to_owned(), json!(choice));
+    }
     Value::Object(body)
 }
 
@@ -128,19 +214,70 @@ struct ChatTranslator {
     model: String,
     quirks: Quirks,
     think: ThinkSplitter,
+    /// Tool calls written as text in the answer, when the quirk applies.
+    text_calls: ToolTextSplitter,
+    /// Tool calls written as text in the reasoning, when the quirk applies.
+    reasoning_calls: ToolTextSplitter,
+    calls: ToolCalls,
     finish: Option<FinishReason>,
     usage: Option<Usage>,
 }
 
 impl ChatTranslator {
-    fn new(client: &HttpClient, model: &str, quirks: Quirks) -> Self {
+    fn new(client: &HttpClient, model: &str, quirks: Quirks, tools_offered: bool) -> Self {
+        // A call written as text is a call only when the model had tools.
+        let finds_calls_in_text = quirks.tools.calls_in_text && tools_offered;
         Self {
             client: client.clone(),
             model: model.to_owned(),
             quirks,
             think: ThinkSplitter::new(quirks.think_tags),
+            text_calls: ToolTextSplitter::new(finds_calls_in_text, TextStream::Text),
+            reasoning_calls: ToolTextSplitter::new(finds_calls_in_text, TextStream::Reasoning),
+            calls: ToolCalls::new(),
             finish: None,
             usage: None,
+        }
+    }
+
+    /// Passes text and reasoning through the splitters that find tool calls
+    /// written as text.
+    fn route(&mut self, events: Vec<ProviderEvent>, out: &mut Vec<ProviderEvent>) {
+        for event in events {
+            match event {
+                ProviderEvent::TextDelta(text) => self.text_calls.push(&text, &mut self.calls, out),
+                ProviderEvent::ReasoningDelta(text) => {
+                    self.reasoning_calls.push(&text, &mut self.calls, out);
+                }
+                other => out.push(other),
+            }
+        }
+    }
+
+    /// Reads the tool calls of a delta: by their index, with an ID and a name
+    /// in their first chunk and their arguments in pieces.
+    fn tool_calls(&mut self, delta: &Value, out: &mut Vec<ProviderEvent>) {
+        let Some(calls) = delta.get("tool_calls").and_then(Value::as_array) else {
+            return;
+        };
+        for (position, call) in calls.iter().enumerate() {
+            let index = call
+                .get("index")
+                .and_then(Value::as_u64)
+                .unwrap_or(position as u64);
+            let function = call.get("function");
+            self.calls.update(
+                &index.to_string(),
+                call.get("id").and_then(Value::as_str),
+                function
+                    .and_then(|function| function.get("name"))
+                    .and_then(Value::as_str),
+                function
+                    .and_then(|function| function.get("arguments"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                out,
+            );
         }
     }
 
@@ -158,7 +295,13 @@ impl ChatTranslator {
         let Some(finish) = self.finish else {
             return Err(stream::broken_stream());
         };
-        self.think.flush(out);
+        let mut held = Vec::new();
+        self.think.flush(&mut held);
+        self.route(held, out);
+        self.text_calls.flush(out);
+        self.reasoning_calls.flush(out);
+        // At the output limit, the call that streamed last may be incomplete.
+        self.calls.end_all(finish == FinishReason::OutputLimit, out);
         if let Some(usage) = self.usage.take() {
             out.push(ProviderEvent::Usage(usage));
         }
@@ -190,16 +333,19 @@ impl Translator for ChatTranslator {
         }
         let choice = chunk.pointer("/choices/0");
         if let Some(delta) = choice.and_then(|choice| choice.get("delta")) {
+            let mut produced = Vec::new();
             for field in ["reasoning_content", "reasoning"] {
                 if let Some(reasoning) = delta.get(field).and_then(Value::as_str)
                     && !reasoning.is_empty()
                 {
-                    out.push(ProviderEvent::ReasoningDelta(reasoning.to_owned()));
+                    produced.push(ProviderEvent::ReasoningDelta(reasoning.to_owned()));
                 }
             }
             if let Some(content) = delta.get("content").and_then(Value::as_str) {
-                self.think.push(content, out);
+                self.think.push(content, &mut produced);
             }
+            self.route(produced, out);
+            self.tool_calls(delta, out);
         }
         if let Some(reason) = choice
             .and_then(|choice| choice.get("finish_reason"))

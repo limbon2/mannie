@@ -1,0 +1,29 @@
+{
+  "error": null,
+  "events": [
+    {
+      "toolCallStarted": {
+        "callId": "call_r1",
+        "name": "read_file"
+      }
+    },
+    {
+      "toolCall": {
+        "arguments": "{\"path\": \"notes.txt\"}",
+        "callId": "call_r1",
+        "name": "read_file"
+      }
+    },
+    {
+      "usage": {
+        "cachedInput": 0,
+        "input": 140,
+        "output": 24,
+        "reasoning": 0
+      }
+    },
+    {
+      "finished": "stop"
+    }
+  ]
+}

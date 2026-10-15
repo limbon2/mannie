@@ -1,5 +1,6 @@
-//! The runtime's repository: conversations, turns, runs, parts, the event log
-//! and checkpoints (docs/features/chat/conversations.md, ADR-0012).
+//! The runtime's repository: conversations, turns, runs, parts, the event log,
+//! checkpoints and projects (docs/features/chat/conversations.md, ADR-0012,
+//! ADR-0023).
 //!
 //! The runtime changes a conversation through [`Store::apply`], which applies a
 //! list of [`Change`]s in one transaction, appends an event with the
@@ -8,20 +9,27 @@
 //! [`Store::events_after`]), the conversation list and the model's context.
 
 mod apply;
+mod archives;
+mod projects;
 mod reads;
 mod recovery;
 mod rows;
 
-use mannie_types::ids::{CheckpointId, ConversationId, PartId, ProfileId, RunId, TurnId};
+use mannie_types::ids::{
+    ArchiveId, CheckpointId, ConversationId, PartId, ProfileId, ProjectId, RunId, TurnId,
+};
 use mannie_types::run::{RunActivity, RunFailure, RunOutcome, RunState};
+use mannie_types::tools::ToolCallDocument;
 use mannie_types::transcript::{
     ContextUsage, ConversationEvent, ConversationSummary, PartKind, PartState,
 };
 
 use crate::error::StoreError;
 
-pub use reads::{EventsAfter, ModelPart, ModelTurn, StoredCheckpoint};
-pub use recovery::Recovered;
+pub use archives::StoredArchive;
+pub use projects::{AddedProject, ConversationList, ProjectDeletion};
+pub use reads::{EventsAfter, KeptRun, ModelPart, ModelTurn, StoredCheckpoint};
+pub use recovery::{Recovered, UncertainCall};
 
 /// The version of the JSON documents this module writes.
 const DOCUMENT_VERSION: u32 = 1;
@@ -35,6 +43,9 @@ pub struct NewConversation {
     pub title: String,
     /// The provider profile the owner chose, or `None` for the default.
     pub profile_id: Option<ProfileId>,
+    /// The project it starts in, whose folder becomes its workspace, or
+    /// `None` for a general conversation.
+    pub project_id: Option<ProjectId>,
 }
 
 /// A run to add.
@@ -66,6 +77,19 @@ pub struct NewPart {
     pub kind: PartKind,
     /// The failure, for an error part.
     pub failure: Option<RunFailure>,
+    /// The tool call, for a tool call part.
+    pub tool_call: Option<ToolCallDocument>,
+}
+
+/// An output of a tool call to archive with the call's part.
+#[derive(Debug, Clone)]
+pub struct NewArchive {
+    /// The archive.
+    pub id: ArchiveId,
+    /// What it holds, such as `stdout`.
+    pub name: String,
+    /// The output.
+    pub content: String,
 }
 
 /// Provider-private data that belongs to a part, such as encrypted reasoning.
@@ -178,6 +202,17 @@ pub enum Change {
         /// Its text.
         text: String,
     },
+    /// A tool call part that is not finished changes: its status, its
+    /// request or its result. The archived outputs are stored with it. This
+    /// is the journal entry of the call's operation (ADR-0013).
+    UpdatePart {
+        /// The part.
+        part_id: PartId,
+        /// The call as it is now.
+        tool_call: ToolCallDocument,
+        /// Outputs to archive with the part.
+        archives: Vec<NewArchive>,
+    },
     /// The parts of a failed attempt are discarded before the run retries.
     DiscardAttempt {
         /// The run.
@@ -207,6 +242,13 @@ pub enum Change {
         /// The profile, or `None` for the default.
         profile_id: Option<ProfileId>,
     },
+    /// A general conversation moves into a project, whose folder becomes
+    /// its workspace. Refused when it already belongs to a project, which it
+    /// never leaves.
+    SetProject {
+        /// The project.
+        project_id: ProjectId,
+    },
 }
 
 /// The result of applying changes: the events to publish, and the sequence
@@ -221,7 +263,7 @@ pub struct Applied {
     pub last_seq: u32,
     /// The conversation as it is now, when the changes affected the
     /// conversation list: a new turn, a run that started or ended, a new
-    /// title or profile.
+    /// title, profile or project.
     pub summary: Option<ConversationSummary>,
 }
 
@@ -253,6 +295,18 @@ pub enum RuntimeStoreError {
         /// The part.
         part: PartId,
     },
+    /// The part is not a tool call.
+    #[error("the part {part} is not a tool call")]
+    NotAToolCall {
+        /// The part.
+        part: PartId,
+    },
+    /// The project does not exist.
+    #[error("the project does not exist")]
+    ProjectNotFound,
+    /// The conversation already belongs to a project.
+    #[error("the conversation already belongs to a project")]
+    AlreadyInProject,
     /// Stored data does not have the shape this version expects.
     #[error("stored data is not valid: {what}")]
     InvalidData {
@@ -277,6 +331,9 @@ impl RuntimeStoreError {
             Self::NothingToRetry => "runtime_store.nothing_to_retry",
             Self::RunNotActive { .. } => "runtime_store.run_not_active",
             Self::PartNotStreaming { .. } => "runtime_store.part_not_streaming",
+            Self::NotAToolCall { .. } => "runtime_store.not_a_tool_call",
+            Self::ProjectNotFound => "runtime_store.project_not_found",
+            Self::AlreadyInProject => "runtime_store.already_in_project",
             Self::InvalidData { .. } => "runtime_store.invalid_data",
             Self::SequenceExhausted => "runtime_store.sequence_exhausted",
             Self::Store(error) => error.code(),
@@ -305,6 +362,8 @@ impl From<rusqlite::Error> for RuntimeStoreError {
 pub(crate) fn statements() -> impl Iterator<Item = &'static str> {
     apply::STATEMENTS
         .iter()
+        .chain(archives::STATEMENTS)
+        .chain(projects::STATEMENTS)
         .chain(reads::STATEMENTS)
         .chain(recovery::STATEMENTS)
         .chain(rows::STATEMENTS)

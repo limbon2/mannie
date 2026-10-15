@@ -40,6 +40,8 @@ export class ProviderProfileForm {
   /** Whether saving removes the stored credential. */
   removesCredential = $state(false);
   saving = $state(false);
+  /** Whether the model gets tools. A new profile uses them. */
+  useTools = $state(true);
 
   constructor(profile: ProviderProfile | null) {
     this.profile = profile;
@@ -54,6 +56,7 @@ export class ProviderProfileForm {
     this.model = profile.model;
     this.name = profile.name;
     this.outputLimit = profile.outputLimit;
+    this.useTools = profile.useTools;
   }
 
   /** The code of the latest save's failure, which marks the fields it concerns. */
@@ -139,6 +142,7 @@ export class ProviderProfileForm {
       name: this.name,
       outputLimit,
       reasoningEffort: this.effort,
+      useTools: this.useTools,
     };
     this.saving = true;
     const outcome =

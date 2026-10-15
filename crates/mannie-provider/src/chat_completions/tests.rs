@@ -20,6 +20,7 @@ fn translator(server: ServerKind) -> ChatTranslator {
         &client,
         "qwen3",
         quirks_for(ApiInterface::ChatCompletions, Some(server)),
+        true,
     )
 }
 
@@ -60,6 +61,8 @@ fn request(effort: ReasoningEffort) -> ModelRequest {
         ],
         max_output_tokens: 512,
         reasoning_effort: effort,
+        tools: Vec::new(),
+        tool_choice: crate::provider::ToolChoice::Auto,
     }
 }
 

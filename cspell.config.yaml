@@ -11,6 +11,8 @@ ignorePaths:
   - .claude/skills/**
   - .agents/skills/**
 words:
+  - ALLUSERSPROFILE
+  - APIKEY
   - appindicator
   - Authenticode
   - autolinks
@@ -23,8 +25,11 @@ words:
   - DMABUF
   - edgedriver
   - egui
+  - evals
+  - execve
   - exmarkdown
   - fastrand
+  - globset
   - HMAC
   - huntabyte
   - inlang
@@ -33,20 +38,27 @@ words:
   - kwallet
   - libappindicator
   - libayatana
+  - libdbus
   - libqca
   - librsvg
   - libwebkit
   - libxdo
   - lifecycles
   - limbon
+  - LOCALAPPDATA
   - lockfiles
+  - LOGNAME
   - Mannie
   - Mannie's
   - metacharacters
   - msvc
+  - nohup
   - NSIS
   - Ollama
+  - openat
   - Paraglide
+  - PATHEXT
+  - pidfds
   - prerender
   - prerendered
   - prerendering
@@ -59,14 +71,17 @@ words:
   - redb
   - redirections
   - remarkrc
+  - reparented
   - reqwest
   - rusqlite
+  - rustix
   - rustls
   - RustSec
   - rustup
   - schemars
   - serde
   - setsid
+  - SIGSTOP
   - Slint
   - specta
   - sqlx
@@ -80,6 +95,11 @@ words:
   - Tombi's
   - unpairing
   - unpairs
+  - USERDOMAIN
+  - USERPROFILE
   - WCAG
+  - winapi
+  - windir
   - zbus
+  - zenity
   - zeroize

@@ -2,29 +2,38 @@
 //! a run reads once at its start, the context of each call, and the calls
 //! that write checkpoints.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use futures_util::StreamExt;
 use mannie_provider::{
-    ModelRequest, Provider, ProviderError, ProviderEvent, Target, check_base_url, quirks_for,
+    ModelRequest, Provider, ProviderError, ProviderEvent, Target, ToolChoice, ToolDefinition,
+    check_base_url, quirks_for,
 };
 use mannie_store::{
     Change, Durability, ModelTurn, NewCheckpoint, RuntimeStoreError, StoredCheckpoint,
     StoredProfile,
 };
+use mannie_tools::{Availability, Tool, with_activity};
 use mannie_types::chat::{ChatSettings, Instructions};
-use mannie_types::ids::{ConversationId, ProfileId};
+use mannie_types::ids::{ConversationId, PartId, ProfileId};
 use mannie_types::provider::{ApiInterface, ReasoningEffort, context_budget};
 use mannie_types::run::RunFailure;
+use mannie_types::tools::ToolCallStatus;
+use mannie_types::transcript::PartKind;
 
 use crate::agents::AgentDefinition;
 use crate::budget::{Ledger, estimate_request, usage};
 use crate::compaction::{self, ContextSize, Trigger};
 use crate::context::{RequestShape, build_request};
-use crate::instructions::InstructionContext;
+use crate::instructions::{InstructionContext, ToolEnvironment};
 use crate::profiles::{VaultError, in_vault};
 use crate::retry::RetryDecision;
-use crate::{Runtime, lock};
+use crate::{Runtime, lock, texts};
+
+/// The newest tool results of the latest turn that stay in the context when
+/// older ones are left out to save space.
+const KEPT_RESULTS: usize = 3;
 
 /// Why a call could not be prepared or made.
 #[derive(Debug)]
@@ -62,6 +71,36 @@ pub(crate) struct Setup {
     pub(crate) budget: u32,
     /// The reasoning effort.
     pub(crate) reasoning_effort: ReasoningEffort,
+    /// The tools of the run: those its agent names that the registry holds,
+    /// or none when the profile does not use tools.
+    pub(crate) tools: Vec<Arc<dyn Tool>>,
+    /// Their definitions, as requests carry them when the tools are
+    /// offered.
+    pub(crate) definitions: Vec<ToolDefinition>,
+}
+
+impl Setup {
+    /// The run's tool with this name.
+    pub(crate) fn tool(&self, name: &str) -> Option<&Arc<dyn Tool>> {
+        self.tools.iter().find(|tool| tool.name() == name)
+    }
+
+    /// Whether the run has tools.
+    pub(crate) fn uses_tools(&self) -> bool {
+        !self.tools.is_empty()
+    }
+}
+
+/// How a call is prepared.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct CallOptions {
+    /// The reply used up its tool calls: the model may not call tools, and a
+    /// note asks it to answer.
+    pub(crate) tools_used_up: bool,
+    /// Even after compaction the context runs low: the latest turn's older
+    /// tool results are left out (docs/features/system-tools/tool-calls.md,
+    /// context).
+    pub(crate) leave_out_results: bool,
 }
 
 /// One call, ready to be made.
@@ -119,6 +158,25 @@ impl Runtime {
             tracing::error!(error.code = error.code(), "a stored base URL is not valid");
             RunFailure::Internal
         })?;
+        let tools: Vec<Arc<dyn Tool>> = if profile.use_tools {
+            agent
+                .tools
+                .iter()
+                .filter_map(|name| self.inner.tools.registry.get(name))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let definitions = tools
+            .iter()
+            .map(|tool| ToolDefinition {
+                name: tool.name().to_owned(),
+                description: tool.description().to_owned(),
+                // Every call names itself for the owner (docs/features/
+                // system-tools/tool-calls.md, the activity of a call).
+                parameters: with_activity(tool.parameters()),
+            })
+            .collect();
         let credential = match profile.credential_ref.clone() {
             None => None,
             Some(reference) => {
@@ -143,6 +201,8 @@ impl Runtime {
             output_limit: profile.output_limit,
             budget: context_budget(profile.context_window, profile.output_limit),
             reasoning_effort: profile.reasoning_effort,
+            tools,
+            definitions,
         })
     }
 
@@ -152,6 +212,7 @@ impl Runtime {
         &self,
         conversation: &ConversationId,
         setup: &Setup,
+        options: CallOptions,
     ) -> Result<Prepared, CallError> {
         let owner = self.owner_instructions().await?;
         let checkpoint = self.current_checkpoint(conversation).await?;
@@ -159,13 +220,49 @@ impl Runtime {
             .as_ref()
             .map(|checkpoint| checkpoint.covers_through_turn);
         let turns = self.inner.store.model_turns(conversation, covered).await?;
+        let (project_id, projects) = if setup.uses_tools() {
+            let summary = self.inner.store.conversation_summary(conversation).await?;
+            let projects = self.inner.store.projects().await?;
+            (summary.and_then(|summary| summary.project_id), projects)
+        } else {
+            (None, Vec::new())
+        };
+        let project = project_id
+            .as_ref()
+            .and_then(|id| projects.iter().find(|project| project.id == *id));
+        // Which tools a call is offered depends on the conversation: a
+        // general conversation can move into a project, one in a project
+        // cannot (docs/architecture/tools.md, availability).
+        let availability = Availability {
+            project,
+            projects: &projects,
+        };
+        let definitions: Vec<ToolDefinition> = setup
+            .tools
+            .iter()
+            .zip(&setup.definitions)
+            .filter(|(tool, _definition)| tool.offered(&availability))
+            .map(|(_tool, definition)| definition.clone())
+            .collect();
+        let system = &self.inner.tools.system;
         let instructions = self.inner.instructions.assemble(&InstructionContext {
             agent: &setup.agent,
             owner_instructions: owner.as_str(),
             checkpoint: checkpoint
                 .as_ref()
                 .map(|checkpoint| checkpoint.summary.as_str()),
+            tools: setup.uses_tools().then(|| ToolEnvironment {
+                system: &system.system,
+                shell: system.shell.as_ref().map(|shell| shell.name.as_str()),
+                project,
+                projects: &projects,
+            }),
         });
+        let left_out = if options.leave_out_results {
+            older_results(&turns)
+        } else {
+            HashSet::new()
+        };
         let shape = RequestShape {
             instructions: &instructions,
             model: &setup.model,
@@ -173,6 +270,14 @@ impl Runtime {
             binding: &setup.binding,
             max_output_tokens: setup.output_limit,
             reasoning_effort: setup.reasoning_effort,
+            tools: &definitions,
+            tool_choice: if options.tools_used_up {
+                ToolChoice::None
+            } else {
+                ToolChoice::Auto
+            },
+            note: (options.tools_used_up && setup.uses_tools()).then_some(texts::TOOL_BUDGET_USED),
+            left_out: &left_out,
         };
         let request = build_request(shape, &turns);
         let estimate = estimate_request(&request);
@@ -390,3 +495,24 @@ impl Runtime {
 
 /// The smallest transcript chunk of a summary call.
 const MIN_CHUNK_TOKENS: u32 = 256;
+
+/// The tool calls of the latest turn whose results can be left out: every
+/// completed call but the newest three.
+fn older_results(turns: &[ModelTurn]) -> HashSet<PartId> {
+    let Some(latest) = turns.last() else {
+        return HashSet::new();
+    };
+    let completed: Vec<&PartId> = latest
+        .parts
+        .iter()
+        .filter(|part| part.kind == Some(PartKind::ToolCall))
+        .filter(|part| {
+            part.tool_call
+                .as_ref()
+                .is_some_and(|call| call.status == ToolCallStatus::Completed)
+        })
+        .map(|part| &part.id)
+        .collect();
+    let older = completed.len().saturating_sub(KEPT_RESULTS);
+    completed[..older].iter().map(|id| (*id).clone()).collect()
+}

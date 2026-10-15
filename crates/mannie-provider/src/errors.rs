@@ -26,6 +26,21 @@ const OVERFLOW_PHRASES: &[&str] = &[
     "reduce the length of the messages",
 ];
 
+/// Phrases that servers use when they refuse a request because of its tools,
+/// in lower case (docs/features/system-tools/tool-calls.md, adapters): vLLM
+/// without its tool options, Ollama with a model without a tool template,
+/// OpenRouter without an endpoint that supports tools, and llama.cpp without
+/// its chat templates.
+const TOOLS_UNSUPPORTED_PHRASES: &[&str] = &[
+    "does not support tools",
+    "enable-auto-tool-choice",
+    "tool choice requires",
+    "support tool use",
+    "tools param requires",
+    "tool calling is not supported",
+    "tools are not supported",
+];
+
 /// What a server's error document says: OpenAI's `{"error": {...}}`, a flat
 /// object with `message` and `code`, or a plain string.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -125,6 +140,9 @@ pub(crate) fn classify_status(
     let transient = |cause| ProviderError::Transient { cause, retry_after };
     match status {
         300..=399 => ProviderError::Permanent(RunFailure::RedirectRefused),
+        400..=499 if details.mentions(TOOLS_UNSUPPORTED_PHRASES) => {
+            ProviderError::Permanent(RunFailure::ToolsUnsupported)
+        }
         401 => ProviderError::Permanent(RunFailure::InvalidCredential),
         402 => ProviderError::Permanent(RunFailure::QuotaExceeded),
         403 => ProviderError::Permanent(RunFailure::PermissionDenied),
@@ -158,6 +176,9 @@ pub(crate) fn classify_status(
 pub(crate) fn classify_stream_error(details: &ErrorDetails, context: Context<'_>) -> ProviderError {
     if context.is_context_overflow(details) {
         return ProviderError::ContextOverflow;
+    }
+    if details.mentions(TOOLS_UNSUPPORTED_PHRASES) {
+        return ProviderError::Permanent(RunFailure::ToolsUnsupported);
     }
     if details.has_code(&["insufficient_quota"]) {
         return ProviderError::Permanent(RunFailure::QuotaExceeded);

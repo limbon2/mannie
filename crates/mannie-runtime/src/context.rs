@@ -3,13 +3,21 @@
 //! checkpoint replaces the turns it covers here, and the stored transcript
 //! never changes (ADR-0012, decision 8).
 
-use mannie_provider::{Content, Message, ModelRequest, Role};
-use mannie_store::ModelTurn;
+use std::collections::HashSet;
+
+use mannie_provider::{Content, Message, ModelRequest, Role, ToolChoice, ToolDefinition};
+use mannie_store::{ModelPart, ModelTurn};
+use mannie_types::ids::{PartId, RunId};
 use mannie_types::provider::{ApiInterface, ReasoningEffort};
 use mannie_types::run::RunState;
+use mannie_types::tools::{NotRunReason, ToolCallDocument, ToolCallStatus};
 use mannie_types::transcript::PartKind;
 
 use crate::texts;
+
+/// The most characters of a call's arguments that a model without tools
+/// reads in the text that stands in for the call.
+const MAX_TEXT_CALL_ARGUMENTS: usize = 2_000;
 
 /// What a request is built from, besides the turns.
 #[derive(Debug, Clone, Copy)]
@@ -26,6 +34,16 @@ pub(crate) struct RequestShape<'a> {
     pub(crate) max_output_tokens: u32,
     /// The reasoning effort.
     pub(crate) reasoning_effort: ReasoningEffort,
+    /// The tools the model may call. Without tools, earlier tool calls reach
+    /// the model as text.
+    pub(crate) tools: &'a [ToolDefinition],
+    /// Whether the model may call them in this call.
+    pub(crate) tool_choice: ToolChoice,
+    /// A note after the turns, such as the one that the reply used up its
+    /// tool calls.
+    pub(crate) note: Option<&'a str>,
+    /// Tool calls whose results are left out to save space.
+    pub(crate) left_out: &'a HashSet<PartId>,
 }
 
 /// Builds the request for `turns`, the turns after the checkpoint, oldest
@@ -35,23 +53,84 @@ pub(crate) fn build_request(shape: RequestShape<'_>, turns: &[ModelTurn]) -> Mod
     for turn in turns {
         append_turn(&mut messages, turn, shape);
     }
+    if let Some(note) = shape.note {
+        messages.push(Message::text(Role::User, note));
+    }
     ModelRequest {
         model: shape.model.to_owned(),
         instructions: shape.instructions.to_owned(),
         messages,
         max_output_tokens: shape.max_output_tokens,
         reasoning_effort: shape.reasoning_effort,
+        tools: shape.tools.to_vec(),
+        tool_choice: shape.tool_choice,
+    }
+}
+
+/// The reply that a turn's parts build: the assistant's content, and the
+/// results of its tool calls, which follow the assistant message that holds
+/// the calls.
+#[derive(Default)]
+struct Reply {
+    content: Vec<Content>,
+    results: Vec<Message>,
+}
+
+impl Reply {
+    /// Adds the reply so far to the messages: the assistant message, then the
+    /// results of its tool calls.
+    fn flush(&mut self, messages: &mut Vec<Message>) {
+        flush_reply(messages, &mut self.content);
+        messages.append(&mut self.results);
+    }
+
+    /// Whether the reply wrote anything that the model reads.
+    fn wrote_something(&self) -> bool {
+        !self.results.is_empty()
+            || self
+                .content
+                .iter()
+                .any(|content| matches!(content, Content::Text(_) | Content::ToolCall { .. }))
     }
 }
 
 fn append_turn(messages: &mut Vec<Message>, turn: &ModelTurn, shape: RequestShape<'_>) {
-    let mut reply: Vec<Content> = Vec::new();
+    let mut reply = Reply::default();
+    // The parts of the runs that the turn keeps come first, run by run; each
+    // ends with the marker of how it ended.
+    let mut current_run: Option<&RunId> = None;
+    // The model call that made the latest tool call, so that calls of the
+    // next step get an assistant message of their own after the results.
+    let mut calling_attempt: Option<u32> = None;
     for part in &turn.parts {
+        if let Some(run) = &part.run_id
+            && current_run != Some(run)
+        {
+            if let Some(previous) = current_run
+                && let Some(kept) = turn.kept_runs.iter().find(|kept| kept.run_id == *previous)
+            {
+                end_run(messages, &mut reply, Some(kept.state));
+            }
+            current_run = Some(run);
+            calling_attempt = None;
+        }
+        let is_call = part.kind == Some(PartKind::ToolCall);
+        let next_step = calling_attempt.is_some_and(|attempt| attempt != part.attempt);
+        let follows_results = !reply.results.is_empty();
+        if follows_results && (!is_call || next_step) {
+            // The next model call of the reply starts after the results.
+            reply.flush(messages);
+        }
+        if is_call {
+            calling_attempt = Some(part.attempt);
+        }
         match part.kind {
-            Some(PartKind::UserText) => messages.push(Message::text(Role::User, part.text.clone())),
+            Some(PartKind::UserText) => {
+                messages.push(Message::text(Role::User, part.text.clone()));
+            }
             Some(PartKind::Text) => {
                 if !part.text.is_empty() {
-                    reply.push(Content::Text(part.text.clone()));
+                    reply.content.push(Content::Text(part.text.clone()));
                 }
             }
             Some(PartKind::Reasoning) => {
@@ -65,41 +144,144 @@ fn append_turn(messages: &mut Vec<Message>, turn: &ModelTurn, shape: RequestShap
                 if shape.interface == ApiInterface::Responses
                     && let Some(item) = item
                 {
-                    reply.push(Content::ProviderItem(item.item.clone()));
+                    reply.content.push(Content::ProviderItem(item.item.clone()));
                 }
             }
+            Some(PartKind::ToolCall) => append_call(&mut reply, part, shape),
             Some(PartKind::ContinuationNote) => {
-                flush_reply(messages, &mut reply);
+                reply.flush(messages);
                 messages.push(Message::text(Role::User, part.text.clone()));
             }
             // Errors are for the owner and never reach the model's turns.
             Some(PartKind::Error) => {}
-            None => reply.push(Content::Text(texts::unknown_part(&part.kind_name))),
+            None => reply
+                .content
+                .push(Content::Text(texts::unknown_part(&part.kind_name))),
         }
     }
-    let marker = match turn.run_state {
+    // A kept run may end the turn, before the current run wrote anything.
+    if let Some(previous) = current_run
+        && let Some(kept) = turn.kept_runs.iter().find(|kept| kept.run_id == *previous)
+    {
+        end_run(messages, &mut reply, Some(kept.state));
+    }
+    end_run(messages, &mut reply, turn.run_state);
+}
+
+/// Ends the parts of one run: its reply, and a marker when it was stopped or
+/// interrupted. A marker without tool results stays in the reply's own
+/// message, as before tools existed.
+fn end_run(messages: &mut Vec<Message>, reply: &mut Reply, state: Option<RunState>) {
+    let marker = match state {
         Some(RunState::Stopped) => Some(texts::STOPPED_MARKER),
         Some(RunState::Interrupted | RunState::Failed) => {
-            let wrote_something = reply
-                .iter()
-                .any(|content| matches!(content, Content::Text(_)));
-            wrote_something.then_some(texts::INTERRUPTED_MARKER)
+            reply.wrote_something().then_some(texts::INTERRUPTED_MARKER)
         }
         _ => None,
     };
-    if let Some(marker) = marker {
-        reply.push(Content::Text(marker.to_owned()));
+    if reply.results.is_empty() {
+        if let Some(marker) = marker {
+            reply.content.push(Content::Text(marker.to_owned()));
+        }
+        reply.flush(messages);
+    } else {
+        reply.flush(messages);
+        if let Some(marker) = marker {
+            messages.push(Message::text(Role::Assistant, marker));
+        }
     }
-    flush_reply(messages, &mut reply);
 }
 
-/// Adds the reply so far as an assistant message. A reasoning item without
-/// text after it would have nothing to lead to, so it is left out.
+/// Adds a tool call: as a call with its result for a model with tools, as
+/// text for a model without them.
+fn append_call(reply: &mut Reply, part: &ModelPart, shape: RequestShape<'_>) {
+    let Some(call) = &part.tool_call else {
+        return;
+    };
+    let result = call_result(&part.id, call, shape.left_out);
+    if shape.tools.is_empty() {
+        let arguments: String = part.text.chars().take(MAX_TEXT_CALL_ARGUMENTS).collect();
+        reply.content.push(Content::Text(texts::tool_call_as_text(
+            &call.tool, &arguments, &result,
+        )));
+        return;
+    }
+    reply.content.push(Content::ToolCall {
+        call_id: call.call_id.clone(),
+        name: call.tool.clone(),
+        arguments: json_object_or_empty(&part.text),
+    });
+    reply.results.push(Message {
+        role: Role::Tool,
+        content: vec![Content::ToolResult {
+            call_id: call.call_id.clone(),
+            output: result,
+        }],
+    });
+}
+
+/// The arguments as they go back to the provider: a JSON object, or `{}` for
+/// arguments that are not one, which providers would refuse.
+fn json_object_or_empty(arguments: &str) -> String {
+    match serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(arguments) {
+        Ok(_) => arguments.to_owned(),
+        Err(_) => "{}".to_owned(),
+    }
+}
+
+/// What the model reads as a call's result.
+pub(crate) fn call_result(
+    part: &PartId,
+    call: &ToolCallDocument,
+    left_out: &HashSet<PartId>,
+) -> String {
+    match call.status {
+        ToolCallStatus::Completed => match &call.result {
+            Some(result) if left_out.contains(part) => {
+                let archives: Vec<String> = result
+                    .archives
+                    .iter()
+                    .map(|archive| archive.id.to_string())
+                    .collect();
+                texts::result_left_out(&archives)
+            }
+            Some(result) => result.output.clone(),
+            None => texts::CANCELED.to_owned(),
+        },
+        ToolCallStatus::Denied => texts::DENIED.to_owned(),
+        ToolCallStatus::Uncertain => texts::UNCERTAIN.to_owned(),
+        ToolCallStatus::NotRun | ToolCallStatus::Canceled => match &call.not_run {
+            Some(reason) => not_run(reason, &call.tool),
+            None => texts::CANCELED.to_owned(),
+        },
+        ToolCallStatus::Receiving
+        | ToolCallStatus::Pending
+        | ToolCallStatus::AwaitingApproval
+        | ToolCallStatus::Executing
+        | ToolCallStatus::Running => texts::CANCELED.to_owned(),
+    }
+}
+
+/// Why a call never started, for the model.
+fn not_run(reason: &NotRunReason, tool: &str) -> String {
+    match reason {
+        NotRunReason::UnknownTool => texts::unknown_tool(tool),
+        NotRunReason::InvalidArguments { detail } => texts::invalid_arguments(detail),
+        NotRunReason::CutOff => texts::CUT_OFF.to_owned(),
+        NotRunReason::EarlierCallDenied => texts::SKIPPED_AFTER_DENIAL.to_owned(),
+        NotRunReason::OverBudget => texts::OVER_BUDGET.to_owned(),
+        NotRunReason::ToolsOff => texts::TOOLS_OFF.to_owned(),
+    }
+}
+
+/// Adds the reply so far as an assistant message. A reply needs text or a
+/// tool call: a reasoning item with nothing after it would lead nowhere, so
+/// it is left out.
 fn flush_reply(messages: &mut Vec<Message>, reply: &mut Vec<Content>) {
-    let has_text = reply
+    let leads_somewhere = reply
         .iter()
-        .any(|content| matches!(content, Content::Text(_)));
-    if has_text {
+        .any(|content| matches!(content, Content::Text(_) | Content::ToolCall { .. }));
+    if leads_somewhere {
         messages.push(Message {
             role: Role::Assistant,
             content: std::mem::take(reply),

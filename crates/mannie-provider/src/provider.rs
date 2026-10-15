@@ -30,6 +30,8 @@ pub enum Role {
     User,
     /// The model.
     Assistant,
+    /// The results of the model's tool calls.
+    Tool,
 }
 
 /// One element of a message.
@@ -41,6 +43,22 @@ pub enum Content {
     /// as an encrypted reasoning item of the Responses API: a JSON document
     /// that the adapter wrote and sends back as it is.
     ProviderItem(String),
+    /// A tool call that the model made, in an assistant message.
+    ToolCall {
+        /// The call's ID, which its result names.
+        call_id: String,
+        /// The tool.
+        name: String,
+        /// The arguments: a JSON object as text.
+        arguments: String,
+    },
+    /// The result of a tool call, in a message of the tool role.
+    ToolResult {
+        /// The call it answers.
+        call_id: String,
+        /// The result as the model reads it.
+        output: String,
+    },
 }
 
 /// A message of the conversation that the model reads.
@@ -62,6 +80,29 @@ impl Message {
     }
 }
 
+/// A tool that the model may call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolDefinition {
+    /// The tool's name.
+    pub name: String,
+    /// What the tool does, for the model.
+    pub description: String,
+    /// The JSON Schema of its arguments: an object.
+    pub parameters: serde_json::Value,
+}
+
+/// Whether the model may call tools in this call.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ToolChoice {
+    /// The model decides.
+    #[default]
+    Auto,
+    /// The model must answer without tools, as after the tool budget of a
+    /// reply is used up. The definitions stay, so that the earlier calls in
+    /// the conversation keep their meaning.
+    None,
+}
+
 /// One model call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelRequest {
@@ -75,6 +116,11 @@ pub struct ModelRequest {
     pub max_output_tokens: u32,
     /// How much the model reasons.
     pub reasoning_effort: ReasoningEffort,
+    /// The tools the model may call. Without tools, the request has no tool
+    /// fields at all.
+    pub tools: Vec<ToolDefinition>,
+    /// Whether the model may call them.
+    pub tool_choice: ToolChoice,
 }
 
 /// What a model call produces, in order, normalized across the APIs.
@@ -87,6 +133,24 @@ pub enum ProviderEvent {
     /// Provider-private data to store with the reasoning and send back to the
     /// same binding on the next call: a JSON document.
     ProviderItem(String),
+    /// The model started a tool call. Its arguments follow with
+    /// [`ProviderEvent::ToolCall`], unless the call was cut off.
+    ToolCallStarted {
+        /// The call's ID, unique within the call.
+        call_id: String,
+        /// The tool.
+        name: String,
+    },
+    /// A tool call is complete.
+    ToolCall {
+        /// The call's ID, as `ToolCallStarted` gave it.
+        call_id: String,
+        /// The tool.
+        name: String,
+        /// The arguments as the model wrote them: a JSON object as text, which
+        /// the runtime checks.
+        arguments: String,
+    },
     /// The token counts of the call.
     Usage(Usage),
     /// The call ended. Nothing follows.

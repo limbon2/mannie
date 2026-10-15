@@ -200,6 +200,9 @@ pub struct ProviderProfile {
     pub output_limit: u32,
     /// The reasoning effort.
     pub reasoning_effort: ReasoningEffort,
+    /// Whether the model gets tools (docs/features/system-tools/tool-calls.md,
+    /// use tools).
+    pub use_tools: bool,
     /// Whether it is the default profile.
     pub is_default: bool,
     /// The server the provider test recognized, if it ran.
@@ -228,6 +231,8 @@ pub struct ProfileDraft {
     pub output_limit: u32,
     /// The reasoning effort.
     pub reasoning_effort: ReasoningEffort,
+    /// Whether the model gets tools.
+    pub use_tools: bool,
 }
 
 impl ProfileDraft {
@@ -473,6 +478,7 @@ mod tests {
             context_window: 32_768,
             output_limit: 4_096,
             reasoning_effort: ReasoningEffort::ServerDefault,
+            use_tools: true,
         }
     }
 

@@ -27,7 +27,7 @@ use futures_util::StreamExt;
 use mannie_provider::testing::{Chunking, FixtureResponse, FixtureServer};
 use mannie_provider::{
     Content, HttpClient, Message, ModelRequest, ProviderError, ProviderEvent, ProviderRegistry,
-    Role, Target, quirks_for,
+    Role, Target, ToolChoice, ToolDefinition, quirks_for,
 };
 use mannie_types::clock::{ManualClock, UtcMillis};
 use mannie_types::provider::{ApiInterface, ReasoningEffort, ServerKind};
@@ -64,16 +64,52 @@ struct RequestManifest {
     max_output_tokens: u32,
     #[serde(default)]
     reasoning_effort: ReasoningEffort,
+    /// The tools offered to the model.
+    #[serde(default)]
+    tools: Vec<ToolManifest>,
+    /// `auto`, the default, or `none`.
+    #[serde(default)]
+    tool_choice: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ToolManifest {
+    name: String,
+    description: String,
+    parameters: Value,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MessageManifest {
+    /// `user`, `assistant` or `tool`.
     role: String,
     #[serde(default)]
     text: Option<String>,
     #[serde(default)]
     item: Option<Value>,
+    /// The tool calls of an assistant message, after its text.
+    #[serde(default)]
+    tool_calls: Vec<ToolCallManifest>,
+    /// The results of a tool message.
+    #[serde(default)]
+    tool_results: Vec<ToolResultManifest>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ToolCallManifest {
+    call_id: String,
+    name: String,
+    arguments: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ToolResultManifest {
+    call_id: String,
+    output: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -116,10 +152,10 @@ fn model_request(manifest: &RequestManifest) -> ModelRequest {
         .messages
         .iter()
         .map(|message| {
-            let role = if message.role == "assistant" {
-                Role::Assistant
-            } else {
-                Role::User
+            let role = match message.role.as_str() {
+                "assistant" => Role::Assistant,
+                "tool" => Role::Tool,
+                _ => Role::User,
             };
             let mut content = Vec::new();
             if let Some(item) = &message.item {
@@ -128,15 +164,43 @@ fn model_request(manifest: &RequestManifest) -> ModelRequest {
             if let Some(text) = &message.text {
                 content.push(Content::Text(text.clone()));
             }
+            for call in &message.tool_calls {
+                content.push(Content::ToolCall {
+                    call_id: call.call_id.clone(),
+                    name: call.name.clone(),
+                    arguments: call.arguments.clone(),
+                });
+            }
+            for result in &message.tool_results {
+                content.push(Content::ToolResult {
+                    call_id: result.call_id.clone(),
+                    output: result.output.clone(),
+                });
+            }
             Message { role, content }
         })
         .collect();
+    let tools = manifest
+        .tools
+        .iter()
+        .map(|tool| ToolDefinition {
+            name: tool.name.clone(),
+            description: tool.description.clone(),
+            parameters: tool.parameters.clone(),
+        })
+        .collect();
+    let tool_choice = match manifest.tool_choice.as_deref() {
+        Some("none") => ToolChoice::None,
+        _ => ToolChoice::Auto,
+    };
     ModelRequest {
         model: manifest.model.clone(),
         instructions: manifest.instructions.clone(),
         messages,
         max_output_tokens: manifest.max_output_tokens,
         reasoning_effort: manifest.reasoning_effort,
+        tools,
+        tool_choice,
     }
 }
 
@@ -147,6 +211,14 @@ fn describe_event(event: &ProviderEvent) -> Value {
         ProviderEvent::ProviderItem(item) => {
             json!({ "item": serde_json::from_str::<Value>(item).unwrap_or(Value::String(item.clone())) })
         }
+        ProviderEvent::ToolCallStarted { call_id, name } => {
+            json!({ "toolCallStarted": { "callId": call_id, "name": name } })
+        }
+        ProviderEvent::ToolCall {
+            call_id,
+            name,
+            arguments,
+        } => json!({ "toolCall": { "callId": call_id, "name": name, "arguments": arguments } }),
         ProviderEvent::Usage(usage) => json!({ "usage": usage }),
         ProviderEvent::Finished(reason) => json!({ "finished": reason }),
     }

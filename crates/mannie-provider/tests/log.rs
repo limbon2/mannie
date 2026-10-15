@@ -66,6 +66,8 @@ async fn a_credential_that_the_server_repeats_never_reaches_the_log() {
         messages: vec![Message::text(Role::User, "Hello")],
         max_output_tokens: 64,
         reasoning_effort: ReasoningEffort::ServerDefault,
+        tools: Vec::new(),
+        tool_choice: mannie_provider::ToolChoice::Auto,
     };
     let error = match adapter.stream(&target, request).next().await {
         Some(Err(error)) => Some(error),

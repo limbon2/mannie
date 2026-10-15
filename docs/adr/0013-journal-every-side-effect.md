@@ -15,7 +15,7 @@
 
 ## Decision
 
-1. Every tool call with a side effect becomes an operation with a journal record. The record moves through these states: prepared, awaiting approval, executing, and finally completed, denied, canceled or uncertain.
+1. Every tool call with a side effect becomes an operation with a journal record. The record moves through these states: prepared, awaiting approval, executing, and finally completed, denied, canceled or uncertain. The record is the tool call's part in the transcript: each change of its state is stored in the same transaction as its event.
 2. Prepare computes the operation's canonical accesses without side effects: each path with its access mode, and each command with its shell and working directory.
 3. Authorize checks policy (workspace defaults, grants, rules and, on a worker, the policy ceiling) and asks the owner when policy does not decide.
 4. Just before executing, the tool prepares again and compares the accesses. Any difference sends the operation back to authorization.

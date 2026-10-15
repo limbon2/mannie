@@ -144,6 +144,7 @@ async fn drive(
         .start_conversation(StartConversation {
             text: "Turn 0".to_owned(),
             profile_id: None,
+            project_id: None,
         })
         .await
         .unwrap();

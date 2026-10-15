@@ -47,7 +47,36 @@ pub struct Quirks {
     /// Whether the server shortens prompts that do not fit its context
     /// instead of failing.
     pub silent_truncation: bool,
+    /// How the server handles tools.
+    pub tools: ToolQuirks,
 }
+
+/// How a server handles tools (docs/features/system-tools/tool-calls.md,
+/// quirk profiles).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ToolQuirks {
+    /// Whether a `<tool_call>` block with a JSON object of `name` and
+    /// `arguments`, in the text or the reasoning, is a tool call. Models in the
+    /// Hermes format write their calls this way when the server parses no tool
+    /// calls.
+    pub calls_in_text: bool,
+    /// Whether tools are sent with `strict: true`, so that the server holds the
+    /// arguments to their schema.
+    pub strict: bool,
+}
+
+/// The tool handling of servers that parse tool calls themselves and do not
+/// enforce schemas: calls written as text are still recognized.
+const GENERIC_TOOLS: ToolQuirks = ToolQuirks {
+    calls_in_text: true,
+    strict: false,
+};
+
+/// The tool handling of OpenAI's servers.
+const OPENAI_TOOLS: ToolQuirks = ToolQuirks {
+    calls_in_text: false,
+    strict: true,
+};
 
 /// The behavior of servers that Mannie does not recognize: the most widely
 /// accepted fields.
@@ -58,14 +87,26 @@ const GENERIC: Quirks = Quirks {
     think_tags: true,
     overflow_phrases: &["context length", "context window", "context size"],
     silent_truncation: false,
+    tools: GENERIC_TOOLS,
 };
 
 /// The quirks of a server, or the generic behavior when it is not known.
 pub fn quirks_for(interface: ApiInterface, server: Option<ServerKind>) -> Quirks {
     if interface == ApiInterface::Responses {
-        // The Responses API has no fields that vary by server in M1.
+        // The Responses API has structured tool calls on every server that
+        // offers it; only OpenAI's servers are known to enforce strict
+        // schemas.
+        let tools = if server == Some(ServerKind::OpenAi) {
+            OPENAI_TOOLS
+        } else {
+            ToolQuirks {
+                calls_in_text: false,
+                strict: false,
+            }
+        };
         return Quirks {
             think_tags: false,
+            tools,
             ..GENERIC
         };
     }
@@ -74,6 +115,7 @@ pub fn quirks_for(interface: ApiInterface, server: Option<ServerKind>) -> Quirks
             output_limit_field: OutputLimitField::MaxCompletionTokens,
             think_tags: false,
             overflow_phrases: &[],
+            tools: OPENAI_TOOLS,
             ..GENERIC
         },
         Some(ServerKind::OpenRouter) => Quirks {
@@ -145,5 +187,16 @@ mod tests {
         assert!(
             quirks_for(ApiInterface::ChatCompletions, Some(ServerKind::Ollama)).silent_truncation
         );
+    }
+
+    #[test]
+    fn only_openai_gets_strict_tools_and_no_tool_calls_in_text() {
+        let openai = quirks_for(ApiInterface::ChatCompletions, Some(ServerKind::OpenAi));
+        let responses = quirks_for(ApiInterface::Responses, Some(ServerKind::OpenAi));
+        let vllm = quirks_for(ApiInterface::ChatCompletions, Some(ServerKind::Vllm));
+
+        assert!(openai.tools.strict && !openai.tools.calls_in_text);
+        assert!(responses.tools.strict && !responses.tools.calls_in_text);
+        assert!(!vllm.tools.strict && vllm.tools.calls_in_text);
     }
 }

@@ -2,6 +2,7 @@
   import ArrowDownIcon from '@lucide/svelte/icons/arrow-down';
   import BookTextIcon from '@lucide/svelte/icons/book-text';
   import { tick } from 'svelte';
+  import { on } from 'svelte/events';
 
   import PartOutlet from '#lib/components/app/shell/PartOutlet.svelte';
   import { Button } from '#lib/components/ui/button/index.js';
@@ -13,14 +14,15 @@
   import type { OpenConversation } from '#lib/state/conversation.svelte.js';
   import { chatFailureMessage } from '#lib/utils/chat-errors.js';
   import { latestTurn } from '#lib/utils/conversation-reducer.js';
+  import { followsAfterScroll } from '#lib/utils/transcript-follow.js';
 
   import RunStatus from './RunStatus.svelte';
 
   // The turns of a conversation (docs/features/chat/conversation-view.md,
-  // layout): it follows a streaming reply while the owner is at the bottom,
-  // offers a way back to the newest text otherwise, and loads earlier turns
-  // when the owner reaches the top. Screen readers hear when a reply ends;
-  // the streamed text itself is not announced.
+  // layout): it follows a reply while the owner is at the bottom, until the
+  // owner scrolls up, offers a way back to the newest message otherwise, and
+  // loads earlier turns when the owner reaches the top. Screen readers hear
+  // when a reply ends; the streamed text itself is not announced.
   let { conversation }: { conversation: OpenConversation } = $props();
 
   /** How close to the bottom, in pixels, still counts as following. */
@@ -29,12 +31,22 @@
   /** How close to the top, in pixels, loads earlier turns. */
   const LOAD_DISTANCE = 64;
 
+  /** How long after the owner's wheel, touch, key or click a move up counts as the owner's, in milliseconds. */
+  const OWNER_SCROLL_WINDOW = 1_000;
+
   let scroller = $state<HTMLDivElement | undefined>();
   let following = $state(true);
+  /** Where the transcript stood at the previous scroll event, which tells a move up from the following. */
+  let previousTop = 0;
+  /** When the owner last used the wheel, a touch, a key or the pointer in the transcript. */
+  let ownerInputAt = Number.NEGATIVE_INFINITY;
+  /** Whether the owner holds the pointer down in the transcript, such as on its scrollbar or while selecting text. */
+  let pointerHeld = false;
 
   const transcript = $derived(conversation.transcript);
   const latest = $derived(latestTurn(transcript));
   const checkpoint = $derived(transcript.checkpoint);
+  const awaitingApproval = $derived(latest?.run?.activity?.kind === 'awaiting_approval');
 
   function endAnnouncement(run: RunView): string {
     switch (run.state) {
@@ -57,7 +69,11 @@
     }
   }
 
-  /** Keeps the transcript at the bottom while the owner follows it and new and growing parts change its size. */
+  /**
+   * Keeps the transcript at the bottom while the owner follows it: when new
+   * and growing parts change the content's size, and when the window or the
+   * message box changes the transcript's own height.
+   */
   function followGrowth(content: HTMLElement): () => void {
     const observer = new ResizeObserver(() => {
       if (following) {
@@ -65,6 +81,9 @@
       }
     });
     observer.observe(content);
+    if (content.parentElement !== null) {
+      observer.observe(content.parentElement);
+    }
     return () => {
       observer.disconnect();
     };
@@ -76,12 +95,56 @@
     }
   }
 
+  /** Notes input with which the owner may scroll the transcript. */
+  function noteOwnerInput(): void {
+    ownerInputAt = performance.now();
+  }
+
+  function handlePointerDown(): void {
+    pointerHeld = true;
+    noteOwnerInput();
+  }
+
+  function handlePointerUp(): void {
+    if (pointerHeld) {
+      pointerHeld = false;
+      noteOwnerInput();
+    }
+  }
+
+  /**
+   * Watches the input with which the owner scrolls the transcript: the wheel,
+   * a touch, a key, and the pointer, also on the scrollbar. The listeners only
+   * observe, so they change nothing that the input does.
+   */
+  function watchOwnerInput(element: HTMLElement): () => void {
+    const removers = [
+      on(element, 'wheel', noteOwnerInput, { passive: true }),
+      on(element, 'touchmove', noteOwnerInput, { passive: true }),
+      on(element, 'keydown', noteOwnerInput),
+      on(element, 'pointerdown', handlePointerDown),
+      on(window, 'pointerup', handlePointerUp),
+      on(window, 'pointercancel', handlePointerUp),
+    ];
+    return () => {
+      for (const remove of removers) {
+        remove();
+      }
+    };
+  }
+
+  /** Whether a move of the transcript now comes from the owner. */
+  function ownerScrolls(): boolean {
+    const recentInput = performance.now() - ownerInputAt < OWNER_SCROLL_WINDOW;
+    return pointerHeld || recentInput;
+  }
+
   function handleScroll(): void {
     if (scroller === undefined) {
       return;
     }
-    const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-    following = distance <= FOLLOW_DISTANCE;
+    following = followsAfterScroll(following, previousTop, scroller, FOLLOW_DISTANCE, ownerScrolls());
+    previousTop = scroller.scrollTop;
     const nearTop = scroller.scrollTop <= LOAD_DISTANCE;
     const canLoad = transcript.hasEarlierTurns && !conversation.loadingEarlier;
     if (nearTop && canLoad) {
@@ -114,11 +177,16 @@
 
 <div class="relative min-h-0 flex-1">
   <!-- Focusable, so that the owner can scroll the transcript from the keyboard
-       when it holds nothing else that takes the focus (WCAG 2.1.1). -->
+       when it holds nothing else that takes the focus (WCAG 2.1.1). Positioned,
+       so that every absolutely positioned element of a reply, such as the text
+       that only screen readers read, belongs to it: otherwise such elements
+       escape its scrolling and stretch the pane around it to the height of the
+       whole conversation. -->
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
   <div
     bind:this={scroller}
-    class="h-full overflow-y-auto outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+    class="relative h-full overflow-y-auto outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+    {@attach watchOwnerInput}
     aria-label={m.chat_transcript_label()}
     role="region"
     tabindex="0"
@@ -144,7 +212,7 @@
             <PartOutlet conversationId={conversation.id} latest={turn === latest} {part} />
           {/each}
           {#if turn === latest}
-            <RunStatus conversationId={conversation.id} run={turn.run} />
+            <RunStatus conversationId={conversation.id} parts={turn.parts} run={turn.run} />
           {/if}
         </article>
         {#if checkpointFollows(turn.position)}
@@ -173,7 +241,7 @@
     <div class="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
       <Button class="pointer-events-auto shadow-sm" size="sm" variant="secondary" onclick={scrollToBottom}>
         <ArrowDownIcon data-icon="inline-start" />
-        {m.chat_jump_to_newest()}
+        {awaitingApproval ? m.chat_jump_to_approval() : m.chat_jump_to_newest()}
       </Button>
     </div>
   {/if}

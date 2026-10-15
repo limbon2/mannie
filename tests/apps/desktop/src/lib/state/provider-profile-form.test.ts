@@ -34,6 +34,7 @@ function storedProfile(hasCredential: boolean): ProviderProfile {
     reasoningEffort: 'medium',
     server: 'open_ai',
     updatedAt: 0,
+    useTools: true,
   };
 }
 
@@ -45,6 +46,35 @@ beforeEach(() => {
   core.update.mockReset();
   core.create.mockResolvedValue({ data: storedProfile(true), ok: true });
   core.update.mockResolvedValue({ data: storedProfile(true), ok: true });
+});
+
+describe('the "Use tools" switch', () => {
+  it('is on for a new profile and follows a stored one', () => {
+    expect(new ProviderProfileForm(null).useTools).toBe(true);
+    expect(new ProviderProfileForm({ ...storedProfile(true), useTools: false }).useTools).toBe(false);
+  });
+
+  it('reaches the core with the profile', async () => {
+    const form = new ProviderProfileForm(storedProfile(true));
+    form.useTools = false;
+
+    expect(await form.save()).toBe(true);
+
+    expect(core.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        draft: {
+          baseUrl: 'https://api.openai.com/v1',
+          contextWindow: 400_000,
+          interface: 'responses',
+          model: 'gpt-5',
+          name: 'OpenAI',
+          outputLimit: 128_000,
+          reasoningEffort: 'medium',
+          useTools: false,
+        },
+      }),
+    );
+  });
 });
 
 describe('a new profile', () => {

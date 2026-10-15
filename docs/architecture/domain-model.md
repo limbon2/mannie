@@ -3,7 +3,7 @@
 |              |                                                                                                                                              |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                             |
-| Last updated | 2026-10-13                                                                                                                                   |
+| Last updated | 2026-10-15                                                                                                                                   |
 | Related      | [Glossary](../glossary.md), [Agent runtime](agent-runtime.md), [Tools](tools.md), [Orchestration](orchestration.md), [Overview](overview.md) |
 
 This document defines the core concepts, their lifecycles and the invariants every contract follows. The [glossary](../glossary.md) gives short definitions; this document shows how the concepts relate.
@@ -15,6 +15,7 @@ classDiagram
   class Machine
   class Master
   class Worker
+  class Project
   class Conversation
   class Turn
   class Step
@@ -27,6 +28,8 @@ classDiagram
   Machine <|-- Master
   Machine <|-- Worker
   Machine "1" --> "*" Conversation : stores
+  Machine "1" --> "*" Project : holds
+  Conversation "*" --> "0..1" Project : belongs to
   Conversation "1" --> "*" Turn
   Turn "1" --> "*" Step
   Turn "1" --> "*" Part
@@ -49,8 +52,9 @@ classDiagram
 - A conversation is an ordered list of turns between a requester and an agent. The requester is the owner for conversations on the master, and an agent for task conversations.
 - A turn is one request and the agent's complete response. A turn is made of parts, the typed elements of the transcript: text, reasoning, tool call, tool result, task events, errors and the part types that features add.
 - A step is one model call within a turn, together with the tool calls it produced. A turn with tool use has several steps.
-- Parts are appended and never edited. A correction or a retry adds parts; it does not rewrite earlier ones.
+- Parts are appended. A part's text and document can change while it is open, as streamed text does or a tool call that waits for an approval, and they are final once it finishes. A correction or a retry adds parts; it does not rewrite finished ones.
 - Every change to a conversation produces an event with a sequence number that is unique and increasing within that conversation.
+- A project is a folder on the master that the owner added, with the conversations that work in it ([ADR-0023](../adr/0023-organize-conversations-into-projects.md)). A conversation belongs to at most one project, from its start or from the moment it moves into one, and its workspace is the project's folder. A general conversation belongs to none.
 
 ## 4. Runs
 
@@ -60,21 +64,18 @@ A run executes one turn ([ADR-0012](../adr/0012-run-agents-as-durable-actors.md)
 stateDiagram-v2
   [*] --> Queued
   Queued --> Running
-  Running --> AwaitingApproval: an operation needs the owner
-  AwaitingApproval --> Running: decision received
   Running --> Completed
   Running --> Failed: permanent error
   Running --> Stopped: the owner stops it
-  AwaitingApproval --> Stopped
   Running --> Interrupted: process ended
-  AwaitingApproval --> Interrupted: process ended
   Completed --> [*]
   Failed --> [*]
   Stopped --> [*]
   Interrupted --> [*]
 ```
 
-- A retry of a failed, stopped or interrupted run starts a new run for the same turn. It reuses the results of operations that completed and never repeats an operation that may have run.
+- A run that waits for the owner's approval of an operation stays running. Its activity says that it waits, and it holds no model slot meanwhile.
+- A retry of a failed, stopped or interrupted run starts a new run for the same turn. It reuses the results of operations that completed and never repeats an operation that may have run. When the earlier run made tool calls, its parts stay in the turn and the new run continues after them.
 - A run's state is stored before it is published, like every other event.
 
 ## 5. Operations
@@ -100,6 +101,7 @@ stateDiagram-v2
 ```
 
 - An operation records its canonical accesses: each path with its access mode, and each command with its shell and working directory.
+- The journal record of an operation is its tool call part, so each change of its state is an event of the conversation.
 - Executing is committed durably before the side effect starts.
 - An uncertain operation is reported to the model and to the owner. Nothing repeats it automatically.
 
@@ -162,3 +164,4 @@ stateDiagram-v2
 7. Provider credentials are at rest only in the master's operating system credential store.
 8. Contracts and stored data change only by addition, with deprecation before removal.
 9. Every task ID identifies one task, however many times it is submitted.
+10. A conversation in a project works in the project's folder and never leaves the project.

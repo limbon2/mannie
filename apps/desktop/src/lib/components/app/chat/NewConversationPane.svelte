@@ -4,20 +4,26 @@
   import * as Empty from '#lib/components/ui/empty/index.js';
   import { commands } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
+  import { conversationList } from '#lib/state/conversation-list.svelte.js';
   import { providerProfiles } from '#lib/state/provider-profiles.svelte.js';
   import type { ChatFailure } from '#lib/types/chat.js';
   import { call } from '#lib/utils/calls.js';
-  import { openConversation } from '#lib/utils/chat-urls.js';
+  import { newConversationProjectId, openConversation } from '#lib/utils/chat-urls.js';
 
   import Composer from './Composer.svelte';
   import NoProfileNotice from './NoProfileNotice.svelte';
 
   // A new conversation: the message box, with a hint about what the owner can
-  // do. The first message creates the conversation, which then opens.
+  // do. The first message creates the conversation, which then opens. A new
+  // conversation of a project, which the address names, starts in it and
+  // works in its folder (docs/features/chat/projects.md); the heading names
+  // the project, and nothing changes near the message box.
   const noProfile = $derived(providerProfiles.status === 'ready' && providerProfiles.profiles.length === 0);
+  const projectId = $derived(newConversationProjectId());
+  const project = $derived(projectId === null ? undefined : conversationList.findProject(projectId));
 
   async function start(text: string): Promise<ChatFailure | null> {
-    const outcome = await call(() => commands.startConversation({ profileId: null, text }));
+    const outcome = await call(() => commands.startConversation({ profileId: null, projectId, text }));
     if (!outcome.ok) {
       return outcome.failure;
     }
@@ -38,7 +44,9 @@
           <Empty.Media variant="icon">
             <MessagesSquareIcon />
           </Empty.Media>
-          <Empty.Title>{m.chat_new_title()}</Empty.Title>
+          <Empty.Title>
+            {project === undefined ? m.chat_new_title() : m.chat_new_title_in_project({ project: project.name })}
+          </Empty.Title>
           <Empty.Description>{m.chat_new_description()}</Empty.Description>
         </Empty.Header>
       </Empty.Root>

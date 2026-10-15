@@ -27,9 +27,39 @@ required-features = ["testing"]
 name = "crash"
 required-features = ["testing"]
 
+# Tool calls between model calls: the policy, approvals, Stop, budgets and
+# early stops.
+[[test]]
+name = "tools_loop"
+required-features = ["testing"]
+
+# Killing the process in every state of a tool call never repeats its
+# operation.
+[[test]]
+name = "tool_crash"
+required-features = ["testing"]
+
+# A compromised model's injected operations cause nothing that the owner did
+# not allow.
+[[test]]
+name = "injection"
+required-features = ["testing"]
+
+# A secret in Mannie's environment never reaches a command; its own binary,
+# because the child it starts again carries the planted secret.
+[[test]]
+name = "command_environment"
+required-features = ["testing"]
+
 # Profiles and their credentials in the vault.
 [[test]]
 name = "profiles"
+required-features = ["testing"]
+
+# Tasks that a real model completes through the tools, and injection tasks;
+# ignored unless run on purpose with `task tools:eval`.
+[[test]]
+name = "evals"
 required-features = ["testing"]
 
 # A planted credential reaches only the Authorization header; its own binary,
@@ -44,6 +74,9 @@ fastrand = { workspace = true }
 futures-util = { workspace = true }
 mannie-provider = { workspace = true }
 mannie-store = { workspace = true }
+# The system tools, their policy and the process supervisor (ADR-0013,
+# ADR-0014).
+mannie-tools = { workspace = true }
 mannie-types = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -21,8 +21,25 @@ use tauri::{AppHandle, Manager, State};
 use tokio::time::{Instant, MissedTickBehavior};
 
 use crate::ipc::channel::{self, BatchSender};
-use crate::state::Core;
+use crate::state::{Core, FolderChoice};
 use crate::window::{MAIN_WINDOW, tray};
+
+/// Sets what the next folder dialog answers instead of opening: a folder, or
+/// nothing for a dialog that the owner closed. The end-to-end tests cannot
+/// click in a dialog of the system.
+#[tauri::command]
+#[specta::specta]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri hands command arguments over by value"
+)]
+pub(crate) fn validation_set_folder_choice(core: State<'_, Core>, folder: Option<String>) {
+    let choice = match folder {
+        Some(folder) => FolderChoice::Folder(folder),
+        None => FolderChoice::Closed,
+    };
+    core.set_folder_choice(choice);
+}
 
 /// Streams a synthetic load to the webview: `load.runs` simulated runs that
 /// each send `load.deltas_per_second` deltas for `load.duration_millis`, over

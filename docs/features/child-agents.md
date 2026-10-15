@@ -1,11 +1,11 @@
 # Child agents
 
-|              |                                                                                                                                                                                    |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status       | Accepted                                                                                                                                                                           |
-| Milestone    | M3                                                                                                                                                                                 |
-| Last updated | 2026-10-13                                                                                                                                                                         |
-| Related      | [ADR-0015](../adr/0015-run-an-agent-runtime-on-every-machine.md), [Orchestration](../architecture/orchestration.md), [System tools](system-tools.md), [Workers](workers/README.md) |
+|              |                                                                                                                                                                                           |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status       | Accepted                                                                                                                                                                                  |
+| Milestone    | M3                                                                                                                                                                                        |
+| Last updated | 2026-10-13                                                                                                                                                                                |
+| Related      | [ADR-0015](../adr/0015-run-an-agent-runtime-on-every-machine.md), [Orchestration](../architecture/orchestration.md), [System tools](system-tools/README.md), [Workers](workers/README.md) |
 
 ## Intent
 
@@ -29,7 +29,7 @@ The owner wants the conversation agent to split larger work into focused tasks f
 
 - Extension points: agent definitions (explore and general), the tool registry (the task tools, and tool subsets per definition), transcript parts for task events and reports, run events, UI part renderers for the child agent card and the conversation view of a child, and the settings section for the number of parallel slots.
 - Follows [ADR-0012](../adr/0012-run-agents-as-durable-actors.md), [ADR-0013](../adr/0013-journal-every-side-effect.md) and [ADR-0015](../adr/0015-run-an-agent-runtime-on-every-machine.md). The task and report contract in [orchestration](../architecture/orchestration.md#2-tasks-and-reports) is shared with workers.
-- Must not change: [system tools](system-tools.md) behave the same in a child as in the conversation agent, within the child's tool set.
+- Must not change: [system tools](system-tools/README.md) behave the same in a child as in the conversation agent, within the child's tool set.
 
 ## Open questions
 

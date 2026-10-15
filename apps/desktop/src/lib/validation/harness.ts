@@ -76,6 +76,11 @@ export interface ValidationHarness {
   runChannelLoad(load: ChannelLoad): Promise<ChannelLoadReport>;
   /** Adds a conversation with this many turns, and returns its ID. */
   seedConversation(turns: number): Promise<string>;
+  /**
+   * Sets what the next folder dialog answers instead of opening: a folder, or
+   * `null` for a dialog that the owner closed.
+   */
+  setFolderChoice(folder: string | null): Promise<void>;
   /** Chooses an item of the tray's menu. */
   trayMenu(item: ValidationTrayItem): Promise<void>;
   /** Whether the main window is visible and the tray exists. */
@@ -292,6 +297,9 @@ window.mannieValidation = {
   processId: async () => commands.validationProcessId(),
   runChannelLoad,
   seedConversation: async (turns) => unwrap(await commands.validationSeedConversation({ turns })),
+  setFolderChoice: async (folder) => {
+    await commands.validationSetFolderChoice(folder);
+  },
   trayMenu: async (item) => {
     await commands.validationTrayMenu(item);
   },

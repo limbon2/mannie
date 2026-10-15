@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::clock::UtcMillis;
-use crate::ids::{ProfileId, RunId, TurnId};
+use crate::ids::{PartId, ProfileId, RunId, TurnId};
 
 /// The lifecycle state of a run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
@@ -13,7 +13,8 @@ use crate::ids::{ProfileId, RunId, TurnId};
 pub enum RunState {
     /// Waiting to start.
     Queued,
-    /// Holding a model slot: preparing, compacting, writing or waiting to retry.
+    /// Working: preparing, compacting, writing or waiting to retry with a
+    /// model slot, or running a tool or waiting for an approval without one.
     Running,
     /// The model finished the reply.
     Completed,
@@ -90,6 +91,19 @@ pub enum RunActivity {
         next_attempt_at: UtcMillis,
         /// Why the previous attempt failed.
         cause: RunFailure,
+    },
+    /// Waiting for the owner to decide about a tool call. The run holds no
+    /// model slot meanwhile.
+    AwaitingApproval {
+        /// The tool call's part.
+        part_id: PartId,
+    },
+    /// Running a tool, without a model slot.
+    RunningTool {
+        /// The tool call's part.
+        part_id: PartId,
+        /// When the tool started.
+        started_at: UtcMillis,
     },
 }
 
@@ -223,6 +237,11 @@ pub enum RunFailure {
     /// No provider profile exists.
     #[error("no provider profile exists")]
     NoProfile,
+    /// The server refused the request because of its tools, as servers do
+    /// whose model has no tool template or that were started without tool
+    /// support. The profile's "Use tools" switch turns tools off.
+    #[error("the server does not support tools for this model")]
+    ToolsUnsupported,
     /// Mannie failed. The log has the cause.
     #[error("Mannie failed")]
     Internal,
@@ -252,6 +271,7 @@ impl RunFailure {
             Self::CredentialStoreUnavailable => "run.credential_store_unavailable",
             Self::ProfileMissing => "run.profile_missing",
             Self::NoProfile => "run.no_profile",
+            Self::ToolsUnsupported => "run.tools_unsupported",
             Self::Internal => "run.internal",
         }
     }

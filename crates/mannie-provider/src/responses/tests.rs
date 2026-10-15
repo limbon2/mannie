@@ -1,12 +1,14 @@
 use std::sync::Arc;
 
 use mannie_types::clock::{ManualClock, UtcMillis};
-use mannie_types::provider::{ApiInterface, ReasoningEffort};
+use mannie_types::provider::{ApiInterface, ReasoningEffort, ServerKind};
 use mannie_types::run::{FinishReason, RunFailure, Usage};
 use serde_json::json;
 
 use super::{ResponsesTranslator, request_body};
-use crate::provider::{Content, Message, ModelRequest, ProviderError, ProviderEvent, Role};
+use crate::provider::{
+    Content, Message, ModelRequest, ProviderError, ProviderEvent, Role, ToolChoice,
+};
 use crate::quirks::quirks_for;
 use crate::sse::SseEvent;
 use crate::stream::{Flow, Translator};
@@ -60,9 +62,14 @@ fn the_request_is_stateless_and_replays_reasoning_items_before_their_answer() {
         ],
         max_output_tokens: 4_096,
         reasoning_effort: ReasoningEffort::Low,
+        tools: Vec::new(),
+        tool_choice: ToolChoice::Auto,
     };
 
-    let body = request_body(&request);
+    let body = request_body(
+        &request,
+        &quirks_for(ApiInterface::Responses, Some(ServerKind::OpenAi)),
+    );
 
     assert_eq!(
         body,
@@ -92,9 +99,14 @@ fn without_an_effort_the_request_asks_for_no_reasoning() {
         messages: vec![Message::text(Role::User, "Hello")],
         max_output_tokens: 100,
         reasoning_effort: ReasoningEffort::ServerDefault,
+        tools: Vec::new(),
+        tool_choice: ToolChoice::Auto,
     };
 
-    let body = request_body(&request);
+    let body = request_body(
+        &request,
+        &quirks_for(ApiInterface::Responses, Some(ServerKind::OpenAi)),
+    );
 
     assert!(body.get("reasoning").is_none());
     assert!(body.get("include").is_none());

@@ -113,6 +113,24 @@ uuid_id!(
     /// the model's context.
     CheckpointId
 );
+uuid_id!(
+    /// Identifies a grant: a permission that lasts for a conversation, for a
+    /// project or for every conversation.
+    GrantId
+);
+uuid_id!(
+    /// Identifies a command rule.
+    RuleId
+);
+uuid_id!(
+    /// Identifies an archived output of a tool call.
+    ArchiveId
+);
+uuid_id!(
+    /// Identifies a project: a folder that the owner added, and the
+    /// conversations that work in it.
+    ProjectId
+);
 
 #[cfg(test)]
 mod tests {

@@ -1,21 +1,71 @@
-use mannie_provider::{Content, Message, Role};
-use mannie_store::{ModelPart, ModelTurn, ProviderItem};
-use mannie_types::ids::{PartId, TurnId};
+use std::collections::HashSet;
+use std::sync::LazyLock;
+
+use mannie_provider::{Content, Message, Role, ToolChoice, ToolDefinition};
+use mannie_store::{KeptRun, ModelPart, ModelTurn, ProviderItem};
+use mannie_types::ids::{ArchiveId, PartId, RunId, TurnId};
 use mannie_types::provider::{ApiInterface, ReasoningEffort};
 use mannie_types::run::RunState;
+use mannie_types::tools::{
+    ArchiveRef, NotRunReason, ToolCallDocument, ToolCallStatus, ToolOutcome, ToolResult,
+};
 use mannie_types::transcript::{PartKind, PartState};
 
 use super::{RequestShape, build_request};
 use crate::texts;
 
+fn part_id(number: u32) -> PartId {
+    PartId::parse(&format!("0199e0f2-0000-7000-8000-{number:012}")).unwrap()
+}
+
+fn run_id(number: u32) -> RunId {
+    RunId::parse(&format!("0199e0f2-0000-7000-b000-{number:012}")).unwrap()
+}
+
 fn part(number: u32, kind: Option<PartKind>, text: &str) -> ModelPart {
     ModelPart {
-        id: PartId::parse(&format!("0199e0f2-0000-7000-8000-{number:012}")).unwrap(),
+        id: part_id(number),
+        run_id: (kind != Some(PartKind::UserText)).then(|| run_id(1)),
         kind,
-        kind_name: kind.map_or("tool_call", PartKind::as_str).to_owned(),
+        kind_name: kind.map_or("task_report", PartKind::as_str).to_owned(),
         state: PartState::Complete,
         text: text.to_owned(),
         provider_item: None,
+        tool_call: None,
+        attempt: u32::from(kind != Some(PartKind::UserText)),
+    }
+}
+
+/// A part that a later model call of the reply wrote.
+fn in_step(attempt: u32, part: ModelPart) -> ModelPart {
+    ModelPart { attempt, ..part }
+}
+
+/// A tool call part with its document.
+fn call(number: u32, arguments: &str, document: ToolCallDocument) -> ModelPart {
+    ModelPart {
+        tool_call: Some(document),
+        ..part(number, Some(PartKind::ToolCall), arguments)
+    }
+}
+
+/// The document of a call with a status.
+fn document(call_id: &str, status: ToolCallStatus) -> ToolCallDocument {
+    ToolCallDocument {
+        status,
+        ..ToolCallDocument::receiving(call_id.to_owned(), "read_file".to_owned())
+    }
+}
+
+/// The document of a call that completed with `output`.
+fn completed(call_id: &str, output: &str) -> ToolCallDocument {
+    ToolCallDocument {
+        result: Some(ToolResult {
+            outcome: ToolOutcome::Unknown,
+            output: output.to_owned(),
+            archives: Vec::new(),
+        }),
+        ..document(call_id, ToolCallStatus::Completed)
     }
 }
 
@@ -23,10 +73,22 @@ fn turn(position: u32, run_state: Option<RunState>, parts: Vec<ModelPart>) -> Mo
     ModelTurn {
         turn_id: TurnId::parse(&format!("0199e0f2-0000-7000-9000-{position:012}")).unwrap(),
         position,
+        run_id: Some(run_id(1)),
         run_state,
+        kept_runs: Vec::new(),
         parts,
     }
 }
+
+static TOOLS: LazyLock<Vec<ToolDefinition>> = LazyLock::new(|| {
+    vec![ToolDefinition {
+        name: "read_file".to_owned(),
+        description: "Reads a file.".to_owned(),
+        parameters: serde_json::json!({ "type": "object" }),
+    }]
+});
+
+static NOTHING_LEFT_OUT: LazyLock<HashSet<PartId>> = LazyLock::new(HashSet::new);
 
 fn shape(interface: ApiInterface) -> RequestShape<'static> {
     RequestShape {
@@ -36,6 +98,35 @@ fn shape(interface: ApiInterface) -> RequestShape<'static> {
         binding: "p:1",
         max_output_tokens: 100,
         reasoning_effort: ReasoningEffort::Low,
+        tools: &[],
+        tool_choice: ToolChoice::Auto,
+        note: None,
+        left_out: &NOTHING_LEFT_OUT,
+    }
+}
+
+fn with_tools(interface: ApiInterface) -> RequestShape<'static> {
+    RequestShape {
+        tools: &TOOLS,
+        ..shape(interface)
+    }
+}
+
+fn tool_call(call_id: &str, arguments: &str) -> Content {
+    Content::ToolCall {
+        call_id: call_id.to_owned(),
+        name: "read_file".to_owned(),
+        arguments: arguments.to_owned(),
+    }
+}
+
+fn tool_result(call_id: &str, output: &str) -> Message {
+    Message {
+        role: Role::Tool,
+        content: vec![Content::ToolResult {
+            call_id: call_id.to_owned(),
+            output: output.to_owned(),
+        }],
     }
 }
 
@@ -203,6 +294,256 @@ fn continuation_notes_and_unknown_parts_reach_the_model_in_place() {
     );
     assert_eq!(
         request.messages[3],
-        Message::text(Role::Assistant, texts::unknown_part("tool_call"))
+        Message::text(Role::Assistant, texts::unknown_part("task_report"))
     );
+}
+
+#[test]
+fn tool_calls_are_followed_by_their_results_before_the_next_step() {
+    let turns = [turn(
+        0,
+        Some(RunState::Completed),
+        vec![
+            part(1, Some(PartKind::UserText), "Read a.txt"),
+            part(2, Some(PartKind::Text), "Reading it."),
+            call(3, r#"{"path":"a.txt"}"#, completed("call_1", "File: a.txt")),
+            call(4, r#"{"path":"b.txt"}"#, completed("call_2", "File: b.txt")),
+            part(5, Some(PartKind::Text), "Both are short."),
+        ],
+    )];
+
+    let request = build_request(with_tools(ApiInterface::ChatCompletions), &turns);
+
+    assert_eq!(
+        request.messages,
+        [
+            Message::text(Role::User, "Read a.txt"),
+            Message {
+                role: Role::Assistant,
+                content: vec![
+                    Content::Text("Reading it.".to_owned()),
+                    tool_call("call_1", r#"{"path":"a.txt"}"#),
+                    tool_call("call_2", r#"{"path":"b.txt"}"#),
+                ],
+            },
+            tool_result("call_1", "File: a.txt"),
+            tool_result("call_2", "File: b.txt"),
+            Message::text(Role::Assistant, "Both are short."),
+        ]
+    );
+    assert_eq!(request.tools.len(), 1);
+}
+
+#[test]
+fn the_calls_of_each_step_get_an_assistant_message_of_their_own() {
+    let turns = [turn(
+        0,
+        Some(RunState::Completed),
+        vec![
+            part(1, Some(PartKind::UserText), "Fix a.txt"),
+            call(2, r#"{"path":"a.txt"}"#, completed("call_1", "File: a.txt")),
+            in_step(
+                2,
+                call(
+                    3,
+                    r#"{"path":"a.txt"}"#,
+                    completed("call_2", "Edited a.txt."),
+                ),
+            ),
+            in_step(3, part(4, Some(PartKind::Text), "Fixed.")),
+        ],
+    )];
+
+    let request = build_request(with_tools(ApiInterface::ChatCompletions), &turns);
+
+    assert_eq!(
+        request.messages,
+        [
+            Message::text(Role::User, "Fix a.txt"),
+            Message {
+                role: Role::Assistant,
+                content: vec![tool_call("call_1", r#"{"path":"a.txt"}"#)],
+            },
+            tool_result("call_1", "File: a.txt"),
+            Message {
+                role: Role::Assistant,
+                content: vec![tool_call("call_2", r#"{"path":"a.txt"}"#)],
+            },
+            tool_result("call_2", "Edited a.txt."),
+            Message::text(Role::Assistant, "Fixed."),
+        ]
+    );
+}
+
+#[test]
+fn calls_that_did_not_run_say_why() {
+    let turns = [turn(
+        0,
+        Some(RunState::Running),
+        vec![
+            part(1, Some(PartKind::UserText), "Go"),
+            call(2, "{}", document("denied", ToolCallStatus::Denied)),
+            call(
+                3,
+                "not json",
+                ToolCallDocument {
+                    not_run: Some(NotRunReason::InvalidArguments {
+                        detail: "expected value".to_owned(),
+                    }),
+                    ..document("invalid", ToolCallStatus::NotRun)
+                },
+            ),
+            call(
+                4,
+                "{}",
+                ToolCallDocument {
+                    not_run: Some(NotRunReason::EarlierCallDenied),
+                    ..document("skipped", ToolCallStatus::NotRun)
+                },
+            ),
+            call(5, "{}", document("uncertain", ToolCallStatus::Uncertain)),
+        ],
+    )];
+
+    let request = build_request(with_tools(ApiInterface::ChatCompletions), &turns);
+
+    assert_eq!(
+        request.messages[1].content[1],
+        tool_call("invalid", "{}"),
+        "arguments that are not JSON go back as an empty object"
+    );
+    assert_eq!(
+        request.messages[2..],
+        [
+            tool_result("denied", texts::DENIED),
+            tool_result("invalid", &texts::invalid_arguments("expected value")),
+            tool_result("skipped", texts::SKIPPED_AFTER_DENIAL),
+            tool_result("uncertain", texts::UNCERTAIN),
+        ]
+    );
+}
+
+#[test]
+fn a_model_without_tools_reads_earlier_calls_as_text() {
+    let turns = [turn(
+        0,
+        Some(RunState::Completed),
+        vec![
+            part(1, Some(PartKind::UserText), "Read a.txt"),
+            call(2, r#"{"path":"a.txt"}"#, completed("call_1", "File: a.txt")),
+            part(3, Some(PartKind::Text), "Done."),
+        ],
+    )];
+
+    let request = build_request(shape(ApiInterface::ChatCompletions), &turns);
+
+    assert_eq!(
+        request.messages[1].content,
+        [
+            Content::Text(texts::tool_call_as_text(
+                "read_file",
+                r#"{"path":"a.txt"}"#,
+                "File: a.txt"
+            )),
+            Content::Text("Done.".to_owned()),
+        ]
+    );
+    assert_eq!(request.tools, Vec::new());
+}
+
+#[test]
+fn results_left_out_name_their_archives() {
+    let archive = ArchiveId::parse("0199e0f2-0000-7000-a000-000000000001").unwrap();
+    let mut output = completed("call_1", "a long output");
+    if let Some(result) = &mut output.result {
+        result.archives.push(ArchiveRef {
+            id: archive.clone(),
+            name: "stdout".to_owned(),
+            bytes: 100_000,
+            lines: 2_000,
+        });
+    }
+    let turns = [turn(
+        0,
+        Some(RunState::Running),
+        vec![
+            part(1, Some(PartKind::UserText), "Build"),
+            call(2, "{}", output),
+        ],
+    )];
+    let left_out = HashSet::from([part_id(2)]);
+
+    let request = build_request(
+        RequestShape {
+            left_out: &left_out,
+            ..with_tools(ApiInterface::ChatCompletions)
+        },
+        &turns,
+    );
+
+    assert_eq!(
+        request.messages[2],
+        tool_result("call_1", &texts::result_left_out(&[archive.to_string()]))
+    );
+}
+
+#[test]
+fn a_kept_run_ends_with_its_marker_before_the_next_run() {
+    let mut kept_call = call(2, "{}", completed("call_1", "File: a.txt"));
+    kept_call.run_id = Some(run_id(7));
+    let turns = [ModelTurn {
+        kept_runs: vec![KeptRun {
+            run_id: run_id(7),
+            state: RunState::Stopped,
+        }],
+        ..turn(
+            0,
+            Some(RunState::Completed),
+            vec![
+                part(1, Some(PartKind::UserText), "Read a.txt"),
+                kept_call,
+                part(3, Some(PartKind::Text), "It says hello."),
+            ],
+        )
+    }];
+
+    let request = build_request(with_tools(ApiInterface::ChatCompletions), &turns);
+
+    assert_eq!(
+        request.messages,
+        [
+            Message::text(Role::User, "Read a.txt"),
+            Message {
+                role: Role::Assistant,
+                content: vec![tool_call("call_1", "{}")],
+            },
+            tool_result("call_1", "File: a.txt"),
+            Message::text(Role::Assistant, texts::STOPPED_MARKER),
+            Message::text(Role::Assistant, "It says hello."),
+        ]
+    );
+}
+
+#[test]
+fn a_note_ends_the_request() {
+    let turns = [turn(
+        0,
+        Some(RunState::Running),
+        vec![part(1, Some(PartKind::UserText), "Go")],
+    )];
+
+    let request = build_request(
+        RequestShape {
+            note: Some(texts::TOOL_BUDGET_USED),
+            tool_choice: ToolChoice::None,
+            ..with_tools(ApiInterface::ChatCompletions)
+        },
+        &turns,
+    );
+
+    assert_eq!(
+        request.messages.last(),
+        Some(&Message::text(Role::User, texts::TOOL_BUDGET_USED))
+    );
+    assert_eq!(request.tool_choice, ToolChoice::None);
 }

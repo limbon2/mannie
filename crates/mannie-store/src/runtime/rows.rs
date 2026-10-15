@@ -3,8 +3,11 @@
 //! events here, so a subscriber sees the same event either way.
 
 use mannie_types::clock::UtcMillis;
-use mannie_types::ids::{CheckpointId, ConversationId, PartId, ProfileId, RunId, TurnId};
+use mannie_types::ids::{
+    CheckpointId, ConversationId, PartId, ProfileId, ProjectId, RunId, TurnId,
+};
 use mannie_types::run::{RunActivity, RunFailure, RunOutcome, RunState, RunView};
+use mannie_types::tools::ToolCallDocument;
 use mannie_types::transcript::{
     Audience, CheckpointView, ContextUsage, ConversationEvent, ConversationSummary, PartContent,
     PartKind, PartState, PartView, TitleSource, TurnView,
@@ -20,9 +23,27 @@ pub(crate) const SELECT_PART: &str = "SELECT id, turn_id, run_id, position, kind
      FROM runtime_parts WHERE id = ?1";
 pub(crate) const SELECT_DELTAS: &str = "SELECT body FROM runtime_events \
      WHERE part_id = ?1 AND kind = 'part_delta' ORDER BY seq";
-pub(crate) const SELECT_SUMMARY: &str = "SELECT c.id, c.title, c.title_source, c.profile_id, c.created_at, c.updated_at, \
-     EXISTS (SELECT 1 FROM runtime_runs r WHERE r.conversation_id = c.id AND r.state IN ('queued', 'running')) \
-     FROM runtime_conversations c WHERE c.id = ?1";
+/// The columns of a conversation summary, for every query that reads one.
+macro_rules! summary_columns {
+    () => {
+        "c.id, c.title, c.title_source, c.profile_id, c.created_at, c.updated_at, \
+         EXISTS (SELECT 1 FROM runtime_runs r WHERE r.conversation_id = c.id \
+         AND r.state IN ('queued', 'running')), \
+         EXISTS (SELECT 1 FROM runtime_runs r WHERE r.conversation_id = c.id \
+         AND r.state IN ('queued', 'running') \
+         AND json_extract(r.activity, '$.kind') = 'awaiting_approval'), \
+         c.workspace, c.project_id"
+    };
+}
+pub(crate) use summary_columns;
+pub(crate) const SELECT_SUMMARY: &str = concat!(
+    "SELECT ",
+    summary_columns!(),
+    " FROM runtime_conversations c WHERE c.id = ?1"
+);
+pub(crate) const SELECT_KEPT_RUNS: &str = "SELECT k.id FROM runtime_runs k \
+     JOIN runtime_runs r ON r.turn_id = k.turn_id \
+     WHERE r.id = ?1 AND k.kept = 1 AND k.id <> ?1 ORDER BY k.created_at, k.id";
 pub(crate) const SELECT_TURN: &str =
     "SELECT id, position, current_run_id, created_at FROM runtime_turns WHERE id = ?1";
 pub(crate) const SELECT_USER_PART: &str = "SELECT id FROM runtime_parts \
@@ -37,6 +58,7 @@ pub(crate) const STATEMENTS: &[&str] = &[
     SELECT_PART,
     SELECT_DELTAS,
     SELECT_SUMMARY,
+    SELECT_KEPT_RUNS,
     SELECT_TURN,
     SELECT_USER_PART,
     SELECT_CHECKPOINT_VIEW,
@@ -49,6 +71,10 @@ pub(crate) struct PartDocument {
     /// The failure of an error part.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) failure: Option<RunFailure>,
+    /// The call of a tool call part, which is also its operation's journal
+    /// record (ADR-0013).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) tool_call: Option<ToolCallDocument>,
 }
 
 /// The document of a checkpoint.
@@ -100,6 +126,7 @@ pub(crate) mod kinds {
     pub(crate) const PART_STARTED: &str = "part_started";
     pub(crate) const PART_DELTA: &str = "part_delta";
     pub(crate) const PART_FINISHED: &str = "part_finished";
+    pub(crate) const PART_UPDATED: &str = "part_updated";
     pub(crate) const ATTEMPT_DISCARDED: &str = "attempt_discarded";
     pub(crate) const CHECKPOINT_CREATED: &str = "checkpoint_created";
     pub(crate) const CONTEXT_USAGE_CHANGED: &str = "context_usage_changed";
@@ -243,6 +270,14 @@ impl PartRow {
         })
     }
 
+    /// The call of a tool call part.
+    pub(crate) fn tool_call(&self) -> Result<ToolCallDocument, RuntimeStoreError> {
+        let document: PartDocument = from_json(&self.document, "part document")?;
+        document.tool_call.ok_or_else(|| {
+            RuntimeStoreError::invalid(format!("the tool call part {} has no call", self.id))
+        })
+    }
+
     /// The part as the UI shows it, or `None` when the owner does not see it.
     /// A streaming part's text is rebuilt from its delta events.
     pub(crate) fn view(
@@ -268,6 +303,12 @@ impl PartRow {
                 PartContent::Error { failure }
             }
             Some(PartKind::ContinuationNote) => return Ok(None),
+            Some(PartKind::ToolCall) => {
+                let call = self.tool_call()?;
+                PartContent::ToolCall {
+                    call: Box::new(call.view(&text)),
+                }
+            }
             None => PartContent::Unknown {
                 name: self.kind.clone(),
             },
@@ -336,8 +377,12 @@ pub(crate) struct RawSummary {
     created_at: i64,
     updated_at: i64,
     has_active_run: bool,
+    awaiting_approval: bool,
+    workspace: Option<String>,
+    project_id: Option<String>,
 }
 
+/// Reads the columns of [`summary_columns`].
 pub(crate) fn summary_from_row(row: &Row<'_>) -> rusqlite::Result<RawSummary> {
     Ok(RawSummary {
         id: row.get(0)?,
@@ -347,6 +392,9 @@ pub(crate) fn summary_from_row(row: &Row<'_>) -> rusqlite::Result<RawSummary> {
         created_at: row.get(4)?,
         updated_at: row.get(5)?,
         has_active_run: row.get(6)?,
+        awaiting_approval: row.get(7)?,
+        workspace: row.get(8)?,
+        project_id: row.get(9)?,
     })
 }
 
@@ -364,6 +412,13 @@ impl RawSummary {
                 .map(|profile| parse_id(profile, ProfileId::parse))
                 .transpose()?,
             has_active_run: self.has_active_run,
+            awaiting_approval: self.awaiting_approval,
+            project_id: self
+                .project_id
+                .as_deref()
+                .map(|project| parse_id(project, ProjectId::parse))
+                .transpose()?,
+            workspace: self.workspace,
             created_at: millis(self.created_at),
             updated_at: millis(self.updated_at),
         })
@@ -458,29 +513,38 @@ pub(crate) fn hydrate(
         }
         kinds::RUN_STARTED => {
             let run_id = required(body.run_id.as_ref(), "run_started without a run")?;
-            run_view(connection, run_id.as_str())?.map(|run| ConversationEvent::RunStarted { run })
+            match run_view(connection, run_id.as_str())? {
+                Some(run) => Some(ConversationEvent::RunStarted {
+                    run,
+                    kept_run_ids: kept_runs(connection, run_id.as_str())?,
+                }),
+                None => None,
+            }
         }
         kinds::RUN_UPDATED => {
             let run_id = required(body.run_id.as_ref(), "run_updated without a run")?;
             run_view(connection, run_id.as_str())?.map(|run| ConversationEvent::RunUpdated { run })
         }
-        kinds::PART_STARTED | kinds::PART_FINISHED => {
+        kinds::PART_STARTED | kinds::PART_FINISHED | kinds::PART_UPDATED => {
             let part_id = required(stored.part_id.as_ref(), "a part event without a part")?;
             let Some(row) = part_row(connection, part_id)? else {
                 return Ok(None);
             };
-            row.view(connection)?.map(|part| {
-                if stored.kind == kinds::PART_STARTED {
-                    ConversationEvent::PartStarted { part }
-                } else {
-                    ConversationEvent::PartFinished { part }
-                }
-            })
+            row.view(connection)?
+                .map(|part| match stored.kind.as_str() {
+                    kinds::PART_STARTED => ConversationEvent::PartStarted { part },
+                    kinds::PART_UPDATED => ConversationEvent::PartUpdated { part },
+                    _ => ConversationEvent::PartFinished { part },
+                })
         }
         kinds::PART_DELTA => {
             let part_id = required(stored.part_id.as_ref(), "a delta without a part")?;
-            let audience_includes_owner =
-                part_row(connection, part_id)?.is_some_and(|row| row.audience().includes_owner());
+            // A tool call's arguments arrive in one delta that can be large;
+            // subscribers get them with the part's next update instead, cut to
+            // what the view shows.
+            let audience_includes_owner = part_row(connection, part_id)?.is_some_and(|row| {
+                row.audience().includes_owner() && row.kind != PartKind::ToolCall.as_str()
+            });
             if audience_includes_owner {
                 Some(ConversationEvent::PartDelta {
                     part_id: parse_id(part_id, PartId::parse)?,
@@ -516,6 +580,20 @@ pub(crate) fn hydrate(
         }),
     };
     Ok(event)
+}
+
+/// The earlier runs of a run's turn whose parts the turn keeps, oldest first.
+pub(crate) fn kept_runs(
+    connection: &Connection,
+    run_id: &str,
+) -> Result<Vec<RunId>, RuntimeStoreError> {
+    let mut select = connection.prepare_cached(SELECT_KEPT_RUNS)?;
+    let rows = select.query_map([run_id], |row| row.get::<_, String>(0))?;
+    let mut kept = Vec::new();
+    for row in rows {
+        kept.push(parse_id(&row?, RunId::parse)?);
+    }
+    Ok(kept)
 }
 
 /// The turn as `turn_started` shows it: the owner's message and the run that

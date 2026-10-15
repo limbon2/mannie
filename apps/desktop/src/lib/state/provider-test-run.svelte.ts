@@ -38,6 +38,7 @@ export class ProviderTestRun {
         name: profile.name,
         outputLimit: limits.outputLimit ?? profile.outputLimit,
         reasoningEffort: profile.reasoningEffort,
+        useTools: profile.useTools,
       },
       id: profile.id,
     });

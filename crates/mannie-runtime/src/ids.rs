@@ -7,7 +7,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use mannie_types::clock::Clock;
 use mannie_types::ids::{
-    CheckpointId, ConversationId, InvalidId, PartId, ProfileId, RunId, TurnId,
+    ArchiveId, CheckpointId, ConversationId, GrantId, InvalidId, PartId, ProfileId, ProjectId,
+    RuleId, RunId, TurnId,
 };
 use uuid::timestamp::context::ContextV7;
 use uuid::{Timestamp, Uuid};
@@ -79,6 +80,26 @@ impl IdGenerator {
     /// A new checkpoint ID.
     pub(crate) fn checkpoint(&self) -> CheckpointId {
         self.make(CheckpointId::parse)
+    }
+
+    /// A new ID of an archived output.
+    pub(crate) fn archive(&self) -> ArchiveId {
+        self.make(ArchiveId::parse)
+    }
+
+    /// A new grant ID.
+    pub(crate) fn grant(&self) -> GrantId {
+        self.make(GrantId::parse)
+    }
+
+    /// A new rule ID.
+    pub(crate) fn rule(&self) -> RuleId {
+        self.make(RuleId::parse)
+    }
+
+    /// A new project ID.
+    pub(crate) fn project(&self) -> ProjectId {
+        self.make(ProjectId::parse)
     }
 }
 

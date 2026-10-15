@@ -2,8 +2,9 @@
 //! per change, each with the conversation's next sequence number
 //! (ADR-0012, decisions 3 and 10).
 
-use mannie_types::ids::{ConversationId, PartId, RunId, TurnId};
+use mannie_types::ids::{ConversationId, PartId, ProjectId, RunId, TurnId};
 use mannie_types::run::{RunActivity, RunOutcome, RunState};
+use mannie_types::tools::ToolCallDocument;
 use mannie_types::transcript::{ContextUsage, ConversationEvent, PartKind, PartState};
 use rusqlite::{OptionalExtension, Transaction, params};
 
@@ -11,15 +12,20 @@ use super::rows::{
     self, CheckpointDocument, EventBody, PartDocument, StoredRow, kinds, streaming_text, to_json,
 };
 use super::{
-    Applied, Change, DOCUMENT_VERSION, NewCheckpoint, NewConversation, NewPart, NewRun,
-    ProviderItem, RuntimeStoreError,
+    Applied, Change, DOCUMENT_VERSION, NewArchive, NewCheckpoint, NewConversation, NewPart, NewRun,
+    ProviderItem, RuntimeStoreError, archives,
 };
 use crate::writer::TransactError;
 use crate::{Durability, Store};
 
 const SELECT_CONVERSATION_EXISTS: &str = "SELECT 1 FROM runtime_conversations WHERE id = ?1";
 const INSERT_CONVERSATION: &str = "INSERT INTO runtime_conversations \
-     (id, title, title_source, profile_id, created_at, updated_at) VALUES (?1, ?2, 'first_message', ?3, ?4, ?4)";
+     (id, title, title_source, profile_id, project_id, workspace, created_at, updated_at) \
+     VALUES (?1, ?2, 'first_message', ?3, ?5, \
+     (SELECT folder FROM runtime_projects WHERE id = ?5), ?4, ?4)";
+const SELECT_PROJECT_EXISTS: &str = "SELECT 1 FROM runtime_projects WHERE id = ?1";
+const SELECT_CONVERSATION_PROJECT: &str =
+    "SELECT project_id FROM runtime_conversations WHERE id = ?1";
 const NEXT_SEQ: &str =
     "UPDATE runtime_conversations SET last_seq = last_seq + 1 WHERE id = ?1 RETURNING last_seq";
 const SELECT_LAST_SEQ: &str = "SELECT last_seq FROM runtime_conversations WHERE id = ?1";
@@ -42,10 +48,18 @@ const SELECT_LATEST_TURN: &str = "SELECT t.id, r.state FROM runtime_turns t \
      LEFT JOIN runtime_runs r ON r.id = t.current_run_id \
      WHERE t.conversation_id = ?1 ORDER BY t.position DESC LIMIT 1";
 const SET_CURRENT_RUN: &str = "UPDATE runtime_turns SET current_run_id = ?2 WHERE id = ?1";
+// A run that made tool calls stays in its turn when a retry replaces it
+// (docs/features/system-tools/tool-calls.md, retry).
+const KEEP_CURRENT_RUN: &str = "UPDATE runtime_runs SET kept = 1 \
+     WHERE id = (SELECT current_run_id FROM runtime_turns WHERE id = ?1) \
+     AND EXISTS (SELECT 1 FROM runtime_parts p WHERE p.run_id = runtime_runs.id \
+     AND p.kind = 'tool_call' AND p.state <> 'discarded')";
 const START_RUN: &str = "UPDATE runtime_runs SET state = 'running', started_at = ?3 \
      WHERE id = ?1 AND conversation_id = ?2 AND state = 'queued'";
 const SET_ACTIVITY: &str = "UPDATE runtime_runs SET activity = ?3 \
      WHERE id = ?1 AND conversation_id = ?2 AND state IN ('queued', 'running')";
+const SELECT_AWAITING_APPROVAL: &str = "SELECT json_extract(activity, '$.kind') = 'awaiting_approval' \
+     FROM runtime_runs WHERE id = ?1 AND conversation_id = ?2";
 const END_RUN: &str = "UPDATE runtime_runs SET state = ?3, outcome = ?4, activity = NULL, ended_at = ?5 \
      WHERE id = ?1 AND conversation_id = ?2 AND state IN ('queued', 'running')";
 const SELECT_ACTIVE_RUN_TURN: &str = "SELECT turn_id FROM runtime_runs \
@@ -54,6 +68,10 @@ const SELECT_NEXT_PART_POSITION: &str =
     "SELECT COALESCE(MAX(position) + 1, 0) FROM runtime_parts WHERE turn_id = ?1";
 const SELECT_PART_STATE: &str =
     "SELECT state FROM runtime_parts WHERE id = ?1 AND conversation_id = ?2";
+const SELECT_PART_KIND: &str =
+    "SELECT kind FROM runtime_parts WHERE id = ?1 AND conversation_id = ?2";
+const UPDATE_PART_DOCUMENT: &str =
+    "UPDATE runtime_parts SET version = ?2, document = ?3 WHERE id = ?1";
 const FINISH_PART: &str =
     "UPDATE runtime_parts SET text = ?2, state = ?3, finished_at = ?4 WHERE id = ?1";
 const INSERT_PROVIDER_ITEM: &str = "INSERT INTO runtime_provider_items (part_id, binding, version, item) \
@@ -71,12 +89,17 @@ const UPDATE_CONTEXT: &str = "UPDATE runtime_conversations \
 const RENAME: &str =
     "UPDATE runtime_conversations SET title = ?2, title_source = 'owner' WHERE id = ?1";
 const SET_PROFILE: &str = "UPDATE runtime_conversations SET profile_id = ?2 WHERE id = ?1";
+const SET_PROJECT: &str = "UPDATE runtime_conversations \
+     SET project_id = ?2, workspace = (SELECT folder FROM runtime_projects WHERE id = ?2) \
+     WHERE id = ?1";
 
 /// Every statement of this module.
 #[cfg(test)]
 pub(crate) const STATEMENTS: &[&str] = &[
     SELECT_CONVERSATION_EXISTS,
     INSERT_CONVERSATION,
+    SELECT_PROJECT_EXISTS,
+    SELECT_CONVERSATION_PROJECT,
     NEXT_SEQ,
     SELECT_LAST_SEQ,
     INSERT_EVENT,
@@ -88,12 +111,16 @@ pub(crate) const STATEMENTS: &[&str] = &[
     TOUCH_CONVERSATION,
     SELECT_LATEST_TURN,
     SET_CURRENT_RUN,
+    KEEP_CURRENT_RUN,
     START_RUN,
     SET_ACTIVITY,
+    SELECT_AWAITING_APPROVAL,
     END_RUN,
     SELECT_ACTIVE_RUN_TURN,
     SELECT_NEXT_PART_POSITION,
     SELECT_PART_STATE,
+    SELECT_PART_KIND,
+    UPDATE_PART_DOCUMENT,
     FINISH_PART,
     INSERT_PROVIDER_ITEM,
     DELETE_DELTAS,
@@ -103,6 +130,7 @@ pub(crate) const STATEMENTS: &[&str] = &[
     UPDATE_CONTEXT,
     RENAME,
     SET_PROFILE,
+    SET_PROJECT,
 ];
 
 impl Store {
@@ -231,6 +259,11 @@ impl Batch<'_> {
                 )?;
                 Ok(())
             }
+            Change::UpdatePart {
+                part_id,
+                tool_call,
+                archives,
+            } => self.update_part(&part_id, &tool_call, &archives),
             Change::DiscardAttempt { run_id, attempt } => self.discard_attempt(run_id, attempt),
             Change::AddCheckpoint { checkpoint } => self.add_checkpoint(checkpoint),
             Change::UpdateContext { ledger, usage } => self.update_context(&ledger, usage),
@@ -251,6 +284,7 @@ impl Batch<'_> {
                 self.summary_changed = true;
                 Ok(())
             }
+            Change::SetProject { project_id } => self.set_project(&project_id),
         }
     }
 
@@ -262,16 +296,57 @@ impl Batch<'_> {
             .profile_id
             .as_ref()
             .map(|id| id.as_str().to_owned());
+        let project = conversation
+            .project_id
+            .as_ref()
+            .map(|id| id.as_str().to_owned());
+        if let Some(project) = &project {
+            self.require_project(project)?;
+        }
         self.transaction
             .prepare_cached(INSERT_CONVERSATION)?
             .execute(params![
                 self.conversation,
                 conversation.title,
                 profile,
-                self.now
+                self.now,
+                project
             ])?;
         self.summary_changed = true;
         Ok(())
+    }
+
+    /// Moves a general conversation into a project. The store copies the
+    /// project's folder, so the workspace always is the project's folder.
+    fn set_project(&mut self, project_id: &ProjectId) -> Result<(), RuntimeStoreError> {
+        let current: Option<String> = self
+            .transaction
+            .prepare_cached(SELECT_CONVERSATION_PROJECT)?
+            .query_row([self.conversation], |row| row.get(0))?;
+        if current.is_some() {
+            return Err(RuntimeStoreError::AlreadyInProject);
+        }
+        self.require_project(project_id.as_str())?;
+        self.transaction
+            .prepare_cached(SET_PROJECT)?
+            .execute(params![self.conversation, project_id.as_str()])?;
+        self.append(kinds::CONVERSATION_CHANGED, None, &EventBody::empty())?;
+        self.summary_changed = true;
+        Ok(())
+    }
+
+    fn require_project(&self, project: &str) -> Result<(), RuntimeStoreError> {
+        let exists = self
+            .transaction
+            .prepare_cached(SELECT_PROJECT_EXISTS)?
+            .query_row([project], |_row| Ok(()))
+            .optional()?
+            .is_some();
+        if exists {
+            Ok(())
+        } else {
+            Err(RuntimeStoreError::ProjectNotFound)
+        }
     }
 
     fn start_turn(
@@ -343,6 +418,9 @@ impl Batch<'_> {
         if !retryable {
             return Err(RuntimeStoreError::NothingToRetry);
         }
+        self.transaction
+            .prepare_cached(KEEP_CURRENT_RUN)?
+            .execute([turn_id.as_str()])?;
         self.insert_run(turn_id.as_str(), &run)?;
         self.transaction
             .prepare_cached(SET_CURRENT_RUN)?
@@ -373,6 +451,17 @@ impl Batch<'_> {
         run_id: RunId,
         activity: &RunActivity,
     ) -> Result<(), RuntimeStoreError> {
+        // The conversation list shows whether a reply waits for the owner
+        // (docs/features/system-tools/tool-activity.md, status), so the
+        // summary changes when a run starts or stops waiting.
+        let was_waiting: Option<bool> = self
+            .transaction
+            .prepare_cached(SELECT_AWAITING_APPROVAL)?
+            .query_row(params![run_id.as_str(), self.conversation], |row| {
+                row.get(0)
+            })
+            .optional()?
+            .flatten();
         let updated = self
             .transaction
             .prepare_cached(SET_ACTIVITY)?
@@ -383,6 +472,10 @@ impl Batch<'_> {
             ])?;
         if updated == 0 {
             return Err(RuntimeStoreError::RunNotActive { run: run_id });
+        }
+        let waits = matches!(activity, RunActivity::AwaitingApproval { .. });
+        if was_waiting.unwrap_or(false) != waits {
+            self.summary_changed = true;
         }
         self.append_run_updated(run_id)
     }
@@ -455,6 +548,51 @@ impl Batch<'_> {
         }
         self.append(
             kinds::PART_FINISHED,
+            Some(part_id.as_str()),
+            &EventBody::empty(),
+        )?;
+        Ok(())
+    }
+
+    fn update_part(
+        &mut self,
+        part_id: &PartId,
+        tool_call: &ToolCallDocument,
+        archives: &[NewArchive],
+    ) -> Result<(), RuntimeStoreError> {
+        self.require_streaming(part_id)?;
+        let kind: Option<String> = self
+            .transaction
+            .prepare_cached(SELECT_PART_KIND)?
+            .query_row([part_id.as_str(), self.conversation], |row| row.get(0))
+            .optional()?;
+        if kind.as_deref() != Some(PartKind::ToolCall.as_str()) {
+            return Err(RuntimeStoreError::NotAToolCall {
+                part: part_id.clone(),
+            });
+        }
+        let document = PartDocument {
+            failure: None,
+            tool_call: Some(tool_call.clone()),
+        };
+        self.transaction
+            .prepare_cached(UPDATE_PART_DOCUMENT)?
+            .execute(params![
+                part_id.as_str(),
+                DOCUMENT_VERSION,
+                to_json(&document)?
+            ])?;
+        for archive in archives {
+            archives::insert(
+                self.transaction,
+                self.conversation,
+                part_id.as_str(),
+                archive,
+                self.now,
+            )?;
+        }
+        self.append(
+            kinds::PART_UPDATED,
             Some(part_id.as_str()),
             &EventBody::empty(),
         )?;
@@ -639,6 +777,7 @@ impl Batch<'_> {
             .query_row([part.turn_id.as_str()], |row| row.get(0))?;
         let document = PartDocument {
             failure: part.failure.clone(),
+            tool_call: part.tool_call.clone(),
         };
         let finished_at = (state != PartState::Streaming).then_some(self.now);
         self.transaction
@@ -721,9 +860,38 @@ impl Batch<'_> {
             rows.collect::<Result<_, _>>()?
         };
         for part_id in streaming {
+            self.end_tool_call(&part_id)?;
             self.finish_part(&part_id, state, "")?;
             self.append(kinds::PART_FINISHED, Some(&part_id), &EventBody::empty())?;
         }
+        Ok(())
+    }
+
+    /// Gives a tool call that ends with its run, unfinished, the status that
+    /// says what may have happened: an operation that was executing becomes
+    /// uncertain, and every other call did not run
+    /// (docs/features/system-tools/operations-and-approvals.md, recovery).
+    /// The status is stored in the same transaction as the end of the part
+    /// and of the run.
+    fn end_tool_call(&self, part_id: &str) -> Result<(), RuntimeStoreError> {
+        let Some(row) = rows::part_row(self.transaction, part_id)? else {
+            return Ok(());
+        };
+        if row.kind != PartKind::ToolCall.as_str() {
+            return Ok(());
+        }
+        let mut document: PartDocument = rows::from_json(&row.document, "part document")?;
+        let Some(tool_call) = document.tool_call.as_mut() else {
+            return Ok(());
+        };
+        if tool_call.status.is_final() {
+            return Ok(());
+        }
+        tool_call.status = tool_call.status.after_interruption();
+        tool_call.ended_at = Some(rows::millis(self.now));
+        self.transaction
+            .prepare_cached(UPDATE_PART_DOCUMENT)?
+            .execute(params![part_id, DOCUMENT_VERSION, to_json(&document)?])?;
         Ok(())
     }
 }

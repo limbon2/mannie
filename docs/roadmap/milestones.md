@@ -20,7 +20,7 @@
 | --------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------- | ------- |
 | M0 Foundation   | The engineering platform and the validations features need | None                                                                                  | Dry run |
 | M1 Chat         | Chat with OpenAI models and the owner's own model servers  | [Chat](../features/chat/README.md), [window and tray](../features/window-and-tray.md) | v0.1.0  |
-| M2 System tools | The model works safely on the master's machine             | [System tools](../features/system-tools.md)                                           | v0.2.0  |
+| M2 System tools | The model works safely on the master's machine             | [System tools](../features/system-tools/README.md)                                    | v0.2.0  |
 | M3 Child agents | Agents split work on their own machine                     | [Child agents](../features/child-agents.md)                                           | v0.3.0  |
 | M4 Workers      | Workers own their hosts and take tasks from the master     | [Workers](../features/workers/README.md)                                              | v0.4.0  |
 
@@ -89,11 +89,11 @@ Exit criteria:
 
 Goal: the model works safely on the master's machine. It ends with v0.2.0.
 
-Features: [System tools](../features/system-tools.md).
+Features: [System tools](../features/system-tools/README.md), and [projects](../features/chat/projects.md) of chat.
 
-Scope: the tool registry with the file and command tools; the operation journal; approvals, grants and rules; workspace defaults; process containment; bounded results and archived outputs; handling of early stops during tool use; tool activity and approval requests in the UI.
+Scope: the tool registry with the file and command tools; the operation journal; approvals, grants and rules; projects, whose folders are the workspaces; process containment; bounded results and archived outputs; handling of early stops during tool use; tool activity and approval requests in the UI.
 
-Validations: V4 on Windows and Linux. M2 also validates [ADR-0013](../adr/0013-journal-every-side-effect.md).
+Validations: V4 on Windows and Linux. M2 also validates [ADR-0013](../adr/0013-journal-every-side-effect.md) and [ADR-0023](../adr/0023-organize-conversations-into-projects.md), which supersedes ADR-0022.
 
 Exit criteria:
 
@@ -101,8 +101,8 @@ Exit criteria:
 - Ending the process in every journal state never repeats an operation, and uncertain operations are reported.
 - The prompt-injection corpus causes no side effect the owner did not allow, and a path changed between approval and execution sends the operation back to authorization.
 - Stop and timeout end whole process trees (V4).
-- Evaluations with an OpenAI model and one open-weight model reach the agreed pass rate.
-- ADR-0013 is Accepted, and v0.2.0 is released.
+- Evaluations with an OpenAI model and one open-weight model pass at least 90% of their tasks, and every injection task passes.
+- ADR-0013 and ADR-0023 are Accepted, and v0.2.0 is released.
 
 ### M3: Child agents
 
@@ -144,7 +144,7 @@ Accepted features go into new milestones as they arrive, and each of those miles
 
 ## 4. Validations
 
-Each validation settles one or more Proposed ADRs. The validation code stays in the repository as tests or benchmarks. The [M0 validation results](m0-validation.md) and the [M1 validation results](m1-validation.md) record what each milestone's validations showed.
+Each validation settles one or more Proposed ADRs. The validation code stays in the repository as tests or benchmarks. The [M0 validation results](m0-validation.md), the [M1 validation results](m1-validation.md) and the [M2 validation results](m2-validation.md) record what each milestone's validations showed.
 
 | V   | Proves                                                                                                                                                                                                                                                                                                                                                                                                                                 | ADRs               | Milestone |
 | --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ | --------- |

@@ -1,0 +1,41 @@
+{
+  "server": "vllm",
+  "interface": "chat_completions",
+  "provenance": "constructed",
+  "sources": [
+    "https://docs.vllm.ai/en/stable/features/tool_calling.html"
+  ],
+  "verifiedOn": "2026-10-14",
+  "request": {
+    "model": "Qwen/Qwen3-8B",
+    "instructions": "",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What does notes.txt say?"
+      }
+    ],
+    "maxOutputTokens": 1024,
+    "reasoningEffort": "server_default",
+    "tools": [
+      {
+        "name": "read_file",
+        "description": "Reads lines of a text file.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "The file."
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "toolChoice": "auto"
+  }
+}

@@ -19,13 +19,13 @@ use tauri::ipc::Channel;
 
 use crate::state::Core;
 
-fn runtime(core: &Core) -> Result<&Runtime, ChatError> {
+pub(super) fn runtime(core: &Core) -> Result<&Runtime, ChatError> {
     core.runtime().ok_or(ChatError::StoreUnavailable)
 }
 
 /// Logs a refused or failed command by its code, and wraps the error for the
 /// UI.
-fn refused(command: &'static str) -> impl FnOnce(ChatError) -> CommandError<ChatError> {
+pub(super) fn refused(command: &'static str) -> impl FnOnce(ChatError) -> CommandError<ChatError> {
     move |error| {
         tracing::warn!(
             command,

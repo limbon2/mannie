@@ -13,7 +13,8 @@ vi.mock('mode-watcher', () => ({ resetMode: vi.fn(), setMode: vi.fn() }));
 
 /**
  * A feature as a later milestone adds one: a view, its navigation entry, a
- * command, a settings section, a sidebar panel, an overlay and a part renderer.
+ * command, a settings section, a sidebar panel, an overlay and a part
+ * renderer.
  */
 function registerExampleFeature(slots: ShellSlots): void {
   const component = () => ({});
@@ -63,24 +64,30 @@ describe('composeShell', () => {
     const slots = composeShell(features);
 
     expect(slots.views.entries.map((view) => view.id)).toEqual(['chat']);
-    expect(slots.sidebarPanels.entries.map((panel) => panel.id)).toEqual(['chat.conversations']);
+    expect(slots.sidebarPanels.entries.map((panel) => panel.id)).toEqual(['chat.projects', 'chat.conversations']);
     expect(slots.overlays.entries.map((overlay) => overlay.id)).toEqual([
       'shell.link-confirmation',
       'chat.dialogs',
       'window.requests',
+      'tools.dialogs',
     ]);
     expect(slots.partRenderers.entries.map((renderer) => renderer.id)).toEqual([
       'user_text',
       'text',
       'reasoning',
       'error',
+      'tool_call',
     ]);
     expect(slots.settingsSections.entries.map((section) => section.id)).toEqual([
       'shell.interface',
       'chat.providers',
       'chat.instructions',
       'window.behavior',
+      'tools.settings',
     ]);
+    expect(slots.commands.entries.map((command) => command.id)).toEqual(
+      expect.arrayContaining(['chat.add-project', 'chat.add-project-from-path', 'tools.show-permissions']),
+    );
   });
 
   it('adds a feature’s entries beside the shell’s', () => {

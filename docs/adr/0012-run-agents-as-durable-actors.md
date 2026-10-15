@@ -14,7 +14,7 @@
 
 ## Decision
 
-1. Each active run is an actor, a tokio task inside the agent runtime, with a mailbox for commands such as stop or an approval decision. It runs to completion whether or not anyone is subscribed.
+1. Each active run is an actor, a tokio task inside the agent runtime, with a mailbox for commands such as stop. It runs to completion whether or not anyone is subscribed. An approval decision reaches the run through the approval it waits on, a one-shot answer registered for that request, so decisions never fill the mailbox that stop relies on.
 2. Each step makes one model call. The runtime owns tools, budgets, retries, compaction and quirk handling, and the provider layer only streams that one call.
 3. The transcript is an append-only list of typed parts. Every change is an event with a per-conversation sequence number, stored before it is published.
 4. Subscribers (the UI through Tauri channels, the master through the link) receive the events after a cursor. A subscriber that reconnects replays from its last cursor without gaps.

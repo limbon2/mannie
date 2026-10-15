@@ -4,7 +4,8 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use crate::ids::ConversationId;
+use crate::ids::{ConversationId, ProjectId};
+use crate::projects::ProjectView;
 
 use super::events::ConversationEvent;
 use super::views::{ConversationSnapshot, ConversationSummary};
@@ -76,10 +77,12 @@ pub enum ConversationUpdate {
     rename_all_fields = "camelCase"
 )]
 pub enum ConversationListUpdate {
-    /// Every conversation, the most recent first.
+    /// Every conversation, the most recent first, and every project.
     Snapshot {
         /// The conversations.
         conversations: Vec<ConversationSummary>,
+        /// The projects, the oldest first.
+        projects: Vec<ProjectView>,
     },
     /// A conversation was created or changed.
     Upserted {
@@ -90,6 +93,16 @@ pub enum ConversationListUpdate {
     Removed {
         /// The deleted conversation.
         id: ConversationId,
+    },
+    /// A project was added or renamed.
+    ProjectUpserted {
+        /// The project as it is now.
+        project: ProjectView,
+    },
+    /// A project was removed, after its conversations.
+    ProjectRemoved {
+        /// The removed project.
+        id: ProjectId,
     },
     /// The core ended the subscription.
     Ended {

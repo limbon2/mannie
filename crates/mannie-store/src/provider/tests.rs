@@ -42,6 +42,7 @@ fn fields(name: &str) -> ProfileFields {
         context_window: 32_768,
         output_limit: 4_096,
         reasoning_effort: ReasoningEffort::ServerDefault,
+        use_tools: true,
     }
 }
 
