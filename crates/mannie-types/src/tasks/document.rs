@@ -125,6 +125,35 @@ pub enum TaskRefusal {
         /// The worker's name.
         worker: String,
     },
+    /// A plugin's executor did not take the task (ADR-0031, decision 6). The
+    /// part keeps the text that the model read as its result, and the UI
+    /// shows the message that the plugin registers for the code.
+    Executor {
+        /// The executor's kind: its plugin's ID.
+        kind: String,
+        /// The executor's code for the refusal, such as `worker_offline`.
+        code: String,
+        /// The name of the target that the call named, if it named one.
+        #[serde(default)]
+        target: Option<String>,
+    },
+}
+
+/// The executor of a plugin that runs a task, and the task's target, such as
+/// a worker (ADR-0031, decision 6).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskExecutorRef {
+    /// The executor's kind: the ID of the plugin that registered it.
+    pub kind: String,
+    /// The target's ID, as the executor names it.
+    pub target_id: String,
+    /// The target's name when the task started. The plugin took it from what
+    /// its target says about itself, so it is content.
+    pub target_name: String,
+    /// What the text that the model reads calls the target, such as
+    /// "the worker", which comes before the target's name.
+    pub noun: String,
 }
 
 /// The worker that a task runs on (docs/features/workers/delegation.md).
@@ -274,13 +303,57 @@ pub struct TaskDocument {
     /// When the task ended.
     #[serde(default)]
     pub ended_at: Option<UtcMillis>,
-    /// The worker that runs the task, or `None` for a child agent.
+    /// The worker of a task that 0.2.0 stored. Later versions name the
+    /// executor instead, and M5's migration copies a stored worker into it.
     #[serde(default)]
     pub worker: Option<TaskWorker>,
-    /// Whether the master let the task go while it ran on its worker: the
-    /// part ended, and the task may still run there.
+    /// The executor that runs the task, or `None` for a child agent.
+    #[serde(default)]
+    pub executor: Option<TaskExecutorRef>,
+    /// Whether the run let the task go while its executor ran it: the part
+    /// ended, and the task may still run there.
     #[serde(default)]
     pub detached: bool,
+}
+
+/// The kind that 0.2.0's stored worker tasks and refusals read as: the
+/// Workers plugin's executor (ADR-0031, decision 6). The views name it so
+/// that the UI reads one shape; the stored fields stay through 0.3.0.
+const LEGACY_WORKERS_KIND: &str = "workers";
+
+/// What the text that the model reads called a worker in 0.2.0.
+const LEGACY_WORKER_NOUN: &str = "the worker";
+
+impl TaskWorker {
+    /// The worker as the target of the Workers plugin's executor.
+    fn as_executor(&self) -> TaskExecutorRef {
+        TaskExecutorRef {
+            kind: LEGACY_WORKERS_KIND.to_owned(),
+            target_id: self.id.as_str().to_owned(),
+            target_name: self.name.clone(),
+            noun: LEGACY_WORKER_NOUN.to_owned(),
+        }
+    }
+}
+
+impl TaskRefusal {
+    /// The refusal as the UI reads it: a refusal of a worker that 0.2.0
+    /// stored reads as the Workers plugin's executor's code.
+    #[must_use]
+    pub fn current(&self) -> Self {
+        let legacy = |code: &str, worker: &str| Self::Executor {
+            kind: LEGACY_WORKERS_KIND.to_owned(),
+            code: code.to_owned(),
+            target: Some(worker.to_owned()),
+        };
+        match self {
+            Self::WorkerOffline { worker } => legacy("worker_offline", worker),
+            Self::WorkerUnknown { worker } => legacy("worker_unknown", worker),
+            Self::WorkerIncompatible { worker } => legacy("worker_incompatible", worker),
+            Self::ProfileNotReachable { worker } => legacy("profile_not_reachable", worker),
+            other => other.clone(),
+        }
+    }
 }
 
 impl TaskDocument {
@@ -304,6 +377,10 @@ impl TaskDocument {
             started_at: self.started_at,
             ended_at: self.ended_at,
             worker: self.worker.clone(),
+            executor: self
+                .executor
+                .clone()
+                .or_else(|| self.worker.as_ref().map(TaskWorker::as_executor)),
             detached: self.detached,
         }
     }
@@ -338,7 +415,7 @@ impl TaskPartDocument {
             activity: call.activity.clone(),
             status: call.status,
             not_run: call.not_run.clone(),
-            refusal: self.refusal.clone(),
+            refusal: self.refusal.as_ref().map(TaskRefusal::current),
             task: self.task.as_ref().map(TaskDocument::view),
             awaited: self.awaited.clone(),
             started_at: call.started_at,
@@ -379,6 +456,7 @@ mod tests {
             started_at: Some(UtcMillis::from_millis(10)),
             ended_at: None,
             worker: None,
+            executor: None,
             detached: false,
         }
     }
@@ -443,6 +521,47 @@ mod tests {
         let approval = task.approval.unwrap();
         assert_eq!(approval.call.status, ToolCallStatus::AwaitingApproval);
         assert_eq!(approval.call.arguments, r#"{"path":"notes.md"}"#);
+    }
+
+    #[test]
+    fn a_worker_task_and_refusal_of_0_2_0_read_as_the_workers_executors() {
+        let mut document = task();
+        document.worker = Some(super::TaskWorker {
+            id: crate::ids::WorkerId::parse("0199e0f2-0000-7000-b000-000000000001").unwrap(),
+            name: "build-01".to_owned(),
+        });
+        let record = ToolCallDocument::receiving("call_1".to_owned(), "delegate_task".to_owned());
+        let started = TaskPartDocument {
+            task: Some(document),
+            ..TaskPartDocument::default()
+        };
+        let refused = TaskPartDocument {
+            refusal: Some(TaskRefusal::WorkerOffline {
+                worker: "build-01".to_owned(),
+            }),
+            ..TaskPartDocument::default()
+        };
+
+        let executor = started.view(&record).task.unwrap().executor.unwrap();
+        let refusal = refused.view(&record).refusal;
+
+        assert_eq!(executor.kind, "workers");
+        assert_eq!(executor.target_id, "0199e0f2-0000-7000-b000-000000000001");
+        assert_eq!(executor.target_name, "build-01");
+        assert_eq!(executor.noun, "the worker");
+        assert_eq!(
+            refusal,
+            Some(TaskRefusal::Executor {
+                kind: "workers".to_owned(),
+                code: "worker_offline".to_owned(),
+                target: Some("build-01".to_owned()),
+            })
+        );
+        assert_eq!(
+            TaskRefusal::BudgetUsed.current(),
+            TaskRefusal::BudgetUsed,
+            "the core's refusals stay as they are"
+        );
     }
 
     #[test]

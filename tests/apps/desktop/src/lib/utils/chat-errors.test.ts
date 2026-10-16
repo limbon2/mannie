@@ -18,6 +18,7 @@ import {
   credentialStoreMessage,
   folderRefusalMessage,
   formatCount,
+  pluginOffOf,
   profileFailureMessage,
   runFailureMessage,
   skipReasonMessage,
@@ -76,6 +77,10 @@ const CHAT_ERRORS: ChatError[] = [
   { code: 'written_by_newer_version' },
   { code: 'storage_failed' },
   { code: 'shutting_down' },
+  { code: 'task_conversation' },
+  { code: 'task_target_unreachable', kind: 'workers', target: 'build-01' },
+  { code: 'worker_unreachable' },
+  { code: 'plugin_off', plugin: 'workers' },
 ];
 
 const PROFILE_ERRORS: ProviderProfileError[] = [
@@ -116,6 +121,19 @@ describe('chat messages', () => {
     expect(
       chatFailureMessage({ error: { code: 'instructions_too_many_characters', maxCharacters: 32_768 }, kind: 'core' }),
     ).toContain(`${formatCount(32_768)} characters`);
+    expect(
+      chatFailureMessage({
+        error: { code: 'task_target_unreachable', kind: 'workers', target: 'build-01' },
+        kind: 'core',
+      }),
+    ).toContain('build-01');
+  });
+
+  it('find the plugin of a task conversation that cannot be followed while the plugin is off', () => {
+    expect(pluginOffOf({ error: { code: 'plugin_off', plugin: 'workers' }, kind: 'core' })).toBe('workers');
+    expect(pluginOffOf({ error: { code: 'storage_failed' }, kind: 'core' })).toBeNull();
+    expect(pluginOffOf({ kind: 'ipc' })).toBeNull();
+    expect(pluginOffOf(null)).toBeNull();
   });
 
   it('say why Mannie refused a project’s folder', () => {

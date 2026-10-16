@@ -8,6 +8,8 @@
   import { getShellSlots } from '#lib/state/shell-slots.svelte.js';
   import { activeSettingsSection } from '#lib/utils/settings-sections.js';
 
+  import PluginOffState from './PluginOffState.svelte';
+
   // One page of the settings: the section that the URL names, which the
   // settings sidebar lists beside the others.
   const slots = getShellSlots();
@@ -30,6 +32,8 @@
     </div>
     <active.section.component />
   </section>
+{:else if active.kind === 'plugin_off'}
+  <PluginOffState plugin={active.plugin} />
 {:else}
   <Empty.Root class="flex-1">
     <Empty.Header>

@@ -1,0 +1,52 @@
+[package]
+name = "mannie-link"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The link between the master and its workers in the Workers plugin: the protobuf contracts, the documents that cross the link, mutual TLS with pinned keys, pairing, and the worker's side of the link (ADR-0016, ADR-0028, ADR-0031)."
+license.workspace = true
+publish.workspace = true
+
+# The JSON documents of the link against the fixtures of each version (V6).
+[[test]]
+name = "compatibility"
+
+[dependencies]
+futures-util = { workspace = true }
+mannie-logging = { workspace = true }
+mannie-runtime = { workspace = true }
+mannie-types = { workspace = true }
+prost = { workspace = true }
+# Ed25519 keys, their signatures in the handshake, the HMAC of pairing and
+# the randomness of codes and nonces.
+ring = { workspace = true }
+rustls = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# The documents that cross the link and reach the UI through the master's
+# IPC types, such as a worker's details (ADR-0007).
+specta = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["fs", "macros", "net", "rt", "sync", "time"] }
+tokio-rustls = { workspace = true }
+tonic = { workspace = true }
+tonic-prost = { workspace = true }
+tracing = { workspace = true }
+zeroize = { workspace = true }
+
+[dev-dependencies]
+mannie-runtime = { workspace = true, features = ["testing"] }
+tokio = { workspace = true, features = ["fs", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
+
+[build-dependencies]
+protox = { workspace = true }
+tonic-prost-build = { workspace = true }
+
+[features]
+# The link's test tools for the plugin's tests: a worker served on loopback,
+# relays and a key in the middle. Never enabled in the desktop app or the
+# worker.
+testing = ["mannie-runtime/testing"]
+
+[lints]
+workspace = true

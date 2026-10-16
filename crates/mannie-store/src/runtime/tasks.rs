@@ -1,6 +1,6 @@
-//! Tasks (docs/features/child-agents/tasks.md, data; docs/features/workers/
-//! delegation.md, data): each start or follow-up of a child's work or of a
-//! worker's, the task conversation it runs in, and the numbers that name a
+//! Tasks (docs/features/child-agents/tasks.md, data; ADR-0031): each start
+//! or follow-up of a child's work or of a task that a plugin's executor runs,
+//! the task conversation it runs in, and the numbers that name a
 //! conversation's children.
 //!
 //! A child's task is stored with the turn that works on it, starts running
@@ -9,20 +9,21 @@
 //! from the task's row when the parent's run ends first (`apply.rs`, ending a
 //! call).
 //!
-//! On the master, a task delegated to a worker has a row without a turn: the
-//! states that the worker publishes change it, and it outlives its part when
-//! the master lets it go. On a worker, a task that the master assigned has a
-//! row without a part, and every change of its state takes the worker's next
-//! state version, which the master follows.
+//! A task that a plugin's executor runs has a row without a turn: the states
+//! that the executor publishes change it, and it outlives its part when the
+//! run lets it go. Its row also keeps the executor's own document, which the
+//! core never reads. A task that another machine assigned has a row without a
+//! part, and every change of its state takes the machine's next state
+//! version, which the assigning side follows.
 
-use mannie_types::ids::{ConversationId, PartId, ProfileId, TaskId, TurnId, WorkerId};
-use mannie_types::tasks::{TaskState, TaskWorker};
+use mannie_types::ids::{ConversationId, PartId, TaskId, TurnId};
+use mannie_types::tasks::{TaskExecutorRef, TaskState};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use super::rows::{from_json, millis, parse_id, position, to_json};
 use super::{
     DOCUMENT_VERSION, NewConversation, NewTask, RuntimeStoreError, StoredChild, StoredTask,
-    TaskEnding, apply,
+    TaskEnding, TaskExecution, apply,
 };
 use crate::writer::TransactError;
 use crate::{Durability, Store};
@@ -30,16 +31,16 @@ use crate::{Durability, Store};
 macro_rules! task_columns {
     () => {
         "id, conversation_id, part_id, turn_id, follow_up, background, state, ending, created_at, \
-         ended_at, worker_id, remote_version, submission, cancel_requested_at, assignment, \
-         state_version, profile_id"
+         ended_at, executor_kind, executor_target, executor_version, executor_document, \
+         assignment, state_version"
     };
 }
 
-// The next state version of a worker's assigned tasks (docs/features/workers/
-// delegation.md, following tasks). Every change of an assigned task's state
-// takes one, so the master can follow the changes from the version it stored
-// last; the versions are stored, so they keep growing when the worker
-// restarts. Other tasks keep version 0.
+// The next state version of the assigned tasks (ADR-0028, decision 1). Every
+// change of an assigned task's state takes one, so the assigning side can
+// follow the changes from the version it stored last; the versions are
+// stored, so they keep growing when the machine restarts. Other tasks keep
+// version 0.
 macro_rules! next_state_version {
     () => {
         "(SELECT COALESCE(MAX(v.state_version), 0) + 1 FROM runtime_tasks v \
@@ -84,8 +85,8 @@ const SELECT_LATEST_TASK: &str = concat!(
     task_columns!(),
     " FROM runtime_tasks WHERE conversation_id = ?1 ORDER BY created_at DESC, id DESC LIMIT 1"
 );
-const SELECT_CHILD: &str = "SELECT id, task_number, task_agent, title, task_worker_id, \
-     task_worker_name FROM runtime_conversations \
+const SELECT_CHILD: &str = "SELECT id, task_number, task_agent, title, task_executor_kind, \
+     task_executor_target, task_executor_name, task_executor_noun FROM runtime_conversations \
      WHERE parent_conversation_id = ?1 AND task_number = ?2";
 const SELECT_NEXT_TASK_NUMBER: &str = "SELECT COALESCE(MAX(task_number), 0) + 1 \
      FROM runtime_conversations WHERE parent_conversation_id = ?1";
@@ -93,26 +94,42 @@ const SELECT_TASK_CONVERSATIONS: &str = "SELECT id FROM runtime_conversations \
      WHERE parent_conversation_id = ?1 ORDER BY task_number";
 const SELECT_IS_TASK_CONVERSATION: &str =
     "SELECT parent_conversation_id IS NOT NULL FROM runtime_conversations WHERE id = ?1";
-const INSERT_DELEGATED_TASK: &str = "INSERT INTO runtime_tasks \
-     (id, conversation_id, part_id, follow_up, background, state, version, created_at, worker_id, \
-     profile_id, submission) VALUES (?1, ?2, ?3, ?4, ?5, 'accepted', ?6, ?7, ?8, ?9, 'pending')";
-const SET_SUBMISSION: &str =
-    "UPDATE runtime_tasks SET submission = ?2 WHERE id = ?1 AND worker_id IS NOT NULL";
-const UPDATE_REMOTE_STATE: &str = "UPDATE runtime_tasks SET state = ?2, remote_version = ?3 \
-     WHERE id = ?1 AND worker_id IS NOT NULL AND state IN ('accepted', 'running') \
-     AND (remote_version IS NULL OR remote_version < ?3)";
-const END_REMOTE_TASK: &str = "UPDATE runtime_tasks SET state = ?2, version = ?3, ending = ?4, \
-     ended_at = ?5, remote_version = MAX(COALESCE(remote_version, 0), ?6) \
-     WHERE id = ?1 AND worker_id IS NOT NULL AND state IN ('accepted', 'running')";
-const REQUEST_CANCEL: &str = "UPDATE runtime_tasks \
-     SET cancel_requested_at = COALESCE(cancel_requested_at, ?2) \
-     WHERE id = ?1 AND worker_id IS NOT NULL AND state IN ('accepted', 'running')";
-const SELECT_ACTIVE_DELEGATED_TASKS: &str = concat!(
+// The table's check asks a task without a turn for a worker until a later
+// release builds the table again, so an executor's target also goes into
+// worker_id (migration 0023).
+const INSERT_EXECUTOR_TASK: &str = "INSERT INTO runtime_tasks \
+     (id, conversation_id, part_id, follow_up, background, state, version, created_at, \
+     executor_kind, executor_target, executor_document, worker_id) \
+     VALUES (?1, ?2, ?3, ?4, ?5, 'accepted', ?6, ?7, ?8, ?9, ?10, ?9)";
+const SET_EXECUTOR_DOCUMENT: &str =
+    "UPDATE runtime_tasks SET executor_document = ?3 WHERE id = ?1 AND executor_kind = ?2";
+const UPDATE_EXECUTOR_STATE: &str = "UPDATE runtime_tasks SET state = ?3, executor_version = ?4 \
+     WHERE id = ?1 AND executor_kind = ?2 AND state IN ('accepted', 'running') \
+     AND executor_version < ?4";
+const END_EXECUTOR_TASK: &str = "UPDATE runtime_tasks SET state = ?3, version = ?4, ending = ?5, \
+     ended_at = ?6, executor_version = MAX(executor_version, ?7) \
+     WHERE id = ?1 AND executor_kind = ?2 AND state IN ('accepted', 'running')";
+const SELECT_ACTIVE_EXECUTOR_TASKS: &str = concat!(
     "SELECT ",
     task_columns!(),
-    " FROM runtime_tasks WHERE worker_id IS NOT NULL AND state IN ('accepted', 'running') \
+    " FROM runtime_tasks WHERE executor_kind = ?1 AND state IN ('accepted', 'running') \
      ORDER BY created_at, id"
 );
+// The task conversations of a parent that an executor serves. The WHERE
+// clause also keeps SQLite from reading the upsert's ON as a join.
+const QUEUE_OUTBOX_OF_CHILDREN: &str = "INSERT INTO runtime_executor_outbox \
+     (executor_kind, executor_target, conversation_id, created_at) \
+     SELECT c.task_executor_kind, c.task_executor_target, c.id, ?2 \
+     FROM runtime_conversations c \
+     WHERE c.parent_conversation_id = ?1 AND c.task_executor_kind IS NOT NULL \
+     AND c.task_executor_target IS NOT NULL \
+     ON CONFLICT DO NOTHING";
+const SELECT_OUTBOX: &str = "SELECT executor_target, conversation_id FROM runtime_executor_outbox \
+     WHERE executor_kind = ?1 ORDER BY created_at, executor_target, conversation_id";
+const DELETE_OUTBOX_ENTRY: &str = "DELETE FROM runtime_executor_outbox \
+     WHERE executor_kind = ?1 AND executor_target = ?2 AND conversation_id = ?3";
+const DELETE_OUTBOX_OF_TARGET: &str = "DELETE FROM runtime_executor_outbox \
+     WHERE executor_kind = ?1 AND executor_target = ?2";
 
 /// Every statement of this module.
 #[cfg(test)]
@@ -128,67 +145,50 @@ pub(crate) const STATEMENTS: &[&str] = &[
     SELECT_NEXT_TASK_NUMBER,
     SELECT_TASK_CONVERSATIONS,
     SELECT_IS_TASK_CONVERSATION,
-    INSERT_DELEGATED_TASK,
-    SET_SUBMISSION,
-    UPDATE_REMOTE_STATE,
-    END_REMOTE_TASK,
-    REQUEST_CANCEL,
-    SELECT_ACTIVE_DELEGATED_TASKS,
+    INSERT_EXECUTOR_TASK,
+    SET_EXECUTOR_DOCUMENT,
+    UPDATE_EXECUTOR_STATE,
+    END_EXECUTOR_TASK,
+    SELECT_ACTIVE_EXECUTOR_TASKS,
+    QUEUE_OUTBOX_OF_CHILDREN,
+    SELECT_OUTBOX,
+    DELETE_OUTBOX_ENTRY,
+    DELETE_OUTBOX_OF_TARGET,
 ];
 
-/// Whether the worker stored a delegated task (docs/features/workers/
-/// delegation.md, submitting a task).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Submission {
-    /// The master stored the task and has not learned that the worker stored
-    /// it. The master asks the worker before it submits the task again.
-    Pending,
-    /// The worker stored the task.
-    Accepted,
-}
-
-impl Submission {
-    /// The stored name.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Pending => "pending",
-            Self::Accepted => "accepted",
-        }
-    }
-
-    fn parse(text: &str) -> Option<Self> {
-        match text {
-            "pending" => Some(Self::Pending),
-            "accepted" => Some(Self::Accepted),
-            _ => None,
-        }
-    }
-}
-
-/// A task that the master delegates to a worker, as the parent's run stores
-/// it after its part and before it submits the task (docs/features/workers/
-/// delegation.md, submitting a task).
+/// A task that a plugin's executor runs, as the parent's run stores it after
+/// its part and before the executor submits it (ADR-0031, decision 4).
 #[derive(Debug, Clone)]
-pub struct NewDelegatedTask {
+pub struct NewExecutorTask {
     /// The task, as the parent's run chose it.
     pub id: TaskId,
     /// The task's conversation.
     pub conversation_id: ConversationId,
-    /// The conversation to create for a new task, with the parent, the
-    /// number and the worker in its origin, or `None` for a follow-up, whose
-    /// conversation exists.
+    /// The conversation to create for a new task, whose origin names the same
+    /// executor and target, or `None` for a follow-up, whose conversation
+    /// exists.
     pub conversation: Option<NewConversation>,
     /// The parent's part that assigned the task.
     pub part_id: PartId,
-    /// The worker that runs it.
-    pub worker_id: WorkerId,
-    /// The provider profile that the task uses, whose credential the master
-    /// leases to the worker.
-    pub profile_id: ProfileId,
+    /// The executor's kind: its plugin's ID.
+    pub kind: String,
+    /// The target that runs the task, as the executor names it.
+    pub target: String,
+    /// The executor's own document, which the core keeps as it is.
+    pub document: Option<String>,
     /// Whether the task continues an earlier task of the same conversation.
     pub follow_up: bool,
-    /// Whether the parent continues while the worker works.
+    /// Whether the parent continues while the target works.
     pub background: bool,
+}
+
+/// A deletion of a task conversation that waits for its executor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutboxEntry {
+    /// The target that keeps the conversation.
+    pub target: String,
+    /// The conversation.
+    pub conversation_id: ConversationId,
 }
 
 /// A task's row.
@@ -203,13 +203,12 @@ struct TaskRow {
     ending: Option<String>,
     created_at: i64,
     ended_at: Option<i64>,
-    worker_id: Option<String>,
-    remote_version: Option<i64>,
-    submission: Option<String>,
-    cancel_requested_at: Option<i64>,
+    executor_kind: Option<String>,
+    executor_target: Option<String>,
+    executor_version: i64,
+    executor_document: Option<String>,
     assignment: Option<String>,
     state_version: i64,
-    profile_id: Option<String>,
 }
 
 fn task_from_row(row: &Row<'_>) -> rusqlite::Result<TaskRow> {
@@ -224,13 +223,12 @@ fn task_from_row(row: &Row<'_>) -> rusqlite::Result<TaskRow> {
         ending: row.get(7)?,
         created_at: row.get(8)?,
         ended_at: row.get(9)?,
-        worker_id: row.get(10)?,
-        remote_version: row.get(11)?,
-        submission: row.get(12)?,
-        cancel_requested_at: row.get(13)?,
+        executor_kind: row.get(10)?,
+        executor_target: row.get(11)?,
+        executor_version: row.get(12)?,
+        executor_document: row.get(13)?,
         assignment: row.get(14)?,
         state_version: row.get(15)?,
-        profile_id: row.get(16)?,
     })
 }
 
@@ -244,15 +242,21 @@ impl TaskRow {
             .as_deref()
             .map(|text| from_json::<TaskEnding>(text, "task ending"))
             .transpose()?;
-        let submission = self
-            .submission
-            .as_deref()
-            .map(|text| {
-                Submission::parse(text).ok_or_else(|| {
-                    RuntimeStoreError::invalid(format!("unknown submission {text:?}"))
-                })
-            })
-            .transpose()?;
+        let executor = match (self.executor_kind, self.executor_target) {
+            (Some(kind), Some(target)) => Some(TaskExecution {
+                kind,
+                target,
+                version: version_from(self.executor_version, "an executor's version")?,
+                document: self.executor_document,
+            }),
+            (None, None) => None,
+            _ => {
+                return Err(RuntimeStoreError::invalid(format!(
+                    "task {} names an executor without its target",
+                    self.id
+                )));
+            }
+        };
         Ok(StoredTask {
             id: parse_id(&self.id, TaskId::parse)?,
             conversation_id: parse_id(&self.conversation_id, ConversationId::parse)?,
@@ -272,24 +276,9 @@ impl TaskRow {
             ending,
             created_at: millis(self.created_at),
             ended_at: self.ended_at.map(millis),
-            worker_id: self
-                .worker_id
-                .as_deref()
-                .map(|id| parse_id(id, WorkerId::parse))
-                .transpose()?,
-            remote_version: self
-                .remote_version
-                .map(|version| version_from(version, "a remote version"))
-                .transpose()?,
-            submission,
-            cancel_requested_at: self.cancel_requested_at.map(millis),
+            executor,
             assignment: self.assignment,
             state_version: version_from(self.state_version, "a state version")?,
-            profile_id: self
-                .profile_id
-                .as_deref()
-                .map(|id| parse_id(id, ProfileId::parse))
-                .transpose()?,
         })
     }
 }
@@ -445,11 +434,27 @@ pub(super) fn task_conversations_in(
         .collect()
 }
 
-/// Stores a delegated task and, for a new task, its conversation. A task
-/// with the same ID already stored stays as it is and is returned.
-fn record_delegated(
+/// Keeps the deletions of a parent's task conversations that executors serve
+/// until each executor takes them (ADR-0031, decision 9), in the transaction
+/// that deletes the parent, so a deletion is never lost. This machine's
+/// copies go with the parent through the foreign key.
+pub(super) fn queue_outbox_of_children(
     connection: &Connection,
-    task: &NewDelegatedTask,
+    parent: &str,
+    now: i64,
+) -> rusqlite::Result<()> {
+    connection
+        .prepare_cached(QUEUE_OUTBOX_OF_CHILDREN)?
+        .execute(params![parent, now])?;
+    Ok(())
+}
+
+/// Stores a task that an executor runs and, for a new task, its
+/// conversation. A task with the same ID already stored stays as it is and
+/// is returned.
+fn record_executor(
+    connection: &Connection,
+    task: &NewExecutorTask,
     now: i64,
 ) -> Result<StoredTask, RuntimeStoreError> {
     if let Some(stored) = select_task(connection, task.id.as_str())? {
@@ -457,16 +462,18 @@ fn record_delegated(
     }
     let conversation = task.conversation_id.as_str();
     if let Some(new_conversation) = &task.conversation {
-        let is_worker_conversation = new_conversation.id == task.conversation_id
+        let names_the_executor = new_conversation.id == task.conversation_id
             && new_conversation.project_id.is_none()
             && new_conversation
                 .task
                 .as_ref()
-                .and_then(|origin| origin.worker.as_ref())
-                .is_some_and(|worker| worker.id == task.worker_id);
-        if !is_worker_conversation {
+                .and_then(|origin| origin.executor.as_ref())
+                .is_some_and(|executor| {
+                    executor.kind == task.kind && executor.target_id == task.target
+                });
+        if !names_the_executor {
             return Err(RuntimeStoreError::invalid(
-                "a delegated task's conversation must name its worker",
+                "the conversation of an executor's task must name its executor and target",
             ));
         }
         apply::insert_conversation(connection, conversation, new_conversation, now)?;
@@ -479,7 +486,7 @@ fn record_delegated(
         return Err(RuntimeStoreError::TaskActive);
     }
     connection
-        .prepare_cached(INSERT_DELEGATED_TASK)?
+        .prepare_cached(INSERT_EXECUTOR_TASK)?
         .execute(params![
             task.id.as_str(),
             conversation,
@@ -488,11 +495,12 @@ fn record_delegated(
             task.background,
             DOCUMENT_VERSION,
             now,
-            task.worker_id.as_str(),
-            task.profile_id.as_str()
+            task.kind,
+            task.target,
+            task.document
         ])?;
     select_task(connection, task.id.as_str())?
-        .ok_or_else(|| RuntimeStoreError::invalid("a delegated task was not stored"))
+        .ok_or_else(|| RuntimeStoreError::invalid("an executor's task was not stored"))
 }
 
 fn rejected(error: TransactError<RuntimeStoreError>) -> RuntimeStoreError {
@@ -574,60 +582,63 @@ impl Store {
             .await?
     }
 
-    /// Stores a task that the master delegates to a worker, with its
-    /// conversation for a new task, before the master submits it, and
-    /// returns it. The submission starts as pending. Storing a task again
-    /// returns the stored task and changes nothing.
-    pub async fn record_delegated_task(
+    /// Stores a task that a plugin's executor runs, with its conversation for
+    /// a new task, before the executor submits it, and returns it. Storing a
+    /// task again returns the stored task and changes nothing.
+    pub async fn record_executor_task(
         &self,
-        task: NewDelegatedTask,
+        task: NewExecutorTask,
     ) -> Result<StoredTask, RuntimeStoreError> {
         let now = self.clock().now().as_millis();
         self.transact(Durability::Full, move |transaction| {
-            record_delegated(transaction, &task, now).map_err(TransactError::Rejected)
+            record_executor(transaction, &task, now).map_err(TransactError::Rejected)
         })
         .await
         .map_err(rejected)
     }
 
-    /// Records whether the worker stored a delegated task. Returns whether
-    /// the task exists.
-    pub async fn set_task_submission(
+    /// Replaces the document of an executor's task. Returns whether the task
+    /// exists with that executor.
+    pub async fn set_executor_document(
         &self,
         task_id: &TaskId,
-        submission: Submission,
+        kind: &str,
+        document: Option<String>,
     ) -> Result<bool, RuntimeStoreError> {
         let task = task_id.as_str().to_owned();
+        let kind = kind.to_owned();
         let changed = self
             .write(Durability::Full, move |transaction| {
                 transaction
-                    .prepare_cached(SET_SUBMISSION)?
-                    .execute(params![task, submission.as_str()])
+                    .prepare_cached(SET_EXECUTOR_DOCUMENT)?
+                    .execute(params![task, kind, document])
             })
             .await?;
         Ok(changed > 0)
     }
 
-    /// Stores a state of a delegated task that its worker published. An
+    /// Stores a state of an executor's task that its executor published. An
     /// active state changes the row when its version is newer than the one
     /// stored; an ending ends the task once, whichever version brings it.
     /// Returns whether the row changed.
-    pub async fn apply_remote_task_state(
+    pub async fn apply_executor_task_state(
         &self,
         task_id: &TaskId,
+        kind: &str,
         version: u64,
         state: TaskState,
         ending: Option<TaskEnding>,
     ) -> Result<bool, RuntimeStoreError> {
         let task = task_id.as_str().to_owned();
-        let version = version_to(version, "a remote version")?;
+        let kind = kind.to_owned();
+        let version = version_to(version, "an executor's version")?;
         let now = self.clock().now().as_millis();
         let changed = self
             .transact(Durability::Full, move |transaction| {
                 let changed = if state.is_active() {
                     transaction
-                        .prepare_cached(UPDATE_REMOTE_STATE)?
-                        .execute(params![task, state.as_str(), version])?
+                        .prepare_cached(UPDATE_EXECUTOR_STATE)?
+                        .execute(params![task, kind, state.as_str(), version])?
                 } else {
                     let ending = ending.unwrap_or(TaskEnding {
                         state,
@@ -641,9 +652,10 @@ impl Store {
                     }
                     let ending = to_json(&ending).map_err(TransactError::Rejected)?;
                     transaction
-                        .prepare_cached(END_REMOTE_TASK)?
+                        .prepare_cached(END_EXECUTOR_TASK)?
                         .execute(params![
                             task,
+                            kind,
                             state.as_str(),
                             DOCUMENT_VERSION,
                             ending,
@@ -658,32 +670,87 @@ impl Store {
         Ok(changed)
     }
 
-    /// Records that the owner or the parent's run asked to cancel a delegated
-    /// task, so the cancel is sent again until the worker ends the task.
-    /// Returns whether the task is active.
-    pub async fn request_task_cancel(&self, task_id: &TaskId) -> Result<bool, RuntimeStoreError> {
-        let task = task_id.as_str().to_owned();
-        let now = self.clock().now().as_millis();
-        let changed = self
-            .write(Durability::Full, move |transaction| {
-                transaction
-                    .prepare_cached(REQUEST_CANCEL)?
-                    .execute(params![task, now])
-            })
-            .await?;
-        Ok(changed > 0)
-    }
-
-    /// The delegated tasks that have not ended, the oldest first.
-    pub async fn active_delegated_tasks(&self) -> Result<Vec<StoredTask>, RuntimeStoreError> {
-        self.read(|connection| {
+    /// The tasks of an executor that have not ended, the oldest first.
+    pub async fn active_executor_tasks(
+        &self,
+        kind: &str,
+    ) -> Result<Vec<StoredTask>, RuntimeStoreError> {
+        let kind = kind.to_owned();
+        self.read(move |connection| {
             Ok(select_tasks(
                 connection,
-                SELECT_ACTIVE_DELEGATED_TASKS,
-                params![],
+                SELECT_ACTIVE_EXECUTOR_TASKS,
+                params![kind],
             ))
         })
         .await?
+    }
+
+    /// The deletions that wait for an executor, the oldest first.
+    pub async fn executor_outbox(&self, kind: &str) -> Result<Vec<OutboxEntry>, RuntimeStoreError> {
+        let kind = kind.to_owned();
+        let raw: Vec<(String, String)> = self
+            .read(move |connection| {
+                let mut select = connection.prepare_cached(SELECT_OUTBOX)?;
+                let rows = select.query_map([kind], |row| Ok((row.get(0)?, row.get(1)?)))?;
+                rows.collect()
+            })
+            .await?;
+        raw.into_iter()
+            .map(|(target, conversation)| {
+                Ok(OutboxEntry {
+                    target,
+                    conversation_id: parse_id(&conversation, ConversationId::parse)?,
+                })
+            })
+            .collect()
+    }
+
+    /// Forgets deletions that an executor took.
+    pub async fn drop_executor_outbox(
+        &self,
+        kind: &str,
+        entries: &[OutboxEntry],
+    ) -> Result<(), RuntimeStoreError> {
+        let kind = kind.to_owned();
+        let entries: Vec<(String, String)> = entries
+            .iter()
+            .map(|entry| {
+                (
+                    entry.target.clone(),
+                    entry.conversation_id.as_str().to_owned(),
+                )
+            })
+            .collect();
+        self.write(Durability::Full, move |transaction| {
+            for (target, conversation) in &entries {
+                transaction
+                    .prepare_cached(DELETE_OUTBOX_ENTRY)?
+                    .execute(params![kind, target, conversation])?;
+            }
+            Ok(())
+        })
+        .await?;
+        Ok(())
+    }
+
+    /// Forgets the deletions that wait for one target of an executor, such
+    /// as a worker that the owner removed. Returns how many there were.
+    pub async fn drop_executor_target_outbox(
+        &self,
+        kind: &str,
+        target: &str,
+    ) -> Result<usize, RuntimeStoreError> {
+        let kind = kind.to_owned();
+        let target = target.to_owned();
+        let dropped = self
+            .write(Durability::Full, move |transaction| {
+                transaction
+                    .prepare_cached(DELETE_OUTBOX_OF_TARGET)?
+                    .execute(params![kind, target])
+            })
+            .await?;
+        Ok(dropped)
     }
 }
 
@@ -701,21 +768,22 @@ fn child_in(
                 number: row.get(1)?,
                 agent: row.get(2)?,
                 title: row.get(3)?,
-                worker_id: row.get(4)?,
-                worker_name: row.get(5)?,
+                executor_kind: row.get(4)?,
+                executor_target: row.get(5)?,
+                executor_name: row.get(6)?,
+                executor_noun: row.get(7)?,
             })
         })
         .optional()?;
     let Some(child) = child else {
         return Ok(None);
     };
-    let worker = match child.worker_id.as_deref() {
-        Some(worker_id) => Some(TaskWorker {
-            id: parse_id(worker_id, WorkerId::parse)?,
-            name: child.worker_name.unwrap_or_default(),
-        }),
-        None => None,
-    };
+    let executor = executor_ref(
+        child.executor_kind,
+        child.executor_target,
+        child.executor_name,
+        child.executor_noun,
+    );
     let id = child.id;
     let latest = connection
         .prepare_cached(SELECT_LATEST_TASK)?
@@ -728,9 +796,27 @@ fn child_in(
         number: position(child.number, "a task number")?,
         agent: child.agent.unwrap_or_default(),
         title: child.title,
-        worker,
+        executor,
         latest,
     }))
+}
+
+/// The executor of a task conversation, from its row's columns.
+pub(super) fn executor_ref(
+    kind: Option<String>,
+    target: Option<String>,
+    name: Option<String>,
+    noun: Option<String>,
+) -> Option<TaskExecutorRef> {
+    match (kind, target) {
+        (Some(kind), Some(target_id)) => Some(TaskExecutorRef {
+            kind,
+            target_id,
+            target_name: name.unwrap_or_default(),
+            noun: noun.unwrap_or_default(),
+        }),
+        _ => None,
+    }
 }
 
 /// A child's conversation row.
@@ -739,6 +825,8 @@ struct ChildRow {
     number: i64,
     agent: Option<String>,
     title: String,
-    worker_id: Option<String>,
-    worker_name: Option<String>,
+    executor_kind: Option<String>,
+    executor_target: Option<String>,
+    executor_name: Option<String>,
+    executor_noun: Option<String>,
 }

@@ -15,6 +15,7 @@ import type {
 import {
   approvalPart,
   childAgentsOf,
+  isCoreTaskTool,
   isTaskActive,
   isTaskTroubled,
 } from '../../../../../../apps/desktop/src/lib/utils/task-parts.js';
@@ -43,6 +44,7 @@ function task(approval: TaskView['approval']): TaskView {
     conversationId: 'child-conversation',
     detached: false,
     endedAt: null,
+    executor: null,
     failure: null,
     followUp: false,
     instruction: '',
@@ -56,6 +58,16 @@ function task(approval: TaskView['approval']): TaskView {
     worker: null,
   };
 }
+
+/** The target of a task of the Workers plugin's executor. */
+const WORKER_TARGET = { kind: 'workers', noun: 'the worker', targetId: 'worker', targetName: 'freebsd-01' };
+
+describe('isCoreTaskTool', () => {
+  it('knows the core’s task tools, and takes any other tool for a plugin’s executor’s', () => {
+    expect(['start_task', 'follow_up_task', 'wait_for_tasks'].every((tool) => isCoreTaskTool(tool))).toBe(true);
+    expect(isCoreTaskTool('delegate_task')).toBe(false);
+  });
+});
 
 describe('task states', () => {
   it('counts a task as active until it ends, and its trouble once it failed or was interrupted', () => {
@@ -87,10 +99,10 @@ describe('approvalPart', () => {
     expect(approvalPart(task(null))).toBeNull();
   });
 
-  it('names the host of a worker task’s call by the name that the card shows for the worker', () => {
+  it('names the host of a call of an executor’s task by the name that the card shows for the target', () => {
     const request: ApprovalRequest = { digest: 'digest', grants: [], host: 'freebsd.local', reasons: [], rule: null };
     const waiting = { call: { ...CALL, request }, createdAt: 7, partId: 'p', position: 3, runId: 'r', turnId: 't' };
-    const onWorker: TaskView = { ...task(waiting), worker: { id: 'worker', name: 'freebsd-01' } };
+    const onWorker: TaskView = { ...task(waiting), executor: WORKER_TARGET };
 
     const shown = approvalPart(onWorker)?.content;
     const ofChild = approvalPart(task(waiting))?.content;
@@ -154,8 +166,8 @@ describe('childAgentsOf', () => {
     expect(childAgentsOf([turn(0, [])])).toEqual([]);
   });
 
-  it('leaves out the tasks of workers, which are no child agents', () => {
-    const onWorker = { ...child(2, 'running'), worker: { id: 'worker', name: 'build-01' } };
+  it('leaves out the tasks of plugins’ executors, which are no child agents', () => {
+    const onWorker = { ...child(2, 'running'), executor: WORKER_TARGET };
     const turns = [turn(0, [taskPart('a', child(1, 'running')), taskPart('b', onWorker)])];
 
     expect(childAgentsOf(turns).map((agent) => agent.number)).toEqual([1]);

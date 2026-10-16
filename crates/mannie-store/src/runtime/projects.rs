@@ -253,7 +253,8 @@ impl Store {
             let now = self.clock().now().as_millis();
             // A conversation's task conversations go with it, through the
             // foreign key; the caller ends their subscriptions too, and the
-            // deletions of worker task conversations wait for their workers.
+            // deletions of the task conversations that executors serve wait
+            // for their executors.
             let (count, children) = self
                 .transact(Durability::Full, move |transaction| {
                     let in_project = transaction
@@ -266,7 +267,7 @@ impl Store {
                     }
                     let children = tasks::task_conversations_in(transaction, &id)
                         .map_err(TransactError::Rejected)?;
-                    crate::workers::queue_deletions_of_children(transaction, &id, now)?;
+                    tasks::queue_outbox_of_children(transaction, &id, now)?;
                     let count = transaction
                         .prepare_cached(DELETE_PROJECT_CONVERSATION)?
                         .execute([id, project])?;

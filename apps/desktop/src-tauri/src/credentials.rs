@@ -1,21 +1,17 @@
 //! The master's credential vault (ADR-0010): the operating system's credential
 //! store through `mannie-secrets`. Every credential that passes through it is
-//! registered with the log redactor before anything else happens to it. The
-//! master's key of the link lives there too (ADR-0016).
+//! registered with the log redactor before anything else happens to it.
+//! Plugins reach it only through their own entries (ADR-0030, decision 13),
+//! such as the Workers plugin's key of the link (ADR-0016).
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use base64::Engine as _;
-use mannie_link::keys::LinkKey;
-use mannie_link::master::{KeyStoreError, MasterKeyStore};
 use mannie_logging::{ErrorChain, Redactor};
+use mannie_plugins::{PluginSecrets, SecretsError};
 use mannie_runtime::{CredentialVault, VaultError};
 use mannie_secrets::{CredentialError, CredentialRef, CredentialStore, UnavailableReason};
 use mannie_types::provider::CredentialStoreProblem;
 use mannie_types::secret::Secret;
-
-/// Where the master's key of the link is kept in the credential store.
-const MASTER_KEY_REFERENCE: &str = "link/master-key";
 
 /// The credential store, opened on first use, so that starting Mannie never
 /// waits for it (NFR-PERF-03). A failed open is tried again on the next use,
@@ -118,56 +114,82 @@ impl CredentialVault for KeyringVault {
     }
 }
 
-/// The master's key of the link, kept in the credential store as the base64
-/// of its PKCS#8 document. The hub reads it on first use and makes it before
-/// the first pairing.
+/// The credential store limited to the entries of one plugin (ADR-0030,
+/// decision 13). Every other entry is refused before the store is touched.
 #[derive(Debug)]
-pub(crate) struct KeyringKeyStore {
+pub(crate) struct ScopedSecrets {
     vault: Arc<KeyringVault>,
+    entries: &'static [&'static str],
 }
 
-impl KeyringKeyStore {
-    /// A key store in `vault`.
-    pub(crate) fn new(vault: Arc<KeyringVault>) -> Self {
-        Self { vault }
+impl ScopedSecrets {
+    /// The plugin's `entries` in `vault`.
+    pub(crate) fn new(vault: Arc<KeyringVault>, entries: &'static [&'static str]) -> Self {
+        Self { vault, entries }
+    }
+
+    fn check(&self, entry: &str) -> Result<(), SecretsError> {
+        if self.entries.contains(&entry) {
+            Ok(())
+        } else {
+            tracing::error!(
+                entry,
+                "a plugin asked for an entry of the credential store that is not its own"
+            );
+            Err(SecretsError::NotPermitted)
+        }
     }
 }
 
-impl MasterKeyStore for KeyringKeyStore {
-    fn load(&self) -> Result<Option<LinkKey>, KeyStoreError> {
-        let text = match self.vault.read(MASTER_KEY_REFERENCE) {
-            Ok(text) => text,
-            Err(VaultError::Missing) => return Ok(None),
-            Err(VaultError::Unavailable(_problem)) => return Err(KeyStoreError::Unavailable),
-        };
-        let pkcs8 = base64::engine::general_purpose::STANDARD
-            .decode(text.expose())
-            .map_err(|_invalid| {
-                tracing::error!("the master's key in the credential store is not base64");
-                KeyStoreError::Invalid
-            })?;
-        LinkKey::from_pkcs8(pkcs8).map(Some).map_err(|_invalid| {
-            tracing::error!("the master's key in the credential store is not a valid key");
-            KeyStoreError::Invalid
-        })
+impl PluginSecrets for ScopedSecrets {
+    fn load(&self, entry: &str) -> Result<Option<Secret>, SecretsError> {
+        self.check(entry)?;
+        match self.vault.read(entry) {
+            Ok(secret) => Ok(Some(secret)),
+            Err(VaultError::Missing) => Ok(None),
+            Err(VaultError::Unavailable(_problem)) => Err(SecretsError::Unavailable),
+        }
     }
 
-    fn save(&self, key: &LinkKey) -> Result<(), KeyStoreError> {
-        // The text moves into the secret, which clears it when it drops.
-        let text = Secret::new(base64::engine::general_purpose::STANDARD.encode(key.pkcs8()));
+    fn save(&self, entry: &str, secret: &Secret) -> Result<(), SecretsError> {
+        self.check(entry)?;
         self.vault
-            .save(MASTER_KEY_REFERENCE, &text)
-            .map_err(|_unavailable| KeyStoreError::Unavailable)
+            .save(entry, secret)
+            .map_err(|_unavailable| SecretsError::Unavailable)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use mannie_logging::Redactor;
+    use mannie_plugins::{PluginSecrets, SecretsError};
     use mannie_runtime::VaultError;
     use mannie_secrets::{CredentialError, CredentialRef, UnavailableReason};
     use mannie_types::provider::CredentialStoreProblem;
+    use mannie_types::secret::Secret;
 
-    use super::vault_error;
+    use super::{KeyringVault, ScopedSecrets, vault_error};
+
+    #[test]
+    fn a_plugin_reaches_only_its_own_entries_and_another_never_reaches_the_store() {
+        // The store opens on first use, so a refused entry that left it
+        // unopened never reached the operating system's credential store.
+        let vault = Arc::new(KeyringVault::new(
+            "io.github.limbon2.mannie.tests",
+            Redactor::new(),
+        ));
+        let secrets = ScopedSecrets::new(Arc::clone(&vault), &["link/master-key"]);
+        let planted = Secret::new("planted-secret".to_owned());
+
+        let read = secrets.load("provider/profile/1");
+        let written = secrets.save("link/other-key", &planted);
+
+        assert_eq!(read.unwrap_err(), SecretsError::NotPermitted);
+        assert_eq!(written.unwrap_err(), SecretsError::NotPermitted);
+        assert!(vault.store.lock().unwrap().is_none());
+    }
 
     #[test]
     fn store_errors_become_the_problems_the_owner_can_act_on() {

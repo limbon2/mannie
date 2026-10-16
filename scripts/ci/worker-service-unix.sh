@@ -5,7 +5,7 @@
 # command, and removes it again (ci.yml on Linux with systemd, nightly.yml on
 # FreeBSD). Runs as root on a disposable machine:
 #   sh scripts/ci/worker-service-unix.sh <mannie-worker> <smoke-master>
-# The test master is `cargo build -p mannie-link --features testing --example
+# The test master is `cargo build -p mannie-workers --features testing --example
 # smoke-master`.
 set -eu
 

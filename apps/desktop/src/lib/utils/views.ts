@@ -7,6 +7,7 @@ import type { ShellView } from '#lib/types/shell-slots.js';
 export type ActiveView =
   | { readonly kind: 'missing'; readonly requested: string }
   | { readonly kind: 'none' }
+  | { readonly kind: 'plugin_off'; readonly plugin: string }
   | { readonly kind: 'view'; readonly view: ShellView };
 
 /** The search parameter that names the view. */
@@ -25,5 +26,10 @@ export function activeView(views: Slot<ShellView>, url: ViewUrl): ActiveView {
     return first === undefined ? { kind: 'none' } : { kind: 'view', view: first };
   }
   const view = views.find(requested);
-  return view === undefined ? { kind: 'missing', requested } : { kind: 'view', view };
+  if (view !== undefined) {
+    return { kind: 'view', view };
+  }
+  // A view of a plugin that is off says so (ADR-0030, decision 11).
+  const plugin = views.pluginOff(requested);
+  return plugin === null ? { kind: 'missing', requested } : { kind: 'plugin_off', plugin };
 }

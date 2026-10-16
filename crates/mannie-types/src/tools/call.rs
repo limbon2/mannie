@@ -114,6 +114,12 @@ pub enum NotRunReason {
         /// What the ceiling forbids.
         refusal: Refusal,
     },
+    /// The owner turned off the plugin of the tool, or of the agent that the
+    /// call gives a task to, after the reply started (ADR-0030, decision 8).
+    PluginOff {
+        /// The plugin's ID.
+        plugin: String,
+    },
 }
 
 /// What a worker's policy ceiling forbids.

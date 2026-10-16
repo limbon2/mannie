@@ -582,6 +582,7 @@ fn assigned(number: u32, background: bool, state: TaskState) -> TaskDocument {
         started_at: None,
         ended_at: None,
         worker: None,
+        executor: None,
         detached: false,
     }
 }

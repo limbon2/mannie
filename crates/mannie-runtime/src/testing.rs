@@ -19,23 +19,26 @@ use futures_util::{FutureExt, StreamExt};
 use mannie_provider::testing::Step;
 use mannie_provider::{
     Content, EventStream, HttpClient, ModelRequest, Provider, ProviderError, ProviderEvent,
-    ProviderRegistry, Target,
+    ProviderRegistry, Target, ToolDefinition,
 };
-use mannie_store::{Store, StoreOptions};
+use mannie_store::{Store, StoreModule, StoreOptions};
 use mannie_tools::{Ceiling, MutationLock, SystemFacts, ToolRegistry};
+use mannie_types::ceiling::CeilingMode;
 use mannie_types::chat::{
     ChatError, CheckpointRef, EarlierTurns, LoadEarlierTurns, SubscribeConversation,
 };
-use mannie_types::clock::UtcMillis;
 use mannie_types::clock::{Clock, SystemClock};
-use mannie_types::ids::{ConversationId, PartId, ProfileId, RunId, TaskId, TurnId, WorkerId};
+use mannie_types::ids::{ConversationId, PartId, ProfileId, RunId, TaskId, TurnId};
 use mannie_types::provider::{
     ApiInterface, CreateProviderProfile, CredentialStoreProblem, ProfileDraft, ProviderProfile,
     ReasoningEffort,
 };
 use mannie_types::run::{FinishReason, RunFailure, RunState, RunView, Usage};
 use mannie_types::secret::Secret;
-use mannie_types::tasks::{AssignedTaskState, TaskCallView, TaskView};
+use mannie_types::tasks::{
+    AssignedTaskState, ProfileSnapshot, TaskAssignment, TaskCallView, TaskExecutorRef, TaskState,
+    TaskView,
+};
 use mannie_types::tools::{
     CommandRule, DecideApproval, ProcessRecord, ReadToolOutput, ToolCallView, ToolOutputPage,
     ToolsError,
@@ -43,14 +46,13 @@ use mannie_types::tools::{
 use mannie_types::transcript::{
     Checkpoint, ConversationEvent, ConversationUpdate, PartContent, PartState, TurnView,
 };
-use mannie_types::workers::{
-    CeilingMode, ProfileSnapshot, TaskAssignment, WorkerDetails, WorkerStatus, WorkerView,
-};
 use tokio::sync::watch;
 
 use crate::{
-    AgentRegistry, CredentialVault, Delegation, DelegationError, InstructionRegistry, Machine,
-    RetryPolicy, Runtime, RuntimeConfig, RuntimeDeps, ToolsDeps, VaultError, WorkerHost, texts,
+    AgentDefinition, AgentRegistry, CredentialVault, ExecutorRefusal, ExecutorSection,
+    FollowUpPlan, GENERAL, InstructionRegistry, InstructionSection, MachineSettings, PlanCall,
+    PlanError, Requester, RetryPolicy, Runtime, RuntimeConfig, RuntimeDeps, SubmitError,
+    TaskExecutor, TaskPlan, TaskSubmission, ToolsDeps, VaultError, checkpoint_section, texts,
 };
 
 /// How long a helper waits for a state before it fails the test. Shared CI
@@ -501,8 +503,9 @@ pub struct HarnessOptions {
     pub agents: AgentRegistry,
     /// The runtime's configuration.
     pub config: RuntimeConfig,
-    /// The port to the workers, for a master that delegates.
-    pub delegation: Option<Arc<dyn Delegation>>,
+    /// The store's modules besides the core's, such as a plugin's, which the
+    /// store migrates as the composition root's do (ADR-0030, decision 5).
+    pub store_modules: Vec<StoreModule>,
 }
 
 impl Default for HarnessOptions {
@@ -517,7 +520,7 @@ impl Default for HarnessOptions {
             use_tools: false,
             agents: AgentRegistry::with_builtin(),
             config: fast_config(),
-            delegation: None,
+            store_modules: Vec::new(),
         }
     }
 }
@@ -561,8 +564,19 @@ pub struct Harness {
 ///
 /// When the store cannot be opened, which fails the test.
 pub fn open_store(database: &Path) -> Store {
+    open_store_with(database, Vec::new())
+}
+
+/// Opens the store of a harness directory with these modules besides the
+/// core's.
+///
+/// # Panics
+///
+/// When the store cannot be opened, which fails the test.
+pub fn open_store_with(database: &Path, modules: Vec<StoreModule>) -> Store {
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
-    let options = StoreOptions::new(database.with_file_name("backups"), clock);
+    let options =
+        StoreOptions::new(database.with_file_name("backups"), clock).with_modules(modules);
     Store::open(database, &options).expect("the test store opens")
 }
 
@@ -649,11 +663,11 @@ pub async fn start_runtime_with_tools(
     tools: ToolsDeps,
     agents: AgentRegistry,
 ) -> Runtime {
-    start_master(store, provider, vault, config, tools, agents, None).await
+    start_master(store, provider, vault, config, tools, agents).await
 }
 
-/// Starts a master's runtime as [`start_runtime_with_tools`] does, with a
-/// port to the workers.
+/// Starts the runtime of the machine that the owner works on, as
+/// [`start_runtime_with_tools`] does. A test adds executors to it afterwards.
 ///
 /// # Panics
 ///
@@ -665,7 +679,6 @@ pub async fn start_master(
     config: RuntimeConfig,
     tools: ToolsDeps,
     agents: AgentRegistry,
-    delegation: Option<Arc<dyn Delegation>>,
 ) -> Runtime {
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let client = HttpClient::new(Arc::clone(&clock)).expect("the HTTP client builds");
@@ -682,8 +695,7 @@ pub async fn start_master(
         agents,
         instructions: InstructionRegistry::with_builtin(),
         tools,
-        machine: Machine::Master,
-        delegation,
+        machine: MachineSettings::default(),
     };
     Runtime::start(deps, config)
         .await
@@ -704,7 +716,10 @@ impl Harness {
     /// test.
     pub async fn with_options(options: HarnessOptions) -> Self {
         let directory = tempfile::tempdir().expect("a temporary directory");
-        let store = open_store(&directory.path().join("mannie.sqlite"));
+        let store = open_store_with(
+            &directory.path().join("mannie.sqlite"),
+            options.store_modules.clone(),
+        );
         let model = FakeModel::new(options.interface);
         if options.enforce_context_window {
             model.enforce_context_window(options.context_window);
@@ -720,7 +735,6 @@ impl Harness {
             options.config.clone(),
             test_tools(directory.path()),
             options.agents.clone(),
-            options.delegation.clone(),
         )
         .await;
         let profile = runtime
@@ -766,7 +780,6 @@ impl Harness {
             self.options.config.clone(),
             test_tools(self.directory.path()),
             self.options.agents.clone(),
-            self.options.delegation.clone(),
         )
         .await;
         self
@@ -1144,8 +1157,64 @@ impl WorkerHarness {
     }
 }
 
-/// Starts a worker's runtime: the worker agent and sections, the system
-/// tools, and a host whose allowed folder is `allowed`.
+/// The name of the harness's worker agent, which runs the tasks that a
+/// master assigns.
+pub const HARNESS_WORKER_AGENT: &str = "worker";
+
+/// The harness's worker agent: every system tool but the move into a
+/// project, with the budgets of the worker service's agent.
+pub const HARNESS_WORKER: AgentDefinition = AgentDefinition {
+    name: HARNESS_WORKER_AGENT,
+    requester: Requester::Agent,
+    instructions: "",
+    tools: GENERAL.tools,
+    max_continuation_notes: 2,
+    max_tool_rounds: 100,
+    max_tool_calls: 250,
+    max_tasks: 0,
+};
+
+/// The first line of the harness worker's prompt.
+pub const HARNESS_WORKER_BASE: &str = "You are the harness's worker agent.";
+
+/// The line of the harness worker's prompt that names the ceiling's mode.
+pub fn ceiling_mode_line(mode: CeilingMode) -> String {
+    format!("Ceiling mode: {}", mode.as_str())
+}
+
+/// The harness worker's sections: its base line, what an assigned run works
+/// under, and the checkpoint.
+fn harness_worker_sections() -> InstructionRegistry {
+    let mut registry = InstructionRegistry::new();
+    let sections = [
+        InstructionSection::new("base", 0, |_context| Some(HARNESS_WORKER_BASE.to_owned())),
+        InstructionSection::new("machine", 250, |context| {
+            context.machine.map(|machine| {
+                let folders: Vec<String> = machine
+                    .allowed_folders
+                    .iter()
+                    .map(|folder| folder.display().to_string())
+                    .collect();
+                format!(
+                    "{}\nAllowed folders: {}\nInstructions: {}",
+                    ceiling_mode_line(machine.mode),
+                    folders.join(", "),
+                    machine.instructions.unwrap_or("none")
+                )
+            })
+        }),
+        checkpoint_section(),
+    ];
+    for section in sections {
+        registry
+            .register(section)
+            .expect("the harness's sections have unique IDs");
+    }
+    registry
+}
+
+/// Starts a worker's runtime: the harness's worker agent and sections, the
+/// system tools, and a ceiling whose allowed folder is `allowed`.
 async fn start_worker_runtime(
     store: Store,
     model: &FakeModel,
@@ -1161,19 +1230,22 @@ async fn start_worker_runtime(
         file
     });
     let system = SystemFacts::detect();
-    let host = WorkerHost {
-        name: host_name.to_owned(),
-        purpose: "Builds and tests the backend".to_owned(),
-        facts: system.host_facts(),
-        ceiling: Ceiling {
+    let machine = MachineSettings {
+        ceiling: Some(Ceiling {
             mode: options.mode,
             allowed_folders: vec![allowed.to_path_buf()],
             rules: options.rules.clone(),
-        },
+        }),
+        name: Some(host_name.to_owned()),
         instructions_file,
-        max_parallel_tasks: options.max_parallel_tasks,
-        accepts_master_full_access: options.accepts_master_full_access,
+        task_slots: Some(options.max_parallel_tasks),
+        assigned_agent: Some(HARNESS_WORKER_AGENT),
+        accepts_assigner_full_access: options.accepts_master_full_access,
     };
+    let mut agents = AgentRegistry::new();
+    agents
+        .register(HARNESS_WORKER)
+        .expect("the harness registers one agent");
     let protected =
         mannie_tools::canonical_folder(&directory.join("data")).expect("the data folder exists");
     let tools = ToolsDeps {
@@ -1197,504 +1269,318 @@ async fn start_worker_runtime(
             .clone()
             .unwrap_or_else(|| Arc::<MemoryVault>::clone(vault)),
         clock,
-        agents: AgentRegistry::for_worker(),
-        instructions: InstructionRegistry::for_worker(),
+        agents,
+        instructions: harness_worker_sections(),
         tools,
-        machine: Machine::Worker(Arc::new(host)),
-        delegation: None,
+        machine,
     };
     Runtime::start(deps, options.config.clone())
         .await
         .expect("the worker's runtime starts")
 }
 
-/// The faults that a [`LocalDelegation`] injects.
+/// The kind of the [`FakeExecutor`].
+pub const FAKE_EXECUTOR_KIND: &str = "fake";
+
+/// The tool of the [`FakeExecutor`].
+pub const FAKE_EXECUTOR_TOOL: &str = "give_task";
+
+/// What the text that the model reads calls the fake executor's targets.
+pub const FAKE_EXECUTOR_NOUN: &str = "the box";
+
+/// The fake executor's instruction section.
+pub const FAKE_EXECUTOR_SECTION: &str = "Boxes you can give tasks to with give_task: box-01.";
+
+/// The agent that the runtime records for the fake executor's tasks.
+pub const FAKE_EXECUTOR_AGENT: &str = "remote";
+
+/// What a call of the fake executor's tool names.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FakeArguments {
+    target: String,
+    title: String,
+    instruction: String,
+    background: bool,
+}
+
 #[derive(Debug, Default)]
-struct Faults {
-    /// The worker cannot be reached: every call fails, and the watches and
-    /// subscriptions end.
-    offline: bool,
-    /// How many of the next submissions reach the worker and lose their
-    /// answers.
-    lost_answers: u32,
-    /// Submissions answer only once the worker's run of the task waits for
-    /// its lease, so the master's follower of the worker sees that state
-    /// before the run that submitted the task gets the answer.
-    answer_when_waiting: bool,
+struct FakeExecutorState {
+    /// The refusal of the next calls of the tool.
+    refusal: Option<ExecutorRefusal>,
+    /// The refusal of the next submissions.
+    submit_refusal: Option<ExecutorRefusal>,
+    /// Whether the next submissions end as if the plugin stopped during
+    /// them.
+    submit_stopped: bool,
+    submissions: Vec<TaskSubmission>,
+    follow_ups: Vec<TaskExecutorRef>,
+    cancels: Vec<TaskId>,
+    decisions: Vec<DecideApproval>,
+    /// Whether the target can be reached for the reads of its conversations.
+    unreachable: bool,
 }
 
-/// A port to one worker in the same process: the master's runtime reaches
-/// the worker's runtime directly, and a test can take the worker offline,
-/// lose or delay the answers of submissions, and see the leases delivered
-/// and revoked (docs/features/workers/delegation.md, acceptance).
-#[derive(Debug)]
-pub struct LocalDelegation {
-    worker: Mutex<Runtime>,
-    view: watch::Sender<Vec<WorkerView>>,
-    /// Ends the watches and subscriptions when the worker goes offline.
-    online: watch::Sender<bool>,
-    faults: Mutex<Faults>,
-    /// The tasks of the leases that the master delivered, once for each
-    /// delivery.
-    delivered: Mutex<Vec<TaskId>>,
-    /// The tasks of the leases that the master revoked.
-    revoked: Mutex<Vec<TaskId>>,
+/// An executor of a plugin for the tests of the runtime's side of executors
+/// (ADR-0031): it takes calls of its tool `give_task`, keeps what it is asked,
+/// and lets the test publish its tasks' states with
+/// [`Runtime::publish_task_state`].
+#[derive(Debug, Default)]
+pub struct FakeExecutor {
+    state: Mutex<FakeExecutorState>,
 }
 
-/// The ID of the worker of a [`LocalDelegation`].
-pub const LOCAL_WORKER_ID: &str = "0199e0f2-0000-7000-b000-000000000001";
+impl FakeExecutor {
+    /// An executor that takes every call.
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
 
-/// The name of the worker of a [`LocalDelegation`].
-pub const LOCAL_WORKER_NAME: &str = "build-01";
+    /// Refuses the next calls of the tool with `refusal`.
+    pub fn refuse_plans(&self, refusal: ExecutorRefusal) {
+        lock(&self.state).refusal = Some(refusal);
+    }
 
-impl LocalDelegation {
-    /// A port to `worker`, connected, at `address`.
-    ///
-    /// # Panics
-    ///
-    /// Never: the worker's ID is a valid UUID.
-    pub fn new(worker: Runtime, address: &str) -> Self {
-        let view = WorkerView {
-            id: WorkerId::parse(LOCAL_WORKER_ID).expect("a valid ID"),
-            name: LOCAL_WORKER_NAME.to_owned(),
-            configured_name: LOCAL_WORKER_NAME.to_owned(),
-            chosen_name: None,
-            address: address.to_owned(),
-            status: WorkerStatus::Connected,
-            details: WorkerDetails {
-                purpose: "Builds and tests the backend".to_owned(),
-                facts: None,
-                ceiling: None,
-                version: Some(env!("CARGO_PKG_VERSION").to_owned()),
-                max_parallel_tasks: 4,
-            },
-            key_pin: "0123456789ab".to_owned(),
-            paired_at: UtcMillis::EPOCH,
-            connected_at: None,
-        };
-        Self {
-            worker: Mutex::new(worker),
-            view: watch::Sender::new(vec![view]),
-            online: watch::Sender::new(true),
-            faults: Mutex::default(),
-            delivered: Mutex::default(),
-            revoked: Mutex::default(),
+    /// Refuses the next submissions with `refusal`.
+    pub fn refuse_submissions(&self, refusal: ExecutorRefusal) {
+        lock(&self.state).submit_refusal = Some(refusal);
+    }
+
+    /// Ends the next submissions as if the plugin stopped before the target
+    /// confirmed them.
+    pub fn stop_submissions(&self) {
+        lock(&self.state).submit_stopped = true;
+    }
+
+    /// Makes the target unreachable for the reads of its conversations.
+    pub fn set_unreachable(&self, unreachable: bool) {
+        lock(&self.state).unreachable = unreachable;
+    }
+
+    /// The tasks submitted so far.
+    pub fn submissions(&self) -> Vec<TaskSubmission> {
+        lock(&self.state).submissions.clone()
+    }
+
+    /// The targets of the follow-ups planned so far.
+    pub fn follow_ups(&self) -> Vec<TaskExecutorRef> {
+        lock(&self.state).follow_ups.clone()
+    }
+
+    /// The tasks that the runtime asked to cancel.
+    pub fn cancels(&self) -> Vec<TaskId> {
+        lock(&self.state).cancels.clone()
+    }
+
+    /// The owner's decisions that reached the executor.
+    pub fn decisions(&self) -> Vec<DecideApproval> {
+        lock(&self.state).decisions.clone()
+    }
+
+    /// A target of the fake executor.
+    pub fn target(name: &str) -> TaskExecutorRef {
+        TaskExecutorRef {
+            kind: FAKE_EXECUTOR_KIND.to_owned(),
+            target_id: format!("target-{name}"),
+            target_name: name.to_owned(),
+            noun: FAKE_EXECUTOR_NOUN.to_owned(),
         }
     }
 
-    /// The worker's ID.
-    ///
-    /// # Panics
-    ///
-    /// Never: the ID is a valid UUID.
-    pub fn worker_id() -> WorkerId {
-        WorkerId::parse(LOCAL_WORKER_ID).expect("a valid ID")
-    }
-
-    /// Replaces the worker's runtime, as after a restart of the worker.
-    pub fn set_worker(&self, worker: Runtime) {
-        *lock(&self.worker) = worker;
-    }
-
-    /// Takes the worker offline, or brings it back.
-    pub fn set_online(&self, online: bool) {
-        lock(&self.faults).offline = !online;
-        self.online.send_replace(online);
-        let status = if online {
-            WorkerStatus::Connected
-        } else {
-            WorkerStatus::Offline
-        };
-        self.view.send_modify(|views| {
-            for view in views {
-                view.status = status;
-            }
-        });
-    }
-
-    /// Removes the worker from the paired workers.
-    pub fn remove(&self) {
-        self.view.send_replace(Vec::new());
-    }
-
-    /// Loses the answers of the next `count` submissions, after the worker
-    /// stored their tasks.
-    pub fn lose_submit_answers(&self, count: u32) {
-        lock(&self.faults).lost_answers = count;
-    }
-
-    /// Answers each submission only once the worker's run of the task waits
-    /// for its lease.
-    pub fn answer_when_waiting(&self) {
-        lock(&self.faults).answer_when_waiting = true;
-    }
-
-    /// The tasks of the leases that the master delivered, once for each
-    /// delivery, in order.
-    pub fn delivered_leases(&self) -> Vec<TaskId> {
-        lock(&self.delivered).clone()
-    }
-
-    /// The tasks of the leases that the master revoked, in order.
-    pub fn revoked_leases(&self) -> Vec<TaskId> {
-        lock(&self.revoked).clone()
-    }
-
-    fn worker(&self) -> Result<Runtime, DelegationError> {
-        if lock(&self.faults).offline {
-            return Err(DelegationError::Unreachable);
+    /// A state of a submitted task, for the test to publish.
+    pub fn state(submission: &TaskSubmission, version: u64, state: TaskState) -> AssignedTaskState {
+        AssignedTaskState {
+            task_id: submission.task_id.clone(),
+            conversation_id: submission.conversation_id.clone(),
+            version,
+            state,
+            started_at: None,
+            activity: None,
+            tool_calls: 0,
+            approval: None,
+            waits_for_lease: false,
+            report: None,
+            failure: None,
+            ended_at: None,
         }
-        Ok(lock(&self.worker).clone())
     }
 
-    /// A stream that ends when the worker goes offline.
-    fn while_online<T: Send + 'static>(
+    /// A state of a submitted task that reported.
+    pub fn reported(submission: &TaskSubmission, version: u64, report: &str) -> AssignedTaskState {
+        AssignedTaskState {
+            report: Some(report.to_owned()),
+            ..Self::state(submission, version, TaskState::Reported)
+        }
+    }
+
+    fn unreachable(&self) -> bool {
+        lock(&self.state).unreachable
+    }
+}
+
+fn fake_unreachable() -> ChatError {
+    ChatError::TaskTargetUnreachable {
+        kind: FAKE_EXECUTOR_KIND.to_owned(),
+        target: "box-01".to_owned(),
+    }
+}
+
+impl TaskExecutor for FakeExecutor {
+    fn kind(&self) -> &'static str {
+        FAKE_EXECUTOR_KIND
+    }
+
+    fn agent(&self) -> &'static str {
+        FAKE_EXECUTOR_AGENT
+    }
+
+    fn tool(&self) -> Option<ToolDefinition> {
+        Some(ToolDefinition {
+            name: FAKE_EXECUTOR_TOOL.to_owned(),
+            description: "Gives a task to a box.".to_owned(),
+            parameters: mannie_tools::with_activity(&serde_json::json!({
+                "additionalProperties": false,
+                "properties": {
+                    "background": { "type": "boolean" },
+                    "instruction": { "type": "string" },
+                    "target": { "type": "string" },
+                    "title": { "type": "string" },
+                },
+                "required": ["background", "instruction", "target", "title"],
+                "type": "object",
+            })),
+        })
+    }
+
+    fn section(&self) -> Option<ExecutorSection> {
+        Some(ExecutorSection {
+            position: 310,
+            text: FAKE_EXECUTOR_SECTION.to_owned(),
+        })
+    }
+
+    fn outlives_reply(&self) -> bool {
+        true
+    }
+
+    fn plan(&self, call: PlanCall<'_>) -> Result<TaskPlan, PlanError> {
+        let arguments: FakeArguments =
+            serde_json::from_str(call.arguments).map_err(|error| PlanError::InvalidArguments {
+                detail: error.to_string(),
+            })?;
+        let refusal = lock(&self.state).refusal.clone();
+        if let Some(refusal) = refusal {
+            return Err(PlanError::Refused(refusal));
+        }
+        Ok(TaskPlan {
+            target: Self::target(&arguments.target),
+            title: arguments.title,
+            instruction: arguments.instruction,
+            background: arguments.background,
+            options: serde_json::json!({}),
+        })
+    }
+
+    fn plan_follow_up(
         &self,
-        stream: BoxStream<'static, T>,
-    ) -> BoxStream<'static, T> {
-        let mut online = self.online.subscribe();
-        let offline = async move {
-            let _offline = online.wait_for(|online| !*online).await.is_ok();
-        };
-        stream.take_until(offline).boxed()
+        earlier: &TaskExecutorRef,
+        _profile: &ProfileSnapshot,
+    ) -> Result<FollowUpPlan, ExecutorRefusal> {
+        let mut state = lock(&self.state);
+        if let Some(refusal) = state.refusal.clone() {
+            return Err(refusal);
+        }
+        state.follow_ups.push(earlier.clone());
+        Ok(FollowUpPlan {
+            target: earlier.clone(),
+            options: serde_json::json!({}),
+        })
     }
-}
 
-fn refused(code: &str) -> DelegationError {
-    DelegationError::Refused {
-        code: code.to_owned(),
-    }
-}
-
-impl Delegation for LocalDelegation {
-    fn workers(&self) -> watch::Receiver<Vec<WorkerView>> {
-        self.view.subscribe()
+    fn document(&self, _submission: &TaskSubmission) -> Option<String> {
+        Some(r#"{"version":1}"#.to_owned())
     }
 
     fn submit(
         &self,
-        _worker: &WorkerId,
-        assignment: TaskAssignment,
-    ) -> BoxFuture<'static, Result<AssignedTaskState, DelegationError>> {
-        let worker = self.worker();
-        let (lose, answer_when_waiting) = {
-            let mut faults = lock(&self.faults);
-            let lose = faults.lost_answers > 0;
-            faults.lost_answers = faults.lost_answers.saturating_sub(1);
-            (lose, faults.answer_when_waiting)
+        submission: TaskSubmission,
+    ) -> BoxFuture<'static, Result<AssignedTaskState, SubmitError>> {
+        let mut state = lock(&self.state);
+        let answer = if state.submit_stopped {
+            Err(SubmitError::Stopped)
+        } else {
+            match state.submit_refusal.clone() {
+                Some(refusal) => Err(SubmitError::Refused(refusal)),
+                None => Ok(Self::state(&submission, 1, TaskState::Accepted)),
+            }
         };
-        async move {
-            let worker = worker?;
-            // The watch starts before the assignment, so it misses no state
-            // of the task.
-            let watch = answer_when_waiting.then(|| worker.watch_assigned_tasks());
-            let mut state = worker
-                .assign_task(assignment)
-                .await
-                .map_err(|error| refused(error.code()))?;
-            if let Some(mut watch) = watch {
-                while !state.waits_for_lease && state.state.is_active() {
-                    let Some(next) = watch.next().await else {
-                        break;
-                    };
-                    if next.task_id == state.task_id {
-                        state = next;
-                    }
-                }
-            }
-            if lose {
-                return Err(DelegationError::Unreachable);
-            }
-            Ok(state)
-        }
-        .boxed()
+        state.submissions.push(submission);
+        futures_util::future::ready(answer).boxed()
     }
 
-    fn task(
-        &self,
-        _worker: &WorkerId,
-        task: &TaskId,
-    ) -> BoxFuture<'static, Result<Option<AssignedTaskState>, DelegationError>> {
-        let worker = self.worker();
-        let task = task.clone();
-        async move {
-            worker?
-                .assigned_task(&task)
-                .await
-                .map_err(|error| refused(error.code()))
-        }
-        .boxed()
-    }
-
-    fn cancel(
-        &self,
-        _worker: &WorkerId,
-        task: &TaskId,
-    ) -> BoxFuture<'static, Result<Option<AssignedTaskState>, DelegationError>> {
-        let worker = self.worker();
-        let task = task.clone();
-        async move {
-            worker?
-                .cancel_assigned_task(&task)
-                .await
-                .map_err(|error| refused(error.code()))
-        }
-        .boxed()
-    }
-
-    fn watch(
-        &self,
-        _worker: &WorkerId,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, AssignedTaskState>, DelegationError>> {
-        let stream = self.worker().map(|worker| {
-            let watch = worker.watch_assigned_tasks();
-            let states = futures_util::stream::unfold(watch, |mut watch| async move {
-                watch.next().await.map(|state| (state, watch))
-            });
-            self.while_online(states.boxed())
-        });
-        async move { stream }.boxed()
-    }
-
-    fn deliver_lease(
-        &self,
-        _worker: &WorkerId,
-        task: &TaskId,
-        binding: String,
-        credential: Secret,
-    ) -> BoxFuture<'static, Result<(), DelegationError>> {
-        lock(&self.delivered).push(task.clone());
-        let worker = self.worker();
-        let task = task.clone();
-        async move {
-            worker?
-                .deliver_lease(&task, &binding, credential)
-                .await
-                .map_err(|error| refused(error.code()))
-        }
-        .boxed()
-    }
-
-    fn revoke_lease(
-        &self,
-        _worker: &WorkerId,
-        task: &TaskId,
-    ) -> BoxFuture<'static, Result<(), DelegationError>> {
-        lock(&self.revoked).push(task.clone());
-        let worker = self.worker();
-        let task = task.clone();
-        async move {
-            worker?
-                .revoke_lease(&task)
-                .await
-                .map_err(|error| refused(error.code()))
-        }
-        .boxed()
-    }
-
-    fn delete_conversations(
-        &self,
-        _worker: &WorkerId,
-        conversations: Vec<ConversationId>,
-    ) -> BoxFuture<'static, Result<(), DelegationError>> {
-        let worker = self.worker();
-        async move {
-            worker?
-                .delete_assigned_conversations(&conversations)
-                .await
-                .map_err(|error| refused(error.code()))
-        }
-        .boxed()
+    fn cancel(&self, task: &TaskId) -> BoxFuture<'static, ()> {
+        lock(&self.state).cancels.push(task.clone());
+        futures_util::future::ready(()).boxed()
     }
 
     fn subscribe(
         &self,
-        _worker: &WorkerId,
-        conversation: &ConversationId,
-        after_seq: Option<u32>,
+        _target: &TaskExecutorRef,
+        _conversation: &ConversationId,
+        _after_seq: Option<u32>,
     ) -> BoxFuture<'static, Result<BoxStream<'static, ConversationUpdate>, ChatError>> {
-        let worker = self.worker();
-        let conversation = conversation.clone();
-        let online = self.online.subscribe();
-        async move {
-            let worker = worker.map_err(|_unreachable| ChatError::WorkerUnreachable)?;
-            let subscription = worker
-                .subscribe(SubscribeConversation {
-                    conversation_id: conversation,
-                    after_seq,
-                })
-                .await?;
-            let updates =
-                futures_util::stream::unfold(subscription, |mut subscription| async move {
-                    subscription
-                        .next()
-                        .await
-                        .map(|update| (update, subscription))
-                });
-            let mut online = online;
-            let offline = async move {
-                let _offline = online.wait_for(|online| !*online).await.is_ok();
-            };
-            Ok(updates.take_until(offline).boxed())
-        }
-        .boxed()
+        let answer = if self.unreachable() {
+            Err(fake_unreachable())
+        } else {
+            Ok(futures_util::stream::empty().boxed())
+        };
+        futures_util::future::ready(answer).boxed()
     }
 
     fn earlier_turns(
         &self,
-        _worker: &WorkerId,
-        input: LoadEarlierTurns,
+        _target: &TaskExecutorRef,
+        _input: LoadEarlierTurns,
     ) -> BoxFuture<'static, Result<EarlierTurns, ChatError>> {
-        let worker = self.worker();
-        async move {
-            worker
-                .map_err(|_unreachable| ChatError::WorkerUnreachable)?
-                .earlier_turns(input)
-                .await
-        }
-        .boxed()
+        let answer = if self.unreachable() {
+            Err(fake_unreachable())
+        } else {
+            Ok(EarlierTurns {
+                turns: Vec::new(),
+                has_earlier_turns: false,
+            })
+        };
+        futures_util::future::ready(answer).boxed()
     }
 
     fn checkpoint(
         &self,
-        _worker: &WorkerId,
-        input: CheckpointRef,
+        _target: &TaskExecutorRef,
+        _input: CheckpointRef,
     ) -> BoxFuture<'static, Result<Checkpoint, ChatError>> {
-        let worker = self.worker();
-        async move {
-            worker
-                .map_err(|_unreachable| ChatError::WorkerUnreachable)?
-                .checkpoint(input)
-                .await
-        }
-        .boxed()
+        let answer = if self.unreachable() {
+            Err(fake_unreachable())
+        } else {
+            Err(ChatError::CheckpointNotFound)
+        };
+        futures_util::future::ready(answer).boxed()
     }
 
     fn tool_output(
         &self,
-        _worker: &WorkerId,
-        input: ReadToolOutput,
+        _target: &TaskExecutorRef,
+        _input: ReadToolOutput,
     ) -> BoxFuture<'static, Result<ToolOutputPage, ToolsError>> {
-        let worker = self.worker();
-        async move {
-            worker
-                .map_err(|_unreachable| ToolsError::WorkerUnreachable)?
-                .tool_output(input)
-                .await
-        }
-        .boxed()
+        futures_util::future::ready(Err(ToolsError::OutputNotFound)).boxed()
     }
 
     fn decide_approval(
         &self,
-        _worker: &WorkerId,
+        _target: &TaskExecutorRef,
         input: DecideApproval,
     ) -> BoxFuture<'static, Result<(), ToolsError>> {
-        let worker = self.worker();
-        async move {
-            worker
-                .map_err(|_unreachable| ToolsError::WorkerUnreachable)?
-                .decide_approval(input)
-                .await
-        }
-        .boxed()
-    }
-
-    fn allow_by_full_access(
-        &self,
-        _worker: &WorkerId,
-        input: DecideApproval,
-    ) -> BoxFuture<'static, Result<(), ToolsError>> {
-        let worker = self.worker();
-        async move {
-            worker
-                .map_err(|_unreachable| ToolsError::WorkerUnreachable)?
-                .allow_by_full_access(&input)
-        }
-        .boxed()
-    }
-}
-
-/// A master's runtime and a worker's runtime in one process, joined by a
-/// [`LocalDelegation`].
-#[derive(Debug)]
-pub struct DelegationHarness {
-    /// The master, whose profile uses tools.
-    pub master: Harness,
-    /// The worker.
-    pub worker: WorkerHarness,
-    /// The port between them.
-    pub delegation: Arc<LocalDelegation>,
-}
-
-impl DelegationHarness {
-    /// A master and a worker with the default options, the worker at a
-    /// loopback address.
-    pub async fn start() -> Self {
-        Self::with_options(
-            HarnessOptions {
-                use_tools: true,
-                ..HarnessOptions::default()
-            },
-            WorkerOptions::default(),
-            "127.0.0.1:7445",
-        )
-        .await
-    }
-
-    /// A master and a worker with these options, the worker at `address`.
-    ///
-    /// # Panics
-    ///
-    /// When the master cannot store the paired worker, which fails the test.
-    pub async fn with_options(
-        master: HarnessOptions,
-        worker: WorkerOptions,
-        address: &str,
-    ) -> Self {
-        let worker = WorkerHarness::with_options(worker).await;
-        let delegation = Arc::new(LocalDelegation::new(worker.runtime.clone(), address));
-        let port: Arc<dyn Delegation> = Arc::<LocalDelegation>::clone(&delegation);
-        let master = Harness::with_options(HarnessOptions {
-            delegation: Some(port),
-            ..master
-        })
-        .await;
-        // The master's store knows the workers it paired with, as the link
-        // keeps them.
-        let view = delegation.workers().borrow().clone();
-        for worker in view {
-            master
-                .store
-                .add_paired_worker(mannie_store::NewPairedWorker {
-                    id: worker.id,
-                    name: worker.configured_name,
-                    chosen_name: worker.chosen_name,
-                    address: worker.address,
-                    key_pin: "0".repeat(64),
-                    details: worker.details,
-                })
-                .await
-                .expect("the master stores the paired worker");
-        }
-        Self {
-            master,
-            worker,
-            delegation,
-        }
-    }
-
-    /// Restarts the worker; its runs end as interrupted.
-    pub async fn restart_worker(mut self) -> Self {
-        self.worker = self.worker.restart().await;
-        self.delegation.set_worker(self.worker.runtime.clone());
-        self
-    }
-
-    /// Restarts the master, as quitting and starting Mannie does.
-    pub async fn restart_master(mut self) -> Self {
-        self.master = self.master.restart().await;
-        self
+        lock(&self.state).decisions.push(input);
+        futures_util::future::ready(Ok(())).boxed()
     }
 }
 

@@ -14,33 +14,13 @@ use crate::texts;
 /// The name of a report's archive.
 const REPORT_ARCHIVE: &str = "report";
 
-/// Who works on a task, as the task's result names it: a child agent, or a
-/// worker (docs/features/workers/delegation.md, a worker's report reads as a
-/// child's).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Doer {
-    /// A child agent on this machine.
-    Child,
-    /// A worker.
-    Worker,
-}
-
-impl Doer {
-    /// Who works on the task of a task document.
-    pub(crate) fn of(task: &TaskDocument) -> Self {
-        if task.worker.is_some() {
-            Self::Worker
-        } else {
-            Self::Child
-        }
-    }
-
-    fn noun(self) -> &'static str {
-        match self {
-            Self::Child => texts::THE_CHILD,
-            Self::Worker => texts::THE_WORKER,
-        }
-    }
+/// Who works on a task, as the task's result names it: the child, or what
+/// the task's executor calls its target, such as "the worker" (ADR-0031), so
+/// an executor's report reads as a child's.
+pub(crate) fn doer_of(task: &TaskDocument) -> &str {
+    task.executor
+        .as_ref()
+        .map_or(texts::THE_CHILD, |executor| executor.noun.as_str())
 }
 
 /// The result of a task's end, as the model reads it.
@@ -66,11 +46,12 @@ fn cut(text: &str, max_bytes: usize) -> &str {
 
 /// The result of a task that ended, within `limit` bytes. A report that does
 /// not fit is cut, and the whole of it goes to an archive whose ID
-/// `archive_id` makes, where `read_tool_output` reads it.
+/// `archive_id` makes, where `read_tool_output` reads it. `doer` names who
+/// worked on the task, as [`doer_of`] does.
 pub(crate) fn render_report(
     number: u32,
     ending: &TaskEnding,
-    doer: Doer,
+    doer: &str,
     limit: usize,
     archive_id: impl FnOnce() -> ArchiveId,
 ) -> TaskOutput {
@@ -116,44 +97,50 @@ pub(crate) fn render_report(
 }
 
 /// The text of a task that ended without a report.
-fn ended_text(number: u32, state: TaskState, failure: Option<&RunFailure>, doer: Doer) -> String {
+fn ended_text(number: u32, state: TaskState, failure: Option<&RunFailure>, doer: &str) -> String {
     match state {
         TaskState::Failed => {
             let cause = failure.unwrap_or(&RunFailure::Internal).to_string();
-            texts::task_failed(number, &cause, doer.noun())
+            texts::task_failed(number, &cause, doer)
         }
-        TaskState::Canceled => texts::task_stopped(number, doer.noun()),
+        TaskState::Canceled => texts::task_stopped(number, doer),
         // A task that still runs when the model reads its part did not end
         // before its parent's run: Mannie's end interrupted both.
         TaskState::Interrupted | TaskState::Accepted | TaskState::Running => {
-            texts::task_interrupted(number, doer.noun())
+            texts::task_interrupted(number, doer)
         }
         TaskState::Reported => texts::task_without_report(number),
     }
 }
 
-/// The text of a call that assigned no task.
+/// The text of a call that assigned no task. An executor's refusal keeps the
+/// text that the model read in the part's output, which [`task_result`]
+/// reads first; so do the refusals of workers that 0.2.0 stored, since M5's
+/// migration wrote theirs (ADR-0031).
 fn refusal_text(refusal: &TaskRefusal) -> String {
     match refusal {
         TaskRefusal::UnknownTask { number } => texts::no_such_task(*number),
         TaskRefusal::StillRunning { number } => texts::task_still_running(*number),
         TaskRefusal::BudgetUsed => texts::TASK_BUDGET_USED.to_owned(),
         TaskRefusal::NotStarted => texts::TASK_NOT_STARTED.to_owned(),
-        TaskRefusal::WorkerOffline { worker } => texts::worker_offline(worker),
-        TaskRefusal::WorkerUnknown { worker } => texts::no_such_worker(worker),
-        TaskRefusal::WorkerIncompatible { worker } => texts::worker_incompatible(worker),
-        TaskRefusal::ProfileNotReachable { worker } => texts::profile_not_reachable(worker),
+        TaskRefusal::WorkerOffline { worker }
+        | TaskRefusal::WorkerUnknown { worker }
+        | TaskRefusal::WorkerIncompatible { worker }
+        | TaskRefusal::ProfileNotReachable { worker } => texts::target_refused(worker),
+        TaskRefusal::Executor { target, .. } => {
+            texts::target_refused(target.as_deref().unwrap_or_default())
+        }
     }
 }
 
 /// The text of a task from its part's document, as after a crash that ended
 /// the parent's run before the model got the task's result. A part that let
-/// its worker task go says so: the task may still run on its worker.
+/// an executor's task go says so: the task may still run on its target.
 fn task_text(task: &TaskDocument) -> String {
-    if let Some(worker) = task.worker.as_ref().filter(|_worker| task.detached) {
-        return texts::task_let_go(task.number, &worker.name);
+    if let Some(executor) = task.executor.as_ref().filter(|_executor| task.detached) {
+        return texts::task_let_go(task.number, &executor.noun, &executor.target_name);
     }
-    let doer = Doer::of(task);
+    let doer = doer_of(task);
     let ending = TaskEnding {
         state: task.state,
         report: task.report.clone(),
@@ -208,7 +195,7 @@ mod tests {
     use mannie_types::run::RunFailure;
     use mannie_types::tasks::{TaskDocument, TaskPartDocument, TaskRefusal, TaskState};
 
-    use super::{Doer, render_report, task_result};
+    use super::{render_report, task_result};
     use crate::texts;
 
     fn archive_id() -> ArchiveId {
@@ -228,7 +215,7 @@ mod tests {
         let output = render_report(
             2,
             &reported("Found it in session.rs."),
-            Doer::Child,
+            texts::THE_CHILD,
             1_000,
             || panic!("nothing is archived"),
         );
@@ -241,7 +228,7 @@ mod tests {
     fn a_long_report_is_cut_to_the_limit_and_archived_whole() {
         let report = "é".repeat(5_000);
 
-        let output = render_report(1, &reported(&report), Doer::Child, 2_000, archive_id);
+        let output = render_report(1, &reported(&report), texts::THE_CHILD, 2_000, archive_id);
 
         assert!(output.output.len() <= 2_000, "{}", output.output.len());
         assert!(output.output.starts_with("Task 1 reported:\n\né"));
@@ -266,11 +253,11 @@ mod tests {
         let blank = reported("   ");
 
         assert_eq!(
-            render_report(3, &failed, Doer::Worker, 1_000, archive_id).output,
-            texts::task_failed(3, "the account's quota is used up", texts::THE_WORKER)
+            render_report(3, &failed, "the worker", 1_000, archive_id).output,
+            texts::task_failed(3, "the account's quota is used up", "the worker")
         );
         assert_eq!(
-            render_report(3, &blank, Doer::Child, 1_000, archive_id).output,
+            render_report(3, &blank, texts::THE_CHILD, 1_000, archive_id).output,
             texts::task_without_report(3)
         );
     }
@@ -305,6 +292,7 @@ mod tests {
                 started_at: None,
                 ended_at: None,
                 worker: None,
+                executor: None,
                 detached: false,
             }),
             ..TaskPartDocument::default()

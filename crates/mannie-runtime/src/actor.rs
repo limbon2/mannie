@@ -10,8 +10,8 @@
 //! assigned (ADR-0028).
 
 mod child;
-mod delegation;
 mod operations;
+mod remote;
 mod tasks;
 
 use std::future::Future;
@@ -35,7 +35,6 @@ use tokio::time::Instant;
 
 pub(crate) use self::child::ChildLink;
 use self::child::ChildRun;
-pub(crate) use self::delegation::worker_label;
 use self::tasks::TaskLane;
 use crate::assigned::AssignedRun;
 use crate::budget::{Ledger, estimate_text, usage};

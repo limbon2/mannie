@@ -26,19 +26,23 @@ function url(search: string): URL {
   return new URL(`https://tauri.localhost/settings${search}`);
 }
 
+function everyPluginOn(): boolean {
+  return true;
+}
+
 beforeEach(() => {
   navigation.goto.mockReset();
 });
 
 describe('activeSettingsSection', () => {
   it('shows nothing when no section is registered', () => {
-    const sections = new Slot<SettingsSection>('settings sections');
+    const sections = new Slot<SettingsSection>('settings sections', everyPluginOn);
 
     expect(activeSettingsSection(sections, url(''))).toEqual({ kind: 'none' });
   });
 
   it('shows the section with the lowest order when the URL names none', () => {
-    const sections = new Slot<SettingsSection>('settings sections');
+    const sections = new Slot<SettingsSection>('settings sections', everyPluginOn);
     sections.register(section('chat.providers', 10));
     const interfaceSection = section('shell.interface', 0);
     sections.register(interfaceSection);
@@ -47,7 +51,7 @@ describe('activeSettingsSection', () => {
   });
 
   it('shows the section the URL names', () => {
-    const sections = new Slot<SettingsSection>('settings sections');
+    const sections = new Slot<SettingsSection>('settings sections', everyPluginOn);
     sections.register(section('shell.interface', 0));
     const providers = section('chat.providers', 10);
     sections.register(providers);
@@ -59,12 +63,23 @@ describe('activeSettingsSection', () => {
   });
 
   it('reports a section that no feature provides', () => {
-    const sections = new Slot<SettingsSection>('settings sections');
+    const sections = new Slot<SettingsSection>('settings sections', everyPluginOn);
     sections.register(section('shell.interface', 0));
 
     expect(activeSettingsSection(sections, url(`?${SECTION_PARAMETER}=removed`))).toEqual({
       kind: 'missing',
       requested: 'removed',
+    });
+  });
+
+  it('says that the plugin of the section the URL names is off', () => {
+    const sections = new Slot<SettingsSection>('settings sections', () => false);
+    sections.register(section('shell.interface', 0));
+    sections.register(section('workers.settings', 28), 'workers');
+
+    expect(activeSettingsSection(sections, url(`?${settingsSectionQuery('workers.settings')}`))).toEqual({
+      kind: 'plugin_off',
+      plugin: 'workers',
     });
   });
 });

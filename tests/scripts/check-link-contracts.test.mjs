@@ -7,11 +7,24 @@ import { dirname, join } from 'node:path';
 import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { baselines, hasContracts, newestReleaseWithContracts } from '../../scripts/check-link-contracts.mjs';
+import {
+  baselines,
+  EARLIER_PROTO_FOLDERS,
+  hasContracts,
+  newestReleaseWithContracts,
+  PROTO_FOLDER,
+} from '../../scripts/check-link-contracts.mjs';
 
 const script = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'scripts', 'check-link-contracts.mjs');
 
-const BUF_YAML = 'version: v2\nmodules:\n  - path: proto\nbreaking:\n  use:\n    - FILE\n';
+/**
+ * The buf workspace of a repository whose contracts are in `contracts`.
+ * @param {string} contracts
+ * @returns {string}
+ */
+function bufYaml(contracts) {
+  return `version: v2\nmodules:\n  - path: ${contracts}\nbreaking:\n  use:\n    - FILE\n`;
+}
 
 /** @type {string[]} */
 const folders = [];
@@ -63,14 +76,16 @@ function repository() {
 }
 
 /**
- * Writes a contract whose message has `fields`.
+ * Writes a contract whose message has `fields`, in the folder of the
+ * contracts or, with `contractsFolder`, in another one.
  * @param {string} folder
  * @param {string} fields
+ * @param {string} [contractsFolder]
  */
-function writeContracts(folder, fields) {
-  const contracts = join(folder, 'proto', 'mannie', 'link', 'example', 'v1');
+function writeContracts(folder, fields, contractsFolder = PROTO_FOLDER) {
+  const contracts = join(folder, contractsFolder, 'mannie', 'link', 'example', 'v1');
   mkdirSync(contracts, { recursive: true });
-  writeFileSync(join(folder, 'buf.yaml'), BUF_YAML);
+  writeFileSync(join(folder, 'buf.yaml'), bufYaml(contractsFolder));
   writeFileSync(
     join(contracts, 'example.proto'),
     `syntax = "proto3";\n\npackage mannie.link.example.v1;\n\nmessage Example {\n${fields}}\n`,
@@ -117,6 +132,24 @@ describe('check-link-contracts', () => {
     const folder = repository();
     writeContracts(folder, NAME);
     commit(folder, 'Add the contracts');
+
+    writeContracts(folder, NAME + COUNT);
+    const added = check(folder);
+    writeContracts(folder, COUNT);
+    const removed = check(folder);
+
+    assert.equal(added.status, 0, added.stdout + added.stderr);
+    assert.match(added.stdout, /only grew since the merge base with main/);
+    assert.notEqual(removed.status, 0);
+    assert.match(removed.stderr, /changed incompatibly since the merge base with main/);
+  });
+
+  it('compares with a baseline that keeps the contracts in their earlier folder', () => {
+    const folder = repository();
+    const [earlier] = EARLIER_PROTO_FOLDERS;
+    writeContracts(folder, NAME, earlier);
+    commit(folder, 'Add the contracts');
+    rmSync(join(folder, earlier), { force: true, recursive: true });
 
     writeContracts(folder, NAME + COUNT);
     const added = check(folder);

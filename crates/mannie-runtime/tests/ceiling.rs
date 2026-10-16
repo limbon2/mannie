@@ -11,14 +11,15 @@
 use std::fs;
 use std::path::Path;
 
-use mannie_runtime::testing::{WorkerHarness, WorkerOptions, reply, tool_calls};
+use mannie_runtime::testing::{WorkerHarness, WorkerOptions, ceiling_mode_line, reply, tool_calls};
+use mannie_types::ceiling::CeilingMode;
 use mannie_types::ids::RuleId;
+use mannie_types::tasks::TaskAssignment;
 use mannie_types::tasks::{AssignedTaskState, TaskState};
 use mannie_types::tools::{
     ApprovalChoice, ApprovalReason, CommandRule, DecideApproval, Decision, NotRunReason, Refusal,
     ToolCallStatus, ToolCallView, ToolsError,
 };
-use mannie_types::workers::{CeilingMode, TaskAssignment};
 use serde_json::json;
 
 fn write(path: &Path) -> String {
@@ -326,7 +327,7 @@ async fn a_task_narrows_the_ceiling_to_reading_and_never_widens_it() {
     assert!(!target.exists());
     let instructions = &worker.model.reply_requests()[0].instructions;
     assert!(
-        instructions.contains(mannie_runtime::texts::WORKER_READ_ONLY_GUIDANCE),
+        instructions.contains(&ceiling_mode_line(CeilingMode::ReadOnly)),
         "{instructions}"
     );
 }

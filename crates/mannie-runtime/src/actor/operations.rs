@@ -19,13 +19,13 @@ use mannie_tools::{
     PrepareError, ProjectFacts, StopReason, StopSignal, Tool, ToolContext, Verdict, decide, digest,
     result_limit, saved_rule,
 };
+use mannie_types::ceiling::CeilingMode;
 use mannie_types::ids::ProjectId;
 use mannie_types::run::{RunActivity, RunFailure};
 use mannie_types::tools::{
     Access, ApprovalChoice, ApprovalRequest, ArchiveRef, CommandRule, Decision, GrantScope,
     NotRunReason, ProcessRecord, Refusal, ToolCallStatus, ToolResult, ToolsSettings,
 };
-use mannie_types::workers::CeilingMode;
 use tokio::sync::oneshot;
 
 use super::{Ending, MAX_DETAIL_CHARS, RunActor, StepCall, budget_bytes, halt};
@@ -78,13 +78,12 @@ struct Surroundings {
 
 /// Why a call of a tool that the run does not have does not run. A read-only
 /// task is not offered the tools that change things, and a call of one that
-/// comes anyway meets the ceiling's refusal (docs/features/workers/
-/// host-and-ceiling.md, the ceiling).
+/// comes anyway meets the ceiling's refusal (ADR-0028, decision 5).
 fn missing_tool_reason(setup: &Setup, tool: &str) -> NotRunReason {
     let read_only = setup
-        .host
+        .assigned
         .as_ref()
-        .is_some_and(|host| host.mode == CeilingMode::ReadOnly);
+        .is_some_and(|assigned| assigned.mode == CeilingMode::ReadOnly);
     if read_only && setup.agent.tools.contains(&tool) {
         NotRunReason::Refused {
             refusal: Refusal::ReadOnlyHost,
@@ -137,11 +136,31 @@ impl RunActor {
         self.flush(Durability::Full).await
     }
 
+    /// The tool of a call, or why the call does not run before its tool is
+    /// prepared: the run was not offered the tool, or the tool's plugin
+    /// stopped since the run started. A run keeps the tools it started with,
+    /// and a call into a stopped plugin does not run (ADR-0030, decision 8).
+    fn tool_to_run(&self, setup: &Setup, name: &str) -> Result<Arc<dyn Tool>, NotRunReason> {
+        let Some(tool) = setup.tool(name).map(Arc::clone) else {
+            return Err(missing_tool_reason(setup, name));
+        };
+        if let Some(plugin) = setup.plugin_of_tool(name)
+            && !self.runtime.plugin_has_tool(plugin, name)
+        {
+            return Err(NotRunReason::PluginOff {
+                plugin: plugin.to_owned(),
+            });
+        }
+        Ok(tool)
+    }
+
     async fn run_call(&mut self, setup: &Setup, mut call: StepCall) -> Result<CallEnd, Ending> {
-        let Some(tool) = setup.tool(&call.document.tool).map(Arc::clone) else {
-            let reason = missing_tool_reason(setup, &call.document.tool);
-            self.end_call(call, reason);
-            return Ok(CallEnd::Ran);
+        let tool = match self.tool_to_run(setup, &call.document.tool) {
+            Ok(tool) => tool,
+            Err(reason) => {
+                self.end_call(call, reason);
+                return Ok(CallEnd::Ran);
+            }
         };
         let arguments = call.arguments.clone().unwrap_or_default();
         let mut surroundings = self.surroundings(setup).await?;
@@ -555,7 +574,7 @@ impl RunActor {
             Some((ceiling, host)) => (
                 ceiling.allowed_folders.first().cloned(),
                 Some(ceiling),
-                Some(host),
+                host,
             ),
             None => (workspace, None, None),
         };
@@ -588,19 +607,18 @@ impl RunActor {
         })
     }
 
-    /// On a worker, the ceiling of the run's calls, narrowed as its task
-    /// asks, with the worker's name; the first allowed folder is the
-    /// workspace (ADR-0028, decision 5). `None` on the master.
-    fn ceiling(&self) -> Option<(Ceiling, String)> {
-        let worker = self.runtime.worker_host()?;
+    /// On a machine with a ceiling, the ceiling of the run's calls, narrowed
+    /// as its task asks, with the machine's name; the first allowed folder is
+    /// the workspace (ADR-0028, decision 5). `None` on a machine without one.
+    fn ceiling(&self) -> Option<(Ceiling, Option<String>)> {
+        let machine = self.runtime.machine();
+        let ceiling = machine.ceiling.as_ref()?;
         let read_only = self
             .assigned
             .as_ref()
             .is_some_and(|assigned| assigned.read_only);
-        let ceiling = worker
-            .ceiling
-            .narrowed(read_only.then_some(CeilingMode::ReadOnly));
-        Some((ceiling, worker.name.clone()))
+        let ceiling = ceiling.narrowed(read_only.then_some(CeilingMode::ReadOnly));
+        Some((ceiling, machine.name.clone()))
     }
 
     /// Stores a call's result and finishes its part. Archived outputs are

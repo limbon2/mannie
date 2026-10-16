@@ -171,3 +171,30 @@ export interface PartRenderer {
   /** The part kind it renders, such as `text`; unique among renderers. */
   readonly id: string;
 }
+
+/**
+ * A kind of task that a plugin's executor runs (ADR-0031, decision 7): how
+ * the core's task card, call note, read-only footer and status line name its
+ * tasks and their target. Without an entry for a kind, such as while its
+ * plugin is off, they show generic texts that name the target.
+ */
+export interface TaskKind {
+  /** The note of a task that the reply let go, which may still run on its target. */
+  readonly detached: Message;
+  /** An icon from @lucide/svelte for the kind's tasks. */
+  readonly icon: Component;
+  /** The executor's kind: the ID of its plugin. */
+  readonly id: string;
+  /** The footer of a task conversation of the kind, which the owner cannot write to. */
+  readonly readOnly: Message;
+  /** The sentence of one of the executor's refusal codes, with the target's name, or `null` for a code it does not know. */
+  readonly refusal: (code: string, target: string | null) => string | null;
+  /** The words before the target's name, for screen readers, such as "Worker:". */
+  readonly targetPrefix: Message;
+  /** The executor's tool, whose calls the call note shows before they have a task. */
+  readonly tool: string;
+  /** The note of a call of the tool whose activity the model has not written yet. */
+  readonly untitledCall: Message;
+  /** The status line of a reply that waits only for tasks of the kind. */
+  readonly waiting: (count: number) => string;
+}

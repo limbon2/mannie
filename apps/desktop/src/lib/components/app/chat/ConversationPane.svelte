@@ -4,6 +4,7 @@
   import { onMount, untrack } from 'svelte';
 
   import ConversationControlOutlet from '#lib/components/app/shell/ConversationControlOutlet.svelte';
+  import PluginOffState from '#lib/components/app/shell/PluginOffState.svelte';
   import * as Alert from '#lib/components/ui/alert/index.js';
   import { Button } from '#lib/components/ui/button/index.js';
   import * as Empty from '#lib/components/ui/empty/index.js';
@@ -13,11 +14,12 @@
   import { m } from '#lib/paraglide/messages.js';
   import { chatActions } from '#lib/state/chat-actions.svelte.js';
   import { OpenConversation } from '#lib/state/conversation.svelte.js';
+  import { pluginStates } from '#lib/state/plugin-states.svelte.js';
   import { providerProfiles } from '#lib/state/provider-profiles.svelte.js';
   import { takeComposerFocus } from '#lib/state/started-conversation.js';
   import type { ChatFailure } from '#lib/types/chat.js';
   import { call } from '#lib/utils/calls.js';
-  import { chatFailureMessage } from '#lib/utils/chat-errors.js';
+  import { chatFailureMessage, pluginOffOf } from '#lib/utils/chat-errors.js';
   import { startNewConversation } from '#lib/utils/chat-urls.js';
   import { hasActiveRun } from '#lib/utils/conversation-reducer.js';
 
@@ -43,12 +45,16 @@
   const transcript = $derived(conversation.transcript);
   const summary = $derived(transcript.conversation);
   const isChild = $derived(summary !== null && summary.task !== null);
-  /** Whether the conversation belongs to a task on a worker rather than to a child agent. */
-  const onWorker = $derived(summary?.task?.worker !== null && summary?.task?.worker !== undefined);
+  /** The kind of task of the plugin's executor whose conversation this is, or `null` for a child agent's. */
+  const executorKind = $derived(summary?.task?.executor?.kind ?? null);
   const replying = $derived(hasActiveRun(transcript));
   const noProfile = $derived(providerProfiles.status === 'ready' && providerProfiles.profiles.length === 0);
   const compacting = $derived(chatActions.compacting.includes(id));
   const compactionFailure = $derived(chatActions.compactionFailures[id] ?? null);
+
+  /** The plugin of a task conversation that cannot be followed while the plugin is off, or `null`. */
+  const offPlugin = $derived(pluginOffOf(conversation.failure));
+  const pluginBackOn = $derived(offPlugin !== null && pluginStates.isOn(offPlugin));
 
   async function send(text: string): Promise<ChatFailure | null> {
     const outcome = await call(() => commands.sendMessage({ conversationId: id, text }));
@@ -58,6 +64,16 @@
   async function stop(): Promise<void> {
     await chatActions.stop(id);
   }
+
+  // A task conversation of a plugin that is off follows again once the
+  // plugin is on (ADR-0030, decision 12).
+  $effect(() => {
+    if (pluginBackOn) {
+      untrack(() => {
+        conversation.retry();
+      });
+    }
+  });
 
   onMount(() => {
     conversation.open();
@@ -89,18 +105,22 @@
       </Empty.Content>
     </Empty.Root>
   {:else if conversation.status === 'error'}
-    <div class="mx-auto w-full max-w-xl p-6">
-      <Alert.Root variant="destructive">
-        <CircleAlertIcon />
-        <Alert.Title>{m.chat_conversation_failed_title()}</Alert.Title>
-        <Alert.Description>
-          {conversation.failure === null ? '' : chatFailureMessage(conversation.failure)}
-        </Alert.Description>
-        <Alert.Action>
-          <Button size="sm" variant="outline" onclick={() => conversation.retry()}>{m.chat_try_again()}</Button>
-        </Alert.Action>
-      </Alert.Root>
-    </div>
+    {#if offPlugin === null}
+      <div class="mx-auto w-full max-w-xl p-6">
+        <Alert.Root variant="destructive">
+          <CircleAlertIcon />
+          <Alert.Title>{m.chat_conversation_failed_title()}</Alert.Title>
+          <Alert.Description>
+            {conversation.failure === null ? '' : chatFailureMessage(conversation.failure)}
+          </Alert.Description>
+          <Alert.Action>
+            <Button size="sm" variant="outline" onclick={() => conversation.retry()}>{m.chat_try_again()}</Button>
+          </Alert.Action>
+        </Alert.Root>
+      </div>
+    {:else}
+      <PluginOffState plugin={offPlugin} />
+    {/if}
   {:else}
     {#if summary !== null}
       <div class="flex items-center gap-2 border-b px-3 py-1.5">
@@ -141,7 +161,12 @@
     <Transcript {conversation} readOnly={isChild} />
   {/if}
   {#if isChild}
-    <ReadOnlyFooter conversationId={id} owner={onWorker ? 'worker' : 'child'} {replying} />
+    <ReadOnlyFooter
+      conversationId={id}
+      kind={executorKind}
+      owner={executorKind === null ? 'child' : 'task'}
+      {replying}
+    />
   {:else}
     {#if noProfile}
       <div class="mx-auto w-full max-w-3xl px-4 pb-2">

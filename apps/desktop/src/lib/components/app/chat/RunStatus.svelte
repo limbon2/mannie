@@ -4,10 +4,11 @@
   import { Button } from '#lib/components/ui/button/index.js';
   import { Spinner } from '#lib/components/ui/spinner/index.js';
   import * as Tooltip from '#lib/components/ui/tooltip/index.js';
-  import type { PartId, PartView, RunView } from '#lib/generated/bindings.js';
+  import type { PartId, PartView, RunView, TaskKindCount } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
   import { chatActions } from '#lib/state/chat-actions.svelte.js';
   import { secondClock } from '#lib/state/second-clock.js';
+  import { getShellSlots } from '#lib/state/shell-slots.svelte.js';
   import type { ChatFailure } from '#lib/types/chat.js';
   import { chatFailureMessage, runFailureMessage } from '#lib/utils/chat-errors.js';
   import { formatSeconds, secondsUntil } from '#lib/utils/durations.js';
@@ -32,6 +33,8 @@
 
   let { conversationId, parts, readOnly = false, run }: Props = $props();
 
+  const slots = getShellSlots();
+
   let retrying = $state(false);
   let retryFailure = $state<ChatFailure | null>(null);
 
@@ -44,15 +47,27 @@
     return isCommand;
   }
 
-  /** What a reply waits for: child agents, workers, or tasks of both. */
-  function waitingForTasks(count: number, workers: number): string {
-    if (workers === 0) {
+  /**
+   * What a reply waits for: child agents, the tasks of one plugin's executor
+   * in its kind's words while the plugin is on (ADR-0031, decision 7), or
+   * tasks of several kinds.
+   */
+  function waitingForTasks(count: number, kinds: readonly TaskKindCount[]): string {
+    if (kinds.length === 0) {
       return m.chat_status_waiting_for_tasks({ count });
     }
-    if (workers === count) {
-      return m.chat_status_waiting_for_workers({ count });
+    const only = soleKind(count, kinds);
+    const kind = only === undefined ? undefined : slots.taskKinds.find(only.kind);
+    return kind?.waiting(count) ?? m.chat_status_waiting_for_any_tasks({ count });
+  }
+
+  /** The kind of every task that a reply waits for, when they all have one. */
+  function soleKind(count: number, kinds: readonly TaskKindCount[]): TaskKindCount | undefined {
+    if (kinds.length !== 1) {
+      return undefined;
     }
-    return m.chat_status_waiting_for_any_tasks({ count });
+    const [kind] = kinds;
+    return kind.count === count ? kind : undefined;
   }
 
   function activeLine(current: RunView): StatusLine {
@@ -91,7 +106,7 @@
         return { busy: true, retryable: false, text: m.chat_status_waiting_for_lease() };
       }
       case 'waiting_for_tasks': {
-        return { busy: true, retryable: false, text: waitingForTasks(activity.count, activity.workers ?? 0) };
+        return { busy: true, retryable: false, text: waitingForTasks(activity.count, activity.kinds ?? []) };
       }
       case 'writing': {
         return { busy: true, retryable: false, text: m.chat_status_writing() };

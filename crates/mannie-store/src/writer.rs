@@ -41,7 +41,7 @@ type Job = Box<dyn FnOnce(&mut WriterConnection) + Send>;
 /// Why a transaction did not commit: the work refused the change, or the store
 /// failed. Either way, nothing of the transaction was written.
 #[derive(Debug)]
-pub(crate) enum TransactError<E> {
+pub enum TransactError<E> {
     /// The work found that the change is not allowed, such as a second active
     /// run in a conversation.
     Rejected(E),

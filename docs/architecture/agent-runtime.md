@@ -1,16 +1,16 @@
 # Agent runtime
 
-|              |                                                                                                                                                                                                                                                                          |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Status       | Draft for review                                                                                                                                                                                                                                                         |
-| Last updated | 2026-10-15                                                                                                                                                                                                                                                               |
-| Related      | [ADR-0011](../adr/0011-own-the-provider-adapters.md), [ADR-0012](../adr/0012-run-agents-as-durable-actors.md), [ADR-0024](../adr/0024-run-child-agent-tasks-in-the-parent-run.md), [Tools](tools.md), [Orchestration](orchestration.md), [Domain model](domain-model.md) |
+|              |                                                                                                                                                                                                                                                                                                                                         |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status       | Draft for review                                                                                                                                                                                                                                                                                                                        |
+| Last updated | 2026-10-16                                                                                                                                                                                                                                                                                                                              |
+| Related      | [ADR-0011](../adr/0011-own-the-provider-adapters.md), [ADR-0012](../adr/0012-run-agents-as-durable-actors.md), [ADR-0024](../adr/0024-run-child-agent-tasks-in-the-parent-run.md), [Tools](tools.md), [Orchestration](orchestration.md), [Domain model](domain-model.md), [ADR-0031](../adr/0031-move-workers-into-the-first-plugin.md) |
 
-The agent runtime (`mannie-runtime`) executes agents. The same runtime runs in the desktop app and in every worker ([ADR-0015](../adr/0015-run-an-agent-runtime-on-every-machine.md)).
+The agent runtime (`mannie-runtime`) executes agents. The same runtime runs in the desktop app and in every worker of the Workers plugin ([ADR-0015](../adr/0015-run-an-agent-runtime-on-every-machine.md)). Its composition root gives it its registries and settings, and plugins add their contributions to it while they are on ([ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md)).
 
 ## 1. Responsibilities
 
-The runtime owns the agent loop, budgets, retries, context management and compaction, and the handling of model quirks. It also runs tasks for child agents and records every change as an event. Provider adapters stream one model call each, tools perform operations, and the store persists data. None of them drives the loop.
+The runtime owns the agent loop, budgets, retries, context management and compaction, and the handling of model quirks. It also runs tasks for child agents, keeps the tasks of plugins' executors in their conversations, and records every change as an event. A run reads the tools, agents, instruction sections and executors that are registered when it starts, and keeps them until it ends. Provider adapters stream one model call each, tools perform operations, and the store persists data. None of them drives the loop.
 
 ## 2. Runs as actors
 
@@ -20,8 +20,8 @@ The runtime owns the agent loop, budgets, retries, context management and compac
 - Each conversation has at most one active run, and different conversations run in parallel. A global limit of 8 concurrent model calls protects the provider and the machine; runs over the limit wait in order.
 - A supervisor watches each run's task. A run whose task panics ends as failed with an internal error, and its conversation is free again.
 - A child agent's run belongs to its parent's run, which starts it, reads its state from a board that the child writes, and writes that state into the parent's conversation as the conversation's only writer. The parent's run ends only after its children have ended ([ADR-0024](../adr/0024-run-child-agent-tasks-in-the-parent-run.md)).
-- A worker task publishes its state on the same board, from the stream of states that the master follows through the runtime's delegation port. The parent's run does not wait for an offline worker when it stops, and quitting leaves worker tasks running ([ADR-0027](../adr/0027-delegate-tasks-to-workers-through-a-runtime-port.md)).
-- On a worker, the runtime runs tasks that the master assigns, each in a task conversation without a parent, under the worker's agent definition and policy ceiling ([ADR-0028](../adr/0028-run-assigned-tasks-under-the-host-ceiling.md)).
+- A task of a plugin's executor publishes its state on the same board: the executor publishes each state with a version, and an older state changes nothing. For an executor whose tasks outlive their reply, such as a worker's, the parent's run does not wait for an unreachable target when it stops, and quitting or turning the plugin off lets the tasks go while they run on ([orchestration](orchestration.md#4-task-executors), [ADR-0031](../adr/0031-move-workers-into-the-first-plugin.md)).
+- With the settings that a composition root gives it, a ceiling, a description of its machine and a number of task slots, the runtime runs tasks that another machine assigns, each in a task conversation without a parent, as a worker does under its agent definition and policy ceiling ([ADR-0028](../adr/0028-run-assigned-tasks-under-the-host-ceiling.md)).
 - At shutdown, the runtime accepts no new runs, asks every run to stop, and waits up to 3 seconds; runs still active become interrupted.
 - At startup, runs that were active become interrupted, with the text they had written, the runs of task conversations first. The owner retries them, or for tasks the assigning agent decides.
 
@@ -69,7 +69,7 @@ The number of continuation notes per turn is limited, and a child's confirmation
 ## 6. Transcript and events
 
 - The transcript is an append-only list of typed parts. Features add part types through an [extension point](extension-points.md#35-transcript-parts-and-run-events).
-- Each change is an event with the conversation's next sequence number. Subscribers replay from a cursor ([desktop app](desktop-app.md#3-streaming-to-the-ui), [orchestration](orchestration.md#5-delegation)).
+- Each change is an event with the conversation's next sequence number. Subscribers replay from a cursor ([desktop app](desktop-app.md#3-streaming-to-the-ui), [orchestration](orchestration.md#4-task-executors)).
 - Provider-private data, such as encrypted reasoning, is stored with a binding to the provider profile and replayed only to the same binding.
 - The store writes deltas in batches every 50 ms and commits lifecycle changes, such as a run's start and end and a part's end, durably ([ADR-0009](../adr/0009-persist-state-in-sqlite.md)). When a part ends, its deltas become the part's text in the same transaction and their events are removed; the part's final event carries the whole text, so replaying from any cursor still rebuilds the transcript.
 - A subscriber without a cursor, or with one too far back, starts from a snapshot of the latest turns, and earlier turns load in pages.
@@ -86,11 +86,11 @@ The number of continuation notes per turn is limited, and a child's confirmation
 
 ## 8. Stop, retry and recovery
 
-| Action or event | Behavior                                                                                                                                                                                                                                                        |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Stop            | Cancels the model call and pending approvals, stops running tool calls through the process supervisor, stops the run's child agents, cancels its worker tasks, and keeps the partial text. Stopping a child's run ends only its task, and its parent continues. |
-| Retry           | Starts a new run for the latest turn, when its run failed, stopped or was interrupted. Completed operations keep their results; uncertain operations are shown to the model, not repeated.                                                                      |
-| Process restart | Active runs become interrupted. Executing operations become uncertain. Approvals that were pending are canceled. Tasks that were running become interrupted, and nothing restarts them.                                                                         |
+| Action or event | Behavior                                                                                                                                                                                                                                                                                       |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stop            | Cancels the model call and pending approvals, stops running tool calls through the process supervisor, stops the run's child agents, cancels the tasks of executors that outlive their reply, and keeps the partial text. Stopping a child's run ends only its task, and its parent continues. |
+| Retry           | Starts a new run for the latest turn, when its run failed, stopped or was interrupted. Completed operations keep their results; uncertain operations are shown to the model, not repeated.                                                                                                     |
+| Process restart | Active runs become interrupted. Executing operations become uncertain. Approvals that were pending are canceled. Tasks that were running become interrupted, and nothing restarts them.                                                                                                        |
 
 ## 9. Testing
 

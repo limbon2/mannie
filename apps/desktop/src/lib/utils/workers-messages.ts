@@ -76,6 +76,9 @@ export function workersFailureMessage(failure: WorkersFailure): string {
     case 'not_a_worker': {
       return m.workers_error_not_a_worker();
     }
+    case 'plugin_off': {
+      return m.workers_error_plugin_off();
+    }
     case 'shutting_down': {
       return m.workers_error_shutting_down();
     }
@@ -95,6 +98,40 @@ export function workersFailureMessage(failure: WorkersFailure): string {
       return m.workers_error_worker_not_found();
     }
   }
+}
+
+/**
+ * Why the executor of the Workers plugin did not take a task, by the code
+ * that it gave (ADR-0031, decision 6), or `null` for a code that this
+ * version does not know. The worker's name is content.
+ */
+export function workersRefusalMessage(code: string, worker: string | null): string | null {
+  const name = worker ?? '';
+  switch (code) {
+    case 'profile_not_reachable': {
+      return m.workers_refusal_profile_not_reachable({ worker: name });
+    }
+    case 'still_running': {
+      return m.workers_refusal_still_running({ worker: name });
+    }
+    case 'worker_incompatible': {
+      return m.workers_refusal_worker_incompatible({ worker: name });
+    }
+    case 'worker_offline': {
+      return m.workers_refusal_worker_offline({ worker: name });
+    }
+    case 'worker_unknown': {
+      return m.workers_refusal_worker_unknown({ worker: name });
+    }
+    default: {
+      return null;
+    }
+  }
+}
+
+/** Why the Workers plugin could not start, by its code, or `null` for the host's codes. */
+export function workersStartFailureMessage(code: string): string | null {
+  return code === 'storage_failed' ? m.workers_plugin_failure_storage_failed() : null;
 }
 
 /** What a worker's ceiling lets its tasks do. */

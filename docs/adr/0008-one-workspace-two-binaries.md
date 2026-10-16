@@ -33,6 +33,7 @@ Verified 2026-10-13:
 
 - Positive: the worker has no GUI dependencies, and tooling enforces the crate boundaries.
 - Negative: there are two composition roots, and the musl and FreeBSD builds need care in CI (risk R10).
+- Refinement in M5: a plugin's crates, binaries and contracts live in `plugins/<id>/`, so the worker service moves to `plugins/workers/worker/` ([ADR-0030](0030-split-mannie-into-a-core-and-plugins.md), [ADR-0031](0031-move-workers-into-the-first-plugin.md)). The bans of decision 3 hold, and cargo-deny also refuses a dependency of a core crate on a plugin's crate.
 
 ## Alternatives considered
 

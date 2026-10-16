@@ -1,11 +1,13 @@
 // The list of paired workers and the owner's actions on it (docs/features/
-// workers/worker-activity.md): the list follows the core's channel, pairing
-// closes its dialog only once the worker is paired, a refusal stays in the
-// dialog, renaming starts from the owner's name and keeps a refused one in
-// the dialog, and a removal confirms before it removes.
+// workers/worker-activity.md): the list follows the core's channel while
+// Workers is on, pairing closes its dialog only once the worker is paired, a
+// refusal stays in the dialog, renaming starts from the owner's name and
+// keeps a refused one in the dialog, a removal confirms before it removes,
+// and the dialogs close as Workers turns off.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { WorkerListUpdate, WorkerView } from '../../../../../../apps/desktop/src/lib/generated/bindings.js';
+import type { PluginStates } from '../../../../../../apps/desktop/src/lib/state/plugin-states.svelte.js';
 import { WorkersActions } from '../../../../../../apps/desktop/src/lib/state/workers-actions.svelte.js';
 import { WorkerList, workerList } from '../../../../../../apps/desktop/src/lib/state/workers.svelte.js';
 import type * as Calls from '../../../../../../apps/desktop/src/lib/utils/calls.js';
@@ -31,6 +33,22 @@ vi.mock('../../../../../../apps/desktop/src/lib/utils/calls.js', async (importOr
   },
 }));
 vi.mock('../../../../../../apps/desktop/src/lib/utils/settings-sections.js', () => navigation);
+
+/** Plugin states in which Workers is on until the test turns it off. */
+function workersPluginStates(): { turnOff: () => void; turnOn: () => void; whileOn: PluginStates['whileOn'] } {
+  let follower: { off: () => void; on: () => void } | null = null;
+  return {
+    turnOff: () => follower?.off(),
+    turnOn: () => follower?.on(),
+    whileOn: (_plugin, on, off) => {
+      follower = { off, on };
+      on();
+      return () => {
+        follower = null;
+      };
+    },
+  };
+}
 
 function worker(id: string, status: WorkerView['status'] = 'connected'): WorkerView {
   return {
@@ -58,7 +76,7 @@ beforeEach(() => {
 
 describe('the list of workers', () => {
   it('loads until the core sends the workers, then follows each change', async () => {
-    const list = new WorkerList();
+    const list = new WorkerList(workersPluginStates());
     list.start();
     await Promise.resolve();
 
@@ -75,7 +93,7 @@ describe('the list of workers', () => {
 
   it('says why it could not follow the list, and follows it again on request', async () => {
     core.subscribeWorkers.mockResolvedValueOnce({ error: { code: 'store_unavailable' }, status: 'error' });
-    const list = new WorkerList();
+    const list = new WorkerList(workersPluginStates());
     list.start();
     await vi.waitFor(() => {
       expect(list.status).toBe('error');
@@ -90,7 +108,7 @@ describe('the list of workers', () => {
   });
 
   it('follows the list again when it fell behind', async () => {
-    const list = new WorkerList();
+    const list = new WorkerList(workersPluginStates());
     list.start();
     await vi.waitFor(() => {
       expect(core.subscribeWorkers).toHaveBeenCalledTimes(1);
@@ -101,6 +119,45 @@ describe('the list of workers', () => {
     await vi.waitFor(() => {
       expect(core.subscribeWorkers).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it('ends the list while Workers is off, and follows it again once Workers is on', async () => {
+    const plugins = workersPluginStates();
+    const list = new WorkerList(plugins);
+    list.start();
+    await vi.waitFor(() => {
+      expect(core.subscribeWorkers).toHaveBeenCalledTimes(1);
+    });
+    channel.deliver([{ type: 'workers', workers: [worker('a')] }]);
+
+    plugins.turnOff();
+    channel.deliver([{ reason: 'plugin_off', type: 'ended' }]);
+
+    // The subscription ends whether or not the core had accepted it yet.
+    await vi.waitFor(() => {
+      expect(core.unsubscribe).toHaveBeenCalledWith({ subscriptionId: 7 });
+    });
+    expect(list.workers).toEqual([]);
+    expect(list.status).toBe('loading');
+    plugins.turnOn();
+    await vi.waitFor(() => {
+      expect(core.subscribeWorkers).toHaveBeenCalledTimes(2);
+    });
+    channel.deliver([{ type: 'workers', workers: [worker('a')] }]);
+    expect(list.status).toBe('ready');
+  });
+
+  it('does not follow the list again when the core ended it because Workers stopped', async () => {
+    const list = new WorkerList(workersPluginStates());
+    list.start();
+    await vi.waitFor(() => {
+      expect(core.subscribeWorkers).toHaveBeenCalledTimes(1);
+    });
+
+    channel.deliver([{ reason: 'plugin_off', type: 'ended' }]);
+    await Promise.resolve();
+
+    expect(core.subscribeWorkers).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -255,6 +312,21 @@ describe('removing a worker', () => {
 
     expect(actions.removeOpen).toBe(true);
     expect(request.failure).toEqual({ error: { code: 'storage_failed' }, kind: 'core' });
+  });
+});
+
+describe('turning Workers off', () => {
+  it('closes every dialog', () => {
+    const actions = new WorkersActions();
+    actions.startPair();
+    actions.startRename(worker('a'));
+    actions.startRemove(worker('b'));
+    actions.detailsFor = 'a';
+
+    actions.closeAll();
+
+    expect([actions.pairOpen, actions.renameOpen, actions.removeOpen]).toEqual([false, false, false]);
+    expect(actions.takeDetailsFor()).toBeNull();
   });
 });
 

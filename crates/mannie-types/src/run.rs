@@ -110,15 +110,29 @@ pub enum RunActivity {
     WaitingForTasks {
         /// How many tasks the run waits for.
         count: u32,
-        /// How many of them run on workers (docs/features/workers/
-        /// worker-activity.md).
+        /// How many of them ran on workers, as 0.2.0 counted them; later
+        /// versions count them in `kinds`.
         #[serde(default)]
         workers: u32,
+        /// How many of them each plugin's executor runs, for the kinds that
+        /// run any (ADR-0031, decision 6).
+        #[serde(default)]
+        kinds: Vec<TaskKindCount>,
     },
     /// On a worker: waiting for the credential that the master leases to the
     /// task, without a model slot (docs/features/workers/
     /// credential-leases.md).
     WaitingForLease,
+}
+
+/// How many of the tasks that a run waits for an executor runs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskKindCount {
+    /// The executor's kind: its plugin's ID.
+    pub kind: String,
+    /// How many tasks.
+    pub count: u32,
 }
 
 /// Why a model call ended.
@@ -321,7 +335,7 @@ pub struct RunView {
 
 #[cfg(test)]
 mod tests {
-    use super::{RunActivity, RunFailure, RunState};
+    use super::{RunActivity, RunFailure, RunState, TaskKindCount};
     use crate::clock::UtcMillis;
 
     #[test]
@@ -392,12 +406,22 @@ mod tests {
         assert_eq!(
             serde_json::to_value(RunActivity::WaitingForTasks {
                 count: 2,
-                workers: 1
+                workers: 0,
+                kinds: vec![TaskKindCount {
+                    kind: "workers".to_owned(),
+                    count: 1
+                }],
             })
             .unwrap(),
-            serde_json::json!({ "kind": "waiting_for_tasks", "count": 2, "workers": 1 })
+            serde_json::json!({
+                "kind": "waiting_for_tasks",
+                "count": 2,
+                "workers": 0,
+                "kinds": [{ "kind": "workers", "count": 1 }]
+            })
         );
-        // An activity stored before workers reads as waiting for children.
+        // An activity stored before workers reads as waiting for children,
+        // and one of 0.2.0 keeps its count of workers.
         assert_eq!(
             serde_json::from_value::<RunActivity>(
                 serde_json::json!({ "kind": "waiting_for_tasks", "count": 2 })
@@ -405,7 +429,19 @@ mod tests {
             .unwrap(),
             RunActivity::WaitingForTasks {
                 count: 2,
-                workers: 0
+                workers: 0,
+                kinds: Vec::new(),
+            }
+        );
+        assert_eq!(
+            serde_json::from_value::<RunActivity>(
+                serde_json::json!({ "kind": "waiting_for_tasks", "count": 2, "workers": 1 })
+            )
+            .unwrap(),
+            RunActivity::WaitingForTasks {
+                count: 2,
+                workers: 1,
+                kinds: Vec::new(),
             }
         );
         assert_eq!(

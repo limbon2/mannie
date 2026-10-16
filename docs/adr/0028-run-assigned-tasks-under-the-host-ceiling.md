@@ -33,6 +33,7 @@
 - Positive: a worker reuses the loop, the tools, the journal, the confirmation and the recovery, and the same policy function enforces the ceiling on every call.
 - Negative: the runtime has two sources of tasks, and the policy and the tools' interface learn the ceiling.
 - Risks: a ceiling that is configured wrong allows more than the owner meant; the configuration is owned by root or Administrators, the worker refuses to start when its own account can change it, and the setup guide explains each mode. A process of the worker's account can read a leased credential from the worker's memory; the worker turns off core dumps and tracing where the system allows it, and the rest is a residual risk of the [security architecture](../architecture/security.md#9-if-a-worker-host-is-compromised).
+- Refinement in M5: the definition `worker`, its sections and its texts belong to the Workers plugin, and `Machine::Worker` becomes settings that any composition root gives the runtime: a ceiling, a description of its machine and the number of its task slots ([ADR-0031](0031-move-workers-into-the-first-plugin.md)).
 
 ## Alternatives considered
 

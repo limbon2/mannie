@@ -1,6 +1,8 @@
 // Every code and state of the child agents feature has a message of its own
-// (ADR-0019), and the messages name the tasks they are about.
-import { describe, expect, it } from 'vitest';
+// (ADR-0019), and the messages name the tasks they are about. A refusal of a
+// plugin's executor shows in its kind's words while the plugin is on, and
+// names its target otherwise (ADR-0031, decision 7).
+import { afterEach, describe, expect, it } from 'vitest';
 
 import type {
   ChildAgentsError,
@@ -9,6 +11,8 @@ import type {
   TaskView,
   ToolCallView,
 } from '../../../../../../apps/desktop/src/lib/generated/bindings.js';
+import { setPluginCatalog } from '../../../../../../apps/desktop/src/lib/state/plugin-catalog.js';
+import type { TaskKind } from '../../../../../../apps/desktop/src/lib/types/shell-slots.js';
 import {
   agentLabel,
   childAgentsFailureMessage,
@@ -42,6 +46,7 @@ function task(state: TaskState, waits: boolean): TaskView {
     conversationId: 'child',
     detached: false,
     endedAt: null,
+    executor: null,
     failure: null,
     followUp: false,
     instruction: 'Write it.',
@@ -96,17 +101,34 @@ describe('agentLabel', () => {
   });
 });
 
+/** The Workers plugin's kind of task, which words one refusal code. */
+const WORKERS_KIND: TaskKind = {
+  detached: () => 'It may still run on its worker.',
+  icon: () => ({}),
+  id: 'workers',
+  readOnly: () => 'A worker runs this task.',
+  refusal: (code, target) => (code === 'worker_offline' ? `${target ?? ''} is not connected.` : null),
+  targetPrefix: () => 'Worker:',
+  tool: 'delegate_task',
+  untitledCall: () => 'Delegating a task',
+  waiting: () => 'Waiting for workers',
+};
+
+function kindOf(kind: string): TaskKind | undefined {
+  return kind === 'workers' ? WORKERS_KIND : undefined;
+}
+
+afterEach(() => {
+  setPluginCatalog([]);
+});
+
 describe('taskRefusalMessage', () => {
-  it('says why each call assigned no task, with the number it named', () => {
+  it('says why each call of the core’s task tools assigned no task, with the number it named', () => {
     const refusals: TaskRefusal[] = [
       { number: 3, reason: 'unknown_task' },
       { number: 2, reason: 'still_running' },
       { reason: 'budget_used' },
       { reason: 'not_started' },
-      { reason: 'worker_offline', worker: 'build-01' },
-      { reason: 'worker_unknown', worker: 'build-02' },
-      { reason: 'worker_incompatible', worker: 'build-03' },
-      { reason: 'profile_not_reachable', worker: 'build-04' },
     ];
 
     const messages = refusals.map((refusal) => taskRefusalMessage(refusal));
@@ -114,11 +136,42 @@ describe('taskRefusalMessage', () => {
     expect(new Set(messages).size).toBe(refusals.length);
     expect(messages[0]).toContain('task 3');
     expect(messages[1]).toContain('task 2');
-    expect(messages.slice(4).map((message, index) => message.includes(`build-0${String(index + 1)}`))).toEqual([
-      true,
-      true,
-      true,
-      true,
+  });
+
+  it('words an executor’s refusal as its kind does while the plugin is on, and names the target otherwise', () => {
+    const offline: TaskRefusal = { code: 'worker_offline', kind: 'workers', reason: 'executor', target: 'build-01' };
+
+    expect(taskRefusalMessage(offline, kindOf)).toBe('build-01 is not connected.');
+    expect(taskRefusalMessage(offline)).toBe('No task started for build-01.');
+    expect(taskRefusalMessage({ ...offline, code: 'newer_code' }, kindOf)).toBe('No task started for build-01.');
+    expect(taskRefusalMessage({ code: 'newer_code', kind: 'workers', reason: 'executor' }, kindOf)).toBe(
+      'No task started.',
+    );
+  });
+
+  it('says that the plugin of an executor is off, by the plugin’s name', () => {
+    setPluginCatalog([
+      { description: () => '', failure: () => null, id: 'workers', name: () => 'Workers', offQuestion: () => null },
     ]);
+
+    expect(taskRefusalMessage({ code: 'plugin_off', kind: 'workers', reason: 'executor' }, kindOf)).toBe(
+      'No task started: the Workers plugin is off.',
+    );
+    expect(taskRefusalMessage({ code: 'plugin_off', kind: 'removed', reason: 'executor' })).toBe(
+      'No task started: the removed plugin is off.',
+    );
+  });
+
+  it('names the worker of a refusal that 0.2.0 stored', () => {
+    const refusals: TaskRefusal[] = [
+      { reason: 'worker_offline', worker: 'build-01' },
+      { reason: 'worker_unknown', worker: 'build-01' },
+      { reason: 'worker_incompatible', worker: 'build-01' },
+      { reason: 'profile_not_reachable', worker: 'build-01' },
+    ];
+
+    const messages = refusals.map((refusal) => taskRefusalMessage(refusal, kindOf));
+
+    expect(new Set(messages)).toEqual(new Set(['No task started for build-01.']));
   });
 });

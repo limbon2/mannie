@@ -6,12 +6,12 @@
 
 use std::path::{Path, PathBuf};
 
+use mannie_types::ceiling::CeilingMode;
 use mannie_types::ids::ProjectId;
 use mannie_types::tools::{
     Access, AccessMode, ApprovalReason, ApprovalRequest, CommandRule, Decision, GrantScope,
     Refusal, RuleProposal, ToolsError,
 };
-use mannie_types::workers::CeilingMode;
 
 use crate::ceiling::Ceiling;
 use crate::digest::digest;

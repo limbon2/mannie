@@ -1,10 +1,10 @@
 # Setting up a worker
 
-|              |                                                                                                                                                                                                       |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status       | Draft for review                                                                                                                                                                                      |
-| Last updated | 2026-10-16                                                                                                                                                                                            |
-| Related      | [Workers](../features/workers/README.md), [The worker service](../features/workers/service.md), [Host and ceiling](../features/workers/host-and-ceiling.md), [Releasing](../engineering/releasing.md) |
+|              |                                                                                                                                                                                                                                                             |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status       | Draft for review                                                                                                                                                                                                                                            |
+| Last updated | 2026-10-16                                                                                                                                                                                                                                                  |
+| Related      | [Workers](../features/workers/README.md), [The worker service](../features/workers/service.md), [Host and ceiling](../features/workers/host-and-ceiling.md), [Workers as a plugin](../features/workers/plugin.md), [Releasing](../engineering/releasing.md) |
 
 A worker lets Mannie on your desktop give tasks to an agent on another computer: a Windows, Linux or FreeBSD host. This guide installs a worker as a service, pairs it with your Mannie, and shows how to update and remove it. It takes about ten minutes.
 
@@ -13,6 +13,7 @@ A worker lets Mannie on your desktop give tasks to an agent on another computer:
 - Download the worker for the host's system from the release page: `mannie-worker-<version>-windows-x86_64.zip`, `mannie-worker-<version>-linux-x86_64.tar.gz` or `mannie-worker-<version>-freebsd-x86_64.tar.gz`, and its signature, the same name with `.sig`.
 - Decide which account the worker runs as. Its tools act on the host with that account's rights, so give it only the access the tasks need. On Linux and FreeBSD, create a system account without a login, such as `mannie-worker`. On Windows, the worker runs as its own virtual account, `NT SERVICE\mannie-worker`.
 - The host must reach the model provider that your Mannie's provider profile uses, and your desktop must reach the host on port 7445.
+- In Mannie, Workers is a plugin. If the Workers settings are not in the settings sidebar, turn Workers on in the Plugins settings first.
 
 ## Install
 

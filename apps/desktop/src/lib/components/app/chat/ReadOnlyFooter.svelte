@@ -4,23 +4,29 @@
   import { Button } from '#lib/components/ui/button/index.js';
   import { m } from '#lib/paraglide/messages.js';
   import { chatActions } from '#lib/state/chat-actions.svelte.js';
+  import { getShellSlots } from '#lib/state/shell-slots.svelte.js';
   import type { ChatFailure } from '#lib/types/chat.js';
   import { chatFailureMessage } from '#lib/utils/chat-errors.js';
 
   // In place of the message box of a conversation that the owner cannot
-  // write to: a child agent's or a worker task's, whose parent conversation
-  // gives it work, or any conversation in a side panel (docs/features/
-  // child-agents/child-agent-activity.md, docs/features/workers/
-  // worker-activity.md). Stop still works while a reply runs.
+  // write to: a child agent's or the task of a plugin's executor, whose
+  // parent conversation gives it work, or any conversation in a side panel
+  // (docs/features/child-agents/child-agent-activity.md). The kind of task
+  // of a plugin that is on says it in its own words (ADR-0031, decision 7).
+  // Stop still works while a reply runs.
   interface Props {
     conversationId: string;
-    /** Whose conversation it is: the owner's, a child agent's or a worker task's. */
-    owner: 'child' | 'owner' | 'worker';
+    /** The kind of task of the plugin's executor, for a task conversation of one. */
+    kind?: string | null;
+    /** Whose conversation it is: the owner's, a child agent's or a plugin's task's. */
+    owner: 'child' | 'owner' | 'task';
     /** Whether a reply runs, which Stop ends. */
     replying: boolean;
   }
 
-  let { conversationId, owner, replying }: Props = $props();
+  let { conversationId, kind = null, owner, replying }: Props = $props();
+
+  const slots = getShellSlots();
 
   let stopping = $state(false);
   let failure = $state<ChatFailure | null>(null);
@@ -33,8 +39,9 @@
       case 'owner': {
         return m.chat_read_only();
       }
-      case 'worker': {
-        return m.chat_read_only_worker();
+      case 'task': {
+        const taskKind = kind === null ? undefined : slots.taskKinds.find(kind);
+        return taskKind?.readOnly() ?? m.chat_read_only_task();
       }
     }
   });

@@ -3,12 +3,16 @@
 //! - One writer thread owns the only read-write connection, and every write is
 //!   a short transaction on it. A small pool of read-only connections serves
 //!   reads in parallel, which WAL mode allows.
-//! - Migrations are forward-only and embedded in the binary. Before migrating
-//!   an existing database, the store copies it; a database with a newer schema
-//!   than the binary knows is refused and left untouched.
-//! - Other crates use the repositories in this crate and never see SQLite.
+//! - Each module owns its tables and their forward-only migrations, which are
+//!   embedded in the binary; a composition root adds the modules of its
+//!   plugins (ADR-0030). Before migrating an existing database, the store
+//!   copies it; a database in which a module has a newer schema than the
+//!   binary knows is refused and left untouched.
+//! - The core's other crates use the repositories in this crate and never see
+//!   SQLite. A plugin's code reaches its own tables through a [`ModuleStore`].
 
 mod error;
+mod module_store;
 mod provider;
 mod readers;
 mod runtime;
@@ -18,21 +22,27 @@ mod store;
 mod tools;
 #[cfg(feature = "validation")]
 pub mod validation;
-mod workers;
 mod writer;
 
+/// SQLite's types, for the code of the modules that a composition root adds
+/// for its plugins (ADR-0030, decision 9).
+pub use rusqlite as sql;
+
 pub use error::{DatabaseError, StoreError};
+pub use module_store::ModuleStore;
 pub use provider::{ProfileFields, ProfileStoreError, StoredProfile};
 pub use runtime::{
     AddedProject, Applied, Change, ConversationList, EventsAfter, KeptRun, ModelPart, ModelTurn,
-    NewArchive, NewCheckpoint, NewConversation, NewDelegatedTask, NewPart, NewRun, NewTask,
-    ProjectDeletion, ProviderItem, Recovered, RuntimeStoreError, StoredArchive, StoredCheckpoint,
-    StoredChild, StoredTask, Submission, TaskEnding, TaskOrigin, UncertainCall,
+    NewArchive, NewCheckpoint, NewConversation, NewExecutorTask, NewPart, NewRun, NewTask,
+    OutboxEntry, ProjectDeletion, ProviderItem, Recovered, RuntimeStoreError, StoredArchive,
+    StoredCheckpoint, StoredChild, StoredTask, TaskEnding, TaskExecution, TaskOrigin,
+    UncertainCall,
 };
+pub use schema::{Migration, StoreModule};
 pub use settings::SettingsStoreError;
 pub use store::{Store, StoreOptions};
 pub use tools::ToolsStoreError;
-pub use workers::{NewPairedWorker, PairedWorker, WorkersStoreError};
+pub use writer::TransactError;
 
 /// How durable a write is once its future resolves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,7 +65,6 @@ pub(crate) fn all_statements() -> impl Iterator<Item = &'static str> {
         .iter()
         .chain(provider::STATEMENTS)
         .chain(tools::STATEMENTS)
-        .chain(workers::STATEMENTS)
         .copied()
         .chain(runtime::statements())
 }

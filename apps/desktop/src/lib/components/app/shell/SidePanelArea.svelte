@@ -1,21 +1,25 @@
 <script lang="ts">
   import PanelRightIcon from '@lucide/svelte/icons/panel-right';
+  import PlugIcon from '@lucide/svelte/icons/plug';
   import { Tabs } from 'bits-ui';
-  import { tick } from 'svelte';
+  import { type Component, tick } from 'svelte';
   import type { Attachment } from 'svelte/attachments';
 
   import { m } from '#lib/paraglide/messages.js';
+  import { pluginName } from '#lib/state/plugin-catalog.js';
   import { getShellSlots } from '#lib/state/shell-slots.svelte.js';
   import { type PanelLabel, sidePanels } from '#lib/state/side-panels.svelte.js';
   import type { OpenPanel } from '#lib/utils/side-panels.js';
 
+  import PluginOffState from './PluginOffState.svelte';
   import SidePanelTab from './SidePanelTab.svelte';
   import UnknownSidePanel from './UnknownSidePanel.svelte';
 
   // The side panel area (ADR-0025): a tab for each open panel, with the
   // panel's Close inside it, and the panels' bodies, which stay mounted while
   // their tab is open so they keep their state. The area is not modal: the
-  // view beside it keeps working.
+  // view beside it keeps working. A panel of a plugin that is off stays open
+  // and says so, and shows again once the plugin is on (ADR-0030, decision 11).
 
   const slots = getShellSlots();
 
@@ -29,8 +33,20 @@
       return named;
     }
     const kind = slots.sidePanels.find(panel.kind);
-    const text = kind === undefined ? m.shell_side_panel_unknown_label() : kind.defaultLabel();
+    if (kind !== undefined) {
+      return { isContent: false, text: kind.defaultLabel() };
+    }
+    const plugin = slots.sidePanels.pluginOff(panel.kind);
+    const text = plugin === null ? m.shell_side_panel_unknown_label() : pluginName(plugin);
     return { isContent: false, text };
+  }
+
+  function iconOf(panel: OpenPanel): Component {
+    const kind = slots.sidePanels.find(panel.kind);
+    if (kind !== undefined) {
+      return kind.icon;
+    }
+    return slots.sidePanels.pluginOff(panel.kind) === null ? PanelRightIcon : PlugIcon;
   }
 
   function show(key: string): void {
@@ -78,7 +94,7 @@
     >
       {#each open.panels as panel (panel.key)}
         <SidePanelTab
-          icon={slots.sidePanels.find(panel.kind)?.icon ?? PanelRightIcon}
+          icon={iconOf(panel)}
           label={labelOf(panel)}
           value={panel.key}
           onClose={() => void closeTab(panel.key)}
@@ -87,6 +103,7 @@
     </Tabs.List>
     {#each open.panels as panel (panel.key)}
       {const kind = $derived(slots.sidePanels.find(panel.kind))}
+      {const offPlugin = $derived(slots.sidePanels.pluginOff(panel.kind))}
       {const label = $derived(labelOf(panel))}
       <Tabs.Content class="flex min-h-0 flex-1 flex-col outline-none" tabindex={-1} value={panel.key}>
         <h2
@@ -106,6 +123,8 @@
                 sidePanels.setLabel(panel.key, { isContent, text });
               }}
             />
+          {:else if offPlugin !== null}
+            <PluginOffState plugin={offPlugin} />
           {:else}
             <UnknownSidePanel close={() => void sidePanels.close(panel.key)} kind={panel.kind} />
           {/if}

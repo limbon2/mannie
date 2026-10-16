@@ -44,6 +44,10 @@ pub(crate) struct ChildState {
     pub(crate) waits_for_lease: bool,
     /// How the task ended, once it ended.
     pub(crate) end: Option<ChildEnd>,
+    /// For an executor's task: the executor's plugin stopped, and the run
+    /// lets the task go, which may still run on its target (ADR-0031,
+    /// decision 10).
+    pub(crate) let_go: bool,
 }
 
 impl ChildState {
@@ -84,8 +88,9 @@ impl TaskBoard {
             let mut entries = self.entries();
             let entry = entries.entry(task.clone()).or_default();
             // A task that ended stays ended: a late update of a child that
-            // already published its end changes nothing.
-            if entry.state.end.is_some() {
+            // already published its end changes nothing. Neither does one
+            // of a task that the run let go.
+            if entry.state.end.is_some() || entry.state.let_go {
                 return;
             }
             change(&mut entry.state);

@@ -1,6 +1,7 @@
 // The messages of the workers feature (docs/features/workers/
-// worker-activity.md; ADR-0019): every status, error and ceiling mode has a
-// catalog message of its own, and an error tells the owner what to do.
+// worker-activity.md; ADR-0019): every status, error, refusal and ceiling
+// mode has a catalog message of its own, and an error tells the owner what to
+// do.
 import { describe, expect, it } from 'vitest';
 
 import type {
@@ -12,6 +13,8 @@ import {
   ceilingModeLabel,
   needsAttention,
   workersFailureMessage,
+  workersRefusalMessage,
+  workersStartFailureMessage,
   workerStatusLabel,
 } from '../../../../../../apps/desktop/src/lib/utils/workers-messages.js';
 
@@ -48,6 +51,7 @@ describe('workersFailureMessage', () => {
       { code: 'shutting_down' },
       { code: 'name_invalid', maxCharacters: 64 },
       { code: 'name_taken' },
+      { code: 'plugin_off' },
     ];
 
     const messages = errors.map((error) => workersFailureMessage({ error, kind: 'core' }));
@@ -60,6 +64,28 @@ describe('workersFailureMessage', () => {
 
   it('says that the core did not answer a call', () => {
     expect(workersFailureMessage({ kind: 'ipc' })).not.toBe('');
+  });
+});
+
+describe('workersRefusalMessage', () => {
+  it('says why the executor took no task for each code, by the worker’s name', () => {
+    const codes = ['worker_offline', 'worker_unknown', 'worker_incompatible', 'profile_not_reachable', 'still_running'];
+
+    const messages = codes.map((code) => workersRefusalMessage(code, 'build-01'));
+
+    expect(new Set(messages).size).toBe(codes.length);
+    expect(messages.every((message) => message?.includes('build-01') ?? false)).toBe(true);
+  });
+
+  it('leaves a code that this version does not know to the core', () => {
+    expect(workersRefusalMessage('newer_code', 'build-01')).toBeNull();
+  });
+});
+
+describe('workersStartFailureMessage', () => {
+  it('words the plugin’s own start failure, and leaves the host’s codes to the core', () => {
+    expect(workersStartFailureMessage('storage_failed')).not.toBeNull();
+    expect(workersStartFailureMessage('grant_missing')).toBeNull();
   });
 });
 

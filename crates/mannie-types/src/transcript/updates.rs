@@ -38,6 +38,9 @@ pub enum SubscriptionEnd {
     Deleted,
     /// Mannie is quitting.
     Shutdown,
+    /// The owner turned off the plugin whose channel it was (ADR-0030,
+    /// decision 5).
+    PluginOff,
 }
 
 /// A message of a conversation's channel. The first one is a snapshot or the
@@ -86,8 +89,9 @@ pub enum ConversationListUpdate {
     },
     /// A conversation was created or changed.
     Upserted {
-        /// The conversation as it is now.
-        conversation: ConversationSummary,
+        /// The conversation as it is now. Boxed, since a summary is much
+        /// larger than the other variants; it serializes as the summary.
+        conversation: Box<ConversationSummary>,
     },
     /// A conversation was deleted.
     Removed {

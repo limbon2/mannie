@@ -1,10 +1,11 @@
 # The link's contracts (docs/features/workers/pairing-and-link.md; ADR-0016):
-# one protobuf package for each service under proto/mannie/link/. `task
-# lint:proto` lints them, and scripts/check-link-contracts.mjs checks that they
-# only grew since the base branch and the last release that has them.
+# one protobuf package for each service under
+# plugins/workers/proto/mannie/link/. `task lint:proto` lints them, and
+# scripts/check-link-contracts.mjs checks that they only grew since the base
+# branch and the last release that has them.
 version: v2
 modules:
-  - path: proto
+  - path: plugins/workers/proto
 lint:
   use:
     - STANDARD

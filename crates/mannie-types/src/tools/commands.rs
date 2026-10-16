@@ -193,6 +193,23 @@ pub enum ToolsError {
     /// delegation.md).
     #[error("the worker of this request cannot be reached")]
     WorkerUnreachable,
+    /// The request belongs to a task whose target, such as a worker, cannot
+    /// be reached now, so the decision did not reach it (ADR-0031, decision
+    /// 6).
+    #[error("the target of this request's task cannot be reached")]
+    TaskTargetUnreachable {
+        /// The executor's kind: its plugin's ID.
+        kind: String,
+        /// The target's name.
+        target: String,
+    },
+    /// The request belongs to a task of a plugin that is off (ADR-0030,
+    /// decision 12).
+    #[error("the plugin of this request is off")]
+    PluginOff {
+        /// The plugin's ID.
+        plugin: String,
+    },
     /// A task conversation follows its parent's full access and has no
     /// switch of its own (ADR-0029, decision 2).
     #[error("a task conversation follows its parent's full access")]
@@ -225,6 +242,8 @@ impl ToolsError {
             Self::StoreUnavailable => "tools.store_unavailable",
             Self::ShuttingDown => "tools.shutting_down",
             Self::WorkerUnreachable => "tools.worker_unreachable",
+            Self::TaskTargetUnreachable { .. } => "tools.task_target_unreachable",
+            Self::PluginOff { .. } => "tools.plugin_off",
             Self::FullAccessFollowsParent => "tools.full_access_follows_parent",
             Self::FullAccessRefused => "tools.full_access_refused",
         }

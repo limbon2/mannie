@@ -1,10 +1,10 @@
 # Domain model
 
-|              |                                                                                                                                              |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status       | Draft for review                                                                                                                             |
-| Last updated | 2026-10-15                                                                                                                                   |
-| Related      | [Glossary](../glossary.md), [Agent runtime](agent-runtime.md), [Tools](tools.md), [Orchestration](orchestration.md), [Overview](overview.md) |
+|              |                                                                                                                                                                                                                                                                            |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status       | Draft for review                                                                                                                                                                                                                                                           |
+| Last updated | 2026-10-16                                                                                                                                                                                                                                                                 |
+| Related      | [Glossary](../glossary.md), [Agent runtime](agent-runtime.md), [Tools](tools.md), [Orchestration](orchestration.md), [Overview](overview.md), [ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md), [Workers architecture](../features/workers/architecture.md) |
 
 This document defines the core concepts, their lifecycles and the invariants every contract follows. The [glossary](../glossary.md) gives short definitions; this document shows how the concepts relate.
 
@@ -25,6 +25,8 @@ classDiagram
   class Task
   class Report
   class ProviderProfile
+  class Plugin
+  class TaskExecutor
   Machine <|-- Master
   Machine <|-- Worker
   Machine "1" --> "*" Conversation : stores
@@ -37,15 +39,16 @@ classDiagram
   Step "1" --> "*" Operation : tool calls with side effects
   Task "1" --> "1" Conversation : runs in
   Task "1" --> "0..1" Report
+  Task "*" --> "0..1" TaskExecutor : runs elsewhere through
+  Plugin "1" --> "*" TaskExecutor : registers
   Conversation "*" --> "1" ProviderProfile : uses
 ```
 
 ## 2. Machines
 
-- A machine is a computer Mannie acts on. There is one master, the desktop app, and any number of workers. Each worker runs on its own host.
-- The master holds the owner's conversations, the provider profiles, the worker registry and the owner's approvals.
-- A worker holds its host facts, its host instructions, its policy ceiling and the conversations of the tasks it runs.
-- A worker is paired with exactly one master. The master records each worker's name, address, pinned key and last known host facts.
+- A machine is a computer Mannie acts on. There is one master, the desktop app, and, with the Workers plugin on, any number of workers. Each worker runs on its own host.
+- The master holds the owner's conversations, the provider profiles, the owner's choices of plugins and the owner's approvals, and each plugin's data in the plugin's own tables, such as the worker registry.
+- A worker holds its host facts, its host instructions, its policy ceiling and the conversations of the tasks it runs. It is paired with exactly one master, which records its name, address, pinned key and last known host facts ([workers architecture](../features/workers/architecture.md)).
 
 ## 3. Conversations, turns, steps and parts
 
@@ -107,7 +110,7 @@ stateDiagram-v2
 
 ## 6. Tasks and reports
 
-A task is work that one agent assigns to another: a child agent on the same machine, or a worker agent ([orchestration](orchestration.md)).
+A task is work that one agent assigns to another: a child agent on the same machine, or the agent that a plugin's executor runs it with, such as a worker agent ([orchestration](orchestration.md)).
 
 ```mermaid
 stateDiagram-v2
@@ -130,26 +133,28 @@ stateDiagram-v2
 - A report is confirmed: the executing agent checked that it finished before it answered.
 - A child agent's task runs in a task conversation on the master: a conversation with a parent conversation, a number that is unique within the parent, and the child's agent definition ([tasks](../features/child-agents/tasks.md#task-conversations)). A task conversation belongs to no project and works under its parent's workspace, project, grants and rules. Deleting the parent deletes its task conversations.
 - A task conversation has at most one task that is accepted or running. A follow-up is a new task in the same conversation, with the same number and agent. Nothing resumes an interrupted task of a child by itself; the parent's model decides whether to follow it up.
-- A worker task's conversation lives on the worker, which assigned the task to it without a parent of its own. The master keeps a row for it with the parent, the number and the worker, and reads the conversation over the link ([ADR-0027](../adr/0027-delegate-tasks-to-workers-through-a-runtime-port.md)). Quitting the master leaves a worker task running, and the master learns its end when it reconnects.
+- The conversation of a task of a plugin's executor lives on the executor's target, such as a worker, which runs the task without a parent of its own. The master keeps a row for it with the parent, the number and the executor, with its kind and target, and reads the conversation through the executor ([ADR-0031](../adr/0031-move-workers-into-the-first-plugin.md)). Quitting the master, or turning the plugin off, lets the task go while it runs on, and the executor learns its end when it follows the task again.
 
-## 7. Workers and the link
+## 7. Plugins
+
+A plugin is an optional feature, or a group of features, that the owner turns on and off ([ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md)).
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Unpaired
-  Unpaired --> Paired: pairing code accepted
-  Paired --> Connected: link established
-  Connected --> Disconnected: link lost
-  Disconnected --> Connected: reconnected
-  Paired --> Unpaired: reset on the worker or removed on the master
-  Connected --> Unpaired: removed
-  Disconnected --> Unpaired: removed
+  [*] --> Off
+  Off --> Starting: the owner turns it on
+  Starting --> On: its start returned its contributions
+  Starting --> Failed: its start failed
+  Failed --> Starting: Try again
+  On --> Stopping: the owner turns it off, or Mannie quits
+  Failed --> Off: the owner turns it off
+  Stopping --> Off
 ```
 
-- Pairing pins each side's public key. A worker accepts connections only from its pinned master, and the master only from the pinned worker key.
-- On connect, both sides agree on a feature level for every link service.
-- Unpairing revokes every active credential lease of that worker and cancels its tasks.
-- The master shows a connected worker whose version it does not work with as incompatible, and gives it no tasks.
+- The owner's choice for each plugin is a setting of the core. At startup, after the core's recovery, the host starts each plugin that the owner turned on. A plugin without a choice follows its default once, and that outcome becomes the choice.
+- While a plugin is on, its contributions are in the registries and its entries in the UI. Turning it off drops them first and then stops the plugin, which ends its background work as quitting does.
+- A plugin's data stays while it is off, and the plugin continues with it when it starts again. What it added to conversations stays readable from what the core stored.
+- The workers of the Workers plugin have a lifecycle of their own, from pairing to removal ([workers architecture](../features/workers/architecture.md#the-link)).
 
 ## 8. Identifiers and time
 
@@ -164,9 +169,10 @@ stateDiagram-v2
 3. An operation executes at most once. An uncertain operation is never repeated automatically.
 4. A side effect needs an allow decision from policy or from the owner. Content that the model reads never grants a permission.
 5. An agent's tools act only on the machine where the agent runs. The master never runs tools on a worker's host.
-6. A worker's policy ceiling can be narrowed for a task and never widened.
+6. A machine's policy ceiling, such as a worker's, can be narrowed for a task and never widened.
 7. Provider credentials are at rest only in the master's operating system credential store.
 8. Contracts and stored data change only by addition, with deprecation before removal.
 9. Every task ID identifies one task, however many times it is submitted.
 10. A conversation in a project works in the project's folder and never leaves the project.
 11. A child agent works under its parent conversation's workspace, grants and rules, and starts no task of its own. Its parent's run ends only after the child's run ended.
+12. The core never depends on a plugin. Turning a plugin off or on repeats no operation and loses none, and a run keeps the tools it started with.

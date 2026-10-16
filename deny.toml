@@ -84,8 +84,19 @@ deny = [
   ], reason = "only the desktop app opens the system's folder dialog; the worker has no window (ADR-0004)" },
   { crate = "tonic", wrappers = [
     "mannie-link",
+    "mannie-workers",
     "tonic-prost",
-  ], reason = "only the link speaks gRPC; the apps reach each other through mannie-link (ADR-0016)" },
+  ], reason = "only the Workers plugin's link speaks gRPC; the master and its workers reach each other through it (ADR-0016, ADR-0031)" },
+  # The plugin boundaries of ADR-0030 (decision 10): the core never depends on
+  # a plugin, a plugin never depends on another plugin, and only the desktop
+  # app's composition root lists the plugins.
+  { crate = "mannie-link", wrappers = [
+    "mannie-worker",
+    "mannie-workers",
+  ], reason = "the link belongs to the Workers plugin, whose crates alone use it (ADR-0030)" },
+  { crate = "mannie-workers", wrappers = [
+    "mannie-desktop",
+  ], reason = "a plugin's crates are used only by the desktop app's composition root (ADR-0030)" },
 ]
 
 [sources]

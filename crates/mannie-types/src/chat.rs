@@ -420,6 +420,22 @@ pub enum ChatError {
     /// now (docs/features/workers/delegation.md).
     #[error("the worker of this conversation cannot be reached")]
     WorkerUnreachable,
+    /// The conversation belongs to a task whose target, such as a worker,
+    /// cannot be reached now (ADR-0031, decision 6).
+    #[error("the target of this task conversation cannot be reached")]
+    TaskTargetUnreachable {
+        /// The executor's kind: its plugin's ID.
+        kind: String,
+        /// The target's name.
+        target: String,
+    },
+    /// The conversation belongs to a task of a plugin that is off (ADR-0030,
+    /// decision 12).
+    #[error("the plugin of this conversation is off")]
+    PluginOff {
+        /// The plugin's ID.
+        plugin: String,
+    },
     /// The settings were written by a newer version of Mannie, which this
     /// version does not overwrite.
     #[error("the chat settings were written by a newer version of Mannie")]
@@ -465,6 +481,8 @@ impl ChatError {
             Self::FolderDialogFailed => "chat.folder_dialog_failed",
             Self::TaskConversation => "chat.task_conversation",
             Self::WorkerUnreachable => "chat.worker_unreachable",
+            Self::TaskTargetUnreachable { .. } => "chat.task_target_unreachable",
+            Self::PluginOff { .. } => "chat.plugin_off",
             Self::WrittenByNewerVersion => "chat.written_by_newer_version",
             Self::StorageFailed => "chat.storage_failed",
             Self::StoreUnavailable => "chat.store_unavailable",

@@ -10,7 +10,7 @@ use crate::ids::{ConversationId, PartId, RunId, TaskId, TurnId};
 use crate::run::RunFailure;
 use crate::tools::{NotRunReason, ToolCallStatus, ToolCallView};
 
-use super::document::{AwaitedTask, TaskRefusal, TaskState, TaskWorker};
+use super::document::{AwaitedTask, TaskExecutorRef, TaskRefusal, TaskState, TaskWorker};
 
 /// A child's call that waits for the owner, with what the UI needs to render
 /// it as a part of the child's conversation.
@@ -67,9 +67,12 @@ pub struct TaskView {
     pub started_at: Option<UtcMillis>,
     /// When the task ended.
     pub ended_at: Option<UtcMillis>,
-    /// The worker that runs the task, or `None` for a child agent.
+    /// The worker of a task that 0.2.0 stored, kept through 0.3.0; the UI
+    /// reads `executor`.
     pub worker: Option<TaskWorker>,
-    /// Whether the master let the task go while it ran on its worker.
+    /// The executor that runs the task, or `None` for a child agent.
+    pub executor: Option<TaskExecutorRef>,
+    /// Whether the run let the task go while its executor ran it.
     pub detached: bool,
 }
 
@@ -109,8 +112,12 @@ pub struct TaskConversation {
     pub number: u32,
     /// The name of the child's agent definition.
     pub agent: String,
-    /// The worker whose conversation this is, or `None` for a child agent's,
-    /// which this machine stores.
+    /// The worker of a task conversation that 0.2.0 stored, kept through
+    /// 0.3.0; the UI reads `executor`.
     #[serde(default)]
     pub worker: Option<TaskWorker>,
+    /// The executor whose task conversation this is, which serves it, or
+    /// `None` for a child agent's, which this machine stores.
+    #[serde(default)]
+    pub executor: Option<TaskExecutorRef>,
 }

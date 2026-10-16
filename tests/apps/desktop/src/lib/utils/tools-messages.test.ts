@@ -44,6 +44,8 @@ const TOOLS_ERRORS: ToolsError[] = [
   { code: 'store_unavailable' },
   { code: 'shutting_down' },
   { code: 'worker_unreachable' },
+  { code: 'task_target_unreachable', kind: 'workers', target: 'build-01' },
+  { code: 'plugin_off', plugin: 'workers' },
   { code: 'full_access_follows_parent' },
   { code: 'full_access_refused' },
 ];
@@ -98,6 +100,7 @@ const NOT_RUN_REASONS: NotRunReason[] = [
   { reason: 'earlier_call_denied' },
   { reason: 'over_budget' },
   { reason: 'tools_off' },
+  { plugin: 'workers', reason: 'plugin_off' },
 ];
 
 const GRANTS: GrantScope[] = [
@@ -122,6 +125,12 @@ describe('tools messages', () => {
     expect(
       toolsFailureMessage({ error: { code: 'environment_name_secret', name: 'API_KEY' }, kind: 'core' }),
     ).toContain('API_KEY');
+    expect(
+      toolsFailureMessage({
+        error: { code: 'task_target_unreachable', kind: 'workers', target: 'build-01' },
+        kind: 'core',
+      }),
+    ).toContain('build-01');
   });
 
   it('say what each failure of a tool call means, and name its path', () => {

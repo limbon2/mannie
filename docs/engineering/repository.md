@@ -1,21 +1,21 @@
 # Repository layout
 
-|              |                                                                                                                                                                                                   |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status       | Draft for review                                                                                                                                                                                  |
-| Last updated | 2026-10-16                                                                                                                                                                                        |
-| Related      | [ADR-0008](../adr/0008-one-workspace-two-binaries.md), [Extension points](../architecture/extension-points.md), [Standards](standards.md), [Releasing](releasing.md), [CI runners](ci-runners.md) |
+|              |                                                                                                                                                                                                                                                                    |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Status       | Draft for review                                                                                                                                                                                                                                                   |
+| Last updated | 2026-10-16                                                                                                                                                                                                                                                         |
+| Related      | [ADR-0008](../adr/0008-one-workspace-two-binaries.md), [ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md), [Extension points](../architecture/extension-points.md), [Standards](standards.md), [Releasing](releasing.md), [CI runners](ci-runners.md) |
 
 ## 1. Principles
 
-1. One repository holds the desktop app, the worker, their shared crates and the documentation, and one version covers them all.
+1. One repository holds the desktop app, the core's crates, the internal plugins with their programs, such as the worker, and the documentation, and one version covers them all.
 2. Contracts are the sources of truth: Rust types for IPC, protobuf files for the link, and SQL migrations for stored data. Everything generated from them is generated during the build and never committed.
 3. Toolchains and tools are pinned, so a given commit always builds the same way.
 4. Every workflow is one task in `Taskfile.yml`.
 
 ## 2. Layout
 
-M0 to M4 built this layout:
+M0 to M4 built this layout, and M5 moved the worker's code into `plugins/workers/` ([ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md), [ADR-0031](../adr/0031-move-workers-into-the-first-plugin.md)):
 
 ```text
 mannie/
@@ -26,7 +26,7 @@ mannie/
 ├── about.toml  about.hbs        # cargo-about: the third-party notices of a release
 ├── clippy.toml  tombi.toml      # Clippy settings; TOML formatting and linting
 ├── eslint.config.js             # ESLint for TypeScript, Svelte and JavaScript
-├── buf.yaml                     # the buf module of the link's contracts in proto/
+├── buf.yaml                     # the buf module of the link's contracts in plugins/workers/proto/
 ├── Taskfile.yml                 # every workflow
 ├── package.json  pnpm-workspace.yaml  pnpm-lock.yaml   # repository tooling, pinned
 ├── .mcp.json  .codex/           # the Svelte MCP server for Claude Code and Codex
@@ -39,15 +39,19 @@ mannie/
 │   ├── mannie-secrets/          # operating system credential store (master only)
 │   ├── mannie-provider/         # provider adapters, quirk profiles; fixtures in tests/fixtures/
 │   ├── mannie-tools/            # the system tools, their policy and ceiling, file safety and the process supervisor
-│   ├── mannie-runtime/          # runs as actors, the event log's hubs, context, compaction, tool calls, tasks and delegation; evaluations in tests/evals/
-│   └── mannie-link/             # the link: contracts, TLS with pinned keys, pairing, the master's and the worker's sides
-├── proto/mannie/link/           # the link's protobuf packages, one folder for each service
+│   ├── mannie-runtime/          # runs as actors, the event log's hubs, context, compaction, tool calls, tasks, task executors and plugins' contributions; evaluations in tests/evals/
+│   └── mannie-plugins/          # the plugin definition, the start context and its grants, and the plugin host
+├── plugins/
+│   └── workers/                 # the Workers plugin
+│       ├── crates/mannie-link/  # the link: contracts, TLS with pinned keys, pairing, the master's and the worker's sides
+│       ├── crates/mannie-workers/   # the master's side of workers, its executor and store module, and the plugin's definition
+│       ├── worker/              # the mannie-worker crate, the worker service
+│       └── proto/mannie/link/   # the link's protobuf packages, one folder for each service
 ├── apps/
-│   ├── desktop/                 # SvelteKit app (package.json, vite.config.ts, src/)
-│   │   ├── messages/            # message catalogs, one file per locale (ADR-0019)
-│   │   ├── project.inlang/      # the Paraglide project
-│   │   └── src-tauri/           # the mannie-desktop crate (the only tauri user)
-│   └── worker/                  # the mannie-worker crate
+│   └── desktop/                 # SvelteKit app (package.json, vite.config.ts, src/)
+│       ├── messages/            # message catalogs, one file per locale (ADR-0019)
+│       ├── project.inlang/      # the Paraglide project
+│       └── src-tauri/           # the mannie-desktop crate (the only tauri user), the composition root that lists the plugins
 ├── scripts/                     # checks, the pseudo-locale, release steps, CI helpers, local ESLint rules
 ├── release/                     # the public key that release signatures are checked against
 ├── tests/
@@ -63,24 +67,28 @@ SvelteKit 3 keeps its configuration in the `sveltekit()` call of `apps/desktop/v
 
 ## 3. Later crates
 
-Each crate arrives with the milestone that first needs it, so no crate is a placeholder. M1 brought `mannie-provider` and `mannie-runtime`, M2 brought `mannie-tools`, and M4 brought `mannie-link`, together with `proto/mannie/link/` and `buf.yaml` for the link's contracts.
+Each crate arrives with the milestone that first needs it, so no crate is a placeholder. M1 brought `mannie-provider` and `mannie-runtime`, M2 brought `mannie-tools`, and M4 brought `mannie-link`, together with the link's contracts and `buf.yaml`. M5 brought `mannie-plugins` and `mannie-workers`, and moved `mannie-link`, the contracts and the worker service into `plugins/workers/` with their names unchanged.
+
+A plugin's crates, programs and contracts live in `plugins/<id>/`, and the core's crates in `crates/`. A plugin's UI and its Tauri commands stay in the desktop app's folders under the plugin's ID, because Tauri and the UI bundle belong to the desktop app ([desktop app](../architecture/desktop-app.md#6-frontend-structure)).
 
 ## 4. Crates and dependency rules
 
-| Crate             | Responsibility                                                                     | May depend on                                                                                                  |
-| ----------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `mannie-types`    | Shared types and the redacting secret type. No I/O.                                | serde, specta, thiserror, zeroize                                                                              |
-| `mannie-store`    | Persistence                                                                        | `mannie-types`, rusqlite                                                                                       |
-| `mannie-logging`  | Logging to rotating files, redaction and crash files                               | `mannie-types`, tracing and its subscriber and appender, regex                                                 |
-| `mannie-provider` | Provider adapters and quirk profiles                                               | `mannie-types`, reqwest, rustls                                                                                |
-| `mannie-tools`    | Tools, operations, the policy ceiling and process containment                      | `mannie-types`, `mannie-store`, ignore, rustix on Unix, libc in the FreeBSD supervisor, windows-sys on Windows |
-| `mannie-runtime`  | The agent runtime                                                                  | `mannie-types`, `mannie-store`, `mannie-provider`, `mannie-tools`                                              |
-| `mannie-link`     | The link between master and workers, and its adapters to the runtime on both sides | `mannie-types`, `mannie-store`, `mannie-runtime`, `mannie-logging`, tonic, prost, rustls, tokio-rustls, ring   |
-| `mannie-secrets`  | The operating system credential store                                              | `mannie-types`, keyring-core and its stores                                                                    |
-| `mannie-desktop`  | The Tauri application and its IPC                                                  | Every library crate, tauri, rfd                                                                                |
-| `mannie-worker`   | The worker service                                                                 | Every library crate except `mannie-secrets`, windows-service, clap, toml, ring                                 |
+| Crate             | Responsibility                                                                 | May depend on                                                                                                            |
+| ----------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `mannie-types`    | Shared types and the redacting secret type. No I/O.                            | serde, specta, thiserror, zeroize                                                                                        |
+| `mannie-store`    | Persistence                                                                    | `mannie-types`, rusqlite                                                                                                 |
+| `mannie-logging`  | Logging to rotating files, redaction and crash files                           | `mannie-types`, tracing and its subscriber and appender, regex                                                           |
+| `mannie-provider` | Provider adapters and quirk profiles                                           | `mannie-types`, reqwest, rustls                                                                                          |
+| `mannie-tools`    | Tools, operations, the policy ceiling and process containment                  | `mannie-types`, `mannie-store`, ignore, rustix on Unix, libc in the FreeBSD supervisor, windows-sys on Windows           |
+| `mannie-runtime`  | The agent runtime                                                              | `mannie-types`, `mannie-store`, `mannie-provider`, `mannie-tools`                                                        |
+| `mannie-plugins`  | What plugins build on, and the plugin host                                     | `mannie-types`, `mannie-store`, `mannie-runtime`                                                                         |
+| `mannie-secrets`  | The operating system credential store                                          | `mannie-types`, keyring-core and its stores                                                                              |
+| `mannie-link`     | The Workers plugin's link between master and workers                           | `mannie-types`, `mannie-runtime`, `mannie-logging`, tonic, prost, rustls, tokio-rustls, ring                             |
+| `mannie-workers`  | The Workers plugin: the master's side of workers and the plugin's definition   | The core's library crates except `mannie-secrets`, `mannie-plugins`, `mannie-link`, tonic                                |
+| `mannie-desktop`  | The Tauri application, its IPC and the composition root that lists the plugins | Every library crate and every plugin's crates, tauri, rfd                                                                |
+| `mannie-worker`   | The Workers plugin's worker service                                            | The core's library crates except `mannie-secrets` and `mannie-plugins`, `mannie-link`, windows-service, clap, toml, ring |
 
-cargo-deny enforces the rules that matter most: only `mannie-desktop` depends on `tauri`, only `mannie-store` on `rusqlite`, only `mannie-secrets` on keyring-core, and only `mannie-desktop` on `mannie-secrets`; ring is the only crypto provider, and `openssl-sys` and `aws-lc-sys` are banned ([ADR-0008](../adr/0008-one-workspace-two-binaries.md)). `scripts/check-worker-dependencies.mjs` checks that no crate of Tauri, GTK or WebKitGTK reaches the worker on any target (V5).
+cargo-deny enforces the rules that matter most: only `mannie-desktop` depends on `tauri`, only `mannie-store` on `rusqlite`, only `mannie-secrets` on keyring-core, and only `mannie-desktop` on `mannie-secrets`; ring is the only crypto provider, and `openssl-sys` and `aws-lc-sys` are banned ([ADR-0008](../adr/0008-one-workspace-two-binaries.md)). It also keeps the plugins' boundaries: only the Workers plugin's crates depend on `mannie-link` and `tonic`, and only `mannie-desktop` depends on `mannie-workers`, so no core crate and no other plugin reaches a plugin ([ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md), decision 10). `scripts/check-worker-dependencies.mjs` checks that no crate of Tauri, GTK or WebKitGTK reaches the worker on any target (V5).
 
 ## 5. Generated artifacts
 
@@ -94,7 +102,7 @@ cargo-deny enforces the rules that matter most: only `mannie-desktop` depends on
 | Tauri command permissions    | The command list in `build.rs`        | `apps/desktop/src-tauri/permissions/autogenerated/` | Every build                              |
 | Microsoft Edge WebDriver     | The installed WebView2 version        | `target/edgedriver/`                                | `task e2e` on Windows                    |
 | Performance figures          | A run of the performance suite        | `target/perf/results.json`                          | `task e2e:perf`                          |
-| Link code                    | `proto/mannie/link/`                  | Cargo's build output                                | Every build, from M4                     |
+| Link code                    | `plugins/workers/proto/mannie/link/`  | Cargo's build output                                | Every build, from M4                     |
 | Third-party notices and SBOM | Lockfiles                             | Release artifacts                                   | Release builds                           |
 
 Generated files are listed in `.gitignore` and never committed. To change one, change its source and run the generator.

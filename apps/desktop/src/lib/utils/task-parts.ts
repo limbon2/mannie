@@ -8,6 +8,14 @@ import type { PartView, TaskState, TaskView, ToolCallView, TurnView } from '#lib
 /** The task tool that waits for reports; the other two start and follow up tasks. */
 export const WAIT_FOR_TASKS = 'wait_for_tasks';
 
+/** The core's task tools; every other tool of a task part is a plugin's executor's (ADR-0031). */
+const CORE_TASK_TOOLS: readonly string[] = ['start_task', 'follow_up_task', WAIT_FOR_TASKS];
+
+/** Whether a task part's tool is one of the core's. */
+export function isCoreTaskTool(tool: string): boolean {
+  return CORE_TASK_TOOLS.includes(tool);
+}
+
 /** Whether a task's child still works on it, or waits for a slot to start. */
 export function isTaskActive(state: TaskState): boolean {
   const waitsForSlot = state === 'accepted';
@@ -35,16 +43,16 @@ function workingFirst(left: TaskView, right: TaskView): number {
 /**
  * The child agents in a conversation's turns: one for each child
  * conversation, with the view of its latest task, since a follow-up shows
- * the child's latest state. The ones that work come first. Tasks on workers
- * are no child agents and stay out (docs/features/workers/worker-activity.md).
+ * the child's latest state. The ones that work come first. The tasks of
+ * plugins' executors are no child agents and stay out (ADR-0031, decision 7).
  */
 export function childAgentsOf(turns: readonly TurnView[]): TaskView[] {
   const latest = new Map<string, TaskView>();
   for (const turn of turns) {
     for (const part of turn.parts) {
       const task = part.content.kind === 'task' ? part.content.call.task : null;
-      // A task without a worker is a child agent's.
-      if (task?.worker === null) {
+      // A task without an executor is a child agent's.
+      if (task?.executor === null) {
         latest.set(task.conversationId, task);
       }
     }
@@ -53,16 +61,16 @@ export function childAgentsOf(turns: readonly TurnView[]): TaskView[] {
 }
 
 /**
- * The call of a worker's task as the card shows it: the request names the
- * host by the name that the card shows for the worker, which can be the
- * owner's, where the worker wrote the one in its configuration
- * (docs/features/workers/worker-activity.md). Only the shown name changes;
- * the decision still names the request by its digest.
+ * The call of a task of a plugin's executor as the card shows it: the
+ * request names the computer that runs it by the name that the card shows
+ * for the target, which can be the owner's, where the target wrote another
+ * one. Only the shown name changes; the decision still names the request by
+ * its digest.
  */
 function shownCall(task: TaskView, call: ToolCallView): ToolCallView {
-  const worker = task.worker;
+  const target = task.executor ?? null;
   const request = call.request;
-  if (worker === null) {
+  if (target === null) {
     return call;
   }
   if (request === null) {
@@ -72,7 +80,7 @@ function shownCall(task: TaskView, call: ToolCallView): ToolCallView {
   if (!namesHost) {
     return call;
   }
-  return { ...call, request: { ...request, host: worker.name } };
+  return { ...call, request: { ...request, host: target.targetName } };
 }
 
 /**

@@ -22,7 +22,14 @@ import {
   waitForPointerInput,
 } from '../support/chat.ts';
 import { closeMainWindow, deleteProviderProfiles, setFolderChoice } from '../support/harness.ts';
-import { axeViolations, openSettings, uncataloguedText, waitForAnimations, waitForApp } from '../support/page.ts';
+import {
+  axeViolations,
+  openSettings,
+  setPluginEnabled,
+  uncataloguedText,
+  waitForAnimations,
+  waitForApp,
+} from '../support/page.ts';
 import { MODELS, type ProviderServer, startProviderServer } from '../support/provider-server.ts';
 
 const PSEUDO_LOCALE = 'en-XA';
@@ -233,6 +240,8 @@ describe('the chat and window views in the pseudo-locale', () => {
   });
 
   it('shows only catalog text on every page of the settings', async () => {
+    // The Workers settings show while the Workers plugin is on.
+    await setPluginEnabled('workers', true);
     for (const section of [
       'shell.interface',
       'chat.providers',
@@ -240,6 +249,7 @@ describe('the chat and window views in the pseudo-locale', () => {
       'window.behavior',
       'tools.settings',
       'child-agents.settings',
+      'plugins.settings',
       'workers.settings',
     ]) {
       await openSettings(section);

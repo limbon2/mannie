@@ -3,6 +3,7 @@
 // explains what it checks, and tests/scripts/eslint/ shows the accepted and
 // rejected code (`task test:scripts`).
 import { namedConditions } from './named-conditions.mjs';
+import { pluginBoundaries } from './plugin-boundaries.mjs';
 import { svelteScriptOrder } from './svelte-script-order.mjs';
 import { testFileLocation } from './test-file-location.mjs';
 
@@ -11,6 +12,7 @@ export default {
   meta: { name: 'mannie' },
   rules: {
     'named-conditions': namedConditions,
+    'plugin-boundaries': pluginBoundaries,
     'svelte-script-order': svelteScriptOrder,
     'test-file-location': testFileLocation,
   },

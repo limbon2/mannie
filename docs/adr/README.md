@@ -47,3 +47,5 @@ Each ADR has exactly one of these statuses:
 | [0027](0027-delegate-tasks-to-workers-through-a-runtime-port.md)       | Delegate tasks to workers through a port of the runtime                                       | Accepted               | M4, V6     |
 | [0028](0028-run-assigned-tasks-under-the-host-ceiling.md)              | Run the tasks that the master assigns under the worker's policy ceiling                       | Accepted               | M4, V6     |
 | [0029](0029-let-the-owner-give-conversations-and-hosts-full-access.md) | Let the owner give conversations and hosts full access                                        | Accepted               | M4         |
+| [0030](0030-split-mannie-into-a-core-and-plugins.md)                   | Split Mannie into a core and internal plugins that the owner turns on and off                 | Accepted (D28)         | M5         |
+| [0031](0031-move-workers-into-the-first-plugin.md)                     | Move the worker system into the first plugin, behind extension points of the core             | Accepted (D28)         | M5         |

@@ -53,7 +53,7 @@ pub use results::{MIN_RESULT_LIMIT_BYTES, RESULT_LIMIT_BYTES, result_limit};
 pub use rules::command_words;
 pub use stop::{StopReason, StopSignal};
 pub use supervisor::end_leftover_command;
-pub use system::{ShellFacts, SystemFacts};
+pub use system::{ShellFacts, SystemFacts, hostname, programs_on_path};
 pub use tool::{
     ArchivedOutput, Done, Execution, PermissionClass, PrepareError, Prepared, Tool, ToolContext,
 };

@@ -209,6 +209,11 @@ export function applyUpdate(state: TranscriptState, update: ConversationUpdate):
         case 'lagged': {
           return 'resubscribe';
         }
+        // Following a task conversation again after its plugin stopped
+        // shows that the plugin is off.
+        case 'plugin_off': {
+          return 'resubscribe';
+        }
         case 'shutdown': {
           return 'shutdown';
         }

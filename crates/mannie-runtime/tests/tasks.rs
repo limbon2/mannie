@@ -318,6 +318,7 @@ async fn a_task_returns_the_childs_confirmed_report() {
             number: 1,
             agent: "explore".to_owned(),
             worker: None,
+            executor: None,
         })
     );
     assert_eq!(summary.project_id, None);
@@ -544,6 +545,7 @@ async fn a_limit_of_two_runs_two_children_and_a_larger_limit_starts_the_third() 
         Some(RunActivity::WaitingForTasks {
             count: 3,
             workers: 0,
+            kinds: Vec::new(),
         })
     );
     assert_eq!(setup.harness.runtime.active_run_count(), 1);
@@ -673,6 +675,7 @@ async fn a_reply_with_unread_reports_waits_and_asks_once_without_their_text() {
                 if run.activity == Some(RunActivity::WaitingForTasks {
             count: 1,
             workers: 0,
+            kinds: Vec::new(),
         })
         )
     });
@@ -757,6 +760,7 @@ async fn a_follow_up_of_a_running_or_unknown_task_assigns_nothing() {
                     == Some(RunActivity::WaitingForTasks {
                         count: 1,
                         workers: 0,
+                        kinds: Vec::new(),
                     })
             })
         })

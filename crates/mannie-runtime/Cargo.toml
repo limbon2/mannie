@@ -74,28 +74,30 @@ required-features = ["testing"]
 name = "profiles"
 required-features = ["testing"]
 
-# Tasks that the master assigns to a worker: the worker agent, idempotent
-# assignments, follow-ups, leases, cancels, slots, restarts and the watch.
+# Tasks that another machine assigns: the agent that runs them, idempotent
+# assignments, follow-ups, credentials that come later, cancels, slots,
+# restarts and the watch.
 [[test]]
 name = "assigned_tasks"
 required-features = ["testing"]
 
-# A worker's ceiling through the loop: every mode, the host's rules, its own
-# folders, a task that narrows the mode, and forged choices.
+# A machine's ceiling through the loop: every mode, the machine's rules, its
+# own folders, a task that narrows the mode, and forged choices.
 [[test]]
 name = "ceiling"
 required-features = ["testing"]
 
-# Tasks delegated to a worker through an in-process port: reports, numbers,
-# follow-ups, approvals, Stop, offline workers, restarts and deletion.
+# What plugins contribute while they are on (ADR-0030): a fake plugin's tool,
+# child agent and section, calls into a plugin that stopped, and all or none.
 [[test]]
-name = "delegation"
+name = "plugins"
 required-features = ["testing"]
 
-# The master ends after the part, after the rows and after a submission whose
-# answer was lost, and no case starts a second task.
+# The tasks of a plugin's executor (ADR-0031): the tool and section of a
+# registered executor, plans, refusals, reports, background tasks, waits,
+# follow-ups, Stop, a stopped plugin and the reads of task conversations.
 [[test]]
-name = "delegation_crash"
+name = "executors"
 required-features = ["testing"]
 
 # Tasks that a real model completes through the tools, and injection tasks;

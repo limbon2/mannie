@@ -1918,7 +1918,7 @@ async fn a_deleted_conversation_leaves_no_archive_or_grant_behind() {
     assert!(!fixture.files_contain(granted), "the grant is gone");
 }
 
+mod executor_tasks;
 /// The tests of tasks and task conversations (docs/features/child-agents/
 /// tasks.md, data).
 mod tasks;
-mod worker_tasks;

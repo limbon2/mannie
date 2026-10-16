@@ -29,6 +29,7 @@
 - Positive: a feature's change stays inside its slice, which keeps reviews small and rarely breaks another feature. Documentation changes stay local as well.
 - Negative: registries add a layer of indirection, and additive contracts collect deprecated items until they are removed.
 - Risks: an extension point designed before a real feature uses it may be wrong. Rule 8 limits this, and a wrong extension point is replaced through an ADR.
+- Refinement in M5: features can form plugins that the owner turns on and off while Mannie runs, and the registries take and drop a plugin's registrations ([ADR-0030](0030-split-mannie-into-a-core-and-plugins.md)). Registration stays explicit code in a composition root, and nothing is loaded at runtime.
 
 ## Alternatives considered
 

@@ -31,6 +31,7 @@ Verified 2026-10-13:
 - Positive: a mature, multiplexed transport with contract checks.
 - Negative: the protobuf toolchain becomes part of the build, and the custom verifiers need careful review and tests.
 - Refinement in M4: decisions 1 to 4 and 6 to 8 were made concrete while the link was built ([pairing and the link](../features/workers/pairing-and-link.md)). Raw public keys replaced certificates, since only the pinned key matters and no X.509 has to be built or parsed. The owner removed the pushed updates and with them the Update service ([decision D20](../roadmap/milestones.md#5-decisions)).
+- Refinement in M5: the link, its contracts and their checks belong to the Workers plugin and move to `plugins/workers/`, with their packages and feature levels unchanged ([ADR-0031](0031-move-workers-into-the-first-plugin.md)).
 
 ## Alternatives considered
 

@@ -15,6 +15,7 @@ import type {
   ToolFailure,
 } from '#lib/generated/bindings.js';
 import { m } from '#lib/paraglide/messages.js';
+import { pluginName } from '#lib/state/plugin-catalog.js';
 import type { ToolsFailure } from '#lib/types/tools.js';
 
 const BYTE_UNITS = ['byte', 'kilobyte', 'megabyte', 'gigabyte'] as const;
@@ -108,6 +109,9 @@ export function toolsFailureMessage(failure: ToolsFailure): string {
     case 'output_not_found': {
       return m.tools_error_output_not_found();
     }
+    case 'plugin_off': {
+      return m.tools_error_plugin_off({ plugin: pluginName(error.plugin) });
+    }
     case 'rule_not_found': {
       return m.tools_error_rule_not_found();
     }
@@ -126,11 +130,16 @@ export function toolsFailureMessage(failure: ToolsFailure): string {
     case 'store_unavailable': {
       return m.shell_error_store_unavailable();
     }
+    case 'task_target_unreachable': {
+      return m.tools_error_task_target_unreachable({ target: error.target });
+    }
     case 'too_many_environment_names': {
       return m.tools_error_too_many_environment_names({ max: error.max });
     }
+    // 0.2.0's error of a worker that cannot be reached; this version names
+    // the target instead.
     case 'worker_unreachable': {
-      return m.tools_error_worker_unreachable();
+      return m.tools_error_task_unreachable();
     }
     case 'written_by_newer_version': {
       return m.tools_error_written_by_newer_version();
@@ -243,6 +252,9 @@ export function notRunMessage(reason: NotRunReason): string {
     case 'over_budget': {
       return m.tools_not_run_over_budget();
     }
+    case 'plugin_off': {
+      return m.tools_not_run_plugin_off({ plugin: pluginName(reason.plugin) });
+    }
     case 'refused': {
       return refusalMessage(reason.refusal);
     }
@@ -255,7 +267,7 @@ export function notRunMessage(reason: NotRunReason): string {
   }
 }
 
-/** What a worker's ceiling forbids. */
+/** What the ceiling of the computer that runs a task forbids. */
 export function refusalMessage(refusal: Refusal): string {
   switch (refusal) {
     case 'no_projects_on_host': {

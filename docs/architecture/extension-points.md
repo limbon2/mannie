@@ -1,37 +1,39 @@
 # Extension points
 
-|              |                                                                                                                                                                          |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Status       | Draft for review                                                                                                                                                         |
-| Last updated | 2026-10-15                                                                                                                                                               |
-| Related      | [ADR-0002](../adr/0002-grow-through-extension-points.md), [Feature protocol](../features/README.md), [Repository](../engineering/repository.md), [Overview](overview.md) |
+|              |                                                                                                                                                                                                                                                                                                          |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status       | Draft for review                                                                                                                                                                                                                                                                                         |
+| Last updated | 2026-10-16                                                                                                                                                                                                                                                                                               |
+| Related      | [ADR-0002](../adr/0002-grow-through-extension-points.md), [ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md), [ADR-0031](../adr/0031-move-workers-into-the-first-plugin.md), [Feature protocol](../features/README.md), [Repository](../engineering/repository.md), [Overview](overview.md) |
 
-Mannie adds features by registration. A feature is a vertical slice: Rust modules, IPC types, UI components, migrations and tests, plus its feature document. The slice plugs into the extension points below and leaves other features alone ([ADR-0002](../adr/0002-grow-through-extension-points.md)).
+Mannie adds features by registration. A feature is a vertical slice: Rust modules, IPC types, UI components, migrations and tests, plus its feature document. The slice plugs into the extension points below and leaves other features alone ([ADR-0002](../adr/0002-grow-through-extension-points.md)). An optional feature, or a group of features, is a plugin, which the owner turns on and off: its contributions enter the registries when it starts and leave them when it stops, while Mannie runs ([ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md)).
 
 ## 1. Rules for every extension point
 
 1. A feature owns what it registers. Other features reach it only through its public interface or through another extension point.
-2. Registration is explicit code in a composition root (`mannie-desktop`, `mannie-worker`) or in a registry module of the UI shell. Nothing is discovered by scanning or loaded at runtime.
+2. Registration is explicit code in a composition root (`mannie-desktop`, `mannie-worker`), in a plugin's start, or in a registry module of the UI shell. Nothing is discovered by scanning or loaded at runtime.
 3. Contracts grow by addition. A reader that meets a variant it does not know skips it or shows it in a generic form, and does not fail.
 4. Each extension point has an owning module and a test that registers a fake entry, so a broken extension point fails its own tests first.
 5. A new extension point, or a change to an existing one, needs an ADR. An extension point is added when the first feature needs it.
+6. A registry that takes a plugin's contributions keeps the plugin's ID with each one, and drops them when the plugin stops. A run keeps what it started with. The core never depends on a plugin, and a plugin never depends on another plugin.
 
 ## 2. Catalog
 
-| Extension point                 | Owning module                 | What a feature registers                                                                            | Introduced in |
-| ------------------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------- | ------------- |
-| Tool registry                   | `mannie-tools`                | A tool: name, schema, availability, permission class and executor                                   | M2            |
-| Agent definitions               | `mannie-runtime`              | An agent definition: instructions, tool set, budgets, requester and default profile                 | M1            |
-| Provider adapters               | `mannie-provider`             | An adapter for an API interface, or a quirk profile                                                 | M1            |
-| Instruction sections            | `mannie-runtime`              | A section of the system prompt and its position                                                     | M1            |
-| Transcript parts and run events | `mannie-types`                | A part type or event variant, with its rendering for the model                                      | M1            |
-| IPC commands and channels       | `mannie-desktop`              | Commands and channel message types for the feature's UI                                             | M0            |
-| UI shell slots                  | The desktop app's shell       | Navigation entries, views, panels, side panels, conversation controls, settings, actions, renderers | M0            |
-| Settings sections               | `mannie-types`                | A typed settings section with defaults and validation                                               | M0            |
-| Store tables and migrations     | `mannie-store`                | The feature's tables and its forward-only migrations                                                | M0            |
-| Link services                   | `mannie-link`                 | A protobuf package with its feature level                                                           | M4            |
-| Delegation port                 | `mannie-runtime`              | The link's way of running a task on another machine, given to the runtime by a composition root     | M4            |
-| Message catalogs                | The desktop app's `messages/` | The feature's visible text, under its own key prefix                                                | M0            |
+| Extension point                 | Owning module                 | What a feature or a plugin registers                                                                            | Introduced in |
+| ------------------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------- |
+| Plugins                         | `mannie-plugins`              | A plugin: its ID, its migrations, its default, and a start that returns its contributions and a stop            | M5            |
+| Tool registry                   | `mannie-tools`                | A tool: name, schema, availability, permission class and executor                                               | M2            |
+| Agent definitions               | `mannie-runtime`              | An agent definition: instructions, tool set, budgets, requester and default profile                             | M1            |
+| Provider adapters               | `mannie-provider`             | An adapter for an API interface, or a quirk profile                                                             | M1            |
+| Instruction sections            | `mannie-runtime`              | A section of the system prompt and its position                                                                 | M1            |
+| Task executors                  | `mannie-runtime`              | A kind of task: its tool, its section, and how its tasks are planned, submitted, followed and read              | M5            |
+| Transcript parts and run events | `mannie-types`                | A part type or event variant, with its rendering for the model                                                  | M1            |
+| IPC commands and channels       | `mannie-desktop`              | Commands and channel message types for the feature's UI                                                         | M0            |
+| UI shell slots                  | The desktop app's shell       | Navigation entries, views, panels, side panels, conversation controls, settings, actions, renderers, task kinds | M0            |
+| Settings sections               | `mannie-types`                | A typed settings section with defaults and validation                                                           | M0            |
+| Store tables and migrations     | `mannie-store`                | The feature's tables and its forward-only migrations, in a module of its own                                    | M0            |
+| Link services                   | `mannie-link` (Workers)       | A protobuf package with its feature level                                                                       | M4            |
+| Message catalogs                | The desktop app's `messages/` | The feature's visible text, under its own key prefix                                                            | M0            |
 
 ## 3. The extension points
 
@@ -39,9 +41,11 @@ Mannie adds features by registration. A feature is a vertical slice: Rust module
 
 A tool implements the `Tool` trait. It declares its name, a description written for the model, an input schema generated from a Rust type with schemars, its permission class: read-only, or with side effects, and whether a model call is offered it, which can depend on the conversation's project and the owner's projects. Its executor follows the operation lifecycle ([ADR-0013](../adr/0013-journal-every-side-effect.md)): prepare, then execute after authorization. Results are typed values with a rendering for the model. An agent definition names the tools its agent may use, and a run gets those of them that the registry holds, so a tool that a platform's composition root does not register, such as `run_command` on FreeBSD until workers bring it, is not offered there. The registry rejects duplicate names when tools register. [Tools](tools.md) has the contract in full. Tools that act on runs rather than on the machine, such as the task tools of child agents, belong to the runtime and stay outside the registry ([ADR-0024](../adr/0024-run-child-agent-tasks-in-the-parent-run.md)).
 
+A plugin's tools enter the registry when the plugin starts and leave it when it stops. A run keeps the tool definitions it started with, and its call of a tool whose plugin stopped does not run: the model reads that the plugin is off, and the call's part records the reason `plugin_off`.
+
 ### 3.2 Agent definitions
 
-An agent definition names an agent's instructions, its tool set (tool names from the registry), its budgets and its default provider profile. It also says who the agent answers to, the owner or another agent, which chooses the wording of its base instructions, its notes and its denials, and how many tasks a reply may give to child agents. Built-in definitions include the conversation agent, the explore and general child agents, and the worker agent, which only the worker registers, so the master never offers it to `start_task`. A run names the definition it runs with, and a feature that needs a new kind of agent registers a definition. It does not change the loop.
+An agent definition names an agent's instructions, its tool set (tool names from the registry), its budgets and its default provider profile. It also says who the agent answers to, the owner or another agent, which chooses the wording of its base instructions, its notes and its denials, and how many tasks a reply may give to child agents. Built-in definitions include the conversation agent and the explore and general child agents. A plugin can add definitions while it is on, and a composition root can register its own, as the Workers plugin's service registers the worker agent, which the master never offers to `start_task`. A run names the definition it runs with, and a feature that needs a new kind of agent registers a definition. It does not change the loop.
 
 ### 3.3 Provider adapters and quirk profiles
 
@@ -49,7 +53,7 @@ An adapter implements the `Provider` trait for one API interface ([ADR-0011](../
 
 ### 3.4 Instruction sections
 
-The system prompt is assembled from sections that modules register, each with a fixed position. Stable sections come first (the base instructions, the agent definition, the tool guidance and the owner's instructions), and sections specific to a host or a session come after them, so that providers can cache the stable prefix. Context that changes from turn to turn goes into the latest user message instead of the system prompt. A section can depend on what a run is offered: the guidance on tasks reaches only runs that are offered the task tools. The context carries the host of a worker (its name, purpose, host instructions and host facts) and the workers that the master can delegate to, and a composition root can assemble a registry of its own, as the worker does.
+The system prompt is assembled from sections that modules register, each with a fixed position. Stable sections come first (the base instructions, the agent definition, the tool guidance and the owner's instructions), and sections specific to a host or a session come after them, so that providers can cache the stable prefix. Context that changes from turn to turn goes into the latest user message instead of the system prompt. A section can depend on what a run is offered: the guidance on tasks reaches only runs that are offered the task tools, and an executor's section, such as the Workers plugin's list of workers, reaches only runs that are offered its tool. The context carries the description of its machine that a composition root gives the runtime, such as a worker's host, and a composition root can assemble a registry of its own, as the worker does. A plugin's sections enter and leave the registry with the plugin.
 
 ### 3.5 Transcript parts and run events
 
@@ -61,9 +65,11 @@ M3 adds the part `task`, which records a call of a task tool together with its t
 
 M4 adds the worker to a task's section, for tasks that run on a worker, and the run activity `waiting_for_lease` ([delegation](../features/workers/delegation.md#contracts)).
 
+M5 adds the executor to a task's section and to a task conversation's summary, with its kind and target, the refusal `executor` with the executor's code, the reason `plugin_off` for a call that did not run, and a count for each kind of task in `waiting_for_tasks` ([ADR-0031](../adr/0031-move-workers-into-the-first-plugin.md), decision 6). The worker's fields and refusals stay readable through 0.3.0, and the core's views show them in the executor's shape.
+
 ### 3.6 IPC commands and channels
 
-Each feature defines its command arguments, results, errors and channel messages in `mannie-types` and registers its commands with tauri-specta in `mannie-desktop`, whose commands live in `src/commands/`, one module per area ([ADR-0007](../adr/0007-generate-ipc-bindings-from-rust.md)). Every command needs a capability grant ([ADR-0004](../adr/0004-keep-system-access-in-the-rust-core.md)). A changed contract gets a new command, and the old one is deprecated.
+Each feature defines its command arguments, results, errors and channel messages in `mannie-types`, or in its plugin's crates, and registers its commands with tauri-specta in `mannie-desktop`, whose commands live in `src/commands/`, one module per area ([ADR-0007](../adr/0007-generate-ipc-bindings-from-rust.md)). A plugin's commands are thin calls into its crates under the plugin's ID; while the plugin is not on, they refuse with the error `plugin_off`, and its channels end with that reason. Every command needs a capability grant ([ADR-0004](../adr/0004-keep-system-access-in-the-rust-core.md)). A changed contract gets a new command, and the old one is deprecated.
 
 ### 3.7 UI shell slots
 
@@ -76,44 +82,53 @@ The shell defines typed slots in `apps/desktop/src/lib/state/shell-slots.svelte.
 - command palette actions, which can say when they are available;
 - part renderers, keyed by part type, with a generic card for a type that no feature registered;
 - side panels, each a kind of content that opens beside the main view with an argument, such as a conversation's ID, and whose component can close its panel and name its tab; open panels show as tabs, belong to the view that opened them through its address, and get a generic body when no feature registered their kind ([ADR-0025](../adr/0025-add-side-panels-to-the-shell.md));
-- conversation controls, each a feature's compact button or menu in a conversation's toolbar, which receives the conversation's summary and the turns that the view has loaded, and renders nothing when it has nothing to offer ([ADR-0026](../adr/0026-add-conversation-controls-back-for-child-agents.md)).
+- conversation controls, each a feature's compact button or menu in a conversation's toolbar, which receives the conversation's summary and the turns that the view has loaded, and renders nothing when it has nothing to offer ([ADR-0026](../adr/0026-add-conversation-controls-back-for-child-agents.md));
+- task kinds, one for each kind of task of a plugin's executor, with its icon and the messages that the task card, the call note, a task conversation's read-only footer, the status line and its refusals use; without an entry, such as while the plugin is off, these show generic texts that name the target ([ADR-0031](../adr/0031-move-workers-into-the-first-plugin.md), decision 7).
 
 A feature registers its Svelte components in its registration, `src/lib/registrations/<feature>.ts`, and the shell renders whatever is registered. The shell never imports a feature directly. The window has a fixed height, so a view can keep parts of itself in place, such as a message box below a transcript. The frontend is sorted by kind, so the feature's components, state and helpers sit with the others of their kind ([desktop app](desktop-app.md#6-frontend-structure)).
 
+A plugin registers through `composeShell()`, which gives it its own view of the slots, so every entry carries the plugin's ID. A slot lists such an entry only while the core reports the plugin as on, through the channel of plugin states, so the window changes without a reload. An address of a view, a settings page or a side panel of a plugin that is off shows a state that names the plugin, with the way to the Plugins settings. A plugin's UI state follows the plugin through `pluginStates.whileOn()`, so its subscriptions run only while the plugin is on. Only `registrations/plugin-list.ts` imports a plugin's UI files, which the lint rule `mannie/plugin-boundaries` checks ([ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md), decisions 10 and 11).
+
 ### 3.8 Settings sections
 
-A feature declares a settings section as a Rust type with defaults and validation. The store persists it, the settings show it as a page of its own through the feature's settings slot, and the core validates every change. Settings never contain secrets; a credential is a reference to the credential store.
+A feature declares a settings section as a Rust type with defaults and validation. The store persists it, the settings show it as a page of its own through the feature's settings slot, and the core validates every change. Settings never contain secrets; a credential is a reference to the credential store. The owner's choices of plugins are the core's section `plugins`.
 
 ### 3.9 Store tables and migrations
 
 A feature owns its tables, named with its module's prefix, and the forward-only migrations that create and change them ([ADR-0009](../adr/0009-persist-state-in-sqlite.md)). It reaches other modules' data through their repositories. A destructive change takes two releases: the first adds the new shape and stops using the old one, and the second removes the old shape.
 
+Each module numbers its migrations on its own, and the store records how many of each module's migrations a database has. The core's modules migrate first, then the modules of plugins in the composition root's order, whether or not a plugin is on, so the schema never depends on a plugin's state. A plugin's code reaches its tables through the store's writer and readers, which `mannie-store` opens to the modules that the composition root registers, and the core's tables never refer to a plugin's tables. A database from before M5 carries its numbered migrations over to these records, also for a module that is registered only later.
+
 ### 3.10 Link services
 
-A feature that needs traffic between the master and workers adds a protobuf package `mannie.link.<service>.v1` under `proto/mannie/link/<service>/v1/` with its own feature level ([ADR-0016](../adr/0016-link-machines-over-pinned-mtls-grpc.md)). The two sides agree on feature levels when they connect, and a feature checks the agreed level before it uses its service. `buf breaking` guards compatibility, and fixture tests guard the JSON documents that travel inside the messages.
+The Workers plugin owns the link. A part of it that needs traffic between the master and workers adds a protobuf package `mannie.link.<service>.v1` under `plugins/workers/proto/mannie/link/<service>/v1/` with its own feature level ([ADR-0016](../adr/0016-link-machines-over-pinned-mtls-grpc.md)). The two sides agree on feature levels when they connect, and a feature checks the agreed level before it uses its service. `buf breaking` guards compatibility, and fixture tests guard the JSON documents that travel inside the messages.
 
 ### 3.11 Message catalogs
 
-A feature adds its visible text as messages in `apps/desktop/messages/en.json`, with keys under the feature's own prefix, such as `chat_` or `tools_` ([ADR-0019](../adr/0019-keep-visible-text-in-message-catalogs.md)). Paraglide JS compiles the catalogs into typed message functions, so a component that uses a missing key fails the build. Error codes from the core map to messages in the same catalog. A feature never edits another feature's messages, and translations of a feature's messages go into the catalog of each added locale.
+A feature adds its visible text as messages in `apps/desktop/messages/en.json`, with keys under the feature's own prefix, such as `chat_` or `tools_`, and a plugin under its ID, such as `workers_` ([ADR-0019](../adr/0019-keep-visible-text-in-message-catalogs.md)). Paraglide JS compiles the catalogs into typed message functions, so a component that uses a missing key fails the build. Error codes from the core map to messages in the same catalog. A feature never edits another feature's messages, the core's messages never name a plugin's things, and translations of a feature's messages go into the catalog of each added locale.
 
-### 3.12 Delegation port
+### 3.12 Task executors
 
-The runtime runs a task on another machine through a port, which the master's composition root gives it and `mannie-link` implements ([ADR-0027](../adr/0027-delegate-tasks-to-workers-through-a-runtime-port.md)). The port lists the machines that take tasks and carries what the runtime asks of them: submitting, following and cancelling tasks, delivering credential leases, and reading and deciding in their task conversations. The runtime never depends on the link, and a runtime without the port offers no delegation.
+A kind of task that runs somewhere other than the parent's run is a task executor, which a plugin registers while it is on ([ADR-0031](../adr/0031-move-workers-into-the-first-plugin.md), decision 4). It replaces the delegation port of M4. The executor gives its kind, which is its plugin's ID, its tool and its instruction section, which a run reads once when it starts; it plans a call or a follow-up, or refuses it with a code and the text that the model reads; it submits, cancels and serves the conversations of the tasks that the runtime stored first; and it says whether its tasks outlive the reply that started them. It reaches the core through the services of its plugin's grant ([orchestration](orchestration.md#4-task-executors)).
+
+### 3.13 Plugins
+
+A plugin implements the `Plugin` trait of `mannie-plugins`: its ID, its store modules, whether it is on when the owner has not chosen yet, and its start and stop. The start receives a context with the store's modules of the plugin and the services that the composition root grants it, and returns its contributions: tools, agent definitions, instruction sections and task executors. A plugin that needs a service without its grant fails with the code `grant_missing`, and contributions with a name that is taken fail with `contributions_refused`. The host keeps the owner's choices, starts the plugins that are on after the core's recovery, makes one change at a time, and reports each plugin's state, `off`, `starting`, `on`, `stopping` or `failed`, through a channel ([plugins](../features/plugins.md)).
 
 ## 4. Anatomy of a feature slice
 
-| Layer            | What the feature adds                                        | Where                                                                                                        |
-| ---------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| Feature document | Intent, behavior, fit, design and acceptance                 | `docs/features/<slug>.md`, or a folder for a big feature                                                     |
-| Rust logic       | A module in the crate that owns the capability               | `crates/<crate>/src/<feature>/`                                                                              |
-| Shared types     | IPC types, parts, events and settings                        | `crates/mannie-types/src/<feature>/`                                                                         |
-| Registration     | Calls to the registries                                      | The composition roots in `apps/`                                                                             |
-| UI               | Components, state and slot registrations                     | `apps/desktop/src/lib/`, sorted by kind: `components/app/<feature>/`, `state/`, `registrations/<feature>.ts` |
-| Data             | Tables and migrations                                        | The store's migration list, in the feature's module                                                          |
-| Link contract    | A protobuf package, when machines talk                       | `proto/mannie/link/<service>/v1/`                                                                            |
-| Visible text     | Messages under the feature's key prefix                      | `apps/desktop/messages/`                                                                                     |
-| Tests            | Unit tests beside the code, integration and end-to-end tests | Next to the code and in each crate's `tests/`                                                                |
-| Changelog        | One line                                                     | `CHANGELOG.md`                                                                                               |
+| Layer            | What the feature adds                                        | Where                                                                                                                                       |
+| ---------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Feature document | Intent, behavior, fit, design and acceptance                 | `docs/features/<slug>.md`, or a folder for a big feature                                                                                    |
+| Rust logic       | A module in the crate that owns the capability               | `crates/<crate>/src/<feature>/`, or a plugin's crates in `plugins/<id>/crates/`                                                             |
+| Shared types     | IPC types, parts, events and settings                        | `crates/mannie-types/src/<feature>/`, or the plugin's crates                                                                                |
+| Registration     | Calls to the registries                                      | The composition roots in `apps/`, or the plugin's start                                                                                     |
+| UI               | Components, state and slot registrations                     | `apps/desktop/src/lib/`, sorted by kind: `components/app/<feature>/`, `state/`, `registrations/<feature>.ts`; a plugin's files carry its ID |
+| Data             | Tables and migrations                                        | The feature's module of the store, or the plugin's own module                                                                               |
+| Link contract    | A protobuf package, when machines talk                       | `plugins/workers/proto/mannie/link/<service>/v1/`                                                                                           |
+| Visible text     | Messages under the feature's key prefix                      | `apps/desktop/messages/`                                                                                                                    |
+| Tests            | Unit tests beside the code, integration and end-to-end tests | Next to the code and in each crate's `tests/`                                                                                               |
+| Changelog        | One line                                                     | `CHANGELOG.md`                                                                                                                              |
 
 ## 5. When an extension point is missing
 

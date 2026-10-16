@@ -18,13 +18,13 @@
 
 ### Feature levels
 
-Each package of the link has a feature level, 1 for every package in v0.2.0. In `Hello`, each side lists the levels it supports, and the master uses the lower level of each package. A feature checks the agreed level before it uses a call that a later level added. A test checks that every package of `proto/` has a level.
+Each package of the link has a feature level, 1 for every package in v0.2.0. In `Hello`, each side lists the levels it supports, and the master uses the lower level of each package. A feature checks the agreed level before it uses a call that a later level added. A test checks that every package of `plugins/workers/proto/` has a level.
 
 ### Contract checks
 
-- `buf lint` with buf's STANDARD rules checks every change to `proto/`, and `buf format` formats it.
+- `buf lint` with buf's STANDARD rules checks every change to `plugins/workers/proto/`, and `buf format` formats it.
 - `scripts/check-link-contracts.mjs` runs `buf breaking` against the merge base with `origin/main` and against the newest release tag that has the contracts, so a change can only add. CI checks out the whole history for it.
-- The JSON documents that travel on the link have fixtures in `crates/mannie-link/tests/fixtures/documents/`, one folder for each minor version that changed one, starting with `v0.2`. `tests/compatibility.rs` checks that this version writes the newest fixtures exactly, reads every older fixture without losing a field, ignores a field that a later version adds in any object, and knows every refusal code of an older version. A release that changes a document adds a folder with every document; the older folders never change.
+- The JSON documents that travel on the link have fixtures in `plugins/workers/crates/mannie-link/tests/fixtures/documents/`, one folder for each minor version that changed one, starting with `v0.2`. `tests/compatibility.rs` checks that this version writes the newest fixtures exactly, reads every older fixture without losing a field, ignores a field that a later version adds in any object, and knows every refusal code of an older version. A release that changes a document adds a folder with every document; the older folders never change.
 - v0.1.0 has no link, so in v0.2.0 a worker one minor version behind is shown by tests that simulate its levels and versions, the contract checks and the fixtures. From v0.3.0 on, a test runs the previous release's worker.
 
 ### Updating a worker

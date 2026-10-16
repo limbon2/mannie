@@ -20,15 +20,14 @@ use mannie_tools::clean_label;
 use mannie_types::ids::{ConversationId, TaskId, TurnId};
 use mannie_types::secret::Secret;
 use mannie_types::tasks::{AssignedTaskState, MAX_TITLE_CHARS};
-use mannie_types::workers::{ProfileSnapshot, TaskAssignment};
+use mannie_types::tasks::{ProfileSnapshot, TaskAssignment};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, watch};
 
 use crate::actor::{ChildLink, Command};
-use crate::agents::WORKER_AGENT;
 use crate::profiles::{VaultError, in_vault};
 use crate::tasks::{ChildGuard, ChildState, TaskSink, check_instruction};
-use crate::{Busy, Machine, Runtime, lock};
+use crate::{Busy, Runtime, lock};
 
 /// What a worker keeps of an assignment in its task's row: what the task's
 /// runs need besides the instruction, which is the first message of its turn.
@@ -336,11 +335,9 @@ fn record_of(task: &StoredTask) -> Option<AssignmentRecord> {
 }
 
 impl Runtime {
-    fn require_worker(&self) -> Result<(), AssignError> {
-        match self.inner.machine {
-            Machine::Worker(_) => Ok(()),
-            Machine::Master => Err(AssignError::NotAWorker),
-        }
+    /// The agent that runs assigned tasks, on a machine that takes them.
+    fn require_worker(&self) -> Result<&'static str, AssignError> {
+        self.machine().assigned_agent.ok_or(AssignError::NotAWorker)
     }
 
     /// The state of an assigned task: live while its run works, from its row
@@ -384,7 +381,7 @@ impl Runtime {
         &self,
         assignment: TaskAssignment,
     ) -> Result<AssignedTaskState, AssignError> {
-        self.require_worker()?;
+        let agent = self.require_worker()?;
         if self.is_shutting_down() {
             return Err(AssignError::ShuttingDown);
         }
@@ -408,7 +405,7 @@ impl Runtime {
         let reservation = self
             .reserve(&conversation, Busy::Starting)
             .map_err(|_busy| AssignError::StillRunning)?;
-        let (changes, turn, run) = self.assignment_batch(&assignment, title)?;
+        let (changes, turn, run) = self.assignment_batch(&assignment, title, agent)?;
         self.inner
             .hubs
             .apply(store, &conversation, changes, Durability::Full)
@@ -463,6 +460,7 @@ impl Runtime {
         &self,
         assignment: &TaskAssignment,
         title: String,
+        agent: &str,
     ) -> Result<(Vec<Change>, TurnId, NewRun), AssignError> {
         let record = AssignmentRecord {
             profile: assignment.profile.clone(),
@@ -476,7 +474,7 @@ impl Runtime {
         let turn = ids.turn();
         let run = NewRun {
             id: ids.run(),
-            agent: WORKER_AGENT.to_owned(),
+            agent: agent.to_owned(),
             profile_id: assignment.profile.id.clone(),
             binding: assignment.profile.binding(),
         };

@@ -3,6 +3,7 @@
 //! that write checkpoints.
 
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures_util::StreamExt;
@@ -15,26 +16,29 @@ use mannie_store::{
     StoredProfile,
 };
 use mannie_tools::{Availability, PermissionClass, Tool, with_activity};
+use mannie_types::ceiling::CeilingMode;
 use mannie_types::chat::ChatSettings;
 use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{ConversationId, PartId, ProfileId, ProjectId};
 use mannie_types::projects::ProjectView;
 use mannie_types::provider::{ApiInterface, ReasoningEffort, context_budget};
 use mannie_types::run::RunFailure;
+use mannie_types::secret::Secret;
 use mannie_types::tools::ToolCallStatus;
 use mannie_types::transcript::PartKind;
-use mannie_types::workers::{CeilingMode, WorkerView};
 
-use crate::actor::worker_label;
 use crate::agents::{AgentDefinition, Requester};
 use crate::assigned::{AssignedRun, lease_reference};
 use crate::budget::{Ledger, estimate_request, usage};
 use crate::compaction::{self, ContextSize, Trigger};
 use crate::context::{RequestShape, build_request};
-use crate::instructions::{HostContext, InstructionContext, ToolEnvironment};
+use crate::executors::TaskExecutor;
+use crate::instructions::{
+    InstructionContext, InstructionSection, MachineContext, ToolEnvironment,
+};
 use crate::profiles::{VaultError, in_vault};
 use crate::retry::RetryDecision;
-use crate::{Runtime, WorkerHost, lock, tasks, texts};
+use crate::{Runtime, lock, tasks, texts};
 
 /// The newest tool results of the latest turn that stay in the context when
 /// older ones are left out to save space.
@@ -43,9 +47,9 @@ const KEPT_RESULTS: usize = 3;
 /// The tool that moves a general conversation into a project.
 const MOVE_TO_PROJECT: &str = "move_to_project";
 
-/// The most bytes of the host instructions that a worker's run reads; the
-/// rest is left out.
-const MAX_HOST_INSTRUCTIONS_BYTES: usize = 64 * 1024;
+/// The most bytes of the machine's instructions that a run of an assigned
+/// task reads; the rest is left out.
+const MAX_MACHINE_INSTRUCTIONS_BYTES: usize = 64 * 1024;
 
 /// Why a call could not be prepared or made.
 #[derive(Debug)]
@@ -95,20 +99,44 @@ pub(crate) struct Setup {
     pub(crate) task_definitions: Vec<ToolDefinition>,
     /// The child agents that `start_task` can start.
     pub(crate) child_agents: Vec<&'static str>,
-    /// On a worker, what the run's task works under.
-    pub(crate) host: Option<HostSetup>,
-    /// On the master, the workers that the run can give tasks to, as they
-    /// were when the run started; empty for a run that is not offered
-    /// `delegate_task`.
-    pub(crate) workers: Vec<WorkerView>,
+    /// For a run of an assigned task, what it works under.
+    pub(crate) assigned: Option<AssignedSetup>,
+    /// The executors whose tools the run is offered, as they were when the
+    /// run started (ADR-0031, decision 4).
+    pub(crate) executors: Vec<OfferedExecutor>,
+    /// The plugins' tools that the run is offered, by name, with each
+    /// plugin's ID, so a call of one whose plugin stopped does not run
+    /// (ADR-0030, decision 8).
+    pub(crate) plugin_tools: Vec<(String, String)>,
+    /// The plugins' instruction sections and those of the executors whose
+    /// tools the run is offered, as they were when the run started, so the
+    /// prompt stays the same while the run lasts.
+    pub(crate) plugin_sections: Vec<InstructionSection>,
 }
 
-/// What a worker's run reads of its host once, when it starts.
+/// An executor whose tool a run is offered.
 #[derive(Debug, Clone)]
-pub(crate) struct HostSetup {
+pub(crate) struct OfferedExecutor {
+    /// The tool's name.
+    pub(crate) tool: String,
+    /// The executor.
+    pub(crate) executor: Arc<dyn TaskExecutor>,
+}
+
+/// What the plugins' executors offer a run that is offered the task tools:
+/// the executors with their tools' definitions and their sections.
+struct ExecutorOffer {
+    executors: Vec<OfferedExecutor>,
+    definitions: Vec<ToolDefinition>,
+    sections: Vec<InstructionSection>,
+}
+
+/// What a run of an assigned task reads of its machine once, when it starts.
+#[derive(Debug, Clone)]
+pub(crate) struct AssignedSetup {
     /// The mode of the task's ceiling.
     pub(crate) mode: CeilingMode,
-    /// The host instructions, as the file said when the run started.
+    /// The machine's instructions, as the file said when the run started.
     pub(crate) instructions: Option<String>,
 }
 
@@ -131,6 +159,37 @@ impl Setup {
     /// Whom the run's agent answers to.
     pub(crate) fn requester(&self) -> Requester {
         self.agent.requester
+    }
+
+    /// The plugin of a tool of the run that a plugin contributed.
+    pub(crate) fn plugin_of_tool(&self, tool: &str) -> Option<&str> {
+        self.plugin_tools
+            .iter()
+            .find(|(name, _plugin)| name == tool)
+            .map(|(_name, plugin)| plugin.as_str())
+    }
+
+    /// The executor whose tool has this name, among those the run is
+    /// offered.
+    pub(crate) fn executor_for(&self, tool: &str) -> Option<Arc<dyn TaskExecutor>> {
+        self.executors
+            .iter()
+            .find(|offered| offered.tool == tool)
+            .map(|offered| Arc::clone(&offered.executor))
+    }
+
+    /// The definitions of the tools that a call is offered where the run
+    /// works, followed by the task tools.
+    fn definitions_for(&self, availability: &Availability<'_>) -> Vec<ToolDefinition> {
+        let mut definitions: Vec<ToolDefinition> = self
+            .tools
+            .iter()
+            .zip(&self.definitions)
+            .filter(|(tool, _definition)| tool.offered(availability))
+            .map(|(_tool, definition)| definition.clone())
+            .collect();
+        definitions.extend(self.task_definitions.iter().cloned());
+        definitions
     }
 }
 
@@ -200,7 +259,7 @@ impl Runtime {
         agent: &str,
         task: bool,
     ) -> Result<Setup, RunFailure> {
-        let Some(agent) = self.inner.agents.get(agent).cloned() else {
+        let Some(agent) = self.agent(agent) else {
             tracing::error!(agent, "a run names an agent that is not registered");
             return Err(RunFailure::Internal);
         };
@@ -215,11 +274,23 @@ impl Runtime {
             tracing::error!(error.code = error.code(), "a stored base URL is not valid");
             RunFailure::Internal
         })?;
+        // The plugins' tools join the core's that the agent names, each for
+        // the agents that its plugin offers it to (ADR-0030, decision 5).
+        let offered = if profile.use_tools {
+            self.plugin_tools_for(agent.name)
+        } else {
+            Vec::new()
+        };
+        let plugin_tools: Vec<(String, String)> = offered
+            .iter()
+            .map(|offered| (offered.tool.name().to_owned(), offered.plugin.clone()))
+            .collect();
         let tools: Vec<Arc<dyn Tool>> = if profile.use_tools {
             agent
                 .tools
                 .iter()
                 .filter_map(|name| self.inner.tools.registry.get(name))
+                .chain(offered.into_iter().map(|offered| offered.tool))
                 .collect()
         } else {
             Vec::new()
@@ -234,12 +305,7 @@ impl Runtime {
                 parameters: with_activity(tool.parameters()),
             })
             .collect();
-        let child_agents: Vec<&'static str> = self
-            .inner
-            .agents
-            .child_agents()
-            .map(|definition| definition.name)
-            .collect();
+        let child_agents = self.child_agent_names();
         // A child never gives tasks of its own (T-22), and an agent without a
         // task budget or anyone to give tasks to is not offered the tools.
         let offers_tasks =
@@ -252,29 +318,15 @@ impl Runtime {
         } else {
             Vec::new()
         };
-        // `delegate_task` is offered while workers are paired, so a master
-        // without workers offers what it offered before (ADR-0027,
-        // decision 2).
-        let workers = if offers_tasks && agent.tools.contains(&tasks::DELEGATE_TASK) {
-            self.workers_now()
-        } else {
-            Vec::new()
-        };
-        if !workers.is_empty() {
-            let names: Vec<String> = workers.iter().map(worker_label).collect();
-            let names: Vec<&str> = names.iter().map(String::as_str).collect();
-            task_definitions.push(tasks::delegate_definition(&names));
+        let mut executors = Vec::new();
+        let mut plugin_sections = self.plugin_sections();
+        if offers_tasks {
+            let offer = self.executor_offer();
+            executors = offer.executors;
+            task_definitions.extend(offer.definitions);
+            plugin_sections.extend(offer.sections);
         }
-        let credential = match profile.credential_ref.clone() {
-            None => None,
-            Some(reference) => {
-                let read = in_vault(&self.inner.vault, move |vault| vault.read(&reference)).await;
-                Some(read.map_err(|error| match error {
-                    VaultError::Missing => RunFailure::CredentialMissing,
-                    VaultError::Unavailable(_) => RunFailure::CredentialStoreUnavailable,
-                })?)
-            }
-        };
+        let credential = self.read_credential(profile).await?;
         Ok(Setup {
             agent,
             adapter,
@@ -293,22 +345,85 @@ impl Runtime {
             definitions,
             task_definitions,
             child_agents,
-            host: None,
-            workers,
+            assigned: None,
+            executors,
+            plugin_tools,
+            plugin_sections,
         })
     }
 
-    /// The setup of a run of a task that the master assigned to this worker
-    /// (ADR-0028, decision 4): the profile that came with the task, whose
-    /// credential the vault holds as the task's lease, the tools that the
-    /// task's mode allows, and the host instructions as they are now.
+    /// The kinds of child agents that `start_task` can start: the core's
+    /// and those of the plugins that are on.
+    fn child_agent_names(&self) -> Vec<&'static str> {
+        let plugin_children: Vec<&'static str> = self
+            .plugin_agents()
+            .into_iter()
+            .filter(|(_plugin, definition)| definition.requester == Requester::Agent)
+            .map(|(_plugin, definition)| definition.name)
+            .collect();
+        self.inner
+            .agents
+            .child_agents()
+            .map(|definition| definition.name)
+            .chain(plugin_children)
+            .collect()
+    }
+
+    /// The tools of the plugins' executors that join the task tools of a run
+    /// that is offered them, each while its executor offers it, with their
+    /// sections, so Mannie without plugins offers what it offered before
+    /// (ADR-0031).
+    fn executor_offer(&self) -> ExecutorOffer {
+        let mut offer = ExecutorOffer {
+            executors: Vec::new(),
+            definitions: Vec::new(),
+            sections: Vec::new(),
+        };
+        for executor in self.executors_now() {
+            let Some(definition) = executor.tool() else {
+                continue;
+            };
+            if let Some(section) = executor.section() {
+                let text = section.text;
+                offer.sections.push(InstructionSection::new(
+                    executor.kind(),
+                    section.position,
+                    move |_context| Some(text.clone()),
+                ));
+            }
+            offer.executors.push(OfferedExecutor {
+                tool: definition.name.clone(),
+                executor,
+            });
+            offer.definitions.push(definition);
+        }
+        offer
+    }
+
+    /// The credential of a profile, which may wait for the owner to unlock
+    /// the credential store, or none for a profile without one.
+    async fn read_credential(&self, profile: &StoredProfile) -> Result<Option<Secret>, RunFailure> {
+        let Some(reference) = profile.credential_ref.clone() else {
+            return Ok(None);
+        };
+        let read = in_vault(&self.inner.vault, move |vault| vault.read(&reference)).await;
+        read.map(Some).map_err(|error| match error {
+            VaultError::Missing => RunFailure::CredentialMissing,
+            VaultError::Unavailable(_) => RunFailure::CredentialStoreUnavailable,
+        })
+    }
+
+    /// The setup of a run of a task that another machine assigned (ADR-0028,
+    /// decision 4): the profile that came with the task, whose credential the
+    /// vault holds under the task's reference, the tools that the task's mode
+    /// allows, and the machine's instructions as they are now.
     pub(crate) async fn assigned_setup(
         &self,
         assigned: &AssignedRun,
         agent: &str,
     ) -> Result<Setup, RunFailure> {
-        let Some(host) = self.worker_host() else {
-            tracing::error!("a run of an assigned task started on the master");
+        let Some(ceiling) = self.machine().ceiling.clone() else {
+            tracing::error!("a run of an assigned task started on a machine without a ceiling");
             return Err(RunFailure::Internal);
         };
         let snapshot = &assigned.profile;
@@ -333,11 +448,10 @@ impl Runtime {
         };
         let mut setup = self.setup_for(&profile, agent, true).await?;
         let narrower = assigned.read_only.then_some(CeilingMode::ReadOnly);
-        let mode = host.ceiling.mode.narrowed_by(narrower);
+        let mode = ceiling.mode.narrowed_by(narrower);
         if mode == CeilingMode::ReadOnly {
             // A read-only task is offered only the tools that read, so the
-            // model rarely meets a refusal (docs/features/workers/
-            // host-and-ceiling.md, the ceiling).
+            // model rarely meets a refusal (ADR-0028, decision 5).
             let (tools, definitions): (Vec<_>, Vec<_>) = setup
                 .tools
                 .into_iter()
@@ -347,9 +461,9 @@ impl Runtime {
             setup.tools = tools;
             setup.definitions = definitions;
         }
-        setup.host = Some(HostSetup {
+        setup.assigned = Some(AssignedSetup {
             mode,
-            instructions: read_host_instructions(host).await,
+            instructions: read_machine_instructions(self.machine().instructions_file.clone()).await,
         });
         Ok(setup)
     }
@@ -385,11 +499,13 @@ impl Runtime {
         setup: &Setup,
         options: CallOptions,
     ) -> Result<Prepared, CallError> {
-        // A worker never receives the owner's global instructions, which
-        // belong to the master's conversations.
-        let owner = match self.worker_host() {
-            Some(_host) => String::new(),
-            None => self.owner_instructions().await?,
+        // An assigned task never receives the owner's global instructions,
+        // which belong to the conversations of the machine that the owner
+        // works on.
+        let owner = if setup.assigned.is_some() {
+            String::new()
+        } else {
+            self.owner_instructions().await?
         };
         let checkpoint = self.current_checkpoint(conversation).await?;
         let covered = checkpoint
@@ -411,14 +527,7 @@ impl Runtime {
             project,
             projects: &projects,
         };
-        let mut definitions: Vec<ToolDefinition> = setup
-            .tools
-            .iter()
-            .zip(&setup.definitions)
-            .filter(|(tool, _definition)| tool.offered(&availability))
-            .map(|(_tool, definition)| definition.clone())
-            .collect();
-        definitions.extend(setup.task_definitions.iter().cloned());
+        let definitions = setup.definitions_for(&availability);
         // Only a run that can move into a project learns the owner's
         // projects; a child works in its parent's workspace.
         let movable: &[_] = if setup.tool(MOVE_TO_PROJECT).is_some() {
@@ -427,7 +536,7 @@ impl Runtime {
             &[]
         };
         let system = &self.inner.tools.system;
-        let instructions = self.inner.instructions.assemble(&InstructionContext {
+        let context = InstructionContext {
             agent: &setup.agent,
             owner_instructions: owner.as_str(),
             checkpoint: checkpoint
@@ -441,9 +550,12 @@ impl Runtime {
                 full_access,
             }),
             offers_tasks: setup.offers_tasks(),
-            host: self.host_context(setup),
-            workers: &setup.workers,
-        });
+            machine: self.machine_context(setup),
+        };
+        let instructions = self
+            .inner
+            .instructions
+            .assemble_with(&context, &setup.plugin_sections);
         let left_out = if options.leave_out_results {
             older_results(&turns)
         } else {
@@ -491,17 +603,15 @@ impl Runtime {
         })
     }
 
-    /// On a worker, the host as its sections show it to the run.
-    fn host_context<'a>(&'a self, setup: &'a Setup) -> Option<HostContext<'a>> {
-        let worker = self.worker_host()?;
-        let host = setup.host.as_ref()?;
-        Some(HostContext {
-            name: &worker.name,
-            purpose: &worker.purpose,
-            facts: &worker.facts,
-            mode: host.mode,
-            allowed_folders: &worker.ceiling.allowed_folders,
-            instructions: host.instructions.as_deref(),
+    /// For a run of an assigned task, what it works under, as the sections
+    /// of its machine show it.
+    fn machine_context<'a>(&'a self, setup: &'a Setup) -> Option<MachineContext<'a>> {
+        let assigned = setup.assigned.as_ref()?;
+        let ceiling = self.machine().ceiling.as_ref()?;
+        Some(MachineContext {
+            mode: assigned.mode,
+            allowed_folders: &ceiling.allowed_folders,
+            instructions: assigned.instructions.as_deref(),
         })
     }
 
@@ -699,33 +809,33 @@ impl Runtime {
 /// The smallest transcript chunk of a summary call.
 const MIN_CHUNK_TOKENS: u32 = 256;
 
-/// The host instructions, read for every task so a change applies from the
-/// next task. A missing file means that there are none; a file that cannot
-/// be read leaves them out, with a warning in the log, and a longer one is
-/// cut.
-async fn read_host_instructions(host: &WorkerHost) -> Option<String> {
-    let path = host.instructions_file.clone()?;
+/// The machine's instructions, read for every assigned task so a change
+/// applies from the next task. A missing file means that there are none; a
+/// file that cannot be read leaves them out, with a warning in the log, and a
+/// longer one is cut.
+async fn read_machine_instructions(path: Option<PathBuf>) -> Option<String> {
+    let path = path?;
     let read = tokio::task::spawn_blocking(move || std::fs::read(&path)).await;
     let bytes = match read {
         Ok(Ok(bytes)) => bytes,
         Ok(Err(error)) if error.kind() == std::io::ErrorKind::NotFound => return None,
         Ok(Err(error)) => {
-            tracing::warn!(%error, "could not read the host instructions; the task runs without them");
+            tracing::warn!(%error, "could not read the machine's instructions; the task runs without them");
             return None;
         }
         Err(error) => {
-            tracing::warn!(%error, "could not read the host instructions; the task runs without them");
+            tracing::warn!(%error, "could not read the machine's instructions; the task runs without them");
             return None;
         }
     };
-    if bytes.len() > MAX_HOST_INSTRUCTIONS_BYTES {
+    if bytes.len() > MAX_MACHINE_INSTRUCTIONS_BYTES {
         tracing::warn!(
             bytes = bytes.len(),
-            limit = MAX_HOST_INSTRUCTIONS_BYTES,
-            "the host instructions are longer than the limit; the rest is left out"
+            limit = MAX_MACHINE_INSTRUCTIONS_BYTES,
+            "the machine's instructions are longer than the limit; the rest is left out"
         );
     }
-    let mut end = bytes.len().min(MAX_HOST_INSTRUCTIONS_BYTES);
+    let mut end = bytes.len().min(MAX_MACHINE_INSTRUCTIONS_BYTES);
     // A cut in the middle of a character is moved back to its start.
     while end > 0 && end < bytes.len() && (bytes[end] & 0b1100_0000) == 0b1000_0000 {
         end -= 1;

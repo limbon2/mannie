@@ -1,185 +1,418 @@
-//! The schema: the ordered list of migrations, the copy of the database
-//! before migrating, and the migration runner (ADR-0009).
+//! The schema: the modules of the database and their migrations, the records
+//! of what each module applied, the copy of the database before migrating,
+//! and the migration runner (ADR-0009, ADR-0030).
 //!
-//! Migrations are forward-only, one logical change each, and owned by the
-//! module whose tables they change. Their SQL lives beside that module. The
-//! schema version of a database is the number of migrations applied to it,
-//! kept in SQLite's `user_version`, so a binary recognizes a database that a
-//! newer binary migrated further.
+//! A module owns the tables that its name prefixes and the forward-only
+//! migrations that create and change them, one logical change each, with
+//! their SQL beside the module. The core's modules are built in, and a
+//! composition root adds the modules of its plugins. The table
+//! `store_modules` records how many migrations of each module a database has,
+//! so a binary recognizes a module that a newer binary migrated further.
+//!
+//! Before M5 the migrations were one ordered list, and SQLite's
+//! `user_version` held how many of them a database had. Each migration of
+//! that list keeps its number as its legacy version, and the first open of
+//! such a database turns `user_version` into records. It also keeps the old
+//! `user_version` in `store_legacy`, so a module that a binary registers
+//! later, such as a plugin's module on a database that the worker converted,
+//! still counts the migrations that the old list applied. From then on
+//! `user_version` is [`MODULE_RECORDS`] plus the sum of the recorded
+//! versions, which binaries up to 0.2.0 refuse as newer than theirs.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use mannie_types::clock::UtcMillis;
-use rusqlite::{Connection, TransactionBehavior};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use time::OffsetDateTime;
 use time::macros::format_description;
 
 use crate::error::{DatabaseError, StoreError};
 
-/// One schema change.
-#[derive(Debug)]
-pub(crate) struct Migration {
-    /// The schema version after this migration: its position in
-    /// [`MIGRATIONS`], counting from 1.
-    pub(crate) version: u32,
-    /// The module that owns the tables it changes.
-    pub(crate) module: &'static str,
-    /// What it does, for logs and errors.
-    pub(crate) description: &'static str,
-    /// The statements, run in one transaction.
-    pub(crate) sql: &'static str,
+/// A module of the database: the owner of the tables that its name
+/// prefixes, with its migrations in order.
+#[derive(Debug, Clone, Copy)]
+pub struct StoreModule {
+    /// The module's name, which prefixes its tables, such as `runtime`.
+    pub name: &'static str,
+    /// The module's migrations in order. A new migration is appended, and an
+    /// applied migration is never edited or removed.
+    pub migrations: &'static [Migration],
 }
 
-/// Every migration, in order. New migrations are appended; an applied
-/// migration is never edited or removed.
-pub(crate) const MIGRATIONS: &[Migration] = &[
-    Migration {
+impl StoreModule {
+    /// The version that the module's migrations lead to.
+    pub fn version(&self) -> u32 {
+        // No module has more migrations than u32 counts.
+        u32::try_from(self.migrations.len()).unwrap_or(u32::MAX)
+    }
+}
+
+/// One schema change of a module.
+#[derive(Debug, Clone, Copy)]
+pub struct Migration {
+    /// The module's version after this migration: its position in the
+    /// module's list, counting from 1.
+    pub version: u32,
+    /// Its number in the single list of migrations before M5, which carries
+    /// over the `user_version` of an older database. Later migrations have
+    /// none.
+    pub legacy_version: Option<u32>,
+    /// What it does, for logs and errors.
+    pub description: &'static str,
+    /// The statements, run in one transaction.
+    pub sql: &'static str,
+}
+
+/// The last version of the single list of migrations before M5.
+pub(crate) const LAST_LEGACY_VERSION: u32 = 22;
+
+/// The `user_version` of a database whose migrations are recorded for each
+/// module, before the sum of the recorded versions is added.
+pub(crate) const MODULE_RECORDS: u32 = 1000;
+
+const SETTINGS: StoreModule = StoreModule {
+    name: "settings",
+    migrations: &[Migration {
         version: 1,
-        module: "settings",
+        legacy_version: Some(1),
         description: "create the settings sections table",
         sql: include_str!("settings/migrations/0001_create_sections.sql"),
-    },
-    Migration {
-        version: 2,
-        module: "runtime",
-        description: "create the conversations, turns and runs tables",
-        sql: include_str!("runtime/migrations/0002_create_conversations.sql"),
-    },
-    Migration {
-        version: 3,
-        module: "runtime",
-        description: "create the parts and provider items tables",
-        sql: include_str!("runtime/migrations/0003_create_parts.sql"),
-    },
-    Migration {
-        version: 4,
-        module: "runtime",
-        description: "create the events table",
-        sql: include_str!("runtime/migrations/0004_create_events.sql"),
-    },
-    Migration {
-        version: 5,
-        module: "runtime",
-        description: "create the checkpoints table",
-        sql: include_str!("runtime/migrations/0005_create_checkpoints.sql"),
-    },
-    Migration {
-        version: 6,
-        module: "provider",
+    }],
+};
+
+const RUNTIME: StoreModule = StoreModule {
+    name: "runtime",
+    migrations: &[
+        Migration {
+            version: 1,
+            legacy_version: Some(2),
+            description: "create the conversations, turns and runs tables",
+            sql: include_str!("runtime/migrations/0002_create_conversations.sql"),
+        },
+        Migration {
+            version: 2,
+            legacy_version: Some(3),
+            description: "create the parts and provider items tables",
+            sql: include_str!("runtime/migrations/0003_create_parts.sql"),
+        },
+        Migration {
+            version: 3,
+            legacy_version: Some(4),
+            description: "create the events table",
+            sql: include_str!("runtime/migrations/0004_create_events.sql"),
+        },
+        Migration {
+            version: 4,
+            legacy_version: Some(5),
+            description: "create the checkpoints table",
+            sql: include_str!("runtime/migrations/0005_create_checkpoints.sql"),
+        },
+        Migration {
+            version: 5,
+            legacy_version: Some(7),
+            description: "mark the runs that a retry keeps",
+            sql: include_str!("runtime/migrations/0007_add_kept_runs.sql"),
+        },
+        Migration {
+            version: 6,
+            legacy_version: Some(8),
+            description: "add the workspace of a conversation",
+            sql: include_str!("runtime/migrations/0008_add_conversation_workspaces.sql"),
+        },
+        Migration {
+            version: 7,
+            legacy_version: Some(9),
+            description: "create the archives of tool outputs",
+            sql: include_str!("runtime/migrations/0009_create_archives.sql"),
+        },
+        Migration {
+            version: 8,
+            legacy_version: Some(12),
+            description: "create the projects table",
+            sql: include_str!("runtime/migrations/0012_create_projects.sql"),
+        },
+        Migration {
+            version: 9,
+            legacy_version: Some(13),
+            description: "add the project of a conversation and turn workspaces into projects",
+            sql: include_str!("runtime/migrations/0013_add_conversation_projects.sql"),
+        },
+        Migration {
+            version: 10,
+            legacy_version: Some(15),
+            description: "add the parent, number and agent of task conversations",
+            sql: include_str!("runtime/migrations/0015_add_task_conversations.sql"),
+        },
+        Migration {
+            version: 11,
+            legacy_version: Some(16),
+            description: "create the tasks table",
+            sql: include_str!("runtime/migrations/0016_create_tasks.sql"),
+        },
+        Migration {
+            version: 12,
+            legacy_version: Some(17),
+            description: "rebuild the tasks table for tasks that run on workers",
+            sql: include_str!("runtime/migrations/0017_rebuild_tasks_for_workers.sql"),
+        },
+        Migration {
+            version: 13,
+            legacy_version: Some(18),
+            description: "add the worker of a task conversation",
+            sql: include_str!("runtime/migrations/0018_add_task_workers.sql"),
+        },
+        Migration {
+            version: 14,
+            legacy_version: Some(21),
+            description: "add the full access of a conversation",
+            sql: include_str!("runtime/migrations/0021_add_conversation_full_access.sql"),
+        },
+        Migration {
+            version: 15,
+            legacy_version: None,
+            description: "add the executor of a task that a plugin runs",
+            sql: include_str!("runtime/migrations/0023_add_task_executors.sql"),
+        },
+        Migration {
+            version: 16,
+            legacy_version: None,
+            description: "add the executor of a task conversation",
+            sql: include_str!("runtime/migrations/0024_add_conversation_executors.sql"),
+        },
+        Migration {
+            version: 17,
+            legacy_version: None,
+            description: "name the executor in the task parts of workers' tasks",
+            sql: include_str!("runtime/migrations/0025_name_executors_in_task_parts.sql"),
+        },
+        Migration {
+            version: 18,
+            legacy_version: None,
+            description: "create the outbox of the executors' deletions",
+            sql: include_str!("runtime/migrations/0026_create_executor_outbox.sql"),
+        },
+        Migration {
+            version: 19,
+            legacy_version: None,
+            description: "keep the texts of workers' refusals in their task parts",
+            sql: include_str!("runtime/migrations/0027_keep_worker_refusal_texts.sql"),
+        },
+    ],
+};
+
+const PROVIDER: StoreModule = StoreModule {
+    name: "provider",
+    migrations: &[Migration {
+        version: 1,
+        legacy_version: Some(6),
         description: "create the provider profiles table",
         sql: include_str!("provider/migrations/0006_create_profiles.sql"),
-    },
-    Migration {
-        version: 7,
-        module: "runtime",
-        description: "mark the runs that a retry keeps",
-        sql: include_str!("runtime/migrations/0007_add_kept_runs.sql"),
-    },
-    Migration {
-        version: 8,
-        module: "runtime",
-        description: "add the workspace of a conversation",
-        sql: include_str!("runtime/migrations/0008_add_conversation_workspaces.sql"),
-    },
-    Migration {
-        version: 9,
-        module: "runtime",
-        description: "create the archives of tool outputs",
-        sql: include_str!("runtime/migrations/0009_create_archives.sql"),
-    },
-    Migration {
-        version: 10,
-        module: "tools",
-        description: "create the grants table",
-        sql: include_str!("tools/migrations/0010_create_grants.sql"),
-    },
-    Migration {
-        version: 11,
-        module: "tools",
-        description: "create the command rules table",
-        sql: include_str!("tools/migrations/0011_create_rules.sql"),
-    },
-    Migration {
-        version: 12,
-        module: "runtime",
-        description: "create the projects table",
-        sql: include_str!("runtime/migrations/0012_create_projects.sql"),
-    },
-    Migration {
-        version: 13,
-        module: "runtime",
-        description: "add the project of a conversation and turn workspaces into projects",
-        sql: include_str!("runtime/migrations/0013_add_conversation_projects.sql"),
-    },
-    Migration {
-        version: 14,
-        module: "tools",
-        description: "create the shared grants table",
-        sql: include_str!("tools/migrations/0014_create_shared_grants.sql"),
-    },
-    Migration {
-        version: 15,
-        module: "runtime",
-        description: "add the parent, number and agent of task conversations",
-        sql: include_str!("runtime/migrations/0015_add_task_conversations.sql"),
-    },
-    Migration {
-        version: 16,
-        module: "runtime",
-        description: "create the tasks table",
-        sql: include_str!("runtime/migrations/0016_create_tasks.sql"),
-    },
-    Migration {
-        version: 17,
-        module: "runtime",
-        description: "rebuild the tasks table for tasks that run on workers",
-        sql: include_str!("runtime/migrations/0017_rebuild_tasks_for_workers.sql"),
-    },
-    Migration {
-        version: 18,
-        module: "runtime",
-        description: "add the worker of a task conversation",
-        sql: include_str!("runtime/migrations/0018_add_task_workers.sql"),
-    },
-    Migration {
-        version: 19,
-        module: "workers",
-        description: "create the paired workers table",
-        sql: include_str!("workers/migrations/0019_create_paired_workers.sql"),
-    },
-    Migration {
-        version: 20,
-        module: "workers",
-        description: "create the table of deletions that wait for a worker",
-        sql: include_str!("workers/migrations/0020_create_worker_deletions.sql"),
-    },
-    Migration {
-        version: 21,
-        module: "runtime",
-        description: "add the full access of a conversation",
-        sql: include_str!("runtime/migrations/0021_add_conversation_full_access.sql"),
-    },
-    Migration {
-        version: 22,
-        module: "workers",
-        description: "add the name that the owner gives a worker",
-        sql: include_str!("workers/migrations/0022_add_worker_chosen_names.sql"),
-    },
-];
+    }],
+};
+
+const TOOLS: StoreModule = StoreModule {
+    name: "tools",
+    migrations: &[
+        Migration {
+            version: 1,
+            legacy_version: Some(10),
+            description: "create the grants table",
+            sql: include_str!("tools/migrations/0010_create_grants.sql"),
+        },
+        Migration {
+            version: 2,
+            legacy_version: Some(11),
+            description: "create the command rules table",
+            sql: include_str!("tools/migrations/0011_create_rules.sql"),
+        },
+        Migration {
+            version: 3,
+            legacy_version: Some(14),
+            description: "create the shared grants table",
+            sql: include_str!("tools/migrations/0014_create_shared_grants.sql"),
+        },
+    ],
+};
+
+/// The built-in modules, in the order that a new database applies them: the
+/// tools' tables refer to the runtime's. The modules of plugins follow them,
+/// so a plugin's migration finds the core's tables up to date. Migrations 19,
+/// 20 and 22 of the single list before M5 belong to the Workers plugin's
+/// module now (ADR-0031, decision 8).
+pub(crate) const CORE_MODULES: [StoreModule; 4] = [SETTINGS, RUNTIME, PROVIDER, TOOLS];
+
+/// The records of a database: each module's name and how many of its
+/// migrations the database has. Modules that this binary does not know keep
+/// their records, and their tables stay untouched.
+pub(crate) type Records = BTreeMap<String, u32>;
+
+const CREATE_RECORDS: &str = "CREATE TABLE store_modules (\
+     module TEXT PRIMARY KEY, \
+     version INTEGER NOT NULL CHECK (version >= 0), \
+     migrated_at INTEGER NOT NULL\
+     ) STRICT, WITHOUT ROWID; \
+     CREATE TABLE store_legacy (\
+     id INTEGER PRIMARY KEY CHECK (id = 1), \
+     user_version INTEGER NOT NULL CHECK (user_version >= 0)\
+     ) STRICT";
+const HAS_RECORDS: &str =
+    "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'store_modules'";
+const SELECT_RECORDS: &str = "SELECT module, version FROM store_modules";
+const INSERT_LEGACY: &str = "INSERT INTO store_legacy (id, user_version) VALUES (1, ?1)";
+const SELECT_LEGACY: &str = "SELECT user_version FROM store_legacy WHERE id = 1";
+const UPSERT_RECORD: &str = "INSERT INTO store_modules (module, version, migrated_at) \
+     VALUES (?1, ?2, ?3) \
+     ON CONFLICT (module) DO UPDATE SET version = excluded.version, \
+     migrated_at = excluded.migrated_at";
+
+/// What a database holds about its schema when it is opened.
+#[derive(Debug)]
+pub(crate) struct Schema {
+    /// SQLite's `user_version`.
+    pub(crate) user_version: u32,
+    /// The records, for a database that has them.
+    pub(crate) records: Option<Records>,
+    /// The `user_version` that a database with records had before M5, or 0
+    /// for one that M5 created.
+    pub(crate) legacy_version: u32,
+}
+
+impl Schema {
+    /// Reads `user_version` and the records of an open database.
+    pub(crate) fn read(connection: &Connection) -> rusqlite::Result<Self> {
+        let user_version: u32 =
+            connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        let has_records = connection
+            .query_row(HAS_RECORDS, [], |_| Ok(()))
+            .optional()?
+            .is_some();
+        if user_version < MODULE_RECORDS || !has_records {
+            return Ok(Self {
+                user_version,
+                records: None,
+                legacy_version: user_version,
+            });
+        }
+        let mut select = connection.prepare(SELECT_RECORDS)?;
+        let rows = select.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        let records = rows.collect::<rusqlite::Result<Records>>()?;
+        let legacy_version = connection
+            .query_row(SELECT_LEGACY, [], |row| row.get(0))
+            .optional()?
+            .unwrap_or(0);
+        Ok(Self {
+            user_version,
+            records: Some(records),
+            legacy_version,
+        })
+    }
+
+    /// Refuses a database that a newer binary migrated further than this one
+    /// can: a known module with a newer version, a single list of migrations
+    /// longer than the one before M5, or a `user_version` without records.
+    pub(crate) fn refuse_newer(
+        &self,
+        path: &Path,
+        modules: &[StoreModule],
+    ) -> Result<(), StoreError> {
+        let too_new = |database: u32, supported: u32| StoreError::SchemaTooNew {
+            path: path.to_path_buf(),
+            database,
+            supported,
+        };
+        match &self.records {
+            Some(records) => {
+                for module in modules {
+                    let recorded = records.get(module.name).copied().unwrap_or(0);
+                    if recorded > module.version() {
+                        tracing::error!(
+                            module = module.name,
+                            database = recorded,
+                            supported = module.version(),
+                            "refused a database written by a newer version of Mannie"
+                        );
+                        return Err(StoreError::ModuleTooNew {
+                            path: path.to_path_buf(),
+                            module: module.name.to_owned(),
+                            database: recorded,
+                            supported: module.version(),
+                        });
+                    }
+                }
+                Ok(())
+            }
+            None if self.user_version > LAST_LEGACY_VERSION => {
+                tracing::error!(
+                    database = self.user_version,
+                    "refused a database written by a newer version of Mannie"
+                );
+                Err(too_new(self.user_version, LAST_LEGACY_VERSION))
+            }
+            None => Ok(()),
+        }
+    }
+
+    /// The records as they stand: the stored ones, and for each module
+    /// without one, the migrations whose legacy version the database's
+    /// `user_version` before M5 covers.
+    pub(crate) fn current_records(&self, modules: &[StoreModule]) -> Records {
+        let mut records = self.records.clone().unwrap_or_default();
+        for module in modules {
+            if !records.contains_key(module.name) {
+                records.insert(module.name.to_owned(), self.carried_over(module));
+            }
+        }
+        records
+    }
+
+    /// How many of a module's migrations the single list before M5 applied.
+    fn carried_over(&self, module: &StoreModule) -> u32 {
+        let applied = module
+            .migrations
+            .iter()
+            .take_while(|migration| {
+                migration
+                    .legacy_version
+                    .is_some_and(|legacy| legacy <= self.legacy_version)
+            })
+            .count();
+        u32::try_from(applied).unwrap_or(u32::MAX)
+    }
+
+    /// The modules that have no record yet.
+    fn unrecorded<'a>(&self, modules: &'a [StoreModule]) -> Vec<&'a StoreModule> {
+        modules
+            .iter()
+            .filter(|module| {
+                self.records
+                    .as_ref()
+                    .is_none_or(|records| !records.contains_key(module.name))
+            })
+            .collect()
+    }
+
+    /// Whether opening changes the database: it has no records yet, a module
+    /// has no record, or a module has migrations that it lacks.
+    pub(crate) fn needs_changes(&self, modules: &[StoreModule]) -> bool {
+        let records = self.current_records(modules);
+        !self.unrecorded(modules).is_empty()
+            || modules
+                .iter()
+                .any(|module| records.get(module.name).copied().unwrap_or(0) < module.version())
+    }
+}
+
+/// The `user_version` that records with these versions stand for.
+fn records_user_version(records: &Records) -> u32 {
+    records
+        .values()
+        .fold(MODULE_RECORDS, |sum, version| sum.saturating_add(*version))
+}
 
 /// How many backups of earlier schema versions the store keeps.
 const KEPT_BACKUPS: usize = 3;
-
-/// The schema version that a list of migrations leads to.
-pub(crate) fn supported_version(migrations: &[Migration]) -> u32 {
-    u32::try_from(migrations.len()).expect("the number of migrations fits in u32")
-}
-
-/// Reads the schema version of an open database.
-pub(crate) fn schema_version(connection: &Connection) -> rusqlite::Result<u32> {
-    connection.pragma_query_value(None, "user_version", |row| row.get(0))
-}
 
 /// Copies the database before its migrations run, so the owner can return to
 /// the earlier version. `VACUUM INTO` writes a consistent snapshot even while
@@ -261,60 +494,190 @@ fn remove_old_backups(backup_directory: &Path, file_name: &str) {
     }
 }
 
-/// Applies every migration newer than the database's schema version, each in
-/// its own transaction, which also records the new version.
+/// Brings the database up to date. A database without records first gets
+/// them, in one transaction, from its `user_version`, and so does a module
+/// without a record from the `user_version` before M5. Then each module, in
+/// the given order, applies the migrations that it lacks, each in its own
+/// transaction, which also records the module's new version and the new
+/// `user_version`.
 pub(crate) fn migrate(
     connection: &mut Connection,
-    migrations: &[Migration],
-    from_version: u32,
+    schema: &Schema,
+    modules: &[StoreModule],
+    now: UtcMillis,
 ) -> Result<(), StoreError> {
-    for migration in migrations
-        .iter()
-        .filter(|migration| migration.version > from_version)
-    {
-        let _span = tracing::info_span!(
-            "migration",
-            version = migration.version,
-            module = migration.module,
-            description = migration.description
-        )
-        .entered();
-        let failed = |source: rusqlite::Error| StoreError::Migration {
-            version: migration.version,
-            description: migration.description,
+    let mut records = schema.current_records(modules);
+    let unrecorded = schema.unrecorded(modules);
+    if !unrecorded.is_empty() {
+        let _span = tracing::info_span!("record_modules", from = schema.user_version).entered();
+        let failed = |source: rusqlite::Error| StoreError::Records {
             source: DatabaseError(source),
         };
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(failed)?;
-        transaction.execute_batch(migration.sql).map_err(failed)?;
+        if schema.records.is_none() {
+            transaction.execute_batch(CREATE_RECORDS).map_err(failed)?;
+            transaction
+                .execute(INSERT_LEGACY, params![schema.legacy_version])
+                .map_err(failed)?;
+        }
+        for module in &unrecorded {
+            let version = records.get(module.name).copied().unwrap_or(0);
+            transaction
+                .execute(
+                    UPSERT_RECORD,
+                    params![module.name, version, now.as_millis()],
+                )
+                .map_err(failed)?;
+        }
         transaction
-            .pragma_update(None, "user_version", migration.version)
+            .pragma_update(None, "user_version", records_user_version(&records))
             .map_err(failed)?;
         transaction.commit().map_err(failed)?;
-        tracing::info!("applied the migration");
+        tracing::info!("recorded the version of each module");
+    }
+    for module in modules {
+        let applied = records.get(module.name).copied().unwrap_or(0);
+        for migration in module
+            .migrations
+            .iter()
+            .filter(|migration| migration.version > applied)
+        {
+            let _span = tracing::info_span!(
+                "migration",
+                module = module.name,
+                version = migration.version,
+                description = migration.description
+            )
+            .entered();
+            let failed = |source: rusqlite::Error| StoreError::Migration {
+                module: module.name,
+                version: migration.version,
+                description: migration.description,
+                source: DatabaseError(source),
+            };
+            records.insert(module.name.to_owned(), migration.version);
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(failed)?;
+            transaction.execute_batch(migration.sql).map_err(failed)?;
+            transaction
+                .execute(
+                    UPSERT_RECORD,
+                    params![module.name, migration.version, now.as_millis()],
+                )
+                .map_err(failed)?;
+            transaction
+                .pragma_update(None, "user_version", records_user_version(&records))
+                .map_err(failed)?;
+            transaction.commit().map_err(failed)?;
+            tracing::info!("applied the migration");
+        }
     }
     Ok(())
 }
 
+/// Applies the migrations of `modules` that have a legacy version up to
+/// `version`, in the order of the single list before M5, and sets
+/// `user_version` to `version`, as a binary up to 0.2.0 left it. Tests use
+/// it to stand in for such a binary; without the modules of plugins, the
+/// database lacks their tables.
+#[cfg(any(test, feature = "testing"))]
+pub(crate) fn migrate_as_before_m5(
+    connection: &mut Connection,
+    modules: &[StoreModule],
+    version: u32,
+) -> rusqlite::Result<()> {
+    let mut migrations: Vec<(u32, &Migration)> = modules
+        .iter()
+        .flat_map(|module| module.migrations)
+        .filter_map(|migration| {
+            migration
+                .legacy_version
+                .filter(|legacy| *legacy <= version)
+                .map(|legacy| (legacy, migration))
+        })
+        .collect();
+    migrations.sort_by_key(|(legacy, _)| *legacy);
+    for (legacy, migration) in migrations {
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute_batch(migration.sql)?;
+        transaction.pragma_update(None, "user_version", legacy)?;
+        transaction.commit()?;
+    }
+    connection.pragma_update(None, "user_version", version)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{MIGRATIONS, backup_timestamp, supported_version};
+    use std::collections::BTreeSet;
+
+    use super::{CORE_MODULES, LAST_LEGACY_VERSION, StoreModule, backup_timestamp};
     use mannie_types::clock::UtcMillis;
 
+    fn every_module() -> Vec<StoreModule> {
+        CORE_MODULES.to_vec()
+    }
+
     #[test]
-    fn migration_versions_count_from_one_without_gaps() {
-        for (index, migration) in MIGRATIONS.iter().enumerate() {
-            assert_eq!(
-                migration.version as usize,
-                index + 1,
-                "{}",
-                migration.description
-            );
-            assert_ne!(migration.module, "");
-            assert_ne!(migration.sql.trim(), "");
+    fn each_module_counts_its_versions_from_one_without_gaps() {
+        for module in every_module() {
+            assert_ne!(module.name, "");
+            for (index, migration) in module.migrations.iter().enumerate() {
+                assert_eq!(
+                    migration.version as usize,
+                    index + 1,
+                    "{}: {}",
+                    module.name,
+                    migration.description
+                );
+                assert_ne!(migration.sql.trim(), "");
+            }
+            assert_eq!(module.version() as usize, module.migrations.len());
         }
-        assert_eq!(supported_version(MIGRATIONS) as usize, MIGRATIONS.len());
+    }
+
+    #[test]
+    fn the_core_covers_its_part_of_the_list_before_m5_once_each() {
+        let mut seen = BTreeSet::new();
+        for module in every_module() {
+            let legacy: Vec<u32> = module
+                .migrations
+                .iter()
+                .map_while(|migration| migration.legacy_version)
+                .collect();
+            assert!(
+                legacy.windows(2).all(|pair| pair[0] < pair[1]),
+                "{}: legacy versions grow",
+                module.name
+            );
+            let without_legacy = module.migrations.len() - legacy.len();
+            assert!(
+                module.migrations[legacy.len()..]
+                    .iter()
+                    .all(|migration| migration.legacy_version.is_none()),
+                "{}: only the first migrations have legacy versions ({without_legacy} later ones)",
+                module.name
+            );
+            for version in legacy {
+                assert!(
+                    seen.insert(version),
+                    "legacy version {version} appears twice"
+                );
+            }
+        }
+        // The Workers plugin's module holds the rest of the list, and its
+        // tests check them (ADR-0031, decision 8).
+        let plugins: BTreeSet<u32> = [19, 20, 22].into();
+        let list: BTreeSet<u32> = (1..=LAST_LEGACY_VERSION).collect();
+        assert_eq!(seen, &list - &plugins);
+    }
+
+    #[test]
+    fn module_names_are_unique() {
+        let names: BTreeSet<&str> = every_module().iter().map(|module| module.name).collect();
+        assert_eq!(names.len(), every_module().len());
     }
 
     #[test]

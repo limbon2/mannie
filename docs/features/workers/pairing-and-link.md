@@ -1,12 +1,12 @@
 # Pairing and the link
 
-|              |                                                                                                                                                                                                                                                                       |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status       | Building                                                                                                                                                                                                                                                              |
-| Milestone    | M4                                                                                                                                                                                                                                                                    |
-| Last updated | 2026-10-16                                                                                                                                                                                                                                                            |
-| Part of      | [Workers](README.md)                                                                                                                                                                                                                                                  |
-| Related      | [ADR-0016](../../adr/0016-link-machines-over-pinned-mtls-grpc.md), [Orchestration](../../architecture/orchestration.md#8-pairing), [Security](../../architecture/security.md), [Compatibility and updates](compatibility-and-updates.md), [Delegation](delegation.md) |
+|              |                                                                                                                                                                                                                                                        |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Status       | Building                                                                                                                                                                                                                                               |
+| Milestone    | M4                                                                                                                                                                                                                                                     |
+| Last updated | 2026-10-16                                                                                                                                                                                                                                             |
+| Part of      | [Workers](README.md)                                                                                                                                                                                                                                   |
+| Related      | [ADR-0016](../../adr/0016-link-machines-over-pinned-mtls-grpc.md), [Workers architecture](architecture.md#pairing), [Security](../../architecture/security.md), [Compatibility and updates](compatibility-and-updates.md), [Delegation](delegation.md) |
 
 ## Design
 
@@ -52,7 +52,7 @@ sequenceDiagram
 
 ### The services
 
-One protobuf package for each service, under `proto/mannie/link/<service>/v1/`, each with its own feature level ([compatibility](compatibility-and-updates.md)):
+One protobuf package for each service, under `plugins/workers/proto/mannie/link/<service>/v1/`, each with its own feature level ([compatibility](compatibility-and-updates.md)):
 
 | Package                    | Calls                                                                                                         | Level |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------- | ----- |
@@ -101,9 +101,9 @@ Documents of the runtime, such as a task's state, an update of a conversation or
 
 ## Acceptance
 
-- Pairing refuses a wrong code, an expired code, a code used before, a sixth attempt and a key substituted by a relay in the middle, and both sides pin each other's keys (V6; `crates/mannie-link/tests/pairing.rs`).
+- Pairing refuses a wrong code, an expired code, a code used before, a sixth attempt and a key substituted by a relay in the middle, and both sides pin each other's keys (V6; `plugins/workers/crates/mannie-workers/tests/pairing.rs`).
 - A paired worker refuses any other master, and an unpaired worker serves only pairing (link tests).
-- A worker that presents another key than the pinned one shows `key_changed` and gets no work (`crates/mannie-link/tests/pairing.rs`).
-- A handshake that stalls is cut after its time, and holds its place among the 8 only until then (`crates/mannie-link/src/tls.rs`).
+- A worker that presents another key than the pinned one shows `key_changed` and gets no work (`plugins/workers/crates/mannie-workers/tests/pairing.rs`).
+- A handshake that stalls is cut after its time, and holds its place among the 8 only until then (`plugins/workers/crates/mannie-link/src/tls.rs`).
 - A link that drops and comes back follows the tasks again, and the master learns every ending that happened meanwhile (link tests).
 - Removing a reachable worker unpairs it, and `pair --reset` lets a worker pair with another master (link tests and the smoke tests).

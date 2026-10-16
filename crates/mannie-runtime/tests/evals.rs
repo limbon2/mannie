@@ -604,8 +604,7 @@ async fn start(
         agents: AgentRegistry::with_builtin(),
         instructions: InstructionRegistry::with_builtin(),
         tools: test_tools(data),
-        machine: mannie_runtime::Machine::Master,
-        delegation: None,
+        machine: mannie_runtime::MachineSettings::default(),
     };
     let runtime = Runtime::start(deps, config)
         .await

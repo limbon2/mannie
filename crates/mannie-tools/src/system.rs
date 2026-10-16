@@ -1,44 +1,10 @@
 //! What the tools tell the model about the machine: the operating system and
-//! the shell that runs commands, and what a worker reports about its host
-//! (docs/features/workers/host-and-ceiling.md, host facts).
+//! the shell that runs commands. The host's name and the programs on `PATH`
+//! are there for a composition root that describes its machine, such as the
+//! Workers plugin's service (ADR-0031, decision 2).
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-
-use mannie_types::workers::HostFacts;
-
-/// The shells that a worker reports besides the one that runs commands, when
-/// they are on `PATH`.
-const OTHER_SHELLS: [&str; 3] = ["pwsh", "bash", "zsh"];
-
-/// The programs that a worker reports when they are on `PATH`. The list is
-/// fixed, so the facts say what the host has and never what it holds.
-const REPORTED_TOOLS: [&str; 24] = [
-    "git",
-    "python3",
-    "python",
-    "node",
-    "npm",
-    "cargo",
-    "go",
-    "java",
-    "make",
-    "cmake",
-    "docker",
-    "podman",
-    "kubectl",
-    "systemctl",
-    "service",
-    "apt",
-    "dnf",
-    "pkg",
-    "zfs",
-    "jexec",
-    "winget",
-    "choco",
-    "psql",
-    "nginx",
-];
 
 /// The facts that `system_info` reports.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,27 +34,24 @@ impl SystemFacts {
             shell: crate::supervisor::shell(),
         }
     }
+}
 
-    /// What a worker reports about its host: these facts, the host's name,
-    /// its shells with the one that runs commands first, and which programs
-    /// of a fixed list are on `PATH`.
-    pub fn host_facts(&self) -> HostFacts {
-        let path = std::env::var_os("PATH").unwrap_or_default();
-        let mut shells: Vec<String> = self.shell.iter().map(|shell| shell.name.clone()).collect();
-        shells.extend(programs_on_path(&path, &OTHER_SHELLS));
-        HostFacts {
-            system: self.system.clone(),
-            hostname: platform::hostname(),
-            shells,
-            tools: programs_on_path(&path, &REPORTED_TOOLS),
-        }
-    }
+/// The machine's name, or an empty name where the system does not say it.
+pub fn hostname() -> String {
+    platform::hostname()
+}
+
+/// The names of `programs` that a folder of `PATH` holds as a program, in
+/// the order of `programs`.
+pub fn programs_on_path(programs: &[&str]) -> Vec<String> {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    programs_in(&path, programs)
 }
 
 /// The names of `programs` that a folder of `path` holds as a program, in the
 /// order of `programs`. Relative folders are skipped: they would name
-/// whatever folder the worker happens to run in.
-fn programs_on_path(path: &OsStr, programs: &[&str]) -> Vec<String> {
+/// whatever folder the process happens to run in.
+fn programs_in(path: &OsStr, programs: &[&str]) -> Vec<String> {
     let folders: Vec<PathBuf> = std::env::split_paths(path)
         .filter(|folder| folder.is_absolute())
         .collect();
@@ -237,7 +200,7 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use super::{SystemFacts, programs_on_path};
+    use super::{hostname, programs_in};
 
     /// Places a program named `name` in `folder`, as the system would find
     /// it.
@@ -268,7 +231,7 @@ mod tests {
         ])
         .unwrap();
 
-        let found = programs_on_path(&path, &["git", "docker", "make", "nginx"]);
+        let found = programs_in(&path, &["git", "docker", "make", "nginx"]);
 
         assert_eq!(found, ["git", "make"]);
     }
@@ -282,27 +245,13 @@ mod tests {
         fs::write(&file, b"").unwrap();
         fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
 
-        let found = programs_on_path(folder.path().as_os_str(), &["make"]);
+        let found = programs_in(folder.path().as_os_str(), &["make"]);
 
         assert_eq!(found, Vec::<String>::new());
     }
 
     #[test]
-    fn host_facts_name_the_host_and_the_shell_that_runs_commands_first() {
-        let system = SystemFacts::detect();
-
-        let facts = system.host_facts();
-
-        assert_eq!(facts.system, system.system);
-        assert_ne!(facts.hostname, "");
-        if let Some(shell) = &system.shell {
-            assert_eq!(facts.shells.first(), Some(&shell.name));
-        }
-        assert!(
-            facts
-                .tools
-                .iter()
-                .all(|tool| super::REPORTED_TOOLS.contains(&tool.as_str()))
-        );
+    fn the_machine_has_a_name() {
+        assert_ne!(hostname(), "");
     }
 }

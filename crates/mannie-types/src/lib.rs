@@ -7,12 +7,14 @@
 //! derive `specta::Type`, and the desktop app generates the TypeScript bindings
 //! from them (ADR-0007).
 
+pub mod ceiling;
 pub mod chat;
 pub mod clock;
 pub mod ids;
 pub mod interface;
 pub mod ipc;
 pub mod links;
+pub mod plugins;
 pub mod projects;
 pub mod provider;
 pub mod run;
@@ -25,4 +27,3 @@ pub mod transcript;
 #[cfg(feature = "validation")]
 pub mod validation;
 pub mod window;
-pub mod workers;

@@ -8,6 +8,8 @@
   import { getShellSlots } from '#lib/state/shell-slots.svelte.js';
   import { activeView } from '#lib/utils/views.js';
 
+  import PluginOffState from './PluginOffState.svelte';
+
   const slots = getShellSlots();
 
   const active = $derived(activeView(slots.views, page.url));
@@ -15,6 +17,8 @@
 
 {#if active.kind === 'view'}
   <active.view.component />
+{:else if active.kind === 'plugin_off'}
+  <PluginOffState plugin={active.plugin} />
 {:else}
   <Empty.Root class="flex-1">
     <Empty.Header>

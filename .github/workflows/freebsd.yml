@@ -8,12 +8,10 @@ name: FreeBSD
 on:
   pull_request:
     paths:
-      - apps/worker/**
-      - crates/mannie-link/**
       - crates/mannie-runtime/**
       - crates/mannie-tools/src/supervisor/**
       - crates/mannie-tools/src/supervisor.rs
-      - proto/**
+      - plugins/workers/**
       - scripts/ci/worker-service-unix.sh
       - .github/workflows/freebsd.yml
       - .github/workflows/nightly.yml

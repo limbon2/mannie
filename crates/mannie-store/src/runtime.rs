@@ -19,10 +19,9 @@ mod tasks;
 use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{
     ArchiveId, CheckpointId, ConversationId, PartId, ProfileId, ProjectId, RunId, TaskId, TurnId,
-    WorkerId,
 };
 use mannie_types::run::{RunActivity, RunFailure, RunOutcome, RunState};
-use mannie_types::tasks::{TaskPartDocument, TaskState, TaskWorker};
+use mannie_types::tasks::{TaskExecutorRef, TaskPartDocument, TaskState};
 use mannie_types::tools::ToolCallDocument;
 use mannie_types::transcript::{
     ContextUsage, ConversationEvent, ConversationSummary, PartKind, PartState,
@@ -35,7 +34,7 @@ pub use archives::StoredArchive;
 pub use projects::{AddedProject, ConversationList, ProjectDeletion};
 pub use reads::{EventsAfter, KeptRun, ModelPart, ModelTurn, StoredCheckpoint};
 pub use recovery::{Recovered, UncertainCall};
-pub use tasks::{NewDelegatedTask, Submission};
+pub use tasks::{NewExecutorTask, OutboxEntry};
 
 /// The version of the JSON documents this module writes.
 const DOCUMENT_VERSION: u32 = 1;
@@ -66,10 +65,9 @@ pub struct TaskOrigin {
     pub number: u32,
     /// The name of the child's agent definition.
     pub agent: String,
-    /// The worker that runs the conversation's tasks, for the conversation
-    /// of a delegated task on the master (docs/features/workers/
-    /// delegation.md).
-    pub worker: Option<TaskWorker>,
+    /// The executor that serves the conversation, for the conversation of a
+    /// task that a plugin's executor runs (ADR-0031, decision 6).
+    pub executor: Option<TaskExecutorRef>,
 }
 
 /// A task to store with the turn that works on it.
@@ -113,8 +111,8 @@ pub struct StoredTask {
     /// The parent's part that assigned the task, or `None` for a task that
     /// another machine assigned.
     pub part_id: Option<PartId>,
-    /// The turn that works on it, or `None` for a task that runs on a
-    /// worker.
+    /// The turn that works on it, or `None` for a task that an executor
+    /// runs.
     pub turn_id: Option<TurnId>,
     /// Whether it continues an earlier task of the same child.
     pub follow_up: bool,
@@ -128,23 +126,30 @@ pub struct StoredTask {
     pub created_at: UtcMillis,
     /// When it ended.
     pub ended_at: Option<UtcMillis>,
-    /// On the master: the worker that runs the task.
-    pub worker_id: Option<WorkerId>,
-    /// On the master: the version of the worker's state that the master
-    /// stored last.
-    pub remote_version: Option<u64>,
-    /// On the master: whether the worker stored the task.
-    pub submission: Option<Submission>,
-    /// On the master: when the owner or the parent's run asked to cancel the
-    /// task, while the cancel waits for its worker.
-    pub cancel_requested_at: Option<UtcMillis>,
-    /// On a worker: what the master assigned, as the runtime's JSON
+    /// For a task that a plugin's executor runs: the executor, the target,
+    /// the version of the latest state that the executor published and its
     /// document.
+    pub executor: Option<TaskExecution>,
+    /// For a task that another machine assigned: what it assigned, as the
+    /// runtime's JSON document.
     pub assignment: Option<String>,
-    /// On a worker: the version of the task's latest stored state.
+    /// For a task that another machine assigned: the version of the task's
+    /// latest stored state.
     pub state_version: u64,
-    /// On the master: the provider profile that a delegated task uses.
-    pub profile_id: Option<ProfileId>,
+}
+
+/// The executor of a stored task (ADR-0031, decision 7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskExecution {
+    /// The executor's kind: its plugin's ID.
+    pub kind: String,
+    /// The target that runs the task, as the executor names it.
+    pub target: String,
+    /// The version of the latest state that the executor published, which a
+    /// state must exceed to change the task.
+    pub version: u64,
+    /// The executor's own document, which the core keeps as it is.
+    pub document: Option<String>,
 }
 
 /// A child of a conversation: its task conversation and its latest task.
@@ -158,8 +163,9 @@ pub struct StoredChild {
     pub agent: String,
     /// The title of the child's conversation: its first task's title.
     pub title: String,
-    /// The worker that runs the child's tasks, or `None` for a child agent.
-    pub worker: Option<TaskWorker>,
+    /// The executor that runs the child's tasks, or `None` for a child
+    /// agent.
+    pub executor: Option<TaskExecutorRef>,
     /// The child's latest task.
     pub latest: Option<StoredTask>,
 }

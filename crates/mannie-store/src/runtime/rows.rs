@@ -4,10 +4,10 @@
 
 use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{
-    CheckpointId, ConversationId, PartId, ProfileId, ProjectId, RunId, TurnId, WorkerId,
+    CheckpointId, ConversationId, PartId, ProfileId, ProjectId, RunId, TurnId,
 };
 use mannie_types::run::{RunActivity, RunFailure, RunOutcome, RunState, RunView};
-use mannie_types::tasks::{TaskConversation, TaskPartDocument, TaskWorker};
+use mannie_types::tasks::{TaskConversation, TaskPartDocument};
 use mannie_types::tools::ToolCallDocument;
 use mannie_types::transcript::{
     Audience, CheckpointView, ContextUsage, ConversationEvent, ConversationSummary, PartContent,
@@ -34,7 +34,8 @@ macro_rules! summary_columns {
          AND r.state IN ('queued', 'running') \
          AND json_extract(r.activity, '$.kind') = 'awaiting_approval'), \
          c.workspace, c.project_id, c.parent_conversation_id, c.task_number, c.task_agent, \
-         c.task_worker_id, c.task_worker_name, c.full_access"
+         c.task_executor_kind, c.task_executor_target, c.task_executor_name, \
+         c.task_executor_noun, c.full_access"
     };
 }
 pub(crate) use summary_columns;
@@ -412,8 +413,10 @@ pub(crate) struct RawSummary {
     parent_conversation_id: Option<String>,
     task_number: Option<i64>,
     task_agent: Option<String>,
-    task_worker_id: Option<String>,
-    task_worker_name: Option<String>,
+    task_executor_kind: Option<String>,
+    task_executor_target: Option<String>,
+    task_executor_name: Option<String>,
+    task_executor_noun: Option<String>,
     full_access: bool,
 }
 
@@ -433,9 +436,11 @@ pub(crate) fn summary_from_row(row: &Row<'_>) -> rusqlite::Result<RawSummary> {
         parent_conversation_id: row.get(10)?,
         task_number: row.get(11)?,
         task_agent: row.get(12)?,
-        task_worker_id: row.get(13)?,
-        task_worker_name: row.get(14)?,
-        full_access: row.get(15)?,
+        task_executor_kind: row.get(13)?,
+        task_executor_target: row.get(14)?,
+        task_executor_name: row.get(15)?,
+        task_executor_noun: row.get(16)?,
+        full_access: row.get(17)?,
     })
 }
 
@@ -443,19 +448,19 @@ impl RawSummary {
     pub(crate) fn into_summary(self) -> Result<ConversationSummary, RuntimeStoreError> {
         // A title source this version does not know shows as the owner's.
         let title_source = TitleSource::parse(&self.title_source).unwrap_or(TitleSource::Owner);
-        let worker = match self.task_worker_id.as_deref() {
-            Some(id) => Some(TaskWorker {
-                id: parse_id(id, WorkerId::parse)?,
-                name: self.task_worker_name.unwrap_or_default(),
-            }),
-            None => None,
-        };
+        let executor = super::tasks::executor_ref(
+            self.task_executor_kind,
+            self.task_executor_target,
+            self.task_executor_name,
+            self.task_executor_noun,
+        );
         let task = match self.parent_conversation_id.as_deref() {
             Some(parent) => Some(TaskConversation {
                 parent_id: parse_id(parent, ConversationId::parse)?,
                 number: position(self.task_number.unwrap_or(0), "a task number")?,
                 agent: self.task_agent.unwrap_or_default(),
-                worker,
+                worker: None,
+                executor,
             }),
             None => None,
         };

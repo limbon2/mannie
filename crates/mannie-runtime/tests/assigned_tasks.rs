@@ -12,8 +12,12 @@ use std::time::Duration;
 
 use mannie_provider::testing::Step;
 use mannie_provider::{Content, ModelRequest, Role};
-use mannie_runtime::testing::{Harness, LEASE_CREDENTIAL, WorkerHarness, WorkerOptions, reply};
+use mannie_runtime::testing::{
+    HARNESS_WORKER_BASE, Harness, LEASE_CREDENTIAL, WorkerHarness, WorkerOptions,
+    ceiling_mode_line, reply,
+};
 use mannie_runtime::{AssignError, LeaseError, texts};
+use mannie_types::ceiling::CeilingMode;
 use mannie_types::run::{RunActivity, RunFailure};
 use mannie_types::secret::Secret;
 use mannie_types::tasks::TaskState;
@@ -88,11 +92,11 @@ async fn an_assigned_task_runs_as_the_worker_agent_confirms_and_reports() {
     );
     let instructions = &requests[0].instructions;
     assert!(
-        instructions.starts_with("You are a worker agent in Mannie, on the host build-01."),
+        instructions.starts_with(HARNESS_WORKER_BASE),
         "{instructions}"
     );
     assert!(
-        instructions.contains(texts::WORKER_ASK_GUIDANCE),
+        instructions.contains(&ceiling_mode_line(CeilingMode::Ask)),
         "{instructions}"
     );
     assert!(

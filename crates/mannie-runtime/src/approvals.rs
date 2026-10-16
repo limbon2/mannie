@@ -120,9 +120,9 @@ impl Runtime {
     /// The owner's answer to a pending approval. It counts only for the
     /// request it names by its digest, so a stale or forged decision changes
     /// nothing (T-5). Grants and rules are saved by the run that waits, from
-    /// the request it holds. A call of a task on a worker waits on the
-    /// worker, which gets the decision through the link (ADR-0027,
-    /// decision 4).
+    /// the request it holds. A call of an executor's task waits on its
+    /// target, which gets the decision through the executor (ADR-0027,
+    /// decision 4; ADR-0031).
     pub async fn decide_approval(&self, input: DecideApproval) -> Result<(), ToolsError> {
         match self.decide_here(&input) {
             Err(ToolsError::ApprovalNotPending) => {}
@@ -136,14 +136,15 @@ impl Runtime {
                 ToolsError::StorageFailed
             })?;
         match remote {
-            Some((delegation, worker, _summary)) => {
+            Some(remote) => {
+                let executor = remote.tools_executor()?;
                 tracing::info!(
                     conversation = %input.conversation_id,
                     part = %input.part_id,
-                    worker = %worker,
-                    "the owner decided about a tool call on a worker"
+                    kind = executor.kind(),
+                    "the owner decided about a tool call of an executor's task"
                 );
-                delegation.decide_approval(&worker, input).await
+                executor.decide_approval(&remote.target, input).await
             }
             None => Err(ToolsError::ApprovalNotPending),
         }
@@ -154,8 +155,11 @@ impl Runtime {
     /// (ADR-0029, decision 5). A host whose configuration refuses that keeps
     /// the call waiting for the owner.
     pub fn allow_by_full_access(&self, input: &DecideApproval) -> Result<(), ToolsError> {
-        let host = self.worker_host().ok_or(ToolsError::ApprovalNotPending)?;
-        if !host.accepts_master_full_access {
+        let machine = self.machine();
+        if machine.assigned_agent.is_none() {
+            return Err(ToolsError::ApprovalNotPending);
+        }
+        if !machine.accepts_assigner_full_access {
             return Err(ToolsError::FullAccessRefused);
         }
         if input.choice != ApprovalChoice::AllowOnce {

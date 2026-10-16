@@ -38,7 +38,7 @@ enum HubMessage {
 /// What the list's hub sends its subscribers.
 #[derive(Debug, Clone)]
 enum ListMessage {
-    Upserted(ConversationSummary),
+    Upserted(Box<ConversationSummary>),
     Removed(ConversationId),
     ProjectUpserted(ProjectView),
     ProjectRemoved(ProjectId),
@@ -96,7 +96,7 @@ impl Hubs {
             // The list's lock is taken inside the conversation's, so the list
             // receives one conversation's changes in their order too.
             let mut list = self.list.lock().await;
-            publish(&mut list, &ListMessage::Upserted(summary.clone()));
+            publish(&mut list, &ListMessage::Upserted(Box::new(summary.clone())));
         }
         drop(subscribers);
         Ok(applied)
@@ -183,7 +183,7 @@ impl Hubs {
     #[cfg(feature = "validation")]
     pub(crate) async fn announce(&self, summary: ConversationSummary) {
         let mut list = self.list.lock().await;
-        publish(&mut list, &ListMessage::Upserted(summary));
+        publish(&mut list, &ListMessage::Upserted(Box::new(summary)));
     }
 
     /// Holds the conversation list while a project changes: the caller

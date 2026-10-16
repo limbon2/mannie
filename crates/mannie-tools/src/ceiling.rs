@@ -5,8 +5,8 @@
 
 use std::path::PathBuf;
 
+use mannie_types::ceiling::CeilingMode;
 use mannie_types::tools::CommandRule;
-use mannie_types::workers::CeilingMode;
 
 /// The ceiling that the policy applies to every call on a worker.
 #[derive(Debug, Clone, PartialEq, Eq)]

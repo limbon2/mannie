@@ -2638,15 +2638,15 @@ name = "mannie-desktop"
 version = "0.2.0"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
- "mannie-link",
  "mannie-logging",
+ "mannie-plugins",
  "mannie-provider",
  "mannie-runtime",
  "mannie-secrets",
  "mannie-store",
  "mannie-tools",
  "mannie-types",
+ "mannie-workers",
  "rfd",
  "serde",
  "specta",
@@ -2665,13 +2665,9 @@ dependencies = [
 name = "mannie-link"
 version = "0.2.0"
 dependencies = [
- "fastrand",
  "futures-util",
- "hyper-util",
  "mannie-logging",
- "mannie-provider",
  "mannie-runtime",
- "mannie-store",
  "mannie-types",
  "prost",
  "protox",
@@ -2679,16 +2675,14 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
- "tempfile",
+ "specta",
  "thiserror 2.0.21",
  "tokio",
  "tokio-rustls",
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
- "tower",
  "tracing",
- "uuid",
  "zeroize",
 ]
 
@@ -2705,6 +2699,20 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "zeroize",
+]
+
+[[package]]
+name = "mannie-plugins"
+version = "0.2.0"
+dependencies = [
+ "futures-util",
+ "mannie-provider",
+ "mannie-runtime",
+ "mannie-store",
+ "mannie-types",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2848,6 +2856,35 @@ dependencies = [
  "uuid",
  "windows-service",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "mannie-workers"
+version = "0.2.0"
+dependencies = [
+ "base64 0.22.1",
+ "fastrand",
+ "futures-util",
+ "hyper-util",
+ "mannie-link",
+ "mannie-plugins",
+ "mannie-provider",
+ "mannie-runtime",
+ "mannie-store",
+ "mannie-tools",
+ "mannie-types",
+ "ring",
+ "rustls",
+ "serde",
+ "serde_json",
+ "specta",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tonic",
+ "tower",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

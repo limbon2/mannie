@@ -143,7 +143,7 @@ jobs:
       - run: cargo build --locked -p mannie-worker
       # The test master that pairs with the installed worker and delegates a
       # command to it.
-      - run: cargo build --locked -p mannie-link --features testing --example smoke-master
+      - run: cargo build --locked -p mannie-workers --features testing --example smoke-master
       - name: Install, pair, delegate to and remove the Windows service
         if: runner.os == 'Windows'
         shell: pwsh
@@ -181,4 +181,4 @@ jobs:
       - name: Lint the worker's crates for FreeBSD
         run: |
           rustup target add x86_64-unknown-freebsd
-          cargo clippy --locked -p mannie-tools -p mannie-runtime -p mannie-link -p mannie-worker --all-targets --all-features --target x86_64-unknown-freebsd -- -D warnings
+          cargo clippy --locked -p mannie-tools -p mannie-runtime -p mannie-link -p mannie-workers -p mannie-worker --all-targets --all-features --target x86_64-unknown-freebsd -- -D warnings

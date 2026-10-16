@@ -101,6 +101,7 @@ impl Fixture {
                 started_at: None,
                 ended_at: None,
                 worker: None,
+                executor: None,
                 detached: false,
             }),
             ..TaskPartDocument::default()
@@ -139,7 +140,7 @@ impl Fixture {
                                 parent_id: parent.conversation.clone(),
                                 number: 1,
                                 agent: "explore".to_owned(),
-                                worker: None,
+                                executor: None,
                             }),
                         },
                     },
@@ -242,13 +243,13 @@ async fn a_task_conversation_is_created_with_its_task_and_stays_out_of_the_list(
     let latest = found.latest.unwrap();
     assert_eq!(latest.id, child.task);
     assert_eq!(latest.part_id.as_ref(), Some(&parent.part));
-    assert_eq!(latest.worker_id, None);
+    assert_eq!(latest.executor, None);
     assert_eq!(latest.assignment, None);
     assert_eq!(
         latest.state_version, 0,
         "only assigned tasks take state versions"
     );
-    assert_eq!(found.worker, None);
+    assert_eq!(found.executor, None);
     assert_eq!(latest.state, TaskState::Accepted);
     assert_eq!(
         fixture

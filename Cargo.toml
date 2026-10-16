@@ -1,7 +1,8 @@
-# Cargo workspace of the Rust core, the desktop app and the worker
-# (docs/engineering/repository.md). Library crates live in crates/, and the two
-# binaries in apps/. A crate is added when the first milestone that needs it
-# starts, so no member is a placeholder.
+# Cargo workspace of the Rust core, the desktop app and the plugins
+# (docs/engineering/repository.md). The core's library crates live in crates/
+# and the desktop app in apps/; each plugin's crates and binaries live in
+# plugins/<id>/ (ADR-0030). A crate is added when the first milestone that
+# needs it starts, so no member is a placeholder.
 #
 # Every member inherits the package settings and the lint policy with:
 #
@@ -19,15 +20,17 @@
 resolver = "3"
 members = [
   "apps/desktop/src-tauri",
-  "apps/worker",
-  "crates/mannie-link",
   "crates/mannie-logging",
+  "crates/mannie-plugins",
   "crates/mannie-provider",
   "crates/mannie-runtime",
   "crates/mannie-secrets",
   "crates/mannie-store",
   "crates/mannie-tools",
   "crates/mannie-types",
+  "plugins/workers/crates/mannie-link",
+  "plugins/workers/crates/mannie-workers",
+  "plugins/workers/worker",
 ]
 
 # One version for the desktop app and the worker (ADR-0018). `task
@@ -66,14 +69,16 @@ keyring-core = "1.0.1"
 # procctl(PROC_REAP_KILL), whose binding panics on the kernel's answer
 # (ADR-0014).
 libc = "0.2.190"
-mannie-link = { path = "crates/mannie-link" }
+mannie-link = { path = "plugins/workers/crates/mannie-link" }
 mannie-logging = { path = "crates/mannie-logging" }
+mannie-plugins = { path = "crates/mannie-plugins" }
 mannie-provider = { path = "crates/mannie-provider" }
 mannie-runtime = { path = "crates/mannie-runtime" }
 mannie-secrets = { path = "crates/mannie-secrets" }
 mannie-store = { path = "crates/mannie-store" }
 mannie-tools = { path = "crates/mannie-tools" }
 mannie-types = { path = "crates/mannie-types" }
+mannie-workers = { path = "plugins/workers/crates/mannie-workers" }
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 # The link's messages (ADR-0016).
 prost = "0.14.4"

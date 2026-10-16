@@ -297,9 +297,9 @@ jobs:
       - name: Write the SBOMs
         run: |
           cargo cyclonedx --manifest-path apps/desktop/src-tauri/Cargo.toml --format json --spec-version 1.5 --target all
-          cargo cyclonedx --manifest-path apps/worker/Cargo.toml --format json --spec-version 1.5 --target all
+          cargo cyclonedx --manifest-path plugins/workers/worker/Cargo.toml --format json --spec-version 1.5 --target all
           mv apps/desktop/src-tauri/mannie-desktop.cdx.json "dist/mannie-desktop-$VERSION-rust.cdx.json"
-          mv apps/worker/mannie-worker.cdx.json "dist/mannie-worker-$VERSION.cdx.json"
+          mv plugins/workers/worker/mannie-worker.cdx.json "dist/mannie-worker-$VERSION.cdx.json"
           pnpm sbom --sbom-format cyclonedx --filter mannie-desktop > "dist/mannie-desktop-$VERSION-npm.cdx.json"
       - name: Write the third-party notices
         run: |

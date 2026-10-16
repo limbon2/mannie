@@ -26,13 +26,10 @@ required-features = ["validation"]
 
 [dependencies]
 anyhow = { workspace = true }
-# The master's key of the link in the credential store, as the base64 of its
-# PKCS#8 document.
-base64 = { workspace = true }
-# The link to the paired workers, whose hub the composition root starts and
-# hands to the runtime (ADR-0016, ADR-0027).
-mannie-link = { workspace = true }
 mannie-logging = { workspace = true }
+# The plugin host, which the composition root runs with the list of plugins
+# and what each may use (ADR-0030).
+mannie-plugins = { workspace = true }
 mannie-provider = { workspace = true }
 mannie-runtime = { workspace = true }
 # Provider credentials in the operating system's credential store (ADR-0010).
@@ -42,6 +39,9 @@ mannie-store = { workspace = true }
 # runtime.
 mannie-tools = { workspace = true }
 mannie-types = { workspace = true }
+# The Workers plugin, the first internal plugin, whose commands the app's IPC
+# calls into (ADR-0031).
+mannie-workers = { workspace = true }
 # The system's folder dialog. The core opens it, so the webview gets no access
 # to the file system (ADR-0004).
 rfd = { workspace = true }

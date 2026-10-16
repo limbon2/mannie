@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte';
+  import { onMount, type Snippet } from 'svelte';
 
   import { afterNavigate } from '$app/navigation';
   import { page } from '$app/state';
@@ -7,6 +7,7 @@
   import * as Resizable from '#lib/components/ui/resizable/index.js';
   import * as Sidebar from '#lib/components/ui/sidebar/index.js';
   import { m } from '#lib/paraglide/messages.js';
+  import { pluginStates } from '#lib/state/plugin-states.svelte.js';
   import { getShellSlots } from '#lib/state/shell-slots.svelte.js';
   import { MAIN_AREA_ID, sidePanels } from '#lib/state/side-panels.svelte.js';
   import { openSettings } from '#lib/utils/settings-sections.js';
@@ -82,6 +83,13 @@
       void openSettings();
     }
   }
+
+  // The slots show a plugin's entries while the core reports the plugin as
+  // on, so the window follows the plugins' states from its start (ADR-0030,
+  // decision 11).
+  onMount(() => {
+    pluginStates.start();
+  });
 
   // The settings are a page of their own with their own sidebar, which leads
   // back to the main view as the owner left it. Views live at `/` and differ

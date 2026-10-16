@@ -27,6 +27,7 @@
 
 - Positive: knowledge about a host stays on that host, and a worker can finish a task while the master is offline.
 - Negative: the runtime runs on three operating systems. The master and a worker can run different versions of it (risk R15), and transcripts are spread across machines.
+- Refinement in M5: workers become the first plugin, which the owner turns on and off, and these decisions hold while it is on ([ADR-0031](0031-move-workers-into-the-first-plugin.md)).
 
 ## Alternatives considered
 

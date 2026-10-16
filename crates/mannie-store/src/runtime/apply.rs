@@ -22,9 +22,10 @@ use crate::{Durability, Store};
 const SELECT_CONVERSATION_EXISTS: &str = "SELECT 1 FROM runtime_conversations WHERE id = ?1";
 const INSERT_CONVERSATION: &str = "INSERT INTO runtime_conversations \
      (id, title, title_source, profile_id, project_id, workspace, parent_conversation_id, \
-     task_number, task_agent, task_worker_id, task_worker_name, created_at, updated_at) \
+     task_number, task_agent, task_executor_kind, task_executor_target, task_executor_name, \
+     task_executor_noun, created_at, updated_at) \
      VALUES (?1, ?2, 'first_message', ?3, ?5, \
-     (SELECT folder FROM runtime_projects WHERE id = ?5), ?6, ?7, ?8, ?9, ?10, ?4, ?4)";
+     (SELECT folder FROM runtime_projects WHERE id = ?5), ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?4, ?4)";
 const SELECT_PROJECT_EXISTS: &str = "SELECT 1 FROM runtime_projects WHERE id = ?1";
 const SELECT_CONVERSATION_PROJECT: &str =
     "SELECT project_id FROM runtime_conversations WHERE id = ?1";
@@ -175,7 +176,7 @@ pub(super) fn insert_conversation(
     let profile = conversation.profile_id.as_ref().map(ProfileId::as_str);
     let project = conversation.project_id.as_ref().map(ProjectId::as_str);
     let task = conversation.task.as_ref();
-    let worker = task.and_then(|origin| origin.worker.as_ref());
+    let executor = task.and_then(|origin| origin.executor.as_ref());
     connection
         .prepare_cached(INSERT_CONVERSATION)?
         .execute(params![
@@ -187,8 +188,10 @@ pub(super) fn insert_conversation(
             task.map(|origin| origin.parent_id.as_str()),
             task.map(|origin| origin.number),
             task.map(|origin| origin.agent.as_str()),
-            worker.map(|worker| worker.id.as_str()),
-            worker.map(|worker| worker.name.as_str())
+            executor.map(|executor| executor.kind.as_str()),
+            executor.map(|executor| executor.target_id.as_str()),
+            executor.map(|executor| executor.target_name.as_str()),
+            executor.map(|executor| executor.noun.as_str())
         ])?;
     Ok(())
 }
@@ -1031,9 +1034,10 @@ impl Batch<'_> {
     /// that was never stored did not start. A task that ended keeps the first
     /// ending stored, whichever run stored it.
     ///
-    /// A task that still runs on a worker keeps running there (ADR-0027): the
-    /// part lets it go, and its row stays active, with any cancel that waits
-    /// for the worker, until the master learns how it ended.
+    /// A task that an executor still runs keeps running there (ADR-0027,
+    /// ADR-0031): the part lets it go, and its row stays active, with any
+    /// cancel that waits in the executor's document, until the executor
+    /// publishes how it ended.
     fn end_task_part(
         &self,
         row: &rows::PartRow,
@@ -1048,7 +1052,7 @@ impl Batch<'_> {
         let mut call_completed = false;
         if let Some(task) = section.task.as_mut().filter(|task| task.state.is_active()) {
             match tasks::of_part(self.transaction, &row.id)? {
-                Some(stored) if stored.state.is_active() && stored.worker_id.is_some() => {
+                Some(stored) if stored.state.is_active() && stored.executor.is_some() => {
                     task.detached = true;
                     call_completed = true;
                 }

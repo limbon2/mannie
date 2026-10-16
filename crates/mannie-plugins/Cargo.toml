@@ -1,0 +1,30 @@
+[package]
+name = "mannie-plugins"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "What Mannie's internal plugins build on: the definition of a plugin, the services that its start receives, and the host that starts and stops plugins and keeps the owner's choices (ADR-0030)."
+license.workspace = true
+publish.workspace = true
+
+# The host with fake plugins: starts at launch, defaults, failures, turning
+# plugins on and off while a run uses them, and quitting.
+[[test]]
+name = "host"
+
+[dependencies]
+futures-util = { workspace = true }
+mannie-runtime = { workspace = true }
+mannie-store = { workspace = true }
+mannie-types = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+mannie-provider = { workspace = true, features = ["testing"] }
+mannie-runtime = { workspace = true, features = ["testing"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
+
+[lints]
+workspace = true

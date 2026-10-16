@@ -10,9 +10,10 @@
 //! and handles Stop, Shutdown and recovery after a crash. It never runs on a
 //! window's behalf; a window only sends commands and follows events.
 //!
-//! The same runtime runs on every machine (ADR-0015): on the master it serves
-//! the owner's conversations, and on a worker the tasks that the master
-//! assigns, under the host's ceiling (ADR-0028).
+//! The same runtime serves the owner's conversations and the tasks that
+//! another machine assigns, under a ceiling that its composition root sets
+//! (ADR-0028). The executors of plugins run tasks somewhere else, such as on
+//! a worker (ADR-0031).
 
 mod actor;
 mod agents;
@@ -23,10 +24,11 @@ mod calls;
 mod compaction;
 mod context;
 mod conversations;
-mod delegation;
+mod executors;
 mod hub;
 mod ids;
 mod instructions;
+mod plugins;
 mod profiles;
 mod projects;
 mod retry;
@@ -50,20 +52,24 @@ use mannie_tools::{Ceiling, MutationLock, SystemFacts, ToolRegistry};
 use mannie_types::clock::Clock;
 use mannie_types::ids::{CheckpointId, ConversationId, ProfileId, ProjectId, RunId};
 use mannie_types::tasks::ChildAgentsSettings;
-use mannie_types::workers::HostFacts;
 use tokio::sync::{Semaphore, mpsc, watch};
 
 pub use agents::{
     AgentDefinition, AgentRegistry, CONVERSATION, CONVERSATION_AGENT, DuplicateAgent, EXPLORE,
-    EXPLORE_AGENT, GENERAL, GENERAL_AGENT, Requester, SYSTEM_TOOLS, WORKER, WORKER_AGENT,
+    EXPLORE_AGENT, GENERAL, GENERAL_AGENT, Requester, SYSTEM_TOOLS,
 };
 pub use assigned::{AssignError, AssignedTaskWatch, LeaseError};
-pub use delegation::{Delegation, DelegationError};
+pub use executors::{
+    CredentialLender, DuplicateExecutor, ExecutorRefusal, ExecutorSection, ExecutorServices,
+    FollowUpPlan, LendError, LentCredential, PlanCall, PlanError, SubmitError, TaskExecutor,
+    TaskPlan, TaskSubmission,
+};
 pub use hub::{ConversationSubscription, ListSubscription, SubscriptionLimits};
 pub use instructions::{
-    BUILTIN_SECTIONS, DuplicateSection, HostContext, InstructionContext, InstructionRegistry,
-    InstructionSection, ToolEnvironment, WORKER_SECTIONS,
+    DuplicateSection, InstructionContext, InstructionRegistry, InstructionSection, MachineContext,
+    SectionText, ToolEnvironment, builtin_sections, checkpoint_section,
 };
+pub use plugins::{ContributionError, PluginContributions, PluginTool};
 pub use profiles::{CredentialVault, VaultError};
 pub use retry::RetryPolicy;
 pub use tasks::TASK_TOOLS;
@@ -71,9 +77,10 @@ pub use tasks::TASK_TOOLS;
 use crate::actor::Command;
 use crate::approvals::Pending;
 use crate::assigned::AssignedTasks;
-use crate::delegation::Followers;
+use crate::executors::Executors;
 use crate::hub::Hubs;
 use crate::ids::IdGenerator;
+use crate::plugins::Plugins;
 use crate::tasks::ChildSlots;
 
 /// What the system tools work with. The composition root builds it once.
@@ -90,37 +97,31 @@ pub struct ToolsDeps {
     pub system: Arc<SystemFacts>,
 }
 
-/// What a worker's runtime knows of its host (docs/features/workers/
-/// host-and-ceiling.md). The worker builds it from its configuration.
-#[derive(Debug, Clone)]
-pub struct WorkerHost {
-    /// The worker's name, which its approval requests show.
-    pub name: String,
-    /// What the host is for.
-    pub purpose: String,
-    /// The host's facts.
-    pub facts: HostFacts,
-    /// The ceiling of every tool call on the host.
-    pub ceiling: Ceiling,
-    /// The Markdown file of the host instructions, which the runtime reads
-    /// for every task, so a change applies from the next task.
-    pub instructions_file: Option<PathBuf>,
-    /// How many tasks run at once.
-    pub max_parallel_tasks: u32,
-    /// Whether a conversation in full access on the master may answer this
-    /// host's requests (ADR-0029, decision 5).
-    pub accepts_master_full_access: bool,
-}
-
-/// The machine that a runtime serves (ADR-0015).
+/// What a composition root says about the machine that its runtime serves
+/// (ADR-0028, ADR-0031). The default is a machine that the owner works on
+/// directly: no ceiling, the child agents settings for its task slots, and
+/// no tasks from another machine.
 #[derive(Debug, Clone, Default)]
-pub enum Machine {
-    /// The owner's computer: the owner's conversations and their tasks.
-    #[default]
-    Master,
-    /// A worker: the tasks that the master assigns, under the host's ceiling
-    /// (ADR-0028).
-    Worker(Arc<WorkerHost>),
+pub struct MachineSettings {
+    /// The ceiling of every tool call, for a machine whose owner sets one
+    /// outside Mannie's interface. Without one, the owner's grants, rules and
+    /// full access decide alone.
+    pub ceiling: Option<Ceiling>,
+    /// The machine's name, which its approval requests show where another
+    /// machine presents them to the owner.
+    pub name: Option<String>,
+    /// A Markdown file of instructions for the machine, which the runtime
+    /// reads for every run of an assigned task, so a change applies from the
+    /// next one.
+    pub instructions_file: Option<PathBuf>,
+    /// How many tasks run at once, in place of the child agents settings.
+    pub task_slots: Option<u32>,
+    /// The agent definition that runs the tasks that another machine assigns,
+    /// or `None` for a machine that takes none.
+    pub assigned_agent: Option<&'static str>,
+    /// Whether the full access of the conversation that assigned a task may
+    /// answer the task's approval requests (ADR-0029, decision 5).
+    pub accepts_assigner_full_access: bool,
 }
 
 /// What the runtime works with. The composition root builds these and hands
@@ -144,10 +145,7 @@ pub struct RuntimeDeps {
     /// The system tools.
     pub tools: ToolsDeps,
     /// The machine that the runtime serves.
-    pub machine: Machine,
-    /// On the master, the port to the paired workers (ADR-0027). `None` on a
-    /// worker, and on a master that delegates nothing.
-    pub delegation: Option<Arc<dyn Delegation>>,
+    pub machine: MachineSettings,
 }
 
 /// The runtime's limits and timings.
@@ -166,9 +164,10 @@ pub struct RuntimeConfig {
     pub stop_timeout: Duration,
     /// How long shutting down waits for the runs to end.
     pub shutdown_timeout: Duration,
-    /// How long Stop waits for the workers to confirm the cancels of a
-    /// reply's worker tasks before it lets them go (ADR-0027, decision 6).
-    pub worker_cancel_timeout: Duration,
+    /// How long Stop waits for the targets of a reply's executors' tasks to
+    /// confirm their cancels before it lets the tasks go (ADR-0027,
+    /// decision 6).
+    pub executor_cancel_timeout: Duration,
     /// The seed of the retry jitter, for tests; `None` seeds it at random.
     pub random_seed: Option<u64>,
 }
@@ -182,7 +181,7 @@ impl Default for RuntimeConfig {
             flush_interval: Duration::from_millis(50),
             stop_timeout: Duration::from_secs(2),
             shutdown_timeout: Duration::from_secs(3),
-            worker_cancel_timeout: Duration::from_secs(10),
+            executor_cancel_timeout: Duration::from_secs(10),
             random_seed: None,
         }
     }
@@ -206,13 +205,14 @@ struct Inner {
     agents: AgentRegistry,
     instructions: InstructionRegistry,
     tools: ToolsDeps,
-    machine: Machine,
-    /// On the master, the port to the paired workers.
-    delegation: Option<Arc<dyn Delegation>>,
-    /// On the master, what follows the workers' tasks.
-    followers: Followers,
-    /// On a worker, the tasks that the master assigned, while they are
-    /// active, and the master's watches of them.
+    machine: MachineSettings,
+    /// The executors of plugins, and the runs that follow their tasks.
+    executors: Executors,
+    /// The other contributions of the plugins that are on (ADR-0030,
+    /// decision 5).
+    plugins: Plugins,
+    /// The tasks that another machine assigned, while they are active, and
+    /// that machine's watches of them.
     assigned: Arc<AssignedTasks>,
     /// Makes assignments one at a time, so a task submitted twice at once is
     /// stored once.
@@ -307,11 +307,12 @@ impl Runtime {
             .map_or_else(fastrand::Rng::new, fastrand::Rng::with_seed);
         // A section that cannot be read leaves the default limit, and the
         // settings page shows the failure when the owner opens it.
-        // On a worker, the configuration limits the tasks that run at once;
-        // on the master, the child agents settings limit the children.
-        let parallel = match &deps.machine {
-            Machine::Worker(host) => host.max_parallel_tasks,
-            Machine::Master => match deps.store.load_settings::<ChildAgentsSettings>().await {
+        // A machine with task slots of its own, such as a worker, takes its
+        // limit from its composition root; otherwise the child agents
+        // settings limit the children.
+        let parallel = match deps.machine.task_slots {
+            Some(slots) => slots,
+            None => match deps.store.load_settings::<ChildAgentsSettings>().await {
                 Ok(settings) => settings.parallel_children.get(),
                 Err(error) => {
                     tracing::warn!(%error, error.code = error.code(), "could not read the child agents settings; using the default limit");
@@ -330,8 +331,8 @@ impl Runtime {
             instructions: deps.instructions,
             tools: deps.tools,
             machine: deps.machine,
-            delegation: deps.delegation,
-            followers: Followers::default(),
+            executors: Executors::default(),
+            plugins: Plugins::default(),
             assigned: Arc::default(),
             assigning: tokio::sync::Mutex::new(()),
             approvals: Mutex::default(),
@@ -346,11 +347,9 @@ impl Runtime {
             shutting_down: AtomicBool::new(false),
             random: Mutex::new(random),
         };
-        let runtime = Self {
+        Ok(Self {
             inner: Arc::new(inner),
-        };
-        runtime.start_following();
-        Ok(runtime)
+        })
     }
 
     /// How many of the owner's replies are active. The runs of child agents
@@ -371,10 +370,10 @@ impl Runtime {
 
     /// Ends every run as interrupted, waits for them up to the shutdown
     /// timeout, ends every subscription, and makes everything stored durable.
-    /// No run starts afterwards.
+    /// No run starts afterwards. The composition root stops the plugins, and
+    /// with them their executors, before.
     pub async fn shutdown(&self) {
         self.inner.shutting_down.store(true, Ordering::SeqCst);
-        self.inner.followers.shut_down();
         let mut ended = Vec::new();
         {
             let busy = lock(&self.inner.busy);
@@ -414,12 +413,9 @@ impl Runtime {
         self.inner.shutting_down.load(Ordering::SeqCst)
     }
 
-    /// The worker's host, on a worker.
-    fn worker_host(&self) -> Option<&WorkerHost> {
-        match &self.inner.machine {
-            Machine::Worker(host) => Some(host),
-            Machine::Master => None,
-        }
+    /// What the composition root said about the machine.
+    fn machine(&self) -> &MachineSettings {
+        &self.inner.machine
     }
 
     /// A number in [0, 1) for the retry jitter.

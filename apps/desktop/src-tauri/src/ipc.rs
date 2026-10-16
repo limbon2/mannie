@@ -15,7 +15,8 @@ use tauri::Wry;
 use tauri_specta::{Builder, ErrorHandlingMode, collect_commands};
 
 use crate::commands::{
-    chat, child_agents, interface, links, projects, providers, startup, tools, window, workers,
+    chat, child_agents, interface, links, plugins, projects, providers, startup, tools, window,
+    workers,
 };
 
 /// The first line of every generated file.
@@ -102,6 +103,9 @@ macro_rules! app_commands {
             tools::read_tool_output,
             child_agents::get_child_agents_settings,
             child_agents::update_child_agents_settings,
+            plugins::subscribe_plugins,
+            plugins::set_plugin_enabled,
+            plugins::plugin_work,
             workers::subscribe_workers,
             workers::pair_worker,
             workers::rename_worker,

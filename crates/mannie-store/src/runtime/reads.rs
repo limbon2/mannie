@@ -499,8 +499,8 @@ impl Store {
     /// Deletes a conversation with everything that belongs to it. Returns
     /// whether it existed. The writer's `secure_delete` overwrites the freed
     /// pages, and emptying the write-ahead log removes the old pages from it
-    /// too (security architecture, local data). The deletions of its worker
-    /// task conversations wait for their workers.
+    /// too (security architecture, local data). The deletions of the task
+    /// conversations that executors serve wait for their executors.
     pub async fn delete_conversation(
         &self,
         conversation_id: &ConversationId,
@@ -509,7 +509,7 @@ impl Store {
         let now = self.clock().now().as_millis();
         let deleted = self
             .write(crate::Durability::Full, move |transaction| {
-                crate::workers::queue_deletions_of_children(transaction, &conversation, now)?;
+                super::tasks::queue_outbox_of_children(transaction, &conversation, now)?;
                 transaction.execute(DELETE_CONVERSATION, [conversation])
             })
             .await?;

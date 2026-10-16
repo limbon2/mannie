@@ -12,7 +12,7 @@ use rusqlite::{Connection, OpenFlags, Transaction};
 use crate::Durability;
 use crate::error::{DatabaseError, StoreError};
 use crate::readers::Readers;
-use crate::schema::{self, Migration};
+use crate::schema::{self, CORE_MODULES, Schema, StoreModule};
 use crate::writer::{TransactError, Writer};
 
 /// How long a connection waits for a lock before it reports the database as
@@ -31,16 +31,29 @@ pub struct StoreOptions {
     pub readers: usize,
     /// The clock for timestamps and backup names.
     pub clock: Arc<dyn Clock>,
+    /// The modules of the composition root's plugins, which follow the core's
+    /// modules (ADR-0030, decision 5).
+    pub modules: Vec<StoreModule>,
 }
 
 impl StoreOptions {
-    /// Options with the default number of readers.
+    /// Options with the default number of readers and only the core's
+    /// modules.
     pub fn new(backup_directory: PathBuf, clock: Arc<dyn Clock>) -> Self {
         Self {
             backup_directory,
             readers: DEFAULT_READERS,
             clock,
+            modules: Vec::new(),
         }
+    }
+
+    /// Adds the modules of plugins, in the order that a new database applies
+    /// them.
+    #[must_use]
+    pub fn with_modules(mut self, modules: impl IntoIterator<Item = StoreModule>) -> Self {
+        self.modules.extend(modules);
+        self
     }
 }
 
@@ -58,36 +71,53 @@ struct Inner {
     writer: Writer,
     readers: Arc<Readers>,
     clock: Arc<dyn Clock>,
+    /// The names of the modules that the store opened with.
+    modules: Vec<&'static str>,
 }
 
 impl Store {
     /// Opens the database at `path`, creating it when it does not exist, and
-    /// brings its schema up to date.
+    /// brings the schema of the core's modules and of the options' modules up
+    /// to date.
     ///
-    /// A database with a newer schema than this binary knows is refused and
-    /// left untouched. Before migrating an existing database, the store copies
-    /// it into the backup directory.
+    /// A database in which a module has a newer schema than this binary knows
+    /// is refused and left untouched. Before migrating an existing database,
+    /// the store copies it into the backup directory.
     ///
     /// This blocks on file I/O: call it at startup or from a blocking task.
     pub fn open(path: &Path, options: &StoreOptions) -> Result<Self, StoreError> {
-        Self::open_with_migrations(path, options, schema::MIGRATIONS)
+        let modules: Vec<StoreModule> = CORE_MODULES
+            .iter()
+            .copied()
+            .chain(options.modules.iter().copied())
+            .collect();
+        Self::open_with_modules(path, options, &modules)
     }
 
-    /// Opens the store with a given list of migrations. Tests use it to stand
-    /// in for older and newer binaries.
-    pub(crate) fn open_with_migrations(
+    /// Opens the store with the given modules, in the order that a new
+    /// database applies them. Tests use it to stand in for older and newer
+    /// binaries.
+    pub(crate) fn open_with_modules(
         path: &Path,
         options: &StoreOptions,
-        migrations: &[Migration],
+        modules: &[StoreModule],
     ) -> Result<Self, StoreError> {
         let _span = tracing::info_span!("open_store", path = %path.display()).entered();
-        let supported = schema::supported_version(migrations);
+        let mut names: Vec<&'static str> = Vec::with_capacity(modules.len());
+        for module in modules {
+            if names.contains(&module.name) {
+                return Err(StoreError::DuplicateModule {
+                    module: module.name,
+                });
+            }
+            names.push(module.name);
+        }
         let exists = fs::exists(path).map_err(|source| StoreError::Io {
             path: path.to_path_buf(),
             source,
         })?;
         if exists {
-            refuse_newer_schema(path, supported)?;
+            refuse_newer_schema(path, modules)?;
         } else if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|source| StoreError::Io {
                 path: parent.to_path_buf(),
@@ -113,27 +143,21 @@ impl Store {
             });
         }
 
-        let version = schema::schema_version(&connection).map_err(open_failed)?;
-        if version > supported {
-            return Err(StoreError::SchemaTooNew {
-                path: path.to_path_buf(),
-                database: version,
-                supported,
-            });
-        }
-        if version < supported {
-            if version > 0 {
+        let schema = Schema::read(&connection).map_err(open_failed)?;
+        schema.refuse_newer(path, modules)?;
+        if schema.needs_changes(modules) {
+            if schema.user_version > 0 {
                 let backup = schema::back_up(
                     &connection,
                     path,
                     &options.backup_directory,
-                    version,
+                    schema.user_version,
                     options.clock.now(),
                 )?;
-                tracing::info!(backup = %backup.display(), from = version, "copied the database before migrating it");
+                tracing::info!(backup = %backup.display(), from = schema.user_version, "copied the database before migrating it");
             }
-            schema::migrate(&mut connection, migrations, version)?;
-            tracing::info!(from = version, to = supported, "migrated the database");
+            schema::migrate(&mut connection, &schema, modules, options.clock.now())?;
+            tracing::info!(from = schema.user_version, "migrated the database");
         }
 
         let readers = Arc::new(Readers::open(path, options.readers.max(1))?);
@@ -144,6 +168,48 @@ impl Store {
                 writer,
                 readers,
                 clock: Arc::clone(&options.clock),
+                modules: names,
+            }),
+        })
+    }
+
+    /// Creates the database as a binary up to 0.2.0 left it at schema
+    /// `version` of the single list of migrations, with the core's modules
+    /// and those in `options`, and serves it without migrating it further.
+    /// Tests use it to seed an older database through the repositories
+    /// before they open it again.
+    ///
+    /// # Errors
+    ///
+    /// When the database cannot be created.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn open_as_before_m5(
+        path: &Path,
+        options: &StoreOptions,
+        version: u32,
+    ) -> Result<Self, StoreError> {
+        let open_failed = |source: rusqlite::Error| StoreError::Open {
+            path: path.to_path_buf(),
+            source: DatabaseError(source),
+        };
+        let modules: Vec<StoreModule> = CORE_MODULES
+            .iter()
+            .chain(&options.modules)
+            .copied()
+            .collect();
+        let mut connection = Connection::open(path).map_err(open_failed)?;
+        configure_connection(&connection).map_err(open_failed)?;
+        enable_wal(&connection).map_err(open_failed)?;
+        schema::migrate_as_before_m5(&mut connection, &modules, version).map_err(open_failed)?;
+        let readers = Arc::new(Readers::open(path, options.readers.max(1))?);
+        let writer = Writer::start(connection, path)?;
+        Ok(Self {
+            inner: Arc::new(Inner {
+                path: path.to_path_buf(),
+                writer,
+                readers,
+                clock: Arc::clone(&options.clock),
+                modules: modules.iter().map(|module| module.name).collect(),
             }),
         })
     }
@@ -153,9 +219,9 @@ impl Store {
         &self.inner.path
     }
 
-    /// The schema version this binary migrates databases to.
-    pub fn schema_version() -> u32 {
-        schema::supported_version(schema::MIGRATIONS)
+    /// The names of the modules that the store opened with.
+    pub fn modules(&self) -> &[&'static str] {
+        &self.inner.modules
     }
 
     pub(crate) fn clock(&self) -> &dyn Clock {
@@ -229,29 +295,18 @@ impl Store {
     }
 }
 
-/// Reads the schema version through a read-only connection and refuses a
-/// database newer than this binary, before anything could change the file.
-fn refuse_newer_schema(path: &Path, supported: u32) -> Result<(), StoreError> {
+/// Reads the schema through a read-only connection and refuses a database
+/// that a newer binary migrated further, before anything could change the
+/// file.
+fn refuse_newer_schema(path: &Path, modules: &[StoreModule]) -> Result<(), StoreError> {
     let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    let version = Connection::open_with_flags(path, flags)
-        .and_then(|connection| schema::schema_version(&connection))
+    let schema = Connection::open_with_flags(path, flags)
+        .and_then(|connection| Schema::read(&connection))
         .map_err(|source| StoreError::Open {
             path: path.to_path_buf(),
             source: DatabaseError(source),
         })?;
-    if version > supported {
-        tracing::error!(
-            database = version,
-            supported,
-            "refused a database written by a newer version of Mannie"
-        );
-        return Err(StoreError::SchemaTooNew {
-            path: path.to_path_buf(),
-            database: version,
-            supported,
-        });
-    }
-    Ok(())
+    schema.refuse_newer(path, modules)
 }
 
 /// Settings that every connection needs.

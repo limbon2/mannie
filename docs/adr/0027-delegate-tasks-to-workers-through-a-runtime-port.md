@@ -33,6 +33,7 @@
 - Positive: the conversation agent uses one task contract for children and workers. The owner reads and answers a worker task the way they read and answer a child's. Chat and tools work unchanged on a worker's conversation, and the runtime stays free of the link.
 - Negative: the runtime grows a remote kind of task and forwards reads of conversations that it does not store. A worker task's card does not change once its part ended, and the master reconciles its tasks with each worker after a restart.
 - Risks: a worker that never answers keeps its task active on the master; the owner sees it in the workers list and stops it there. A compromised worker sends hostile reports and descriptions; they reach the model only as tool results and as data, and every side effect on the master still needs the policy or the owner.
+- Refinement in M5: the port becomes the Workers plugin's task executor, and the changes in other features become uses of the core's task kinds and executor fields ([ADR-0031](0031-move-workers-into-the-first-plugin.md)).
 
 ## Alternatives considered
 

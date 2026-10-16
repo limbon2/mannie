@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                                                                                                                                                               |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                                                                                                                                                                              |
-| Last updated | 2026-10-15                                                                                                                                                                                                                                                                                                                    |
+| Last updated | 2026-10-16                                                                                                                                                                                                                                                                                                                    |
 | Related      | [ADR-0003](../adr/0003-build-the-desktop-app-on-tauri-2.md), [ADR-0004](../adr/0004-keep-system-access-in-the-rust-core.md), [ADR-0005](../adr/0005-build-the-ui-with-sveltekit-as-a-static-spa.md), [ADR-0006](../adr/0006-use-shadcn-svelte-through-its-cli.md), [ADR-0007](../adr/0007-generate-ipc-bindings-from-rust.md) |
 
 The desktop app is the master. It is a Tauri 2 application with a Rust core and a SvelteKit UI in the operating system's webview.
@@ -73,12 +73,13 @@ apps/desktop/
 │       │       ├── chat/        # conversations, the transcript's parts, provider profiles and instructions
 │       │       ├── tools/       # tool calls and their approvals, permissions, rules and the tools settings
 │       │       ├── child-agents/  # the cards of tasks and the child agents settings
-│       │       ├── workers/     # the workers in the sidebar, pairing, removal and the workers settings
+│       │       ├── plugins/     # the Plugins settings and the way to them
+│       │       ├── workers/     # the Workers plugin: the workers in the sidebar, pairing, removal and the workers settings
 │       │       └── window-and-tray/  # the questions about closing, and the window settings
 │       ├── state/               # state modules: the shell's slots, settings, conversations, profiles, the window's questions
 │       ├── utils/               # helpers: messages for error codes, the transcript's reducer, Markdown, calls, ordering
 │       ├── types/               # shared types: the slot entries, command outcomes, the settings failures
-│       ├── registrations/       # what fills the slots: the shell's entries, chat.ts, window-and-tray.ts, composeShell()
+│       ├── registrations/       # what fills the slots: the shell's entries, chat.ts, window-and-tray.ts, the list of plugins, composeShell()
 │       ├── validation/          # the validation harness, which only validation builds load
 │       ├── generated/           # IPC bindings, generated and never committed
 │       └── paraglide/           # message functions compiled from messages/, never committed
@@ -86,10 +87,11 @@ apps/desktop/
 ```
 
 - An area's files carry its name inside each kind folder. The shell's components are in `components/app/shell/`, its slots in `state/shell-slots.svelte.ts`, and its entries in `registrations/shell.ts`. A feature adds its components in `components/app/<feature>/`, its state in `state/`, its helpers in `utils/`, and its registration in `registrations/<feature>.ts`, which it lists in `registrations/features.ts`.
+- A plugin's UI files follow the same rule under the plugin's ID, such as `components/app/workers/`, `state/workers.svelte.ts` and `registrations/workers.ts` ([ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md), decision 10). Its registration is listed in `registrations/plugin-list.ts`, the one core file that imports a plugin's UI, and the lint rule `mannie/plugin-boundaries` refuses any other import of a plugin's files from the core or from another plugin.
 - Components that are not CLI output live in `components/app/` ([ADR-0006](../adr/0006-use-shadcn-svelte-through-its-cli.md)): shared compositions directly in it, and each area's components in a folder of their own.
 - The app imports its own modules through the `#lib/*` subpath import, which SvelteKit 3 uses in place of `$lib`.
 - The root layout's load function asks the core whether it started and loads the interface settings with their locale before anything renders.
-- `composeShell()` creates the shell's slots, registers the shell's own entries (the interface settings and the commands for the settings and the theme), then calls each feature's registration. The shell renders whatever the slots hold and never imports a feature.
+- `composeShell()` creates the shell's slots, registers the shell's own entries (the interface settings and the commands for the settings and the theme), then calls each feature's registration, then each plugin's with the plugin's own view of the slots. The shell renders whatever the slots hold and never imports a feature. A slot shows a plugin's entries only while the core reports the plugin as on, which the shell follows through the channel of plugin states from its start ([extension points](extension-points.md#37-ui-shell-slots)).
 - The settings are a page of their own (`/settings`). The shell then shows the settings sidebar in place of the main one: a link back to the main view as the owner left it, and a page per settings section, which the `section` search parameter selects.
 - Side panels open beside the main view, in a resizable split that keeps its size in the webview's storage, or over the view when the main area is narrower than 720 pixels ([ADR-0025](../adr/0025-add-side-panels-to-the-shell.md)). The main view's address holds the open panels, one `panel` search parameter each, and the visible one in `shown-panel`, so a view that opens other content leaves them behind, the settings lead back to them and a reload shows them again. `state/side-panels.svelte.ts` opens, shows and closes them and moves the focus.
 - State lives in `.svelte.ts` modules in `state/` that use runes. Each open conversation has a state object that its channel subscription feeds.
@@ -101,12 +103,12 @@ apps/desktop/
 - The single-instance plugin focuses the running window when the app starts a second time, and shows it again if it was hidden in the tray.
 - On the first close of the main window, Mannie asks whether to keep running in the system tray or to quit, and saves the answer as a setting that the owner can change later (D13). The [window and tray](../features/window-and-tray.md) feature describes the behavior.
 - The core decides what a close does. When it needs the owner, it shows the window and asks over the window's channel; when no window can answer within 5 seconds, for example because its page failed to load, Mannie quits.
-- In tray mode, closing the window only hides it. Runs, channels in the core and worker links continue, and the tray icon's menu opens the window again or quits.
+- In tray mode, closing the window only hides it. Runs, channels in the core and the plugins that are on continue, and the tray icon's menu opens the window again or quits.
 - In quit mode, closing the window quits the app. While runs are active, Mannie warns first, and so does Quit in the tray menu. Quitting interrupts the master's runs, which can be retried. Tasks on workers keep running on their workers.
-- Quitting ends the event loop, then shuts the core down: the runtime marks active runs as interrupted and waits up to 3 seconds for them, the store writes what it holds, and the logs flush. A process that is killed instead leaves the recovery to the next start.
+- Quitting ends the event loop, then shuts the core down: the runtime marks active runs as interrupted and waits up to 3 seconds for them, the plugin host stops the plugins that are on, as turning them off does, and keeps the owner's choices, the store writes what it holds, and the logs flush. A process that is killed instead leaves the recovery to the next start.
 - The tray icon uses Tauri's `tray-icon` feature, which is part of Tauri itself and not a plugin. It appears once the window gives it its labels from the catalog, and Mannie runs without it when the system has no tray.
 - Validation builds, which only the end-to-end tests run, open the window off every screen, without a taskbar button and without the focus, so a test run leaves the owner's screen and keyboard alone. `MANNIE_E2E_SHOW_WINDOW=1` shows it.
-- After the computer resumes from sleep, provider calls that failed while it slept count as transient errors and are retried. The link to each worker reconnects.
+- After the computer resumes from sleep, provider calls that failed while it slept count as transient errors and are retried. With the Workers plugin on, the link to each worker reconnects.
 
 ## 8. Platform differences
 

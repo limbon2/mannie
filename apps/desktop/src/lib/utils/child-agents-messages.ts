@@ -2,10 +2,14 @@
 // the commands' errors, the states of tasks, the agents' names and why a call
 // of a task tool assigned no task. The UI shows the catalog's message for a
 // code and never the core's description. Titles, activities, instructions and
-// reports are content and never pass through these functions.
+// reports are content and never pass through these functions. A plugin's
+// executor names its own refusals through its kind of task (ADR-0031,
+// decision 7).
 import type { TaskRefusal, TaskState, TaskView } from '#lib/generated/bindings.js';
 import { m } from '#lib/paraglide/messages.js';
+import { pluginName } from '#lib/state/plugin-catalog.js';
 import type { ChildAgentsFailure } from '#lib/types/child-agents.js';
+import type { TaskKind } from '#lib/types/shell-slots.js';
 
 /** What to tell the owner about a command of the child agents feature that failed. */
 export function childAgentsFailureMessage(failure: ChildAgentsFailure): string {
@@ -74,11 +78,30 @@ export function agentLabel(agent: string): string {
   }
 }
 
-/** Why a call of a task tool assigned no task, as a sentence. */
-export function taskRefusalMessage(refusal: TaskRefusal): string {
+/** An executor's refusal that its kind of task does not name, as a sentence that names the target. */
+function executorRefusalMessage(target: string | null): string {
+  return target === null ? m.child_agents_refusal_executor_untargeted() : m.child_agents_refusal_executor({ target });
+}
+
+/**
+ * Why a call of a task tool assigned no task, as a sentence. `kindOf` finds
+ * the kind of task of a plugin's executor while its plugin is on; without
+ * one, the sentence names the target.
+ */
+export function taskRefusalMessage(
+  refusal: TaskRefusal,
+  kindOf: (kind: string) => TaskKind | undefined = () => undefined,
+): string {
   switch (refusal.reason) {
     case 'budget_used': {
       return m.child_agents_refusal_budget_used();
+    }
+    case 'executor': {
+      if (refusal.code === 'plugin_off') {
+        return m.child_agents_refusal_plugin_off({ plugin: pluginName(refusal.kind) });
+      }
+      const target = refusal.target ?? null;
+      return kindOf(refusal.kind)?.refusal(refusal.code, target) ?? executorRefusalMessage(target);
     }
     case 'not_started': {
       return m.child_agents_refusal_not_started();
@@ -86,20 +109,16 @@ export function taskRefusalMessage(refusal: TaskRefusal): string {
     case 'still_running': {
       return m.child_agents_refusal_still_running({ number: String(refusal.number) });
     }
-    case 'profile_not_reachable': {
-      return m.child_agents_refusal_profile_not_reachable({ worker: refusal.worker });
-    }
     case 'unknown_task': {
       return m.child_agents_refusal_unknown_task({ number: String(refusal.number) });
     }
-    case 'worker_incompatible': {
-      return m.child_agents_refusal_worker_incompatible({ worker: refusal.worker });
-    }
-    case 'worker_offline': {
-      return m.child_agents_refusal_worker_offline({ worker: refusal.worker });
-    }
+    // The refusals of workers that 0.2.0 stored, which the core shows as the
+    // Workers plugin's codes; they name their worker.
+    case 'profile_not_reachable':
+    case 'worker_incompatible':
+    case 'worker_offline':
     case 'worker_unknown': {
-      return m.child_agents_refusal_worker_unknown({ worker: refusal.worker });
+      return executorRefusalMessage(refusal.worker);
     }
   }
 }

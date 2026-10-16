@@ -129,6 +129,27 @@ export async function leaveSettings(): Promise<void> {
   });
 }
 
+/**
+ * Turns a plugin on or off with its switch on the Plugins page, and waits
+ * until the core reports the state that the switch asked for. The switch is
+ * found by the plugin's ID, so this works in the pseudo-locale. A plugin with
+ * work in progress asks before it turns off, which this does not answer.
+ */
+export async function setPluginEnabled(id: string, enabled: boolean): Promise<void> {
+  await openSettings('plugins.settings');
+  const plugin = await $(`[data-plugin="${id}"]`);
+  await plugin.waitForDisplayed();
+  const wanted = enabled ? 'on' : 'off';
+  if ((await plugin.getAttribute('data-plugin-state')) === wanted) {
+    return;
+  }
+  await plugin.$('[data-plugin-switch]').click();
+  await $(`[data-plugin="${id}"][data-plugin-state="${wanted}"]`).waitForExist({
+    timeout: 30_000,
+    timeoutMsg: `the plugin ${id} did not turn ${wanted}`,
+  });
+}
+
 /** Whether the window shows the dark theme. */
 export async function isDark(): Promise<boolean> {
   return browser.execute(() => document.documentElement.classList.contains('dark'));

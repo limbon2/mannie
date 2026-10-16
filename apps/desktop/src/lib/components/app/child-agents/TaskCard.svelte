@@ -1,16 +1,17 @@
 <script lang="ts">
   import BotIcon from '@lucide/svelte/icons/bot';
+  import BoxIcon from '@lucide/svelte/icons/box';
   import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
   import CircleAlertIcon from '@lucide/svelte/icons/circle-alert';
   import CircleCheckIcon from '@lucide/svelte/icons/circle-check';
   import CircleStopIcon from '@lucide/svelte/icons/circle-stop';
   import LoaderCircleIcon from '@lucide/svelte/icons/loader-circle';
   import MessagesSquareIcon from '@lucide/svelte/icons/messages-square';
-  import ServerIcon from '@lucide/svelte/icons/server';
   import SquareIcon from '@lucide/svelte/icons/square';
   import { untrack } from 'svelte';
 
   import Markdown from '#lib/components/app/markdown/Markdown.svelte';
+  import PluginsSettingsLink from '#lib/components/app/plugins/PluginsSettingsLink.svelte';
   import PartOutlet from '#lib/components/app/shell/PartOutlet.svelte';
   import { Badge } from '#lib/components/ui/badge/index.js';
   import { Button } from '#lib/components/ui/button/index.js';
@@ -18,26 +19,34 @@
   import type { TaskView } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
   import { childAgentsActions } from '#lib/state/child-agents-actions.svelte.js';
+  import { getShellSlots } from '#lib/state/shell-slots.svelte.js';
   import { sidePanels } from '#lib/state/side-panels.svelte.js';
   import { chatFailureMessage, runFailureMessage } from '#lib/utils/chat-errors.js';
   import { CONVERSATION_PANEL } from '#lib/utils/chat-urls.js';
   import { agentLabel, taskStateLabel } from '#lib/utils/child-agents-messages.js';
+  import { failedForPluginOff } from '#lib/utils/plugins-messages.js';
   import { approvalPart, isTaskActive, isTaskTroubled } from '#lib/utils/task-parts.js';
 
   // The card of a task in its parent's reply (docs/features/child-agents/
   // child-agent-activity.md, the card of a task): the child's number and
   // title, its agent, its state and what it does now, the call of the child
   // that waits for the owner, and on demand the instruction and the report.
-  // A task on a worker shows the worker's name in place of the agent
-  // (docs/features/workers/worker-activity.md). The title, the activity, the
-  // instruction, the report and the worker's name are content, which a model
-  // or a worker wrote. A status region announces a change of state without
-  // taking the focus.
+  // A task of a plugin's executor shows its target's name in place of the
+  // agent, with the icon and the words of its kind of task while the plugin
+  // is on (ADR-0031, decision 7). The title, the activity, the instruction,
+  // the report and the target's name are content, which a model or the
+  // target wrote. A status region announces a change of state without taking
+  // the focus.
   let { task }: { task: TaskView } = $props();
+
+  const slots = getShellSlots();
 
   let detailsOpen = $state(false);
 
   const number = $derived(String(task.number));
+  /** The target of a plugin's executor that runs the task, or `null` for a child agent. */
+  const target = $derived(task.executor ?? null);
+  const kind = $derived(target === null ? undefined : slots.taskKinds.find(target.kind));
   const active = $derived(isTaskActive(task.state));
   const troubled = $derived(isTaskTroubled(task.state));
   const stateLabel = $derived(taskStateLabel(task));
@@ -62,20 +71,22 @@
 
 <div class="flex flex-col gap-3 rounded-lg border p-3" data-task-number={task.number} data-task-state={task.state}>
   <div class="flex items-start gap-2">
-    {#if task.worker === null}
+    {#if target === null}
       <BotIcon class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+    {:else if kind === undefined}
+      <BoxIcon class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
     {:else}
-      <ServerIcon class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+      <kind.icon class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
     {/if}
     <p class="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-sm">
       <span class="font-medium">{m.child_agents_task_number({ number })}</span>
       <span class="min-w-0 wrap-anywhere" data-content dir="auto">{task.title}</span>
-      {#if task.worker === null}
+      {#if target === null}
         <Badge variant="secondary">{agentLabel(task.agent)}</Badge>
       {:else}
-        <Badge class="max-w-full" data-task-worker="" variant="secondary">
-          <span class="sr-only">{m.child_agents_worker_prefix()}</span>
-          <span class="min-w-0 truncate" data-content dir="auto">{task.worker.name}</span>
+        <Badge class="max-w-full" data-task-kind={target.kind} data-task-target="" variant="secondary">
+          <span class="sr-only">{kind?.targetPrefix() ?? m.child_agents_target_prefix()}</span>
+          <span class="min-w-0 truncate" data-content dir="auto">{target.targetName}</span>
         </Badge>
       {/if}
       {#if task.followUp}
@@ -104,7 +115,9 @@
     {/if}
   </div>
   {#if task.detached}
-    <p class="text-sm text-muted-foreground" data-task-detached="">{m.child_agents_detached()}</p>
+    <p class="text-sm text-muted-foreground" data-task-detached="">
+      {kind?.detached() ?? m.child_agents_detached()}
+    </p>
   {/if}
   {#if approval !== null}
     <!-- The child's call renders as a part of the child's conversation, so the
@@ -163,6 +176,9 @@
   </Collapsible.Root>
   {#if stopFailure !== null}
     <p class="text-sm text-destructive" role="alert">{chatFailureMessage(stopFailure)}</p>
+    {#if failedForPluginOff(stopFailure)}
+      <PluginsSettingsLink />
+    {/if}
   {/if}
 </div>
 <p class="sr-only" role="status">

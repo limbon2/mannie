@@ -2,6 +2,7 @@
   import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
   import LoaderCircleIcon from '@lucide/svelte/icons/loader-circle';
 
+  import PluginsSettingsLink from '#lib/components/app/plugins/PluginsSettingsLink.svelte';
   import { Button } from '#lib/components/ui/button/index.js';
   import * as Collapsible from '#lib/components/ui/collapsible/index.js';
   import type { ToolCallView } from '#lib/generated/bindings.js';
@@ -9,6 +10,7 @@
   import { secondClock } from '#lib/state/second-clock.js';
   import { toolsActions } from '#lib/state/tools-actions.svelte.js';
   import type { PartRendererProps } from '#lib/types/shell-slots.js';
+  import { failedForPluginOff } from '#lib/utils/plugins-messages.js';
   import { notRunMessage, toolFailureMessage, toolsFailureMessage } from '#lib/utils/tools-messages.js';
   import { callStatus, callSummary, RUN_COMMAND, toolIcon } from '#lib/utils/tools-summaries.js';
 
@@ -122,6 +124,9 @@
     </Collapsible.Root>
     {#if decisionFailure !== null}
       <p class="text-sm text-destructive" role="alert">{toolsFailureMessage(decisionFailure)}</p>
+      {#if failedForPluginOff(decisionFailure)}
+        <PluginsSettingsLink />
+      {/if}
     {/if}
     {#if request !== null}
       <ToolApproval accesses={call.accesses} {conversationId} partId={part.id} {request} />

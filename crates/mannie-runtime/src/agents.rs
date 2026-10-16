@@ -15,9 +15,6 @@ pub const EXPLORE_AGENT: &str = "explore";
 /// The name of the child agent that also changes files and runs commands.
 pub const GENERAL_AGENT: &str = "general";
 
-/// The name of the agent of the tasks that the master assigns to a worker.
-pub const WORKER_AGENT: &str = "worker";
-
 /// Whom an agent answers to, which decides how the text it reads addresses
 /// it (docs/features/child-agents/tasks.md, the text the model sees).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,7 +72,7 @@ pub const SYSTEM_TOOLS: [&str; 15] = [
 ];
 
 /// The conversation agent's tools: the system tools and the task tools.
-const CONVERSATION_TOOLS: [&str; 19] = [
+const CONVERSATION_TOOLS: [&str; 18] = [
     SYSTEM_TOOLS[0],
     SYSTEM_TOOLS[1],
     SYSTEM_TOOLS[2],
@@ -94,7 +91,6 @@ const CONVERSATION_TOOLS: [&str; 19] = [
     TASK_TOOLS[0],
     TASK_TOOLS[1],
     TASK_TOOLS[2],
-    TASK_TOOLS[3],
 ];
 
 /// The tools of an explore child: the system tools that only read. It has no
@@ -168,23 +164,6 @@ pub const GENERAL: AgentDefinition = AgentDefinition {
     max_tasks: 0,
 };
 
-/// The worker agent (docs/features/workers/host-and-ceiling.md, the worker
-/// agent): every system tool but the move into a project, on its own host and
-/// within the host's ceiling, with the conversation agent's budgets of tools.
-/// Its texts come from the worker's own instruction sections, and only a
-/// worker registers it, so the agents that `start_task` offers on the master
-/// stay the same.
-pub const WORKER: AgentDefinition = AgentDefinition {
-    name: WORKER_AGENT,
-    requester: Requester::Agent,
-    instructions: "",
-    tools: &GENERAL_TOOLS,
-    max_continuation_notes: 2,
-    max_tool_rounds: 100,
-    max_tool_calls: 250,
-    max_tasks: 0,
-};
-
 /// A definition whose name is already registered.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("the agent {name} is already registered")]
@@ -210,13 +189,6 @@ impl AgentRegistry {
     pub fn with_builtin() -> Self {
         Self {
             definitions: vec![CONVERSATION, EXPLORE, GENERAL],
-        }
-    }
-
-    /// A worker's registry: the worker agent alone (ADR-0028, decision 2).
-    pub fn for_worker() -> Self {
-        Self {
-            definitions: vec![WORKER],
         }
     }
 
@@ -253,7 +225,7 @@ mod tests {
 
     use super::{
         AgentDefinition, AgentRegistry, CONVERSATION, CONVERSATION_AGENT, DuplicateAgent, EXPLORE,
-        GENERAL, Requester, WORKER, WORKER_AGENT,
+        GENERAL, Requester,
     };
     use crate::tasks::TASK_TOOLS;
 
@@ -303,7 +275,7 @@ mod tests {
 
     #[test]
     fn children_neither_move_their_parent_nor_give_tasks() {
-        for child in [EXPLORE, GENERAL, WORKER] {
+        for child in [EXPLORE, GENERAL] {
             assert_eq!(child.requester, Requester::Agent);
             assert_eq!(child.max_tasks, 0);
             assert!(!child.tools.contains(&"move_to_project"), "{}", child.name);
@@ -315,14 +287,5 @@ mod tests {
             assert!(CONVERSATION.tools.contains(&task_tool));
         }
         assert_eq!(CONVERSATION.requester, Requester::Owner);
-    }
-
-    #[test]
-    fn only_a_worker_registers_the_worker_agent() {
-        assert!(AgentRegistry::with_builtin().get(WORKER_AGENT).is_none());
-        let worker = AgentRegistry::for_worker();
-        assert_eq!(worker.get(WORKER_AGENT), Some(&WORKER));
-        assert!(worker.get(CONVERSATION_AGENT).is_none());
-        assert_eq!(WORKER.tools, GENERAL.tools);
     }
 }

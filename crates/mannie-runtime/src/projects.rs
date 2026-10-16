@@ -173,9 +173,9 @@ impl Runtime {
             for conversation in &deletion.task_conversations {
                 self.inner.hubs.ended_task_conversation(conversation).await;
             }
-            // The deletions of worker task conversations wait for their
-            // workers in the store; the followers send them.
-            self.inner.followers.nudge();
+            // The deletions of the conversations of executors' tasks wait
+            // in the outbox until each executor takes them.
+            self.inner.executors.notify_outbox();
             if deletion.project_deleted {
                 self.inner
                     .hubs

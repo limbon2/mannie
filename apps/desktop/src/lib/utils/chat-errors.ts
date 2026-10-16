@@ -10,6 +10,7 @@ import type {
   SkipReason,
 } from '#lib/generated/bindings.js';
 import { m } from '#lib/paraglide/messages.js';
+import { pluginName } from '#lib/state/plugin-catalog.js';
 import type { ChatFailure, ProfileFailure } from '#lib/types/chat.js';
 
 const counts = new Intl.NumberFormat();
@@ -183,11 +184,19 @@ export function chatFailureMessage(failure: ChatFailure): string {
     case 'store_unavailable': {
       return m.shell_error_store_unavailable();
     }
+    case 'plugin_off': {
+      return m.chat_error_plugin_off({ plugin: pluginName(error.plugin) });
+    }
     case 'task_conversation': {
       return m.chat_error_task_conversation();
     }
+    case 'task_target_unreachable': {
+      return m.chat_error_task_target_unreachable({ target: error.target });
+    }
+    // 0.2.0's error of a worker that cannot be reached; this version names
+    // the target instead.
     case 'worker_unreachable': {
-      return m.chat_error_worker_unreachable();
+      return m.chat_error_task_unreachable();
     }
     case 'title_empty': {
       return m.chat_error_title_empty();
@@ -199,6 +208,15 @@ export function chatFailureMessage(failure: ChatFailure): string {
       return m.chat_error_written_by_newer_version();
     }
   }
+}
+
+/**
+ * The plugin of a task conversation that cannot be followed because the
+ * plugin is off, or `null` for any other failure (ADR-0030, decision 12).
+ */
+export function pluginOffOf(failure: ChatFailure | null): string | null {
+  const error = failure?.kind === 'core' ? failure.error : null;
+  return error?.code === 'plugin_off' ? error.plugin : null;
 }
 
 /** Why Mannie refused a project's folder, as a sentence. */

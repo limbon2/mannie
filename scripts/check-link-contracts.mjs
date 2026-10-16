@@ -5,6 +5,8 @@
 // breaking change in a branch or in uncommitted work, and the newest release
 // tag that has the files, which catches one that reached the base branch.
 // A baseline without the files is skipped, because the contracts start in M4.
+// Since M5 the files live in the Workers plugin's folder (ADR-0031), so a
+// baseline from before keeps them in `proto/`, and buf compares the folders.
 //
 // `task lint:proto` runs it from the repository's root. MANNIE_CONTRACTS_BASE
 // names the base branch, `origin/main` by default. CI checks out the whole
@@ -15,7 +17,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** The folder of the contracts, which buf.yaml names as its module. */
-export const PROTO_FOLDER = 'proto';
+export const PROTO_FOLDER = 'plugins/workers/proto';
+
+/** Where commits from before M5 keep the contracts. */
+export const EARLIER_PROTO_FOLDERS = ['proto'];
 
 /** The base branch when MANNIE_CONTRACTS_BASE names none. */
 export const DEFAULT_BASE = 'origin/main';
@@ -24,7 +29,8 @@ export const DEFAULT_BASE = 'origin/main';
 const BUF = join(dirname(fileURLToPath(import.meta.url)), '..', 'node_modules', '@bufbuild', 'buf', 'bin', 'buf');
 
 /**
- * @typedef {{ name: string, commit: string }} Baseline
+ * A commit to compare with, and the folder of its contracts.
+ * @typedef {{ name: string, commit: string, contracts: string }} Baseline
  */
 
 /**
@@ -40,13 +46,25 @@ function git(folder, args) {
 }
 
 /**
+ * The folder of the contracts in `commit`, or `undefined` when it has none.
+ * @param {string} folder the repository
+ * @param {string} commit
+ * @returns {string | undefined}
+ */
+export function contractsFolder(folder, commit) {
+  return [PROTO_FOLDER, ...EARLIER_PROTO_FOLDERS].find(
+    (candidate) => git(folder, ['cat-file', '-e', `${commit}:${candidate}`]) !== undefined,
+  );
+}
+
+/**
  * Whether `commit` has the contracts.
  * @param {string} folder the repository
  * @param {string} commit
  * @returns {boolean}
  */
 export function hasContracts(folder, commit) {
-  return git(folder, ['cat-file', '-e', `${commit}:${PROTO_FOLDER}`]) !== undefined;
+  return contractsFolder(folder, commit) !== undefined;
 }
 
 /**
@@ -73,7 +91,6 @@ export function baselines(folder, base) {
       `there is no merge base with ${base}; fetch it with its history, or name another base in MANNIE_CONTRACTS_BASE`,
     );
   }
-  /** @type {Baseline[]} */
   const candidates = [{ name: `the merge base with ${base}`, commit: mergeBase }];
   const release = newestReleaseWithContracts(folder);
   if (release !== undefined) {
@@ -87,10 +104,11 @@ export function baselines(folder, base) {
   /** @type {string[]} */
   const skipped = [];
   for (const candidate of candidates) {
-    if (!hasContracts(folder, candidate.commit)) {
+    const contracts = contractsFolder(folder, candidate.commit);
+    if (contracts === undefined) {
       skipped.push(candidate.name);
     } else if (!found.some((baseline) => baseline.commit === candidate.commit)) {
-      found.push(candidate);
+      found.push({ ...candidate, contracts });
     }
   }
   return { baselines: found, skipped };
@@ -104,7 +122,8 @@ export function baselines(folder, base) {
  * @returns {boolean}
  */
 export function onlyGrew(folder, baseline) {
-  const result = spawnSync(process.execPath, [BUF, 'breaking', '--against', `.git#ref=${baseline.commit}`], {
+  const against = `.git#ref=${baseline.commit},subdir=${baseline.contracts}`;
+  const result = spawnSync(process.execPath, [BUF, 'breaking', PROTO_FOLDER, '--against', against], {
     cwd: folder,
     stdio: 'inherit',
   });

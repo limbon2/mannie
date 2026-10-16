@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                           |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                                          |
-| Last updated | 2026-10-15                                                                                                                                                                                |
+| Last updated | 2026-10-16                                                                                                                                                                                |
 | Related      | [ADR-0013](../adr/0013-journal-every-side-effect.md), [ADR-0014](../adr/0014-contain-process-trees.md), [Extension points](extension-points.md#31-tool-registry), [Security](security.md) |
 
 This document describes the rules that every tool follows. It does not list the tools: each feature's document lists the tools it adds.
@@ -58,12 +58,12 @@ flowchart LR
 
 Policy decides first, and the owner decides what policy leaves open.
 
-| Source         | Effect                                                                                                                                                                                                         |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Workspace      | Reads inside the conversation's workspace are allowed. Whether writes inside it are allowed without asking is a setting.                                                                                       |
-| Grant          | An approval "for" this conversation, its project or every conversation allows the same kind of access there, for example writes in one folder.                                                                 |
-| Rule           | A saved pattern, such as a command prefix, allows matching operations in every conversation it covers.                                                                                                         |
-| Policy ceiling | On a worker, the ceiling set on the host limits everything above and can refuse an operation outright. A task can narrow it further ([host and ceiling](../features/workers/host-and-ceiling.md#the-ceiling)). |
+| Source         | Effect                                                                                                                                                                                                                                                                                            |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Workspace      | Reads inside the conversation's workspace are allowed. Whether writes inside it are allowed without asking is a setting.                                                                                                                                                                          |
+| Grant          | An approval "for" this conversation, its project or every conversation allows the same kind of access there, for example writes in one folder.                                                                                                                                                    |
+| Rule           | A saved pattern, such as a command prefix, allows matching operations in every conversation it covers.                                                                                                                                                                                            |
+| Policy ceiling | On a machine whose composition root gives the runtime a ceiling, such as a worker, where it is set on the host, the ceiling limits everything above and can refuse an operation outright. A task can narrow it further ([host and ceiling](../features/workers/host-and-ceiling.md#the-ceiling)). |
 
 - An approval request shows the operation exactly: the canonical paths, or the full command with its shell and working directory, and on a worker also the host. A worker's request offers only Allow once and Deny.
 - The owner can allow the operation once, allow it for the conversation, its project or every conversation, save a rule, or deny it. A denial goes back to the model as the tool result.

@@ -1,8 +1,8 @@
 //! The core's state, which the commands share, and how it starts and stops:
-//! logging first, then the store, then the link's hub, which connects to the
-//! paired workers, then the runtime, which marks the replies of a previous
-//! process as interrupted before any command runs and delegates through the
-//! hub (ADR-0027).
+//! logging first, then the store with the modules of the plugins, then the
+//! runtime, which marks the replies of a previous process as interrupted
+//! before any command runs, then the plugin host, which starts the plugins
+//! that the owner turned on (ADR-0030).
 //!
 //! A store that does not open does not stop the app. The window opens, the
 //! shell asks for the startup status, and it shows what failed and what the
@@ -12,33 +12,40 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
-use mannie_link::master::{Hub, HubConfig};
 use mannie_logging::{ErrorChain, LogConfig, LoggingGuard, Redactor};
+use mannie_plugins::{Grants, HostedPlugin, Plugin, PluginHost};
 use mannie_provider::{HttpClient, ProviderRegistry};
 use mannie_runtime::{
-    AgentRegistry, Delegation, InstructionRegistry, Machine, Runtime, RuntimeConfig, RuntimeDeps,
+    AgentRegistry, InstructionRegistry, MachineSettings, Runtime, RuntimeConfig, RuntimeDeps,
     ToolsDeps,
 };
-use mannie_store::{Store, StoreError, StoreOptions};
+use mannie_store::{Store, StoreError, StoreModule, StoreOptions};
 use mannie_tools::{MutationLock, SystemFacts, ToolRegistry};
 use mannie_types::clock::{Clock, SystemClock};
 use mannie_types::startup::StartupProblem;
 use mannie_types::window::WindowSettings;
+use mannie_workers::WorkersPlugin;
+use mannie_workers::keys::MASTER_KEY_ENTRY;
 use tauri::{App, Manager};
 
-use crate::credentials::{KeyringKeyStore, KeyringVault};
+use crate::credentials::{KeyringVault, ScopedSecrets};
 use crate::ipc::subscriptions::Subscriptions;
 use crate::window::requests::WindowRequests;
 
 /// The file name of the master's database in its data folder.
 const DATABASE_FILE: &str = "mannie.sqlite";
 
+/// The Workers plugin's entries of the credential store: the master's key of
+/// the link, under the name that 0.2.0 used.
+const WORKERS_SECRETS: &[&str] = &[MASTER_KEY_ENTRY];
+
 /// What runs once the store opened.
 #[derive(Debug)]
 struct Services {
     store: Store,
-    hub: Hub,
     runtime: Runtime,
+    plugins: PluginHost,
+    workers: WorkersPlugin,
 }
 
 #[derive(Debug)]
@@ -100,13 +107,22 @@ impl Core {
             .map(|services| &services.runtime)
     }
 
-    /// The link's hub, unless the core did not start.
-    pub(crate) fn hub(&self) -> Option<&Hub> {
+    /// The plugin host, unless the core did not start.
+    pub(crate) fn plugins(&self) -> Option<&PluginHost> {
         self.inner
             .services
             .as_ref()
             .ok()
-            .map(|services| &services.hub)
+            .map(|services| &services.plugins)
+    }
+
+    /// The Workers plugin, for its commands, unless the core did not start.
+    pub(crate) fn workers(&self) -> Option<&WorkersPlugin> {
+        self.inner
+            .services
+            .as_ref()
+            .ok()
+            .map(|services| &services.workers)
     }
 
     /// Why the core did not start, if it did not.
@@ -184,16 +200,17 @@ impl Core {
     }
 
     /// Stops the core: the runtime marks active replies as interrupted and
-    /// waits for them, and lets the tasks on workers run on; the hub ends
-    /// its connections; the store makes everything durable, and the logs are
-    /// written out. Mannie quits afterwards.
+    /// waits for them, and lets the tasks of plugins' executors run on; the
+    /// plugins that are on stop and keep the owner's choices; the store makes
+    /// everything durable, and the logs are written out. Mannie quits
+    /// afterwards.
     pub(crate) async fn shutdown(&self) {
         self.inner.subscriptions.cancel_all();
         if let Some(runtime) = self.runtime() {
             runtime.shutdown().await;
         }
-        if let Some(hub) = self.hub() {
-            hub.shutdown().await;
+        if let Some(plugins) = self.plugins() {
+            plugins.shutdown().await;
         }
         tracing::info!("Mannie stopped");
         drop(lock(&self.inner.logging).take());
@@ -207,8 +224,9 @@ pub(crate) fn start(app: &App) -> Core {
     let redactor = Redactor::new();
     let logging = start_logging(app, &redactor, &clock);
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "Mannie is starting");
-    let services = open_store(app, Arc::clone(&clock))
-        .and_then(|store| start_runtime(app, store, &redactor, clock));
+    let workers = workers_plugin();
+    let services = open_store(app, Arc::clone(&clock), workers.store_modules())
+        .and_then(|store| start_runtime(app, store, &redactor, clock, workers));
     if let Err(problem) = &services {
         tracing::error!(?problem, "Mannie started without its database");
     }
@@ -260,8 +278,24 @@ fn start_logging(app: &App, redactor: &Redactor, clock: &Arc<dyn Clock>) -> Opti
     }
 }
 
-/// Opens the master's database in the platform's local data folder.
-fn open_store(app: &App, clock: Arc<dyn Clock>) -> Result<Store, StartupProblem> {
+/// The Workers plugin. The end-to-end tests stop a worker and wait for it to
+/// come back, so validation builds try again sooner.
+fn workers_plugin() -> WorkersPlugin {
+    #[cfg(feature = "validation")]
+    let plugin = WorkersPlugin::with_max_retry_delay(std::time::Duration::from_secs(2));
+    #[cfg(not(feature = "validation"))]
+    let plugin = WorkersPlugin::new();
+    plugin
+}
+
+/// Opens the master's database in the platform's local data folder, with
+/// the modules of the plugins, whose migrations run whether or not the
+/// plugins are on (ADR-0030, decision 5).
+fn open_store(
+    app: &App,
+    clock: Arc<dyn Clock>,
+    modules: Vec<StoreModule>,
+) -> Result<Store, StartupProblem> {
     let data_directory = app.path().app_local_data_dir().map_err(|error| {
         tracing::error!(%error, "could not determine the data folder");
         StartupProblem::DataDirectoryUnavailable
@@ -272,20 +306,22 @@ fn open_store(app: &App, clock: Arc<dyn Clock>) -> Result<Store, StartupProblem>
         tracing::error!(error = %ErrorChain(&error), directory = %data_directory.display(), "could not create the data folder");
         StartupProblem::DatabaseUnavailable { path: database.display().to_string() }
     })?;
-    Store::open(&database, &StoreOptions::new(backups.clone(), clock)).map_err(|error| {
+    let options = StoreOptions::new(backups.clone(), clock).with_modules(modules);
+    Store::open(&database, &options).map_err(|error| {
         tracing::error!(error = %ErrorChain(&error), error.code = error.code(), "could not open the database");
         startup_problem(&error, &database, &backups)
     })
 }
 
-/// Starts the link's hub and the runtime, which first marks the replies of a
-/// previous process as interrupted. The credential store opens on first use,
-/// for a provider's credential or the master's key of the link.
+/// Starts the runtime, which first marks the replies of a previous process
+/// as interrupted, and the plugin host. The credential store opens on first
+/// use, for a provider's credential or a plugin's entry.
 fn start_runtime(
     app: &App,
     store: Store,
     redactor: &Redactor,
     clock: Arc<dyn Clock>,
+    workers: WorkersPlugin,
 ) -> Result<Services, StartupProblem> {
     let client = HttpClient::new(Arc::clone(&clock)).map_err(|error| {
         tracing::error!(error = %ErrorChain(&error), "could not set up the HTTP client for model providers");
@@ -296,34 +332,16 @@ fn start_runtime(
         &app.config().identifier,
         redactor.clone(),
     ));
-    let keys = Arc::new(KeyringKeyStore::new(Arc::clone(&vault)));
-    let hub = tauri::async_runtime::block_on(Hub::start(
-        store.clone(),
-        keys,
-        hub_config(),
-        Arc::clone(&clock),
-    ))
-    .map_err(|error| {
-        tracing::error!(
-            error.code = error.code(),
-            "could not read the paired workers"
-        );
-        StartupProblem::DatabaseUnavailable {
-            path: store.path().display().to_string(),
-        }
-    })?;
-    let delegation: Arc<dyn Delegation> = Arc::new(hub.clone());
     let deps = RuntimeDeps {
         store: store.clone(),
         client,
         registry,
-        vault,
-        clock,
+        vault: Arc::<KeyringVault>::clone(&vault),
+        clock: Arc::clone(&clock),
         agents: AgentRegistry::with_builtin(),
         instructions: InstructionRegistry::with_builtin(),
         tools: tools(app),
-        machine: Machine::Master,
-        delegation: Some(delegation),
+        machine: MachineSettings::default(),
     };
     let runtime = tauri::async_runtime::block_on(Runtime::start(deps, RuntimeConfig::default()))
         .map_err(|error| {
@@ -332,23 +350,39 @@ fn start_runtime(
                 path: store.path().display().to_string(),
             }
         })?;
+    // What each plugin may use, in one place (ADR-0030, decision 13).
+    let workers_plugin: Arc<dyn Plugin> = Arc::new(workers.clone());
+    let hosted = vec![HostedPlugin {
+        plugin: workers_plugin,
+        grants: Grants {
+            executors: Some(runtime.executor_services()),
+            credentials: Some(runtime.credential_lender()),
+            secrets: Some(Arc::new(ScopedSecrets::new(vault, WORKERS_SECRETS))),
+        },
+    }];
+    let plugins = PluginHost::new(
+        runtime.clone(),
+        store.clone(),
+        hosted,
+        clock,
+        env!("CARGO_PKG_VERSION").to_owned(),
+    )
+    .map_err(|error| {
+        tracing::error!(error = %ErrorChain(&error), "could not take the list of plugins");
+        StartupProblem::DatabaseUnavailable {
+            path: store.path().display().to_string(),
+        }
+    })?;
+    // The plugins start after the core's recovery, in the background, so the
+    // window never waits for them; the Plugins page shows each one starting.
+    let starting = plugins.clone();
+    tauri::async_runtime::spawn(async move { starting.start_chosen().await });
     Ok(Services {
         store,
-        hub,
         runtime,
+        plugins,
+        workers,
     })
-}
-
-/// How the hub connects to the workers. The end-to-end tests stop a worker
-/// and wait for it to come back, so validation builds try again sooner.
-fn hub_config() -> HubConfig {
-    let config = HubConfig::new(env!("CARGO_PKG_VERSION").to_owned());
-    #[cfg(feature = "validation")]
-    let config = HubConfig {
-        max_retry_delay: std::time::Duration::from_secs(2),
-        ..config
-    };
-    config
 }
 
 /// The system tools of the master. Mannie's data and log folders are
@@ -415,6 +449,11 @@ fn startup_problem(error: &StoreError, database: &Path, backups: &Path) -> Start
     let path = database.display().to_string();
     match error {
         StoreError::SchemaTooNew {
+            database: database_version,
+            supported,
+            ..
+        }
+        | StoreError::ModuleTooNew {
             database: database_version,
             supported,
             ..

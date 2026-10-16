@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 
+use mannie_types::ceiling::CeilingMode;
 use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{ProjectId, RuleId};
 use mannie_types::tools::{
     Access, AccessMode, ApprovalReason, ApprovalRequest, CommandRule, Decision, EntryCount,
     GrantScope, Refusal, RuleProposal, ToolsError,
 };
-use mannie_types::workers::CeilingMode;
 
 use super::{Grants, PolicyInputs, Verdict, decide, saved_rule};
 use crate::ceiling::Ceiling;

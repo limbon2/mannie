@@ -98,8 +98,8 @@ describe('the shell', () => {
       'Instructions',
       'Tools',
       'Child agents',
-      'Workers',
       'Window',
+      'Plugins',
     ]);
     await waitForShownText('[id="settings-section-window.behavior"]', 'Window');
     await expect($('#interface-theme-system')).not.toBeExisting();

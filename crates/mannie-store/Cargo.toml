@@ -37,6 +37,9 @@ tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 
 [features]
+# Lets the tests of plugins create a database as 0.2.0 left it, with their
+# modules (ADR-0030). Never enabled in the desktop app or the worker.
+testing = []
 # Exposes the synthetic event table that the validations (V3) write to. Never
 # enabled in the desktop app or the worker.
 validation = []

@@ -13,15 +13,19 @@ function url(search: string): URL {
   return new URL(`https://tauri.localhost/${search}`);
 }
 
+function everyPluginOn(): boolean {
+  return true;
+}
+
 describe('activeView', () => {
   it('shows nothing when no view is registered', () => {
-    const views = new Slot<ShellView>('views');
+    const views = new Slot<ShellView>('views', everyPluginOn);
 
     expect(activeView(views, url(''))).toEqual({ kind: 'none' });
   });
 
   it('shows the first registered view when the URL names none', () => {
-    const views = new Slot<ShellView>('views');
+    const views = new Slot<ShellView>('views', everyPluginOn);
     const chat = view('chat');
     views.register(chat);
     views.register(view('workers'));
@@ -30,7 +34,7 @@ describe('activeView', () => {
   });
 
   it('shows the view the URL names', () => {
-    const views = new Slot<ShellView>('views');
+    const views = new Slot<ShellView>('views', everyPluginOn);
     views.register(view('chat'));
     const workers = view('workers');
     views.register(workers);
@@ -39,9 +43,17 @@ describe('activeView', () => {
   });
 
   it('reports a view that no feature provides', () => {
-    const views = new Slot<ShellView>('views');
+    const views = new Slot<ShellView>('views', everyPluginOn);
     views.register(view('chat'));
 
     expect(activeView(views, url(`?${VIEW_PARAMETER}=removed`))).toEqual({ kind: 'missing', requested: 'removed' });
+  });
+
+  it('says that the plugin of the view the URL names is off', () => {
+    const views = new Slot<ShellView>('views', () => false);
+    views.register(view('chat'));
+    views.register(view('jira'), 'jira');
+
+    expect(activeView(views, url(`?${VIEW_PARAMETER}=jira`))).toEqual({ kind: 'plugin_off', plugin: 'jira' });
   });
 });

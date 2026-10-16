@@ -5,7 +5,7 @@
 # command, and removes it again (ci.yml). Runs elevated on a disposable
 # machine:
 #   ./scripts/ci/worker-service-windows.ps1 -Worker target/debug/mannie-worker.exe -Master target/debug/examples/smoke-master.exe
-# The test master is `cargo build -p mannie-link --features testing --example
+# The test master is `cargo build -p mannie-workers --features testing --example
 # smoke-master`.
 param(
     [Parameter(Mandatory)]

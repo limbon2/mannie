@@ -64,6 +64,14 @@ export class WorkersActions {
   renaming: RenameWorkerRequest | null = $state(null);
   renameOpen = $state(false);
 
+  /** Closes every dialog, as Workers turns off. */
+  closeAll(): void {
+    this.pairOpen = false;
+    this.renameOpen = false;
+    this.removeOpen = false;
+    this.detailsFor = null;
+  }
+
   /** Pairs with the worker of a pairing dialog, which closes once the worker is paired. */
   async confirmPair(request: PairRequest): Promise<void> {
     request.pairing = true;

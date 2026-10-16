@@ -3,9 +3,9 @@
 use std::fmt;
 use std::path::PathBuf;
 
-/// An error from SQLite. The type is opaque, so that rusqlite stays inside
-/// this crate (ADR-0009): other crates can format it and walk its sources,
-/// but not depend on its type.
+/// An error from SQLite. The type is opaque, so that the core's other crates
+/// never depend on rusqlite's types (ADR-0009): they can format it and walk
+/// its sources.
 pub struct DatabaseError(pub(crate) rusqlite::Error);
 
 impl fmt::Debug for DatabaseError {
@@ -48,6 +48,35 @@ pub enum StoreError {
         /// The newest schema version this binary knows.
         supported: u32,
     },
+    /// A newer version of Mannie migrated one module of the database further
+    /// than this one knows. The database was left untouched.
+    #[error(
+        "the database {path} has version {database} of the module {module}, and this version of Mannie supports up to version {supported}; the database was left untouched"
+    )]
+    ModuleTooNew {
+        /// The database file.
+        path: PathBuf,
+        /// The module.
+        module: String,
+        /// The module's version in the database.
+        database: u32,
+        /// The newest version of the module that this binary knows.
+        supported: u32,
+    },
+    /// Two modules of the store have the same name, which is a fault of the
+    /// composition root.
+    #[error("two modules of the store are named {module}")]
+    DuplicateModule {
+        /// The name.
+        module: &'static str,
+    },
+    /// Code asked for the tables of a module that the store did not open
+    /// with, which is a fault of the composition root.
+    #[error("the store did not open with the module {module}")]
+    ModuleNotRegistered {
+        /// The module.
+        module: &'static str,
+    },
     /// A folder or file of the store could not be created or changed.
     #[error("could not prepare {path}")]
     Io {
@@ -85,10 +114,22 @@ pub enum StoreError {
         #[source]
         source: DatabaseError,
     },
+    /// Recording the version of each module of a database from before M5
+    /// failed and was rolled back, so no migration ran.
+    #[error("could not record the version of each module; no migration ran")]
+    Records {
+        /// The cause.
+        #[source]
+        source: DatabaseError,
+    },
     /// A migration failed and was rolled back.
-    #[error("migration {version} ({description}) failed and was rolled back")]
+    #[error(
+        "migration {version} of the module {module} ({description}) failed and was rolled back"
+    )]
     Migration {
-        /// The schema version the migration leads to.
+        /// The module whose migration failed.
+        module: &'static str,
+        /// The module's version that the migration leads to.
         version: u32,
         /// What the migration does.
         description: &'static str,
@@ -115,7 +156,10 @@ impl StoreError {
     /// The stable code of the error, for logs.
     pub fn code(&self) -> &'static str {
         match self {
-            Self::SchemaTooNew { .. } => "store.schema_too_new",
+            Self::SchemaTooNew { .. } | Self::ModuleTooNew { .. } => "store.schema_too_new",
+            Self::DuplicateModule { .. } => "store.duplicate_module",
+            Self::ModuleNotRegistered { .. } => "store.module_not_registered",
+            Self::Records { .. } => "store.records",
             Self::Io { .. } => "store.io",
             Self::Open { .. } => "store.open",
             Self::WalUnavailable { .. } => "store.wal_unavailable",

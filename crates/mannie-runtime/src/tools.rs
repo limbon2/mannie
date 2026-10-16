@@ -189,14 +189,17 @@ impl Runtime {
     }
 
     /// A page of an archived output of a conversation, for the owner. The
-    /// outputs of a task on a worker come from the worker.
+    /// outputs of an executor's task come from its target.
     pub async fn tool_output(&self, input: ReadToolOutput) -> Result<ToolOutputPage, ToolsError> {
-        if let Some((delegation, worker, _summary)) = self
+        if let Some(remote) = self
             .remote_conversation(&input.conversation_id)
             .await
             .map_err(runtime_store_failure)?
         {
-            return delegation.tool_output(&worker, input).await;
+            return remote
+                .tools_executor()?
+                .tool_output(&remote.target, input)
+                .await;
         }
         let archive = self
             .inner

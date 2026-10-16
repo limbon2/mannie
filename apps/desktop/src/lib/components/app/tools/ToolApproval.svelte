@@ -28,7 +28,7 @@
 
   const deciding = $derived(toolsActions.deciding.includes(partId));
   const inProject = $derived(request.project !== null && request.project !== undefined);
-  /** The worker whose host the operation runs on, or `null` on this computer. */
+  /** The computer that runs the task of the operation, by the name its card shows, or `null` for this computer. */
   const host = $derived(request.host ?? null);
 
   function decide(choice: ApprovalChoice): void {
@@ -43,7 +43,7 @@
     <ToolAccessList {accesses} />
   </div>
   {#if host !== null}
-    <!-- The worker's name is content, which the worker wrote. -->
+    <!-- The computer's name is content, which it or the owner wrote. -->
     <div class="flex flex-col gap-1">
       <p class="text-xs font-medium text-muted-foreground">{m.tools_approval_host()}</p>
       <p class="text-sm wrap-anywhere" data-approval-host="" data-content dir="auto">{host}</p>

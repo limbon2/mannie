@@ -1,3 +1,7 @@
+// The registry behind the shell's slots (docs/architecture/extension-points.md,
+// UI shell slots): entries in the order they were registered, no duplicate
+// IDs, and a plugin's entries only while the core reports the plugin as on
+// (ADR-0030, decision 11).
 import { describe, expect, it } from 'vitest';
 
 import { ShellSlots, Slot } from '../../../../../../apps/desktop/src/lib/state/shell-slots.svelte.js';
@@ -7,9 +11,19 @@ interface Entry {
   readonly order: number;
 }
 
+function everyPluginOn(): boolean {
+  return true;
+}
+
+/** Plugin states that the test changes: the plugins in `on` are on. */
+function pluginsOn(...plugins: string[]): { isOn: (plugin: string) => boolean; on: Set<string> } {
+  const on = new Set(plugins);
+  return { isOn: (plugin) => on.has(plugin), on };
+}
+
 describe('Slot', () => {
   it('keeps the entries in the order they were registered', () => {
-    const slot = new Slot<Entry>('test');
+    const slot = new Slot<Entry>('test', everyPluginOn);
 
     slot.register({ id: 'second', order: 2 });
     slot.register({ id: 'first', order: 1 });
@@ -18,7 +32,7 @@ describe('Slot', () => {
   });
 
   it('finds an entry by its ID', () => {
-    const slot = new Slot<Entry>('test');
+    const slot = new Slot<Entry>('test', everyPluginOn);
     slot.register({ id: 'settings', order: 0 });
 
     expect(slot.find('settings')).toEqual({ id: 'settings', order: 0 });
@@ -26,7 +40,7 @@ describe('Slot', () => {
   });
 
   it('refuses a second entry with the same ID', () => {
-    const slot = new Slot<Entry>('commands');
+    const slot = new Slot<Entry>('commands', everyPluginOn);
     slot.register({ id: 'shell.open-settings', order: 0 });
 
     expect(() => {
@@ -34,9 +48,73 @@ describe('Slot', () => {
     }).toThrow('The commands slot already has an entry with the ID shell.open-settings.');
     expect(slot.entries).toHaveLength(1);
   });
+
+  it('lists and finds a plugin’s entry only while the plugin is on, and the core’s always', () => {
+    const plugins = pluginsOn();
+    const slot = new Slot<Entry>('test', plugins.isOn);
+    slot.register({ id: 'core', order: 0 });
+    slot.register({ id: 'workers.panel', order: 1 }, 'workers');
+
+    const whileOff = slot.entries.map((entry) => entry.id);
+    const foundWhileOff = slot.find('workers.panel');
+    plugins.on.add('workers');
+
+    expect(whileOff).toEqual(['core']);
+    expect(foundWhileOff).toBeUndefined();
+    expect(slot.entries.map((entry) => entry.id)).toEqual(['core', 'workers.panel']);
+    expect(slot.find('workers.panel')).toEqual({ id: 'workers.panel', order: 1 });
+  });
+
+  it('names the plugin of an entry that does not show because its plugin is off', () => {
+    const plugins = pluginsOn();
+    const slot = new Slot<Entry>('test', plugins.isOn);
+    slot.register({ id: 'core', order: 0 });
+    slot.register({ id: 'workers.panel', order: 1 }, 'workers');
+
+    const whileOff = slot.pluginOff('workers.panel');
+    plugins.on.add('workers');
+
+    expect(whileOff).toBe('workers');
+    expect(slot.pluginOff('workers.panel')).toBeNull();
+    expect(slot.pluginOff('core')).toBeNull();
+    expect(slot.pluginOff('missing')).toBeNull();
+  });
+
+  it('refuses an ID that an entry of a plugin that is off has', () => {
+    const slot = new Slot<Entry>('commands', pluginsOn().isOn);
+    slot.register({ id: 'workers.pair', order: 0 }, 'workers');
+
+    expect(() => {
+      slot.register({ id: 'workers.pair', order: 1 });
+    }).toThrow('The commands slot already has an entry with the ID workers.pair.');
+  });
 });
 
 describe('ShellSlots', () => {
+  it('registers a plugin’s entries under the plugin’s ID in every slot', () => {
+    const plugins = pluginsOn();
+    const slots = new ShellSlots(plugins.isOn);
+    const component = () => ({});
+    const workers = slots.forPlugin('workers');
+
+    workers.sidebarPanels.register({ component, id: 'workers.panel', order: 5 });
+    workers.commands.register({
+      group: () => 'Workers',
+      id: 'workers.pair',
+      label: () => 'Pair',
+      order: 0,
+      run: () => undefined,
+    });
+    const whileOff = [slots.sidebarPanels.entries.length, slots.commands.entries.length];
+    plugins.on.add('workers');
+
+    expect(whileOff).toEqual([0, 0]);
+    expect(slots.sidebarPanels.entries.map((panel) => panel.id)).toEqual(['workers.panel']);
+    expect(slots.commands.find('workers.pair')).toBeDefined();
+    plugins.on.delete('workers');
+    expect(slots.commands.pluginOff('workers.pair')).toBe('workers');
+  });
+
   it('has a slot for panels, overlays and part renderers that refuses duplicates', () => {
     const slots = new ShellSlots();
     const component = () => ({});

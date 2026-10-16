@@ -1,8 +1,8 @@
 //! The side of a run that gives tasks to child agents
 //! (docs/features/child-agents/tasks.md; ADR-0024): starts and follow-ups,
 //! waits for reports, the states that children publish, and the end of the
-//! children with their parent. Tasks on workers share the lane, the board and
-//! the waits (ADR-0027); `delegation.rs` gives them.
+//! children with their parent. The tasks of plugins' executors share the
+//! lane, the board and the waits (ADR-0031); `remote.rs` gives them.
 //!
 //! The run is the only writer of its conversation. A task's part stays open
 //! while the task runs, and the run keeps the part's documents here: every
@@ -16,22 +16,23 @@ use mannie_store::{
     Change, Durability, NewArchive, NewConversation, NewRun, NewTask, RuntimeStoreError,
     TaskEnding, TaskOrigin,
 };
+use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{ConversationId, PartId, RunId, TaskId, TurnId};
-use mannie_types::run::{FinishReason, RunActivity, RunFailure};
+use mannie_types::run::{FinishReason, RunActivity, RunFailure, TaskKindCount};
 use mannie_types::tasks::{
     AwaitedTask, INSTRUCTION_PREVIEW_CHARS, MAX_REPORT_VIEW_BYTES, TaskDocument, TaskPartDocument,
     TaskRefusal, TaskState,
 };
-use mannie_types::tools::{NotRunReason, ToolCallDocument, ToolCallStatus};
+use mannie_types::tools::{ArchiveRef, NotRunReason, ToolCallDocument, ToolCallStatus};
 use mannie_types::transcript::PartState;
 use tokio::sync::mpsc;
 
 use super::{ChildLink, Command, Ending, MAX_DETAIL_CHARS, RunActor, StepCall, halt};
 use crate::calls::Setup;
-use crate::delegation::RemoteFollow;
+use crate::executors::{ExecutorRefusal, RemoteFollow};
 use crate::ids::IdGenerator;
 use crate::tasks::{
-    ChildEnd, ChildGuard, ChildState, Doer, TaskBoard, TaskCall, TaskSink, parse_call,
+    ChildEnd, ChildGuard, ChildState, TaskBoard, TaskCall, TaskSink, doer_of, parse_call,
     render_report,
 };
 use crate::{Runtime, lock, texts};
@@ -50,10 +51,10 @@ pub(super) struct LaneTask {
     /// holds.
     pub(super) section: TaskPartDocument,
     pub(super) document: TaskDocument,
-    /// The child's run, which the run stops when it ends; `None` for a task
-    /// on a worker, which the run cancels through the port.
+    /// The child's run, which the run stops when it ends; `None` for an
+    /// executor's task, which the run cancels through its executor.
     pub(super) mailbox: Option<mpsc::Sender<Command>>,
-    /// For a task on a worker, the run's hold on its states.
+    /// For an executor's task, the run's hold on its states.
     pub(super) follow: Option<RemoteFollow>,
     /// How the task ended, once the run stored it.
     pub(super) ending: Option<TaskEnding>,
@@ -61,25 +62,48 @@ pub(super) struct LaneTask {
     pub(super) read: bool,
     /// Whether a note asked the model to read the report.
     pub(super) noted: bool,
+    /// Whether the run let the task go because its executor's plugin
+    /// stopped: the task may still run on its target (ADR-0031, decision
+    /// 10).
+    pub(super) let_go: bool,
 }
 
-/// A task of an earlier reply that runs on a worker, which a wait of this
-/// run takes up again (ADR-0027, decision 6).
+/// A task of an earlier reply that an executor still runs, which a wait of
+/// this run takes up again (ADR-0027, decision 6).
 #[derive(Debug)]
 struct FollowedTask {
     id: TaskId,
+    /// The kind of the executor that runs it.
+    kind: String,
     ending: Option<TaskEnding>,
+    /// Whether the executor's plugin stopped while the wait followed the
+    /// task.
+    let_go: bool,
     _follow: RemoteFollow,
+}
+
+impl FollowedTask {
+    fn is_active(&self) -> bool {
+        self.ending.is_none() && !self.let_go
+    }
 }
 
 impl LaneTask {
     fn is_active(&self) -> bool {
-        self.ending.is_none()
+        self.ending.is_none() && !self.let_go
     }
 
-    /// Whether the task runs on a worker.
+    /// Whether an executor runs the task.
     fn is_remote(&self) -> bool {
         self.mailbox.is_none()
+    }
+
+    /// The kind of the executor that runs the task.
+    fn executor_kind(&self) -> Option<&str> {
+        self.document
+            .executor
+            .as_ref()
+            .map(|executor| executor.kind.as_str())
     }
 
     /// The change that stores the task's part as it is now.
@@ -102,7 +126,8 @@ pub(super) struct TaskLane {
     pub(super) board: Arc<TaskBoard>,
     /// The tasks, in the order the run gave them.
     pub(super) tasks: Vec<LaneTask>,
-    /// The tasks of earlier replies on workers that a wait follows.
+    /// The tasks of earlier replies that executors run, which a wait
+    /// follows.
     followed: Vec<FollowedTask>,
     /// The starts and follow-ups of the reply, against its task budget.
     pub(super) assigned: u32,
@@ -182,8 +207,8 @@ impl TaskLane {
             .any(|task| task.is_active() || (!task.read && !task.noted))
     }
 
-    /// Sends `command` to every child that still works. Tasks on workers
-    /// have no mailbox: the run cancels them through the port.
+    /// Sends `command` to every child that still works. Executors' tasks
+    /// have no mailbox: the run cancels them through their executors.
     fn stop_all(&self, command: Command) {
         for task in self.tasks.iter().filter(|task| task.is_active()) {
             if let Some(mailbox) = &task.mailbox {
@@ -218,8 +243,9 @@ impl TaskLane {
     /// Takes what the children published since the run last looked into the
     /// tasks' documents, and returns the changes that store it. A task that
     /// ended finishes its part, with the report as its result unless it runs
-    /// in the background, where `wait_for_tasks` returns the report.
-    fn absorb(&mut self, ids: &IdGenerator) -> Mirror {
+    /// in the background, where `wait_for_tasks` returns the report. A task
+    /// whose executor's plugin stopped is let go.
+    fn absorb(&mut self, ids: &IdGenerator, now: UtcMillis) -> Mirror {
         let published = self.board.take_changes();
         let waiting_before = self.child_waiting().cloned();
         let mut mirror = Mirror::default();
@@ -230,17 +256,28 @@ impl TaskLane {
                 .find(|task| task.id == task_id && task.is_active())
             else {
                 // A task of an earlier reply that a wait follows has no part
-                // in this run: only its end matters.
+                // in this run: only its end matters, or that it was let go.
                 let followed = self
                     .followed
                     .iter_mut()
-                    .find(|followed| followed.id == task_id && followed.ending.is_none());
-                if let (Some(followed), Some(end)) = (followed, &state.end) {
-                    followed.ending = Some(end.ending.clone());
-                    self.board.forget(&task_id);
+                    .find(|followed| followed.id == task_id && followed.is_active());
+                if let Some(followed) = followed {
+                    if let Some(end) = &state.end {
+                        followed.ending = Some(end.ending.clone());
+                        self.board.forget(&task_id);
+                    } else if state.let_go {
+                        followed.let_go = true;
+                        self.board.forget(&task_id);
+                    }
                 }
                 continue;
             };
+            if state.let_go && state.end.is_none() {
+                mirror.durable = true;
+                mirror.changes.extend(let_go(task, now));
+                self.board.forget(&task_id);
+                continue;
+            }
             mirror.durable |= apply_state(&mut task.document, &state);
             match &state.end {
                 None => mirror.changes.push(task.update(Vec::new())),
@@ -286,7 +323,7 @@ fn complete(task: &mut LaneTask, end: &ChildEnd, limit: usize, ids: &IdGenerator
         let output = render_report(
             task.document.number,
             &end.ending,
-            Doer::of(&task.document),
+            doer_of(&task.document),
             limit,
             || ids.archive(),
         );
@@ -305,13 +342,62 @@ fn complete(task: &mut LaneTask, end: &ChildEnd, limit: usize, ids: &IdGenerator
         task = %task.id,
         number = task.document.number,
         agent = %task.document.agent,
-        worker = task.document.worker.as_ref().map(|worker| worker.id.as_str()),
+        executor = task.document.executor.as_ref().map(|executor| executor.kind.as_str()),
         state = end.ending.state.as_str(),
         tool_calls = task.document.tool_calls,
         "a task ended"
     );
     vec![
         task.update(archives),
+        Change::FinishPart {
+            part_id: task.part_id.clone(),
+            state: PartState::Complete,
+            tail: String::new(),
+            provider_item: None,
+        },
+    ]
+}
+
+/// The result of an executor's task that the run let go: it may still run
+/// on its target.
+pub(super) fn let_go_text(document: &TaskDocument) -> String {
+    let (noun, target) = document
+        .executor
+        .as_ref()
+        .map_or((texts::THE_CHILD, ""), |executor| {
+            (executor.noun.as_str(), executor.target_name.as_str())
+        });
+    texts::task_let_go(document.number, noun, target)
+}
+
+/// Lets go of an executor's task whose plugin stopped (ADR-0031, decision
+/// 10): its part ends with the result that the task may still run on its
+/// target, and a wait takes the task up again once the plugin is back on. A
+/// task in the background, whose result the model read when it started,
+/// keeps that result, and a wait for the reply's reports says that it was
+/// let go.
+fn let_go(task: &mut LaneTask, now: UtcMillis) -> Vec<Change> {
+    task.let_go = true;
+    task.follow = None;
+    task.document.detached = true;
+    task.document.activity = None;
+    task.document.approval = None;
+    if task.document.background {
+        task.noted = true;
+    } else {
+        task.section.output = Some(let_go_text(&task.document));
+        task.read = true;
+    }
+    task.call.status = ToolCallStatus::Completed;
+    task.call.ended_at = Some(now);
+    tracing::info!(
+        task = %task.id,
+        number = task.document.number,
+        executor = task.document.executor.as_ref().map(|executor| executor.kind.as_str()),
+        "a run let go of a task whose plugin stopped"
+    );
+    vec![
+        task.update(Vec::new()),
         Change::FinishPart {
             part_id: task.part_id.clone(),
             state: PartState::Complete,
@@ -349,14 +435,26 @@ enum Awaited {
         number: u32,
         title: String,
         ending: TaskEnding,
-        doer: Doer,
+        doer: String,
     },
-    /// A worker's task from an earlier reply that still runs, which the wait
-    /// follows to its end.
+    /// An executor's task from an earlier reply that still runs, which the
+    /// wait follows to its end.
     Followed {
         number: u32,
         title: String,
         task: TaskId,
+        /// The kind of the executor that runs it.
+        kind: String,
+        doer: String,
+        /// The name of the target that runs it.
+        target: String,
+    },
+    /// An executor's task that still runs while its plugin is off, which
+    /// no wait can follow (ADR-0031, decision 10).
+    PluginOff {
+        number: u32,
+        kind: String,
+        target: String,
     },
     /// A number that no child of the conversation has.
     Unknown(u32),
@@ -382,7 +480,8 @@ impl Runtime {
 impl RunActor {
     /// Stores what the run's children published since the last time.
     pub(super) async fn mirror_children(&mut self) -> Result<(), Ending> {
-        let mirror = self.tasks.absorb(&self.runtime.inner.ids);
+        let now = self.now();
+        let mirror = self.tasks.absorb(&self.runtime.inner.ids, now);
         let mut changes = mirror.changes;
         if mirror.approval_changed {
             changes.push(self.shown_activity());
@@ -416,16 +515,16 @@ impl RunActor {
                 .tasks
                 .followed
                 .iter()
-                .filter(|followed| followed.ending.is_none())
+                .filter(|followed| followed.is_active())
                 .count();
             let count = waited.len() + followed;
             if count == 0 {
                 return Ok(());
             }
-            let workers = waited.iter().filter(|task| task.is_remote()).count() + followed;
             let waiting = RunActivity::WaitingForTasks {
                 count: u32::try_from(count).unwrap_or(u32::MAX),
-                workers: u32::try_from(workers).unwrap_or(u32::MAX),
+                workers: 0,
+                kinds: self.waited_kinds(&waited),
             };
             if self.tasks.activity != waiting {
                 let change = self.activity(waiting);
@@ -437,6 +536,32 @@ impl RunActor {
                 () = board.changed() => {}
             }
         }
+    }
+
+    /// How many of the waited tasks, and of the followed ones, each
+    /// executor runs.
+    fn waited_kinds(&self, waited: &[&LaneTask]) -> Vec<TaskKindCount> {
+        let mut kinds: Vec<TaskKindCount> = Vec::new();
+        let followed = self
+            .tasks
+            .followed
+            .iter()
+            .filter(|followed| followed.is_active())
+            .map(|followed| followed.kind.as_str());
+        for kind in waited
+            .iter()
+            .filter_map(|task| task.executor_kind())
+            .chain(followed)
+        {
+            match kinds.iter_mut().find(|counted| counted.kind == kind) {
+                Some(counted) => counted.count += 1,
+                None => kinds.push(TaskKindCount {
+                    kind: kind.to_owned(),
+                    count: 1,
+                }),
+            }
+        }
+        kinds
     }
 
     /// Waits for the tasks of the step that do not run in the background:
@@ -470,11 +595,11 @@ impl RunActor {
     /// mailbox. Their ends are stored in their parts when the store still
     /// takes them.
     ///
-    /// Tasks on workers are an exception (ADR-0027, decision 6): a stop
-    /// stores a cancel for each, sends it, and waits for the workers to
-    /// confirm up to the cancel timeout; quitting leaves them running. The
-    /// store lets go of the parts of those that still run, and the cancels
-    /// stay queued for their workers.
+    /// The tasks of executors whose tasks outlive their reply are an
+    /// exception (ADR-0027, decision 6): a stop asks each executor to cancel
+    /// them and waits for their targets to confirm up to the cancel timeout;
+    /// quitting leaves them running. The store lets go of the parts of those
+    /// that still run, and each executor keeps its cancels.
     pub(super) async fn end_children(&mut self, result: &Result<FinishReason, Ending>) {
         if !self.tasks.tasks.iter().any(LaneTask::is_active) {
             return;
@@ -488,7 +613,7 @@ impl RunActor {
         self.tasks.stop_all(command);
         let deadline = if command == Command::Stop {
             self.cancel_remote_tasks().await;
-            Some(tokio::time::Instant::now() + self.runtime.inner.config.worker_cancel_timeout)
+            Some(tokio::time::Instant::now() + self.runtime.inner.config.executor_cancel_timeout)
         } else {
             None
         };
@@ -501,17 +626,18 @@ impl RunActor {
                 storing = false;
             }
             if !storing {
-                let _unstored = self.tasks.absorb(&self.runtime.inner.ids);
+                let now = self.now();
+                let _unstored = self.tasks.absorb(&self.runtime.inner.ids, now);
             }
             let active = self.tasks.tasks.iter().filter(|task| task.is_active());
             let (remote, local): (Vec<&LaneTask>, Vec<&LaneTask>) =
-                active.partition(|task| task.is_remote());
-            let waits_for_workers = !remote.is_empty()
+                active.partition(|task| self.outlives_reply(task));
+            let waits_for_targets = !remote.is_empty()
                 && command == Command::Stop
                 && deadline.is_some_and(|deadline| tokio::time::Instant::now() < deadline);
-            if local.is_empty() && !waits_for_workers {
+            if local.is_empty() && !waits_for_targets {
                 if !remote.is_empty() {
-                    tracing::info!(run = %self.run, tasks = remote.len(), "the run lets go of tasks that still run on workers");
+                    tracing::info!(run = %self.run, tasks = remote.len(), "the run lets go of tasks that executors still run");
                 }
                 return;
             }
@@ -525,9 +651,19 @@ impl RunActor {
                     None => listening = false,
                 },
                 () = board.changed() => {}
-                () = super::until(deadline), if waits_for_workers => {}
+                () = super::until(deadline), if waits_for_targets => {}
             }
         }
+    }
+
+    /// Whether a task outlives the reply that gave it: a task of an
+    /// executor that says so, also while its plugin is off.
+    fn outlives_reply(&self, task: &LaneTask) -> bool {
+        task.is_remote()
+            && task
+                .executor_kind()
+                .and_then(|kind| self.runtime.executor(kind))
+                .is_none_or(|executor| executor.outlives_reply())
     }
 
     /// Runs a call of a task tool. A start or a follow-up returns once the
@@ -537,6 +673,9 @@ impl RunActor {
         setup: &Setup,
         call: StepCall,
     ) -> Result<(), Ending> {
+        if let Some(executor) = setup.executor_for(&call.document.tool) {
+            return self.give_task(setup, call, executor).await;
+        }
         let arguments = call.arguments.clone().unwrap_or_default();
         let parsed = match parse_call(&call.document.tool, &arguments, &setup.child_agents) {
             Ok(parsed) => parsed,
@@ -547,24 +686,6 @@ impl RunActor {
             }
         };
         match parsed {
-            TaskCall::Delegate {
-                worker,
-                title,
-                instruction,
-                background,
-                read_only,
-            } => {
-                self.delegate(
-                    setup,
-                    call,
-                    &worker,
-                    title,
-                    instruction,
-                    background,
-                    read_only,
-                )
-                .await
-            }
             TaskCall::Start {
                 title,
                 agent,
@@ -597,6 +718,9 @@ impl RunActor {
         instruction: String,
         background: bool,
     ) -> Result<(), Ending> {
+        let Some(call) = self.unless_plugin_off(call, &agent) else {
+            return Ok(());
+        };
         if self.task_budget_used(setup) {
             self.refuse_task(call, TaskRefusal::BudgetUsed);
             return Ok(());
@@ -626,13 +750,14 @@ impl RunActor {
             started_at: None,
             ended_at: None,
             worker: None,
+            executor: None,
             detached: false,
         };
         let origin = TaskOrigin {
             parent_id: self.conversation.clone(),
             number,
             agent: document.agent.clone(),
-            worker: None,
+            executor: None,
         };
         self.assign(setup, call, document, instruction, Some(origin))
             .await
@@ -668,11 +793,14 @@ impl RunActor {
             self.refuse_task(call, TaskRefusal::UnknownTask { number });
             return Ok(());
         };
-        if child.worker.is_some() {
+        if child.executor.is_some() {
             return self
-                .follow_up_on_worker(setup, call, child, instruction, background)
+                .follow_up_on_executor(call, child, instruction, background)
                 .await;
         }
+        let Some(call) = self.unless_plugin_off(call, &child.agent) else {
+            return Ok(());
+        };
         let running = child
             .latest
             .as_ref()
@@ -700,6 +828,7 @@ impl RunActor {
             started_at: None,
             ended_at: None,
             worker: None,
+            executor: None,
             detached: false,
         };
         self.assign(setup, call, document, instruction, None).await
@@ -860,6 +989,7 @@ impl RunActor {
             ending: None,
             read: false,
             noted: false,
+            let_go: false,
         };
         if task.document.background {
             // The model reads this result at once; the part stays open until
@@ -873,6 +1003,21 @@ impl RunActor {
         self.tasks.tasks.push(task);
     }
 
+    /// The call, unless it gives a task to the agent of a plugin that is off,
+    /// which does not run: the run started with the plugin's agent, or the
+    /// child was given its first task while the plugin was on (ADR-0030,
+    /// decision 8).
+    fn unless_plugin_off(&mut self, call: StepCall, agent: &str) -> Option<StepCall> {
+        if self.runtime.agent(agent).is_some() {
+            return Some(call);
+        }
+        let Some(plugin) = self.runtime.agent_plugin(agent) else {
+            return Some(call);
+        };
+        self.end_call(call, NotRunReason::PluginOff { plugin });
+        None
+    }
+
     /// Ends a call of a task tool that assigns no task, with the reason.
     pub(super) fn refuse_task(&mut self, mut call: StepCall, refusal: TaskRefusal) {
         tracing::info!(run = %self.run, part = %call.part_id, tool = %call.document.tool, refusal = ?refusal, "a task call assigned no task");
@@ -884,7 +1029,7 @@ impl RunActor {
 
     /// Stores the final documents of a call of a task tool that ended, with
     /// outputs to archive, and finishes its part.
-    fn complete_task_call(&mut self, mut call: StepCall, archives: Vec<NewArchive>) {
+    pub(super) fn complete_task_call(&mut self, mut call: StepCall, archives: Vec<NewArchive>) {
         call.document.status = ToolCallStatus::Completed;
         call.document.ended_at = Some(self.now());
         self.pending.push(call.update(archives));
@@ -912,7 +1057,13 @@ impl RunActor {
         }
         let mut awaited = Vec::with_capacity(numbers.len());
         for &number in numbers {
-            if let Some(index) = self.tasks.latest(number) {
+            // A task that the run let go is taken up again as a task of an
+            // earlier reply.
+            let in_lane = self
+                .tasks
+                .latest(number)
+                .filter(|index| !self.tasks.tasks[*index].let_go);
+            if let Some(index) = in_lane {
                 awaited.push(Awaited::Lane(index));
                 continue;
             }
@@ -922,50 +1073,59 @@ impl RunActor {
                 .store
                 .child_by_number(&self.conversation, number)
                 .await?;
-            let pick = match child.and_then(|child| {
-                let doer = if child.worker.is_some() {
-                    Doer::Worker
-                } else {
-                    Doer::Child
-                };
-                child.latest.map(|task| (child.title, task, doer))
-            }) {
-                // A worker's task that still runs is followed to its end.
-                Some((title, task, Doer::Worker)) if task.state.is_active() => Awaited::Followed {
-                    number,
-                    title,
-                    task: task.id,
-                },
-                Some((title, task, doer)) => Awaited::Earlier {
+            let Some((title, task, executor)) =
+                child.and_then(|child| Some((child.title, child.latest?, child.executor)))
+            else {
+                awaited.push(Awaited::Unknown(number));
+                continue;
+            };
+            let pick = match executor {
+                // An executor's task that still runs is followed to its end,
+                // while its plugin is on.
+                Some(executor) if task.state.is_active() => {
+                    if self.runtime.executor(&executor.kind).is_some() {
+                        Awaited::Followed {
+                            number,
+                            title,
+                            task: task.id,
+                            kind: executor.kind,
+                            doer: executor.noun,
+                            target: executor.target_name,
+                        }
+                    } else {
+                        Awaited::PluginOff {
+                            number,
+                            kind: executor.kind,
+                            target: executor.target_name,
+                        }
+                    }
+                }
+                executor => Awaited::Earlier {
                     number,
                     title,
                     ending: task.ending.unwrap_or_else(interrupted),
-                    doer,
+                    doer: executor
+                        .map_or_else(|| texts::THE_CHILD.to_owned(), |executor| executor.noun),
                 },
-                None => Awaited::Unknown(number),
             };
             awaited.push(pick);
         }
         Ok(awaited)
     }
 
-    /// Takes up the tasks of earlier replies on workers that a wait names:
-    /// the workers' states reach this run's board from now on, and a task
-    /// that ended meanwhile is read from its row.
+    /// Takes up the tasks of earlier replies that executors run, which a
+    /// wait names: the executors' states reach this run's board from now on,
+    /// and a task that ended meanwhile is read from its row.
     async fn follow_earlier(&mut self, awaited: &[Awaited]) -> Result<(), Ending> {
         for pick in awaited {
-            let Awaited::Followed { task, .. } = pick else {
+            let Awaited::Followed { task, kind, .. } = pick else {
                 continue;
             };
-            let follow = RemoteFollow::new(&self.runtime, task, &self.tasks.board);
+            let follow = RemoteFollow::new(&self.runtime, task, kind, &self.tasks.board);
             // Read after the hold, so an end stored before it is seen here
             // and one stored after it reaches the board.
-            let ending = self
-                .runtime
-                .inner
-                .store
-                .task(task)
-                .await?
+            let stored = self.runtime.inner.store.task(task).await?;
+            let ending = stored
                 .filter(|stored| !stored.state.is_active())
                 .map(|stored| {
                     stored.ending.unwrap_or(TaskEnding {
@@ -974,10 +1134,15 @@ impl RunActor {
                         failure: None,
                     })
                 });
-            tracing::info!(run = %self.run, task = %task, "a wait takes up a task on a worker");
+            // Checked after the hold too: a plugin that stopped before it
+            // could not tell this run to let the task go.
+            let let_go = ending.is_none() && self.runtime.executor(kind).is_none();
+            tracing::info!(run = %self.run, task = %task, kind = %kind, let_go, "a wait takes up a task of an executor");
             self.tasks.followed.push(FollowedTask {
                 id: task.clone(),
+                kind: kind.clone(),
                 ending,
+                let_go,
                 _follow: follow,
             });
         }
@@ -1012,7 +1177,7 @@ impl RunActor {
                     title: title.clone(),
                     state: TaskState::Running,
                 }),
-                Awaited::Unknown(_) => None,
+                Awaited::PluginOff { .. } | Awaited::Unknown(_) => None,
             })
             .collect()
     }
@@ -1022,6 +1187,25 @@ impl RunActor {
     /// archived whole.
     async fn wait_for_tasks(&mut self, mut call: StepCall, numbers: &[u32]) -> Result<(), Ending> {
         let awaited = self.awaited(numbers).await?;
+        // A wait for a task whose plugin is off does not run (ADR-0031,
+        // decision 10).
+        let plugin_off = awaited.iter().find_map(|pick| match pick {
+            Awaited::PluginOff {
+                number,
+                kind,
+                target,
+            } => Some((*number, kind.clone(), target.clone())),
+            _ => None,
+        });
+        if let Some((number, kind, target)) = plugin_off {
+            let refusal = ExecutorRefusal {
+                code: "plugin_off".to_owned(),
+                target: Some(target),
+                text: texts::task_plugin_off(number, &kind),
+            };
+            self.refuse_by_executor(call, &kind, refusal);
+            return Ok(());
+        }
         if awaited.is_empty() {
             call.task
                 .get_or_insert_with(TaskPartDocument::default)
@@ -1041,60 +1225,101 @@ impl RunActor {
             .iter()
             .filter_map(|pick| match pick {
                 Awaited::Lane(index) => Some(self.tasks.tasks[*index].id.clone()),
-                Awaited::Earlier { .. } | Awaited::Followed { .. } | Awaited::Unknown(_) => None,
+                Awaited::Earlier { .. }
+                | Awaited::Followed { .. }
+                | Awaited::PluginOff { .. }
+                | Awaited::Unknown(_) => None,
             })
             .collect();
         self.follow_earlier(&awaited).await?;
         let waited_out = self.await_tasks(|task| waited.contains(&task.id)).await;
         let followed: Vec<FollowedTask> = std::mem::take(&mut self.tasks.followed);
         waited_out?;
+        let reports = self.waited_reports(&awaited, &followed);
+        let view = self.awaited_view(&awaited);
+        let section = call.task.get_or_insert_with(TaskPartDocument::default);
+        section.awaited = view;
+        section.output = Some(reports.outputs.join("\n\n"));
+        section.archives = reports.references;
+        self.complete_task_call(call, reports.archives);
+        Ok(())
+    }
+
+    /// The reports of the tasks that a wait waited for, in their order, each
+    /// within its share of the result limit. A report that does not fit is
+    /// archived whole.
+    fn waited_reports(&mut self, awaited: &[Awaited], followed: &[FollowedTask]) -> WaitedReports {
         let limit = (self.tasks.result_limit / awaited.len()).max(MIN_REPORT_BYTES);
         let ids = &self.runtime.inner.ids;
-        let mut outputs = Vec::with_capacity(awaited.len());
-        let mut archives = Vec::new();
-        let mut references = Vec::new();
-        for pick in &awaited {
+        let mut reports = WaitedReports {
+            outputs: Vec::with_capacity(awaited.len()),
+            archives: Vec::new(),
+            references: Vec::new(),
+        };
+        let outputs = &mut reports.outputs;
+        for pick in awaited {
             let (number, ending, doer) = match pick {
                 Awaited::Lane(index) => {
                     let task = &mut self.tasks.tasks[*index];
                     task.read = true;
+                    if task.let_go {
+                        outputs.push(let_go_text(&task.document));
+                        continue;
+                    }
                     let ending = task.ending.clone().unwrap_or_else(interrupted);
-                    (task.document.number, ending, Doer::of(&task.document))
+                    (
+                        task.document.number,
+                        ending,
+                        doer_of(&task.document).to_owned(),
+                    )
                 }
                 Awaited::Earlier {
                     number,
                     ending,
                     doer,
                     ..
-                } => (*number, ending.clone(), *doer),
-                Awaited::Followed { number, task, .. } => {
+                } => (*number, ending.clone(), doer.clone()),
+                Awaited::Followed {
+                    number,
+                    task,
+                    doer,
+                    target,
+                    ..
+                } => {
+                    let followed = followed.iter().find(|followed| followed.id == *task);
+                    if followed.is_some_and(|followed| followed.ending.is_none() && followed.let_go)
+                    {
+                        outputs.push(texts::task_let_go(*number, doer, target));
+                        continue;
+                    }
                     let ending = followed
-                        .iter()
-                        .find(|followed| followed.id == *task)
                         .and_then(|followed| followed.ending.clone())
                         .unwrap_or_else(interrupted);
-                    (*number, ending, Doer::Worker)
+                    (*number, ending, doer.clone())
                 }
+                Awaited::PluginOff { .. } => continue,
                 Awaited::Unknown(number) => {
                     outputs.push(texts::no_such_task(*number));
                     continue;
                 }
             };
-            let rendered = render_report(number, &ending, doer, limit, || ids.archive());
+            let rendered = render_report(number, &ending, &doer, limit, || ids.archive());
             outputs.push(rendered.output);
             if let Some((archive, reference)) = rendered.archive {
-                archives.push(archive);
-                references.push(reference);
+                reports.archives.push(archive);
+                reports.references.push(reference);
             }
         }
-        let view = self.awaited_view(&awaited);
-        let section = call.task.get_or_insert_with(TaskPartDocument::default);
-        section.awaited = view;
-        section.output = Some(outputs.join("\n\n"));
-        section.archives = references;
-        self.complete_task_call(call, archives);
-        Ok(())
+        reports
     }
+}
+
+/// What a wait read from the tasks it waited for: one line of the result for
+/// each task, and the reports that did not fit, archived whole.
+struct WaitedReports {
+    outputs: Vec<String>,
+    archives: Vec<NewArchive>,
+    references: Vec<ArchiveRef>,
 }
 
 #[cfg(test)]

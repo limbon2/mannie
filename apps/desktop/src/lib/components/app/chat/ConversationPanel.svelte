@@ -3,14 +3,16 @@
   import MessageSquareOffIcon from '@lucide/svelte/icons/message-square-off';
   import { onMount, untrack } from 'svelte';
 
+  import PluginOffState from '#lib/components/app/shell/PluginOffState.svelte';
   import * as Alert from '#lib/components/ui/alert/index.js';
   import { Button } from '#lib/components/ui/button/index.js';
   import * as Empty from '#lib/components/ui/empty/index.js';
   import { Skeleton } from '#lib/components/ui/skeleton/index.js';
   import { m } from '#lib/paraglide/messages.js';
   import { OpenConversation } from '#lib/state/conversation.svelte.js';
+  import { pluginStates } from '#lib/state/plugin-states.svelte.js';
   import type { SidePanelProps } from '#lib/types/shell-slots.js';
-  import { chatFailureMessage } from '#lib/utils/chat-errors.js';
+  import { chatFailureMessage, pluginOffOf } from '#lib/utils/chat-errors.js';
   import { hasActiveRun } from '#lib/utils/conversation-reducer.js';
 
   import ReadOnlyFooter from './ReadOnlyFooter.svelte';
@@ -28,15 +30,20 @@
   const transcript = $derived(conversation.transcript);
   const summary = $derived(transcript.conversation);
   const replying = $derived(hasActiveRun(transcript));
-  /** Whose conversation the panel shows: the owner's, a child agent's or a worker task's. */
+  /** The kind of task of the plugin's executor whose conversation the panel shows, or `null`. */
+  const executorKind = $derived(summary?.task?.executor?.kind ?? null);
+  /** Whose conversation the panel shows: the owner's, a child agent's or a plugin's task's. */
   const owner = $derived.by(() => {
     const task = summary?.task ?? null;
     if (task === null) {
       return 'owner';
     }
-    const worker = task.worker ?? null;
-    return worker === null ? 'child' : 'worker';
+    return executorKind === null ? 'child' : 'task';
   });
+
+  /** The plugin of a task conversation that cannot be followed while the plugin is off, or `null`. */
+  const offPlugin = $derived(pluginOffOf(conversation.failure));
+  const pluginBackOn = $derived(offPlugin !== null && pluginStates.isOn(offPlugin));
 
   /** The tab's name once the conversation is known: a child's with its number, as its card shows it. */
   const tabLabel = $derived.by(() => {
@@ -53,6 +60,16 @@
   $effect(() => {
     if (tabLabel !== null) {
       setLabel(tabLabel, true);
+    }
+  });
+
+  // A task conversation of a plugin that is off follows again once the
+  // plugin is on (ADR-0030, decision 12).
+  $effect(() => {
+    if (pluginBackOn) {
+      untrack(() => {
+        conversation.retry();
+      });
     }
   });
 
@@ -86,23 +103,27 @@
       </Empty.Content>
     </Empty.Root>
   {:else if conversation.status === 'error'}
-    <div class="p-4">
-      <Alert.Root variant="destructive">
-        <CircleAlertIcon />
-        <Alert.Title>{m.chat_conversation_failed_title()}</Alert.Title>
-        <Alert.Description>
-          {conversation.failure === null ? '' : chatFailureMessage(conversation.failure)}
-        </Alert.Description>
-        <Alert.Action>
-          <Button size="sm" variant="outline" onclick={() => conversation.retry()}>{m.chat_try_again()}</Button>
-        </Alert.Action>
-      </Alert.Root>
-    </div>
+    {#if offPlugin === null}
+      <div class="p-4">
+        <Alert.Root variant="destructive">
+          <CircleAlertIcon />
+          <Alert.Title>{m.chat_conversation_failed_title()}</Alert.Title>
+          <Alert.Description>
+            {conversation.failure === null ? '' : chatFailureMessage(conversation.failure)}
+          </Alert.Description>
+          <Alert.Action>
+            <Button size="sm" variant="outline" onclick={() => conversation.retry()}>{m.chat_try_again()}</Button>
+          </Alert.Action>
+        </Alert.Root>
+      </div>
+    {:else}
+      <PluginOffState plugin={offPlugin} />
+    {/if}
   {:else}
     {#if conversation.status === 'ended'}
       <p class="border-b px-4 py-2 text-sm text-muted-foreground">{m.chat_conversation_ended()}</p>
     {/if}
     <Transcript {conversation} readOnly />
-    <ReadOnlyFooter conversationId={conversation.id} {owner} {replying} />
+    <ReadOnlyFooter conversationId={conversation.id} kind={executorKind} {owner} {replying} />
   {/if}
 </div>

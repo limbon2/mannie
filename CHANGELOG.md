@@ -4,7 +4,16 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+### Added
+
+- The Plugins settings list the plugins built into Mannie, each with a switch that takes effect at once, without a restart; a plugin that starts, stops or failed says so, a failed one offers "Try again", and turning off a plugin with work in progress asks first.
+- While a plugin is off, its parts of the interface are gone, the address of one of its pages says that it is off and leads to the Plugins settings, and what it added to conversations stays readable.
+
 ### Changed
+
+- Workers are the first plugin: turning Workers off closes every link and lets running worker tasks go, which keep running on their workers and are followed again when Workers is back on. After the update from 0.2.0, Workers is on when a worker is paired; a new installation starts with it off.
+- A failure while Workers starts, such as a list of paired workers that cannot be read, leaves Workers failed on the Plugins page and no longer keeps Mannie from starting.
+- The worker service, the link and its contracts moved into `plugins/workers/` with their names unchanged, so workers of 0.2.0 keep working.
 
 - The architecture decisions that were Proposed are Accepted, and a failed or missing CI run no longer holds back a change, a milestone or a release.
 - `task test` runs every Rust test binary even when one fails, so a run reports every failing test.

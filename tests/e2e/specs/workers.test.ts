@@ -9,7 +9,8 @@
 // name; and removing a worker asks first. Every step works from the keyboard
 // and passes axe in both themes. The fixture provider's tools scenario calls
 // the tools that each message names, and a task's instruction scripts the
-// worker agent the same way.
+// worker agent the same way. Workers is a plugin that a new installation
+// has off (docs/features/plugins.md), so the spec turns it on first.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -33,6 +34,7 @@ import {
   leaveSettings,
   openSettings,
   runCommand,
+  setPluginEnabled,
   waitForAnimations,
   waitForApp,
   waitForShownText,
@@ -113,6 +115,8 @@ describe('workers', () => {
     provider = await startProviderServer();
     worker = await TestWorker.start(WORKER_NAME);
     await waitForApp();
+    await setPluginEnabled('workers', true);
+    await leaveSettings();
     await addProfile(provider.baseUrl, { model: MODELS.tools, name: 'Tools', useTools: true });
   });
 
@@ -200,9 +204,10 @@ describe('workers', () => {
     const shown = $(card(1));
     await expect(shown).toHaveText(expect.stringContaining('Task 1'));
     await expect(shown).toHaveText(expect.stringContaining('Write the notes'));
-    // The badge says to screen readers that the name is the worker's. The
-    // request names the host as the card does, by the owner's name.
-    await expect($(`${card(1)} [data-task-worker] [data-content]`)).toHaveText(OWNER_NAME);
+    // The badge of the Workers plugin's kind of task says to screen readers
+    // that the name is the worker's. The request names the host as the card
+    // does, by the owner's name.
+    await expect($(`${card(1)} [data-task-target][data-task-kind="workers"] [data-content]`)).toHaveText(OWNER_NAME);
     await expect($(`${card(1)} [data-approval-host]`)).toHaveText(OWNER_NAME);
     // The request leaves the focus in the message box.
     expect(await focusedElement()).toEqual(expect.objectContaining({ tag: 'textarea' }));

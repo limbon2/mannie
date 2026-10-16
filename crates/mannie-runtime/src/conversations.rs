@@ -328,7 +328,7 @@ impl Runtime {
             }
         };
         let Some((mailbox, mut ended)) = running else {
-            // The conversation of a task on a worker runs on the worker.
+            // The conversation of an executor's task runs on its target.
             if self.stop_remote_task(conversation).await {
                 return StopOutcome::Stopped;
             }
@@ -434,9 +434,9 @@ impl Runtime {
         for child in &children {
             self.inner.hubs.ended_task_conversation(child).await;
         }
-        // The deletions of the conversations of worker tasks wait for their
-        // workers in the store; the followers send them.
-        self.inner.followers.nudge();
+        // The deletions of the conversations of executors' tasks wait in
+        // the outbox until each executor takes them.
+        self.inner.executors.notify_outbox();
         tracing::info!(conversation = %conversation, task_conversations = children.len(), "deleted a conversation");
         Ok(())
     }
@@ -510,14 +510,17 @@ impl Runtime {
     }
 
     /// The owner's turns before `before_position`, page by page. The turns of
-    /// a task on a worker come from the worker.
+    /// an executor's task come from its target.
     pub async fn earlier_turns(&self, input: LoadEarlierTurns) -> Result<EarlierTurns, ChatError> {
-        if let Some((delegation, worker, _summary)) = self
+        if let Some(remote) = self
             .remote_conversation(&input.conversation_id)
             .await
             .map_err(store_failure)?
         {
-            return delegation.earlier_turns(&worker, input).await;
+            return remote
+                .chat_executor()?
+                .earlier_turns(&remote.target, input)
+                .await;
         }
         let limit = input.limit.clamp(1, MAX_EARLIER_TURNS);
         let (turns, has_earlier_turns) = self
@@ -534,12 +537,15 @@ impl Runtime {
 
     /// A checkpoint with its summary.
     pub async fn checkpoint(&self, input: CheckpointRef) -> Result<Checkpoint, ChatError> {
-        if let Some((delegation, worker, _summary)) = self
+        if let Some(remote) = self
             .remote_conversation(&input.conversation_id)
             .await
             .map_err(store_failure)?
         {
-            return delegation.checkpoint(&worker, input).await;
+            return remote
+                .chat_executor()?
+                .checkpoint(&remote.target, input)
+                .await;
         }
         self.inner
             .store
@@ -574,20 +580,21 @@ impl Runtime {
     }
 
     /// Follows a conversation from a cursor, or from a snapshot. The
-    /// conversation of a task on a worker is followed on the worker.
+    /// conversation of an executor's task is followed on its target.
     pub async fn subscribe(
         &self,
         input: SubscribeConversation,
     ) -> Result<ConversationSubscription, ChatError> {
-        if let Some((delegation, worker, summary)) = self
+        if let Some(remote) = self
             .remote_conversation(&input.conversation_id)
             .await
             .map_err(store_failure)?
         {
-            let stream = delegation
-                .subscribe(&worker, &input.conversation_id, input.after_seq)
+            let stream = remote
+                .chat_executor()?
+                .subscribe(&remote.target, &input.conversation_id, input.after_seq)
                 .await?;
-            return Ok(ConversationSubscription::remote(stream, summary));
+            return Ok(ConversationSubscription::remote(stream, remote.summary));
         }
         self.inner
             .hubs

@@ -5,6 +5,7 @@
 // Prettier owns the layout, the Tailwind class order (prettier-plugin-tailwindcss)
 // and CSS declaration order; ESLint owns correctness and the order of imports,
 // exports, type members and Svelte attributes.
+import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import comments from '@eslint-community/eslint-plugin-eslint-comments/configs';
@@ -22,6 +23,11 @@ import tseslint from 'typescript-eslint';
 import mannie from './scripts/eslint/plugin.mjs';
 
 const desktopApp = join(import.meta.dirname, 'apps/desktop');
+
+// Each internal plugin has a folder in plugins/ named by its ID (ADR-0030).
+const pluginIds = readdirSync(join(import.meta.dirname, 'plugins'), { withFileTypes: true })
+  .filter((entry) => entry.isDirectory())
+  .map((entry) => entry.name);
 
 // SvelteKit 3 keeps the Svelte options in vite.config. Loading them gives the
 // Svelte rules the forced runes mode and the compiler's warning filter. Before
@@ -350,6 +356,9 @@ export default defineConfig(
           ],
         },
       ],
+      // The core's UI and other plugins never import a plugin's UI files
+      // (ADR-0030, decision 10).
+      'mannie/plugin-boundaries': ['error', { libFolder: join(desktopApp, 'src/lib'), plugins: pluginIds }],
       // Visible text comes from the Paraglide message catalog (ADR-0019).
       'no-restricted-syntax': [
         'error',

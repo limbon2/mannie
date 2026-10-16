@@ -1,22 +1,27 @@
-//! Commands of the workers feature (docs/features/workers/pairing-and-link.md,
-//! contracts): the paired workers on a channel, pairing a worker with the
-//! code that its host printed, naming one, and removing one. The hub checks
-//! every request; these commands find the hub and log refusals by their
-//! code.
+//! Commands of the Workers plugin (docs/features/workers/pairing-and-link.md,
+//! contracts; docs/features/workers/plugin.md): the paired workers on a
+//! channel, pairing a worker with the code that its host printed, naming one,
+//! and removing one. They are thin calls into the plugin's crate (ADR-0030,
+//! decision 10): the hub checks every request, and while Workers is off every
+//! command refuses with `plugin_off` and the channel ends with that reason.
 
-use mannie_link::master::Hub;
 use mannie_types::ipc::{ChannelBatch, CommandError};
 use mannie_types::transcript::{SubscriptionEnd, SubscriptionId};
-use mannie_types::workers::{
-    PairWorker, RenameWorker, WorkerListUpdate, WorkerRef, WorkerView, WorkersError,
-};
+use mannie_workers::WorkersPlugin;
+use mannie_workers::commands::{PairWorker, RenameWorker, WorkerRef, WorkersError};
+use mannie_workers::hub::Hub;
+use mannie_workers::view::{WorkerListUpdate, WorkerView};
 use tauri::State;
 use tauri::ipc::Channel;
 
 use crate::state::Core;
 
-fn hub(core: &Core) -> Result<&Hub, WorkersError> {
-    core.hub().ok_or(WorkersError::StoreUnavailable)
+fn plugin(core: &Core) -> Result<&WorkersPlugin, WorkersError> {
+    core.workers().ok_or(WorkersError::StoreUnavailable)
+}
+
+fn hub(core: &Core) -> Result<Hub, WorkersError> {
+    plugin(core)?.hub()
 }
 
 /// Logs a refused or failed command by its code, and wraps the error for the
@@ -33,7 +38,7 @@ fn refused(command: &'static str) -> impl FnOnce(WorkersError) -> CommandError<W
 }
 
 /// Follows the paired workers: the list first, then the list after each
-/// change of a worker or its status.
+/// change of a worker or its status, until Workers stops.
 #[tauri::command]
 #[specta::specta]
 pub(crate) async fn subscribe_workers(
@@ -41,9 +46,11 @@ pub(crate) async fn subscribe_workers(
     updates: Channel<ChannelBatch<WorkerListUpdate>>,
 ) -> Result<SubscriptionId, CommandError<WorkersError>> {
     let page = core.subscriptions().page();
-    let mut workers = hub(&core)
-        .map_err(refused("subscribe_workers"))?
-        .worker_views();
+    let subscription = plugin(&core)
+        .and_then(WorkersPlugin::subscribe)
+        .map_err(refused("subscribe_workers"))?;
+    let mut workers = subscription.workers;
+    let mut on = subscription.on;
     Ok(core
         .subscriptions()
         .start(page, updates, |sender| async move {
@@ -56,15 +63,19 @@ pub(crate) async fn subscribe_workers(
                 {
                     break;
                 }
-                if workers.changed().await.is_err() {
-                    // The hub stopped: Mannie quits.
-                    let _sent = sender
-                        .send(WorkerListUpdate::Ended {
-                            reason: SubscriptionEnd::Shutdown,
-                        })
-                        .await;
-                    break;
-                }
+                let reason = tokio::select! {
+                    changed = workers.changed() => match changed {
+                        Ok(()) => continue,
+                        // The hub stopped: Workers stops or Mannie quits.
+                        Err(_closed) => SubscriptionEnd::Shutdown,
+                    },
+                    turned = on.wait_for(|on| !*on) => match turned {
+                        Ok(_off) => SubscriptionEnd::PluginOff,
+                        Err(_closed) => SubscriptionEnd::Shutdown,
+                    },
+                };
+                let _sent = sender.send(WorkerListUpdate::Ended { reason }).await;
+                break;
             }
         }))
 }

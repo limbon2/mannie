@@ -45,7 +45,7 @@ jobs:
             # the provider adapters, the runtime and the link (ADR-0015); the
             # desktop app does not run on FreeBSD.
             cargo test --locked -p mannie-worker -p mannie-store -p mannie-logging -p mannie-types -p mannie-tools
-            cargo test --locked -p mannie-provider -p mannie-runtime -p mannie-link --features mannie-provider/testing,mannie-runtime/testing,mannie-link/testing
+            cargo test --locked -p mannie-provider -p mannie-runtime -p mannie-link -p mannie-workers --features mannie-provider/testing,mannie-runtime/testing,mannie-link/testing,mannie-workers/testing
             cargo build --locked -p mannie-worker
-            cargo build --locked -p mannie-link --features testing --example smoke-master
+            cargo build --locked -p mannie-workers --features testing --example smoke-master
             sh scripts/ci/worker-service-unix.sh target/debug/mannie-worker target/debug/examples/smoke-master

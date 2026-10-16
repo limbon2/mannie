@@ -1,0 +1,108 @@
+[package]
+name = "mannie-workers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The master's side of the Workers plugin: the paired workers and their tables, pairing, the connections over the link, and the executor that gives tasks to workers (ADR-0027, ADR-0031)."
+license.workspace = true
+publish.workspace = true
+
+# The test master of the worker service's smoke tests
+# (scripts/ci/worker-service-*).
+[[example]]
+name = "smoke-master"
+required-features = ["testing"]
+
+# Pairing over loopback: codes, attempts, keys in the middle and pins (V6).
+[[test]]
+name = "pairing"
+required-features = ["testing"]
+
+# Tasks given to workers through an in-process link: reports, numbers,
+# follow-ups, approvals, Stop, offline workers, restarts, deletion, and
+# Workers turned off and on.
+[[test]]
+name = "delegation"
+required-features = ["testing"]
+
+# The master ends after the part, after the rows and after a submission whose
+# answer was lost, and no case starts a second task.
+[[test]]
+name = "delegation_crash"
+required-features = ["testing"]
+
+# Delegation over loopback: reports, leases, approvals, the task's
+# conversation, a dropped link, an offline master and versions (V6).
+[[test]]
+name = "linked_delegation"
+required-features = ["testing"]
+
+# Calls whose answers the link lost: Submit, Decide and Cancel (V6).
+[[test]]
+name = "link_drop"
+required-features = ["testing"]
+
+# Every tool of the worker agent through a delegated task (M4's exit).
+[[test]]
+name = "delegated_conformance"
+required-features = ["testing"]
+
+# Workers through the plugin host: its default, on and off, plugin_off, and a
+# start without its services.
+[[test]]
+name = "plugin"
+required-features = ["testing"]
+
+# The plugin's tables: their migrations from 0.2.0 and their statements.
+[[test]]
+name = "store"
+required-features = ["testing"]
+
+[dependencies]
+# The master's key in the credential store, which 0.2.0 kept as base64.
+base64 = { workspace = true }
+# The jitter of the master's reconnects.
+fastrand = { workspace = true }
+futures-util = { workspace = true }
+# The client's connections, over the link's own TLS streams.
+hyper-util = { workspace = true }
+mannie-link = { workspace = true }
+mannie-plugins = { workspace = true }
+mannie-provider = { workspace = true }
+mannie-runtime = { workspace = true }
+mannie-store = { workspace = true }
+mannie-tools = { workspace = true }
+mannie-types = { workspace = true }
+rustls = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# The workers' IPC types, from which the desktop app generates bindings
+# (ADR-0007).
+specta = { workspace = true }
+# The temporary stores of the test tools, with the testing feature.
+tempfile = { workspace = true, optional = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
+tonic = { workspace = true }
+tower = { workspace = true }
+tracing = { workspace = true }
+# The IDs of paired workers.
+uuid = { workspace = true }
+
+[dev-dependencies]
+mannie-link = { workspace = true, features = ["testing"] }
+mannie-provider = { workspace = true, features = ["testing"] }
+mannie-runtime = { workspace = true, features = ["testing"] }
+mannie-store = { workspace = true, features = ["testing"] }
+# The digests of the files that the conformance tests compare.
+ring = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
+
+[features]
+# The plugin's test tools: an in-process link to test workers, and a master
+# with a hub on loopback. Never enabled in the desktop app or the worker.
+testing = ["dep:tempfile", "mannie-link/testing", "mannie-runtime/testing"]
+
+[lints]
+workspace = true

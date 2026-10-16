@@ -1,20 +1,20 @@
 # Mannie product vision
 
-|              |                                                                                                                                                      |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status       | Draft for review                                                                                                                                     |
-| Last updated | 2026-10-13                                                                                                                                           |
-| Related      | [Goals and scope](goals-and-scope.md), [Feature protocol](../features/README.md), [Milestones](../roadmap/milestones.md), [Glossary](../glossary.md) |
+|              |                                                                                                                                                                                         |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status       | Draft for review                                                                                                                                                                        |
+| Last updated | 2026-10-16                                                                                                                                                                              |
+| Related      | [Goals and scope](goals-and-scope.md), [Feature protocol](../features/README.md), [Milestones](../roadmap/milestones.md), [Glossary](../glossary.md), [Plugins](../features/plugins.md) |
 
 ## 1. Summary
 
-Mannie is a desktop AI agent harness for one person, its owner. It starts with three capabilities:
+Mannie is a desktop AI agent harness for one person, its owner. Its core holds what every agent harness needs:
 
 - Chat with AI models. Replies stream as they are generated, and conversations are stored safely on disk.
 - System tools. The model can read, write, edit and search files and run commands on the owner's computer, under approval rules the owner controls.
-- Work across machines. The desktop app, called the master, handles the owner's request. It hands tasks to child agents on the same machine, or to workers: autonomous agents that each run on a host and know how to work on it.
+- Child agents. The desktop app, called the master, handles the owner's request and hands tasks to child agents on the same machine.
 
-Everything else is added one feature at a time, when the owner asks for it.
+Everything else is a plugin that each owner turns on when they need it, such as integrations with Jira and git, a code editor, a terminal, database clients and log viewers ([decision D26](../roadmap/milestones.md#5-decisions)). The first plugin is work across machines: workers, autonomous agents that each run on a host, know how to work on it and take tasks from the master. Features and plugins are added one at a time, when the owner asks for them.
 
 ## 2. The problem
 
@@ -30,7 +30,8 @@ Mannie has one user, who also directs its development.
 | --------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | Use OpenAI models and their own model servers | Provider profiles for the OpenAI Responses API and for OpenAI-compatible servers               |
 | Let the model do real work on a computer      | System tools under approvals, rules and workspace defaults                                     |
-| Get work done on other hosts                  | Workers that run on those hosts and take tasks from the master                                 |
+| Get work done on other hosts                  | The Workers plugin: workers that run on those hosts and take tasks from the master             |
+| Use only what they need                       | Plugins that the owner turns on and off while Mannie runs                                      |
 | Keep control                                  | Explicit approvals, policy ceilings configured on each host, no permissions taken from content |
 | Never lose work                               | Durable runs, crash-safe storage, and operations that are never repeated after a crash         |
 | Add features when needs appear                | The feature protocol and an architecture that grows by addition                                |
@@ -42,10 +43,10 @@ There are no accounts, teams or tenants, and Mannie never phones home.
 These principles decide trade-offs. A design that conflicts with one of them needs an ADR that explains why.
 
 1. Production quality from the first commit, with no prototype or MVP stage ([decision D2](../roadmap/milestones.md#5-decisions)). Every release meets the Definition of Done for the scope it ships.
-2. Mannie grows feature by feature. New capabilities arrive through the [feature protocol](../features/README.md) and plug into named [extension points](../architecture/extension-points.md), so a feature changes its own code and its own document while the rest of the system stays as it was ([ADR-0002](../adr/0002-grow-through-extension-points.md)).
+2. Mannie grows feature by feature. New capabilities arrive through the [feature protocol](../features/README.md) and plug into named [extension points](../architecture/extension-points.md), so a feature changes its own code and its own document while the rest of the system stays as it was ([ADR-0002](../adr/0002-grow-through-extension-points.md)). What not every owner needs is a plugin, built into Mannie and off until the owner turns it on, and the core never depends on one ([ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md)).
 3. The owner stays in control. A side effect happens only after policy or the owner allows it. Content the model reads, such as files, command output, web pages or reports from other agents, never grants a permission.
 4. Work survives failures. Runs continue through window reloads, crashes and dropped connections. An operation never runs twice, and an operation that may have run is never repeated automatically.
-5. The master orchestrates and workers own their hosts. The master takes care of the owner's request. A worker takes care of the master's request and handles its host's environment on its own ([ADR-0015](../adr/0015-run-an-agent-runtime-on-every-machine.md)).
+5. The master orchestrates and workers own their hosts. The master takes care of the owner's request. With the Workers plugin on, a worker takes care of the master's request and handles its host's environment on its own ([ADR-0015](../adr/0015-run-an-agent-runtime-on-every-machine.md)).
 6. Provider credentials are stored only in the operating system's credential store on the master. Anywhere else they exist only in memory.
 7. Mannie writes its own agent loop, provider adapters, tools and orchestration, and uses established components for infrastructure: Tauri, Svelte, SQLite, gRPC and rustls.
 8. Data stays on the owner's machines, and Mannie sends no telemetry.
@@ -56,6 +57,7 @@ These principles decide trade-offs. A design that conflicts with one of them nee
 - From the first release (v0.1.0), the owner can use Mannie for everyday chat with OpenAI models and their own model servers.
 - The model reads, edits and runs things on the owner's workstation, and the owner never finds a side effect they did not allow.
 - The owner hands a task to a worker on a FreeBSD or Linux host without explaining how that host works, and gets a confirmed report back.
+- An owner who does not need a plugin never sees it, and turning one on or off takes effect at once.
 - Crashes, reloads and dropped links do not lose conversations or tasks.
 - A new feature lands as its own slice with its own document, and nothing unrelated changes.
 
