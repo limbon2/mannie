@@ -5,7 +5,11 @@
 # Keyring, KWallet and no Secret Service (V7), the worker service on Windows
 # and Linux with a test master that pairs with it and delegates a command,
 # and the worker's FreeBSD and static Linux builds. The release workflow runs
-# it too. Actions are pinned by commit SHA.
+# it too. Every job runs on the owner's self-hosted runners, virtual machines
+# that are thrown away after one job, which is what the label `disposable`
+# promises. Their system labels start with `mannie-`, so that no job that asks
+# for a GitHub-hosted image, such as the release's signing job, can land on
+# them (docs/engineering/ci-runners.md). Actions are pinned by commit SHA.
 name: CI
 
 on:
@@ -35,8 +39,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2025, ubuntu-24.04]
-    runs-on: ${{ matrix.os }}
+        os: [windows-11, ubuntu-24.04]
+    runs-on: [self-hosted, disposable, "mannie-${{ matrix.os }}"]
     steps:
       # The whole history and the tags: `task lint:proto` compares the link's
       # contracts with the merge base and the newest release that has them.
@@ -54,8 +58,8 @@ jobs:
       fail-fast: false
       matrix:
         # V1 names the WebKitGTK 4.1 of Ubuntu 22.04, the oldest supported LTS.
-        os: [windows-2025, ubuntu-22.04]
-    runs-on: ${{ matrix.os }}
+        os: [windows-11, ubuntu-22.04]
+    runs-on: [self-hosted, disposable, "mannie-${{ matrix.os }}"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
@@ -93,7 +97,7 @@ jobs:
 
   credentials:
     name: Credential store (${{ matrix.secret-service }})
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, disposable, mannie-ubuntu-24.04]
     strategy:
       fail-fast: false
       matrix:
@@ -126,8 +130,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2025, ubuntu-24.04]
-    runs-on: ${{ matrix.os }}
+        os: [windows-11, ubuntu-24.04]
+    runs-on: [self-hosted, disposable, "mannie-${{ matrix.os }}"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install the Rust toolchain from rust-toolchain.toml
@@ -150,7 +154,7 @@ jobs:
 
   worker-builds:
     name: Worker builds for FreeBSD and static Linux
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, disposable, mannie-ubuntu-24.04]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install the Rust toolchain and targets from rust-toolchain.toml

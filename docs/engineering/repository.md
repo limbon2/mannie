@@ -1,10 +1,10 @@
 # Repository layout
 
-|              |                                                                                                                                                                      |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status       | Draft for review                                                                                                                                                     |
-| Last updated | 2026-10-14                                                                                                                                                           |
-| Related      | [ADR-0008](../adr/0008-one-workspace-two-binaries.md), [Extension points](../architecture/extension-points.md), [Standards](standards.md), [Releasing](releasing.md) |
+|              |                                                                                                                                                                                                   |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status       | Draft for review                                                                                                                                                                                  |
+| Last updated | 2026-10-16                                                                                                                                                                                        |
+| Related      | [ADR-0008](../adr/0008-one-workspace-two-binaries.md), [Extension points](../architecture/extension-points.md), [Standards](standards.md), [Releasing](releasing.md), [CI runners](ci-runners.md) |
 
 ## 1. Principles
 
@@ -159,6 +159,7 @@ Task commands call real executables only, never Unix utilities, so every task ru
 
 - The owner's workstation runs Windows 11. Development happens natively on Windows and on Linux.
 - FreeBSD builds and tests of the worker run in CI, in a FreeBSD virtual machine.
+- CI runs on the owner's self-hosted runners, except the FreeBSD virtual machine and the release's own jobs, which run on GitHub's runners ([CI runners](ci-runners.md)).
 - Tool caches stay in their default user locations, never in the repository: the Cargo registry, the pnpm store, and the Vite and Vitest caches. Build output (`target/`, `build/`, `.svelte-kit/`) stays in its ignored folders.
 
 ## 9. Agent tooling

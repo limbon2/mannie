@@ -5,8 +5,9 @@
 # the evaluations pass at least 90% of their tasks with an OpenAI model and
 # an open-weight model, and every injection task. A model without its
 # variables is reported as not configured. The workflow is not part of the
-# release, so that a provider's outage never blocks one. Actions are pinned by
-# commit SHA.
+# release, so that a provider's outage never blocks one. The jobs run on the
+# owner's self-hosted runners (docs/engineering/ci-runners.md). Actions are
+# pinned by commit SHA.
 #
 # For each model NAME of the matrix, the repository needs the variables
 # MANNIE_EVAL_<NAME>_BASE_URL and MANNIE_EVAL_<NAME>_MODEL, the secret
@@ -30,7 +31,7 @@ env:
 jobs:
   oracle:
     name: Evaluations (oracle)
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, disposable, mannie-ubuntu-24.04]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -46,7 +47,7 @@ jobs:
 
   models:
     name: Evaluations (${{ matrix.name }})
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, disposable, mannie-ubuntu-24.04]
     timeout-minutes: 180
     strategy:
       fail-fast: false

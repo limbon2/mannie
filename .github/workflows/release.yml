@@ -4,7 +4,11 @@
 # signatures of the worker archives, CycloneDX SBOMs and third-party notices,
 # and a draft GitHub release whose notes are the version's changelog section.
 # Nothing is published: the owner checks the draft on clean machines and
-# publishes it (V10). Actions are pinned by commit SHA.
+# publishes it (V10). The checks of ci.yml run on the owner's self-hosted
+# runners. The release's own jobs and the FreeBSD tests run on GitHub-hosted
+# runners, so the artifacts are built, installed and signed on clean machines
+# that the self-hosted runners never touch (docs/engineering/ci-runners.md).
+# Actions are pinned by commit SHA.
 name: Release
 
 on:

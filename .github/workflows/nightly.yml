@@ -19,6 +19,8 @@ permissions:
 jobs:
   freebsd:
     name: Worker on FreeBSD 14.4
+    # GitHub's Linux runners have the KVM that the virtual machine needs, so
+    # this job stays on them (docs/engineering/ci-runners.md).
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:

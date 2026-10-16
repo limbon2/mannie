@@ -3,7 +3,7 @@
 |              |                                                                                                                       |
 | ------------ | --------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                      |
-| Last updated | 2026-10-15                                                                                                            |
+| Last updated | 2026-10-16                                                                                                            |
 | Related      | [AGENTS.md](../AGENTS.md), [README](../README.md), [ADR index](adr/README.md), [Feature protocol](features/README.md) |
 
 This is the project's documentation: the vision, scope, architecture, decisions and working rules, and the results of the validations that settle the decisions.
@@ -28,6 +28,7 @@ This is the project's documentation: the vision, scope, architecture, decisions 
 | 14  | [Engineering standards](engineering/standards.md)    | The Definition of Done and the standards for code, contracts, data and tests                                                                                                                                                                       |
 | 15  | [Repository](engineering/repository.md)              | The layout, the crates and their rules, generated artifacts and tasks                                                                                                                                                                              |
 | 16  | [Releasing](engineering/releasing.md)                | When releases happen and how they are built                                                                                                                                                                                                        |
+| 17  | [CI runners](engineering/ci-runners.md)              | Where CI's jobs run, and what the owner's self-hosted runners need                                                                                                                                                                                 |
 | -   | [M0 validation results](roadmap/m0-validation.md)    | What the M0 validations showed, and the decisions they leave for the owner                                                                                                                                                                         |
 | -   | [M1 validation results](roadmap/m1-validation.md)    | What the M1 validations and exit criteria showed so far, and what remains before v0.1.0                                                                                                                                                            |
 | -   | [M2 validation results](roadmap/m2-validation.md)    | What the M2 validations and exit criteria showed so far, and what remains before v0.2.0                                                                                                                                                            |

@@ -115,7 +115,7 @@ Documents follow the conventions in [docs/README.md](docs/README.md): a status t
 - Run `task fmt`, then `task fmt:check`. Never add a suppression just to make a check pass. A justified suppression is narrow and states its reason: `#[expect(lint, reason = "...")]` in Rust, never `#[allow]`, and `// eslint-disable-next-line rule -- reason` in TypeScript and Svelte, never `@ts-ignore`. A suppression that no longer suppresses anything fails the check.
 - Run the checks that the change touches. Behavior changes need tests, including the failure paths. A passing build alone does not show that a feature works.
 - Documentation changes must pass `task docs:check`. Before reporting a change as done, run `task ci`.
-- CI repeats these checks on GitHub's runners and blocks nothing. A change, a milestone or a release is done when it compiles, builds, runs without runtime errors and its tests pass on the owner's machines ([D24](docs/roadmap/milestones.md#5-decisions)).
+- CI repeats these checks and blocks nothing. A change, a milestone or a release is done when it compiles, builds, runs without runtime errors and its tests pass on the owner's machines ([D24](docs/roadmap/milestones.md#5-decisions)).
 - Tell existing failures apart from failures your change introduced.
 
 ### Generated files and caches

@@ -3,8 +3,9 @@
 # against each server that the repository's variables and secrets name, and
 # against an Ollama container of a pinned version. A server without its
 # variables is reported as not configured. The workflow is not part of the
-# release, so that a provider's outage never blocks one. Actions are pinned by
-# commit SHA, and the Ollama image by digest.
+# release, so that a provider's outage never blocks one. The jobs run on the
+# owner's self-hosted runners (docs/engineering/ci-runners.md). Actions are
+# pinned by commit SHA, and the Ollama image by digest.
 #
 # For each server NAME of the matrix, the repository needs the variables
 # MANNIE_LIVE_<NAME>_BASE_URL and MANNIE_LIVE_<NAME>_MODEL, the secret
@@ -28,7 +29,7 @@ env:
 jobs:
   configured:
     name: Live (${{ matrix.name }})
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, disposable, mannie-ubuntu-24.04]
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -75,7 +76,7 @@ jobs:
 
   ollama:
     name: Live (OLLAMA)
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, disposable, mannie-ubuntu-24.04]
     timeout-minutes: 45
     services:
       ollama:
