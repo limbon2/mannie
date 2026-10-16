@@ -34,6 +34,10 @@ jobs:
           run: |
             set -eu
             . "$HOME/.cargo/env"
+            # The workflow's environment does not reach the virtual machine,
+            # whose disk lives on the runner's, so the build settings of
+            # ci.yml that keep the build small are set here.
+            export CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=line-tables-only
             rustup toolchain install
             # The crates of the worker: the system tools that its agents use,
             # the provider adapters, the runtime and the link (ADR-0015); the

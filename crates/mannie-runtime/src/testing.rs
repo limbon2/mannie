@@ -53,6 +53,12 @@ use crate::{
     RetryPolicy, Runtime, RuntimeConfig, RuntimeDeps, ToolsDeps, VaultError, WorkerHost, texts,
 };
 
+/// How long a helper waits for a state before it fails the test. Shared CI
+/// runners run the tests several times slower than a workstation, and a
+/// command there can take seconds to start, so the limit only catches a
+/// hang, as the helpers of mannie-link do.
+const WAIT_LIMIT: Duration = Duration::from_secs(120);
+
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -779,7 +785,7 @@ impl Harness {
     /// # Panics
     ///
     /// When the conversation does not exist or `done` does not hold within
-    /// 20 seconds, which fails the test.
+    /// two minutes, which fails the test.
     pub async fn wait_until(
         &self,
         conversation: &ConversationId,
@@ -802,9 +808,9 @@ impl Harness {
                 }
             }
         };
-        tokio::time::timeout(Duration::from_secs(20), wait)
+        tokio::time::timeout(WAIT_LIMIT, wait)
             .await
-            .expect("the condition holds within 20 seconds");
+            .expect("the condition holds within two minutes");
         transcript
     }
 
@@ -813,8 +819,8 @@ impl Harness {
     ///
     /// # Panics
     ///
-    /// When the conversation does not exist or the run does not end within 20
-    /// seconds, which fails the test.
+    /// When the conversation does not exist or the run does not end within
+    /// two minutes, which fails the test.
     pub async fn wait_for_run(&self, conversation: &ConversationId, run: &RunId) -> Transcript {
         self.wait_until(conversation, |transcript| {
             transcript
@@ -939,9 +945,9 @@ async fn wait_for_assigned(
             }
         }
     };
-    tokio::time::timeout(Duration::from_secs(20), wait)
+    tokio::time::timeout(WAIT_LIMIT, wait)
         .await
-        .expect("the task's state holds within 20 seconds")
+        .expect("the task's state holds within two minutes")
 }
 
 impl WorkerHarness {
@@ -1078,7 +1084,7 @@ impl WorkerHarness {
     ///
     /// # Panics
     ///
-    /// When it does not within 20 seconds, which fails the test.
+    /// When it does not within two minutes, which fails the test.
     pub async fn wait_for_task(
         &self,
         task: &TaskId,
@@ -1091,7 +1097,7 @@ impl WorkerHarness {
     ///
     /// # Panics
     ///
-    /// When it does not end within 20 seconds, which fails the test.
+    /// When it does not end within two minutes, which fails the test.
     pub async fn wait_for_end(&self, task: &TaskId) -> AssignedTaskState {
         self.wait_for_task(task, |state| !state.state.is_active())
             .await

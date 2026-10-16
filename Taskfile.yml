@@ -154,8 +154,10 @@ tasks:
       # output for the static C runtime, and Cargo hands that folder to the
       # doctests of every crate built in the same run, which then fail to link
       # on Windows. The desktop crate's tests therefore run on their own.
-      - cargo test --workspace --all-features --locked --exclude mannie-desktop
-      - cargo test -p mannie-desktop --all-features --locked
+      # Every test binary runs even after one fails, so a single run, which
+      # takes long in CI, reports every failure.
+      - cargo test --workspace --all-features --locked --no-fail-fast --exclude mannie-desktop
+      - cargo test -p mannie-desktop --all-features --locked --no-fail-fast
 
   test:desktop:
     desc: Run the desktop app's unit tests with Vitest
