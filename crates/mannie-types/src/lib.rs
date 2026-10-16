@@ -25,3 +25,4 @@ pub mod transcript;
 #[cfg(feature = "validation")]
 pub mod validation;
 pub mod window;
+pub mod workers;

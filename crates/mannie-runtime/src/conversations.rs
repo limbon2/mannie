@@ -25,7 +25,7 @@ use crate::{Busy, Runtime, lock};
 /// A conversation that a command has reserved: for a new run, or for the
 /// owner's compaction. Dropping it releases the conversation unless a run
 /// took it over.
-struct Reservation<'a> {
+pub(crate) struct Reservation<'a> {
     runtime: &'a Runtime,
     conversation: ConversationId,
 }
@@ -86,7 +86,7 @@ impl Runtime {
         Ok(())
     }
 
-    fn reserve(
+    pub(crate) fn reserve(
         &self,
         conversation: &ConversationId,
         busy_with: Busy,
@@ -181,28 +181,32 @@ impl Runtime {
         {
             return Err(ChatError::ProjectNotFound);
         }
+        let full_access = self.full_access_for_new_conversations().await;
         let conversation_id = self.inner.ids.conversation();
         let reservation = self.reserve(&conversation_id, Busy::Starting)?;
         let turn_id = self.inner.ids.turn();
         let run = self.new_run(&profile);
-        let changes = vec![
-            Change::CreateConversation {
-                conversation: NewConversation {
-                    id: conversation_id.clone(),
-                    title: title_from_message(&input.text),
-                    profile_id: input.profile_id,
-                    project_id: input.project_id,
-                    task: None,
-                },
-            },
-            Change::StartTurn {
-                turn_id: turn_id.clone(),
-                user_part_id: self.inner.ids.part(),
-                text: input.text,
-                run: run.clone(),
+        let mut changes = vec![Change::CreateConversation {
+            conversation: NewConversation {
+                id: conversation_id.clone(),
+                title: title_from_message(&input.text),
+                profile_id: input.profile_id,
+                project_id: input.project_id,
                 task: None,
             },
-        ];
+        }];
+        // In the same transaction, so the reply's first call already follows
+        // it (ADR-0029, decision 2).
+        if full_access {
+            changes.push(Change::SetFullAccess { enabled: true });
+        }
+        changes.push(Change::StartTurn {
+            turn_id: turn_id.clone(),
+            user_part_id: self.inner.ids.part(),
+            text: input.text,
+            run: run.clone(),
+            task: None,
+        });
         self.inner
             .hubs
             .apply(
@@ -324,6 +328,10 @@ impl Runtime {
             }
         };
         let Some((mailbox, mut ended)) = running else {
+            // The conversation of a task on a worker runs on the worker.
+            if self.stop_remote_task(conversation).await {
+                return StopOutcome::Stopped;
+            }
             return StopOutcome::NotRunning;
         };
         // A full mailbox already holds a command that ends the run.
@@ -426,6 +434,9 @@ impl Runtime {
         for child in &children {
             self.inner.hubs.ended_task_conversation(child).await;
         }
+        // The deletions of the conversations of worker tasks wait for their
+        // workers in the store; the followers send them.
+        self.inner.followers.nudge();
         tracing::info!(conversation = %conversation, task_conversations = children.len(), "deleted a conversation");
         Ok(())
     }
@@ -498,8 +509,16 @@ impl Runtime {
         }
     }
 
-    /// The owner's turns before `before_position`, page by page.
+    /// The owner's turns before `before_position`, page by page. The turns of
+    /// a task on a worker come from the worker.
     pub async fn earlier_turns(&self, input: LoadEarlierTurns) -> Result<EarlierTurns, ChatError> {
+        if let Some((delegation, worker, _summary)) = self
+            .remote_conversation(&input.conversation_id)
+            .await
+            .map_err(store_failure)?
+        {
+            return delegation.earlier_turns(&worker, input).await;
+        }
         let limit = input.limit.clamp(1, MAX_EARLIER_TURNS);
         let (turns, has_earlier_turns) = self
             .inner
@@ -515,6 +534,13 @@ impl Runtime {
 
     /// A checkpoint with its summary.
     pub async fn checkpoint(&self, input: CheckpointRef) -> Result<Checkpoint, ChatError> {
+        if let Some((delegation, worker, _summary)) = self
+            .remote_conversation(&input.conversation_id)
+            .await
+            .map_err(store_failure)?
+        {
+            return delegation.checkpoint(&worker, input).await;
+        }
         self.inner
             .store
             .checkpoint(&input.conversation_id, &input.checkpoint_id)
@@ -547,11 +573,22 @@ impl Runtime {
         Ok(settings)
     }
 
-    /// Follows a conversation from a cursor, or from a snapshot.
+    /// Follows a conversation from a cursor, or from a snapshot. The
+    /// conversation of a task on a worker is followed on the worker.
     pub async fn subscribe(
         &self,
         input: SubscribeConversation,
     ) -> Result<ConversationSubscription, ChatError> {
+        if let Some((delegation, worker, summary)) = self
+            .remote_conversation(&input.conversation_id)
+            .await
+            .map_err(store_failure)?
+        {
+            let stream = delegation
+                .subscribe(&worker, &input.conversation_id, input.after_seq)
+                .await?;
+            return Ok(ConversationSubscription::remote(stream, summary));
+        }
         self.inner
             .hubs
             .subscribe(

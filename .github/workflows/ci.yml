@@ -3,8 +3,9 @@
 # and Linux, with the performance figures they measure (NFR-PERF-01 to 04,
 # enforced only on the reference machine), the credential store with GNOME
 # Keyring, KWallet and no Secret Service (V7), the worker service on Windows
-# and Linux, and the worker's FreeBSD and static Linux builds. The release
-# workflow runs it too. Actions are pinned by commit SHA.
+# and Linux with a test master that pairs with it and delegates a command,
+# and the worker's FreeBSD and static Linux builds. The release workflow runs
+# it too. Actions are pinned by commit SHA.
 name: CI
 
 on:
@@ -33,7 +34,11 @@ jobs:
         os: [windows-2025, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
     steps:
+      # The whole history and the tags: `task lint:proto` compares the link's
+      # contracts with the merge base and the newest release that has them.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - uses: ./.github/actions/setup
         with:
           cache-key: check
@@ -128,13 +133,16 @@ jobs:
         with:
           key: worker-service
       - run: cargo build --locked -p mannie-worker
-      - name: Install, check and remove the Windows service
+      # The test master that pairs with the installed worker and delegates a
+      # command to it.
+      - run: cargo build --locked -p mannie-link --features testing --example smoke-master
+      - name: Install, pair, delegate to and remove the Windows service
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./scripts/ci/worker-service-windows.ps1 -Worker target/debug/mannie-worker.exe
-      - name: Install, check and remove the systemd unit
+        run: ./scripts/ci/worker-service-windows.ps1 -Worker target/debug/mannie-worker.exe -Master target/debug/examples/smoke-master.exe
+      - name: Install, pair, delegate to and remove the systemd unit
         if: runner.os == 'Linux'
-        run: sudo sh scripts/ci/worker-service-unix.sh target/debug/mannie-worker
+        run: sudo sh scripts/ci/worker-service-unix.sh target/debug/mannie-worker target/debug/examples/smoke-master
 
   worker-builds:
     name: Worker builds for FreeBSD and static Linux
@@ -156,14 +164,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends musl-tools
           cargo build --locked --release -p mannie-worker --target x86_64-unknown-linux-musl
-      # The worker's tests run on FreeBSD every night (nightly.yml).
+      # The worker's tests run on FreeBSD every night (nightly.yml), and for
+      # pull requests that change what the worker runs (freebsd.yml).
       - name: Cross-build the FreeBSD worker
         run: cross build --locked --release -p mannie-worker --target x86_64-unknown-freebsd
-      # The worker will run the system tools on FreeBSD (M4); until then,
-      # their Unix file safety must at least build there, without warnings.
-      # Clippy links nothing, so it needs FreeBSD's standard library but not
-      # cross.
-      - name: Lint the system tools for FreeBSD
+      # The worker's crates build for FreeBSD without warnings. Clippy links
+      # nothing, so it needs FreeBSD's standard library but not cross.
+      - name: Lint the worker's crates for FreeBSD
         run: |
           rustup target add x86_64-unknown-freebsd
-          cargo clippy --locked -p mannie-tools --all-targets --target x86_64-unknown-freebsd -- -D warnings
+          cargo clippy --locked -p mannie-tools -p mannie-runtime -p mannie-link -p mannie-worker --all-targets --all-features --target x86_64-unknown-freebsd -- -D warnings

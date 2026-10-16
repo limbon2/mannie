@@ -18,19 +18,21 @@ mod store;
 mod tools;
 #[cfg(feature = "validation")]
 pub mod validation;
+mod workers;
 mod writer;
 
 pub use error::{DatabaseError, StoreError};
 pub use provider::{ProfileFields, ProfileStoreError, StoredProfile};
 pub use runtime::{
     AddedProject, Applied, Change, ConversationList, EventsAfter, KeptRun, ModelPart, ModelTurn,
-    NewArchive, NewCheckpoint, NewConversation, NewPart, NewRun, NewTask, ProjectDeletion,
-    ProviderItem, Recovered, RuntimeStoreError, StoredArchive, StoredCheckpoint, StoredChild,
-    StoredTask, TaskEnding, TaskOrigin, UncertainCall,
+    NewArchive, NewCheckpoint, NewConversation, NewDelegatedTask, NewPart, NewRun, NewTask,
+    ProjectDeletion, ProviderItem, Recovered, RuntimeStoreError, StoredArchive, StoredCheckpoint,
+    StoredChild, StoredTask, Submission, TaskEnding, TaskOrigin, UncertainCall,
 };
 pub use settings::SettingsStoreError;
 pub use store::{Store, StoreOptions};
 pub use tools::ToolsStoreError;
+pub use workers::{NewPairedWorker, PairedWorker, WorkersStoreError};
 
 /// How durable a write is once its future resolves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +55,7 @@ pub(crate) fn all_statements() -> impl Iterator<Item = &'static str> {
         .iter()
         .chain(provider::STATEMENTS)
         .chain(tools::STATEMENTS)
+        .chain(workers::STATEMENTS)
         .copied()
         .chain(runtime::statements())
 }

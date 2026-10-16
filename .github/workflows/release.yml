@@ -273,6 +273,23 @@ jobs:
         run: |
           node scripts/release.mjs sign dist/mannie-worker-*
           node scripts/release.mjs verify release/mannie-release.pub dist/mannie-worker-*.zip dist/mannie-worker-*.tar.gz
+      # The released worker checks every signed archive with the key built
+      # into it, which proves that the key is the release key, and reports
+      # that key's fingerprint (docs/engineering/releasing.md, signing).
+      - name: Check the archives with the released worker
+        run: |
+          mkdir worker
+          tar -xzf "dist/mannie-worker-$VERSION-linux-x86_64.tar.gz" -C worker
+          expected="$(node scripts/release.mjs fingerprint release/mannie-release.pub)"
+          reported="$(worker/mannie-worker self-check --json | node -e "process.stdout.write(JSON.parse(require('node:fs').readFileSync(0, 'utf8')).releaseKeySha256)")"
+          if [ "$reported" != "$expected" ]; then
+            echo "the released worker checks updates with the key $reported, not the release key $expected" >&2
+            exit 1
+          fi
+          for archive in dist/mannie-worker-*.zip dist/mannie-worker-*.tar.gz; do
+            worker/mannie-worker update --check "$archive"
+          done
+          rm -rf worker
       - name: Write the SBOMs
         run: |
           cargo cyclonedx --manifest-path apps/desktop/src-tauri/Cargo.toml --format json --spec-version 1.5 --target all

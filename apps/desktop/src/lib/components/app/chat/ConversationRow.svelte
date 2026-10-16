@@ -1,5 +1,6 @@
 <script lang="ts">
   import EllipsisIcon from '@lucide/svelte/icons/ellipsis';
+  import LockOpenIcon from '@lucide/svelte/icons/lock-open';
   import ShieldAlertIcon from '@lucide/svelte/icons/shield-alert';
 
   import { resolve } from '$app/paths';
@@ -14,12 +15,12 @@
   import { conversationQuery, openConversationId } from '#lib/utils/chat-urls.js';
 
   // One conversation in the sidebar (docs/features/chat/conversation-view.md,
-  // layout; projects.md): its title, a mark while its reply waits for the
-  // owner's approval or is being written, so the owner finds it from another
-  // conversation, and a menu to rename or delete it, which shows on hover and
-  // focus. The menu's button lies over room that the row keeps free, so
-  // nothing moves when it shows, and the row stays highlighted while the
-  // pointer is on the button.
+  // layout; projects.md): its title, a mark while it is in full access
+  // (ADR-0029), a mark while its reply waits for the owner's approval or is
+  // being written, so the owner finds it from another conversation, and a
+  // menu to rename or delete it, which shows on hover and focus. The menu's
+  // button lies over room that the row keeps free, so nothing moves when it
+  // shows, and the row stays highlighted while the pointer is on the button.
   interface Props {
     conversation: ConversationSummary;
     /** Whether the row belongs to a project's list. */
@@ -29,6 +30,7 @@
   let { conversation, nested = false }: Props = $props();
 
   const isOpen = $derived(conversation.id === openConversationId());
+  const hasFullAccess = $derived(conversation.fullAccess ?? false);
   // A project's conversations form a sub-list below the project's row.
   const Item = $derived(nested ? Sidebar.MenuSubItem : Sidebar.MenuItem);
   const RowButton = $derived(nested ? Sidebar.MenuSubButton : Sidebar.MenuButton);
@@ -46,6 +48,14 @@
         href="{resolve('/')}?{conversationQuery(conversation.id)}"
       >
         <span class="truncate" data-content>{conversation.title}</span>
+        {#if hasFullAccess}
+          <LockOpenIcon
+            class="shrink-0 text-destructive"
+            aria-label={m.chat_conversation_full_access()}
+            data-full-access-mark=""
+            role="img"
+          />
+        {/if}
         {#if conversation.awaitingApproval}
           <ShieldAlertIcon class="ms-auto" aria-label={m.chat_conversation_awaiting_approval()} role="img" />
         {:else if conversation.hasActiveRun}

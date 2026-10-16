@@ -1,7 +1,9 @@
 //! Test tools: a credential vault in memory, a fake model that plays scripted
-//! replies and writes summaries on its own, a runtime on a temporary store,
-//! and a transcript that a subscriber builds from updates
-//! (docs/architecture/agent-runtime.md, testing).
+//! replies and writes summaries on its own, a runtime on a temporary store, a
+//! worker's runtime with its host and ceiling, a port that joins a master and
+//! a worker in one process with faults to inject, and a transcript that a
+//! subscriber builds from updates (docs/architecture/agent-runtime.md,
+//! testing).
 //!
 //! Only the `testing` feature compiles this module. The desktop app and the
 //! worker never enable it.
@@ -11,30 +13,44 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
+use futures_util::future::BoxFuture;
+use futures_util::stream::BoxStream;
+use futures_util::{FutureExt, StreamExt};
 use mannie_provider::testing::Step;
 use mannie_provider::{
     Content, EventStream, HttpClient, ModelRequest, Provider, ProviderError, ProviderEvent,
     ProviderRegistry, Target,
 };
 use mannie_store::{Store, StoreOptions};
-use mannie_tools::{MutationLock, SystemFacts, ToolRegistry};
+use mannie_tools::{Ceiling, MutationLock, SystemFacts, ToolRegistry};
+use mannie_types::chat::{
+    ChatError, CheckpointRef, EarlierTurns, LoadEarlierTurns, SubscribeConversation,
+};
+use mannie_types::clock::UtcMillis;
 use mannie_types::clock::{Clock, SystemClock};
-use mannie_types::ids::{ConversationId, PartId, RunId, TurnId};
+use mannie_types::ids::{ConversationId, PartId, ProfileId, RunId, TaskId, TurnId, WorkerId};
 use mannie_types::provider::{
     ApiInterface, CreateProviderProfile, CredentialStoreProblem, ProfileDraft, ProviderProfile,
     ReasoningEffort,
 };
 use mannie_types::run::{FinishReason, RunFailure, RunState, RunView, Usage};
 use mannie_types::secret::Secret;
-use mannie_types::tasks::{TaskCallView, TaskView};
-use mannie_types::tools::ToolCallView;
-use mannie_types::transcript::{
-    ConversationEvent, ConversationUpdate, PartContent, PartState, TurnView,
+use mannie_types::tasks::{AssignedTaskState, TaskCallView, TaskView};
+use mannie_types::tools::{
+    CommandRule, DecideApproval, ProcessRecord, ReadToolOutput, ToolCallView, ToolOutputPage,
+    ToolsError,
 };
+use mannie_types::transcript::{
+    Checkpoint, ConversationEvent, ConversationUpdate, PartContent, PartState, TurnView,
+};
+use mannie_types::workers::{
+    CeilingMode, ProfileSnapshot, TaskAssignment, WorkerDetails, WorkerStatus, WorkerView,
+};
+use tokio::sync::watch;
 
 use crate::{
-    AgentRegistry, CredentialVault, InstructionRegistry, RetryPolicy, Runtime, RuntimeConfig,
-    RuntimeDeps, ToolsDeps, VaultError, texts,
+    AgentRegistry, CredentialVault, Delegation, DelegationError, InstructionRegistry, Machine,
+    RetryPolicy, Runtime, RuntimeConfig, RuntimeDeps, ToolsDeps, VaultError, WorkerHost, texts,
 };
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -49,16 +65,39 @@ struct VaultState {
     failing_deletes: Option<CredentialStoreProblem>,
 }
 
-/// A credential vault in memory, whose calls can be made to fail.
-#[derive(Debug, Default)]
+/// A credential vault in memory, whose calls can be made to fail. One made
+/// with [`MemoryVault::with_arrivals`] tells waiting runs when a credential
+/// arrives, as a worker's lease vault does.
+#[derive(Debug)]
 pub struct MemoryVault {
     state: Mutex<VaultState>,
+    /// Counts the credentials saved, for the waits of runs.
+    saved: watch::Sender<u64>,
+    announces_arrivals: bool,
+}
+
+impl Default for MemoryVault {
+    fn default() -> Self {
+        Self {
+            state: Mutex::default(),
+            saved: watch::Sender::new(0),
+            announces_arrivals: false,
+        }
+    }
 }
 
 impl MemoryVault {
     /// An empty vault.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// An empty vault that tells waiting runs when a credential arrives.
+    pub fn with_arrivals() -> Self {
+        Self {
+            announces_arrivals: true,
+            ..Self::default()
+        }
     }
 
     /// The references of every stored credential, in order.
@@ -79,6 +118,7 @@ impl MemoryVault {
         lock(&self.state)
             .entries
             .insert(reference.to_owned(), Secret::new(credential.to_owned()));
+        self.saved.send_modify(|count| *count += 1);
     }
 
     /// Removes a credential without going through a profile.
@@ -111,6 +151,8 @@ impl CredentialVault for MemoryVault {
         state
             .entries
             .insert(reference.to_owned(), credential.clone());
+        drop(state);
+        self.saved.send_modify(|count| *count += 1);
         Ok(())
     }
 
@@ -136,6 +178,18 @@ impl CredentialVault for MemoryVault {
             .remove(reference)
             .map(|_removed| ())
             .ok_or(VaultError::Missing)
+    }
+
+    fn arrival(&self, _reference: &str) -> Option<BoxFuture<'static, ()>> {
+        if !self.announces_arrivals {
+            return None;
+        }
+        // The receiver counts what was saved so far, so a save after this
+        // call ends the wait, even one before the wait is polled.
+        let mut saved = self.saved.subscribe();
+        Some(Box::pin(async move {
+            let _changed = saved.changed().await;
+        }))
     }
 }
 
@@ -441,6 +495,8 @@ pub struct HarnessOptions {
     pub agents: AgentRegistry,
     /// The runtime's configuration.
     pub config: RuntimeConfig,
+    /// The port to the workers, for a master that delegates.
+    pub delegation: Option<Arc<dyn Delegation>>,
 }
 
 impl Default for HarnessOptions {
@@ -455,6 +511,7 @@ impl Default for HarnessOptions {
             use_tools: false,
             agents: AgentRegistry::with_builtin(),
             config: fast_config(),
+            delegation: None,
         }
     }
 }
@@ -503,6 +560,47 @@ pub fn open_store(database: &Path) -> Store {
     Store::open(database, &options).expect("the test store opens")
 }
 
+/// Waits up to five seconds until the shell of a command that outlived a
+/// killed Mannie has ended. On Linux and FreeBSD such a command runs on until
+/// the recovery ends its tree, in the background, at the next start
+/// (docs/features/system-tools/commands.md, crash recovery), so a crash test
+/// counts what the command did only once its shell is gone. On Windows the
+/// command's job ended with Mannie.
+#[cfg_attr(
+    not(any(target_os = "linux", target_os = "freebsd")),
+    expect(
+        clippy::unused_async,
+        reason = "the command's job ended with Mannie, so there is nothing to wait for"
+    )
+)]
+pub async fn wait_for_leftover_command(process: Option<&ProcessRecord>) {
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    if let Some(process) = process {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while process_exists(process.pid) && std::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    let _ = process;
+}
+
+/// Whether a process exists, as a zombie too.
+#[cfg(target_os = "linux")]
+fn process_exists(pid: u32) -> bool {
+    Path::new(&format!("/proc/{pid}")).exists()
+}
+
+/// Whether a process exists, as a zombie too. FreeBSD mounts no `/proc` by
+/// default, so `ps` answers.
+#[cfg(target_os = "freebsd")]
+fn process_exists(pid: u32) -> bool {
+    std::process::Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "pid="])
+        .output()
+        .is_ok_and(|output| !String::from_utf8_lossy(&output.stdout).trim().is_empty())
+}
+
 /// Starts a runtime on `store` with `provider` behind every profile of its
 /// interface, and the system tools without protected folders.
 ///
@@ -545,6 +643,24 @@ pub async fn start_runtime_with_tools(
     tools: ToolsDeps,
     agents: AgentRegistry,
 ) -> Runtime {
+    start_master(store, provider, vault, config, tools, agents, None).await
+}
+
+/// Starts a master's runtime as [`start_runtime_with_tools`] does, with a
+/// port to the workers.
+///
+/// # Panics
+///
+/// When the runtime cannot start, which fails the test.
+pub async fn start_master(
+    store: Store,
+    provider: Arc<dyn Provider>,
+    vault: Arc<MemoryVault>,
+    config: RuntimeConfig,
+    tools: ToolsDeps,
+    agents: AgentRegistry,
+    delegation: Option<Arc<dyn Delegation>>,
+) -> Runtime {
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let client = HttpClient::new(Arc::clone(&clock)).expect("the HTTP client builds");
     let mut registry = ProviderRegistry::new();
@@ -560,6 +676,8 @@ pub async fn start_runtime_with_tools(
         agents,
         instructions: InstructionRegistry::with_builtin(),
         tools,
+        machine: Machine::Master,
+        delegation,
     };
     Runtime::start(deps, config)
         .await
@@ -589,13 +707,14 @@ impl Harness {
             model.write_full_summaries();
         }
         let vault = Arc::new(MemoryVault::new());
-        let runtime = start_runtime_with_tools(
+        let runtime = start_master(
             store.clone(),
             Arc::new(model.clone()),
             Arc::clone(&vault),
             options.config.clone(),
             test_tools(directory.path()),
             options.agents.clone(),
+            options.delegation.clone(),
         )
         .await;
         let profile = runtime
@@ -634,13 +753,14 @@ impl Harness {
     /// restart of Mannie does.
     pub async fn restart(mut self) -> Self {
         self.runtime.shutdown().await;
-        self.runtime = start_runtime_with_tools(
+        self.runtime = start_master(
             self.store.clone(),
             Arc::new(self.model.clone()),
             Arc::clone(&self.vault),
             self.options.config.clone(),
             test_tools(self.directory.path()),
             self.options.agents.clone(),
+            self.options.delegation.clone(),
         )
         .await;
         self
@@ -667,7 +787,7 @@ impl Harness {
     ) -> Transcript {
         let mut subscription = self
             .runtime
-            .subscribe(mannie_types::chat::SubscribeConversation {
+            .subscribe(SubscribeConversation {
                 conversation_id: conversation.clone(),
                 after_seq: Some(0),
             })
@@ -719,6 +839,856 @@ impl Harness {
         let mut transcript = Transcript::default();
         transcript.apply(&ConversationUpdate::Snapshot { snapshot });
         transcript
+    }
+}
+
+/// The credential that a test worker's leases carry.
+pub const LEASE_CREDENTIAL: &str = "sk-lease-credential";
+
+/// How a test worker is set up.
+#[derive(Debug, Clone)]
+pub struct WorkerOptions {
+    /// The mode of the host's ceiling.
+    pub mode: CeilingMode,
+    /// The host's command rules.
+    pub rules: Vec<CommandRule>,
+    /// The text of the host instructions file, or `None` for no file.
+    pub host_instructions: Option<String>,
+    /// How many tasks run at once.
+    pub max_parallel_tasks: u32,
+    /// Whether the profile that comes with the tasks uses tools.
+    pub use_tools: bool,
+    /// Whether the profile has a credential, which comes as a lease.
+    pub credential: bool,
+    /// The runtime's configuration.
+    pub config: RuntimeConfig,
+    /// The vault of the leases, in place of the harness's own: the link's
+    /// lease vault, in its tests.
+    pub vault: Option<Arc<dyn CredentialVault>>,
+    /// Whether a conversation in full access on the master may answer the
+    /// host's requests.
+    pub accepts_master_full_access: bool,
+}
+
+impl Default for WorkerOptions {
+    fn default() -> Self {
+        Self {
+            mode: CeilingMode::Ask,
+            rules: Vec::new(),
+            host_instructions: None,
+            max_parallel_tasks: 4,
+            use_tools: true,
+            credential: true,
+            config: fast_config(),
+            vault: None,
+            accepts_master_full_access: true,
+        }
+    }
+}
+
+/// A worker's runtime on a temporary store, with a fake model, a lease vault
+/// in memory, and a host whose allowed folder is a temporary folder.
+#[derive(Debug)]
+pub struct WorkerHarness {
+    /// The runtime.
+    pub runtime: Runtime,
+    /// Its store.
+    pub store: Store,
+    /// The model behind the tasks' profile.
+    pub model: FakeModel,
+    /// The lease vault.
+    pub vault: Arc<MemoryVault>,
+    /// The allowed folder, which is the tasks' workspace.
+    pub allowed: PathBuf,
+    /// A folder outside the allowed one.
+    pub outside: PathBuf,
+    /// The host's name.
+    pub host_name: String,
+    options: WorkerOptions,
+    directory: tempfile::TempDir,
+}
+
+/// A new UUIDv7 for a test.
+fn new_id<T>(parse: fn(&str) -> Result<T, mannie_types::ids::InvalidId>) -> T {
+    parse(&uuid::Uuid::now_v7().to_string()).expect("a UUIDv7 is a valid ID")
+}
+
+/// Waits until a task's state satisfies `done`, through a watch that starts
+/// after the task's current state was read.
+async fn wait_for_assigned(
+    runtime: &Runtime,
+    task: &TaskId,
+    done: impl Fn(&AssignedTaskState) -> bool,
+) -> AssignedTaskState {
+    let wait = async {
+        let mut watch = runtime.watch_assigned_tasks();
+        // A state that holds already, or that the task reached before the
+        // watch began, is read from the runtime.
+        if let Some(state) = runtime.assigned_task(task).await.expect("the store reads")
+            && done(&state)
+        {
+            return state;
+        }
+        loop {
+            let state = watch
+                .next()
+                .await
+                .expect("the watch of assigned tasks goes on");
+            if state.task_id == *task && done(&state) {
+                return state;
+            }
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(20), wait)
+        .await
+        .expect("the task's state holds within 20 seconds")
+}
+
+impl WorkerHarness {
+    /// A worker with the default options.
+    pub async fn start() -> Self {
+        Self::with_options(WorkerOptions::default()).await
+    }
+
+    /// A worker with `options`.
+    ///
+    /// # Panics
+    ///
+    /// When the folders or the runtime cannot be set up, which fails the
+    /// test.
+    pub async fn with_options(options: WorkerOptions) -> Self {
+        let directory = tempfile::tempdir().expect("a temporary directory");
+        for folder in ["data", "work", "outside"] {
+            std::fs::create_dir_all(directory.path().join(folder)).expect("a test folder");
+        }
+        let store = open_store(&directory.path().join("data").join("worker.sqlite"));
+        let model = FakeModel::new(ApiInterface::ChatCompletions);
+        let vault = Arc::new(MemoryVault::with_arrivals());
+        let allowed = PathBuf::from(
+            mannie_tools::canonical_folder(&directory.path().join("work"))
+                .expect("the allowed folder exists"),
+        );
+        let outside = PathBuf::from(
+            mannie_tools::canonical_folder(&directory.path().join("outside"))
+                .expect("the outside folder exists"),
+        );
+        let host_name = "build-01".to_owned();
+        let runtime = start_worker_runtime(
+            store.clone(),
+            &model,
+            &vault,
+            &options,
+            directory.path(),
+            &allowed,
+            &host_name,
+        )
+        .await;
+        Self {
+            runtime,
+            store,
+            model,
+            vault,
+            allowed,
+            outside,
+            host_name,
+            options,
+            directory,
+        }
+    }
+
+    /// The profile that comes with the tasks, as the master would send it.
+    ///
+    /// # Panics
+    ///
+    /// Never: its ID is a valid UUID.
+    pub fn profile(&self) -> ProfileSnapshot {
+        ProfileSnapshot {
+            id: ProfileId::parse("0199e0f2-0000-7000-8000-00000000c0de").expect("a valid ID"),
+            config_revision: 1,
+            interface: ApiInterface::ChatCompletions,
+            base_url: "http://127.0.0.1:9/v1".to_owned(),
+            model: "test-model".to_owned(),
+            context_window: 128_000,
+            output_limit: 16_384,
+            reasoning_effort: ReasoningEffort::ServerDefault,
+            server: None,
+            use_tools: self.options.use_tools,
+            has_credential: self.options.credential,
+        }
+    }
+
+    /// A new task in a new conversation, as the master assigns it.
+    pub fn assignment(&self, instruction: &str) -> TaskAssignment {
+        TaskAssignment {
+            task_id: new_id(TaskId::parse),
+            conversation_id: new_id(ConversationId::parse),
+            follow_up: false,
+            title: "Build the backend".to_owned(),
+            instruction: instruction.to_owned(),
+            read_only: false,
+            profile: self.profile(),
+        }
+    }
+
+    /// A follow-up of `earlier` in its conversation.
+    pub fn follow_up(earlier: &TaskAssignment, instruction: &str) -> TaskAssignment {
+        TaskAssignment {
+            task_id: new_id(TaskId::parse),
+            follow_up: true,
+            instruction: instruction.to_owned(),
+            ..earlier.clone()
+        }
+    }
+
+    /// Delivers the task's lease, as the master does once the worker stored
+    /// the task.
+    ///
+    /// # Panics
+    ///
+    /// When the worker refuses the lease, which fails the test.
+    pub async fn deliver_lease(&self, task: &TaskId) {
+        self.runtime
+            .deliver_lease(
+                task,
+                &self.profile().binding(),
+                Secret::new(LEASE_CREDENTIAL.to_owned()),
+            )
+            .await
+            .expect("the worker takes the lease");
+    }
+
+    /// Assigns a task and delivers its lease.
+    ///
+    /// # Panics
+    ///
+    /// When the worker refuses the task or its lease, which fails the test.
+    pub async fn assign(&self, assignment: TaskAssignment) -> AssignedTaskState {
+        let state = self
+            .runtime
+            .assign_task(assignment)
+            .await
+            .expect("the worker takes the task");
+        if self.options.credential {
+            self.deliver_lease(&state.task_id).await;
+        }
+        state
+    }
+
+    /// Waits until a task's state satisfies `done`.
+    ///
+    /// # Panics
+    ///
+    /// When it does not within 20 seconds, which fails the test.
+    pub async fn wait_for_task(
+        &self,
+        task: &TaskId,
+        done: impl Fn(&AssignedTaskState) -> bool,
+    ) -> AssignedTaskState {
+        wait_for_assigned(&self.runtime, task, done).await
+    }
+
+    /// Waits until a task has ended.
+    ///
+    /// # Panics
+    ///
+    /// When it does not end within 20 seconds, which fails the test.
+    pub async fn wait_for_end(&self, task: &TaskId) -> AssignedTaskState {
+        self.wait_for_task(task, |state| !state.state.is_active())
+            .await
+    }
+
+    /// The transcript of a fresh snapshot of a task's conversation.
+    ///
+    /// # Panics
+    ///
+    /// When the conversation cannot be read, which fails the test.
+    pub async fn snapshot(&self, conversation: &ConversationId) -> Transcript {
+        let snapshot = self
+            .store
+            .snapshot(conversation, 1_000, 100_000)
+            .await
+            .expect("the snapshot reads")
+            .expect("the conversation exists");
+        let mut transcript = Transcript::default();
+        transcript.apply(&ConversationUpdate::Snapshot { snapshot });
+        transcript
+    }
+
+    /// The worker's data folder, which the policy protects.
+    pub fn data_folder(&self) -> PathBuf {
+        self.directory.path().join("data")
+    }
+
+    /// Shuts the runtime down and starts a new one on the same store, as a
+    /// restart of the worker does. Leases do not survive it.
+    pub async fn restart(mut self) -> Self {
+        self.runtime.shutdown().await;
+        self.vault = Arc::new(MemoryVault::with_arrivals());
+        self.runtime = start_worker_runtime(
+            self.store.clone(),
+            &self.model,
+            &self.vault,
+            &self.options,
+            self.directory.path(),
+            &self.allowed,
+            &self.host_name,
+        )
+        .await;
+        self
+    }
+}
+
+/// Starts a worker's runtime: the worker agent and sections, the system
+/// tools, and a host whose allowed folder is `allowed`.
+async fn start_worker_runtime(
+    store: Store,
+    model: &FakeModel,
+    vault: &Arc<MemoryVault>,
+    options: &WorkerOptions,
+    directory: &Path,
+    allowed: &Path,
+    host_name: &str,
+) -> Runtime {
+    let instructions_file = options.host_instructions.as_ref().map(|text| {
+        let file = directory.join("data").join("host.md");
+        std::fs::write(&file, text).expect("the host instructions are written");
+        file
+    });
+    let system = SystemFacts::detect();
+    let host = WorkerHost {
+        name: host_name.to_owned(),
+        purpose: "Builds and tests the backend".to_owned(),
+        facts: system.host_facts(),
+        ceiling: Ceiling {
+            mode: options.mode,
+            allowed_folders: vec![allowed.to_path_buf()],
+            rules: options.rules.clone(),
+        },
+        instructions_file,
+        max_parallel_tasks: options.max_parallel_tasks,
+        accepts_master_full_access: options.accepts_master_full_access,
+    };
+    let protected =
+        mannie_tools::canonical_folder(&directory.join("data")).expect("the data folder exists");
+    let tools = ToolsDeps {
+        registry: ToolRegistry::with_system_tools(),
+        protected: vec![PathBuf::from(protected)],
+        mutations: MutationLock::new(),
+        system: Arc::new(system),
+    };
+    let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+    let client = HttpClient::new(Arc::clone(&clock)).expect("the HTTP client builds");
+    let mut registry = ProviderRegistry::new();
+    registry
+        .register(Arc::new(model.clone()))
+        .expect("one adapter per interface");
+    let deps = RuntimeDeps {
+        store,
+        client,
+        registry,
+        vault: options
+            .vault
+            .clone()
+            .unwrap_or_else(|| Arc::<MemoryVault>::clone(vault)),
+        clock,
+        agents: AgentRegistry::for_worker(),
+        instructions: InstructionRegistry::for_worker(),
+        tools,
+        machine: Machine::Worker(Arc::new(host)),
+        delegation: None,
+    };
+    Runtime::start(deps, options.config.clone())
+        .await
+        .expect("the worker's runtime starts")
+}
+
+/// The faults that a [`LocalDelegation`] injects.
+#[derive(Debug, Default)]
+struct Faults {
+    /// The worker cannot be reached: every call fails, and the watches and
+    /// subscriptions end.
+    offline: bool,
+    /// How many of the next submissions reach the worker and lose their
+    /// answers.
+    lost_answers: u32,
+    /// Submissions answer only once the worker's run of the task waits for
+    /// its lease, so the master's follower of the worker sees that state
+    /// before the run that submitted the task gets the answer.
+    answer_when_waiting: bool,
+}
+
+/// A port to one worker in the same process: the master's runtime reaches
+/// the worker's runtime directly, and a test can take the worker offline,
+/// lose or delay the answers of submissions, and see the leases delivered
+/// and revoked (docs/features/workers/delegation.md, acceptance).
+#[derive(Debug)]
+pub struct LocalDelegation {
+    worker: Mutex<Runtime>,
+    view: watch::Sender<Vec<WorkerView>>,
+    /// Ends the watches and subscriptions when the worker goes offline.
+    online: watch::Sender<bool>,
+    faults: Mutex<Faults>,
+    /// The tasks of the leases that the master delivered, once for each
+    /// delivery.
+    delivered: Mutex<Vec<TaskId>>,
+    /// The tasks of the leases that the master revoked.
+    revoked: Mutex<Vec<TaskId>>,
+}
+
+/// The ID of the worker of a [`LocalDelegation`].
+pub const LOCAL_WORKER_ID: &str = "0199e0f2-0000-7000-b000-000000000001";
+
+/// The name of the worker of a [`LocalDelegation`].
+pub const LOCAL_WORKER_NAME: &str = "build-01";
+
+impl LocalDelegation {
+    /// A port to `worker`, connected, at `address`.
+    ///
+    /// # Panics
+    ///
+    /// Never: the worker's ID is a valid UUID.
+    pub fn new(worker: Runtime, address: &str) -> Self {
+        let view = WorkerView {
+            id: WorkerId::parse(LOCAL_WORKER_ID).expect("a valid ID"),
+            name: LOCAL_WORKER_NAME.to_owned(),
+            configured_name: LOCAL_WORKER_NAME.to_owned(),
+            chosen_name: None,
+            address: address.to_owned(),
+            status: WorkerStatus::Connected,
+            details: WorkerDetails {
+                purpose: "Builds and tests the backend".to_owned(),
+                facts: None,
+                ceiling: None,
+                version: Some(env!("CARGO_PKG_VERSION").to_owned()),
+                max_parallel_tasks: 4,
+            },
+            key_pin: "0123456789ab".to_owned(),
+            paired_at: UtcMillis::EPOCH,
+            connected_at: None,
+        };
+        Self {
+            worker: Mutex::new(worker),
+            view: watch::Sender::new(vec![view]),
+            online: watch::Sender::new(true),
+            faults: Mutex::default(),
+            delivered: Mutex::default(),
+            revoked: Mutex::default(),
+        }
+    }
+
+    /// The worker's ID.
+    ///
+    /// # Panics
+    ///
+    /// Never: the ID is a valid UUID.
+    pub fn worker_id() -> WorkerId {
+        WorkerId::parse(LOCAL_WORKER_ID).expect("a valid ID")
+    }
+
+    /// Replaces the worker's runtime, as after a restart of the worker.
+    pub fn set_worker(&self, worker: Runtime) {
+        *lock(&self.worker) = worker;
+    }
+
+    /// Takes the worker offline, or brings it back.
+    pub fn set_online(&self, online: bool) {
+        lock(&self.faults).offline = !online;
+        self.online.send_replace(online);
+        let status = if online {
+            WorkerStatus::Connected
+        } else {
+            WorkerStatus::Offline
+        };
+        self.view.send_modify(|views| {
+            for view in views {
+                view.status = status;
+            }
+        });
+    }
+
+    /// Removes the worker from the paired workers.
+    pub fn remove(&self) {
+        self.view.send_replace(Vec::new());
+    }
+
+    /// Loses the answers of the next `count` submissions, after the worker
+    /// stored their tasks.
+    pub fn lose_submit_answers(&self, count: u32) {
+        lock(&self.faults).lost_answers = count;
+    }
+
+    /// Answers each submission only once the worker's run of the task waits
+    /// for its lease.
+    pub fn answer_when_waiting(&self) {
+        lock(&self.faults).answer_when_waiting = true;
+    }
+
+    /// The tasks of the leases that the master delivered, once for each
+    /// delivery, in order.
+    pub fn delivered_leases(&self) -> Vec<TaskId> {
+        lock(&self.delivered).clone()
+    }
+
+    /// The tasks of the leases that the master revoked, in order.
+    pub fn revoked_leases(&self) -> Vec<TaskId> {
+        lock(&self.revoked).clone()
+    }
+
+    fn worker(&self) -> Result<Runtime, DelegationError> {
+        if lock(&self.faults).offline {
+            return Err(DelegationError::Unreachable);
+        }
+        Ok(lock(&self.worker).clone())
+    }
+
+    /// A stream that ends when the worker goes offline.
+    fn while_online<T: Send + 'static>(
+        &self,
+        stream: BoxStream<'static, T>,
+    ) -> BoxStream<'static, T> {
+        let mut online = self.online.subscribe();
+        let offline = async move {
+            let _offline = online.wait_for(|online| !*online).await.is_ok();
+        };
+        stream.take_until(offline).boxed()
+    }
+}
+
+fn refused(code: &str) -> DelegationError {
+    DelegationError::Refused {
+        code: code.to_owned(),
+    }
+}
+
+impl Delegation for LocalDelegation {
+    fn workers(&self) -> watch::Receiver<Vec<WorkerView>> {
+        self.view.subscribe()
+    }
+
+    fn submit(
+        &self,
+        _worker: &WorkerId,
+        assignment: TaskAssignment,
+    ) -> BoxFuture<'static, Result<AssignedTaskState, DelegationError>> {
+        let worker = self.worker();
+        let (lose, answer_when_waiting) = {
+            let mut faults = lock(&self.faults);
+            let lose = faults.lost_answers > 0;
+            faults.lost_answers = faults.lost_answers.saturating_sub(1);
+            (lose, faults.answer_when_waiting)
+        };
+        async move {
+            let worker = worker?;
+            // The watch starts before the assignment, so it misses no state
+            // of the task.
+            let watch = answer_when_waiting.then(|| worker.watch_assigned_tasks());
+            let mut state = worker
+                .assign_task(assignment)
+                .await
+                .map_err(|error| refused(error.code()))?;
+            if let Some(mut watch) = watch {
+                while !state.waits_for_lease && state.state.is_active() {
+                    let Some(next) = watch.next().await else {
+                        break;
+                    };
+                    if next.task_id == state.task_id {
+                        state = next;
+                    }
+                }
+            }
+            if lose {
+                return Err(DelegationError::Unreachable);
+            }
+            Ok(state)
+        }
+        .boxed()
+    }
+
+    fn task(
+        &self,
+        _worker: &WorkerId,
+        task: &TaskId,
+    ) -> BoxFuture<'static, Result<Option<AssignedTaskState>, DelegationError>> {
+        let worker = self.worker();
+        let task = task.clone();
+        async move {
+            worker?
+                .assigned_task(&task)
+                .await
+                .map_err(|error| refused(error.code()))
+        }
+        .boxed()
+    }
+
+    fn cancel(
+        &self,
+        _worker: &WorkerId,
+        task: &TaskId,
+    ) -> BoxFuture<'static, Result<Option<AssignedTaskState>, DelegationError>> {
+        let worker = self.worker();
+        let task = task.clone();
+        async move {
+            worker?
+                .cancel_assigned_task(&task)
+                .await
+                .map_err(|error| refused(error.code()))
+        }
+        .boxed()
+    }
+
+    fn watch(
+        &self,
+        _worker: &WorkerId,
+    ) -> BoxFuture<'static, Result<BoxStream<'static, AssignedTaskState>, DelegationError>> {
+        let stream = self.worker().map(|worker| {
+            let watch = worker.watch_assigned_tasks();
+            let states = futures_util::stream::unfold(watch, |mut watch| async move {
+                watch.next().await.map(|state| (state, watch))
+            });
+            self.while_online(states.boxed())
+        });
+        async move { stream }.boxed()
+    }
+
+    fn deliver_lease(
+        &self,
+        _worker: &WorkerId,
+        task: &TaskId,
+        binding: String,
+        credential: Secret,
+    ) -> BoxFuture<'static, Result<(), DelegationError>> {
+        lock(&self.delivered).push(task.clone());
+        let worker = self.worker();
+        let task = task.clone();
+        async move {
+            worker?
+                .deliver_lease(&task, &binding, credential)
+                .await
+                .map_err(|error| refused(error.code()))
+        }
+        .boxed()
+    }
+
+    fn revoke_lease(
+        &self,
+        _worker: &WorkerId,
+        task: &TaskId,
+    ) -> BoxFuture<'static, Result<(), DelegationError>> {
+        lock(&self.revoked).push(task.clone());
+        let worker = self.worker();
+        let task = task.clone();
+        async move {
+            worker?
+                .revoke_lease(&task)
+                .await
+                .map_err(|error| refused(error.code()))
+        }
+        .boxed()
+    }
+
+    fn delete_conversations(
+        &self,
+        _worker: &WorkerId,
+        conversations: Vec<ConversationId>,
+    ) -> BoxFuture<'static, Result<(), DelegationError>> {
+        let worker = self.worker();
+        async move {
+            worker?
+                .delete_assigned_conversations(&conversations)
+                .await
+                .map_err(|error| refused(error.code()))
+        }
+        .boxed()
+    }
+
+    fn subscribe(
+        &self,
+        _worker: &WorkerId,
+        conversation: &ConversationId,
+        after_seq: Option<u32>,
+    ) -> BoxFuture<'static, Result<BoxStream<'static, ConversationUpdate>, ChatError>> {
+        let worker = self.worker();
+        let conversation = conversation.clone();
+        let online = self.online.subscribe();
+        async move {
+            let worker = worker.map_err(|_unreachable| ChatError::WorkerUnreachable)?;
+            let subscription = worker
+                .subscribe(SubscribeConversation {
+                    conversation_id: conversation,
+                    after_seq,
+                })
+                .await?;
+            let updates =
+                futures_util::stream::unfold(subscription, |mut subscription| async move {
+                    subscription
+                        .next()
+                        .await
+                        .map(|update| (update, subscription))
+                });
+            let mut online = online;
+            let offline = async move {
+                let _offline = online.wait_for(|online| !*online).await.is_ok();
+            };
+            Ok(updates.take_until(offline).boxed())
+        }
+        .boxed()
+    }
+
+    fn earlier_turns(
+        &self,
+        _worker: &WorkerId,
+        input: LoadEarlierTurns,
+    ) -> BoxFuture<'static, Result<EarlierTurns, ChatError>> {
+        let worker = self.worker();
+        async move {
+            worker
+                .map_err(|_unreachable| ChatError::WorkerUnreachable)?
+                .earlier_turns(input)
+                .await
+        }
+        .boxed()
+    }
+
+    fn checkpoint(
+        &self,
+        _worker: &WorkerId,
+        input: CheckpointRef,
+    ) -> BoxFuture<'static, Result<Checkpoint, ChatError>> {
+        let worker = self.worker();
+        async move {
+            worker
+                .map_err(|_unreachable| ChatError::WorkerUnreachable)?
+                .checkpoint(input)
+                .await
+        }
+        .boxed()
+    }
+
+    fn tool_output(
+        &self,
+        _worker: &WorkerId,
+        input: ReadToolOutput,
+    ) -> BoxFuture<'static, Result<ToolOutputPage, ToolsError>> {
+        let worker = self.worker();
+        async move {
+            worker
+                .map_err(|_unreachable| ToolsError::WorkerUnreachable)?
+                .tool_output(input)
+                .await
+        }
+        .boxed()
+    }
+
+    fn decide_approval(
+        &self,
+        _worker: &WorkerId,
+        input: DecideApproval,
+    ) -> BoxFuture<'static, Result<(), ToolsError>> {
+        let worker = self.worker();
+        async move {
+            worker
+                .map_err(|_unreachable| ToolsError::WorkerUnreachable)?
+                .decide_approval(input)
+                .await
+        }
+        .boxed()
+    }
+
+    fn allow_by_full_access(
+        &self,
+        _worker: &WorkerId,
+        input: DecideApproval,
+    ) -> BoxFuture<'static, Result<(), ToolsError>> {
+        let worker = self.worker();
+        async move {
+            worker
+                .map_err(|_unreachable| ToolsError::WorkerUnreachable)?
+                .allow_by_full_access(&input)
+        }
+        .boxed()
+    }
+}
+
+/// A master's runtime and a worker's runtime in one process, joined by a
+/// [`LocalDelegation`].
+#[derive(Debug)]
+pub struct DelegationHarness {
+    /// The master, whose profile uses tools.
+    pub master: Harness,
+    /// The worker.
+    pub worker: WorkerHarness,
+    /// The port between them.
+    pub delegation: Arc<LocalDelegation>,
+}
+
+impl DelegationHarness {
+    /// A master and a worker with the default options, the worker at a
+    /// loopback address.
+    pub async fn start() -> Self {
+        Self::with_options(
+            HarnessOptions {
+                use_tools: true,
+                ..HarnessOptions::default()
+            },
+            WorkerOptions::default(),
+            "127.0.0.1:7445",
+        )
+        .await
+    }
+
+    /// A master and a worker with these options, the worker at `address`.
+    ///
+    /// # Panics
+    ///
+    /// When the master cannot store the paired worker, which fails the test.
+    pub async fn with_options(
+        master: HarnessOptions,
+        worker: WorkerOptions,
+        address: &str,
+    ) -> Self {
+        let worker = WorkerHarness::with_options(worker).await;
+        let delegation = Arc::new(LocalDelegation::new(worker.runtime.clone(), address));
+        let port: Arc<dyn Delegation> = Arc::<LocalDelegation>::clone(&delegation);
+        let master = Harness::with_options(HarnessOptions {
+            delegation: Some(port),
+            ..master
+        })
+        .await;
+        // The master's store knows the workers it paired with, as the link
+        // keeps them.
+        let view = delegation.workers().borrow().clone();
+        for worker in view {
+            master
+                .store
+                .add_paired_worker(mannie_store::NewPairedWorker {
+                    id: worker.id,
+                    name: worker.configured_name,
+                    chosen_name: worker.chosen_name,
+                    address: worker.address,
+                    key_pin: "0".repeat(64),
+                    details: worker.details,
+                })
+                .await
+                .expect("the master stores the paired worker");
+        }
+        Self {
+            master,
+            worker,
+            delegation,
+        }
+    }
+
+    /// Restarts the worker; its runs end as interrupted.
+    pub async fn restart_worker(mut self) -> Self {
+        self.worker = self.worker.restart().await;
+        self.delegation.set_worker(self.worker.runtime.clone());
+        self
+    }
+
+    /// Restarts the master, as quitting and starting Mannie does.
+    pub async fn restart_master(mut self) -> Self {
+        self.master = self.master.restart().await;
+        self
     }
 }
 

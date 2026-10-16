@@ -44,6 +44,17 @@
     return isCommand;
   }
 
+  /** What a reply waits for: child agents, workers, or tasks of both. */
+  function waitingForTasks(count: number, workers: number): string {
+    if (workers === 0) {
+      return m.chat_status_waiting_for_tasks({ count });
+    }
+    if (workers === count) {
+      return m.chat_status_waiting_for_workers({ count });
+    }
+    return m.chat_status_waiting_for_any_tasks({ count });
+  }
+
   function activeLine(current: RunView): StatusLine {
     const activity = current.activity;
     if (activity === null) {
@@ -76,8 +87,11 @@
       case 'waiting_for_slot': {
         return { busy: true, retryable: false, text: m.chat_status_waiting_for_slot() };
       }
+      case 'waiting_for_lease': {
+        return { busy: true, retryable: false, text: m.chat_status_waiting_for_lease() };
+      }
       case 'waiting_for_tasks': {
-        return { busy: true, retryable: false, text: m.chat_status_waiting_for_tasks({ count: activity.count }) };
+        return { busy: true, retryable: false, text: waitingForTasks(activity.count, activity.workers ?? 0) };
       }
       case 'writing': {
         return { busy: true, retryable: false, text: m.chat_status_writing() };

@@ -108,6 +108,23 @@ pub enum NotRunReason {
     OverBudget,
     /// The provider profile does not use tools.
     ToolsOff,
+    /// A worker's policy ceiling forbids the operation (docs/features/
+    /// workers/host-and-ceiling.md, the ceiling).
+    Refused {
+        /// What the ceiling forbids.
+        refusal: Refusal,
+    },
+}
+
+/// What a worker's policy ceiling forbids.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum Refusal {
+    /// The ceiling, or the task, lets the worker only read: every change and
+    /// every command is refused.
+    ReadOnlyHost,
+    /// A worker has no projects to move a conversation into.
+    NoProjectsOnHost,
 }
 
 /// The process of a running command, so that the recovery after a crash can

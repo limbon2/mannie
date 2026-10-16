@@ -30,6 +30,7 @@ Mannie adds features by registration. A feature is a vertical slice: Rust module
 | Settings sections               | `mannie-types`                | A typed settings section with defaults and validation                                               | M0            |
 | Store tables and migrations     | `mannie-store`                | The feature's tables and its forward-only migrations                                                | M0            |
 | Link services                   | `mannie-link`                 | A protobuf package with its feature level                                                           | M4            |
+| Delegation port                 | `mannie-runtime`              | The link's way of running a task on another machine, given to the runtime by a composition root     | M4            |
 | Message catalogs                | The desktop app's `messages/` | The feature's visible text, under its own key prefix                                                | M0            |
 
 ## 3. The extension points
@@ -40,7 +41,7 @@ A tool implements the `Tool` trait. It declares its name, a description written 
 
 ### 3.2 Agent definitions
 
-An agent definition names an agent's instructions, its tool set (tool names from the registry), its budgets and its default provider profile. It also says who the agent answers to, the owner or another agent, which chooses the wording of its base instructions, its notes and its denials, and how many tasks a reply may give to child agents. Built-in definitions include the conversation agent, the explore and general child agents, and the worker agent. A feature that needs a new kind of agent registers a definition. It does not change the loop.
+An agent definition names an agent's instructions, its tool set (tool names from the registry), its budgets and its default provider profile. It also says who the agent answers to, the owner or another agent, which chooses the wording of its base instructions, its notes and its denials, and how many tasks a reply may give to child agents. Built-in definitions include the conversation agent, the explore and general child agents, and the worker agent, which only the worker registers, so the master never offers it to `start_task`. A run names the definition it runs with, and a feature that needs a new kind of agent registers a definition. It does not change the loop.
 
 ### 3.3 Provider adapters and quirk profiles
 
@@ -48,7 +49,7 @@ An adapter implements the `Provider` trait for one API interface ([ADR-0011](../
 
 ### 3.4 Instruction sections
 
-The system prompt is assembled from sections that modules register, each with a fixed position. Stable sections come first (the base instructions, the agent definition, the tool guidance and the owner's instructions), and sections specific to a host or a session come after them, so that providers can cache the stable prefix. Context that changes from turn to turn goes into the latest user message instead of the system prompt. A section can depend on what a run is offered: the guidance on tasks reaches only runs that are offered the task tools.
+The system prompt is assembled from sections that modules register, each with a fixed position. Stable sections come first (the base instructions, the agent definition, the tool guidance and the owner's instructions), and sections specific to a host or a session come after them, so that providers can cache the stable prefix. Context that changes from turn to turn goes into the latest user message instead of the system prompt. A section can depend on what a run is offered: the guidance on tasks reaches only runs that are offered the task tools. The context carries the host of a worker (its name, purpose, host instructions and host facts) and the workers that the master can delegate to, and a composition root can assemble a registry of its own, as the worker does.
 
 ### 3.5 Transcript parts and run events
 
@@ -57,6 +58,8 @@ Parts and events are tagged enums in `mannie-types` with a version-tolerant enco
 M1 adds the parts of chat: the owner's text, the reply's text, reasoning, and errors, each with a state (streaming, complete, stopped, interrupted, incomplete or discarded) and an audience (the owner, the model or both). Its events cover turns, runs, parts with their deltas, discarded attempts, checkpoints, the context's use and changes to a conversation ([conversations](../features/chat/conversations.md)).
 
 M3 adds the part `task`, which records a call of a task tool together with its task, and the run activity `waiting_for_tasks` ([tasks](../features/child-agents/tasks.md#the-task-part)). Code in the store and the runtime that handles calls treats `task` parts as it treats `tool_call` parts.
+
+M4 adds the worker to a task's section, for tasks that run on a worker, and the run activity `waiting_for_lease` ([delegation](../features/workers/delegation.md#contracts)).
 
 ### 3.6 IPC commands and channels
 
@@ -87,11 +90,15 @@ A feature owns its tables, named with its module's prefix, and the forward-only 
 
 ### 3.10 Link services
 
-A feature that needs traffic between the master and workers adds a protobuf package under `proto/mannie/link/` with its own feature level ([ADR-0016](../adr/0016-link-machines-over-pinned-mtls-grpc.md)). The two sides agree on feature levels when they connect, and a feature checks the agreed level before it uses its service. `buf breaking` guards compatibility.
+A feature that needs traffic between the master and workers adds a protobuf package `mannie.link.<service>.v1` under `proto/mannie/link/<service>/v1/` with its own feature level ([ADR-0016](../adr/0016-link-machines-over-pinned-mtls-grpc.md)). The two sides agree on feature levels when they connect, and a feature checks the agreed level before it uses its service. `buf breaking` guards compatibility, and fixture tests guard the JSON documents that travel inside the messages.
 
 ### 3.11 Message catalogs
 
 A feature adds its visible text as messages in `apps/desktop/messages/en.json`, with keys under the feature's own prefix, such as `chat_` or `tools_` ([ADR-0019](../adr/0019-keep-visible-text-in-message-catalogs.md)). Paraglide JS compiles the catalogs into typed message functions, so a component that uses a missing key fails the build. Error codes from the core map to messages in the same catalog. A feature never edits another feature's messages, and translations of a feature's messages go into the catalog of each added locale.
+
+### 3.12 Delegation port
+
+The runtime runs a task on another machine through a port, which the master's composition root gives it and `mannie-link` implements ([ADR-0027](../adr/0027-delegate-tasks-to-workers-through-a-runtime-port.md)). The port lists the machines that take tasks and carries what the runtime asks of them: submitting, following and cancelling tasks, delivering credential leases, and reading and deciding in their task conversations. The runtime never depends on the link, and a runtime without the port offers no delegation.
 
 ## 4. Anatomy of a feature slice
 
@@ -103,7 +110,7 @@ A feature adds its visible text as messages in `apps/desktop/messages/en.json`, 
 | Registration     | Calls to the registries                                      | The composition roots in `apps/`                                                                             |
 | UI               | Components, state and slot registrations                     | `apps/desktop/src/lib/`, sorted by kind: `components/app/<feature>/`, `state/`, `registrations/<feature>.ts` |
 | Data             | Tables and migrations                                        | The store's migration list, in the feature's module                                                          |
-| Link contract    | A protobuf package, when machines talk                       | `proto/mannie/link/<feature>/`                                                                               |
+| Link contract    | A protobuf package, when machines talk                       | `proto/mannie/link/<service>/v1/`                                                                            |
 | Visible text     | Messages under the feature's key prefix                      | `apps/desktop/messages/`                                                                                     |
 | Tests            | Unit tests beside the code, integration and end-to-end tests | Next to the code and in each crate's `tests/`                                                                |
 | Changelog        | One line                                                     | `CHANGELOG.md`                                                                                               |

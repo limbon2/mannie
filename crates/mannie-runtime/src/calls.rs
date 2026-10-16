@@ -14,22 +14,27 @@ use mannie_store::{
     Change, Durability, ModelTurn, NewCheckpoint, RuntimeStoreError, StoredCheckpoint,
     StoredProfile,
 };
-use mannie_tools::{Availability, Tool, with_activity};
-use mannie_types::chat::{ChatSettings, Instructions};
-use mannie_types::ids::{ConversationId, PartId, ProfileId};
+use mannie_tools::{Availability, PermissionClass, Tool, with_activity};
+use mannie_types::chat::ChatSettings;
+use mannie_types::clock::UtcMillis;
+use mannie_types::ids::{ConversationId, PartId, ProfileId, ProjectId};
+use mannie_types::projects::ProjectView;
 use mannie_types::provider::{ApiInterface, ReasoningEffort, context_budget};
 use mannie_types::run::RunFailure;
 use mannie_types::tools::ToolCallStatus;
 use mannie_types::transcript::PartKind;
+use mannie_types::workers::{CeilingMode, WorkerView};
 
+use crate::actor::worker_label;
 use crate::agents::{AgentDefinition, Requester};
+use crate::assigned::{AssignedRun, lease_reference};
 use crate::budget::{Ledger, estimate_request, usage};
 use crate::compaction::{self, ContextSize, Trigger};
 use crate::context::{RequestShape, build_request};
-use crate::instructions::{InstructionContext, ToolEnvironment};
+use crate::instructions::{HostContext, InstructionContext, ToolEnvironment};
 use crate::profiles::{VaultError, in_vault};
 use crate::retry::RetryDecision;
-use crate::{Runtime, lock, tasks, texts};
+use crate::{Runtime, WorkerHost, lock, tasks, texts};
 
 /// The newest tool results of the latest turn that stay in the context when
 /// older ones are left out to save space.
@@ -37,6 +42,10 @@ const KEPT_RESULTS: usize = 3;
 
 /// The tool that moves a general conversation into a project.
 const MOVE_TO_PROJECT: &str = "move_to_project";
+
+/// The most bytes of the host instructions that a worker's run reads; the
+/// rest is left out.
+const MAX_HOST_INSTRUCTIONS_BYTES: usize = 64 * 1024;
 
 /// Why a call could not be prepared or made.
 #[derive(Debug)]
@@ -86,6 +95,21 @@ pub(crate) struct Setup {
     pub(crate) task_definitions: Vec<ToolDefinition>,
     /// The child agents that `start_task` can start.
     pub(crate) child_agents: Vec<&'static str>,
+    /// On a worker, what the run's task works under.
+    pub(crate) host: Option<HostSetup>,
+    /// On the master, the workers that the run can give tasks to, as they
+    /// were when the run started; empty for a run that is not offered
+    /// `delegate_task`.
+    pub(crate) workers: Vec<WorkerView>,
+}
+
+/// What a worker's run reads of its host once, when it starts.
+#[derive(Debug, Clone)]
+pub(crate) struct HostSetup {
+    /// The mode of the task's ceiling.
+    pub(crate) mode: CeilingMode,
+    /// The host instructions, as the file said when the run started.
+    pub(crate) instructions: Option<String>,
 }
 
 impl Setup {
@@ -135,6 +159,17 @@ pub(crate) struct Prepared {
     pub(crate) turns: Vec<ModelTurn>,
     /// The ledger of the conversation's last call.
     pub(crate) ledger: Ledger,
+}
+
+/// What a run with tools learns of its conversation for one call.
+#[derive(Debug, Default)]
+struct ConversationFacts {
+    /// The conversation's project.
+    project_id: Option<ProjectId>,
+    /// The owner's projects, the oldest first.
+    projects: Vec<ProjectView>,
+    /// Whether the conversation, or a child's parent, is in full access.
+    full_access: bool,
 }
 
 impl Runtime {
@@ -209,7 +244,7 @@ impl Runtime {
         // task budget or anyone to give tasks to is not offered the tools.
         let offers_tasks =
             profile.use_tools && !task && agent.max_tasks > 0 && !child_agents.is_empty();
-        let task_definitions = if offers_tasks {
+        let mut task_definitions: Vec<ToolDefinition> = if offers_tasks {
             tasks::definitions(&child_agents)
                 .into_iter()
                 .filter(|definition| agent.tools.contains(&definition.name.as_str()))
@@ -217,6 +252,19 @@ impl Runtime {
         } else {
             Vec::new()
         };
+        // `delegate_task` is offered while workers are paired, so a master
+        // without workers offers what it offered before (ADR-0027,
+        // decision 2).
+        let workers = if offers_tasks && agent.tools.contains(&tasks::DELEGATE_TASK) {
+            self.workers_now()
+        } else {
+            Vec::new()
+        };
+        if !workers.is_empty() {
+            let names: Vec<String> = workers.iter().map(worker_label).collect();
+            let names: Vec<&str> = names.iter().map(String::as_str).collect();
+            task_definitions.push(tasks::delegate_definition(&names));
+        }
         let credential = match profile.credential_ref.clone() {
             None => None,
             Some(reference) => {
@@ -245,6 +293,84 @@ impl Runtime {
             definitions,
             task_definitions,
             child_agents,
+            host: None,
+            workers,
+        })
+    }
+
+    /// The setup of a run of a task that the master assigned to this worker
+    /// (ADR-0028, decision 4): the profile that came with the task, whose
+    /// credential the vault holds as the task's lease, the tools that the
+    /// task's mode allows, and the host instructions as they are now.
+    pub(crate) async fn assigned_setup(
+        &self,
+        assigned: &AssignedRun,
+        agent: &str,
+    ) -> Result<Setup, RunFailure> {
+        let Some(host) = self.worker_host() else {
+            tracing::error!("a run of an assigned task started on the master");
+            return Err(RunFailure::Internal);
+        };
+        let snapshot = &assigned.profile;
+        let profile = StoredProfile {
+            id: snapshot.id.clone(),
+            name: String::new(),
+            interface: snapshot.interface,
+            base_url: snapshot.base_url.clone(),
+            model: snapshot.model.clone(),
+            credential_ref: snapshot
+                .has_credential
+                .then(|| lease_reference(&assigned.task)),
+            is_default: false,
+            config_revision: snapshot.config_revision,
+            context_window: snapshot.context_window,
+            output_limit: snapshot.output_limit,
+            reasoning_effort: snapshot.reasoning_effort,
+            use_tools: snapshot.use_tools,
+            server: snapshot.server,
+            created_at: UtcMillis::EPOCH,
+            updated_at: UtcMillis::EPOCH,
+        };
+        let mut setup = self.setup_for(&profile, agent, true).await?;
+        let narrower = assigned.read_only.then_some(CeilingMode::ReadOnly);
+        let mode = host.ceiling.mode.narrowed_by(narrower);
+        if mode == CeilingMode::ReadOnly {
+            // A read-only task is offered only the tools that read, so the
+            // model rarely meets a refusal (docs/features/workers/
+            // host-and-ceiling.md, the ceiling).
+            let (tools, definitions): (Vec<_>, Vec<_>) = setup
+                .tools
+                .into_iter()
+                .zip(setup.definitions)
+                .filter(|(tool, _definition)| tool.class() == PermissionClass::ReadOnly)
+                .unzip();
+            setup.tools = tools;
+            setup.definitions = definitions;
+        }
+        setup.host = Some(HostSetup {
+            mode,
+            instructions: read_host_instructions(host).await,
+        });
+        Ok(setup)
+    }
+
+    /// What a run with tools learns of `authority` for its next call: its
+    /// project, the owner's projects and whether it is in full access. A run
+    /// without tools learns none of it.
+    async fn conversation_facts(
+        &self,
+        authority: &ConversationId,
+        setup: &Setup,
+    ) -> Result<ConversationFacts, CallError> {
+        if !setup.uses_tools() {
+            return Ok(ConversationFacts::default());
+        }
+        let summary = self.inner.store.conversation_summary(authority).await?;
+        let projects = self.inner.store.projects().await?;
+        Ok(ConversationFacts {
+            full_access: summary.as_ref().is_some_and(|summary| summary.full_access),
+            project_id: summary.and_then(|summary| summary.project_id),
+            projects,
         })
     }
 
@@ -259,19 +385,22 @@ impl Runtime {
         setup: &Setup,
         options: CallOptions,
     ) -> Result<Prepared, CallError> {
-        let owner = self.owner_instructions().await?;
+        // A worker never receives the owner's global instructions, which
+        // belong to the master's conversations.
+        let owner = match self.worker_host() {
+            Some(_host) => String::new(),
+            None => self.owner_instructions().await?,
+        };
         let checkpoint = self.current_checkpoint(conversation).await?;
         let covered = checkpoint
             .as_ref()
             .map(|checkpoint| checkpoint.covers_through_turn);
         let turns = self.inner.store.model_turns(conversation, covered).await?;
-        let (project_id, projects) = if setup.uses_tools() {
-            let summary = self.inner.store.conversation_summary(authority).await?;
-            let projects = self.inner.store.projects().await?;
-            (summary.and_then(|summary| summary.project_id), projects)
-        } else {
-            (None, Vec::new())
-        };
+        let ConversationFacts {
+            project_id,
+            projects,
+            full_access,
+        } = self.conversation_facts(authority, setup).await?;
         let project = project_id
             .as_ref()
             .and_then(|id| projects.iter().find(|project| project.id == *id));
@@ -309,8 +438,11 @@ impl Runtime {
                 shell: system.shell.as_ref().map(|shell| shell.name.as_str()),
                 project,
                 projects: movable,
+                full_access,
             }),
             offers_tasks: setup.offers_tasks(),
+            host: self.host_context(setup),
+            workers: &setup.workers,
         });
         let left_out = if options.leave_out_results {
             older_results(&turns)
@@ -359,9 +491,23 @@ impl Runtime {
         })
     }
 
-    async fn owner_instructions(&self) -> Result<Instructions, CallError> {
+    /// On a worker, the host as its sections show it to the run.
+    fn host_context<'a>(&'a self, setup: &'a Setup) -> Option<HostContext<'a>> {
+        let worker = self.worker_host()?;
+        let host = setup.host.as_ref()?;
+        Some(HostContext {
+            name: &worker.name,
+            purpose: &worker.purpose,
+            facts: &worker.facts,
+            mode: host.mode,
+            allowed_folders: &worker.ceiling.allowed_folders,
+            instructions: host.instructions.as_deref(),
+        })
+    }
+
+    async fn owner_instructions(&self) -> Result<String, CallError> {
         match self.inner.store.load_settings::<ChatSettings>().await {
-            Ok(settings) => Ok(settings.instructions),
+            Ok(settings) => Ok(settings.instructions.as_str().to_owned()),
             Err(error) => {
                 tracing::error!(%error, error.code = error.code(), "could not read the owner's instructions");
                 Err(CallError::Failed(RunFailure::Internal))
@@ -552,6 +698,41 @@ impl Runtime {
 
 /// The smallest transcript chunk of a summary call.
 const MIN_CHUNK_TOKENS: u32 = 256;
+
+/// The host instructions, read for every task so a change applies from the
+/// next task. A missing file means that there are none; a file that cannot
+/// be read leaves them out, with a warning in the log, and a longer one is
+/// cut.
+async fn read_host_instructions(host: &WorkerHost) -> Option<String> {
+    let path = host.instructions_file.clone()?;
+    let read = tokio::task::spawn_blocking(move || std::fs::read(&path)).await;
+    let bytes = match read {
+        Ok(Ok(bytes)) => bytes,
+        Ok(Err(error)) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "could not read the host instructions; the task runs without them");
+            return None;
+        }
+        Err(error) => {
+            tracing::warn!(%error, "could not read the host instructions; the task runs without them");
+            return None;
+        }
+    };
+    if bytes.len() > MAX_HOST_INSTRUCTIONS_BYTES {
+        tracing::warn!(
+            bytes = bytes.len(),
+            limit = MAX_HOST_INSTRUCTIONS_BYTES,
+            "the host instructions are longer than the limit; the rest is left out"
+        );
+    }
+    let mut end = bytes.len().min(MAX_HOST_INSTRUCTIONS_BYTES);
+    // A cut in the middle of a character is moved back to its start.
+    while end > 0 && end < bytes.len() && (bytes[end] & 0b1100_0000) == 0b1000_0000 {
+        end -= 1;
+    }
+    let text = String::from_utf8_lossy(&bytes[..end]).trim().to_owned();
+    (!text.is_empty()).then_some(text)
+}
 
 /// The calls of the latest turn whose results can be left out: every
 /// completed tool call and every task call that returned reports, but the

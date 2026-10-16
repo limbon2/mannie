@@ -3,25 +3,53 @@ name = "mannie-worker"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "The Mannie worker: the headless service that runs on each host. In M0 it starts, logs, opens its store and installs as a service."
+description = "The Mannie worker: the headless service that runs Mannie's agent runtime on a host for a paired master, behind the link."
 license.workspace = true
 publish.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+# The signatures of release archives, which the release workflow writes in
+# base64.
+base64 = { workspace = true }
 clap = { workspace = true }
+mannie-link = { workspace = true }
 mannie-logging = { workspace = true }
+mannie-provider = { workspace = true }
+mannie-runtime = { workspace = true }
 mannie-store = { workspace = true }
+mannie-tools = { workspace = true }
 mannie-types = { workspace = true }
-thiserror = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "sync"] }
-tracing = { workspace = true }
-
-[dev-dependencies]
+# The Ed25519 check of a release archive's signature.
+ring = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# The private folder that `update` unpacks an archive in.
 tempfile = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+toml = { workspace = true }
+tracing = { workspace = true }
+# The IDs of the host's command rules.
+uuid = { workspace = true }
+
+[build-dependencies]
+base64 = { workspace = true }
+
+[target.'cfg(target_os = "freebsd")'.dependencies]
+# procctl(PROC_TRACE_CTL), which turns off tracing of the worker; rustix's
+# binding passes its argument wrongly.
+libc = { workspace = true }
+
+[target."cfg(unix)".dependencies]
+# Core dumps and tracing turned off, and whether the worker's account can
+# write its configuration.
+rustix = { workspace = true, features = ["fs", "process"] }
 
 [target."cfg(windows)".dependencies]
 windows-service = { workspace = true }
+# Whether the worker's account can write its configuration's folder.
+windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem"] }
 
 [lints]
 workspace = true

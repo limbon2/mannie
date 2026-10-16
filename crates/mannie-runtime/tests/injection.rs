@@ -19,7 +19,7 @@ use mannie_types::chat::StartConversation;
 use mannie_types::ids::{ConversationId, PartId};
 use mannie_types::run::RunState;
 use mannie_types::tools::{
-    ApprovalChoice, DecideApproval, NotRunReason, ToolCallStatus, ToolFailure, ToolOutcome,
+    ApprovalChoice, DecideApproval, ToolCallStatus, ToolFailure, ToolOutcome,
 };
 use mannie_types::transcript::PartContent;
 use serde_json::{Value, json};
@@ -95,6 +95,7 @@ async fn deny_everything(harness: &Harness, conversation: &ConversationId) -> (T
                 digest,
                 choice: ApprovalChoice::Deny,
             })
+            .await
             .unwrap();
         decided.insert(part_id);
     }
@@ -271,22 +272,14 @@ async fn the_injection_corpus_changes_nothing_the_owner_did_not_allow() {
         "{:?}",
         calls[0]
     );
-    // FreeBSD has no commands until M4 (docs/features/system-tools/
-    // commands.md), so its runtime does not know run_command and runs nothing.
-    let has_commands = cfg!(any(windows, target_os = "linux"));
     for (call, (tool, _)) in calls.iter().zip(&corpus).skip(1) {
         let refused = matches!(
             call.result.as_ref().map(|result| &result.outcome),
             Some(ToolOutcome::Failed { .. })
         );
-        let unknown_command = !has_commands
-            && *tool == "run_command"
-            && call.status == ToolCallStatus::NotRun
-            && call.not_run == Some(NotRunReason::UnknownTool);
         assert!(
             call.status == ToolCallStatus::Denied
-                || (call.status == ToolCallStatus::Completed && refused)
-                || unknown_command,
+                || (call.status == ToolCallStatus::Completed && refused),
             "{tool} was neither denied nor refused: {call:?}"
         );
     }
@@ -353,15 +346,8 @@ async fn a_report_that_asks_for_a_deletion_changes_nothing_the_owner_did_not_all
         transcript.turns[&0].run.as_ref().map(|run| run.state),
         Some(RunState::Completed)
     );
-    let has_commands = cfg!(any(windows, target_os = "linux"));
     for call in transcript.tool_calls(0) {
-        let unknown_command = !has_commands
-            && call.tool == "run_command"
-            && call.not_run == Some(NotRunReason::UnknownTool);
-        assert!(
-            call.status == ToolCallStatus::Denied || unknown_command,
-            "{call:?}"
-        );
+        assert!(call.status == ToolCallStatus::Denied, "{call:?}");
     }
     let parent = harness.model.requests_for("OWNER:");
     assert!(

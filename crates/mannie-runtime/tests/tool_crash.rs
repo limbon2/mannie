@@ -11,7 +11,7 @@
 //! marker appears at most once, and that Retry repeats nothing.
 
 #![cfg(test)]
-#![cfg(any(windows, target_os = "linux"))]
+#![cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -23,6 +23,7 @@ use mannie_provider::testing::Step;
 use mannie_provider::{Content, ProviderEvent, Role};
 use mannie_runtime::testing::{
     FakeModel, MemoryVault, fast_config, open_store, reply, start_runtime_with_tools, test_tools,
+    wait_for_leftover_command,
 };
 use mannie_runtime::{AgentRegistry, texts};
 use mannie_types::chat::{StartConversation, SubscribeConversation};
@@ -190,6 +191,7 @@ fn child_tool_call() {
                         digest: call.request.as_ref().unwrap().digest.clone(),
                         choice: ApprovalChoice::AllowOnce,
                     })
+                    .await
                     .unwrap();
             }
         }
@@ -248,7 +250,6 @@ async fn killing_mannie_during_a_tool_call_never_repeats_it() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::create_dir(workspace(directory.path())).unwrap();
         run_child_until(directory.path(), kill);
-        let markers_before = marker_lines(directory.path());
 
         let store = open_store(&directory.path().join("mannie.sqlite"));
         let profile = store.default_profile().await.unwrap().unwrap();
@@ -275,6 +276,10 @@ async fn killing_mannie_during_a_tool_call_never_repeats_it() {
             .find_map(|part| part.tool_call.clone())
             .unwrap_or_else(|| panic!("{label}: no tool call was stored"));
         assert_eq!(call.status, kill.recovered_status(), "{label}: {call:?}");
+        // A command that outlived the child may still write its marker until
+        // the recovery has ended it.
+        wait_for_leftover_command(call.process.as_ref()).await;
+        let markers_before = marker_lines(directory.path());
         assert!(
             markers_before <= 1,
             "{label}: the marker appears {markers_before} times"
@@ -284,15 +289,6 @@ async fn killing_mannie_during_a_tool_call_never_repeats_it() {
         }
         if kill == KillPoint::Receiving || kill == KillPoint::AwaitingApproval {
             assert_eq!(markers_before, 0, "{label}");
-        }
-        #[cfg(target_os = "linux")]
-        if let Some(process) = &call.process {
-            // The recovery ends what is left of the command.
-            let deadline = Instant::now() + Duration::from_secs(5);
-            while Path::new(&format!("/proc/{}", process.pid)).exists() && Instant::now() < deadline
-            {
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
         }
 
         let retried = runtime.retry_reply(&conversation).await.unwrap();

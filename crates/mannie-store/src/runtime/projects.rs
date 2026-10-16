@@ -23,6 +23,8 @@ const INSERT_PROJECT: &str = "INSERT INTO runtime_projects (id, name, folder, cr
 const RENAME_PROJECT: &str = "UPDATE runtime_projects SET name = ?2, updated_at = ?3 WHERE id = ?1";
 const SELECT_PROJECT_CONVERSATIONS: &str =
     "SELECT id FROM runtime_conversations WHERE project_id = ?1 ORDER BY created_at, id";
+const SELECT_IN_PROJECT: &str =
+    "SELECT 1 FROM runtime_conversations WHERE id = ?1 AND project_id = ?2";
 const DELETE_PROJECT_CONVERSATION: &str =
     "DELETE FROM runtime_conversations WHERE id = ?1 AND project_id = ?2";
 const SELECT_PROJECT_IN_USE: &str =
@@ -38,6 +40,7 @@ pub(crate) const STATEMENTS: &[&str] = &[
     INSERT_PROJECT,
     RENAME_PROJECT,
     SELECT_PROJECT_CONVERSATIONS,
+    SELECT_IN_PROJECT,
     DELETE_PROJECT_CONVERSATION,
     SELECT_PROJECT_IN_USE,
     DELETE_PROJECT,
@@ -247,12 +250,23 @@ impl Store {
         for conversation in conversations {
             let id = conversation.as_str().to_owned();
             let project = project_id.as_str().to_owned();
+            let now = self.clock().now().as_millis();
             // A conversation's task conversations go with it, through the
-            // foreign key; the caller ends their subscriptions too.
+            // foreign key; the caller ends their subscriptions too, and the
+            // deletions of worker task conversations wait for their workers.
             let (count, children) = self
                 .transact(Durability::Full, move |transaction| {
+                    let in_project = transaction
+                        .prepare_cached(SELECT_IN_PROJECT)?
+                        .query_row(params![id, project], |_row| Ok(()))
+                        .optional()?
+                        .is_some();
+                    if !in_project {
+                        return Ok((0, Vec::new()));
+                    }
                     let children = tasks::task_conversations_in(transaction, &id)
                         .map_err(TransactError::Rejected)?;
+                    crate::workers::queue_deletions_of_children(transaction, &id, now)?;
                     let count = transaction
                         .prepare_cached(DELETE_PROJECT_CONVERSATION)?
                         .execute([id, project])?;

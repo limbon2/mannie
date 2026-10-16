@@ -63,6 +63,7 @@ export class ToolsSettingsState {
     const update: UpdateToolsSettings = {
       allowChangesInWorkspace: current.allowChangesInWorkspace,
       commandEnvironment: [...current.commandEnvironment],
+      fullAccessForNewConversations: current.fullAccessForNewConversations ?? false,
       ...change,
     };
     this.saving = true;

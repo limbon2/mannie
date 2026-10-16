@@ -43,6 +43,9 @@ const TOOLS_ERRORS: ToolsError[] = [
   { code: 'storage_failed' },
   { code: 'store_unavailable' },
   { code: 'shutting_down' },
+  { code: 'worker_unreachable' },
+  { code: 'full_access_follows_parent' },
+  { code: 'full_access_refused' },
 ];
 
 const TOOL_FAILURES: ToolFailure[] = [
@@ -165,6 +168,10 @@ describe('tools messages', () => {
       'allowed_for_project',
       'allowed_always',
       'owner_named_project',
+      'allowed_folder',
+      'host_rule',
+      'full_access',
+      'host_full_access',
     ];
     const modes: AccessMode[] = ['read', 'write', 'create', 'delete'];
 

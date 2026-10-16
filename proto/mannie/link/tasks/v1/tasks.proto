@@ -1,0 +1,80 @@
+// The tasks that the master delegates to a worker (docs/features/workers/
+// delegation.md; ADR-0027, ADR-0028).
+//
+// The master chooses the IDs of a task and of its conversation, so Submit
+// stores a task once: a task that the worker knows is returned as it is.
+// Submit and Cancel run to their end on the worker even when the connection
+// drops, so calling them again finds what they did.
+syntax = "proto3";
+
+package mannie.link.tasks.v1;
+
+// The tasks of a worker.
+service TasksService {
+  // Gives the worker a task, or a follow-up of an earlier one.
+  rpc Submit(SubmitRequest) returns (SubmitResponse);
+  // A task's state.
+  rpc Get(GetRequest) returns (GetResponse);
+  // Cancels a task and answers with its state then.
+  rpc Cancel(CancelRequest) returns (CancelResponse);
+  // The state of each active task, then every change of any task.
+  rpc Watch(WatchRequest) returns (stream WatchResponse);
+  // Deletes conversations of tasks, as the master deleted their parent.
+  rpc DeleteConversations(DeleteConversationsRequest) returns (DeleteConversationsResponse);
+}
+
+// A task to run.
+message SubmitRequest {
+  // The JSON of `TaskAssignment`.
+  string assignment_json = 1;
+}
+
+// The task as the worker stored it.
+message SubmitResponse {
+  // The JSON of `AssignedTaskState`.
+  string state_json = 1;
+}
+
+// Asks for a task's state.
+message GetRequest {
+  // The task's ID.
+  string task_id = 1;
+}
+
+// A task's state.
+message GetResponse {
+  // The JSON of `AssignedTaskState`, or absent for a task that the worker
+  // does not know.
+  optional string state_json = 1;
+}
+
+// Asks to cancel a task.
+message CancelRequest {
+  // The task's ID.
+  string task_id = 1;
+}
+
+// A canceled task's state.
+message CancelResponse {
+  // The JSON of `AssignedTaskState`, or absent for a task that the worker
+  // does not know.
+  optional string state_json = 1;
+}
+
+// Starts following the worker's tasks.
+message WatchRequest {}
+
+// One state of a task.
+message WatchResponse {
+  // The JSON of `AssignedTaskState`.
+  string state_json = 1;
+}
+
+// Conversations to delete.
+message DeleteConversationsRequest {
+  // The conversations' IDs.
+  repeated string conversation_ids = 1;
+}
+
+// The worker deleted the conversations it had.
+message DeleteConversationsResponse {}

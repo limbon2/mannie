@@ -7,6 +7,7 @@ import { registerChat } from './chat.js';
 import { registerChildAgents } from './child-agents.js';
 import { registerTools } from './tools.js';
 import { registerWindowAndTray } from './window-and-tray.js';
+import { registerWorkers } from './workers.js';
 
 /** A feature's registration: it adds the feature's entries to the shell's slots. */
 export type FeatureRegistration = (slots: ShellSlots) => void;
@@ -17,4 +18,5 @@ export const features: readonly FeatureRegistration[] = [
   registerWindowAndTray,
   registerTools,
   registerChildAgents,
+  registerWorkers,
 ];

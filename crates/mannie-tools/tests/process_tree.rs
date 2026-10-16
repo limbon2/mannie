@@ -7,7 +7,7 @@
 //! the grandchild must be gone.
 
 #![cfg(test)]
-#![cfg(any(windows, target_os = "linux"))]
+#![cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -187,6 +187,19 @@ fn is_alive(pid: u32) -> bool {
     }
 }
 
+#[cfg(target_os = "freebsd")]
+fn is_alive(pid: u32) -> bool {
+    // FreeBSD mounts no `/proc` by default, so `ps` answers. A zombie has
+    // ended; only its entry waits to be reaped.
+    let output = std::process::Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "state="])
+        .output()
+        .unwrap();
+    let state = String::from_utf8_lossy(&output.stdout);
+    let state = state.trim();
+    !state.is_empty() && !state.starts_with('Z')
+}
+
 #[cfg(windows)]
 fn wait_for_file(path: &Path) -> String {
     format!(
@@ -195,7 +208,7 @@ fn wait_for_file(path: &Path) -> String {
     )
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn wait_for_file(path: &Path) -> String {
     format!("while [ ! -s '{}' ]; do sleep 0.05; done", path.display())
 }
@@ -205,7 +218,7 @@ fn sleep_long() -> &'static str {
     "Start-Sleep -Seconds 60"
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn sleep_long() -> &'static str {
     "sleep 60"
 }
@@ -339,20 +352,34 @@ public static class MannieSpawner {
     }
 }
 
-#[cfg(target_os = "linux")]
-mod linux {
+#[cfg(unix)]
+mod unix {
     use super::every_end_ends;
 
     #[tokio::test]
     async fn a_background_process_ends_with_the_command() {
-        every_end_ends(|pid_file| format!("sleep 60 &\necho $! > '{}'", pid_file.display())).await;
-    }
-
-    #[tokio::test]
-    async fn a_process_in_a_new_session_ends_with_the_command() {
         every_end_ends(|pid_file| {
             format!(
-                "setsid sh -c 'echo $$ > \"{}\"; exec sleep 60' &",
+                "sleep 60 &
+echo $! > '{}'",
+                pid_file.display()
+            )
+        })
+        .await;
+    }
+
+    /// Linux has `setsid(1)`; FreeBSD detaches a process with `daemon(8)`,
+    /// which forks and calls `setsid` before it runs the command.
+    #[tokio::test]
+    async fn a_process_in_a_new_session_ends_with_the_command() {
+        let detach = if cfg!(target_os = "freebsd") {
+            "daemon -f"
+        } else {
+            "setsid"
+        };
+        every_end_ends(|pid_file| {
+            format!(
+                "{detach} sh -c 'echo $$ > \"{}\"; exec sleep 60' &",
                 pid_file.display()
             )
         })

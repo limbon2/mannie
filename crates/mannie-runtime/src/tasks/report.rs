@@ -14,6 +14,35 @@ use crate::texts;
 /// The name of a report's archive.
 const REPORT_ARCHIVE: &str = "report";
 
+/// Who works on a task, as the task's result names it: a child agent, or a
+/// worker (docs/features/workers/delegation.md, a worker's report reads as a
+/// child's).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Doer {
+    /// A child agent on this machine.
+    Child,
+    /// A worker.
+    Worker,
+}
+
+impl Doer {
+    /// Who works on the task of a task document.
+    pub(crate) fn of(task: &TaskDocument) -> Self {
+        if task.worker.is_some() {
+            Self::Worker
+        } else {
+            Self::Child
+        }
+    }
+
+    fn noun(self) -> &'static str {
+        match self {
+            Self::Child => texts::THE_CHILD,
+            Self::Worker => texts::THE_WORKER,
+        }
+    }
+}
+
 /// The result of a task's end, as the model reads it.
 #[derive(Debug)]
 pub(crate) struct TaskOutput {
@@ -41,6 +70,7 @@ fn cut(text: &str, max_bytes: usize) -> &str {
 pub(crate) fn render_report(
     number: u32,
     ending: &TaskEnding,
+    doer: Doer,
     limit: usize,
     archive_id: impl FnOnce() -> ArchiveId,
 ) -> TaskOutput {
@@ -77,7 +107,7 @@ pub(crate) fn render_report(
             }
         }
         (TaskState::Reported, None) => texts::task_without_report(number),
-        (state, _) => ended_text(number, state, ending.failure.as_ref()),
+        (state, _) => ended_text(number, state, ending.failure.as_ref(), doer),
     };
     TaskOutput {
         output,
@@ -86,17 +116,17 @@ pub(crate) fn render_report(
 }
 
 /// The text of a task that ended without a report.
-fn ended_text(number: u32, state: TaskState, failure: Option<&RunFailure>) -> String {
+fn ended_text(number: u32, state: TaskState, failure: Option<&RunFailure>, doer: Doer) -> String {
     match state {
         TaskState::Failed => {
             let cause = failure.unwrap_or(&RunFailure::Internal).to_string();
-            texts::task_failed(number, &cause)
+            texts::task_failed(number, &cause, doer.noun())
         }
-        TaskState::Canceled => texts::task_stopped(number),
+        TaskState::Canceled => texts::task_stopped(number, doer.noun()),
         // A task that still runs when the model reads its part did not end
         // before its parent's run: Mannie's end interrupted both.
         TaskState::Interrupted | TaskState::Accepted | TaskState::Running => {
-            texts::task_interrupted(number)
+            texts::task_interrupted(number, doer.noun())
         }
         TaskState::Reported => texts::task_without_report(number),
     }
@@ -109,12 +139,21 @@ fn refusal_text(refusal: &TaskRefusal) -> String {
         TaskRefusal::StillRunning { number } => texts::task_still_running(*number),
         TaskRefusal::BudgetUsed => texts::TASK_BUDGET_USED.to_owned(),
         TaskRefusal::NotStarted => texts::TASK_NOT_STARTED.to_owned(),
+        TaskRefusal::WorkerOffline { worker } => texts::worker_offline(worker),
+        TaskRefusal::WorkerUnknown { worker } => texts::no_such_worker(worker),
+        TaskRefusal::WorkerIncompatible { worker } => texts::worker_incompatible(worker),
+        TaskRefusal::ProfileNotReachable { worker } => texts::profile_not_reachable(worker),
     }
 }
 
 /// The text of a task from its part's document, as after a crash that ended
-/// the parent's run before the model got the task's result.
+/// the parent's run before the model got the task's result. A part that let
+/// its worker task go says so: the task may still run on its worker.
 fn task_text(task: &TaskDocument) -> String {
+    if let Some(worker) = task.worker.as_ref().filter(|_worker| task.detached) {
+        return texts::task_let_go(task.number, &worker.name);
+    }
+    let doer = Doer::of(task);
     let ending = TaskEnding {
         state: task.state,
         report: task.report.clone(),
@@ -122,12 +161,12 @@ fn task_text(task: &TaskDocument) -> String {
     };
     match task.state {
         TaskState::Reported => {
-            render_report(task.number, &ending, usize::MAX, || {
+            render_report(task.number, &ending, doer, usize::MAX, || {
                 unreachable!("a report without a limit is never archived")
             })
             .output
         }
-        state => ended_text(task.number, state, task.failure.as_ref()),
+        state => ended_text(task.number, state, task.failure.as_ref(), doer),
     }
 }
 
@@ -169,7 +208,7 @@ mod tests {
     use mannie_types::run::RunFailure;
     use mannie_types::tasks::{TaskDocument, TaskPartDocument, TaskRefusal, TaskState};
 
-    use super::{render_report, task_result};
+    use super::{Doer, render_report, task_result};
     use crate::texts;
 
     fn archive_id() -> ArchiveId {
@@ -186,9 +225,13 @@ mod tests {
 
     #[test]
     fn a_report_that_fits_is_the_whole_result() {
-        let output = render_report(2, &reported("Found it in session.rs."), 1_000, || {
-            panic!("nothing is archived")
-        });
+        let output = render_report(
+            2,
+            &reported("Found it in session.rs."),
+            Doer::Child,
+            1_000,
+            || panic!("nothing is archived"),
+        );
 
         assert_eq!(output.output, "Task 2 reported:\n\nFound it in session.rs.");
         assert!(output.archive.is_none());
@@ -198,7 +241,7 @@ mod tests {
     fn a_long_report_is_cut_to_the_limit_and_archived_whole() {
         let report = "é".repeat(5_000);
 
-        let output = render_report(1, &reported(&report), 2_000, archive_id);
+        let output = render_report(1, &reported(&report), Doer::Child, 2_000, archive_id);
 
         assert!(output.output.len() <= 2_000, "{}", output.output.len());
         assert!(output.output.starts_with("Task 1 reported:\n\né"));
@@ -223,11 +266,11 @@ mod tests {
         let blank = reported("   ");
 
         assert_eq!(
-            render_report(3, &failed, 1_000, archive_id).output,
-            texts::task_failed(3, "the account's quota is used up")
+            render_report(3, &failed, Doer::Worker, 1_000, archive_id).output,
+            texts::task_failed(3, "the account's quota is used up", texts::THE_WORKER)
         );
         assert_eq!(
-            render_report(3, &blank, 1_000, archive_id).output,
+            render_report(3, &blank, Doer::Child, 1_000, archive_id).output,
             texts::task_without_report(3)
         );
     }
@@ -261,6 +304,8 @@ mod tests {
                 failure: None,
                 started_at: None,
                 ended_at: None,
+                worker: None,
+                detached: false,
             }),
             ..TaskPartDocument::default()
         };
@@ -270,7 +315,10 @@ mod tests {
             Some("Task 1 started in the background.")
         );
         assert_eq!(task_result(&refused), Some(texts::task_still_running(4)));
-        assert_eq!(task_result(&interrupted), Some(texts::task_interrupted(5)));
+        assert_eq!(
+            task_result(&interrupted),
+            Some(texts::task_interrupted(5, texts::THE_CHILD))
+        );
         assert_eq!(task_result(&TaskPartDocument::default()), None);
     }
 }

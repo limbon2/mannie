@@ -4,7 +4,7 @@
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Building                                                                                                                                                                                                                                                                                            |
 | Milestone    | M1                                                                                                                                                                                                                                                                                                  |
-| Last updated | 2026-10-15                                                                                                                                                                                                                                                                                          |
+| Last updated | 2026-10-16                                                                                                                                                                                                                                                                                          |
 | Part of      | [Chat](README.md)                                                                                                                                                                                                                                                                                   |
 | Related      | [ADR-0012](../../adr/0012-run-agents-as-durable-actors.md), [ADR-0009](../../adr/0009-persist-state-in-sqlite.md), [Agent runtime](../../architecture/agent-runtime.md), [Domain model](../../architecture/domain-model.md), [Desktop app](../../architecture/desktop-app.md#3-streaming-to-the-ui) |
 
@@ -56,7 +56,7 @@
 
 ### The owner's instructions
 
-- A settings section with the key `chat` holds the owner's instructions: plain text of at most 32 KiB, applied to every conversation from its next reply.
+- A settings section with the key `chat` holds the owner's instructions: plain text of at most 32,768 characters, applied to every conversation from its next reply. Until 2026-10-16 the limit was 32 KiB of UTF-8, so every text saved under the old limit stays within the new one.
 
 ### The text the model sees
 
@@ -76,13 +76,13 @@ The compaction request has instructions of its own. They ask for a checkpoint th
 
 ### Errors
 
-A failed reply shows the cause from the run failure codes: `invalid_credential`, `permission_denied`, `quota_exceeded`, `model_not_found`, `endpoint_not_found`, `rate_limited` (with the time of the next possible attempt), `server_error`, `context_overflow`, `request_too_large`, `bad_request`, `content_filtered`, `connection_failed`, `timed_out`, `broken_stream`, `invalid_response`, `redirect_refused`, `credential_missing`, `credential_store_unavailable`, `profile_missing`, `no_profile`, `tools_unsupported` (the server refused tools; see [system tools](../system-tools/tool-calls.md#use-tools)) and `internal`. The commands report their own codes through `ChatError`: `message_empty`, `message_too_long`, `title_empty`, `title_too_long`, `instructions_too_long`, `conversation_not_found`, `checkpoint_not_found`, `run_active`, `nothing_to_retry`, `nothing_to_compact`, `compacting` (a compaction of the conversation is running), `compaction_failed` (with the run failure that ended it), `profile_not_found`, `written_by_newer_version`, `storage_failed` and `shutting_down`.
+A failed reply shows the cause from the run failure codes: `invalid_credential`, `permission_denied`, `quota_exceeded`, `model_not_found`, `endpoint_not_found`, `rate_limited` (with the time of the next possible attempt), `server_error`, `context_overflow`, `request_too_large`, `bad_request`, `content_filtered`, `connection_failed`, `timed_out`, `broken_stream`, `invalid_response`, `redirect_refused`, `credential_missing`, `credential_store_unavailable`, `profile_missing`, `no_profile`, `tools_unsupported` (the server refused tools; see [system tools](../system-tools/tool-calls.md#use-tools)) and `internal`. The commands report their own codes through `ChatError`: `message_empty`, `message_too_long`, `title_empty`, `title_too_long`, `instructions_too_many_characters` (`instructions_too_long`, which counted bytes, is deprecated and no longer returned), `conversation_not_found`, `checkpoint_not_found`, `run_active`, `nothing_to_retry`, `nothing_to_compact`, `compacting` (a compaction of the conversation is running), `compaction_failed` (with the run failure that ended it), `profile_not_found`, `written_by_newer_version`, `storage_failed` and `shutting_down`.
 
 ### Contracts
 
 - Commands (`apps/desktop/src-tauri/src/commands/chat.rs`): `subscribe_conversations`, `subscribe_conversation`, `unsubscribe`, `load_earlier_turns`, `start_conversation` (with the first message, and the project of a conversation that starts in one), `send_message`, `stop_reply`, `retry_reply`, `rename_conversation`, `delete_conversation`, `set_conversation_profile`, `compact_conversation`, `get_checkpoint`, `get_chat_settings` and `update_chat_settings`.
 - Channels carry `ChannelBatch<ConversationUpdate>` and `ChannelBatch<ConversationListUpdate>`. The batch's own counter detects lost batches; each conversation event carries the conversation's sequence number, which is the cursor.
-- Limits: a message is at most 256 KiB, a title at most 200 characters, and instructions at most 32 KiB.
+- Limits: a message is at most 256 KiB, a title at most 200 characters, and instructions at most 32,768 characters.
 - Numbers that cross IPC are 32-bit integers, and times are milliseconds since the Unix epoch as JSON numbers.
 
 ### Data

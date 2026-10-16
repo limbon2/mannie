@@ -1,0 +1,17 @@
+{
+  "purpose": "Builds and tests the backend",
+  "facts": {
+    "system": "Linux 6.8 (x86_64)",
+    "hostname": "build-01",
+    "shells": ["bash", "sh"],
+    "tools": ["cargo", "git", "make"]
+  },
+  "ceiling": {
+    "mode": "ask",
+    "allowedFolders": ["/srv/build"],
+    "rules": ["cargo test"],
+    "acceptsMasterFullAccess": true
+  },
+  "version": "0.4.0",
+  "maxParallelTasks": 4
+}

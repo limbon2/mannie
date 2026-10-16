@@ -76,11 +76,22 @@ pub struct SharedGrantRef {
     pub grant_id: GrantId,
 }
 
+/// The argument of `set_full_access`: the owner's switch on a conversation
+/// (ADR-0029, decision 2).
+#[derive(Debug, Clone, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SetFullAccess {
+    /// The conversation.
+    pub conversation_id: ConversationId,
+    /// Whether every operation of the conversation runs without asking.
+    pub enabled: bool,
+}
+
 /// The most lines one page of an archived output holds.
 pub const MAX_OUTPUT_PAGE_LINES: u32 = 2_000;
 
 /// The argument of `read_tool_output`.
-#[derive(Debug, Clone, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ReadToolOutput {
     /// The conversation the output belongs to.
@@ -107,7 +118,7 @@ pub struct ToolOutputPage {
 
 /// Why a command of the system tools feature failed. The UI shows the message
 /// for the code from its catalog (ADR-0019).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type, thiserror::Error)]
 #[serde(
     tag = "code",
     rename_all = "snake_case",
@@ -177,6 +188,19 @@ pub enum ToolsError {
     /// Mannie is quitting.
     #[error("Mannie is quitting")]
     ShuttingDown,
+    /// The request belongs to a task on a worker that cannot be reached now,
+    /// so the decision did not reach it (docs/features/workers/
+    /// delegation.md).
+    #[error("the worker of this request cannot be reached")]
+    WorkerUnreachable,
+    /// A task conversation follows its parent's full access and has no
+    /// switch of its own (ADR-0029, decision 2).
+    #[error("a task conversation follows its parent's full access")]
+    FullAccessFollowsParent,
+    /// The worker's configuration does not let a conversation in full access
+    /// on the master answer its requests (ADR-0029, decision 5).
+    #[error("this worker does not take answers from the master's full access")]
+    FullAccessRefused,
 }
 
 impl ToolsError {
@@ -200,6 +224,9 @@ impl ToolsError {
             Self::StorageFailed => "tools.storage_failed",
             Self::StoreUnavailable => "tools.store_unavailable",
             Self::ShuttingDown => "tools.shutting_down",
+            Self::WorkerUnreachable => "tools.worker_unreachable",
+            Self::FullAccessFollowsParent => "tools.full_access_follows_parent",
+            Self::FullAccessRefused => "tools.full_access_refused",
         }
     }
 }

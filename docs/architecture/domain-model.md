@@ -130,6 +130,7 @@ stateDiagram-v2
 - A report is confirmed: the executing agent checked that it finished before it answered.
 - A child agent's task runs in a task conversation on the master: a conversation with a parent conversation, a number that is unique within the parent, and the child's agent definition ([tasks](../features/child-agents/tasks.md#task-conversations)). A task conversation belongs to no project and works under its parent's workspace, project, grants and rules. Deleting the parent deletes its task conversations.
 - A task conversation has at most one task that is accepted or running. A follow-up is a new task in the same conversation, with the same number and agent. Nothing resumes an interrupted task of a child by itself; the parent's model decides whether to follow it up.
+- A worker task's conversation lives on the worker, which assigned the task to it without a parent of its own. The master keeps a row for it with the parent, the number and the worker, and reads the conversation over the link ([ADR-0027](../adr/0027-delegate-tasks-to-workers-through-a-runtime-port.md)). Quitting the master leaves a worker task running, and the master learns its end when it reconnects.
 
 ## 7. Workers and the link
 
@@ -147,7 +148,8 @@ stateDiagram-v2
 
 - Pairing pins each side's public key. A worker accepts connections only from its pinned master, and the master only from the pinned worker key.
 - On connect, both sides agree on a feature level for every link service.
-- Unpairing revokes every active credential lease of that worker.
+- Unpairing revokes every active credential lease of that worker and cancels its tasks.
+- The master shows a connected worker whose version it does not work with as incompatible, and gives it no tasks.
 
 ## 8. Identifiers and time
 

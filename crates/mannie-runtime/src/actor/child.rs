@@ -1,7 +1,9 @@
-//! The side of a run that works on a task of a child agent
-//! (docs/features/child-agents/tasks.md): its slot among the children, what
-//! it publishes to its parent's run, the confirmation before its report, and
-//! the end of its task.
+//! The side of a run that works on a task (docs/features/child-agents/
+//! tasks.md): its slot, what it publishes to whoever gave the task, the
+//! confirmation before its report, and the end of its task. The task is a
+//! child agent's, from a parent's run on this machine, or on a worker one
+//! that the master assigned (ADR-0028), which also waits for its credential
+//! lease.
 
 use mannie_store::{Applied, Durability, TaskEnding};
 use mannie_types::ids::ConversationId;
@@ -10,16 +12,21 @@ use mannie_types::tasks::{ChildApproval, TaskState};
 use mannie_types::transcript::ConversationEvent;
 
 use super::{Ending, RunActor, StepCall};
+use crate::assigned::{AssignedRun, lease_reference};
+use crate::profiles::{VaultError, in_vault};
 use crate::tasks::{ChildGuard, ChildSlot};
 use crate::texts;
 
-/// What ties a child's run to its parent's run.
+/// What ties a task's run to whoever gave the task.
 #[derive(Debug)]
 pub(crate) struct ChildLink {
-    /// The parent conversation, whose run gave the task.
-    pub(crate) parent: ConversationId,
-    /// The child's hold on its parent's board.
+    /// The parent conversation, whose run gave the task, or `None` for a
+    /// task that the master assigned to this worker.
+    pub(crate) parent: Option<ConversationId>,
+    /// The task's hold on where its run publishes.
     pub(crate) guard: ChildGuard,
+    /// The assignment, for a task that the master assigned.
+    pub(crate) assigned: Option<AssignedRun>,
 }
 
 /// What a child's run keeps of its task.
@@ -42,9 +49,13 @@ impl ChildRun {
     }
 
     /// Frees the child's slot, then tells the parent how the task ended. An
-    /// ending that was not stored leaves the guard to publish a failure.
-    pub(super) fn finish(mut self, ending: Option<TaskEnding>) {
+    /// ending that was not stored leaves the guard to publish a failure. An
+    /// assigned task's ending carries the version that storing it took.
+    pub(super) fn finish(mut self, ending: Option<TaskEnding>, version: Option<u64>) {
         drop(self.slot.take());
+        if let Some(version) = version {
+            self.guard.set_version(version);
+        }
         if let Some(ending) = ending {
             self.guard.publish_end(ending);
         }
@@ -116,12 +127,76 @@ impl RunActor {
         Ok(())
     }
 
-    /// Tells the parent that the child started to work on its task.
-    pub(super) fn child_started(&self) {
+    /// Tells the parent that the child started to work on its task. An
+    /// assigned task's state carries the version that its start took.
+    pub(super) async fn child_started(&self) {
+        let version = self.assigned_version().await;
         let now = self.now();
         if let Some(child) = &self.child {
+            if let Some(version) = version {
+                child.guard.set_version(version);
+            }
             child.guard.publish(|state| state.started_at = Some(now));
         }
+    }
+
+    /// The version of the assigned task's latest stored state, read after a
+    /// change stored it; `None` for a run that works on no assigned task.
+    pub(super) async fn assigned_version(&self) -> Option<u64> {
+        let assigned = self.assigned.as_ref()?;
+        match self.runtime.inner.store.task(&assigned.task).await {
+            Ok(task) => task.map(|task| task.state_version),
+            Err(error) => {
+                tracing::warn!(%error, error.code = error.code(), task = %assigned.task, "could not read the version of an assigned task");
+                None
+            }
+        }
+    }
+
+    /// Waits until the vault holds the credential lease of the run's
+    /// assigned task (docs/features/workers/credential-leases.md). The run
+    /// holds its slot and no model slot meanwhile, and the master sees that
+    /// it waits. A run of a profile without a credential, or of no assigned
+    /// task, does not wait; nor does one on a vault whose credentials never
+    /// arrive by themselves, whose setup then reports what is missing.
+    pub(super) async fn await_lease(&mut self) -> Result<(), Ending> {
+        let Some(task) = self
+            .assigned
+            .as_ref()
+            .filter(|assigned| assigned.profile.has_credential)
+            .map(|assigned| assigned.task.clone())
+        else {
+            return Ok(());
+        };
+        let reference = lease_reference(&task);
+        let vault = std::sync::Arc::clone(&self.runtime.inner.vault);
+        let mut waited = false;
+        loop {
+            // The wait is set up before the read, so a lease that arrives in
+            // between still ends it.
+            let arrival = vault.arrival(&reference);
+            let read = {
+                let reference = reference.clone();
+                in_vault(&vault, move |vault| vault.read(&reference)).await
+            };
+            let (Err(VaultError::Missing), Some(arrival)) = (read, arrival) else {
+                break;
+            };
+            if !waited {
+                waited = true;
+                tracing::info!(run = %self.run, task = %task, "an assigned task waits for its lease");
+                let waiting = self.activity(RunActivity::WaitingForLease);
+                self.apply(vec![waiting], Durability::Normal).await?;
+                if let Some(child) = &self.child {
+                    child.guard.publish(|state| state.waits_for_lease = true);
+                }
+            }
+            self.wait(arrival).await?;
+        }
+        if waited && let Some(child) = &self.child {
+            child.guard.publish(|state| state.waits_for_lease = false);
+        }
+        Ok(())
     }
 
     /// Tells the parent about the child's tool calls: how many it made, and

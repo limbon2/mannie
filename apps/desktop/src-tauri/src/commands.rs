@@ -13,3 +13,4 @@ pub(crate) mod tools;
 #[cfg(feature = "validation")]
 pub(crate) mod validation;
 pub(crate) mod window;
+pub(crate) mod workers;

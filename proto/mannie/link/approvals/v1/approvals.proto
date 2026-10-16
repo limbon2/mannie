@@ -1,0 +1,28 @@
+// The owner's decisions about the calls of a worker's tasks
+// (docs/features/workers/host-and-ceiling.md, approvals).
+//
+// A worker's request offers only Allow once and Deny; the worker refuses any
+// other choice, whatever the master sends.
+syntax = "proto3";
+
+package mannie.link.approvals.v1;
+
+// The approvals that a worker's tasks wait for.
+service ApprovalsService {
+  // The owner's decision about a call that waits.
+  rpc Decide(DecideRequest) returns (DecideResponse);
+}
+
+// A decision.
+message DecideRequest {
+  // The JSON of `DecideApproval`.
+  string decision_json = 1;
+  // Whether the decision is the Allow once that a conversation in full access
+  // gives on the master (ADR-0029, decision 5). The worker records it as
+  // `full_access`, and refuses it when its configuration does not take such
+  // answers.
+  bool by_full_access = 2;
+}
+
+// The worker delivered the decision to the call that waited for it.
+message DecideResponse {}

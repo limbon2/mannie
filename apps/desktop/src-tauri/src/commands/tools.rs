@@ -7,8 +7,9 @@ use mannie_runtime::Runtime;
 use mannie_types::chat::ConversationRef;
 use mannie_types::ipc::CommandError;
 use mannie_types::tools::{
-    CommandRule, ConversationGrant, DecideApproval, GrantRef, ReadToolOutput, RuleRef, SharedGrant,
-    SharedGrantRef, ToolOutputPage, ToolsError, ToolsSettings, UpdateToolsSettings,
+    CommandRule, ConversationGrant, DecideApproval, GrantRef, ReadToolOutput, RuleRef,
+    SetFullAccess, SharedGrant, SharedGrantRef, ToolOutputPage, ToolsError, ToolsSettings,
+    UpdateToolsSettings,
 };
 use tauri::State;
 
@@ -31,19 +32,18 @@ fn refused(command: &'static str) -> impl FnOnce(ToolsError) -> CommandError<Too
     }
 }
 
-/// The owner's answer to a tool call that waits for approval.
+/// The owner's answer to a tool call that waits for approval. The answer to
+/// a call of a worker's task goes to the worker through the link.
 #[tauri::command]
 #[specta::specta]
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "Tauri hands command arguments over by value"
-)]
-pub(crate) fn decide_approval(
+pub(crate) async fn decide_approval(
     core: State<'_, Core>,
     input: DecideApproval,
 ) -> Result<(), CommandError<ToolsError>> {
     runtime(&core)
-        .and_then(|runtime| runtime.decide_approval(input))
+        .map_err(refused("decide_approval"))?
+        .decide_approval(input)
+        .await
         .map_err(refused("decide_approval"))
 }
 
@@ -58,6 +58,21 @@ pub(crate) async fn get_tools_settings(
         .tools_settings()
         .await
         .map_err(refused("get_tools_settings"))
+}
+
+/// Switches a conversation's full access, which applies from the next tool
+/// call (ADR-0029).
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn set_full_access(
+    core: State<'_, Core>,
+    input: SetFullAccess,
+) -> Result<(), CommandError<ToolsError>> {
+    runtime(&core)
+        .map_err(refused("set_full_access"))?
+        .set_full_access(input)
+        .await
+        .map_err(refused("set_full_access"))
 }
 
 /// Saves the tools settings, which apply from the next tool call.

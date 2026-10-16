@@ -29,6 +29,7 @@
 - Positive: stop and timeout end everything a command started.
 - Negative: three platform-specific code paths, each tested on its own platform. A command cannot start a server or an application that keeps running after it.
 - Refinement in M2: decisions 3 and 5 were made concrete while V4 was built. Making Mannie itself the subreaper, as first proposed, would have made it adopt every orphan of its webview and of the programs that open links.
+- Refinement in M4: decision 4 is made concrete as decision 3 is. The shell becomes the reaper between `fork` and `exec`, which keeps the status, so the worker never adopts orphans that are not a command's, and stopping sends the signals of decision 3 to the shell's reaped descendants through `PROC_REAP_KILL`. V4 runs on FreeBSD in the nightly workflow and for every pull request that changes the supervisor ([M4 validation results](../roadmap/m4-validation.md)).
 
 ## Alternatives considered
 

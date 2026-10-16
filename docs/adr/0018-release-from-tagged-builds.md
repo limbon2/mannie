@@ -22,7 +22,7 @@
    - for the Windows desktop, an NSIS installer for x86_64 that installs per user, without administrator rights;
    - for the Linux desktop, deb and rpm packages for x86_64, built on the oldest supported Ubuntu LTS release;
    - for the worker, builds for `x86_64-pc-windows-msvc` (zip), `x86_64-unknown-linux-musl` (tar.gz, static) and `x86_64-unknown-freebsd` (tar.gz, built on FreeBSD 14).
-4. Every artifact has a SHA-256 checksum, and worker artifacts are signed with Ed25519. The signing key is kept outside the repository, and its public key is embedded in the master and the worker. Releases include a CycloneDX SBOM and third-party notices.
+4. Every artifact has a SHA-256 checksum, and worker artifacts are signed with Ed25519. The signing key is kept outside the repository, and its public key is embedded in the worker, whose `update` command checks it ([decision D20](../roadmap/milestones.md#5-decisions)). Releases include a CycloneDX SBOM and third-party notices.
 5. CI creates a draft GitHub release (D17) whose notes are the version's changelog section. The owner publishes it after the smoke installs pass.
 6. Code signing of the Windows installer follows decision D16.
 7. Desktop auto-update is a later feature with its own ADR.
@@ -31,6 +31,7 @@
 
 - Positive: every release is built the same way, and workers can verify what they install.
 - Negative: the owner has to manage a release signing key, and unsigned Windows installers trigger SmartScreen warnings (risk R14).
+- Refinement in M4: the owner applies worker updates on the host, and the master pushes no builds (D20), so only the worker embeds the release key.
 
 ## Alternatives considered
 

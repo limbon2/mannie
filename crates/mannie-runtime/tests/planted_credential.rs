@@ -128,6 +128,8 @@ async fn start_with_adapters(store: mannie_store::Store, base_url: &str) -> Runt
                 mutations: mannie_tools::MutationLock::new(),
                 system: Arc::new(mannie_tools::SystemFacts::detect()),
             },
+            machine: mannie_runtime::Machine::Master,
+            delegation: None,
         },
         fast_config(),
     )

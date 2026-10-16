@@ -4,10 +4,10 @@
 
 use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{
-    CheckpointId, ConversationId, PartId, ProfileId, ProjectId, RunId, TurnId,
+    CheckpointId, ConversationId, PartId, ProfileId, ProjectId, RunId, TurnId, WorkerId,
 };
 use mannie_types::run::{RunActivity, RunFailure, RunOutcome, RunState, RunView};
-use mannie_types::tasks::{TaskConversation, TaskPartDocument};
+use mannie_types::tasks::{TaskConversation, TaskPartDocument, TaskWorker};
 use mannie_types::tools::ToolCallDocument;
 use mannie_types::transcript::{
     Audience, CheckpointView, ContextUsage, ConversationEvent, ConversationSummary, PartContent,
@@ -33,7 +33,8 @@ macro_rules! summary_columns {
          EXISTS (SELECT 1 FROM runtime_runs r WHERE r.conversation_id = c.id \
          AND r.state IN ('queued', 'running') \
          AND json_extract(r.activity, '$.kind') = 'awaiting_approval'), \
-         c.workspace, c.project_id, c.parent_conversation_id, c.task_number, c.task_agent"
+         c.workspace, c.project_id, c.parent_conversation_id, c.task_number, c.task_agent, \
+         c.task_worker_id, c.task_worker_name, c.full_access"
     };
 }
 pub(crate) use summary_columns;
@@ -411,6 +412,9 @@ pub(crate) struct RawSummary {
     parent_conversation_id: Option<String>,
     task_number: Option<i64>,
     task_agent: Option<String>,
+    task_worker_id: Option<String>,
+    task_worker_name: Option<String>,
+    full_access: bool,
 }
 
 /// Reads the columns of [`summary_columns`].
@@ -429,6 +433,9 @@ pub(crate) fn summary_from_row(row: &Row<'_>) -> rusqlite::Result<RawSummary> {
         parent_conversation_id: row.get(10)?,
         task_number: row.get(11)?,
         task_agent: row.get(12)?,
+        task_worker_id: row.get(13)?,
+        task_worker_name: row.get(14)?,
+        full_access: row.get(15)?,
     })
 }
 
@@ -436,11 +443,19 @@ impl RawSummary {
     pub(crate) fn into_summary(self) -> Result<ConversationSummary, RuntimeStoreError> {
         // A title source this version does not know shows as the owner's.
         let title_source = TitleSource::parse(&self.title_source).unwrap_or(TitleSource::Owner);
+        let worker = match self.task_worker_id.as_deref() {
+            Some(id) => Some(TaskWorker {
+                id: parse_id(id, WorkerId::parse)?,
+                name: self.task_worker_name.unwrap_or_default(),
+            }),
+            None => None,
+        };
         let task = match self.parent_conversation_id.as_deref() {
             Some(parent) => Some(TaskConversation {
                 parent_id: parse_id(parent, ConversationId::parse)?,
                 number: position(self.task_number.unwrap_or(0), "a task number")?,
                 agent: self.task_agent.unwrap_or_default(),
+                worker,
             }),
             None => None,
         };
@@ -455,6 +470,7 @@ impl RawSummary {
                 .transpose()?,
             has_active_run: self.has_active_run,
             awaiting_approval: self.awaiting_approval,
+            full_access: self.full_access,
             project_id: self
                 .project_id
                 .as_deref()

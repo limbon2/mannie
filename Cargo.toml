@@ -20,6 +20,7 @@ resolver = "3"
 members = [
   "apps/desktop/src-tauri",
   "apps/worker",
+  "crates/mannie-link",
   "crates/mannie-logging",
   "crates/mannie-provider",
   "crates/mannie-runtime",
@@ -44,16 +45,28 @@ publish = false
 # cargo-deny (deny.toml) enforces which crate may depend on which.
 [workspace.dependencies]
 anyhow = "1.0.104"
+# The release key that the worker embeds, and the signatures that `mannie-worker
+# update` checks, which the release workflow writes in base64.
+base64 = "0.22.1"
 bytes = "1.12.1"
 clap = { version = "4.6.7", features = ["derive"] }
 fastrand = "2.5.0"
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 # Glob patterns of `find_files`, as the `ignore` crate matches them.
 globset = "0.4.20"
+# The HTTP/2 connections of the link's client, which brings its own TLS
+# stream (ADR-0016).
+hyper-util = { version = "0.1.21", default-features = false, features = ["tokio"] }
 # Walking folders the way `.gitignore` files say, for `find_files` and
 # `search_text`.
 ignore = "0.4.33"
 keyring-core = "1.0.1"
+# The FreeBSD process supervisor's calls that rustix cannot make for it: a
+# process's start time from sysctl, which it has no binding for, and
+# procctl(PROC_REAP_KILL), whose binding panics on the kernel's answer
+# (ADR-0014).
+libc = "0.2.190"
+mannie-link = { path = "crates/mannie-link" }
 mannie-logging = { path = "crates/mannie-logging" }
 mannie-provider = { path = "crates/mannie-provider" }
 mannie-runtime = { path = "crates/mannie-runtime" }
@@ -62,6 +75,10 @@ mannie-store = { path = "crates/mannie-store" }
 mannie-tools = { path = "crates/mannie-tools" }
 mannie-types = { path = "crates/mannie-types" }
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
+# The link's messages (ADR-0016).
+prost = "0.14.4"
+# Compiles the link's protobuf files in the build without a system protoc.
+protox = "0.10.0"
 regex = "1.13.1"
 # Without the default TLS feature, which brings the aws-lc crypto provider that
 # deny.toml bans: rustls with ring only (ADR-0008, ADR-0011).
@@ -70,6 +87,9 @@ reqwest = { version = "0.13.5", default-features = false }
 # project (ADR-0023). On Linux it goes through the XDG desktop portal: the GTK
 # backend would run GTK on a thread of its own, beside Tauri's.
 rfd = { version = "0.17.2", default-features = false, features = ["wayland", "xdg-portal"] }
+# Ed25519 keys and the HMAC of pairing, from the crypto provider that rustls
+# uses (ADR-0008, ADR-0016).
+ring = "0.17.14"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 # Safe calls of Unix file and process functions: `openat` without following
 # links, child subreapers and process file descriptors (ADR-0014).
@@ -93,8 +113,20 @@ tempfile = "3.27.0"
 thiserror = "2.0.21"
 time = { version = "0.3.55", features = ["formatting", "macros"] }
 tokio = "1.53.2"
+# The link's TLS streams with ring, without the default aws-lc that deny.toml
+# bans (ADR-0008, ADR-0016).
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring"] }
 # Cancellation tokens for running tools (engineering standards, async).
 tokio-util = "0.7.20"
+# The worker's configuration file (docs/features/workers/service.md).
+toml = { version = "1.1.8", default-features = false, features = ["parse", "serde", "std"] }
+# gRPC for the link (ADR-0016), without TLS: the link brings its own, with
+# pinned keys.
+tonic = { version = "0.14.6", default-features = false, features = ["codegen", "router", "transport"] }
+tonic-prost = "0.14.6"
+tonic-prost-build = { version = "0.14.6", default-features = false }
+# The connector of the link's client.
+tower = { version = "0.5.3", default-features = false, features = ["util"] }
 tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }

@@ -21,12 +21,12 @@ pub use approval::{
     RuleProposal,
 };
 pub use call::{
-    MAX_ARGUMENTS_BYTES, MAX_VIEW_ARGUMENTS_BYTES, NotRunReason, ProcessRecord, ToolCallDocument,
-    ToolCallStatus, ToolCallView,
+    MAX_ARGUMENTS_BYTES, MAX_VIEW_ARGUMENTS_BYTES, NotRunReason, ProcessRecord, Refusal,
+    ToolCallDocument, ToolCallStatus, ToolCallView,
 };
 pub use commands::{
     CommandRule, ConversationGrant, GrantRef, MAX_OUTPUT_PAGE_LINES, ReadToolOutput, RuleRef,
-    SharedGrant, SharedGrantRef, ToolOutputPage, ToolsError,
+    SetFullAccess, SharedGrant, SharedGrantRef, ToolOutputPage, ToolsError,
 };
 pub use outcome::{
     ArchiveRef, CommandEnding, EntryKind, PathRefusal, ToolFailure, ToolOutcome, ToolResult,

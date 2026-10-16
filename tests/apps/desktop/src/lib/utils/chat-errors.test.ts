@@ -17,6 +17,7 @@ import {
   checkNoteMessage,
   credentialStoreMessage,
   folderRefusalMessage,
+  formatCount,
   profileFailureMessage,
   runFailureMessage,
   skipReasonMessage,
@@ -54,6 +55,7 @@ const CHAT_ERRORS: ChatError[] = [
   { code: 'title_empty' },
   { code: 'title_too_long', maxCharacters: 200 },
   { code: 'instructions_too_long', maxBytes: 32_768 },
+  { code: 'instructions_too_many_characters', maxCharacters: 32_768 },
   { code: 'conversation_not_found' },
   { code: 'checkpoint_not_found' },
   { code: 'run_active' },
@@ -111,6 +113,9 @@ describe('chat messages', () => {
 
     expectDistinct(messages);
     expect(chatFailureMessage({ kind: 'ipc' })).not.toBe('');
+    expect(
+      chatFailureMessage({ error: { code: 'instructions_too_many_characters', maxCharacters: 32_768 }, kind: 'core' }),
+    ).toContain(`${formatCount(32_768)} characters`);
   });
 
   it('say why Mannie refused a project’s folder', () => {

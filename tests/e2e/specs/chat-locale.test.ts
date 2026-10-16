@@ -240,6 +240,7 @@ describe('the chat and window views in the pseudo-locale', () => {
       'window.behavior',
       'tools.settings',
       'child-agents.settings',
+      'workers.settings',
     ]) {
       await openSettings(section);
 

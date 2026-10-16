@@ -7,6 +7,7 @@ import {
   checkedVersion,
   checksums,
   isValidSignature,
+  keyFingerprint,
   newKeyPair,
   releaseNotes,
   signature,
@@ -132,5 +133,18 @@ describe('signatures', () => {
     assert.equal(isValidSignature(content, signed, pair.publicKey), true);
     assert.equal(isValidSignature(Buffer.from('mannie-worker!'), signed, pair.publicKey), false);
     assert.equal(isValidSignature(content, signed, other.publicKey), false);
+  });
+});
+
+describe('keyFingerprint', () => {
+  it('is the SHA-256 of the key info, the same for every copy of a key and different for another key', () => {
+    const pair = newKeyPair();
+    const other = newKeyPair();
+
+    const fingerprint = keyFingerprint(pair.publicKey);
+
+    assert.match(fingerprint, /^[0-9a-f]{64}$/u);
+    assert.equal(keyFingerprint(`${pair.publicKey}\n`), fingerprint);
+    assert.notEqual(keyFingerprint(other.publicKey), fingerprint);
   });
 });

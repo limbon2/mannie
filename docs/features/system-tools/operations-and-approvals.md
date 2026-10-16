@@ -42,11 +42,13 @@ flowchart TD
 
 ### The journal
 
-The journal record of an operation is its tool call part ([tool calls](tool-calls.md#the-transcript-part)). Each change of its status is stored in the same transaction as its event, with full durability, and the `executing` status is stored before the side effect starts. The record keeps the accesses, the decision with its source (the workspace, a grant of the conversation, of its project or of every conversation, a rule or the owner), the result, and for a command the shell's process ID and start time.
+The journal record of an operation is its tool call part ([tool calls](tool-calls.md#the-transcript-part)). Each change of its status is stored in the same transaction as its event, with full durability, and the `executing` status is stored before the side effect starts. The record keeps the accesses, the decision with its source (the workspace, a grant of the conversation, of its project or of every conversation, a rule, full access or the owner), the result, and for a command the shell's process ID and start time.
 
 ### Policy
 
-The policy is a function of the accesses, the conversation's workspace and project, the `tools` settings, the grants that apply to the conversation, the rules and, for a move into a project, the owner's message of the turn. It is read again for every call, so a change applies from the next call.
+The policy is a function of the accesses, the conversation's workspace and project, the `tools` settings, the grants that apply to the conversation, the rules, the conversation's full access and, for a move into a project, the owner's message of the turn. It is read again for every call, so a change applies from the next call.
+
+A conversation in [full access](#full-access) allows every operation before the table applies: commands, commands with shell operators, changes anywhere, accesses inside Mannie's data and log folders, and a move into a project that the owner's message did not name.
 
 | Order | Source                        | Effect                                                                                                               |
 | ----- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------- |
@@ -59,6 +61,16 @@ The policy is a function of the accesses, the conversation's workspace and proje
 | 7     | The owner                     | Everything else asks                                                                                                 |
 
 An operation with several accesses is allowed only when every access is. Commands are never allowed by the workspace, and no grant or rule moves a conversation ([projects](../chat/projects.md#moving-a-conversation-into-a-project)). The decision names the source that reaches furthest: a rule, then a grant for every conversation, of the project and of the conversation, then the owner's message and the workspace.
+
+### Full access
+
+Full access is the owner's standing decision that a conversation's operations run without asking ([ADR-0029](../../adr/0029-let-the-owner-give-conversations-and-hosts-full-access.md), [decision D22](../../roadmap/milestones.md#5-decisions)).
+
+- Every conversation has a switch. A new conversation takes the value of `full_access_for_new_conversations` in the settings, and the owner switches it afterwards through `set_full_access`. A child agent's conversation follows its parent's switch and refuses its own with `full_access_follows_parent`.
+- The policy reads the switch for every call, so turning it off applies from the next call. A call that already waits for the owner keeps waiting.
+- An operation that runs under it is journaled with the decision `full_access`, and its recovery after a crash stays the same.
+- The guidance on tools tells the model that nobody checks its operations in the conversation.
+- When a worker task of a conversation in full access asks the owner, the master answers it at once with Allow once, marked as automatic, unless the worker's configuration refuses that ([host and ceiling](../workers/host-and-ceiling.md#approvals)).
 
 ### The workspace
 
@@ -103,30 +115,33 @@ The statuses are stored before the runs end as interrupted, so a crash during th
 
 ### Contracts
 
-- Commands (`apps/desktop/src-tauri/src/commands/tools.rs`): `decide_approval`, `get_tools_settings`, `update_tools_settings`, `list_command_rules`, `delete_command_rule`, `list_conversation_grants`, `revoke_conversation_grant`, `list_shared_grants`, `revoke_shared_grant` and `read_tool_output`. `list_conversation_grants` returns the grants of one conversation, and `list_shared_grants` the grants for a project, which name it, and those for every conversation.
-- Errors use `ToolsError`: `conversation_not_found`, `approval_not_pending`, `approval_changed`, `rule_not_possible`, `rule_prefix_invalid`, `not_in_a_project`, `grant_not_possible`, `rule_not_found`, `grant_not_found`, `output_not_found`, `environment_name_invalid`, `environment_name_secret`, `too_many_environment_names`, `written_by_newer_version`, `storage_failed`, `store_unavailable` and `shutting_down`.
-- The conversation summary carries the workspace, the project and whether the conversation waits for an approval. The conversation list receives a new summary when a reply starts or stops waiting, so the list marks it at once.
+- Commands (`apps/desktop/src-tauri/src/commands/tools.rs`): `decide_approval`, `set_full_access`, `get_tools_settings`, `update_tools_settings`, `list_command_rules`, `delete_command_rule`, `list_conversation_grants`, `revoke_conversation_grant`, `list_shared_grants`, `revoke_shared_grant` and `read_tool_output`. `list_conversation_grants` returns the grants of one conversation, and `list_shared_grants` the grants for a project, which name it, and those for every conversation.
+- Errors use `ToolsError`: `conversation_not_found`, `approval_not_pending`, `approval_changed`, `rule_not_possible`, `rule_prefix_invalid`, `not_in_a_project`, `grant_not_possible`, `rule_not_found`, `grant_not_found`, `output_not_found`, `environment_name_invalid`, `environment_name_secret`, `too_many_environment_names`, `written_by_newer_version`, `storage_failed`, `store_unavailable`, `shutting_down`, `full_access_follows_parent` and `full_access_refused`.
+- The conversation summary carries the workspace, the project, whether the conversation is in full access and whether it waits for an approval. The conversation list receives a new summary when a reply starts or stops waiting, so the list marks it at once.
 
 ### Settings
 
 The settings section `tools` holds:
 
-| Field                        | Rule                                                                                                                                                    |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `allow_changes_in_workspace` | False by default                                                                                                                                        |
-| `command_environment`        | At most 50 variable names passed to commands besides the built-in ones. Names that look like secrets are refused ([commands](commands.md#environment)). |
+| Field                               | Rule                                                                                                                                                    |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `allow_changes_in_workspace`        | False by default                                                                                                                                        |
+| `command_environment`               | At most 50 variable names passed to commands besides the built-in ones. Names that look like secrets are refused ([commands](commands.md#environment)). |
+| `full_access_for_new_conversations` | False by default. A new conversation starts in full access when it is true                                                                              |
 
 ### Data
 
 - Migration `0008` adds `workspace` to `runtime_conversations`.
 - Migration `0010` creates `tools_grants`: the conversation, the kind (path or command), the mode and folder of a path grant, the command and working directory of a command grant, and the time. The conversation is a foreign key to `runtime_conversations` with `ON DELETE CASCADE`, the store's first foreign key across modules, so deleting a conversation deletes its grants with `secure_delete`.
 - Migration `0011` creates `tools_rules`: the words, the optional folder, and the time.
+- Migration `0021` adds `full_access` to `runtime_conversations`, off for every conversation that existed.
 - Migration `0014` creates `tools_shared_grants`: the project, or none for every conversation, the scope and the time. The project is a foreign key to `runtime_projects` with `ON DELETE CASCADE`, so removing a project deletes its grants.
 
 ### Threat notes
 
 - T-1 and T-2: operations are authorized against their canonical accesses, the second preparation catches changes, and commands with metacharacters always ask.
-- A broad grant could let the model change Mannie's database and with it the rules. Accesses inside Mannie's data and log folders therefore always ask.
+- A broad grant could let the model change Mannie's database and with it the rules. Accesses inside Mannie's data and log folders therefore always ask, except in full access.
+- T-29: full access removes the owner's check, so text that the model reads can run commands and change files, Mannie's own included. It is off by default, the owner turns it on for a conversation or for new conversations after a confirmation, the UI marks it, and the journal records it.
 - A grant for a project or for every conversation reaches conversations that the owner is not looking at. The owner chooses the scope in each request, the request shows what the grant covers, and the Tools settings list every such grant with "Revoke".
 - T-5: a decision must name the digest of the request it answers, so a stale or forged decision changes nothing. A compromised webview could still answer a pending request, which stays a residual risk ([security](../../architecture/security.md#8-if-the-webview-is-compromised)).
 - Paths, commands and approvals are content. Logs at `info` level record operations with their IDs, tools, statuses and codes, and paths and commands only at `debug`.
@@ -135,6 +150,7 @@ The settings section `tools` holds:
 
 - Ending the process in every journal state never makes an operation run twice, the recovered statuses match the table, and a retry reports uncertain operations without repeating them (crash tests in `mannie-runtime`, and an end-to-end test that kills the app during a command).
 - The policy decides as the table says, for every source and combination (unit tests of the policy).
+- A conversation in full access and its child agents run every operation without asking, Mannie's own folders included, turning it off asks from the next call, a new conversation takes the setting's value, and a task conversation has no switch of its own (unit tests of the policy and runtime tests).
 - An approval runs the operation only for the request it answers; a stale decision, a changed digest and a decision for another conversation are refused (runtime tests).
 - A path changed between the approval and the execution goes back to the policy (runtime test).
 - The prompt-injection corpus causes no side effect that the owner did not allow, and creates no grant and no rule (runtime test with a scripted model).

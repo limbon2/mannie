@@ -190,7 +190,7 @@ pub(crate) struct TypedExecution<I> {
     /// Stop.
     pub(crate) stop: StopSignal,
     /// Receives a command's process once it started.
-    #[cfg(any(windows, target_os = "linux"))]
+    #[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
     pub(crate) process: Option<oneshot::Sender<ProcessRecord>>,
 }
 
@@ -313,7 +313,7 @@ impl<T: TypedTool> Tool for Registered<T> {
                 input,
                 accesses: execution.accesses,
                 stop: execution.stop,
-                #[cfg(any(windows, target_os = "linux"))]
+                #[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
                 process: execution.process,
             };
             T::execute(typed).await.unwrap_or_else(failed)

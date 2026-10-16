@@ -49,6 +49,17 @@ async function save(): Promise<void> {
   await $(`${DIALOG} button[type="submit"]`).click();
 }
 
+/** How far the dialog's fields reach past their scroll area to the side, in pixels; 0 when they fit. */
+async function sidewaysOverflow(): Promise<number> {
+  return browser.execute(() => {
+    const fields = document.querySelector('[data-profile-fields]');
+    if (fields === null) {
+      throw new Error('the profile dialog is not open');
+    }
+    return fields.scrollWidth - fields.clientWidth;
+  });
+}
+
 describe('provider profiles', () => {
   let provider: ProviderServer;
 
@@ -74,6 +85,9 @@ describe('provider profiles', () => {
     await clickWithText('main button', 'Add a profile');
     await $(DIALOG).waitForDisplayed();
     await waitForAnimations();
+    // The fields scroll only down. The click area of the Use tools switch at
+    // their end reached past the edge once, and they scrolled sideways.
+    expect(await sidewaysOverflow()).toBe(0);
     await fill('#profile-name', 'Mock');
     await $('#profile-interface-chat_completions').click();
     await fill('#profile-base-url', 'http://example.com/v1');

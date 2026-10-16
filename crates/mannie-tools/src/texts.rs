@@ -49,7 +49,7 @@ pub(crate) const DELETE_PATH: &str =
     "Deletes a file or folder for good. A folder that is not empty needs recursive set to true.";
 
 /// The description of `run_command`.
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 pub(crate) const RUN_COMMAND: &str = "Runs a command in the shell that system_info names, without a terminal or input, in working_directory or the workspace. It ends after timeout_seconds (60 by default, at most 600), and every process it started ends with it. Returns the exit code and the output.";
 
 /// The description of `read_tool_output`.

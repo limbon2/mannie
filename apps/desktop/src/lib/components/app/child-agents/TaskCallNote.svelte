@@ -1,6 +1,7 @@
 <script lang="ts">
   import BotIcon from '@lucide/svelte/icons/bot';
   import LoaderCircleIcon from '@lucide/svelte/icons/loader-circle';
+  import ServerIcon from '@lucide/svelte/icons/server';
 
   import type { TaskCallView } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
@@ -13,6 +14,8 @@
   let { call }: { call: TaskCallView } = $props();
 
   const starting = $derived(call.status === 'receiving' || call.status === 'pending' || call.status === 'running');
+  /** Whether the call delegates to a worker rather than starting a child agent. */
+  const delegates = $derived(call.tool === 'delegate_task');
   const note = $derived(explain(call));
 
   function explain(current: TaskCallView): string {
@@ -30,11 +33,15 @@
   <p class="flex items-center gap-2">
     {#if starting}
       <LoaderCircleIcon class="size-4 shrink-0 animate-spin" />
+    {:else if delegates}
+      <ServerIcon class="size-4 shrink-0" />
     {:else}
       <BotIcon class="size-4 shrink-0" />
     {/if}
     {#if call.activity !== null}
       <span class="min-w-0 truncate" data-content dir="auto">{call.activity}</span>
+    {:else if delegates}
+      <span>{m.child_agents_call_untitled_worker()}</span>
     {:else}
       <span>{m.child_agents_call_untitled()}</span>
     {/if}

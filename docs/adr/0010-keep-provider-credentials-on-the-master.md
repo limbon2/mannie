@@ -30,6 +30,7 @@ Verified 2026-10-13:
 
 - Positive: keys at rest exist only in stores that the operating system protects, and a worker holds a key only while it works on a task.
 - Negative: anyone who controls a worker host during a task can read the leased key (risk R7), and Linux desktops need a running Secret Service.
+- Refinement in M4: a lease belongs to one task and lives in the worker's lease vault, which the task's runs read like any credential vault ([credential leases](../features/workers/credential-leases.md)). The vault drops a lease when its task ends, when the master revokes it, which ends the task's run, and when the worker is unpaired, and the log redactor forgets it then. The worker turns off core dumps and, where the system allows it, tracing by other processes of its account.
 
 ## Alternatives considered
 

@@ -82,6 +82,10 @@ deny = [
   { crate = "rfd", wrappers = [
     "mannie-desktop",
   ], reason = "only the desktop app opens the system's folder dialog; the worker has no window (ADR-0004)" },
+  { crate = "tonic", wrappers = [
+    "mannie-link",
+    "tonic-prost",
+  ], reason = "only the link speaks gRPC; the apps reach each other through mannie-link (ADR-0016)" },
 ]
 
 [sources]

@@ -13,7 +13,7 @@
 //! without running the command again.
 
 #![cfg(test)]
-#![cfg(any(windows, target_os = "linux"))]
+#![cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -25,7 +25,7 @@ use mannie_provider::testing::Step;
 use mannie_provider::{Content, ModelRequest, Role};
 use mannie_runtime::testing::{
     FakeModel, MemoryVault, Transcript, fast_config, open_store, reply, start_runtime_with_tools,
-    test_tools, tool_calls,
+    test_tools, tool_calls, wait_for_leftover_command,
 };
 use mannie_runtime::{AgentRegistry, Runtime, texts};
 use mannie_store::Store;
@@ -35,7 +35,7 @@ use mannie_types::provider::{ApiInterface, CreateProviderProfile, ProfileDraft, 
 use mannie_types::run::RunState;
 use mannie_types::secret::Secret;
 use mannie_types::tasks::TaskState;
-use mannie_types::tools::{ApprovalChoice, DecideApproval, ToolCallStatus};
+use mannie_types::tools::{ApprovalChoice, DecideApproval, ProcessRecord, ToolCallStatus};
 use mannie_types::transcript::{ConversationEvent, ConversationUpdate, PartContent};
 use serde_json::json;
 
@@ -264,6 +264,7 @@ async fn follow_and_approve(runtime: Runtime, conversation: ConversationId) {
                     digest: approval.call.request.as_ref().unwrap().digest.clone(),
                     choice: ApprovalChoice::AllowOnce,
                 })
+                .await
                 .unwrap();
         }
     }
@@ -432,6 +433,16 @@ async fn check_recovered(
     (conversation, child.clone())
 }
 
+/// The shell of the child's command, as the journal recorded it.
+async fn child_command(store: &Store, child: &ConversationId) -> Option<ProcessRecord> {
+    let turns = store.model_turns(child, None).await.unwrap();
+    turns
+        .iter()
+        .flat_map(|turn| &turn.parts)
+        .find_map(|part| part.tool_call.as_ref())
+        .and_then(|call| call.process.clone())
+}
+
 /// Retries the parent's reply, which reads the task's end and starts no
 /// child.
 async fn retry_starts_no_child(
@@ -450,7 +461,7 @@ async fn retry_starts_no_child(
     let (_parent, task_state, _child, _command) = kill.recovered();
     let expected = match task_state {
         TaskState::Reported => texts::task_reported(1, "Report: marked once."),
-        _ => texts::task_interrupted(1),
+        _ => texts::task_interrupted(1, texts::THE_CHILD),
     };
     assert_eq!(results(&request), [expected], "{label}");
     let children = store.task_conversations(conversation).await.unwrap();
@@ -516,6 +527,12 @@ async fn killing_mannie_during_a_task_never_repeats_what_the_child_did() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::create_dir(workspace(directory.path())).unwrap();
         run_child_until(directory.path(), kill);
+
+        let (runtime, store, model) = restart(directory.path()).await;
+        let (conversation, child) = check_recovered(&store, kill, &label).await;
+        // A command that outlived the process may still write its marker
+        // until the recovery has ended it.
+        wait_for_leftover_command(child_command(&store, &child).await.as_ref()).await;
         let markers_before = marker_lines(directory.path());
         assert!(
             markers_before <= 1,
@@ -524,9 +541,6 @@ async fn killing_mannie_during_a_task_never_repeats_what_the_child_did() {
         if kill != KillPoint::Executing {
             assert_eq!(markers_before, 1, "{label}");
         }
-
-        let (runtime, store, model) = restart(directory.path()).await;
-        let (conversation, child) = check_recovered(&store, kill, &label).await;
         let (parent_state, _task, _child, _command) = kill.recovered();
         if parent_state != RunState::Completed {
             retry_starts_no_child(&runtime, &store, &model, &conversation, kill, &label).await;

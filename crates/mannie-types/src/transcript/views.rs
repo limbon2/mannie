@@ -54,6 +54,11 @@ pub struct ConversationSummary {
     pub has_active_run: bool,
     /// Whether the reply waits for the owner to decide about a tool call.
     pub awaiting_approval: bool,
+    /// Whether every operation of the conversation runs without asking
+    /// (ADR-0029). A task conversation follows its parent's switch, so its
+    /// own stays off.
+    #[serde(default)]
+    pub full_access: bool,
     /// The project the conversation belongs to, or `None` for a general
     /// conversation.
     pub project_id: Option<ProjectId>,

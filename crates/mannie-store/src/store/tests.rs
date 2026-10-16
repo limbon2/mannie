@@ -4,8 +4,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 use mannie_types::clock::{Clock, UtcMillis};
+use mannie_types::ids::{ConversationId, PartId, TaskId, TurnId};
 use mannie_types::interface::{InterfaceSettings, LocaleTag};
 use mannie_types::settings::SettingsSection;
+use mannie_types::tasks::TaskState;
 use rusqlite::Connection;
 
 use crate::schema::{MIGRATIONS, Migration};
@@ -705,4 +707,182 @@ async fn a_database_from_the_tools_schema_is_upgraded_for_task_conversations() {
         .await
         .unwrap();
     assert_eq!(violations, Vec::<String>::new());
+}
+
+/// The schema of child agents (version 16) keeps every task with its part
+/// and its turn. Migration 17 builds the tasks table again for worker tasks
+/// and 18 adds the worker of a task conversation; a stored child and its
+/// ended task read as before (docs/features/workers/delegation.md, data). A
+/// fixture database of v0.3.0 replaces this seed once that release exists.
+#[tokio::test]
+async fn a_database_from_the_child_agents_schema_is_upgraded_for_worker_tasks() {
+    let fixture = Fixture::new();
+    let child_agents_schema = &MIGRATIONS[..16];
+    let older = fixture.open(child_agents_schema).unwrap();
+    seed_child_agents_schema(&older).await;
+    drop(older);
+    assert_eq!(user_version(&fixture.database()), 16);
+
+    let upgraded = fixture.open(MIGRATIONS).unwrap();
+
+    assert_eq!(user_version(&fixture.database()), Store::schema_version());
+    let parent = ConversationId::parse("0199e0f2-7a1b-7c3d-8e4f-000000000001").unwrap();
+    let task_id = TaskId::parse("0199e0f2-7a1b-7c3d-8e4f-000000000021").unwrap();
+    let task = upgraded.task(&task_id).await.unwrap().unwrap();
+    assert_eq!(
+        task.part_id.as_ref().map(PartId::as_str),
+        Some("0199e0f2-7a1b-7c3d-8e4f-000000000005")
+    );
+    assert_eq!(
+        task.turn_id.as_ref().map(TurnId::as_str),
+        Some("0199e0f2-7a1b-7c3d-8e4f-000000000012")
+    );
+    assert_eq!(task.state, TaskState::Reported);
+    assert_eq!(
+        task.ending.and_then(|ending| ending.report).as_deref(),
+        Some("In session.rs.")
+    );
+    assert_eq!(task.worker_id, None);
+    assert_eq!(task.submission, None);
+    assert_eq!(task.assignment, None);
+    assert_eq!(task.state_version, 0);
+    let child = upgraded.child_by_number(&parent, 1).await.unwrap().unwrap();
+    assert_eq!(child.agent, "explore");
+    assert_eq!(child.worker, None);
+    assert_eq!(child.latest.map(|task| task.id), Some(task_id));
+    let summary = upgraded
+        .conversation_summary(&child.conversation_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(summary.task.and_then(|origin| origin.worker), None);
+    let indexes = task_indexes(&upgraded).await;
+    // A task needs the part or the assignment that started it.
+    let refused = upgraded
+        .write(Durability::Full, |transaction| {
+            transaction.execute(
+                "INSERT INTO runtime_tasks (id, conversation_id, part_id, turn_id, follow_up, \
+                 background, state, version, created_at) \
+                 VALUES ('0199e0f2-7a1b-7c3d-8e4f-000000000022', \
+                 '0199e0f2-7a1b-7c3d-8e4f-000000000011', NULL, \
+                 '0199e0f2-7a1b-7c3d-8e4f-000000000012', 0, 0, 'reported', 1, 3)",
+                [],
+            )
+        })
+        .await;
+    assert_eq!(
+        indexes,
+        [
+            "runtime_tasks_by_part",
+            "runtime_tasks_by_state_version",
+            "runtime_tasks_by_turn",
+            "runtime_tasks_by_worker",
+            "runtime_tasks_one_active",
+        ]
+    );
+    refused.unwrap_err();
+    let violations: Vec<String> = upgraded
+        .read(|connection| {
+            let mut check = connection.prepare("PRAGMA foreign_key_check")?;
+            let rows = check.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect()
+        })
+        .await
+        .unwrap();
+    assert_eq!(violations, Vec::<String>::new());
+}
+
+/// The schema before the owner could name workers (version 21) keeps a
+/// paired worker with the name in its configuration. Migration 22 adds the
+/// owner's name, which such a worker does not have yet, so it keeps showing
+/// its configured name (docs/features/workers/pairing-and-link.md, data).
+#[tokio::test]
+async fn a_database_with_paired_workers_is_upgraded_for_the_owners_names() {
+    let fixture = Fixture::new();
+    let before_names = &MIGRATIONS[..21];
+    let older = fixture.open(before_names).unwrap();
+    older
+        .write(Durability::Full, |transaction| {
+            transaction.execute(
+                "INSERT INTO workers_paired (id, name, address, key_pin, version, details, \
+                 paired_at, connected_at, updated_at) \
+                 VALUES ('0199e0f2-0000-7000-b000-000000000001', 'build-01', 'build-01.lan:7445', \
+                 ?1, 1, '{}', 1, NULL, 1)",
+                ["d".repeat(64)],
+            )
+        })
+        .await
+        .unwrap();
+    drop(older);
+    assert_eq!(user_version(&fixture.database()), 21);
+
+    let upgraded = fixture.open(MIGRATIONS).unwrap();
+
+    assert_eq!(user_version(&fixture.database()), Store::schema_version());
+    let workers = upgraded.paired_workers().await.unwrap();
+    assert_eq!(workers.len(), 1);
+    assert_eq!(workers[0].name, "build-01");
+    assert_eq!(workers[0].chosen_name, None);
+}
+
+/// A parent with a child and its ended task, as the schema of child agents
+/// stored them.
+async fn seed_child_agents_schema(older: &Store) {
+    older
+        .write(Durability::Full, |transaction| {
+            transaction.execute_batch(
+                "INSERT INTO runtime_conversations (id, title, title_source, profile_id, last_seq, \
+                 parent_conversation_id, task_number, task_agent, created_at, updated_at) \
+                 VALUES ('0199e0f2-7a1b-7c3d-8e4f-000000000001', 'Split the work', 'first_message', \
+                 NULL, 0, NULL, NULL, NULL, 1, 1), \
+                 ('0199e0f2-7a1b-7c3d-8e4f-000000000011', 'Find the sessions', 'first_message', \
+                 NULL, 0, '0199e0f2-7a1b-7c3d-8e4f-000000000001', 1, 'explore', 1, 1); \
+                 INSERT INTO runtime_turns (id, conversation_id, position, current_run_id, created_at) \
+                 VALUES ('0199e0f2-7a1b-7c3d-8e4f-000000000002', '0199e0f2-7a1b-7c3d-8e4f-000000000001', 0, \
+                 '0199e0f2-7a1b-7c3d-8e4f-000000000003', 1), \
+                 ('0199e0f2-7a1b-7c3d-8e4f-000000000012', '0199e0f2-7a1b-7c3d-8e4f-000000000011', 0, \
+                 '0199e0f2-7a1b-7c3d-8e4f-000000000013', 1); \
+                 INSERT INTO runtime_runs (id, conversation_id, turn_id, agent, profile_id, binding, state, version, \
+                 outcome, created_at, started_at, ended_at, kept) \
+                 VALUES ('0199e0f2-7a1b-7c3d-8e4f-000000000003', '0199e0f2-7a1b-7c3d-8e4f-000000000001', \
+                 '0199e0f2-7a1b-7c3d-8e4f-000000000002', 'conversation', '0199e0f2-0000-7000-8000-000000000001', \
+                 '0199e0f2-0000-7000-8000-000000000001:1', 'completed', 1, '{}', 1, 1, 3, 0), \
+                 ('0199e0f2-7a1b-7c3d-8e4f-000000000013', '0199e0f2-7a1b-7c3d-8e4f-000000000011', \
+                 '0199e0f2-7a1b-7c3d-8e4f-000000000012', 'explore', '0199e0f2-0000-7000-8000-000000000001', \
+                 '0199e0f2-0000-7000-8000-000000000001:1', 'completed', 1, '{}', 1, 1, 2, 0); \
+                 INSERT INTO runtime_parts (id, conversation_id, turn_id, run_id, attempt, position, kind, audience, \
+                 state, text, version, document, created_at, finished_at) \
+                 VALUES ('0199e0f2-7a1b-7c3d-8e4f-000000000004', '0199e0f2-7a1b-7c3d-8e4f-000000000001', \
+                 '0199e0f2-7a1b-7c3d-8e4f-000000000002', NULL, NULL, 0, 'user_text', 'both', 'complete', \
+                 'Split the work', 1, '{}', 1, 1), \
+                 ('0199e0f2-7a1b-7c3d-8e4f-000000000005', '0199e0f2-7a1b-7c3d-8e4f-000000000001', \
+                 '0199e0f2-7a1b-7c3d-8e4f-000000000002', '0199e0f2-7a1b-7c3d-8e4f-000000000003', 1, 1, 'task', \
+                 'both', 'complete', '{}', 1, \
+                 '{\"toolCall\":{\"callId\":\"call_1\",\"tool\":\"start_task\",\"status\":\"completed\"}}', 1, 3), \
+                 ('0199e0f2-7a1b-7c3d-8e4f-000000000014', '0199e0f2-7a1b-7c3d-8e4f-000000000011', \
+                 '0199e0f2-7a1b-7c3d-8e4f-000000000012', NULL, NULL, 0, 'user_text', 'both', 'complete', \
+                 'Find where sessions expire.', 1, '{}', 1, 1); \
+                 INSERT INTO runtime_tasks (id, conversation_id, part_id, turn_id, follow_up, background, state, \
+                 version, ending, created_at, ended_at) \
+                 VALUES ('0199e0f2-7a1b-7c3d-8e4f-000000000021', '0199e0f2-7a1b-7c3d-8e4f-000000000011', \
+                 '0199e0f2-7a1b-7c3d-8e4f-000000000005', '0199e0f2-7a1b-7c3d-8e4f-000000000012', 0, 0, 'reported', \
+                 1, '{\"state\":\"reported\",\"report\":\"In session.rs.\"}', 1, 2);",
+            )
+        })
+        .await
+        .unwrap();
+}
+
+/// The names of the indexes of the tasks table.
+async fn task_indexes(store: &Store) -> Vec<String> {
+    store
+        .read(|connection| {
+            let mut select = connection.prepare(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'runtime_tasks' AND sql IS NOT NULL ORDER BY name",
+            )?;
+            let rows = select.query_map([], |row| row.get::<_, String>(0))?;
+            rows.collect()
+        })
+        .await
+        .unwrap()
 }

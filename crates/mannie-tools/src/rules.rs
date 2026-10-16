@@ -36,8 +36,8 @@ fn is_refused(character: char) -> bool {
 /// The words of a command, split at spaces and tabs outside quotes, with the
 /// quotes removed. `None` when a rule or grant can never cover the command:
 /// it contains a metacharacter, an unusual space or an unbalanced quote, or
-/// it has no words.
-pub(crate) fn command_words(command: &str) -> Option<Vec<String>> {
+/// it has no words. A worker reads its host rules with it too.
+pub fn command_words(command: &str) -> Option<Vec<String>> {
     if command.chars().any(is_refused) {
         return None;
     }

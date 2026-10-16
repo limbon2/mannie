@@ -20,6 +20,8 @@ The runtime owns the agent loop, budgets, retries, context management and compac
 - Each conversation has at most one active run, and different conversations run in parallel. A global limit of 8 concurrent model calls protects the provider and the machine; runs over the limit wait in order.
 - A supervisor watches each run's task. A run whose task panics ends as failed with an internal error, and its conversation is free again.
 - A child agent's run belongs to its parent's run, which starts it, reads its state from a board that the child writes, and writes that state into the parent's conversation as the conversation's only writer. The parent's run ends only after its children have ended ([ADR-0024](../adr/0024-run-child-agent-tasks-in-the-parent-run.md)).
+- A worker task publishes its state on the same board, from the stream of states that the master follows through the runtime's delegation port. The parent's run does not wait for an offline worker when it stops, and quitting leaves worker tasks running ([ADR-0027](../adr/0027-delegate-tasks-to-workers-through-a-runtime-port.md)).
+- On a worker, the runtime runs tasks that the master assigns, each in a task conversation without a parent, under the worker's agent definition and policy ceiling ([ADR-0028](../adr/0028-run-assigned-tasks-under-the-host-ceiling.md)).
 - At shutdown, the runtime accepts no new runs, asks every run to stop, and waits up to 3 seconds; runs still active become interrupted.
 - At startup, runs that were active become interrupted, with the text they had written, the runs of task conversations first. The owner retries them, or for tasks the assigning agent decides.
 
@@ -84,11 +86,11 @@ The number of continuation notes per turn is limited, and a child's confirmation
 
 ## 8. Stop, retry and recovery
 
-| Action or event | Behavior                                                                                                                                                                                                                              |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Stop            | Cancels the model call and pending approvals, stops running tool calls through the process supervisor, stops the run's child agents, and keeps the partial text. Stopping a child's run ends only its task, and its parent continues. |
-| Retry           | Starts a new run for the latest turn, when its run failed, stopped or was interrupted. Completed operations keep their results; uncertain operations are shown to the model, not repeated.                                            |
-| Process restart | Active runs become interrupted. Executing operations become uncertain. Approvals that were pending are canceled. Tasks that were running become interrupted, and nothing restarts them.                                               |
+| Action or event | Behavior                                                                                                                                                                                                                                                        |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stop            | Cancels the model call and pending approvals, stops running tool calls through the process supervisor, stops the run's child agents, cancels its worker tasks, and keeps the partial text. Stopping a child's run ends only its task, and its parent continues. |
+| Retry           | Starts a new run for the latest turn, when its run failed, stopped or was interrupted. Completed operations keep their results; uncertain operations are shown to the model, not repeated.                                                                      |
+| Process restart | Active runs become interrupted. Executing operations become uncertain. Approvals that were pending are canceled. Tasks that were running become interrupted, and nothing restarts them.                                                                         |
 
 ## 9. Testing
 

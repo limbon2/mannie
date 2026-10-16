@@ -1,10 +1,12 @@
 // The system tools feature's entries in the shell's slots (docs/features/
 // system-tools/tool-activity.md; ADR-0020): the renderer of tool calls, the
-// dialogs, the command for the open conversation, and the Tools settings
-// section. A conversation's workspace is its project's folder, which the chat
-// feature shows (ADR-0023).
+// dialogs, the command for the open conversation, the full access switch in
+// a conversation's toolbar (ADR-0029), and the Tools settings section. A
+// conversation's workspace is its project's folder, which the chat feature
+// shows (ADR-0023).
 import WrenchIcon from '@lucide/svelte/icons/wrench';
 
+import FullAccessControl from '#lib/components/app/tools/FullAccessControl.svelte';
 import ToolCallPart from '#lib/components/app/tools/ToolCallPart.svelte';
 import ToolsDialogs from '#lib/components/app/tools/ToolsDialogs.svelte';
 import ToolsSettingsSection from '#lib/components/app/tools/ToolsSettingsSection.svelte';
@@ -24,6 +26,7 @@ function openSummary(): ReturnType<typeof conversationList.find> {
 export function registerTools(slots: ShellSlots): void {
   slots.partRenderers.register({ component: ToolCallPart, id: 'tool_call' });
   slots.overlays.register({ component: ToolsDialogs, id: 'tools.dialogs' });
+  slots.conversationControls.register({ component: FullAccessControl, id: 'tools.full-access', order: 20 });
   slots.commands.register({
     available: () => openSummary() !== undefined,
     group: m.tools_command_group,

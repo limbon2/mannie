@@ -22,6 +22,7 @@ const core = vi.hoisted(() => ({
   readToolOutput: vi.fn(),
   revokeConversationGrant: vi.fn(),
   revokeSharedGrant: vi.fn(),
+  setFullAccess: vi.fn(),
 }));
 
 vi.mock('../../../../../../apps/desktop/src/lib/generated/bindings.js', () => ({ commands: core }));
@@ -282,5 +283,56 @@ describe('permissions of a conversation', () => {
 
     expect(request.status).toBe('error');
     expect(request.readFailure?.kind).toBe('core');
+  });
+});
+
+describe('full access', () => {
+  it('asks before it turns full access on, and switches once the owner confirms', async () => {
+    const actions = new ToolsActions();
+    core.setFullAccess.mockResolvedValue(ok(null));
+
+    actions.switchFullAccess(CONVERSATION, true);
+
+    expect(actions.fullAccessOpen).toBe(true);
+    expect(core.setFullAccess).not.toHaveBeenCalled();
+    const request = actions.fullAccess;
+    expect(request?.enable).toBe(true);
+    if (request !== null) {
+      await actions.saveFullAccess(request);
+    }
+    expect(core.setFullAccess).toHaveBeenCalledWith({ conversationId: CONVERSATION, enabled: true });
+    expect(actions.fullAccessOpen).toBe(false);
+  });
+
+  it('keeps the dialog open with the reason when turning it on fails', async () => {
+    const actions = new ToolsActions();
+    core.setFullAccess.mockResolvedValue(refused({ code: 'storage_failed' }));
+    actions.switchFullAccess(CONVERSATION, true);
+    const request = actions.fullAccess;
+
+    if (request !== null) {
+      await actions.saveFullAccess(request);
+    }
+
+    expect(actions.fullAccessOpen).toBe(true);
+    expect(request?.failure?.kind).toBe('core');
+  });
+
+  it('turns full access off at once, and opens the dialog only when that fails', async () => {
+    const actions = new ToolsActions();
+    core.setFullAccess.mockResolvedValueOnce(ok(null));
+
+    actions.switchFullAccess(CONVERSATION, false);
+    await vi.waitFor(() => {
+      expect(core.setFullAccess).toHaveBeenCalledWith({ conversationId: CONVERSATION, enabled: false });
+    });
+    expect(actions.fullAccessOpen).toBe(false);
+
+    core.setFullAccess.mockResolvedValueOnce(refused({ code: 'conversation_not_found' }));
+    actions.switchFullAccess(CONVERSATION, false);
+    await vi.waitFor(() => {
+      expect(actions.fullAccessOpen).toBe(true);
+    });
+    expect(actions.fullAccess?.failure?.kind).toBe('core');
   });
 });

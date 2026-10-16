@@ -10,20 +10,16 @@
   import { m } from '#lib/paraglide/messages.js';
   import { chatSettings } from '#lib/state/chat-settings.svelte.js';
   import { chatFailureMessage, formatCount } from '#lib/utils/chat-errors.js';
+  import { countCharacters, MAX_INSTRUCTIONS_CHARACTERS } from '#lib/utils/chat-instructions.js';
 
   // The owner's instructions, which apply to every conversation from its next
   // reply (docs/features/chat/conversations.md, the owner's instructions).
 
-  /** The core's limit, which it checks again. */
-  const MAX_BYTES = 32 * 1024;
-
-  const encoder = new TextEncoder();
-
   let draft = $state('');
   let saved = $state(false);
 
-  const bytes = $derived(encoder.encode(draft).length);
-  const tooLong = $derived(bytes > MAX_BYTES);
+  const characters = $derived(countCharacters(draft));
+  const tooLong = $derived(characters > MAX_INSTRUCTIONS_CHARACTERS);
   const changed = $derived(draft !== chatSettings.instructions);
 
   async function save(event: SubmitEvent): Promise<void> {
@@ -65,7 +61,7 @@
         oninput={() => (saved = false)}
       />
       <Field.Description id="chat-instructions-size">
-        {m.chat_instructions_size({ max: formatCount(MAX_BYTES), used: formatCount(bytes) })}
+        {m.chat_instructions_size({ max: formatCount(MAX_INSTRUCTIONS_CHARACTERS), used: formatCount(characters) })}
       </Field.Description>
     </Field.Field>
     {#if chatSettings.saveFailure !== null}

@@ -1,0 +1,38 @@
+// Credential leases (docs/features/workers/credential-leases.md; ADR-0010).
+//
+// The master leases the credential of a task's provider profile to the
+// worker, which keeps it in memory for the task's runs and never stores it.
+syntax = "proto3";
+
+package mannie.link.leases.v1;
+
+// The leases of a worker's tasks.
+service LeasesService {
+  // Delivers a task's lease.
+  rpc Deliver(DeliverRequest) returns (DeliverResponse);
+  // Revokes a task's lease; a run of the task ends.
+  rpc Revoke(RevokeRequest) returns (RevokeResponse);
+}
+
+// A lease.
+message DeliverRequest {
+  // The task's ID.
+  string task_id = 1;
+  // The binding of the task's profile: its ID and configuration revision. A
+  // worker refuses a lease whose binding is not the task's.
+  string binding = 2;
+  // The credential, as UTF-8.
+  bytes credential = 3;
+}
+
+// The worker keeps the lease.
+message DeliverResponse {}
+
+// Revokes a lease.
+message RevokeRequest {
+  // The task's ID.
+  string task_id = 1;
+}
+
+// The worker dropped the lease.
+message RevokeResponse {}

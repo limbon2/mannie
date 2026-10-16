@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type {
+  ApprovalRequest,
   PartView,
   TaskState,
   TaskView,
@@ -40,6 +41,7 @@ function task(approval: TaskView['approval']): TaskView {
     approval,
     background: false,
     conversationId: 'child-conversation',
+    detached: false,
     endedAt: null,
     failure: null,
     followUp: false,
@@ -51,6 +53,7 @@ function task(approval: TaskView['approval']): TaskView {
     taskId: 'task',
     title: 'Write the notes',
     toolCalls: 1,
+    worker: null,
   };
 }
 
@@ -82,6 +85,18 @@ describe('approvalPart', () => {
 
   it('has no part while no call of the child waits', () => {
     expect(approvalPart(task(null))).toBeNull();
+  });
+
+  it('names the host of a worker task’s call by the name that the card shows for the worker', () => {
+    const request: ApprovalRequest = { digest: 'digest', grants: [], host: 'freebsd.local', reasons: [], rule: null };
+    const waiting = { call: { ...CALL, request }, createdAt: 7, partId: 'p', position: 3, runId: 'r', turnId: 't' };
+    const onWorker: TaskView = { ...task(waiting), worker: { id: 'worker', name: 'freebsd-01' } };
+
+    const shown = approvalPart(onWorker)?.content;
+    const ofChild = approvalPart(task(waiting))?.content;
+
+    expect(shown).toEqual({ call: { ...CALL, request: { ...request, host: 'freebsd-01' } }, kind: 'tool_call' });
+    expect(ofChild).toEqual({ call: { ...CALL, request }, kind: 'tool_call' });
   });
 });
 
@@ -137,5 +152,12 @@ describe('childAgentsOf', () => {
 
   it('lists no child in turns without tasks', () => {
     expect(childAgentsOf([turn(0, [])])).toEqual([]);
+  });
+
+  it('leaves out the tasks of workers, which are no child agents', () => {
+    const onWorker = { ...child(2, 'running'), worker: { id: 'worker', name: 'build-01' } };
+    const turns = [turn(0, [taskPart('a', child(1, 'running')), taskPart('b', onWorker)])];
+
+    expect(childAgentsOf(turns).map((agent) => agent.number)).toEqual([1]);
   });
 });

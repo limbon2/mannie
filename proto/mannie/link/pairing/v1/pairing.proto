@@ -1,0 +1,95 @@
+// Pairing a master with a worker (docs/features/workers/pairing-and-link.md,
+// pairing; ADR-0016).
+//
+// The owner runs `mannie-worker pair` on the host, which prints a code, and
+// types the code and the host's address in the master. The master connects
+// with its own key; an unpaired worker records that key from the TLS
+// handshake and serves only this service. Each side proves that it knows the
+// code with an HMAC over both public keys of this TLS session, which each
+// side takes from the handshake and never from a message, so a relay in the
+// middle cannot pair either side with its own key. The worker proves first,
+// and the master second.
+syntax = "proto3";
+
+package mannie.link.pairing.v1;
+
+// Pairs a master with a worker.
+service PairingService {
+  // The master starts a pairing; the worker proves that it knows the code.
+  rpc Begin(BeginRequest) returns (BeginResponse);
+  // The master proves that it knows the code; both sides pin each other's
+  // keys.
+  rpc Finish(FinishRequest) returns (FinishResponse);
+}
+
+// The master's start of a pairing.
+message BeginRequest {
+  // 32 random bytes of the master.
+  bytes master_nonce = 1;
+}
+
+// The worker's answer to a start.
+message BeginResponse {
+  // A challenge, or why the worker refuses to pair.
+  oneof outcome {
+    // The worker's proof and its nonce.
+    Challenge challenge = 1;
+    // Why the worker refuses.
+    Refusal refusal = 2;
+  }
+}
+
+// The worker's proof that it knows the code.
+message Challenge {
+  // 32 random bytes of the worker.
+  bytes worker_nonce = 1;
+  // HMAC-SHA256 with the code as the key over the worker's label, both
+  // public keys and both nonces.
+  bytes worker_proof = 2;
+  // The worker's name, from its configuration.
+  string name = 3;
+}
+
+// The master's proof that it knows the code.
+message FinishRequest {
+  // HMAC-SHA256 with the code as the key over the master's label, both
+  // public keys and both nonces.
+  bytes master_proof = 1;
+}
+
+// The worker's answer to the master's proof.
+message FinishResponse {
+  // The pairing, or why the worker refuses it.
+  oneof outcome {
+    // The worker pinned the master's key.
+    Paired paired = 1;
+    // Why the worker refuses.
+    Refusal refusal = 2;
+  }
+}
+
+// A pairing that both sides keep.
+message Paired {
+  // The worker's name.
+  string name = 1;
+}
+
+// Why a worker refuses to pair.
+message Refusal {
+  // The reason.
+  RefusalReason reason = 1;
+}
+
+// The reasons of a refusal.
+enum RefusalReason {
+  // Not sent.
+  REFUSAL_REASON_UNSPECIFIED = 0;
+  // No code was created, or it expired, or it was used.
+  REFUSAL_REASON_NO_VALID_CODE = 1;
+  // The worker is paired with a master already.
+  REFUSAL_REASON_ALREADY_PAIRED = 2;
+  // The code allowed its attempts.
+  REFUSAL_REASON_TOO_MANY_ATTEMPTS = 3;
+  // A proof does not match the code and the keys of this session.
+  REFUSAL_REASON_INVALID_PROOF = 4;
+}

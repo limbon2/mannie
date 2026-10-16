@@ -19,9 +19,10 @@ mod tasks;
 use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{
     ArchiveId, CheckpointId, ConversationId, PartId, ProfileId, ProjectId, RunId, TaskId, TurnId,
+    WorkerId,
 };
 use mannie_types::run::{RunActivity, RunFailure, RunOutcome, RunState};
-use mannie_types::tasks::{TaskPartDocument, TaskState};
+use mannie_types::tasks::{TaskPartDocument, TaskState, TaskWorker};
 use mannie_types::tools::ToolCallDocument;
 use mannie_types::transcript::{
     ContextUsage, ConversationEvent, ConversationSummary, PartKind, PartState,
@@ -34,6 +35,7 @@ pub use archives::StoredArchive;
 pub use projects::{AddedProject, ConversationList, ProjectDeletion};
 pub use reads::{EventsAfter, KeptRun, ModelPart, ModelTurn, StoredCheckpoint};
 pub use recovery::{Recovered, UncertainCall};
+pub use tasks::{NewDelegatedTask, Submission};
 
 /// The version of the JSON documents this module writes.
 const DOCUMENT_VERSION: u32 = 1;
@@ -64,15 +66,23 @@ pub struct TaskOrigin {
     pub number: u32,
     /// The name of the child's agent definition.
     pub agent: String,
+    /// The worker that runs the conversation's tasks, for the conversation
+    /// of a delegated task on the master (docs/features/workers/
+    /// delegation.md).
+    pub worker: Option<TaskWorker>,
 }
 
 /// A task to store with the turn that works on it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewTask {
-    /// The task, as the parent's run chose it.
+    /// The task, as the agent that assigned it chose it.
     pub id: TaskId,
-    /// The parent's part that assigned the task.
-    pub part_id: PartId,
+    /// The parent's part that assigned the task, or `None` for a task that
+    /// another machine assigned.
+    pub part_id: Option<PartId>,
+    /// What another machine assigned, as a JSON document of the runtime's,
+    /// for a task that a worker runs for the master (ADR-0028).
+    pub assignment: Option<String>,
     /// Whether the task continues an earlier task of the same child.
     pub follow_up: bool,
     /// Whether the parent continues while the child works.
@@ -100,10 +110,12 @@ pub struct StoredTask {
     pub id: TaskId,
     /// The child's conversation.
     pub conversation_id: ConversationId,
-    /// The parent's part that assigned the task.
-    pub part_id: PartId,
-    /// The child's turn that works on it.
-    pub turn_id: TurnId,
+    /// The parent's part that assigned the task, or `None` for a task that
+    /// another machine assigned.
+    pub part_id: Option<PartId>,
+    /// The turn that works on it, or `None` for a task that runs on a
+    /// worker.
+    pub turn_id: Option<TurnId>,
     /// Whether it continues an earlier task of the same child.
     pub follow_up: bool,
     /// Whether the parent continues while the child works.
@@ -116,6 +128,23 @@ pub struct StoredTask {
     pub created_at: UtcMillis,
     /// When it ended.
     pub ended_at: Option<UtcMillis>,
+    /// On the master: the worker that runs the task.
+    pub worker_id: Option<WorkerId>,
+    /// On the master: the version of the worker's state that the master
+    /// stored last.
+    pub remote_version: Option<u64>,
+    /// On the master: whether the worker stored the task.
+    pub submission: Option<Submission>,
+    /// On the master: when the owner or the parent's run asked to cancel the
+    /// task, while the cancel waits for its worker.
+    pub cancel_requested_at: Option<UtcMillis>,
+    /// On a worker: what the master assigned, as the runtime's JSON
+    /// document.
+    pub assignment: Option<String>,
+    /// On a worker: the version of the task's latest stored state.
+    pub state_version: u64,
+    /// On the master: the provider profile that a delegated task uses.
+    pub profile_id: Option<ProfileId>,
 }
 
 /// A child of a conversation: its task conversation and its latest task.
@@ -129,6 +158,8 @@ pub struct StoredChild {
     pub agent: String,
     /// The title of the child's conversation: its first task's title.
     pub title: String,
+    /// The worker that runs the child's tasks, or `None` for a child agent.
+    pub worker: Option<TaskWorker>,
     /// The child's latest task.
     pub latest: Option<StoredTask>,
 }
@@ -347,6 +378,11 @@ pub enum Change {
         /// The profile, or `None` for the default.
         profile_id: Option<ProfileId>,
     },
+    /// The owner switched the conversation's full access (ADR-0029).
+    SetFullAccess {
+        /// Whether every operation runs without asking.
+        enabled: bool,
+    },
     /// A general conversation moves into a project, whose folder becomes
     /// its workspace. Refused when it already belongs to a project, which it
     /// never leaves.
@@ -412,6 +448,9 @@ pub enum RuntimeStoreError {
         /// The part.
         part: PartId,
     },
+    /// The task conversation already works on a task.
+    #[error("the task conversation already works on a task")]
+    TaskActive,
     /// The project does not exist.
     #[error("the project does not exist")]
     ProjectNotFound,
@@ -444,6 +483,7 @@ impl RuntimeStoreError {
             Self::PartNotStreaming { .. } => "runtime_store.part_not_streaming",
             Self::NotAToolCall { .. } => "runtime_store.not_a_tool_call",
             Self::NotATaskPart { .. } => "runtime_store.not_a_task_part",
+            Self::TaskActive => "runtime_store.task_active",
             Self::ProjectNotFound => "runtime_store.project_not_found",
             Self::AlreadyInProject => "runtime_store.already_in_project",
             Self::InvalidData { .. } => "runtime_store.invalid_data",

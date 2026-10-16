@@ -43,6 +43,8 @@
   const transcript = $derived(conversation.transcript);
   const summary = $derived(transcript.conversation);
   const isChild = $derived(summary !== null && summary.task !== null);
+  /** Whether the conversation belongs to a task on a worker rather than to a child agent. */
+  const onWorker = $derived(summary?.task?.worker !== null && summary?.task?.worker !== undefined);
   const replying = $derived(hasActiveRun(transcript));
   const noProfile = $derived(providerProfiles.status === 'ready' && providerProfiles.profiles.length === 0);
   const compacting = $derived(chatActions.compacting.includes(id));
@@ -139,7 +141,7 @@
     <Transcript {conversation} readOnly={isChild} />
   {/if}
   {#if isChild}
-    <ReadOnlyFooter child conversationId={id} {replying} />
+    <ReadOnlyFooter conversationId={id} owner={onWorker ? 'worker' : 'child'} {replying} />
   {:else}
     {#if noProfile}
       <div class="mx-auto w-full max-w-3xl px-4 pb-2">

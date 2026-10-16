@@ -2,6 +2,7 @@
 // tool-activity.md, acceptance): in a conversation of a project, reads inside
 // the project's folder run without a question, changes ask, the owner's
 // answers reach the model, permissions and rules last as long as they should,
+// a conversation in full access runs everything without asking (ADR-0029),
 // Stop ends a running command, a waiting request survives a reload, and a
 // command that was running when the app died is never run again. The fixture
 // provider's tools scenario calls the tool that each message names.
@@ -45,6 +46,8 @@ const IS_WINDOWS = process.platform === 'win32';
 const WAIT_A_MINUTE = IS_WINDOWS ? 'Start-Sleep -Seconds 60' : 'sleep 60';
 
 const DIALOG = '[data-slot="dialog-content"]';
+
+const ALERT_DIALOG = '[data-slot="alert-dialog-content"]';
 
 /** When the owner pressed Escape and when the running call ended, in the page's clock. */
 interface StopTiming {
@@ -413,6 +416,59 @@ describe('system tools', () => {
     await $('#tools-allow-changes').click();
     await expect($('#tools-allow-changes')).toHaveAttribute('aria-checked', 'false');
     await leaveSettings();
+  });
+
+  it('runs commands and changes without asking in a conversation in full access, which the toolbar and the sidebar mark', async () => {
+    await $('[data-full-access="off"]').click();
+    await expect($(ALERT_DIALOG)).toBeDisplayed();
+    await waitForAnimations();
+    await axeInBothThemes();
+    await $('[data-full-access-confirm]').click();
+
+    await expect($('[data-full-access="on"]')).toHaveAttribute('aria-pressed', 'true');
+    await expect($('[data-slot="sidebar"] [data-full-access-mark]')).toBeExisting();
+    await axeInBothThemes();
+    await send(callMessage('write_file', { content: 'all', path: 'full.txt' }));
+    expect(await waitForCompleteReply()).toContain(TOOLS_DONE);
+    expect(readFileSync(join(workspace, 'full.txt'), 'utf8')).toBe('all');
+    await send(callMessage('run_command', { command: 'echo full' }));
+    expect(await waitForCompleteReply()).toContain(TOOLS_DONE);
+    expect(await latestToolStatus()).toBe('completed');
+    await expect($('main')).not.toHaveText(expect.stringContaining('Waiting for your approval.'));
+
+    await $('[data-full-access="on"]').click();
+    await expect($('[data-full-access="off"]')).toHaveAttribute('aria-pressed', 'false');
+    await expect($('[data-slot="sidebar"] [data-full-access-mark]')).not.toBeExisting();
+    await send(callMessage('write_file', { content: 'asked', path: 'asked.txt' }));
+    await waitForToolStatus('awaiting_approval');
+    await clickInLatestTurn('Deny');
+    await waitForCompleteReply();
+    expect(existsSync(join(workspace, 'asked.txt'))).toBe(false);
+  });
+
+  it('starts new conversations in full access once the settings say so, after asking', async () => {
+    await openSettings('tools.settings');
+    await $('#tools-full-access').click();
+    await expect($(ALERT_DIALOG)).toBeDisplayed();
+    await waitForAnimations();
+    expect(await axeViolations()).toEqual([]);
+    await $('[data-full-access-default-confirm]').click();
+    await expect($('#tools-full-access')).toHaveAttribute('aria-checked', 'true');
+
+    await startConversationIn(project);
+    await send(callMessage('write_file', { content: 'new', path: 'new-full.txt' }));
+    expect(await waitForCompleteReply()).toContain(TOOLS_DONE);
+
+    await expect($('[data-full-access="on"]')).toBeDisplayed();
+    expect(readFileSync(join(workspace, 'new-full.txt'), 'utf8')).toBe('new');
+    await openSettings('tools.settings');
+    await $('#tools-full-access').click();
+    await expect($('#tools-full-access')).toHaveAttribute('aria-checked', 'false');
+    await leaveSettings();
+    // The setting applies to new conversations only, and the tests below
+    // expect this conversation to ask.
+    await $('[data-full-access="on"]').click();
+    await expect($('[data-full-access="off"]')).toHaveAttribute('aria-pressed', 'false');
   });
 
   it('sends no tools for a profile that does not use them', async () => {

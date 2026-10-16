@@ -1,7 +1,9 @@
 //! The worker as a Windows service. It runs as the virtual account
 //! `NT SERVICE\mannie-worker`, which Windows creates with the service and which
 //! needs no password. Only that account, SYSTEM and the administrators can
-//! open the data folder (security architecture, local data).
+//! open the data folder; the configuration's folder belongs to SYSTEM and the
+//! administrators, and the service's account can only read it (security
+//! architecture, local data).
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -14,7 +16,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, anyhow, bail};
 use tokio::sync::Notify;
 use windows_service::service::{
-    ServiceAccess, ServiceAction, ServiceActionType, ServiceControl, ServiceControlAccept,
+    Service, ServiceAccess, ServiceAction, ServiceActionType, ServiceControl, ServiceControlAccept,
     ServiceErrorControl, ServiceExitCode, ServiceFailureActions, ServiceFailureResetPeriod,
     ServiceInfo, ServiceStartType, ServiceState, ServiceStatus, ServiceType,
 };
@@ -25,6 +27,9 @@ use windows_service::service_dispatcher;
 use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
 
 use super::{SERVICE_NAME, report};
+use crate::cli::RunArguments;
+use crate::config::Config;
+use crate::paths::Folders;
 use crate::worker::{Worker, WorkerOptions};
 
 const DISPLAY_NAME: &str = "Mannie worker";
@@ -39,7 +44,7 @@ const ACCOUNT: &str = r"NT SERVICE\mannie-worker";
 const SYSTEM_SID: &str = "*S-1-5-18";
 const ADMINISTRATORS_SID: &str = "*S-1-5-32-544";
 
-/// How long `install` and `uninstall` wait for the service to start or stop.
+/// How long the commands wait for the service to start or stop.
 const STATE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How long the service control manager waits between status reports while
@@ -53,7 +58,7 @@ const ERROR_SERVICE_NOT_ACTIVE: i32 = 1062;
 const ERROR_FAILED_SERVICE_CONTROLLER_CONNECT: i32 = 1063;
 const ERROR_SERVICE_EXISTS: i32 = 1073;
 
-pub(super) fn install(executable: &Path, data_directory: &Path) -> anyhow::Result<()> {
+pub(super) fn install(program: &Path, config_file: &Path, config: &Config) -> anyhow::Result<()> {
     let manager = ServiceManager::local_computer(
         None::<&str>,
         ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE,
@@ -65,8 +70,8 @@ pub(super) fn install(executable: &Path, data_directory: &Path) -> anyhow::Resul
         service_type: ServiceType::OWN_PROCESS,
         start_type: ServiceStartType::AutoStart,
         error_control: ServiceErrorControl::Normal,
-        executable_path: executable.to_path_buf(),
-        launch_arguments: launch_arguments(data_directory),
+        executable_path: program.to_path_buf(),
+        launch_arguments: launch_arguments(config_file),
         dependencies: Vec::new(),
         account_name: Some(ACCOUNT.into()),
         account_password: None,
@@ -79,7 +84,10 @@ pub(super) fn install(executable: &Path, data_directory: &Path) -> anyhow::Resul
     report(&format!(
         "Created the service {SERVICE_NAME}, which runs as {ACCOUNT}."
     ));
-    let prepared = configure(&service).and_then(|()| restrict_data_directory(data_directory));
+    let config_folder = config_file.parent().unwrap_or(config_file);
+    let prepared = configure(&service)
+        .and_then(|()| restrict_config_directory(config_folder))
+        .and_then(|()| restrict_data_directory(&config.data_dir));
     if let Err(error) = prepared {
         // Leave nothing half installed.
         return match service.delete() {
@@ -90,15 +98,19 @@ pub(super) fn install(executable: &Path, data_directory: &Path) -> anyhow::Resul
         };
     }
     report(&format!(
+        "SYSTEM and the administrators own {}, and {ACCOUNT} can only read it.",
+        config_folder.display()
+    ));
+    report(&format!(
         "Only {ACCOUNT}, SYSTEM and the administrators can open {}.",
-        data_directory.display()
+        config.data_dir.display()
     ));
     service
         .start::<&OsStr>(&[])
         .map_err(explain)
         .context("the service is installed but did not start")?;
     wait_for_state(&service, ServiceState::Running).context(
-        "the service is installed but did not start. The System log in Event Viewer and the worker's log show why",
+        "the service is installed but did not start. The System log in Event Viewer and `mannie-worker status` show why",
     )?;
     report(&format!(
         "Started the service {SERVICE_NAME}. It starts with Windows."
@@ -107,43 +119,83 @@ pub(super) fn install(executable: &Path, data_directory: &Path) -> anyhow::Resul
 }
 
 pub(super) fn uninstall() -> anyhow::Result<()> {
-    let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
-        .map_err(explain)?;
-    let access = ServiceAccess::QUERY_STATUS | ServiceAccess::STOP | ServiceAccess::DELETE;
-    let service = manager
-        .open_service(SERVICE_NAME, access)
-        .map_err(explain)?;
-    let state = service.query_status().map_err(explain)?.current_state;
-    if state != ServiceState::Stopped {
-        match service.stop() {
-            Ok(_) => {}
-            Err(windows_service::Error::Winapi(error))
-                if error.raw_os_error() == Some(ERROR_SERVICE_NOT_ACTIVE) => {}
-            Err(error) => return Err(explain(error)).context("could not stop the service"),
-        }
-        wait_for_state(&service, ServiceState::Stopped).context("the service did not stop")?;
+    let service = open(ServiceAccess::QUERY_STATUS | ServiceAccess::STOP | ServiceAccess::DELETE)?;
+    if stop_service(&service)? {
         report(&format!("Stopped the service {SERVICE_NAME}."));
     }
     service.delete().map_err(explain)?;
-    report(&format!(
-        "Removed the service {SERVICE_NAME}. The data folder was kept."
-    ));
+    report(&format!("Removed the service {SERVICE_NAME}."));
     Ok(())
 }
 
+pub(super) fn is_installed() -> anyhow::Result<bool> {
+    let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
+        .map_err(explain)?;
+    match manager.open_service(SERVICE_NAME, ServiceAccess::QUERY_STATUS) {
+        Ok(_service) => Ok(true),
+        Err(windows_service::Error::Winapi(error))
+            if error.raw_os_error() == Some(ERROR_SERVICE_DOES_NOT_EXIST) =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(explain(error)),
+    }
+}
+
+pub(super) fn is_running() -> anyhow::Result<bool> {
+    let service = open(ServiceAccess::QUERY_STATUS)?;
+    let state = service.query_status().map_err(explain)?.current_state;
+    Ok(state == ServiceState::Running)
+}
+
+pub(super) fn stop() -> anyhow::Result<()> {
+    let service = open(ServiceAccess::QUERY_STATUS | ServiceAccess::STOP)?;
+    stop_service(&service)?;
+    Ok(())
+}
+
+pub(super) fn start() -> anyhow::Result<()> {
+    let service = open(ServiceAccess::QUERY_STATUS | ServiceAccess::START)?;
+    service.start::<&OsStr>(&[]).map_err(explain)?;
+    wait_for_state(&service, ServiceState::Running)
+}
+
+/// Opens the installed service.
+fn open(access: ServiceAccess) -> anyhow::Result<Service> {
+    let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
+        .map_err(explain)?;
+    manager.open_service(SERVICE_NAME, access).map_err(explain)
+}
+
+/// Stops the service and waits until it stopped. Returns whether it ran.
+fn stop_service(service: &Service) -> anyhow::Result<bool> {
+    let state = service.query_status().map_err(explain)?.current_state;
+    if state == ServiceState::Stopped {
+        return Ok(false);
+    }
+    match service.stop() {
+        Ok(_status) => {}
+        Err(windows_service::Error::Winapi(error))
+            if error.raw_os_error() == Some(ERROR_SERVICE_NOT_ACTIVE) => {}
+        Err(error) => return Err(explain(error)).context("could not stop the service"),
+    }
+    wait_for_state(service, ServiceState::Stopped).context("the service did not stop")?;
+    Ok(true)
+}
+
 /// The arguments the service control manager starts the worker with.
-fn launch_arguments(data_directory: &Path) -> Vec<OsString> {
+fn launch_arguments(config_file: &Path) -> Vec<OsString> {
     vec![
         "service".into(),
         "run".into(),
-        "--data-dir".into(),
-        data_directory.as_os_str().to_owned(),
+        "--config".into(),
+        config_file.as_os_str().to_owned(),
     ]
 }
 
 /// Sets the description and restarts after a failure: twice, ten seconds
 /// apart, then not again until a day without failures has passed.
-fn configure(service: &windows_service::service::Service) -> anyhow::Result<()> {
+fn configure(service: &Service) -> anyhow::Result<()> {
     service.set_description(DESCRIPTION).map_err(explain)?;
     let restart = ServiceAction {
         action_type: ServiceActionType::Restart,
@@ -169,21 +221,34 @@ fn configure(service: &windows_service::service::Service) -> anyhow::Result<()> 
     Ok(())
 }
 
+/// Gives the configuration's folder an access list of its own: full control
+/// for SYSTEM and the administrators, and read access for the service's
+/// account. Without it the folder would inherit the right of every user to
+/// add files under `%ProgramData%`.
+fn restrict_config_directory(directory: &Path) -> anyhow::Result<()> {
+    set_access(directory, "RX")
+}
+
 /// Gives the data folder an access list of its own: full control for SYSTEM
-/// and the administrators, and modify rights for the service account. The
-/// first icacls call drops explicit entries in the whole folder; the second
-/// removes the inherited entries and grants the three, which the folder's
-/// contents then inherit.
+/// and the administrators, and modify rights for the service account.
 fn restrict_data_directory(directory: &Path) -> anyhow::Result<()> {
     fs::create_dir_all(directory)
         .with_context(|| format!("could not create the data folder {}", directory.display()))?;
+    set_access(directory, "M")
+}
+
+/// Replaces a folder's access list: the first icacls call drops explicit
+/// entries in the whole folder; the second removes the inherited entries and
+/// grants full control to SYSTEM and the administrators and `rights` to the
+/// service's account, which the folder's contents then inherit.
+fn set_access(directory: &Path, rights: &str) -> anyhow::Result<()> {
     let icacls = icacls_path()?;
     let directory = directory.as_os_str();
     run_icacls(
         &icacls,
         &[directory, "/reset".as_ref(), "/T".as_ref(), "/Q".as_ref()],
     )?;
-    let service_grant = format!("{ACCOUNT}:(OI)(CI)M");
+    let service_grant = format!("{ACCOUNT}:(OI)(CI){rights}");
     let system_grant = format!("{SYSTEM_SID}:(OI)(CI)F");
     let administrators_grant = format!("{ADMINISTRATORS_SID}:(OI)(CI)F");
     run_icacls(
@@ -230,10 +295,7 @@ fn run_icacls(icacls: &Path, arguments: &[&OsStr]) -> anyhow::Result<()> {
 }
 
 /// Polls the service until it reaches `wanted`, or fails when it stops on the way.
-fn wait_for_state(
-    service: &windows_service::service::Service,
-    wanted: ServiceState,
-) -> anyhow::Result<()> {
+fn wait_for_state(service: &Service, wanted: ServiceState) -> anyhow::Result<()> {
     let deadline = Instant::now() + STATE_TIMEOUT;
     loop {
         let status = service.query_status().map_err(explain)?;
@@ -271,22 +333,16 @@ fn explain(error: windows_service::Error) -> anyhow::Error {
     }
 }
 
-/// The data folder the service control manager started the worker with,
-/// for the service's main function.
-static DATA_DIRECTORY: OnceLock<PathBuf> = OnceLock::new();
+/// The arguments the service control manager started the worker with, for
+/// the service's main function.
+static ARGUMENTS: OnceLock<RunArguments> = OnceLock::new();
 
 windows_service::define_windows_service!(service_entry, service_main);
 
 /// Hands the process to the service control manager, which calls
 /// `service_main` on another thread and returns once the service stopped.
-pub(super) fn run(data_directory: &Path) -> anyhow::Result<()> {
-    let data_directory = std::path::absolute(data_directory).with_context(|| {
-        format!(
-            "the data folder {} is not a usable path",
-            data_directory.display()
-        )
-    })?;
-    DATA_DIRECTORY.get_or_init(|| data_directory);
+pub(super) fn run(arguments: &RunArguments) -> anyhow::Result<()> {
+    ARGUMENTS.get_or_init(|| arguments.clone());
     service_dispatcher::start(SERVICE_NAME, service_entry).map_err(|error| match &error {
         windows_service::Error::Winapi(io_error) if io_error.raw_os_error() == Some(ERROR_FAILED_SERVICE_CONTROLLER_CONNECT) => {
             anyhow!(error).context("Windows starts the service with this command. To run the worker in a terminal, use `mannie-worker run`")
@@ -296,7 +352,7 @@ pub(super) fn run(data_directory: &Path) -> anyhow::Result<()> {
 }
 
 fn service_main(_arguments: Vec<OsString>) {
-    let Some(data_directory) = DATA_DIRECTORY.get() else {
+    let Some(arguments) = ARGUMENTS.get() else {
         return;
     };
     let stop = Arc::new(Notify::new());
@@ -314,7 +370,7 @@ fn service_main(_arguments: Vec<OsString>) {
     let Ok(status) = service_control_handler::register(SERVICE_NAME, handler) else {
         return;
     };
-    let exit_code = match serve(status, data_directory, &stop) {
+    let exit_code = match serve(status, arguments, &stop) {
         Ok(()) => ServiceExitCode::NO_ERROR,
         Err(error) => {
             tracing::error!(error = format!("{error:#}"), "the worker service failed");
@@ -329,32 +385,43 @@ fn service_main(_arguments: Vec<OsString>) {
 
 /// Starts the worker, reports it running, and stops it when the service
 /// control manager asks.
-fn serve(status: ServiceStatusHandle, data_directory: &Path, stop: &Notify) -> anyhow::Result<()> {
+fn serve(
+    status: ServiceStatusHandle,
+    arguments: &RunArguments,
+    stop: &Notify,
+) -> anyhow::Result<()> {
     status.set_service_status(service_status(
         ServiceState::StartPending,
         ServiceExitCode::NO_ERROR,
     ))?;
+    let folders = Folders::of_this_system()?;
+    let config = crate::run::configuration(arguments, &folders)?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("could not start the async runtime")?;
     runtime.block_on(async {
         let options = WorkerOptions {
-            data_directory: data_directory.to_path_buf(),
+            config,
+            folders,
             console_logging: false,
         };
-        let worker = Worker::start(&options)?;
+        let worker = Worker::start(&options).await?;
         status.set_service_status(service_status(
             ServiceState::Running,
             ServiceExitCode::NO_ERROR,
         ))?;
-        stop.notified().await;
-        status.set_service_status(service_status(
-            ServiceState::StopPending,
-            ServiceExitCode::NO_ERROR,
-        ))?;
-        worker.stop();
-        Ok(())
+        worker
+            .run_until(async {
+                stop.notified().await;
+                if let Err(error) = status.set_service_status(service_status(
+                    ServiceState::StopPending,
+                    ServiceExitCode::NO_ERROR,
+                )) {
+                    tracing::warn!(%error, "could not report that the service stops");
+                }
+            })
+            .await
     })
 }
 

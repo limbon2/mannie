@@ -13,7 +13,10 @@ catalog:
 # Packages that may run install scripts; everything else is refused. The
 # WebdriverIO driver packages would download browser drivers on install, which
 # the end-to-end tests do not use: tauri-driver drives the webview's own driver.
+# buf's script only checks the binary that its platform package brings, and
+# its launcher finds that binary without it.
 allowBuilds:
+  "@bufbuild/buf": false
   edgedriver: false
   esbuild: true
   geckodriver: false

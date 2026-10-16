@@ -21,9 +21,26 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - A "Child agents" button in the conversation's toolbar that says how many child agents work, lists them, and opens a child's conversation in a side panel.
 - The Child agents settings: how many child agents work at the same time, from 1 to 16, 4 by default.
 - Evaluations of tasks split across child agents.
+- Workers: `mannie-worker` runs Mannie's agent runtime on another Windows, Linux or FreeBSD computer as a service, with a configuration that only root or the administrators can change, and takes tasks that the conversation agent delegates to it with `delegate_task`.
+- Pairing a worker with a one-time code that `mannie-worker pair` prints on its host, over a link of mutual TLS 1.3 where each side pins the other's key, and removing a worker, which unpairs it.
+- Naming a worker in Mannie: an optional name when pairing it, and "Rename…" in its menu and in the Workers settings; Mannie and the conversation agent use that name in place of the one in the worker's configuration, and an empty name goes back to it.
+- A ceiling on each worker's host: reads only, asking before every change and command, or changing its allowed folders and running the commands of its rules without asking; a task can narrow it and never widen it, and a worker's approval requests reach the owner in the task's card.
+- A worker's tasks in the conversation as cards with the worker's name, Stop, and the task's conversation live in a side panel; a worker task keeps running when Mannie quits, and `wait_for_tasks` reads its report after a restart.
+- Leases of the provider's credential: the worker keeps it only in memory, hidden from its logs, for as long as the task runs.
+- The "Workers" group in the sidebar, "Pair a worker…" in the command palette, and the Workers settings with each worker's status, version, host and ceiling.
+- `mannie-worker status`, `facts`, `self-check --json`, and `update`, which installs a signed release on the host and puts the previous program back when the new one does not start.
+- Compatibility with workers one minor version behind, checked by `buf breaking` on the link's contracts and by fixtures of the documents that the link carries (`task lint:proto`).
+- Full access: a "Full access" button on each conversation and a setting for new conversations that run every command and change without asking, after a confirmation, with a mark in the conversation list; a worker mode `full_access`; and a conversation in full access answers the requests of its worker tasks unless the worker refuses that.
+
+### Changed
+
+- The help of a form field sits behind a "(?)" button beside its label, in the provider profile dialog, the pairing dialog and the Tools, Child agents and Interface settings.
+- The owner's instructions hold up to 32,768 characters, where the limit was 32 KiB, and the counter under them counts characters.
 
 ### Fixed
 
+- The provider profile menu in the conversation's toolbar is wide enough for its title and its profiles; it had the width of its button, so its lines wrapped.
+- The fields of the provider profile dialog scroll only down; the click area of the "Use tools" switch reached past their edge, so they also scrolled a little to the side.
 - The conversation view stops following a reply only when the owner scrolls up; a tool call or an approval request that appeared at once, or a message box that shrank after sending, could end the following and leave the newest activity out of view.
 - A long reply no longer stretches the pane around the conversation: the text that only screen readers read escaped the transcript's scrolling, so the wheel could scroll the whole view away into empty space.
 - The message box keeps the focus after the first message of a new conversation; the conversation's own pane replaced the new conversation's, and the focus fell to the page.

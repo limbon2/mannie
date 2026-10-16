@@ -136,6 +136,10 @@ uuid_id!(
     /// chosen by the agent that assigns it.
     TaskId
 );
+uuid_id!(
+    /// Identifies a worker that the master paired with.
+    WorkerId
+);
 
 #[cfg(test)]
 mod tests {

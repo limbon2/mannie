@@ -4,12 +4,12 @@
 //! in `approvals.rs`; a conversation's workspace is its project's folder
 //! (`projects.rs`).
 
-use mannie_store::{RuntimeStoreError, SettingsStoreError, ToolsStoreError};
+use mannie_store::{Change, Durability, RuntimeStoreError, SettingsStoreError, ToolsStoreError};
 use mannie_tools::output_page;
 use mannie_types::ids::ConversationId;
 use mannie_types::tools::{
-    CommandRule, ConversationGrant, GrantRef, ReadToolOutput, RuleRef, SharedGrant, SharedGrantRef,
-    ToolOutputPage, ToolsError, ToolsSettings, UpdateToolsSettings,
+    CommandRule, ConversationGrant, GrantRef, ReadToolOutput, RuleRef, SetFullAccess, SharedGrant,
+    SharedGrantRef, ToolOutputPage, ToolsError, ToolsSettings, UpdateToolsSettings,
 };
 
 use crate::Runtime;
@@ -64,6 +64,55 @@ impl Runtime {
             .await
             .map_err(|error| settings_failure(&error))?;
         Ok(settings)
+    }
+
+    /// Whether a new conversation starts in full access. Settings that cannot
+    /// be read count as off, so the new conversation asks.
+    pub(crate) async fn full_access_for_new_conversations(&self) -> bool {
+        match self.tools_settings().await {
+            Ok(settings) => settings.full_access_for_new_conversations,
+            Err(error) => {
+                tracing::warn!(
+                    error.code = error.code(),
+                    "a new conversation starts without full access, since the tools settings could not be read"
+                );
+                false
+            }
+        }
+    }
+
+    /// Switches a conversation's full access (ADR-0029, decision 2). Tool
+    /// calls follow it from the next call. A task conversation follows its
+    /// parent's switch and has none of its own.
+    pub async fn set_full_access(&self, input: SetFullAccess) -> Result<(), ToolsError> {
+        let summary = self
+            .inner
+            .store
+            .conversation_summary(&input.conversation_id)
+            .await
+            .map_err(runtime_store_failure)?
+            .ok_or(ToolsError::ConversationNotFound)?;
+        if summary.task.is_some() {
+            return Err(ToolsError::FullAccessFollowsParent);
+        }
+        self.inner
+            .hubs
+            .apply(
+                &self.inner.store,
+                &input.conversation_id,
+                vec![Change::SetFullAccess {
+                    enabled: input.enabled,
+                }],
+                Durability::Full,
+            )
+            .await
+            .map_err(runtime_store_failure)?;
+        tracing::info!(
+            conversation = %input.conversation_id,
+            enabled = input.enabled,
+            "the owner switched a conversation's full access"
+        );
+        Ok(())
     }
 
     /// The command rules, the oldest first.
@@ -139,8 +188,16 @@ impl Runtime {
         Ok(())
     }
 
-    /// A page of an archived output of a conversation, for the owner.
+    /// A page of an archived output of a conversation, for the owner. The
+    /// outputs of a task on a worker come from the worker.
     pub async fn tool_output(&self, input: ReadToolOutput) -> Result<ToolOutputPage, ToolsError> {
+        if let Some((delegation, worker, _summary)) = self
+            .remote_conversation(&input.conversation_id)
+            .await
+            .map_err(runtime_store_failure)?
+        {
+            return delegation.tool_output(&worker, input).await;
+        }
         let archive = self
             .inner
             .store

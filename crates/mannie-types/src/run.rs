@@ -110,7 +110,15 @@ pub enum RunActivity {
     WaitingForTasks {
         /// How many tasks the run waits for.
         count: u32,
+        /// How many of them run on workers (docs/features/workers/
+        /// worker-activity.md).
+        #[serde(default)]
+        workers: u32,
     },
+    /// On a worker: waiting for the credential that the master leases to the
+    /// task, without a model slot (docs/features/workers/
+    /// credential-leases.md).
+    WaitingForLease,
 }
 
 /// Why a model call ended.
@@ -248,6 +256,11 @@ pub enum RunFailure {
     /// support. The profile's "Use tools" switch turns tools off.
     #[error("the server does not support tools for this model")]
     ToolsUnsupported,
+    /// On a worker: the master revoked the credential that it leased to the
+    /// task, which ends the task's run (docs/features/workers/
+    /// credential-leases.md).
+    #[error("the master revoked the task's credential lease")]
+    LeaseRevoked,
     /// Mannie failed. The log has the cause.
     #[error("Mannie failed")]
     Internal,
@@ -278,6 +291,7 @@ impl RunFailure {
             Self::ProfileMissing => "run.profile_missing",
             Self::NoProfile => "run.no_profile",
             Self::ToolsUnsupported => "run.tools_unsupported",
+            Self::LeaseRevoked => "run.lease_revoked",
             Self::Internal => "run.internal",
         }
     }
@@ -376,8 +390,27 @@ mod tests {
             serde_json::json!({ "kind": "waiting_for_slot" })
         );
         assert_eq!(
-            serde_json::to_value(RunActivity::WaitingForTasks { count: 2 }).unwrap(),
-            serde_json::json!({ "kind": "waiting_for_tasks", "count": 2 })
+            serde_json::to_value(RunActivity::WaitingForTasks {
+                count: 2,
+                workers: 1
+            })
+            .unwrap(),
+            serde_json::json!({ "kind": "waiting_for_tasks", "count": 2, "workers": 1 })
+        );
+        // An activity stored before workers reads as waiting for children.
+        assert_eq!(
+            serde_json::from_value::<RunActivity>(
+                serde_json::json!({ "kind": "waiting_for_tasks", "count": 2 })
+            )
+            .unwrap(),
+            RunActivity::WaitingForTasks {
+                count: 2,
+                workers: 0
+            }
+        );
+        assert_eq!(
+            serde_json::to_value(RunActivity::WaitingForLease).unwrap(),
+            serde_json::json!({ "kind": "waiting_for_lease" })
         );
     }
 }

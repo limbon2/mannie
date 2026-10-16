@@ -35,7 +35,7 @@ use tracing_subscriber::util::{SubscriberInitExt, TryInitError};
 use tracing_subscriber::{Layer, Registry, fmt};
 
 pub use chain::ErrorChain;
-pub use redact::{REDACTED, Redactor};
+pub use redact::{REDACTED, RedactionGuard, Redactor};
 
 /// The environment variable that overrides the default filter.
 pub const FILTER_VARIABLE: &str = "MANNIE_LOG";

@@ -3,7 +3,7 @@
 // child's call that waits for the owner, which a card renders through the
 // shell's part outlet as a part of the child's conversation, and the child
 // agents that a conversation's toolbar lists.
-import type { PartView, TaskState, TaskView, TurnView } from '#lib/generated/bindings.js';
+import type { PartView, TaskState, TaskView, ToolCallView, TurnView } from '#lib/generated/bindings.js';
 
 /** The task tool that waits for reports; the other two start and follow up tasks. */
 export const WAIT_FOR_TASKS = 'wait_for_tasks';
@@ -35,19 +35,44 @@ function workingFirst(left: TaskView, right: TaskView): number {
 /**
  * The child agents in a conversation's turns: one for each child
  * conversation, with the view of its latest task, since a follow-up shows
- * the child's latest state. The ones that work come first.
+ * the child's latest state. The ones that work come first. Tasks on workers
+ * are no child agents and stay out (docs/features/workers/worker-activity.md).
  */
 export function childAgentsOf(turns: readonly TurnView[]): TaskView[] {
   const latest = new Map<string, TaskView>();
   for (const turn of turns) {
     for (const part of turn.parts) {
       const task = part.content.kind === 'task' ? part.content.call.task : null;
-      if (task !== null) {
+      // A task without a worker is a child agent's.
+      if (task?.worker === null) {
         latest.set(task.conversationId, task);
       }
     }
   }
   return [...latest.values()].sort(workingFirst);
+}
+
+/**
+ * The call of a worker's task as the card shows it: the request names the
+ * host by the name that the card shows for the worker, which can be the
+ * owner's, where the worker wrote the one in its configuration
+ * (docs/features/workers/worker-activity.md). Only the shown name changes;
+ * the decision still names the request by its digest.
+ */
+function shownCall(task: TaskView, call: ToolCallView): ToolCallView {
+  const worker = task.worker;
+  const request = call.request;
+  if (worker === null) {
+    return call;
+  }
+  if (request === null) {
+    return call;
+  }
+  const namesHost = (request.host ?? null) !== null;
+  if (!namesHost) {
+    return call;
+  }
+  return { ...call, request: { ...request, host: worker.name } };
 }
 
 /**
@@ -61,7 +86,7 @@ export function approvalPart(task: TaskView): PartView | null {
     return null;
   }
   return {
-    content: { call: approval.call, kind: 'tool_call' },
+    content: { call: shownCall(task, approval.call), kind: 'tool_call' },
     createdAt: approval.createdAt,
     id: approval.partId,
     position: approval.position,

@@ -15,7 +15,7 @@ use tauri::Wry;
 use tauri_specta::{Builder, ErrorHandlingMode, collect_commands};
 
 use crate::commands::{
-    chat, child_agents, interface, links, projects, providers, startup, tools, window,
+    chat, child_agents, interface, links, projects, providers, startup, tools, window, workers,
 };
 
 /// The first line of every generated file.
@@ -90,6 +90,7 @@ macro_rules! app_commands {
             window::update_window_settings,
             window::set_tray_labels,
             tools::decide_approval,
+            tools::set_full_access,
             tools::get_tools_settings,
             tools::update_tools_settings,
             tools::list_command_rules,
@@ -101,6 +102,10 @@ macro_rules! app_commands {
             tools::read_tool_output,
             child_agents::get_child_agents_settings,
             child_agents::update_child_agents_settings,
+            workers::subscribe_workers,
+            workers::pair_worker,
+            workers::rename_worker,
+            workers::remove_worker,
             $($extra)*
         ]
     };

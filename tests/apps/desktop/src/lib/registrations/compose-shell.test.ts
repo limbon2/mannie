@@ -69,14 +69,22 @@ describe('composeShell', () => {
     const slots = composeShell(features);
 
     expect(slots.views.entries.map((view) => view.id)).toEqual(['chat']);
-    expect(slots.sidebarPanels.entries.map((panel) => panel.id)).toEqual(['chat.projects', 'chat.conversations']);
+    expect(slots.sidebarPanels.entries.map((panel) => panel.id)).toEqual([
+      'chat.projects',
+      'chat.conversations',
+      'workers.panel',
+    ]);
     expect(slots.sidePanels.entries.map((kind) => kind.id)).toEqual(['chat.conversation']);
-    expect(slots.conversationControls.entries.map((control) => control.id)).toEqual(['child-agents.control']);
+    expect(slots.conversationControls.entries.map((control) => control.id)).toEqual([
+      'tools.full-access',
+      'child-agents.control',
+    ]);
     expect(slots.overlays.entries.map((overlay) => overlay.id)).toEqual([
       'shell.link-confirmation',
       'chat.dialogs',
       'window.requests',
       'tools.dialogs',
+      'workers.dialogs',
     ]);
     expect(slots.partRenderers.entries.map((renderer) => renderer.id)).toEqual([
       'user_text',
@@ -93,9 +101,15 @@ describe('composeShell', () => {
       'window.behavior',
       'tools.settings',
       'child-agents.settings',
+      'workers.settings',
     ]);
     expect(slots.commands.entries.map((command) => command.id)).toEqual(
-      expect.arrayContaining(['chat.add-project', 'chat.add-project-from-path', 'tools.show-permissions']),
+      expect.arrayContaining([
+        'chat.add-project',
+        'chat.add-project-from-path',
+        'tools.show-permissions',
+        'workers.pair',
+      ]),
     );
   });
 

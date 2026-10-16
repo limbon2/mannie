@@ -1,5 +1,6 @@
-//! The task tools (docs/features/child-agents/tasks.md, the task tools): their
-//! definitions as a model receives them, and the checking of their calls.
+//! The task tools (docs/features/child-agents/tasks.md, the task tools; docs/
+//! features/workers/delegation.md, `delegate_task`): their definitions as a
+//! model receives them, and the checking of their calls.
 //!
 //! The schemas are written here, strict like the tools' own: every property
 //! is required and nothing else is allowed. A test checks them against the
@@ -24,6 +25,9 @@ pub(crate) const FOLLOW_UP_TASK: &str = "follow_up_task";
 /// The tool that waits for tasks and returns their reports.
 pub(crate) const WAIT_FOR_TASKS: &str = "wait_for_tasks";
 
+/// The tool that gives a task to a worker (ADR-0027, decision 2).
+pub(crate) const DELEGATE_TASK: &str = "delegate_task";
+
 /// The most tasks that one wait names.
 const MAX_AWAITED: usize = 64;
 
@@ -44,6 +48,17 @@ struct FollowUpArguments {
     task: u32,
     instruction: String,
     background: bool,
+}
+
+/// The arguments of `delegate_task`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DelegateArguments {
+    worker: String,
+    title: String,
+    instruction: String,
+    background: bool,
+    read_only: bool,
 }
 
 /// The arguments of `wait_for_tasks`.
@@ -82,6 +97,19 @@ pub(crate) enum TaskCall {
         /// The children's numbers, without repeats, in the order named.
         numbers: Vec<u32>,
     },
+    /// A task for a worker.
+    Delegate {
+        /// The worker's name, as the call gave it.
+        worker: String,
+        /// The title, cleaned for display.
+        title: String,
+        /// The instruction.
+        instruction: String,
+        /// Whether the parent continues while the worker works.
+        background: bool,
+        /// Whether the worker may only read and search for the task.
+        read_only: bool,
+    },
 }
 
 /// The definitions of the task tools, as a model receives them. `agents` are
@@ -104,6 +132,47 @@ pub(crate) fn definitions(agents: &[&str]) -> Vec<ToolDefinition> {
             parameters: with_activity(&wait_parameters()),
         },
     ]
+}
+
+/// The definition of `delegate_task`, as a model receives it while workers
+/// are paired. `workers` are the names of the paired workers.
+pub(crate) fn delegate_definition(workers: &[&str]) -> ToolDefinition {
+    ToolDefinition {
+        name: DELEGATE_TASK.to_owned(),
+        description: texts::DELEGATE_TASK.to_owned(),
+        parameters: with_activity(&delegate_parameters(workers)),
+    }
+}
+
+fn delegate_parameters(workers: &[&str]) -> Value {
+    json!({
+        "additionalProperties": false,
+        "properties": {
+            "background": {
+                "description": texts::DELEGATE_BACKGROUND_ARGUMENT,
+                "type": "boolean",
+            },
+            "instruction": {
+                "description": texts::DELEGATE_INSTRUCTION_ARGUMENT,
+                "type": "string",
+            },
+            "read_only": {
+                "description": texts::DELEGATE_READ_ONLY_ARGUMENT,
+                "type": "boolean",
+            },
+            "title": {
+                "description": texts::TASK_TITLE_ARGUMENT,
+                "type": "string",
+            },
+            "worker": {
+                "description": texts::DELEGATE_WORKER_ARGUMENT,
+                "enum": workers,
+                "type": "string",
+            },
+        },
+        "required": ["background", "instruction", "read_only", "title", "worker"],
+        "type": "object",
+    })
 }
 
 fn start_parameters(agents: &[&str]) -> Value {
@@ -183,7 +252,7 @@ fn parse<I: DeserializeOwned>(arguments: &str) -> Result<I, String> {
 }
 
 /// Checks an instruction: not blank, and not longer than the limit.
-fn check_instruction(instruction: String) -> Result<String, String> {
+pub(crate) fn check_instruction(instruction: &str) -> Result<(), String> {
     if instruction.trim().is_empty() {
         return Err("the instruction is empty".to_owned());
     }
@@ -192,7 +261,7 @@ fn check_instruction(instruction: String) -> Result<String, String> {
             "the instruction is longer than {MAX_INSTRUCTION_BYTES} bytes"
         ));
     }
-    Ok(instruction)
+    Ok(())
 }
 
 /// Checks a call of a task tool, without the activity, which the runtime took
@@ -211,10 +280,11 @@ pub(crate) fn parse_call(tool: &str, arguments: &str, agents: &[&str]) -> Result
                     agents.join(", ")
                 ));
             }
+            check_instruction(&input.instruction)?;
             Ok(TaskCall::Start {
                 title,
                 agent: input.agent,
-                instruction: check_instruction(input.instruction)?,
+                instruction: input.instruction,
                 background: input.background,
             })
         }
@@ -223,10 +293,27 @@ pub(crate) fn parse_call(tool: &str, arguments: &str, agents: &[&str]) -> Result
             if input.task == 0 {
                 return Err("tasks are numbered from 1".to_owned());
             }
+            check_instruction(&input.instruction)?;
             Ok(TaskCall::FollowUp {
                 number: input.task,
-                instruction: check_instruction(input.instruction)?,
+                instruction: input.instruction,
                 background: input.background,
+            })
+        }
+        DELEGATE_TASK => {
+            let input: DelegateArguments = parse(arguments)?;
+            let title = clean_label(&input.title, MAX_TITLE_CHARS)
+                .ok_or_else(|| "the title is empty".to_owned())?;
+            if input.worker.trim().is_empty() {
+                return Err("the worker is empty".to_owned());
+            }
+            check_instruction(&input.instruction)?;
+            Ok(TaskCall::Delegate {
+                worker: input.worker,
+                title,
+                instruction: input.instruction,
+                background: input.background,
+                read_only: input.read_only,
             })
         }
         WAIT_FOR_TASKS => {
@@ -253,7 +340,10 @@ pub(crate) fn parse_call(tool: &str, arguments: &str, agents: &[&str]) -> Result
 mod tests {
     use serde_json::{Value, json};
 
-    use super::{FOLLOW_UP_TASK, START_TASK, TaskCall, WAIT_FOR_TASKS, definitions, parse_call};
+    use super::{
+        DELEGATE_TASK, FOLLOW_UP_TASK, START_TASK, TaskCall, WAIT_FOR_TASKS, definitions,
+        delegate_definition, parse_call,
+    };
 
     const AGENTS: [&str; 2] = ["explore", "general"];
 
@@ -273,7 +363,9 @@ mod tests {
 
     #[test]
     fn every_schema_is_strict_and_parses_as_its_tool_reads_it() {
-        for definition in definitions(&AGENTS) {
+        let mut all = definitions(&AGENTS);
+        all.push(delegate_definition(&["build-01"]));
+        for definition in all {
             let parameters = &definition.parameters;
             let properties = parameters["properties"].as_object().unwrap();
             let mut required: Vec<&str> = parameters["required"]
@@ -372,5 +464,35 @@ mod tests {
         );
         parse_call(WAIT_FOR_TASKS, r#"{"tasks":[0]}"#, &AGENTS).unwrap_err();
         parse_call("read_file", "{}", &AGENTS).unwrap_err();
+    }
+
+    #[test]
+    fn a_delegation_names_a_worker_and_may_narrow_it_to_reading() {
+        let call = parse_call(
+            DELEGATE_TASK,
+            r#"{"worker":"build-01","title":"  Build\nit ","instruction":"Build and test.","background":false,"read_only":true}"#,
+            &AGENTS,
+        );
+
+        assert_eq!(
+            call,
+            Ok(TaskCall::Delegate {
+                worker: "build-01".to_owned(),
+                title: "Build it".to_owned(),
+                instruction: "Build and test.".to_owned(),
+                background: false,
+                read_only: true,
+            })
+        );
+        for refused in [
+            r#"{"worker":" ","title":"T","instruction":"Go.","background":false,"read_only":false}"#,
+            r#"{"worker":"w","title":"T","instruction":" ","background":false,"read_only":false}"#,
+            r#"{"worker":"w","title":"T","instruction":"Go.","background":false}"#,
+        ] {
+            assert!(
+                parse_call(DELEGATE_TASK, refused, &AGENTS).is_err(),
+                "{refused}"
+            );
+        }
     }
 }

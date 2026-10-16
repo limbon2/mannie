@@ -9,15 +9,21 @@
 //! retries transient failures, compacts long conversations into checkpoints,
 //! and handles Stop, Shutdown and recovery after a crash. It never runs on a
 //! window's behalf; a window only sends commands and follows events.
+//!
+//! The same runtime runs on every machine (ADR-0015): on the master it serves
+//! the owner's conversations, and on a worker the tasks that the master
+//! assigns, under the host's ceiling (ADR-0028).
 
 mod actor;
 mod agents;
 mod approvals;
+mod assigned;
 mod budget;
 mod calls;
 mod compaction;
 mod context;
 mod conversations;
+mod delegation;
 mod hub;
 mod ids;
 mod instructions;
@@ -40,20 +46,23 @@ use std::time::Duration;
 
 use mannie_provider::{HttpClient, ProviderRegistry};
 use mannie_store::{RuntimeStoreError, Store};
-use mannie_tools::{MutationLock, SystemFacts, ToolRegistry};
+use mannie_tools::{Ceiling, MutationLock, SystemFacts, ToolRegistry};
 use mannie_types::clock::Clock;
 use mannie_types::ids::{CheckpointId, ConversationId, ProfileId, ProjectId, RunId};
 use mannie_types::tasks::ChildAgentsSettings;
+use mannie_types::workers::HostFacts;
 use tokio::sync::{Semaphore, mpsc, watch};
 
 pub use agents::{
     AgentDefinition, AgentRegistry, CONVERSATION, CONVERSATION_AGENT, DuplicateAgent, EXPLORE,
-    EXPLORE_AGENT, GENERAL, GENERAL_AGENT, Requester, SYSTEM_TOOLS,
+    EXPLORE_AGENT, GENERAL, GENERAL_AGENT, Requester, SYSTEM_TOOLS, WORKER, WORKER_AGENT,
 };
+pub use assigned::{AssignError, AssignedTaskWatch, LeaseError};
+pub use delegation::{Delegation, DelegationError};
 pub use hub::{ConversationSubscription, ListSubscription, SubscriptionLimits};
 pub use instructions::{
-    BUILTIN_SECTIONS, DuplicateSection, InstructionContext, InstructionRegistry,
-    InstructionSection, ToolEnvironment,
+    BUILTIN_SECTIONS, DuplicateSection, HostContext, InstructionContext, InstructionRegistry,
+    InstructionSection, ToolEnvironment, WORKER_SECTIONS,
 };
 pub use profiles::{CredentialVault, VaultError};
 pub use retry::RetryPolicy;
@@ -61,6 +70,8 @@ pub use tasks::TASK_TOOLS;
 
 use crate::actor::Command;
 use crate::approvals::Pending;
+use crate::assigned::AssignedTasks;
+use crate::delegation::Followers;
 use crate::hub::Hubs;
 use crate::ids::IdGenerator;
 use crate::tasks::ChildSlots;
@@ -77,6 +88,39 @@ pub struct ToolsDeps {
     pub mutations: MutationLock,
     /// What the tools report about the machine.
     pub system: Arc<SystemFacts>,
+}
+
+/// What a worker's runtime knows of its host (docs/features/workers/
+/// host-and-ceiling.md). The worker builds it from its configuration.
+#[derive(Debug, Clone)]
+pub struct WorkerHost {
+    /// The worker's name, which its approval requests show.
+    pub name: String,
+    /// What the host is for.
+    pub purpose: String,
+    /// The host's facts.
+    pub facts: HostFacts,
+    /// The ceiling of every tool call on the host.
+    pub ceiling: Ceiling,
+    /// The Markdown file of the host instructions, which the runtime reads
+    /// for every task, so a change applies from the next task.
+    pub instructions_file: Option<PathBuf>,
+    /// How many tasks run at once.
+    pub max_parallel_tasks: u32,
+    /// Whether a conversation in full access on the master may answer this
+    /// host's requests (ADR-0029, decision 5).
+    pub accepts_master_full_access: bool,
+}
+
+/// The machine that a runtime serves (ADR-0015).
+#[derive(Debug, Clone, Default)]
+pub enum Machine {
+    /// The owner's computer: the owner's conversations and their tasks.
+    #[default]
+    Master,
+    /// A worker: the tasks that the master assigns, under the host's ceiling
+    /// (ADR-0028).
+    Worker(Arc<WorkerHost>),
 }
 
 /// What the runtime works with. The composition root builds these and hands
@@ -99,6 +143,11 @@ pub struct RuntimeDeps {
     pub instructions: InstructionRegistry,
     /// The system tools.
     pub tools: ToolsDeps,
+    /// The machine that the runtime serves.
+    pub machine: Machine,
+    /// On the master, the port to the paired workers (ADR-0027). `None` on a
+    /// worker, and on a master that delegates nothing.
+    pub delegation: Option<Arc<dyn Delegation>>,
 }
 
 /// The runtime's limits and timings.
@@ -117,6 +166,9 @@ pub struct RuntimeConfig {
     pub stop_timeout: Duration,
     /// How long shutting down waits for the runs to end.
     pub shutdown_timeout: Duration,
+    /// How long Stop waits for the workers to confirm the cancels of a
+    /// reply's worker tasks before it lets them go (ADR-0027, decision 6).
+    pub worker_cancel_timeout: Duration,
     /// The seed of the retry jitter, for tests; `None` seeds it at random.
     pub random_seed: Option<u64>,
 }
@@ -130,6 +182,7 @@ impl Default for RuntimeConfig {
             flush_interval: Duration::from_millis(50),
             stop_timeout: Duration::from_secs(2),
             shutdown_timeout: Duration::from_secs(3),
+            worker_cancel_timeout: Duration::from_secs(10),
             random_seed: None,
         }
     }
@@ -153,6 +206,17 @@ struct Inner {
     agents: AgentRegistry,
     instructions: InstructionRegistry,
     tools: ToolsDeps,
+    machine: Machine,
+    /// On the master, the port to the paired workers.
+    delegation: Option<Arc<dyn Delegation>>,
+    /// On the master, what follows the workers' tasks.
+    followers: Followers,
+    /// On a worker, the tasks that the master assigned, while they are
+    /// active, and the master's watches of them.
+    assigned: Arc<AssignedTasks>,
+    /// Makes assignments one at a time, so a task submitted twice at once is
+    /// stored once.
+    assigning: tokio::sync::Mutex<()>,
     /// The approvals that runs wait for, one per conversation at most, since
     /// a conversation runs its tool calls one at a time.
     approvals: Mutex<HashMap<ConversationId, Pending>>,
@@ -197,6 +261,9 @@ struct RunHandle {
     /// The parent conversation, for a run that works on a task of a child
     /// agent, which its parent's run starts and ends.
     parent: Option<ConversationId>,
+    /// Whether the run works on a task that the master assigned to this
+    /// worker.
+    assigned: bool,
     mailbox: mpsc::Sender<Command>,
     ended: watch::Receiver<bool>,
 }
@@ -240,12 +307,17 @@ impl Runtime {
             .map_or_else(fastrand::Rng::new, fastrand::Rng::with_seed);
         // A section that cannot be read leaves the default limit, and the
         // settings page shows the failure when the owner opens it.
-        let child_agents = match deps.store.load_settings::<ChildAgentsSettings>().await {
-            Ok(settings) => settings,
-            Err(error) => {
-                tracing::warn!(%error, error.code = error.code(), "could not read the child agents settings; using the default limit");
-                ChildAgentsSettings::default()
-            }
+        // On a worker, the configuration limits the tasks that run at once;
+        // on the master, the child agents settings limit the children.
+        let parallel = match &deps.machine {
+            Machine::Worker(host) => host.max_parallel_tasks,
+            Machine::Master => match deps.store.load_settings::<ChildAgentsSettings>().await {
+                Ok(settings) => settings.parallel_children.get(),
+                Err(error) => {
+                    tracing::warn!(%error, error.code = error.code(), "could not read the child agents settings; using the default limit");
+                    ChildAgentsSettings::default().parallel_children.get()
+                }
+            },
         };
         let inner = Inner {
             ids: IdGenerator::new(Arc::clone(&deps.clock)),
@@ -257,32 +329,40 @@ impl Runtime {
             agents: deps.agents,
             instructions: deps.instructions,
             tools: deps.tools,
+            machine: deps.machine,
+            delegation: deps.delegation,
+            followers: Followers::default(),
+            assigned: Arc::default(),
+            assigning: tokio::sync::Mutex::new(()),
             approvals: Mutex::default(),
             hubs: Hubs::default(),
             busy: Mutex::default(),
             verified_checkpoints: Mutex::default(),
             removing_projects: Mutex::default(),
             slots: Arc::new(Semaphore::new(config.max_concurrent_calls)),
-            child_slots: ChildSlots::new(child_agents.parallel_children.get()),
+            child_slots: ChildSlots::new(parallel),
             child_settings: tokio::sync::Mutex::new(()),
             config,
             shutting_down: AtomicBool::new(false),
             random: Mutex::new(random),
         };
-        Ok(Self {
+        let runtime = Self {
             inner: Arc::new(inner),
-        })
+        };
+        runtime.start_following();
+        Ok(runtime)
     }
 
     /// How many of the owner's replies are active. The runs of child agents
-    /// belong to their parent's reply and do not count of their own.
+    /// belong to their parent's reply and do not count of their own, and a
+    /// worker's runs work on tasks.
     pub fn active_run_count(&self) -> u32 {
         let busy = lock(&self.inner.busy);
         let active = busy
             .values()
             .filter(|busy| match busy {
                 Busy::Starting => true,
-                Busy::Running(handle) => handle.parent.is_none(),
+                Busy::Running(handle) => handle.parent.is_none() && !handle.assigned,
                 Busy::Compacting => false,
             })
             .count();
@@ -294,6 +374,7 @@ impl Runtime {
     /// No run starts afterwards.
     pub async fn shutdown(&self) {
         self.inner.shutting_down.store(true, Ordering::SeqCst);
+        self.inner.followers.shut_down();
         let mut ended = Vec::new();
         {
             let busy = lock(&self.inner.busy);
@@ -316,6 +397,7 @@ impl Runtime {
             tracing::warn!("runs did not end in time; the next start marks them as interrupted");
         }
         self.inner.hubs.shut_down().await;
+        self.inner.assigned.shut_down();
         if let Err(error) = self.inner.store.flush().await {
             tracing::warn!(%error, error.code = error.code(), "could not make the store durable while quitting");
         }
@@ -330,6 +412,14 @@ impl Runtime {
 
     fn is_shutting_down(&self) -> bool {
         self.inner.shutting_down.load(Ordering::SeqCst)
+    }
+
+    /// The worker's host, on a worker.
+    fn worker_host(&self) -> Option<&WorkerHost> {
+        match &self.inner.machine {
+            Machine::Worker(host) => Some(host),
+            Machine::Master => None,
+        }
     }
 
     /// A number in [0, 1) for the retry jitter.

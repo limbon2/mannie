@@ -49,11 +49,20 @@ A move of a general conversation into a project shows as a tool row, such as "Mo
 
 A dialog lists the grants that apply to the conversation, such as "Changes in D:\Projects\app\src" or "The command cargo test in D:\Projects\app", under "This conversation", "This project" and "Every conversation", each with "Revoke". The command palette opens it.
 
+### Full access
+
+- A conversation's toolbar has the button "Full access" ([ADR-0029](../../adr/0029-let-the-owner-give-conversations-and-hosts-full-access.md)), a toggle button whose pressed state screen readers hear. While full access is on, it shows in the destructive color.
+- Turning it on asks first, in a dialog: "Turn on full access?", what will run without asking, Mannie's own files and the requests of worker tasks included, and the risk that text the model reads makes it run commands; "Turn on full access" and "Cancel". Turning it off happens at once; when that fails, a dialog says so, with "Try again" and "Close".
+- The conversation list marks a conversation in full access with an open lock labeled "Full access".
+- The details of a call that full access allowed say "Full access allowed this.", or "The worker's full access allowed this." for a worker in that mode.
+- A task conversation follows its parent and shows no button.
+
 ### Settings
 
 The Tools section of the settings holds:
 
 - a switch "Allow changes inside the workspace without asking", off by default, with a description of what it allows;
+- a switch "Full access for new conversations", off by default, which asks first, in a dialog, before it turns on;
 - the command rules, each with its words, its folder and "Delete";
 - the grants for every conversation and for each project, each with "Revoke";
 - the extra environment variables that commands receive, one name per line, with "Save"; a refused name shows why.
@@ -96,5 +105,6 @@ WebDriver cannot reach the system's folder dialog. In validation builds, `add_pr
 - Stop during a running command ends it, and a reload while an approval waits shows the request again (end-to-end tests).
 - Killing the app during a command leaves the call marked as "May have run", and Retry continues without running it again (end-to-end test).
 - "Allow for…", the permissions dialog and the Tools settings work from the keyboard (end-to-end tests).
+- A conversation in full access runs a change and a command without a request, its button and the conversation list mark it, turning it off asks again, and the settings' switch makes new conversations start in full access after its confirmation (end-to-end tests, with axe on the dialogs and the marks in both themes).
 - Axe finds no WCAG 2.1 AA violation in the rows, their details, the approval requests, the dialogs and the Tools settings, in the light and dark themes.
 - In the pseudo-locale, every piece of text outside content comes from the catalog, and no layout overflows.

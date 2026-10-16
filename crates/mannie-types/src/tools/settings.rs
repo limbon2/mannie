@@ -86,6 +86,10 @@ pub struct ToolsSettings {
     pub allow_changes_in_workspace: bool,
     /// Environment variables that commands receive besides the built-in ones.
     pub command_environment: Vec<EnvName>,
+    /// Whether a new conversation starts in full access, which its own switch
+    /// changes afterwards. Off by default (ADR-0029, decision 2).
+    #[serde(default)]
+    pub full_access_for_new_conversations: bool,
 }
 
 impl SettingsSection for ToolsSettings {
@@ -102,6 +106,8 @@ pub struct UpdateToolsSettings {
     pub allow_changes_in_workspace: bool,
     /// The names of extra environment variables for commands.
     pub command_environment: Vec<String>,
+    /// Whether new conversations start in full access.
+    pub full_access_for_new_conversations: bool,
 }
 
 impl UpdateToolsSettings {
@@ -122,6 +128,7 @@ impl UpdateToolsSettings {
         Ok(ToolsSettings {
             allow_changes_in_workspace: self.allow_changes_in_workspace,
             command_environment,
+            full_access_for_new_conversations: self.full_access_for_new_conversations,
         })
     }
 }
@@ -175,6 +182,7 @@ mod tests {
                 " CARGO_HOME ".to_owned(),
                 "RUSTUP_HOME".to_owned(),
             ],
+            full_access_for_new_conversations: true,
         }
         .into_settings()
         .unwrap();
@@ -188,7 +196,21 @@ mod tests {
             ["CARGO_HOME", "RUSTUP_HOME"]
         );
         assert!(settings.allow_changes_in_workspace);
+        assert!(settings.full_access_for_new_conversations);
         assert!(!ToolsSettings::default().allow_changes_in_workspace);
+        assert!(!ToolsSettings::default().full_access_for_new_conversations);
+    }
+
+    #[test]
+    fn a_section_from_before_full_access_reads_with_it_off() {
+        let stored = serde_json::json!({
+            "allowChangesInWorkspace": true,
+            "commandEnvironment": [],
+        });
+
+        let settings = serde_json::from_value::<ToolsSettings>(stored).unwrap();
+
+        assert!(!settings.full_access_for_new_conversations);
     }
 
     #[test]
@@ -217,6 +239,7 @@ mod tests {
             serde_json::json!({
                 "allowChangesInWorkspace": true,
                 "commandEnvironment": ["CARGO_HOME"],
+                "fullAccessForNewConversations": false,
             })
         );
     }

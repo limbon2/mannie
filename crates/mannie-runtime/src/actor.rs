@@ -6,9 +6,11 @@
 //!
 //! A run can give tasks to child agents, which run as runs of their own
 //! (ADR-0024): `tasks.rs` holds the parent's side, and `child.rs` the side of
-//! a run that works on a task.
+//! a run that works on a task, a child's or, on a worker, one that the master
+//! assigned (ADR-0028).
 
 mod child;
+mod delegation;
 mod operations;
 mod tasks;
 
@@ -33,7 +35,9 @@ use tokio::time::Instant;
 
 pub(crate) use self::child::ChildLink;
 use self::child::ChildRun;
+pub(crate) use self::delegation::worker_label;
 use self::tasks::TaskLane;
+use crate::assigned::AssignedRun;
 use crate::budget::{Ledger, estimate_text, usage};
 use crate::calls::{CallError, CallOptions, Prepared, Setup};
 use crate::compaction::{self, ContextSize, Trigger};
@@ -68,6 +72,9 @@ pub(crate) enum Command {
     Stop,
     /// Mannie quits.
     Shutdown,
+    /// On a worker: the master revoked the credential lease of the run's
+    /// task, which ends the run as failed.
+    LeaseRevoked,
 }
 
 /// Why a run ends without completing.
@@ -231,8 +238,11 @@ pub(crate) struct RunActor {
     prompt_cut: bool,
     /// The tasks that the run gave to child agents.
     tasks: TaskLane,
-    /// The task that the run works on, when it is a child agent's.
+    /// The task that the run works on, when it is a child agent's or an
+    /// assigned one.
     child: Option<ChildRun>,
+    /// On a worker, the assignment of the task that the run works on.
+    assigned: Option<AssignedRun>,
 }
 
 /// Waits until `due`, or forever without a time.
@@ -246,6 +256,7 @@ async fn until(due: Option<Instant>) {
 fn halt(command: Option<Command>) -> Ending {
     match command {
         Some(Command::Stop) => Ending::Stopped,
+        Some(Command::LeaseRevoked) => Ending::Failed(RunFailure::LeaseRevoked),
         // A closed mailbox means the runtime is gone.
         Some(Command::Shutdown) | None => Ending::Interrupted,
     }
@@ -288,7 +299,8 @@ fn budget_bytes(tokens: u32) -> usize {
 impl Runtime {
     /// Starts the actor of a stored run, and returns its mailbox. The
     /// conversation was reserved by the command that stored the run, or it
-    /// is the task conversation of the parent run that `link` names.
+    /// is the task conversation of the parent run that `link` names, or of a
+    /// task that the master assigned.
     pub(crate) fn spawn_run(
         &self,
         conversation: ConversationId,
@@ -303,14 +315,22 @@ impl Runtime {
         let handle = RunHandle {
             run_id: run.clone(),
             profile_id: profile.clone(),
-            parent: link.as_ref().map(|link| link.parent.clone()),
+            parent: link.as_ref().and_then(|link| link.parent.clone()),
+            assigned: link.as_ref().is_some_and(|link| link.assigned.is_some()),
             mailbox: mailbox.clone(),
             ended,
         };
         lock(&self.inner.busy).insert(conversation.clone(), Busy::Running(handle));
-        let (authority, child) = match link {
-            Some(link) => (link.parent, Some(ChildRun::new(link.guard))),
-            None => (conversation.clone(), None),
+        // A child's tools work under its parent's authority (ADR-0024,
+        // decision 3); an assigned task's under its own conversation's and
+        // the host's ceiling.
+        let (authority, child, assigned) = match link {
+            Some(link) => (
+                link.parent.unwrap_or_else(|| conversation.clone()),
+                Some(ChildRun::new(link.guard)),
+                link.assigned,
+            ),
+            None => (conversation.clone(), None, None),
         };
         let actor = RunActor {
             runtime: self.clone(),
@@ -338,6 +358,7 @@ impl Runtime {
             prompt_cut: false,
             tasks: TaskLane::default(),
             child,
+            assigned,
         };
         let task = tokio::spawn(actor.run());
         let runtime = self.clone();
@@ -436,10 +457,13 @@ impl RunActor {
             return Err(Ending::Interrupted);
         }
         // A child takes its slot among the children before a model slot, so
-        // that it never holds a model slot while it waits for one.
+        // that it never holds a model slot while it waits for one. An
+        // assigned task waits for its lease in its slot, without a model
+        // slot too.
         if self.child.is_some() {
             self.acquire_child_slot().await?;
         }
+        self.await_lease().await?;
         let permit = self.acquire_slot().await?;
         let preparing = self.activity(RunActivity::Preparing);
         self.apply(
@@ -452,15 +476,21 @@ impl RunActor {
             Durability::Full,
         )
         .await?;
-        self.child_started();
+        self.child_started().await;
         let setup = {
             let runtime = self.runtime.clone();
             let profile = self.profile.clone();
             let agent = self.agent.clone();
             let task = self.child.is_some();
-            self.wait(async move { runtime.load_setup(&profile, &agent, task).await })
-                .await?
-                .map_err(Ending::Failed)?
+            let assigned = self.assigned.clone();
+            self.wait(async move {
+                match assigned {
+                    Some(assigned) => runtime.assigned_setup(&assigned, &agent).await,
+                    None => runtime.load_setup(&profile, &agent, task).await,
+                }
+            })
+            .await?
+            .map_err(Ending::Failed)?
         };
         self.binding.clone_from(&setup.binding);
         self.task_tools = setup
@@ -1241,13 +1271,23 @@ impl RunActor {
             output_tokens = self.usage.map(|usage| usage.output),
             "a run ended"
         );
+        // An assigned task's state carries the version of the ending that
+        // was just stored, and its lease goes with its run.
+        let version = if stored {
+            self.assigned_version().await
+        } else {
+            None
+        };
+        if let Some(assigned) = &self.assigned {
+            self.runtime.drop_lease(&assigned.task).await;
+        }
         // The busy map lets the next command in once the end is stored. A
         // child frees its slot and its conversation before its parent learns
         // that it ended, so that a follow-up finds both free.
         let child = self.child.take();
         self.runtime.release_run(&self.conversation, &self.run);
         if let Some(child) = child {
-            child.finish(task.filter(|_ending| stored));
+            child.finish(task.filter(|_ending| stored), version);
         }
     }
 }

@@ -12,8 +12,9 @@ mod settings;
 mod view;
 
 pub use document::{
-    AwaitedTask, ChildApproval, INSTRUCTION_PREVIEW_CHARS, MAX_INSTRUCTION_BYTES,
-    MAX_REPORT_VIEW_BYTES, MAX_TITLE_CHARS, TaskDocument, TaskPartDocument, TaskRefusal, TaskState,
+    AssignedTaskState, AwaitedTask, ChildApproval, INSTRUCTION_PREVIEW_CHARS,
+    MAX_INSTRUCTION_BYTES, MAX_REPORT_VIEW_BYTES, MAX_TITLE_CHARS, TaskDocument, TaskPartDocument,
+    TaskRefusal, TaskState, TaskWorker,
 };
 pub use settings::{
     ChildAgentsError, ChildAgentsSettings, ParallelChildren, UpdateChildAgentsSettings,

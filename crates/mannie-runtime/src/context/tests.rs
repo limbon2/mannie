@@ -581,6 +581,8 @@ fn assigned(number: u32, background: bool, state: TaskState) -> TaskDocument {
         failure: None,
         started_at: None,
         ended_at: None,
+        worker: None,
+        detached: false,
     }
 }
 
@@ -664,7 +666,7 @@ fn task_parts_read_as_calls_with_their_results() {
             tool_result("start_1", &texts::task_reported(1, "Found it.")),
             tool_result("start_2", &texts::task_started_in_background(2, "explore")),
             tool_result("follow_1", &texts::task_still_running(2)),
-            tool_result("start_4", &texts::task_interrupted(4)),
+            tool_result("start_4", &texts::task_interrupted(4, texts::THE_CHILD)),
         ]
     );
 }

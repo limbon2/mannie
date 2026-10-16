@@ -1,0 +1,30 @@
+# The FreeBSD tests of the nightly workflow for pull requests that change
+# what the worker runs: the process supervisor, the runtime, the link, its
+# contracts and the worker itself (ADR-0008, ADR-0014). Other pull requests
+# only cross-build the worker for FreeBSD (ci.yml). Actions are pinned by
+# commit SHA.
+name: FreeBSD
+
+on:
+  pull_request:
+    paths:
+      - apps/worker/**
+      - crates/mannie-link/**
+      - crates/mannie-runtime/**
+      - crates/mannie-tools/src/supervisor/**
+      - crates/mannie-tools/src/supervisor.rs
+      - proto/**
+      - scripts/ci/worker-service-unix.sh
+      - .github/workflows/freebsd.yml
+      - .github/workflows/nightly.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: freebsd-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  freebsd:
+    uses: ./.github/workflows/nightly.yml

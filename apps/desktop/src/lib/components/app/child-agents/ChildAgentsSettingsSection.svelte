@@ -2,6 +2,7 @@
   import CircleAlertIcon from '@lucide/svelte/icons/circle-alert';
   import { onMount } from 'svelte';
 
+  import FieldHelp from '#lib/components/app/FieldHelp.svelte';
   import * as Alert from '#lib/components/ui/alert/index.js';
   import { Button } from '#lib/components/ui/button/index.js';
   import * as Field from '#lib/components/ui/field/index.js';
@@ -68,7 +69,14 @@
   </div>
 {:else}
   <Field.Field>
-    <Field.Label for="child-agents-limit">{m.child_agents_settings_limit_label()}</Field.Label>
+    <div class="flex items-center gap-1">
+      <Field.Label for="child-agents-limit">{m.child_agents_settings_limit_label()}</Field.Label>
+      <FieldHelp
+        id="child-agents-limit-help"
+        field={m.child_agents_settings_limit_label()}
+        text={m.child_agents_settings_limit_description()}
+      />
+    </div>
     <Select.Root
       disabled={childAgentsSettings.saving}
       {items}
@@ -76,7 +84,7 @@
       value={String(settings.parallelChildren)}
       onValueChange={change}
     >
-      <Select.Trigger id="child-agents-limit" class="w-full max-w-xs">
+      <Select.Trigger id="child-agents-limit" class="w-full max-w-xs" aria-describedby="child-agents-limit-help">
         <Select.Value />
       </Select.Trigger>
       <Select.Content>
@@ -85,7 +93,6 @@
         {/each}
       </Select.Content>
     </Select.Root>
-    <Field.Description>{m.child_agents_settings_limit_description()}</Field.Description>
     <div role="status">
       {#if childAgentsSettings.saving}
         <p class="flex items-center gap-2 text-sm text-muted-foreground">

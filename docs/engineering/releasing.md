@@ -51,11 +51,11 @@ Each worker archive holds the binary and `LICENSE`. `node scripts/release.mjs` r
 
 ## 6. Signing
 
-- Worker artifacts are signed with Ed25519. The master and the worker embed the public key and check it before an update is installed ([ADR-0016](../adr/0016-link-machines-over-pinned-mtls-grpc.md)).
+- Worker artifacts are signed with Ed25519. The worker embeds the public key, and `mannie-worker update` checks an archive's signature with it before it installs the build ([ADR-0016](../adr/0016-link-machines-over-pinned-mtls-grpc.md), [decision D20](../roadmap/milestones.md#5-decisions)). The release workflow runs `mannie-worker update --check` on every signed archive, which proves that the built-in key is the release key.
 - Before the first release, the owner creates the key pair with `node scripts/release.mjs keygen <folder>`, stores the private key as the repository secret `MANNIE_RELEASE_SIGNING_KEY`, keeps an offline copy, deletes the file, and commits the public key as `release/mannie-release.pub`. The release workflow signs with the secret and checks every signature against the committed public key, so a release fails until both exist.
 - Windows installers are not code-signed (D16). Windows SmartScreen warns when an installer first runs, and the installation notes explain how to continue. Signing is considered again before 1.0.
 
 ## 7. Updates
 
 - The owner updates the desktop app by installing the new installer. Desktop auto-update is a later feature with its own ADR.
-- The master pushes worker updates as part of the [workers](../features/workers/README.md) feature.
+- The owner updates a worker on its host: they download the archive of the new release and its signature, and run `mannie-worker update` with administrator rights ([compatibility and updates](../features/workers/compatibility-and-updates.md#updating-a-worker)). The master pushes no builds (D20), and it says when a worker needs an update.

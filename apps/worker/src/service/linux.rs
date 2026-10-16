@@ -8,15 +8,22 @@ use std::path::Path;
 use anyhow::{Context, bail};
 
 use super::{SERVICE_NAME, report, unix};
+use crate::config::Config;
 
 /// Where `install` writes the unit.
 const UNIT_PATH: &str = "/etc/systemd/system/mannie-worker.service";
 
-pub(super) fn install(executable: &Path, data_directory: &Path, user: &str) -> anyhow::Result<()> {
-    let executable = unix::plain_path(executable, "worker's executable")?;
-    let data_directory = unix::plain_path(data_directory, "data folder")?;
+pub(super) fn install(
+    program: &Path,
+    config_file: &Path,
+    config: &Config,
+    user: &str,
+) -> anyhow::Result<()> {
+    let program = unix::plain_path(program, "worker's program")?;
+    let config_file = unix::plain_path(config_file, "configuration")?;
+    let data_directory = unix::plain_path(&config.data_dir, "data folder")?;
     unix::existing_account(user)?;
-    let unit = unit_file(executable, data_directory, user);
+    let unit = unit_file(program, config_file, data_directory, user);
     write_unit(&unit)?;
     report(&format!("Wrote the systemd unit {UNIT_PATH}."));
     unix::run("systemctl", &["daemon-reload".as_ref()])?;
@@ -30,7 +37,7 @@ pub(super) fn install(executable: &Path, data_directory: &Path, user: &str) -> a
 }
 
 pub(super) fn uninstall() -> anyhow::Result<()> {
-    if !Path::new(UNIT_PATH).exists() {
+    if !is_installed()? {
         bail!("the service {SERVICE_NAME} is not installed: {UNIT_PATH} does not exist");
     }
     unix::run(
@@ -40,10 +47,33 @@ pub(super) fn uninstall() -> anyhow::Result<()> {
     report(&format!("Stopped the service {SERVICE_NAME}."));
     fs::remove_file(UNIT_PATH).with_context(|| format!("could not remove {UNIT_PATH}"))?;
     unix::run("systemctl", &["daemon-reload".as_ref()])?;
-    report(&format!(
-        "Removed the systemd unit {UNIT_PATH}. The data folder was kept."
-    ));
+    report(&format!("Removed the systemd unit {UNIT_PATH}."));
     Ok(())
+}
+
+pub(super) fn is_installed() -> anyhow::Result<bool> {
+    Path::new(UNIT_PATH)
+        .try_exists()
+        .with_context(|| format!("could not look for {UNIT_PATH}"))
+}
+
+pub(super) fn is_running() -> anyhow::Result<bool> {
+    unix::succeeds(
+        "systemctl",
+        &[
+            "is-active".as_ref(),
+            "--quiet".as_ref(),
+            unit_name().as_ref(),
+        ],
+    )
+}
+
+pub(super) fn stop() -> anyhow::Result<()> {
+    unix::run("systemctl", &["stop".as_ref(), unit_name().as_ref()])
+}
+
+pub(super) fn start() -> anyhow::Result<()> {
+    unix::run("systemctl", &["start".as_ref(), unit_name().as_ref()])
 }
 
 fn unit_name() -> String {
@@ -76,8 +106,9 @@ fn write_unit(unit: &str) -> anyhow::Result<()> {
         .with_context(|| format!("could not write {UNIT_PATH}"))
 }
 
-/// The unit. The values are plain (see `unix::plain_path`), so none needs quoting.
-fn unit_file(executable: &str, data_directory: &str, user: &str) -> String {
+/// The unit. The values are plain (see `unix::plain_path`), so none needs
+/// quoting.
+fn unit_file(program: &str, config_file: &str, data_directory: &str, user: &str) -> String {
     format!(
         "\
 # Written by `mannie-worker service install`; `mannie-worker service uninstall` removes it.
@@ -94,9 +125,11 @@ Type=exec
 User={user}
 # Files the worker creates are readable only by its account.
 UMask=0077
+# No core dumps: the worker's memory holds credential leases.
+LimitCORE=0
 # Runs as root (+) to create the data folder for the account, readable only by it.
 ExecStartPre=+/usr/bin/install -d -o {user} -m 0700 {data_directory}
-ExecStart={executable} run --data-dir {data_directory}
+ExecStart={program} run --config {config_file}
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=30

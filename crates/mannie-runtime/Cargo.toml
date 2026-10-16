@@ -33,6 +33,12 @@ required-features = ["testing"]
 name = "tools_loop"
 required-features = ["testing"]
 
+# Full access: a conversation and its child agents run their operations
+# without asking, from the next call after the owner's switch.
+[[test]]
+name = "full_access"
+required-features = ["testing"]
+
 # Killing the process in every state of a tool call never repeats its
 # operation.
 [[test]]
@@ -66,6 +72,30 @@ required-features = ["testing"]
 # Profiles and their credentials in the vault.
 [[test]]
 name = "profiles"
+required-features = ["testing"]
+
+# Tasks that the master assigns to a worker: the worker agent, idempotent
+# assignments, follow-ups, leases, cancels, slots, restarts and the watch.
+[[test]]
+name = "assigned_tasks"
+required-features = ["testing"]
+
+# A worker's ceiling through the loop: every mode, the host's rules, its own
+# folders, a task that narrows the mode, and forged choices.
+[[test]]
+name = "ceiling"
+required-features = ["testing"]
+
+# Tasks delegated to a worker through an in-process port: reports, numbers,
+# follow-ups, approvals, Stop, offline workers, restarts and deletion.
+[[test]]
+name = "delegation"
+required-features = ["testing"]
+
+# The master ends after the part, after the rows and after a submission whose
+# answer was lost, and no case starts a second task.
+[[test]]
+name = "delegation_crash"
 required-features = ["testing"]
 
 # Tasks that a real model completes through the tools, and injection tasks;

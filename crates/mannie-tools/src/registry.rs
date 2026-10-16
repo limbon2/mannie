@@ -210,7 +210,7 @@ mod tests {
 
         assert_eq!(
             registry.get("run_command").is_some(),
-            cfg!(any(windows, target_os = "linux"))
+            cfg!(any(windows, target_os = "linux", target_os = "freebsd"))
         );
     }
 }

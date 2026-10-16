@@ -11,6 +11,7 @@ import type {
   GrantScope,
   NotRunReason,
   PathRefusal,
+  Refusal,
   ToolFailure,
 } from '#lib/generated/bindings.js';
 import { m } from '#lib/paraglide/messages.js';
@@ -89,6 +90,12 @@ export function toolsFailureMessage(failure: ToolsFailure): string {
     case 'environment_name_secret': {
       return m.tools_error_environment_name_secret({ name: error.name });
     }
+    case 'full_access_follows_parent': {
+      return m.tools_error_full_access_follows_parent();
+    }
+    case 'full_access_refused': {
+      return m.tools_error_full_access_refused();
+    }
     case 'grant_not_found': {
       return m.tools_error_grant_not_found();
     }
@@ -121,6 +128,9 @@ export function toolsFailureMessage(failure: ToolsFailure): string {
     }
     case 'too_many_environment_names': {
       return m.tools_error_too_many_environment_names({ max: error.max });
+    }
+    case 'worker_unreachable': {
+      return m.tools_error_worker_unreachable();
     }
     case 'written_by_newer_version': {
       return m.tools_error_written_by_newer_version();
@@ -233,11 +243,26 @@ export function notRunMessage(reason: NotRunReason): string {
     case 'over_budget': {
       return m.tools_not_run_over_budget();
     }
+    case 'refused': {
+      return refusalMessage(reason.refusal);
+    }
     case 'tools_off': {
       return m.tools_not_run_tools_off();
     }
     case 'unknown_tool': {
       return m.tools_not_run_unknown_tool();
+    }
+  }
+}
+
+/** What a worker's ceiling forbids. */
+export function refusalMessage(refusal: Refusal): string {
+  switch (refusal) {
+    case 'no_projects_on_host': {
+      return m.tools_refusal_no_projects_on_host();
+    }
+    case 'read_only_host': {
+      return m.tools_refusal_read_only_host();
     }
   }
 }
@@ -251,6 +276,9 @@ export function approvalReasonMessage(reason: ApprovalReason): string {
     case 'command': {
       return m.tools_reason_command();
     }
+    case 'host_asks': {
+      return m.tools_reason_host_asks();
+    }
     case 'mannie_folder': {
       return m.tools_reason_mannie_folder();
     }
@@ -259,6 +287,9 @@ export function approvalReasonMessage(reason: ApprovalReason): string {
     }
     case 'no_workspace': {
       return m.tools_reason_no_workspace();
+    }
+    case 'outside_allowed_folders': {
+      return m.tools_reason_outside_allowed_folders();
     }
     case 'outside_workspace': {
       return m.tools_reason_outside_workspace();
@@ -271,6 +302,9 @@ export function decisionMessage(decision: Decision): string {
   switch (decision) {
     case 'allowed_always': {
       return m.tools_decision_allowed_always();
+    }
+    case 'allowed_folder': {
+      return m.tools_decision_allowed_folder();
     }
     case 'allowed_for_conversation': {
       return m.tools_decision_allowed_for_conversation();
@@ -287,8 +321,17 @@ export function decisionMessage(decision: Decision): string {
     case 'denied': {
       return m.tools_decision_denied();
     }
+    case 'full_access': {
+      return m.tools_decision_full_access();
+    }
     case 'grant': {
       return m.tools_decision_grant();
+    }
+    case 'host_full_access': {
+      return m.tools_decision_host_full_access();
+    }
+    case 'host_rule': {
+      return m.tools_decision_host_rule();
     }
     case 'owner_named_project': {
       return m.tools_decision_owner_named_project();

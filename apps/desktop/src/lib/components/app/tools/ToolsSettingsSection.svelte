@@ -2,6 +2,8 @@
   import CircleAlertIcon from '@lucide/svelte/icons/circle-alert';
   import { onMount } from 'svelte';
 
+  import FieldHelp from '#lib/components/app/FieldHelp.svelte';
+  import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
   import * as Alert from '#lib/components/ui/alert/index.js';
   import { Button } from '#lib/components/ui/button/index.js';
   import * as Field from '#lib/components/ui/field/index.js';
@@ -18,13 +20,16 @@
 
   // The Tools section of the settings (docs/features/system-tools/
   // tool-activity.md, settings): whether changes inside a workspace run
-  // without asking, the command rules, the grants for a project or for every
+  // without asking, whether new conversations start in full access
+  // (ADR-0029), the command rules, the grants for a project or for every
   // conversation, and the environment variables that commands receive beyond
   // the built-in ones. Every change goes to the core, which checks it and
   // returns what it stored. A conversation's workspace is its project's
   // folder, which the sidebar adds (docs/features/chat/projects.md).
   let environmentDraft = $state('');
   let environmentSaved = $state(false);
+  /** Whether the owner confirms that new conversations start in full access. */
+  let confirmingFullAccess = $state(false);
 
   const settings = $derived(toolsSettings.settings);
   const saveFailure = $derived(toolsSettings.saveFailure);
@@ -72,6 +77,20 @@
     void toolsSettings.update({ allowChangesInWorkspace: allow });
   }
 
+  /** Turning full access on for new conversations asks first; turning it off does not. */
+  function setFullAccessDefault(enable: boolean): void {
+    if (enable) {
+      confirmingFullAccess = true;
+      return;
+    }
+    void toolsSettings.update({ fullAccessForNewConversations: false });
+  }
+
+  function confirmFullAccessDefault(): void {
+    confirmingFullAccess = false;
+    void toolsSettings.update({ fullAccessForNewConversations: true });
+  }
+
   onMount(() => {
     void load();
     void commandRules.load();
@@ -109,6 +128,18 @@
         id="tools-allow-changes"
         disabled={toolsSettings.saving}
         bind:checked={() => settings.allowChangesInWorkspace, setAllowChanges}
+      />
+    </Field.Field>
+
+    <Field.Field orientation="horizontal">
+      <Field.Content>
+        <Field.Label for="tools-full-access">{m.tools_settings_full_access()}</Field.Label>
+        <Field.Description>{m.tools_settings_full_access_description()}</Field.Description>
+      </Field.Content>
+      <Switch
+        id="tools-full-access"
+        disabled={toolsSettings.saving}
+        bind:checked={() => settings.fullAccessForNewConversations ?? false, setFullAccessDefault}
       />
     </Field.Field>
 
@@ -221,7 +252,14 @@
 
     <form class="flex flex-col gap-3" onsubmit={saveEnvironment}>
       <Field.Field>
-        <Field.Label for="tools-environment">{m.tools_settings_environment_label()}</Field.Label>
+        <div class="flex items-center gap-1">
+          <Field.Label for="tools-environment">{m.tools_settings_environment_label()}</Field.Label>
+          <FieldHelp
+            id="tools-environment-description"
+            field={m.tools_settings_environment_label()}
+            text={m.tools_settings_environment_description()}
+          />
+        </div>
         <Textarea
           id="tools-environment"
           class="min-h-24 font-mono"
@@ -230,9 +268,6 @@
           bind:value={environmentDraft}
           oninput={() => (environmentSaved = false)}
         />
-        <Field.Description id="tools-environment-description">
-          {m.tools_settings_environment_description()}
-        </Field.Description>
       </Field.Field>
       <div class="flex items-center gap-3">
         <Button disabled={toolsSettings.saving || !environmentChanged} type="submit">{m.tools_settings_save()}</Button>
@@ -251,3 +286,18 @@
     {/if}
   </div>
 {/if}
+
+<AlertDialog.Root bind:open={confirmingFullAccess}>
+  <AlertDialog.Content>
+    <AlertDialog.Header>
+      <AlertDialog.Title>{m.tools_settings_full_access_confirm_title()}</AlertDialog.Title>
+      <AlertDialog.Description>{m.tools_settings_full_access_confirm_description()}</AlertDialog.Description>
+    </AlertDialog.Header>
+    <AlertDialog.Footer>
+      <AlertDialog.Cancel>{m.tools_cancel()}</AlertDialog.Cancel>
+      <Button data-full-access-default-confirm="" variant="destructive" onclick={confirmFullAccessDefault}>
+        {m.tools_settings_full_access_confirm()}
+      </Button>
+    </AlertDialog.Footer>
+  </AlertDialog.Content>
+</AlertDialog.Root>

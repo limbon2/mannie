@@ -33,6 +33,7 @@
 
 - Positive: children run in the same runtime and loop as the conversation agent, with their operations journaled and authorized like the parent's. The parent's transcript records each task, its progress and its report, and one recovery path covers both. Workers can reuse the task part, the task contract and the lanes in M4.
 - Negative: the runtime grows a second kind of call, which the store and the context must treat as calls; the parent's actor multiplexes its children's states with its own work; and a task conversation is a conversation that the owner cannot write to.
+- Refinement in M4: tasks that the conversation agent gives to workers reuse this contract, but decision 9 does not hold for them: Stop cancels them without waiting for an offline worker, and quitting the master leaves them running ([ADR-0027](0027-delegate-tasks-to-workers-through-a-runtime-port.md)).
 - Risks: a report carries an injection that the parent's model follows, which the policy and the owner still stop and the injection corpus tests; a parent waits forever for a child that never ends, which every child's wait for its mailbox and the stop that the parent's end sends prevent; the slot limit starves a reply's foreground tasks behind other conversations' children, which the order of the pool keeps fair.
 
 ## Alternatives considered

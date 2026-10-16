@@ -15,19 +15,21 @@ use std::sync::Arc;
 use futures_util::future::BoxFuture;
 use mannie_store::{Change, Durability, NewArchive};
 use mannie_tools::{
-    CommandEnvironment, Done, Execution, Grants, PermissionClass, PolicyInputs, PrepareError,
-    ProjectFacts, StopReason, StopSignal, Tool, ToolContext, Verdict, decide, digest, result_limit,
-    saved_rule,
+    Ceiling, CommandEnvironment, Done, Execution, Grants, PermissionClass, PolicyInputs,
+    PrepareError, ProjectFacts, StopReason, StopSignal, Tool, ToolContext, Verdict, decide, digest,
+    result_limit, saved_rule,
 };
 use mannie_types::ids::ProjectId;
 use mannie_types::run::{RunActivity, RunFailure};
 use mannie_types::tools::{
     Access, ApprovalChoice, ApprovalRequest, ArchiveRef, CommandRule, Decision, GrantScope,
-    NotRunReason, ProcessRecord, ToolCallStatus, ToolResult, ToolsSettings,
+    NotRunReason, ProcessRecord, Refusal, ToolCallStatus, ToolResult, ToolsSettings,
 };
+use mannie_types::workers::CeilingMode;
 use tokio::sync::oneshot;
 
 use super::{Ending, MAX_DETAIL_CHARS, RunActor, StepCall, budget_bytes, halt};
+use crate::approvals::Answer;
 use crate::calls::Setup;
 use crate::projects::Moves;
 
@@ -65,6 +67,31 @@ struct Surroundings {
     rules: Vec<CommandRule>,
     /// The conversation's project.
     project: Option<ProjectId>,
+    /// On a worker, the ceiling of the task, narrowed as the task asks.
+    ceiling: Option<Ceiling>,
+    /// On a worker, its name, for its approval requests.
+    host: Option<String>,
+    /// Whether the conversation, or a child's parent, is in full access
+    /// (ADR-0029). The switch is read again for every call.
+    full_access: bool,
+}
+
+/// Why a call of a tool that the run does not have does not run. A read-only
+/// task is not offered the tools that change things, and a call of one that
+/// comes anyway meets the ceiling's refusal (docs/features/workers/
+/// host-and-ceiling.md, the ceiling).
+fn missing_tool_reason(setup: &Setup, tool: &str) -> NotRunReason {
+    let read_only = setup
+        .host
+        .as_ref()
+        .is_some_and(|host| host.mode == CeilingMode::ReadOnly);
+    if read_only && setup.agent.tools.contains(&tool) {
+        NotRunReason::Refused {
+            refusal: Refusal::ReadOnlyHost,
+        }
+    } else {
+        NotRunReason::UnknownTool
+    }
 }
 
 /// A store failure that ends the run.
@@ -98,7 +125,7 @@ impl RunActor {
             self.tool_calls += 1;
             self.publish_progress(call.document.activity.clone());
             if call.task.is_some() {
-                self.run_task_call(setup, call).await?;
+                Box::pin(self.run_task_call(setup, call)).await?;
             } else if self.run_call(setup, call).await? == CallEnd::Denied {
                 denied = true;
             }
@@ -112,7 +139,8 @@ impl RunActor {
 
     async fn run_call(&mut self, setup: &Setup, mut call: StepCall) -> Result<CallEnd, Ending> {
         let Some(tool) = setup.tool(&call.document.tool).map(Arc::clone) else {
-            self.end_call(call, NotRunReason::UnknownTool);
+            let reason = missing_tool_reason(setup, &call.document.tool);
+            self.end_call(call, reason);
             return Ok(CallEnd::Ran);
         };
         let arguments = call.arguments.clone().unwrap_or_default();
@@ -140,23 +168,7 @@ impl RunActor {
             None
         };
         loop {
-            let protected = &self.runtime.inner.tools.protected;
-            let verdict = decide(
-                &accesses,
-                &PolicyInputs {
-                    workspace: surroundings.context.workspace.as_deref(),
-                    allow_changes_in_workspace: surroundings.settings.allow_changes_in_workspace,
-                    protected,
-                    grants: Grants {
-                        conversation: &surroundings.grants,
-                        project: &surroundings.project_grants,
-                        always: &surroundings.always_grants,
-                    },
-                    rules: &surroundings.rules,
-                    project: surroundings.project.as_ref(),
-                    owner_request: owner_request.as_deref(),
-                },
-            );
+            let verdict = self.verdict(&accesses, &surroundings, owner_request.as_deref());
             let request = match verdict {
                 Verdict::Unrestricted => break,
                 Verdict::Allowed(decision) => {
@@ -165,9 +177,22 @@ impl RunActor {
                     break;
                 }
                 Verdict::Ask(request) => request,
+                Verdict::Refused(refusal) => {
+                    tracing::info!(run = %self.run, part = %call.part_id, tool = %call.document.tool, refusal = ?refusal, "the worker's ceiling refused a tool call");
+                    self.end_call(call, NotRunReason::Refused { refusal });
+                    return Ok(CallEnd::Ran);
+                }
             };
-            let choice = self.ask(&mut call, &accesses, &request).await?;
-            let decision = Decision::of_choice(&choice);
+            let answer = self.ask(&mut call, &accesses, &request).await?;
+            let (choice, decision) = match answer {
+                Answer::Owner(choice) => {
+                    let decision = Decision::of_choice(&choice);
+                    (Some(choice), decision)
+                }
+                // Full access allows this call once; it grants nothing longer
+                // and saves no rule (ADR-0029, decision 5).
+                Answer::FullAccess => (None, Decision::FullAccess),
+            };
             call.document.decision = Some(decision);
             call.document.decided_at = Some(self.now());
             if !decision.allows() {
@@ -178,7 +203,9 @@ impl RunActor {
                 self.flush(Durability::Full).await?;
                 return Ok(CallEnd::Denied);
             }
-            self.remember(&choice, &request).await;
+            if let Some(choice) = &choice {
+                self.remember(choice, &request).await;
+            }
             // The approval covers the accesses that the owner saw. Anything
             // that changed since goes back to the policy, and an earlier
             // approval no longer counts.
@@ -207,6 +234,34 @@ impl RunActor {
         }
         self.execute(&tool, call, surroundings.context, arguments, accesses)
             .await
+    }
+
+    /// What the policy decides about a call's accesses in its surroundings.
+    fn verdict(
+        &self,
+        accesses: &[Access],
+        surroundings: &Surroundings,
+        owner_request: Option<&str>,
+    ) -> Verdict {
+        decide(
+            accesses,
+            &PolicyInputs {
+                workspace: surroundings.context.workspace.as_deref(),
+                allow_changes_in_workspace: surroundings.settings.allow_changes_in_workspace,
+                protected: &self.runtime.inner.tools.protected,
+                grants: Grants {
+                    conversation: &surroundings.grants,
+                    project: &surroundings.project_grants,
+                    always: &surroundings.always_grants,
+                },
+                rules: &surroundings.rules,
+                project: surroundings.project.as_ref(),
+                owner_request,
+                ceiling: surroundings.ceiling.as_ref(),
+                host: surroundings.host.as_deref(),
+                full_access: surroundings.full_access,
+            },
+        )
     }
 
     /// Runs an authorized call and stores its result.
@@ -286,8 +341,9 @@ impl RunActor {
                 done = &mut execution => return Ok((done, halted)),
                 command = self.commands.recv(), if halted.is_none() => {
                     let ending = halt(command);
+                    // A revoked lease ends the run on purpose, as a stop does.
                     let reason = match ending {
-                        Ending::Stopped => StopReason::Stopped,
+                        Ending::Stopped | Ending::Failed(_) => StopReason::Stopped,
                         _ => StopReason::Interrupted,
                     };
                     tracing::info!(run = %self.run, part = %call.part_id, "stopping a running tool");
@@ -314,7 +370,7 @@ impl RunActor {
         call: &mut StepCall,
         accesses: &[Access],
         request: &ApprovalRequest,
-    ) -> Result<ApprovalChoice, Ending> {
+    ) -> Result<Answer, Ending> {
         call.document.status = ToolCallStatus::AwaitingApproval;
         call.document.accesses = accesses.to_vec();
         call.document.request = Some(request.clone());
@@ -439,6 +495,7 @@ impl RunActor {
             .as_ref()
             .and_then(|summary| summary.workspace.as_ref())
             .map(PathBuf::from);
+        let full_access = summary.as_ref().is_some_and(|summary| summary.full_access);
         let project = summary.and_then(|summary| summary.project_id);
         let projects = inner.store.projects().await?;
         let mut project_grants = Vec::new();
@@ -494,6 +551,14 @@ impl RunActor {
                 }),
             }
         };
+        let (workspace, ceiling, host) = match self.ceiling() {
+            Some((ceiling, host)) => (
+                ceiling.allowed_folders.first().cloned(),
+                Some(ceiling),
+                Some(host),
+            ),
+            None => (workspace, None, None),
+        };
         let runtime = self.runtime.clone();
         // Archives belong to the conversation of the call, also a child's.
         let context = ToolContext {
@@ -517,7 +582,25 @@ impl RunActor {
             always_grants,
             rules,
             project,
+            ceiling,
+            host,
+            full_access,
         })
+    }
+
+    /// On a worker, the ceiling of the run's calls, narrowed as its task
+    /// asks, with the worker's name; the first allowed folder is the
+    /// workspace (ADR-0028, decision 5). `None` on the master.
+    fn ceiling(&self) -> Option<(Ceiling, String)> {
+        let worker = self.runtime.worker_host()?;
+        let read_only = self
+            .assigned
+            .as_ref()
+            .is_some_and(|assigned| assigned.read_only);
+        let ceiling = worker
+            .ceiling
+            .narrowed(read_only.then_some(CeilingMode::ReadOnly));
+        Some((ceiling, worker.name.clone()))
     }
 
     /// Stores a call's result and finishes its part. Archived outputs are

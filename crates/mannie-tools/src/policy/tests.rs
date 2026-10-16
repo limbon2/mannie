@@ -4,10 +4,12 @@ use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{ProjectId, RuleId};
 use mannie_types::tools::{
     Access, AccessMode, ApprovalReason, ApprovalRequest, CommandRule, Decision, EntryCount,
-    GrantScope, RuleProposal, ToolsError,
+    GrantScope, Refusal, RuleProposal, ToolsError,
 };
+use mannie_types::workers::CeilingMode;
 
 use super::{Grants, PolicyInputs, Verdict, decide, saved_rule};
+use crate::ceiling::Ceiling;
 use crate::digest::digest;
 
 /// An absolute path on this platform: `C:\work` on Windows, `/work` elsewhere.
@@ -80,6 +82,9 @@ struct Inputs {
     rules: Vec<CommandRule>,
     project: Option<ProjectId>,
     owner_request: Option<String>,
+    ceiling: Option<Ceiling>,
+    host: Option<String>,
+    full_access: bool,
 }
 
 impl Inputs {
@@ -95,6 +100,25 @@ impl Inputs {
             rules: Vec::new(),
             project: None,
             owner_request: None,
+            ceiling: None,
+            host: None,
+            full_access: false,
+        }
+    }
+
+    /// A worker named `build-01` whose ceiling allows `/srv/app` and the
+    /// command rule `cargo test`, with its data in `/var/lib/mannie-worker`.
+    fn worker(mode: CeilingMode) -> Self {
+        Self {
+            workspace: Some(PathBuf::from(at("/srv/app"))),
+            protected: vec![PathBuf::from(at("/var/lib/mannie-worker"))],
+            ceiling: Some(Ceiling {
+                mode,
+                allowed_folders: vec![PathBuf::from(at("/srv/app"))],
+                rules: vec![rule(&["cargo", "test"], None)],
+            }),
+            host: Some("build-01".to_owned()),
+            ..Self::new()
         }
     }
 
@@ -113,6 +137,9 @@ impl Inputs {
                 rules: &self.rules,
                 project: self.project.as_ref(),
                 owner_request: self.owner_request.as_deref(),
+                ceiling: self.ceiling.as_ref(),
+                host: self.host.as_deref(),
+                full_access: self.full_access,
             },
         )
     }
@@ -130,8 +157,28 @@ fn ask(
         grants,
         rule,
         project: None,
+        host: None,
     })
 }
+
+/// A worker's request: it names the host and offers nothing for longer than
+/// once.
+fn worker_ask(accesses: &[Access], reasons: &[ApprovalReason]) -> Verdict {
+    Verdict::Ask(ApprovalRequest {
+        digest: digest(accesses),
+        reasons: reasons.to_vec(),
+        grants: Vec::new(),
+        rule: None,
+        project: None,
+        host: Some("build-01".to_owned()),
+    })
+}
+
+const MODES: [CeilingMode; 3] = [
+    CeilingMode::ReadOnly,
+    CeilingMode::Ask,
+    CeilingMode::Autonomous,
+];
 
 fn project_id() -> ProjectId {
     ProjectId::parse("0199e0f2-0000-7000-a000-000000000001").unwrap()
@@ -589,5 +636,275 @@ fn saved_rules_keep_the_chosen_leading_words() {
     assert_eq!(
         saved_rule(&proposal, 4, false),
         Err(ToolsError::RulePrefixInvalid)
+    );
+}
+
+// The ceiling of a worker (docs/features/workers/host-and-ceiling.md, the
+// ceiling): one test for each row of its table.
+
+#[test]
+fn a_read_inside_the_allowed_folders_runs_in_every_mode() {
+    for mode in MODES {
+        assert_eq!(
+            Inputs::worker(mode).decide(&[read("/srv/app/src/main.rs")]),
+            Verdict::Allowed(Decision::AllowedFolder),
+            "{mode:?}"
+        );
+    }
+}
+
+#[test]
+fn a_read_outside_the_allowed_folders_asks_in_every_mode() {
+    for mode in MODES {
+        let accesses = [read("/etc/hosts")];
+        assert_eq!(
+            Inputs::worker(mode).decide(&accesses),
+            worker_ask(&accesses, &[ApprovalReason::OutsideAllowedFolders]),
+            "{mode:?}"
+        );
+    }
+}
+
+#[test]
+fn read_only_refuses_every_change_and_every_command() {
+    let inputs = Inputs::worker(CeilingMode::ReadOnly);
+
+    for accesses in [
+        vec![write("/srv/app/a.txt")],
+        vec![write("/tmp/a.txt")],
+        vec![command("cargo test", "/srv/app")],
+        vec![command("ls", "/srv/app")],
+    ] {
+        assert_eq!(
+            inputs.decide(&accesses),
+            Verdict::Refused(Refusal::ReadOnlyHost),
+            "{accesses:?}"
+        );
+    }
+}
+
+#[test]
+fn ask_asks_for_every_change_and_every_command() {
+    let inputs = Inputs::worker(CeilingMode::Ask);
+    let inside = [write("/srv/app/a.txt")];
+    let outside = [write("/tmp/a.txt")];
+    let ruled = [command("cargo test", "/srv/app")];
+
+    assert_eq!(
+        inputs.decide(&inside),
+        worker_ask(&inside, &[ApprovalReason::HostAsks])
+    );
+    assert_eq!(
+        inputs.decide(&outside),
+        worker_ask(&outside, &[ApprovalReason::OutsideAllowedFolders])
+    );
+    assert_eq!(
+        inputs.decide(&ruled),
+        worker_ask(&ruled, &[ApprovalReason::Command])
+    );
+}
+
+#[test]
+fn autonomous_runs_changes_inside_the_allowed_folders_and_commands_that_a_host_rule_allows() {
+    let inputs = Inputs::worker(CeilingMode::Autonomous);
+    let outside = [write("/tmp/a.txt")];
+    let unruled = [command("cargo build", "/srv/app")];
+    let chained = [command("cargo test; rm -rf /srv/app", "/srv/app")];
+
+    assert_eq!(
+        inputs.decide(&[write("/srv/app/a.txt")]),
+        Verdict::Allowed(Decision::AllowedFolder)
+    );
+    assert_eq!(
+        inputs.decide(&[command("cargo test --workspace", "/srv/app")]),
+        Verdict::Allowed(Decision::HostRule)
+    );
+    assert_eq!(
+        inputs.decide(&outside),
+        worker_ask(&outside, &[ApprovalReason::OutsideAllowedFolders])
+    );
+    assert_eq!(
+        inputs.decide(&unruled),
+        worker_ask(&unruled, &[ApprovalReason::Command])
+    );
+    // A rule never covers shell metacharacters.
+    assert_eq!(
+        inputs.decide(&chained),
+        worker_ask(&chained, &[ApprovalReason::Command])
+    );
+}
+
+#[test]
+fn the_workers_own_folders_always_ask_and_read_only_refuses_changes_there() {
+    let read_data = [read("/var/lib/mannie-worker/link-key")];
+    let write_data = [write("/var/lib/mannie-worker/master-pin")];
+    for mode in MODES {
+        assert_eq!(
+            Inputs::worker(mode).decide(&read_data),
+            worker_ask(&read_data, &[ApprovalReason::MannieFolder]),
+            "{mode:?}"
+        );
+    }
+    assert_eq!(
+        Inputs::worker(CeilingMode::Autonomous).decide(&write_data),
+        worker_ask(&write_data, &[ApprovalReason::MannieFolder])
+    );
+    assert_eq!(
+        Inputs::worker(CeilingMode::ReadOnly).decide(&write_data),
+        Verdict::Refused(Refusal::ReadOnlyHost)
+    );
+}
+
+#[test]
+fn one_refused_access_refuses_the_whole_operation() {
+    let accesses = [read("/srv/app/a.txt"), write("/srv/app/b.txt")];
+
+    assert_eq!(
+        Inputs::worker(CeilingMode::ReadOnly).decide(&accesses),
+        Verdict::Refused(Refusal::ReadOnlyHost)
+    );
+}
+
+#[test]
+fn a_move_into_a_project_is_refused_on_a_worker() {
+    for mode in MODES {
+        assert_eq!(
+            Inputs::worker(mode).decide(&[move_into("Mannie", "/srv/app")]),
+            Verdict::Refused(Refusal::NoProjectsOnHost),
+            "{mode:?}"
+        );
+    }
+}
+
+#[test]
+fn a_task_narrows_the_ceiling_and_never_widens_it() {
+    let mut inputs = Inputs::worker(CeilingMode::Autonomous);
+    let ceiling = inputs.ceiling.clone().unwrap();
+    inputs.ceiling = Some(ceiling.narrowed(Some(CeilingMode::ReadOnly)));
+
+    assert_eq!(
+        inputs.decide(&[write("/srv/app/a.txt")]),
+        Verdict::Refused(Refusal::ReadOnlyHost)
+    );
+
+    let mut asking = Inputs::worker(CeilingMode::Ask);
+    let ceiling = asking.ceiling.clone().unwrap();
+    asking.ceiling = Some(ceiling.narrowed(Some(CeilingMode::Autonomous)));
+    let accesses = [write("/srv/app/a.txt")];
+
+    assert_eq!(
+        asking.decide(&accesses),
+        worker_ask(&accesses, &[ApprovalReason::HostAsks])
+    );
+}
+
+#[test]
+fn a_host_rule_limited_to_a_folder_runs_only_there() {
+    let mut inputs = Inputs::worker(CeilingMode::Autonomous);
+    if let Some(ceiling) = &mut inputs.ceiling {
+        ceiling.rules = vec![rule(&["make"], Some("/srv/app"))];
+    }
+    let elsewhere = [command("make", "/tmp")];
+
+    assert_eq!(
+        inputs.decide(&[command("make", "/srv/app/sub")]),
+        Verdict::Allowed(Decision::HostRule)
+    );
+    assert_eq!(
+        inputs.decide(&elsewhere),
+        worker_ask(&elsewhere, &[ApprovalReason::Command])
+    );
+}
+
+#[test]
+fn the_masters_rules_and_workspace_setting_do_not_apply_on_a_worker() {
+    let mut inputs = Inputs::worker(CeilingMode::Ask);
+    inputs.rules = vec![rule(&["ls"], None)];
+    inputs.allow_changes_in_workspace = true;
+    let listing = [command("ls", "/srv/app")];
+    let change = [write("/srv/app/a.txt")];
+
+    assert_eq!(
+        inputs.decide(&listing),
+        worker_ask(&listing, &[ApprovalReason::Command])
+    );
+    assert_eq!(
+        inputs.decide(&change),
+        worker_ask(&change, &[ApprovalReason::HostAsks])
+    );
+}
+
+#[test]
+fn full_access_allows_every_operation_on_the_master() {
+    let mut inputs = Inputs::new();
+    inputs.full_access = true;
+
+    for accesses in [
+        vec![read("/elsewhere/notes.txt")],
+        vec![write("/work/src/main.rs")],
+        vec![write("/data/mannie/mannie.sqlite")],
+        vec![command("rm -rf build && cargo build", "/work")],
+        vec![move_into("app", "/projects/app")],
+        vec![read("/work/a.txt"), command("make", "/data/mannie")],
+    ] {
+        assert_eq!(
+            inputs.decide(&accesses),
+            Verdict::Allowed(Decision::FullAccess),
+            "{accesses:?}"
+        );
+    }
+}
+
+#[test]
+fn a_conversations_full_access_is_no_input_of_a_workers_ceiling() {
+    let mut inputs = Inputs::worker(CeilingMode::Ask);
+    inputs.full_access = true;
+    let listing = [command("ls", "/srv/app")];
+
+    assert_eq!(
+        inputs.decide(&listing),
+        worker_ask(&listing, &[ApprovalReason::Command])
+    );
+}
+
+#[test]
+fn a_host_in_full_access_runs_every_path_and_command() {
+    let inputs = Inputs::worker(CeilingMode::FullAccess);
+
+    for accesses in [
+        vec![read("/etc/hosts")],
+        vec![write("/srv/app/a.txt")],
+        vec![write("/home/someone/b.txt")],
+        vec![write("/var/lib/mannie-worker/mannie-worker.sqlite")],
+        vec![command("ls | wc -l", "/tmp")],
+        vec![command("cargo build", "/var/lib/mannie-worker")],
+    ] {
+        assert_eq!(
+            inputs.decide(&accesses),
+            Verdict::Allowed(Decision::HostFullAccess),
+            "{accesses:?}"
+        );
+    }
+    assert_eq!(
+        inputs.decide(&[move_into("app", "/projects/app")]),
+        Verdict::Refused(Refusal::NoProjectsOnHost)
+    );
+}
+
+#[test]
+fn a_read_only_task_narrows_a_host_in_full_access() {
+    let inputs = Inputs::worker(CeilingMode::FullAccess.narrowed_by(Some(CeilingMode::ReadOnly)));
+
+    assert_eq!(
+        inputs.decide(&[read("/srv/app/a.txt")]),
+        Verdict::Allowed(Decision::AllowedFolder)
+    );
+    assert_eq!(
+        inputs.decide(&[write("/srv/app/a.txt")]),
+        Verdict::Refused(Refusal::ReadOnlyHost)
+    );
+    assert_eq!(
+        inputs.decide(&[command("ls", "/srv/app")]),
+        Verdict::Refused(Refusal::ReadOnlyHost)
     );
 }

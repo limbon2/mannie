@@ -4,7 +4,9 @@
 //!
 //! Publishing replaces a child's state and never waits, so a child never
 //! blocks on its parent, and the parent always reads the latest state of
-//! each child, its end included.
+//! each child, its end included. On a worker, the run of a task that the
+//! master assigned publishes the same state to the worker's assigned tasks
+//! instead, which the master follows (ADR-0028, decision 1).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -15,6 +17,8 @@ use mannie_types::ids::TaskId;
 use mannie_types::run::RunFailure;
 use mannie_types::tasks::{ChildApproval, TaskState};
 use tokio::sync::Notify;
+
+use crate::assigned::AssignedTasks;
 
 /// What a child's task has ended with.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,6 +40,8 @@ pub(crate) struct ChildState {
     pub(crate) tool_calls: u32,
     /// The child's call that waits for the owner.
     pub(crate) approval: Option<ChildApproval>,
+    /// On a worker: whether the task's run waits for its credential lease.
+    pub(crate) waits_for_lease: bool,
     /// How the task ended, once it ended.
     pub(crate) end: Option<ChildEnd>,
 }
@@ -114,43 +120,71 @@ impl TaskBoard {
     }
 }
 
-/// A child's hold on its parent's board. When the child's run ends without
-/// having published its end, as when its task panics, the guard publishes a
-/// failure, so the parent never waits for a child that is gone.
+/// Where the run of a task publishes the task's state.
+#[derive(Debug, Clone)]
+pub(crate) enum TaskSink {
+    /// The board of the parent's run, for a child agent.
+    Board(Arc<TaskBoard>),
+    /// The worker's assigned tasks, for a task that the master assigned.
+    Assigned(Arc<AssignedTasks>),
+}
+
+impl TaskSink {
+    fn publish(&self, task: &TaskId, change: impl FnOnce(&mut ChildState)) {
+        match self {
+            Self::Board(board) => board.publish(task, change),
+            Self::Assigned(assigned) => assigned.publish(task, change),
+        }
+    }
+}
+
+/// A task's hold on where its run publishes: its parent's board, or the
+/// worker's assigned tasks. When the run ends without having published the
+/// task's end, as when its task panics, the guard publishes a failure, so
+/// nobody waits for a run that is gone.
 #[derive(Debug)]
 pub(crate) struct ChildGuard {
-    board: Arc<TaskBoard>,
+    sink: TaskSink,
     task: TaskId,
     clock: Arc<dyn mannie_types::clock::Clock>,
     published_end: bool,
 }
 
 impl ChildGuard {
-    /// The guard of a child's task on its parent's board.
+    /// The guard of a task that publishes to `sink`.
     pub(crate) fn new(
-        board: Arc<TaskBoard>,
+        sink: TaskSink,
         task: TaskId,
         clock: Arc<dyn mannie_types::clock::Clock>,
     ) -> Self {
         Self {
-            board,
+            sink,
             task,
             clock,
             published_end: false,
         }
     }
 
-    /// Changes the child's state on the board.
+    /// Changes the task's state.
     pub(crate) fn publish(&self, change: impl FnOnce(&mut ChildState)) {
-        self.board.publish(&self.task, change);
+        self.sink.publish(&self.task, change);
     }
 
-    /// Publishes the task's end, once its child's run stored it.
+    /// Records the version of the task's latest stored state, which the
+    /// states that follow carry. Only an assigned task has versions.
+    pub(crate) fn set_version(&self, version: u64) {
+        if let TaskSink::Assigned(assigned) = &self.sink {
+            assigned.set_version(&self.task, version);
+        }
+    }
+
+    /// Publishes the task's end, once its run stored it.
     pub(crate) fn publish_end(&mut self, ending: TaskEnding) {
         let ended_at = self.clock.now();
-        self.board.publish(&self.task, |state| {
+        self.sink.publish(&self.task, |state| {
             state.approval = None;
             state.activity = None;
+            state.waits_for_lease = false;
             state.end = Some(ChildEnd { ending, ended_at });
         });
         self.published_end = true;
@@ -182,7 +216,7 @@ mod tests {
     use mannie_types::run::RunFailure;
     use mannie_types::tasks::TaskState;
 
-    use super::{ChildGuard, TaskBoard};
+    use super::{ChildGuard, TaskBoard, TaskSink};
 
     fn task(last: u32) -> TaskId {
         TaskId::parse(&format!("0199e0f2-0000-7000-a000-{last:012}")).unwrap()
@@ -217,7 +251,7 @@ mod tests {
     #[tokio::test]
     async fn an_ended_task_ignores_late_updates() {
         let board = Arc::new(TaskBoard::default());
-        let mut guard = ChildGuard::new(Arc::clone(&board), task(1), clock());
+        let mut guard = ChildGuard::new(TaskSink::Board(Arc::clone(&board)), task(1), clock());
 
         guard.publish_end(TaskEnding {
             state: TaskState::Reported,
@@ -236,7 +270,7 @@ mod tests {
     #[tokio::test]
     async fn a_child_that_ends_without_its_end_fails_on_the_board() {
         let board = Arc::new(TaskBoard::default());
-        let guard = ChildGuard::new(Arc::clone(&board), task(1), clock());
+        let guard = ChildGuard::new(TaskSink::Board(Arc::clone(&board)), task(1), clock());
         guard.publish(|state| state.started_at = Some(UtcMillis::from_millis(5)));
 
         drop(guard);

@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                        |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                                       |
-| Last updated | 2026-10-14                                                                                                                                                                             |
+| Last updated | 2026-10-16                                                                                                                                                                             |
 | Related      | [Repository](repository.md), [Releasing](releasing.md), [Security](../architecture/security.md), [Extension points](../architecture/extension-points.md), [AGENTS.md](../../AGENTS.md) |
 
 ## 1. Definition of Done
@@ -57,6 +57,7 @@ Nothing reaches `main` as a placeholder: no stubbed security checks, no TODO in 
 - Every action works from the keyboard, focus is always visible, and the app meets WCAG 2.1 AA. End-to-end tests run axe checks.
 - English comes first, and adding a language must not need code changes (D10). Every piece of visible text comes from the message catalog, and the core returns codes with arguments that the UI turns into messages ([ADR-0019](../adr/0019-keep-visible-text-in-message-catalogs.md)).
 - Layouts leave room for text that grows by about 40% in translation, and Mannie's own components use logical (start and end) styling where direction matters.
+- A field's help text sits behind a "(?)" button beside its label (`components/app/FieldHelp.svelte`), which shows it on hover and keyboard focus and keeps it for screen readers through the control's `aria-describedby`. Counters, status, the text of each option in a choice and warnings that something runs without asking stay visible.
 - Density suits a working tool, and spacing comes from the theme tokens.
 
 ## 5. Contracts

@@ -9,7 +9,7 @@
 //! output lists the allowed variables and not the planted one.
 
 #![cfg(test)]
-#![cfg(any(windows, target_os = "linux"))]
+#![cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 
 use std::process::Command;
 
@@ -88,6 +88,7 @@ async fn child_runs_env() {
             digest,
             choice: ApprovalChoice::AllowOnce,
         })
+        .await
         .unwrap();
     let transcript = harness
         .wait_for_run(&started.conversation_id, &started.run_id)

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::clock::UtcMillis;
-use crate::ids::{ConversationId, PartId, RunId, TaskId, TurnId};
+use crate::ids::{ConversationId, PartId, RunId, TaskId, TurnId, WorkerId};
 use crate::run::RunFailure;
 use crate::tools::{ArchiveRef, ToolCallDocument};
 
@@ -103,6 +103,39 @@ pub enum TaskRefusal {
     BudgetUsed,
     /// Mannie ended after the call was stored and before its task was.
     NotStarted,
+    /// The worker that a delegation named is not connected
+    /// (docs/features/workers/delegation.md).
+    WorkerOffline {
+        /// The worker's name.
+        worker: String,
+    },
+    /// No paired worker has the name that a delegation gave.
+    WorkerUnknown {
+        /// The name that the call gave.
+        worker: String,
+    },
+    /// The worker runs a version of Mannie that this one does not work with.
+    WorkerIncompatible {
+        /// The worker's name.
+        worker: String,
+    },
+    /// The conversation's provider profile uses an address on this computer,
+    /// which a worker on another machine cannot reach.
+    ProfileNotReachable {
+        /// The worker's name.
+        worker: String,
+    },
+}
+
+/// The worker that a task runs on (docs/features/workers/delegation.md).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskWorker {
+    /// The worker.
+    pub id: WorkerId,
+    /// The worker's name when the task started. The worker wrote it, so it
+    /// is content.
+    pub name: String,
 }
 
 /// A call of a child that waits for the owner, as its parent's part mirrors
@@ -138,6 +171,48 @@ impl ChildApproval {
             call: self.call.view(&self.arguments),
         }
     }
+}
+
+/// The state of a task that the master assigned to a worker, as the worker
+/// publishes it and the master follows it (docs/features/workers/
+/// delegation.md, following tasks). Every change of a worker's tasks has a
+/// higher version than the one before, so the master follows them from the
+/// version it stored last.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssignedTaskState {
+    /// The task.
+    pub task_id: TaskId,
+    /// The task's conversation on the worker.
+    pub conversation_id: ConversationId,
+    /// The version of this state.
+    pub version: u64,
+    /// Where the task is in its life.
+    pub state: TaskState,
+    /// When the worker agent started to work.
+    #[serde(default)]
+    pub started_at: Option<UtcMillis>,
+    /// The activity of the worker agent's current tool call.
+    #[serde(default)]
+    pub activity: Option<String>,
+    /// How many tool calls the worker agent made for the task.
+    #[serde(default)]
+    pub tool_calls: u32,
+    /// The call that waits for the owner.
+    #[serde(default)]
+    pub approval: Option<ChildApproval>,
+    /// Whether the task's run waits for its credential lease.
+    #[serde(default)]
+    pub waits_for_lease: bool,
+    /// The worker agent's report, once the task reported.
+    #[serde(default)]
+    pub report: Option<String>,
+    /// Why the task failed.
+    #[serde(default)]
+    pub failure: Option<RunFailure>,
+    /// When the task ended.
+    #[serde(default)]
+    pub ended_at: Option<UtcMillis>,
 }
 
 /// A task that a wait waits for.
@@ -199,6 +274,13 @@ pub struct TaskDocument {
     /// When the task ended.
     #[serde(default)]
     pub ended_at: Option<UtcMillis>,
+    /// The worker that runs the task, or `None` for a child agent.
+    #[serde(default)]
+    pub worker: Option<TaskWorker>,
+    /// Whether the master let the task go while it ran on its worker: the
+    /// part ended, and the task may still run there.
+    #[serde(default)]
+    pub detached: bool,
 }
 
 impl TaskDocument {
@@ -221,6 +303,8 @@ impl TaskDocument {
             failure: self.failure.clone(),
             started_at: self.started_at,
             ended_at: self.ended_at,
+            worker: self.worker.clone(),
+            detached: self.detached,
         }
     }
 }
@@ -294,6 +378,8 @@ mod tests {
             failure: None,
             started_at: Some(UtcMillis::from_millis(10)),
             ended_at: None,
+            worker: None,
+            detached: false,
         }
     }
 

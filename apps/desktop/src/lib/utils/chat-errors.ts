@@ -60,6 +60,9 @@ export function runFailureMessage(failure: RunFailure): string {
     case 'invalid_response': {
       return m.chat_failure_invalid_response();
     }
+    case 'lease_revoked': {
+      return m.chat_failure_lease_revoked();
+    }
     case 'model_not_found': {
       return m.chat_failure_model_not_found({ model: failure.model });
     }
@@ -129,6 +132,9 @@ export function chatFailureMessage(failure: ChatFailure): string {
     case 'instructions_too_long': {
       return m.chat_error_instructions_too_long({ maxBytes: formatCount(error.maxBytes) });
     }
+    case 'instructions_too_many_characters': {
+      return m.chat_error_instructions_too_many_characters({ maxCharacters: formatCount(error.maxCharacters) });
+    }
     case 'message_empty': {
       return m.chat_error_message_empty();
     }
@@ -179,6 +185,9 @@ export function chatFailureMessage(failure: ChatFailure): string {
     }
     case 'task_conversation': {
       return m.chat_error_task_conversation();
+    }
+    case 'worker_unreachable': {
+      return m.chat_error_worker_unreachable();
     }
     case 'title_empty': {
       return m.chat_error_title_empty();

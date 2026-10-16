@@ -2,12 +2,12 @@
 //! per change, each with the conversation's next sequence number
 //! (ADR-0012, decisions 3 and 10).
 
-use mannie_types::ids::{ConversationId, PartId, ProjectId, RunId, TurnId};
+use mannie_types::ids::{ConversationId, PartId, ProfileId, ProjectId, RunId, TurnId};
 use mannie_types::run::{RunActivity, RunOutcome, RunState};
 use mannie_types::tasks::{TaskPartDocument, TaskRefusal, TaskState};
 use mannie_types::tools::{ToolCallDocument, ToolCallStatus};
 use mannie_types::transcript::{ContextUsage, ConversationEvent, PartKind, PartState};
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use super::rows::{
     self, CheckpointDocument, EventBody, PartDocument, StoredRow, kinds, streaming_text, to_json,
@@ -22,9 +22,9 @@ use crate::{Durability, Store};
 const SELECT_CONVERSATION_EXISTS: &str = "SELECT 1 FROM runtime_conversations WHERE id = ?1";
 const INSERT_CONVERSATION: &str = "INSERT INTO runtime_conversations \
      (id, title, title_source, profile_id, project_id, workspace, parent_conversation_id, \
-     task_number, task_agent, created_at, updated_at) \
+     task_number, task_agent, task_worker_id, task_worker_name, created_at, updated_at) \
      VALUES (?1, ?2, 'first_message', ?3, ?5, \
-     (SELECT folder FROM runtime_projects WHERE id = ?5), ?6, ?7, ?8, ?4, ?4)";
+     (SELECT folder FROM runtime_projects WHERE id = ?5), ?6, ?7, ?8, ?9, ?10, ?4, ?4)";
 const SELECT_PROJECT_EXISTS: &str = "SELECT 1 FROM runtime_projects WHERE id = ?1";
 const SELECT_CONVERSATION_PROJECT: &str =
     "SELECT project_id FROM runtime_conversations WHERE id = ?1";
@@ -92,6 +92,7 @@ const UPDATE_CONTEXT: &str = "UPDATE runtime_conversations \
 const RENAME: &str =
     "UPDATE runtime_conversations SET title = ?2, title_source = 'owner' WHERE id = ?1";
 const SET_PROFILE: &str = "UPDATE runtime_conversations SET profile_id = ?2 WHERE id = ?1";
+const SET_FULL_ACCESS: &str = "UPDATE runtime_conversations SET full_access = ?2 WHERE id = ?1";
 const SET_PROJECT: &str = "UPDATE runtime_conversations \
      SET project_id = ?2, workspace = (SELECT folder FROM runtime_projects WHERE id = ?2) \
      WHERE id = ?1";
@@ -133,6 +134,7 @@ pub(crate) const STATEMENTS: &[&str] = &[
     UPDATE_CONTEXT,
     RENAME,
     SET_PROFILE,
+    SET_FULL_ACCESS,
     SET_PROJECT,
 ];
 
@@ -161,6 +163,34 @@ impl Store {
             TransactError::Store(error) => RuntimeStoreError::Store(error),
         })
     }
+}
+
+/// Stores a conversation's row. The caller checks that its project exists.
+pub(super) fn insert_conversation(
+    connection: &Connection,
+    id: &str,
+    conversation: &NewConversation,
+    now: i64,
+) -> Result<(), RuntimeStoreError> {
+    let profile = conversation.profile_id.as_ref().map(ProfileId::as_str);
+    let project = conversation.project_id.as_ref().map(ProjectId::as_str);
+    let task = conversation.task.as_ref();
+    let worker = task.and_then(|origin| origin.worker.as_ref());
+    connection
+        .prepare_cached(INSERT_CONVERSATION)?
+        .execute(params![
+            id,
+            conversation.title,
+            profile,
+            now,
+            project,
+            task.map(|origin| origin.parent_id.as_str()),
+            task.map(|origin| origin.number),
+            task.map(|origin| origin.agent.as_str()),
+            worker.map(|worker| worker.id.as_str()),
+            worker.map(|worker| worker.name.as_str())
+        ])?;
+    Ok(())
 }
 
 /// The state of one batch while it is applied.
@@ -298,6 +328,14 @@ impl Batch<'_> {
                 self.summary_changed = true;
                 Ok(())
             }
+            Change::SetFullAccess { enabled } => {
+                self.transaction
+                    .prepare_cached(SET_FULL_ACCESS)?
+                    .execute(params![self.conversation, enabled])?;
+                self.append(kinds::CONVERSATION_CHANGED, None, &EventBody::empty())?;
+                self.summary_changed = true;
+                Ok(())
+            }
             Change::SetProject { project_id } => self.set_project(&project_id),
         }
     }
@@ -306,30 +344,10 @@ impl Batch<'_> {
         &mut self,
         conversation: &NewConversation,
     ) -> Result<(), RuntimeStoreError> {
-        let profile = conversation
-            .profile_id
-            .as_ref()
-            .map(|id| id.as_str().to_owned());
-        let project = conversation
-            .project_id
-            .as_ref()
-            .map(|id| id.as_str().to_owned());
-        if let Some(project) = &project {
-            self.require_project(project)?;
+        if let Some(project) = &conversation.project_id {
+            self.require_project(project.as_str())?;
         }
-        let task = conversation.task.as_ref();
-        self.transaction
-            .prepare_cached(INSERT_CONVERSATION)?
-            .execute(params![
-                self.conversation,
-                conversation.title,
-                profile,
-                self.now,
-                project,
-                task.map(|origin| origin.parent_id.as_str()),
-                task.map(|origin| origin.number),
-                task.map(|origin| origin.agent.as_str())
-            ])?;
+        insert_conversation(self.transaction, self.conversation, conversation, self.now)?;
         self.summary_changed = true;
         Ok(())
     }
@@ -1012,6 +1030,10 @@ impl Batch<'_> {
     /// part its ending; a task that still runs ends as `unfinished`; a task
     /// that was never stored did not start. A task that ended keeps the first
     /// ending stored, whichever run stored it.
+    ///
+    /// A task that still runs on a worker keeps running there (ADR-0027): the
+    /// part lets it go, and its row stays active, with any cancel that waits
+    /// for the worker, until the master learns how it ended.
     fn end_task_part(
         &self,
         row: &rows::PartRow,
@@ -1023,9 +1045,13 @@ impl Batch<'_> {
         };
         let now = rows::millis(self.now);
         let mut section = document.task.take().unwrap_or_default();
-        let mut ended_from_row = false;
+        let mut call_completed = false;
         if let Some(task) = section.task.as_mut().filter(|task| task.state.is_active()) {
             match tasks::of_part(self.transaction, &row.id)? {
+                Some(stored) if stored.state.is_active() && stored.worker_id.is_some() => {
+                    task.detached = true;
+                    call_completed = true;
+                }
                 Some(stored) if !stored.state.is_active() => {
                     let ending = stored.ending.unwrap_or(TaskEnding {
                         state: stored.state,
@@ -1036,7 +1062,7 @@ impl Batch<'_> {
                     task.report = ending.report;
                     task.failure = ending.failure;
                     task.ended_at = stored.ended_at.or(Some(now));
-                    ended_from_row = true;
+                    call_completed = true;
                 }
                 Some(stored) => {
                     let ending = TaskEnding {
@@ -1058,7 +1084,7 @@ impl Batch<'_> {
             task.approval = None;
         }
         if !call.status.is_final() {
-            call.status = if ended_from_row {
+            call.status = if call_completed {
                 ToolCallStatus::Completed
             } else {
                 call.status.after_interruption()

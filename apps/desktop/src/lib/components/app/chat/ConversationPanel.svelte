@@ -28,7 +28,15 @@
   const transcript = $derived(conversation.transcript);
   const summary = $derived(transcript.conversation);
   const replying = $derived(hasActiveRun(transcript));
-  const isChild = $derived(summary !== null && summary.task !== null);
+  /** Whose conversation the panel shows: the owner's, a child agent's or a worker task's. */
+  const owner = $derived.by(() => {
+    const task = summary?.task ?? null;
+    if (task === null) {
+      return 'owner';
+    }
+    const worker = task.worker ?? null;
+    return worker === null ? 'child' : 'worker';
+  });
 
   /** The tab's name once the conversation is known: a child's with its number, as its card shows it. */
   const tabLabel = $derived.by(() => {
@@ -95,6 +103,6 @@
       <p class="border-b px-4 py-2 text-sm text-muted-foreground">{m.chat_conversation_ended()}</p>
     {/if}
     <Transcript {conversation} readOnly />
-    <ReadOnlyFooter child={isChild} conversationId={conversation.id} {replying} />
+    <ReadOnlyFooter conversationId={conversation.id} {owner} {replying} />
   {/if}
 </div>

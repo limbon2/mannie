@@ -73,6 +73,7 @@ apps/desktop/
 │       │       ├── chat/        # conversations, the transcript's parts, provider profiles and instructions
 │       │       ├── tools/       # tool calls and their approvals, permissions, rules and the tools settings
 │       │       ├── child-agents/  # the cards of tasks and the child agents settings
+│       │       ├── workers/     # the workers in the sidebar, pairing, removal and the workers settings
 │       │       └── window-and-tray/  # the questions about closing, and the window settings
 │       ├── state/               # state modules: the shell's slots, settings, conversations, profiles, the window's questions
 │       ├── utils/               # helpers: messages for error codes, the transcript's reducer, Markdown, calls, ordering

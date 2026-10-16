@@ -49,17 +49,17 @@ The owner works only with the desktop app. The master and each worker call model
 
 The Rust code is split into crates with enforced dependency rules ([ADR-0008](../adr/0008-one-workspace-two-binaries.md), [repository](../engineering/repository.md)):
 
-| Crate             | Contents                                                                             |
-| ----------------- | ------------------------------------------------------------------------------------ |
-| `mannie-types`    | Shared domain, IPC and settings types, and the redacting secret type. No I/O.        |
-| `mannie-store`    | SQLite access, migrations and repositories.                                          |
-| `mannie-provider` | Provider adapters and quirk profiles.                                                |
-| `mannie-tools`    | The tool registry, built-in tools, operations and the process supervisor.            |
-| `mannie-runtime`  | Runs, the agent loop, context management, agent definitions, tasks and child agents. |
-| `mannie-link`     | Link contracts, client and server, pairing and key pinning.                          |
-| `mannie-secrets`  | Access to the operating system credential store. Used by the master only.            |
-| `mannie-desktop`  | The Tauri application: composition root, IPC commands and capabilities.              |
-| `mannie-worker`   | The worker service: composition root and service integration.                        |
+| Crate             | Contents                                                                                                             |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `mannie-types`    | Shared domain, IPC and settings types, and the redacting secret type. No I/O.                                        |
+| `mannie-store`    | SQLite access, migrations and repositories.                                                                          |
+| `mannie-provider` | Provider adapters and quirk profiles.                                                                                |
+| `mannie-tools`    | The tool registry, built-in tools, operations and the process supervisor.                                            |
+| `mannie-runtime`  | Runs, the agent loop, context management, agent definitions, tasks and child agents.                                 |
+| `mannie-link`     | Link contracts, client and server, pairing and key pinning, and the link's adapters to the runtime on both machines. |
+| `mannie-secrets`  | Access to the operating system credential store. Used by the master only.                                            |
+| `mannie-desktop`  | The Tauri application: composition root, IPC commands and capabilities.                                              |
+| `mannie-worker`   | The worker service: composition root and service integration.                                                        |
 
 ## 4. Process model
 

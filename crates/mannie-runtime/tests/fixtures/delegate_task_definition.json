@@ -1,0 +1,36 @@
+{
+  "description": "Gives a self-contained task to a worker: an agent of Mannie on another computer, which works with that host's tools and knowledge and reports back. Choose the worker by its purpose and facts in the list of workers. The worker knows nothing of this conversation and cannot see this computer, so the instruction must contain everything it needs. The worker's host decides what it may do, and the owner approves its changes and commands as they approve yours. Tasks started in one step run at the same time. With background false, the result is the worker's report. With background true, the result gives the task's number, and wait_for_tasks returns the report. follow_up_task continues a worker's task on the same worker.",
+  "name": "delegate_task",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "activity": {
+        "description": "A few words for the owner that say what this call does, as an ongoing action, such as \"Reading package.json\" or \"Counting the failed tests\".",
+        "type": "string"
+      },
+      "background": {
+        "description": "false to wait for the report before your next step, true to continue while the worker works.",
+        "type": "boolean"
+      },
+      "instruction": {
+        "description": "The complete task: the goal, the files or facts on the worker's host to start from, the constraints, and what the report must contain. The worker knows nothing of this conversation.",
+        "type": "string"
+      },
+      "read_only": {
+        "description": "true limits the worker to reading and searching for this task; false lets it change files and run commands as its host allows.",
+        "type": "boolean"
+      },
+      "title": {
+        "description": "A few words for the owner that name the task, such as \"Find the callers of parse_config\".",
+        "type": "string"
+      },
+      "worker": {
+        "description": "The name of the worker, from the list of workers.",
+        "enum": ["build-01"],
+        "type": "string"
+      }
+    },
+    "required": ["activity", "background", "instruction", "read_only", "title", "worker"],
+    "type": "object"
+  }
+}

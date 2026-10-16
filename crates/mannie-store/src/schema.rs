@@ -130,6 +130,42 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         description: "create the tasks table",
         sql: include_str!("runtime/migrations/0016_create_tasks.sql"),
     },
+    Migration {
+        version: 17,
+        module: "runtime",
+        description: "rebuild the tasks table for tasks that run on workers",
+        sql: include_str!("runtime/migrations/0017_rebuild_tasks_for_workers.sql"),
+    },
+    Migration {
+        version: 18,
+        module: "runtime",
+        description: "add the worker of a task conversation",
+        sql: include_str!("runtime/migrations/0018_add_task_workers.sql"),
+    },
+    Migration {
+        version: 19,
+        module: "workers",
+        description: "create the paired workers table",
+        sql: include_str!("workers/migrations/0019_create_paired_workers.sql"),
+    },
+    Migration {
+        version: 20,
+        module: "workers",
+        description: "create the table of deletions that wait for a worker",
+        sql: include_str!("workers/migrations/0020_create_worker_deletions.sql"),
+    },
+    Migration {
+        version: 21,
+        module: "runtime",
+        description: "add the full access of a conversation",
+        sql: include_str!("runtime/migrations/0021_add_conversation_full_access.sql"),
+    },
+    Migration {
+        version: 22,
+        module: "workers",
+        description: "add the name that the owner gives a worker",
+        sql: include_str!("workers/migrations/0022_add_worker_chosen_names.sql"),
+    },
 ];
 
 /// How many backups of earlier schema versions the store keeps.

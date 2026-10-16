@@ -14,6 +14,7 @@
 //! (ADR-0014).
 
 mod activity;
+mod ceiling;
 mod digest;
 mod environment;
 mod identity;
@@ -39,6 +40,7 @@ pub use activity::{
     ACTIVITY_ARGUMENT, MAX_ACTIVITY_CHARS, SplitArguments, clean_label, split_activity,
     with_activity,
 };
+pub use ceiling::Ceiling;
 pub use digest::digest;
 pub use environment::CommandEnvironment;
 pub use lock::MutationLock;
@@ -48,6 +50,7 @@ pub use policy::{Grants, PolicyInputs, Verdict, decide, saved_rule};
 pub use projects::{Availability, MoveFailure, ProjectFacts, ProjectMoves};
 pub use registry::{RegisterError, ToolRegistry};
 pub use results::{MIN_RESULT_LIMIT_BYTES, RESULT_LIMIT_BYTES, result_limit};
+pub use rules::command_words;
 pub use stop::{StopReason, StopSignal};
 pub use supervisor::end_leftover_command;
 pub use system::{ShellFacts, SystemFacts};

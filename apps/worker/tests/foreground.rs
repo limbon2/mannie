@@ -1,9 +1,11 @@
 #![cfg(test)]
 //! The worker binary in a terminal: it starts, logs and opens its store, stops
-//! cleanly when asked, and refuses a database from a newer version of Mannie.
+//! cleanly when asked, and refuses a database from a newer version of Mannie,
+//! a configuration that is not valid, and one that its own account can
+//! change.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -13,12 +15,39 @@ const DATABASE_FILE: &str = "mannie-worker.sqlite";
 /// How long the worker may take to start.
 const START_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Writes a configuration beside the data folder: the worker listens on a
+/// loopback port of the system's choosing.
+fn write_config(data_directory: &Path, extra: &str) -> PathBuf {
+    let folder = data_directory
+        .parent()
+        .expect("the data folder has a parent");
+    fs::create_dir_all(folder).expect("the configuration's folder");
+    let file = folder.join("worker.toml");
+    fs::write(
+        &file,
+        format!(
+            "version = 1\nname = \"test-worker\"\nlisten = \"127.0.0.1:0\"\ndata_dir = '{}'\n{extra}",
+            data_directory.display()
+        ),
+    )
+    .expect("the configuration is written");
+    file
+}
+
+/// The worker with a new configuration of the test's own account.
 fn worker(data_directory: &Path) -> Command {
+    worker_with(&write_config(data_directory, ""))
+}
+
+/// The worker with `config`, which belongs to the test's own account and so
+/// needs `--allow-writable-config`.
+fn worker_with(config: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_mannie-worker"));
     command
         .arg("run")
-        .arg("--data-dir")
-        .arg(data_directory)
+        .arg("--config")
+        .arg(config)
+        .arg("--allow-writable-config")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -173,5 +202,46 @@ fn refuses_a_database_from_a_newer_version_and_leaves_it_untouched() {
         fs::read(&database).unwrap(),
         planted,
         "the database is untouched"
+    );
+}
+
+#[test]
+fn refuses_a_configuration_that_its_own_account_can_change() {
+    let folder = tempfile::tempdir().unwrap();
+    let data_directory = folder.path().join("worker");
+    let config = write_config(&data_directory, "");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_mannie-worker"))
+        .arg("run")
+        .arg("--config")
+        .arg(&config)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "the worker refused to start");
+    let error_output = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        error_output.contains("this account can change the configuration"),
+        "the error says why: {error_output}"
+    );
+    assert!(
+        !data_directory.exists(),
+        "the worker created nothing before it refused"
+    );
+}
+
+#[test]
+fn refuses_a_configuration_with_an_unknown_key_and_names_it() {
+    let folder = tempfile::tempdir().unwrap();
+    let data_directory = folder.path().join("worker");
+    let config = write_config(&data_directory, "[ceiling]\nmode = \"ask\"\nallowed = []\n");
+
+    let output = worker_with(&config).output().unwrap();
+
+    assert!(!output.status.success(), "the worker refused to start");
+    let error_output = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        error_output.contains("allowed"),
+        "the error names the key: {error_output}"
     );
 }

@@ -10,7 +10,7 @@ use crate::ids::{ConversationId, PartId, RunId, TaskId, TurnId};
 use crate::run::RunFailure;
 use crate::tools::{NotRunReason, ToolCallStatus, ToolCallView};
 
-use super::document::{AwaitedTask, TaskRefusal, TaskState};
+use super::document::{AwaitedTask, TaskRefusal, TaskState, TaskWorker};
 
 /// A child's call that waits for the owner, with what the UI needs to render
 /// it as a part of the child's conversation.
@@ -67,6 +67,10 @@ pub struct TaskView {
     pub started_at: Option<UtcMillis>,
     /// When the task ended.
     pub ended_at: Option<UtcMillis>,
+    /// The worker that runs the task, or `None` for a child agent.
+    pub worker: Option<TaskWorker>,
+    /// Whether the master let the task go while it ran on its worker.
+    pub detached: bool,
 }
 
 /// A `task` part as the UI shows it: the call of a task tool, without its
@@ -105,4 +109,8 @@ pub struct TaskConversation {
     pub number: u32,
     /// The name of the child's agent definition.
     pub agent: String,
+    /// The worker whose conversation this is, or `None` for a child agent's,
+    /// which this machine stores.
+    #[serde(default)]
+    pub worker: Option<TaskWorker>,
 }

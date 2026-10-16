@@ -9,10 +9,13 @@
 //   node scripts/release.mjs keygen <folder>           write a new Ed25519 signing key pair
 //   node scripts/release.mjs sign <file>...            sign files with MANNIE_RELEASE_SIGNING_KEY
 //   node scripts/release.mjs verify <public key> <file>...  check the signatures of files
+//   node scripts/release.mjs fingerprint <public key>  print the SHA-256 of a public key
 //
 // Signatures are Ed25519 over the whole file, stored base64-encoded beside it
 // as <file>.sig. The private key is a PKCS #8 PEM that lives only in the CI
-// secret MANNIE_RELEASE_SIGNING_KEY; the public key is an SPKI PEM.
+// secret MANNIE_RELEASE_SIGNING_KEY; the public key is an SPKI PEM. The
+// fingerprint is the SHA-256 of the key's SubjectPublicKeyInfo, which the
+// worker's `self-check --json` reports for the key built into it.
 
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify } from 'node:crypto';
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -175,6 +178,17 @@ export function isValidSignature(content, signatureText, publicKeyPem) {
   return verify(null, content, createPublicKey(publicKeyPem), Buffer.from(signatureText.trim(), 'base64'));
 }
 
+/**
+ * The SHA-256 of a public key's SubjectPublicKeyInfo in hexadecimal, as
+ * `mannie-worker self-check --json` reports it.
+ * @param {string} publicKeyPem
+ * @returns {string}
+ */
+export function keyFingerprint(publicKeyPem) {
+  const spki = createPublicKey(publicKeyPem).export({ format: 'der', type: 'spki' });
+  return createHash('sha256').update(spki).digest('hex');
+}
+
 /** @param {string} path */
 function readText(path) {
   return readFileSync(path, 'utf8');
@@ -264,9 +278,17 @@ function run(argumentList, repository) {
       }
       return;
     }
+    case 'fingerprint': {
+      const publicKeyFile = rest[0];
+      if (publicKeyFile === undefined) {
+        throw new Error('name the public key file');
+      }
+      console.log(keyFingerprint(readText(publicKeyFile)));
+      return;
+    }
     default: {
       throw new Error(
-        `unknown command ${JSON.stringify(command)}: use version, prepare, notes, checksums, keygen, sign or verify`,
+        `unknown command ${JSON.stringify(command)}: use version, prepare, notes, checksums, keygen, sign, verify or fingerprint`,
       );
     }
   }

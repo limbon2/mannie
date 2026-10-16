@@ -1,8 +1,10 @@
 # Every night and for every release tag: the tests of the worker and of the
-# crates it will run agents with, the provider adapters and the runtime, and
-# the worker's rc.d service on FreeBSD, in a virtual machine with the oldest
-# supported 14.x release (ADR-0008). Pull requests only cross-build the worker
-# for FreeBSD (ci.yml). Actions are pinned by commit SHA.
+# crates it runs agents with, among them the system tools with the process
+# supervisor (V4), the provider adapters, the runtime and the link, and the
+# worker's rc.d service with a delegated command, on FreeBSD, in a virtual
+# machine with the oldest supported 14.x release (ADR-0008). Pull requests
+# only cross-build the worker for FreeBSD (ci.yml). Actions are pinned by
+# commit SHA.
 name: Nightly
 
 on:
@@ -33,10 +35,11 @@ jobs:
             set -eu
             . "$HOME/.cargo/env"
             rustup toolchain install
-            # The crates of the worker, and the provider adapters and the
-            # runtime that its agents will use (ADR-0015); the desktop app
-            # does not run on FreeBSD.
-            cargo test --locked -p mannie-worker -p mannie-store -p mannie-logging -p mannie-types
-            cargo test --locked -p mannie-provider -p mannie-runtime --features mannie-provider/testing,mannie-runtime/testing
+            # The crates of the worker: the system tools that its agents use,
+            # the provider adapters, the runtime and the link (ADR-0015); the
+            # desktop app does not run on FreeBSD.
+            cargo test --locked -p mannie-worker -p mannie-store -p mannie-logging -p mannie-types -p mannie-tools
+            cargo test --locked -p mannie-provider -p mannie-runtime -p mannie-link --features mannie-provider/testing,mannie-runtime/testing,mannie-link/testing
             cargo build --locked -p mannie-worker
-            sh scripts/ci/worker-service-unix.sh target/debug/mannie-worker
+            cargo build --locked -p mannie-link --features testing --example smoke-master
+            sh scripts/ci/worker-service-unix.sh target/debug/mannie-worker target/debug/examples/smoke-master

@@ -65,6 +65,7 @@ describe('ToolsSettingsState', () => {
     expect(core.updateToolsSettings).toHaveBeenCalledWith({
       allowChangesInWorkspace: true,
       commandEnvironment: ['JAVA_HOME'],
+      fullAccessForNewConversations: false,
     });
     expect(settings.settings?.allowChangesInWorkspace).toBe(true);
   });

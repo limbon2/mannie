@@ -1,0 +1,87 @@
+[package]
+name = "mannie-link"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The link between the master and its workers: the protobuf contracts, mutual TLS with pinned keys, pairing, and the adapters of both sides to the agent runtime (ADR-0016, ADR-0027, ADR-0028)."
+license.workspace = true
+publish.workspace = true
+
+# The test master of the worker service's smoke tests
+# (scripts/ci/worker-service-*).
+[[example]]
+name = "smoke-master"
+required-features = ["testing"]
+
+# Pairing over loopback: codes, attempts, keys in the middle and pins (V6).
+[[test]]
+name = "pairing"
+required-features = ["testing"]
+
+# Delegation over loopback: reports, leases, approvals, the task's
+# conversation, a dropped link, an offline master and versions (V6).
+[[test]]
+name = "delegation"
+required-features = ["testing"]
+
+# Calls whose answers the link lost: Submit, Decide and Cancel (V6).
+[[test]]
+name = "link_drop"
+required-features = ["testing"]
+
+# Every tool of the worker agent through a delegated task (M4's exit).
+[[test]]
+name = "delegated_conformance"
+required-features = ["testing"]
+
+# The JSON documents of the link against the fixtures of each version (V6).
+[[test]]
+name = "compatibility"
+
+[dependencies]
+# The jitter of the master's reconnects.
+fastrand = { workspace = true }
+futures-util = { workspace = true }
+# The client's connections, over the link's own TLS streams.
+hyper-util = { workspace = true }
+mannie-logging = { workspace = true }
+mannie-runtime = { workspace = true }
+mannie-store = { workspace = true }
+mannie-types = { workspace = true }
+prost = { workspace = true }
+# Ed25519 keys, their signatures in the handshake, the HMAC of pairing and
+# the randomness of codes and nonces.
+ring = { workspace = true }
+rustls = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# The temporary stores of the test tools, with the testing feature.
+tempfile = { workspace = true, optional = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["fs", "macros", "net", "rt", "sync", "time"] }
+tokio-rustls = { workspace = true }
+tonic = { workspace = true }
+tonic-prost = { workspace = true }
+tower = { workspace = true }
+tracing = { workspace = true }
+# The IDs of paired workers.
+uuid = { workspace = true }
+zeroize = { workspace = true }
+
+[dev-dependencies]
+mannie-provider = { workspace = true, features = ["testing"] }
+mannie-runtime = { workspace = true, features = ["testing"] }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["fs", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
+
+[build-dependencies]
+protox = { workspace = true }
+tonic-prost-build = { workspace = true }
+
+[features]
+# The link's test tools, for its own tests: a worker and a master on
+# loopback, and relays. Never enabled in the desktop app or the worker.
+testing = ["dep:tempfile", "mannie-runtime/testing"]
+
+[lints]
+workspace = true

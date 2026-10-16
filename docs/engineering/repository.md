@@ -15,7 +15,7 @@
 
 ## 2. Layout
 
-M0 and M1 built this layout:
+M0 to M4 built this layout:
 
 ```text
 mannie/
@@ -26,6 +26,7 @@ mannie/
 ├── about.toml  about.hbs        # cargo-about: the third-party notices of a release
 ├── clippy.toml  tombi.toml      # Clippy settings; TOML formatting and linting
 ├── eslint.config.js             # ESLint for TypeScript, Svelte and JavaScript
+├── buf.yaml                     # the buf module of the link's contracts in proto/
 ├── Taskfile.yml                 # every workflow
 ├── package.json  pnpm-workspace.yaml  pnpm-lock.yaml   # repository tooling, pinned
 ├── .mcp.json  .codex/           # the Svelte MCP server for Claude Code and Codex
@@ -37,8 +38,10 @@ mannie/
 │   ├── mannie-logging/          # tracing to rotating files, redaction, crash files
 │   ├── mannie-secrets/          # operating system credential store (master only)
 │   ├── mannie-provider/         # provider adapters, quirk profiles; fixtures in tests/fixtures/
-│   ├── mannie-tools/            # the system tools, their policy, file safety and the process supervisor
-│   └── mannie-runtime/          # runs as actors, the event log's hubs, context, compaction, tool calls; evaluations in tests/evals/
+│   ├── mannie-tools/            # the system tools, their policy and ceiling, file safety and the process supervisor
+│   ├── mannie-runtime/          # runs as actors, the event log's hubs, context, compaction, tool calls, tasks and delegation; evaluations in tests/evals/
+│   └── mannie-link/             # the link: contracts, TLS with pinned keys, pairing, the master's and the worker's sides
+├── proto/mannie/link/           # the link's protobuf packages, one folder for each service
 ├── apps/
 │   ├── desktop/                 # SvelteKit app (package.json, vite.config.ts, src/)
 │   │   ├── messages/            # message catalogs, one file per locale (ADR-0019)
@@ -51,7 +54,7 @@ mannie/
 │   ├── apps/desktop/            # Vitest unit tests of the desktop app
 │   ├── e2e/                     # WebdriverIO end-to-end tests (V1, V2, V3, V11, the features of M1 and M2), perf/ for NFR-PERF
 │   └── scripts/                 # tests of the repository scripts
-└── docs/
+└── docs/                        # the documentation; the owner's setup guides are in docs/guides/
 ```
 
 Tests live under `tests/` and mirror the folders of the code they test. Rust unit tests are the exception: they sit in a `tests.rs` beside the module, as Rust requires for private items.
@@ -60,26 +63,22 @@ SvelteKit 3 keeps its configuration in the `sveltekit()` call of `apps/desktop/v
 
 ## 3. Later crates
 
-Each crate arrives with the milestone that first needs it, so no crate is a placeholder. M1 brought `mannie-provider` and `mannie-runtime`, and M2 brought `mannie-tools`.
-
-| Crate         | Arrives with                                                                            |
-| ------------- | --------------------------------------------------------------------------------------- |
-| `mannie-link` | M4, workers, together with `proto/mannie/link/` and `buf.yaml` for the link's contracts |
+Each crate arrives with the milestone that first needs it, so no crate is a placeholder. M1 brought `mannie-provider` and `mannie-runtime`, M2 brought `mannie-tools`, and M4 brought `mannie-link`, together with `proto/mannie/link/` and `buf.yaml` for the link's contracts.
 
 ## 4. Crates and dependency rules
 
-| Crate             | Responsibility                                       | May depend on                                                                  |
-| ----------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `mannie-types`    | Shared types and the redacting secret type. No I/O.  | serde, specta, thiserror, zeroize                                              |
-| `mannie-store`    | Persistence                                          | `mannie-types`, rusqlite                                                       |
-| `mannie-logging`  | Logging to rotating files, redaction and crash files | `mannie-types`, tracing and its subscriber and appender, regex                 |
-| `mannie-provider` | Provider adapters and quirk profiles                 | `mannie-types`, reqwest, rustls                                                |
-| `mannie-tools`    | Tools, operations and process containment            | `mannie-types`, `mannie-store`, ignore, rustix on Unix, windows-sys on Windows |
-| `mannie-runtime`  | The agent runtime                                    | `mannie-types`, `mannie-store`, `mannie-provider`, `mannie-tools`              |
-| `mannie-link`     | The link between master and workers                  | `mannie-types`, tonic, prost, rustls                                           |
-| `mannie-secrets`  | The operating system credential store                | `mannie-types`, keyring-core and its stores                                    |
-| `mannie-desktop`  | The Tauri application and its IPC                    | Every library crate, tauri, rfd                                                |
-| `mannie-worker`   | The worker service                                   | Every library crate except `mannie-secrets`, windows-service, clap             |
+| Crate             | Responsibility                                                                     | May depend on                                                                                                  |
+| ----------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `mannie-types`    | Shared types and the redacting secret type. No I/O.                                | serde, specta, thiserror, zeroize                                                                              |
+| `mannie-store`    | Persistence                                                                        | `mannie-types`, rusqlite                                                                                       |
+| `mannie-logging`  | Logging to rotating files, redaction and crash files                               | `mannie-types`, tracing and its subscriber and appender, regex                                                 |
+| `mannie-provider` | Provider adapters and quirk profiles                                               | `mannie-types`, reqwest, rustls                                                                                |
+| `mannie-tools`    | Tools, operations, the policy ceiling and process containment                      | `mannie-types`, `mannie-store`, ignore, rustix on Unix, libc in the FreeBSD supervisor, windows-sys on Windows |
+| `mannie-runtime`  | The agent runtime                                                                  | `mannie-types`, `mannie-store`, `mannie-provider`, `mannie-tools`                                              |
+| `mannie-link`     | The link between master and workers, and its adapters to the runtime on both sides | `mannie-types`, `mannie-store`, `mannie-runtime`, `mannie-logging`, tonic, prost, rustls, tokio-rustls, ring   |
+| `mannie-secrets`  | The operating system credential store                                              | `mannie-types`, keyring-core and its stores                                                                    |
+| `mannie-desktop`  | The Tauri application and its IPC                                                  | Every library crate, tauri, rfd                                                                                |
+| `mannie-worker`   | The worker service                                                                 | Every library crate except `mannie-secrets`, windows-service, clap, toml, ring                                 |
 
 cargo-deny enforces the rules that matter most: only `mannie-desktop` depends on `tauri`, only `mannie-store` on `rusqlite`, only `mannie-secrets` on keyring-core, and only `mannie-desktop` on `mannie-secrets`; ring is the only crypto provider, and `openssl-sys` and `aws-lc-sys` are banned ([ADR-0008](../adr/0008-one-workspace-two-binaries.md)). `scripts/check-worker-dependencies.mjs` checks that no crate of Tauri, GTK or WebKitGTK reaches the worker on any target (V5).
 
@@ -104,54 +103,55 @@ The application icons in `apps/desktop/src-tauri/icons/` are assets, not code: t
 
 ## 6. Tool pinning
 
-| Tool                                                | Pinned by                                                                         |
-| --------------------------------------------------- | --------------------------------------------------------------------------------- |
-| Rust                                                | `rust-toolchain.toml`                                                             |
-| Node.js                                             | `engines` in `package.json` (24 or newer)                                         |
-| pnpm                                                | `packageManager` in `package.json`                                                |
-| Task                                                | 3.40 or newer; CI installs 3.40.1                                                 |
-| Prettier, ESLint, Tombi and the documentation tools | Exact versions in `package.json` and `pnpm-lock.yaml`                             |
-| Vitest                                              | The pnpm catalog in `pnpm-workspace.yaml`, shared by the root and the desktop app |
-| shadcn-svelte CLI, Tauri CLI, Paraglide JS          | Exact devDependencies of the desktop app                                          |
-| WebdriverIO, axe-core, the Svelte MCP server        | Exact devDependencies at the root                                                 |
-| cargo-deny, tauri-driver                            | Exact versions installed by `task setup` and by CI                                |
-| cargo-about, cargo-cyclonedx, cross                 | Exact versions installed by CI                                                    |
-| GitHub Actions                                      | Commit SHAs, with the release tag in a comment                                    |
-| Microsoft Edge WebDriver                            | The version of the installed WebView2 runtime (`scripts/edgedriver.mjs`)          |
-| The shadcn-svelte agent skill                       | `skills-lock.json`, written by the skills CLI 1.7.2                               |
+| Tool                                                     | Pinned by                                                                         |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Rust                                                     | `rust-toolchain.toml`                                                             |
+| Node.js                                                  | `engines` in `package.json` (24 or newer)                                         |
+| pnpm                                                     | `packageManager` in `package.json`                                                |
+| Task                                                     | 3.40 or newer; CI installs 3.40.1                                                 |
+| Prettier, ESLint, Tombi, buf and the documentation tools | Exact versions in `package.json` and `pnpm-lock.yaml`                             |
+| Vitest                                                   | The pnpm catalog in `pnpm-workspace.yaml`, shared by the root and the desktop app |
+| shadcn-svelte CLI, Tauri CLI, Paraglide JS               | Exact devDependencies of the desktop app                                          |
+| WebdriverIO, axe-core, the Svelte MCP server             | Exact devDependencies at the root                                                 |
+| cargo-deny, tauri-driver                                 | Exact versions installed by `task setup` and by CI                                |
+| cargo-about, cargo-cyclonedx, cross                      | Exact versions installed by CI                                                    |
+| GitHub Actions                                           | Commit SHAs, with the release tag in a comment                                    |
+| Microsoft Edge WebDriver                                 | The version of the installed WebView2 runtime (`scripts/edgedriver.mjs`)          |
+| The shadcn-svelte agent skill                            | `skills-lock.json`, written by the skills CLI 1.7.2                               |
 
 ## 7. Tasks
 
-| Task                                   | Does                                                                                                                          |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `task`                                 | Lists the tasks                                                                                                               |
-| `task setup`                           | Installs the pinned pnpm packages, cargo-deny and tauri-driver                                                                |
-| `task gen`                             | Generates the IPC bindings, compiles the message catalogs and writes SvelteKit's types                                        |
-| `task gen:pseudo-locale`               | Generates the pseudo-locale project that the end-to-end tests use                                                             |
-| `task dev`                             | Runs the desktop app in development mode                                                                                      |
-| `task build`                           | Builds the desktop app's installers and the worker in release mode                                                            |
-| `task fmt`                             | Formats and sorts all code and documentation: ESLint fixes, Prettier, Tombi and rustfmt                                       |
-| `task fmt:check`                       | Checks that all code and documentation is formatted and sorted                                                                |
-| `task fmt:rust`, `task fmt:check:rust` | Formats, or checks, the Rust code with rustfmt                                                                                |
-| `task lint`                            | Runs the linters and the dependency and catalog checks below                                                                  |
-| `task lint:ts`                         | Lints TypeScript, Svelte and JavaScript with ESLint, including the local rules and the order of imports, types and attributes |
-| `task lint:types`                      | Type-checks the desktop app and its unit tests with svelte-check, and the end-to-end tests with tsc                           |
-| `task lint:toml`                       | Lints the TOML files against their schemas with Tombi                                                                         |
-| `task lint:rust`                       | Checks that every crate inherits the workspace lints, then runs Clippy with warnings denied                                   |
-| `task lint:deps`                       | Runs cargo-deny, the worker's dependency check (V5) and the license check of the desktop app's npm packages                   |
-| `task lint:messages`                   | Checks the message catalogs with the inlang CLI                                                                               |
-| `task test`                            | Runs the Rust tests, the desktop app's Vitest tests and the tests of the repository scripts                                   |
-| `task test:linux`                      | Runs Clippy and the Rust tests in a Linux container, without the desktop crate, for a workstation that runs Windows           |
-| `task e2e`                             | Builds the validation app and runs the end-to-end tests through tauri-driver                                                  |
-| `task e2e:perf`                        | Builds the validation app and measures NFR-PERF-01 to 04; `MANNIE_PERF_REPORT_ONLY=1` reports without enforcing the targets   |
-| `task bench`                           | Runs the store's benchmarks                                                                                                   |
-| `task provider:live`                   | Runs the live conformance tests against the server that the `MANNIE_LIVE_*` variables name (V8)                               |
-| `task provider:record`                 | Records the fixtures of that server as the live tests run (V8)                                                                |
-| `task tools:eval`                      | Runs the system tools' evaluations with the model that the `MANNIE_EVAL_*` variables name, or with the scripted oracle        |
-| `task release:prepare VERSION=x.y.z`   | Sets the version and turns the changelog's Unreleased section into the release's section ([releasing](releasing.md))          |
-| `task docs:fmt`                        | Formats the documentation and repository configuration with Prettier                                                          |
-| `task docs:check`                      | Checks formatting, Markdown rules, spelling, links and the consistency of the documents                                       |
-| `task ci`                              | Runs every check a change must pass: `gen`, `docs:check`, `fmt:check`, `lint` and `test`                                      |
+| Task                                   | Does                                                                                                                                                                                                                   |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `task`                                 | Lists the tasks                                                                                                                                                                                                        |
+| `task setup`                           | Installs the pinned pnpm packages, cargo-deny and tauri-driver                                                                                                                                                         |
+| `task gen`                             | Generates the IPC bindings, compiles the message catalogs and writes SvelteKit's types                                                                                                                                 |
+| `task gen:pseudo-locale`               | Generates the pseudo-locale project that the end-to-end tests use                                                                                                                                                      |
+| `task dev`                             | Runs the desktop app in development mode                                                                                                                                                                               |
+| `task build`                           | Builds the desktop app's installers and the worker in release mode                                                                                                                                                     |
+| `task fmt`                             | Formats and sorts all code and documentation: ESLint fixes, Prettier, Tombi, rustfmt and `buf format`                                                                                                                  |
+| `task fmt:check`                       | Checks that all code and documentation is formatted and sorted, the contracts with `buf format` included                                                                                                               |
+| `task fmt:rust`, `task fmt:check:rust` | Formats, or checks, the Rust code with rustfmt                                                                                                                                                                         |
+| `task lint`                            | Runs the linters and the dependency and catalog checks below                                                                                                                                                           |
+| `task lint:ts`                         | Lints TypeScript, Svelte and JavaScript with ESLint, including the local rules and the order of imports, types and attributes                                                                                          |
+| `task lint:types`                      | Type-checks the desktop app and its unit tests with svelte-check, and the end-to-end tests with tsc                                                                                                                    |
+| `task lint:toml`                       | Lints the TOML files against their schemas with Tombi                                                                                                                                                                  |
+| `task lint:rust`                       | Checks that every crate inherits the workspace lints, then runs Clippy with warnings denied                                                                                                                            |
+| `task lint:deps`                       | Runs cargo-deny, the worker's dependency check (V5) and the license check of the desktop app's npm packages                                                                                                            |
+| `task lint:messages`                   | Checks the message catalogs with the inlang CLI                                                                                                                                                                        |
+| `task lint:proto`                      | Lints the link's contracts with `buf lint`, and checks with `buf breaking` that they only grew since the merge base with `origin/main` (or the branch in `MANNIE_CONTRACTS_BASE`) and the newest release that has them |
+| `task test`                            | Runs the Rust tests, the desktop app's Vitest tests and the tests of the repository scripts                                                                                                                            |
+| `task test:linux`                      | Runs Clippy and the Rust tests in a Linux container, without the desktop crate, for a workstation that runs Windows                                                                                                    |
+| `task e2e`                             | Builds the validation app and the worker, and runs the end-to-end tests through tauri-driver; the workers' tests pair the app with a real worker                                                                       |
+| `task e2e:perf`                        | Builds the validation app and measures NFR-PERF-01 to 04; `MANNIE_PERF_REPORT_ONLY=1` reports without enforcing the targets                                                                                            |
+| `task bench`                           | Runs the store's benchmarks                                                                                                                                                                                            |
+| `task provider:live`                   | Runs the live conformance tests against the server that the `MANNIE_LIVE_*` variables name (V8)                                                                                                                        |
+| `task provider:record`                 | Records the fixtures of that server as the live tests run (V8)                                                                                                                                                         |
+| `task tools:eval`                      | Runs the system tools' evaluations with the model that the `MANNIE_EVAL_*` variables name, or with the scripted oracle                                                                                                 |
+| `task release:prepare VERSION=x.y.z`   | Sets the version and turns the changelog's Unreleased section into the release's section ([releasing](releasing.md))                                                                                                   |
+| `task docs:fmt`                        | Formats the documentation and repository configuration with Prettier                                                                                                                                                   |
+| `task docs:check`                      | Checks formatting, Markdown rules, spelling, links and the consistency of the documents                                                                                                                                |
+| `task ci`                              | Runs every check a change must pass: `gen`, `docs:check`, `fmt:check`, `lint` and `test`                                                                                                                               |
 
 Task commands call real executables only, never Unix utilities, so every task runs the same on Windows, Linux and FreeBSD.
 

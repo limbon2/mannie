@@ -6,6 +6,8 @@
 use std::fmt;
 use std::sync::Arc;
 
+use futures_util::future::BoxFuture;
+
 use mannie_provider::{TestInput, Url, check_base_url, credential_transport_allowed, test_profile};
 use mannie_store::{ProfileFields, ProfileStoreError, StoredProfile};
 use mannie_types::ids::ProfileId;
@@ -28,6 +30,13 @@ pub trait CredentialVault: Send + Sync + fmt::Debug + 'static {
     fn read(&self, reference: &str) -> Result<Secret, VaultError>;
     /// Deletes the credential stored under `reference`.
     fn delete(&self, reference: &str) -> Result<(), VaultError>;
+    /// A wait that ends once a credential is saved under `reference`, for a
+    /// vault whose credentials arrive while runs wait for them: a worker's
+    /// leases (docs/features/workers/credential-leases.md). `None`, the
+    /// default, for a vault whose credentials never arrive by themselves.
+    fn arrival(&self, _reference: &str) -> Option<BoxFuture<'static, ()>> {
+        None
+    }
 }
 
 /// Why the vault could not do what was asked.

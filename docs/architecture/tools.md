@@ -58,14 +58,14 @@ flowchart LR
 
 Policy decides first, and the owner decides what policy leaves open.
 
-| Source         | Effect                                                                                                                                         |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Workspace      | Reads inside the conversation's workspace are allowed. Whether writes inside it are allowed without asking is a setting.                       |
-| Grant          | An approval "for" this conversation, its project or every conversation allows the same kind of access there, for example writes in one folder. |
-| Rule           | A saved pattern, such as a command prefix, allows matching operations in every conversation it covers.                                         |
-| Policy ceiling | On a worker, the ceiling set on the host limits everything above. A task can narrow it further ([orchestration](orchestration.md#4-workers)).  |
+| Source         | Effect                                                                                                                                                                                                         |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Workspace      | Reads inside the conversation's workspace are allowed. Whether writes inside it are allowed without asking is a setting.                                                                                       |
+| Grant          | An approval "for" this conversation, its project or every conversation allows the same kind of access there, for example writes in one folder.                                                                 |
+| Rule           | A saved pattern, such as a command prefix, allows matching operations in every conversation it covers.                                                                                                         |
+| Policy ceiling | On a worker, the ceiling set on the host limits everything above and can refuse an operation outright. A task can narrow it further ([host and ceiling](../features/workers/host-and-ceiling.md#the-ceiling)). |
 
-- An approval request shows the operation exactly: the canonical paths, or the full command with its shell and working directory, and on a worker also the host.
+- An approval request shows the operation exactly: the canonical paths, or the full command with its shell and working directory, and on a worker also the host. A worker's request offers only Allow once and Deny.
 - The owner can allow the operation once, allow it for the conversation, its project or every conversation, save a rule, or deny it. A denial goes back to the model as the tool result.
 - A child agent's request shows in its parent's conversation, inside the card of its task, with the task's number and title. The decision names the child's conversation, and a grant "for this conversation" is saved for the parent, so it covers the parent and all its children.
 - A move into a project runs without a question only when the owner's message of the turn names the project and no other tool call of the turn came before it, so nothing that the model read can stand in for the owner's words; no grant or rule covers a move.

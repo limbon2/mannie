@@ -40,6 +40,7 @@ function task(state: TaskState, waits: boolean): TaskView {
     approval: waits ? { call, createdAt: 1, partId: 'part', position: 2, runId: 'run', turnId: 'turn' } : null,
     background: false,
     conversationId: 'child',
+    detached: false,
     endedAt: null,
     failure: null,
     followUp: false,
@@ -51,6 +52,7 @@ function task(state: TaskState, waits: boolean): TaskView {
     taskId: 'task',
     title: 'Write the notes',
     toolCalls: 0,
+    worker: null,
   };
 }
 
@@ -101,6 +103,10 @@ describe('taskRefusalMessage', () => {
       { number: 2, reason: 'still_running' },
       { reason: 'budget_used' },
       { reason: 'not_started' },
+      { reason: 'worker_offline', worker: 'build-01' },
+      { reason: 'worker_unknown', worker: 'build-02' },
+      { reason: 'worker_incompatible', worker: 'build-03' },
+      { reason: 'profile_not_reachable', worker: 'build-04' },
     ];
 
     const messages = refusals.map((refusal) => taskRefusalMessage(refusal));
@@ -108,5 +114,11 @@ describe('taskRefusalMessage', () => {
     expect(new Set(messages).size).toBe(refusals.length);
     expect(messages[0]).toContain('task 3');
     expect(messages[1]).toContain('task 2');
+    expect(messages.slice(4).map((message, index) => message.includes(`build-0${String(index + 1)}`))).toEqual([
+      true,
+      true,
+      true,
+      true,
+    ]);
   });
 });

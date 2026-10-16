@@ -9,9 +9,11 @@ use std::path::{Path, PathBuf};
 use mannie_types::ids::ProjectId;
 use mannie_types::tools::{
     Access, AccessMode, ApprovalReason, ApprovalRequest, CommandRule, Decision, GrantScope,
-    RuleProposal, ToolsError,
+    Refusal, RuleProposal, ToolsError,
 };
+use mannie_types::workers::CeilingMode;
 
+use crate::ceiling::Ceiling;
 use crate::digest::digest;
 use crate::paths::{is_inside, is_same_path};
 use crate::projects::names_project;
@@ -51,6 +53,16 @@ pub struct PolicyInputs<'a> {
     /// owner's words (ADR-0023, decision 3). A move into a project that it
     /// names runs without a question.
     pub owner_request: Option<&'a str>,
+    /// On a worker, its policy ceiling, which takes the place of the
+    /// workspace and the rules and can refuse an operation outright
+    /// (ADR-0028). `None` on the master.
+    pub ceiling: Option<&'a Ceiling>,
+    /// On a worker, its name, which an approval request shows.
+    pub host: Option<&'a str>,
+    /// On the master, whether the conversation is in full access, which the
+    /// owner switched on (ADR-0029): every operation runs without asking.
+    /// On a worker, its ceiling's mode decides instead.
+    pub full_access: bool,
 }
 
 /// What the policy decided about an operation.
@@ -63,9 +75,13 @@ pub enum Verdict {
     Allowed(Decision),
     /// The owner decides.
     Ask(ApprovalRequest),
+    /// A worker's ceiling forbids the operation; nobody can allow it.
+    Refused(Refusal),
 }
 
-/// Decides about an operation. It is allowed only when every access is:
+/// Decides about an operation. A conversation in full access allows every
+/// operation, Mannie's own folders included (ADR-0029, decision 3).
+/// Otherwise it is allowed only when every access is:
 ///
 /// 1. an access inside Mannie's data or log folders asks;
 /// 2. a read inside the workspace is allowed;
@@ -79,17 +95,33 @@ pub enum Verdict {
 /// Commands are never allowed by the workspace, a command with a
 /// metacharacter is never allowed by a grant or a rule, and a move is never
 /// granted.
+///
+/// On a worker, its ceiling decides in place of the workspace and the rules
+/// ([`decide_under_ceiling`]): an access that the ceiling forbids refuses the
+/// whole operation, and a request offers only "Allow once" and "Deny".
 pub fn decide(accesses: &[Access], inputs: &PolicyInputs<'_>) -> Verdict {
     if accesses.is_empty() {
         return Verdict::Unrestricted;
     }
-    let mut decision = Decision::Workspace;
+    if inputs.full_access && inputs.ceiling.is_none() {
+        return Verdict::Allowed(Decision::FullAccess);
+    }
+    let mut decision = if inputs.ceiling.is_some() {
+        Decision::AllowedFolder
+    } else {
+        Decision::Workspace
+    };
     let mut reasons: Vec<ApprovalReason> = Vec::new();
     let mut asking: Vec<&Access> = Vec::new();
     for access in accesses {
-        match decide_access(access, inputs) {
+        let held = match inputs.ceiling {
+            Some(ceiling) => decide_under_ceiling(access, ceiling, inputs),
+            None => decide_access(access, inputs).map_err(Hold::Ask),
+        };
+        match held {
             Ok(source) => decision = stronger(decision, source),
-            Err(reason) => {
+            Err(Hold::Refuse(refusal)) => return Verdict::Refused(refusal),
+            Err(Hold::Ask(reason)) => {
                 if !reasons.contains(&reason) {
                     reasons.push(reason);
                 }
@@ -99,6 +131,18 @@ pub fn decide(accesses: &[Access], inputs: &PolicyInputs<'_>) -> Verdict {
     }
     if asking.is_empty() {
         return Verdict::Allowed(decision);
+    }
+    if inputs.ceiling.is_some() {
+        // A worker grants nothing for longer than once and saves no rule, so
+        // nothing that the master sends widens its ceiling (ADR-0028).
+        return Verdict::Ask(ApprovalRequest {
+            digest: digest(accesses),
+            reasons,
+            grants: Vec::new(),
+            rule: None,
+            project: None,
+            host: inputs.host.map(str::to_owned),
+        });
     }
     let protected = reasons.contains(&ApprovalReason::MannieFolder);
     Verdict::Ask(ApprovalRequest {
@@ -111,7 +155,97 @@ pub fn decide(accesses: &[Access], inputs: &PolicyInputs<'_>) -> Verdict {
         rule: if protected { None } else { rule_for(accesses) },
         reasons,
         project: inputs.project.cloned(),
+        host: None,
     })
+}
+
+/// Why an access does not run without the owner.
+enum Hold {
+    /// The owner decides.
+    Ask(ApprovalReason),
+    /// Nobody can allow it.
+    Refuse(Refusal),
+}
+
+/// What allows one access on a worker, why it asks, or why it is refused
+/// (docs/features/workers/host-and-ceiling.md, the ceiling). Reads inside the
+/// allowed folders run; read-only refuses every change and command; ask asks
+/// for them; autonomous runs changes inside the allowed folders and the
+/// commands that a host rule matches; everything else asks. The worker's own
+/// folders always ask, and a grant of the task's conversation allows what it
+/// covers, as on the master. Full access runs every path and command, the
+/// worker's own folders included (ADR-0029, decision 4); a host has no
+/// projects in any mode.
+fn decide_under_ceiling(
+    access: &Access,
+    ceiling: &Ceiling,
+    inputs: &PolicyInputs<'_>,
+) -> Result<Decision, Hold> {
+    let read_only = ceiling.mode == CeilingMode::ReadOnly;
+    let autonomous = ceiling.mode == CeilingMode::Autonomous;
+    let full_access = ceiling.mode == CeilingMode::FullAccess;
+    let runs_anything = matches!(access, Access::Path { .. } | Access::Command { .. });
+    if full_access && runs_anything {
+        return Ok(Decision::HostFullAccess);
+    }
+    match access {
+        Access::Path { path, mode, .. } => {
+            let path = Path::new(path);
+            if mode.changes() && read_only {
+                return Err(Hold::Refuse(Refusal::ReadOnlyHost));
+            }
+            if is_protected(path, inputs) {
+                return Err(Hold::Ask(ApprovalReason::MannieFolder));
+            }
+            let inside = ceiling
+                .allowed_folders
+                .iter()
+                .any(|folder| is_inside(path, folder));
+            if inside && (!mode.changes() || autonomous) {
+                return Ok(Decision::AllowedFolder);
+            }
+            if let Some(decision) = granted(&inputs.grants, |grant| covers_path(grant, path, *mode))
+            {
+                return Ok(decision);
+            }
+            Err(Hold::Ask(if inside {
+                ApprovalReason::HostAsks
+            } else {
+                ApprovalReason::OutsideAllowedFolders
+            }))
+        }
+        Access::Command {
+            command,
+            working_directory,
+            ..
+        } => {
+            if read_only {
+                return Err(Hold::Refuse(Refusal::ReadOnlyHost));
+            }
+            let directory = Path::new(working_directory);
+            if is_protected(directory, inputs) {
+                return Err(Hold::Ask(ApprovalReason::MannieFolder));
+            }
+            let Some(words) = command_words(command) else {
+                return Err(Hold::Ask(ApprovalReason::Command));
+            };
+            if let Some(decision) = granted(&inputs.grants, |grant| {
+                covers_command(grant, command, directory)
+            }) {
+                return Ok(decision);
+            }
+            let ruled = autonomous
+                && ceiling
+                    .rules
+                    .iter()
+                    .any(|rule| rule_matches(rule, &words, directory));
+            if ruled {
+                return Ok(Decision::HostRule);
+            }
+            Err(Hold::Ask(ApprovalReason::Command))
+        }
+        Access::Project { .. } => Err(Hold::Refuse(Refusal::NoProjectsOnHost)),
+    }
 }
 
 /// What allows one access, or why it asks.
@@ -197,12 +331,13 @@ fn is_protected(path: &Path, inputs: &PolicyInputs<'_>) -> bool {
         .any(|folder| is_inside(path, folder))
 }
 
-/// The decision that names the source that reaches furthest: a rule, then a
-/// grant for every conversation, of the project and of the conversation, then
-/// the owner's request and the workspace.
+/// The decision that names the source that reaches furthest: full access,
+/// then a rule, then a grant for every conversation, of the project and of
+/// the conversation, then the owner's request and the workspace.
 fn stronger(current: Decision, source: Decision) -> Decision {
     let rank = |decision: Decision| match decision {
-        Decision::Rule => 5,
+        Decision::FullAccess | Decision::HostFullAccess => 6,
+        Decision::Rule | Decision::HostRule => 5,
         Decision::AlwaysGrant => 4,
         Decision::ProjectGrant => 3,
         Decision::Grant => 2,

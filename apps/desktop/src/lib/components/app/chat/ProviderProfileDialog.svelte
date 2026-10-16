@@ -2,6 +2,7 @@
   import CircleAlertIcon from '@lucide/svelte/icons/circle-alert';
   import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
 
+  import FieldHelp from '#lib/components/app/FieldHelp.svelte';
   import * as Alert from '#lib/components/ui/alert/index.js';
   import { Button } from '#lib/components/ui/button/index.js';
   import * as Dialog from '#lib/components/ui/dialog/index.js';
@@ -96,14 +97,25 @@
           </Dialog.Title>
           <Dialog.Description>{m.chat_providers_dialog_description()}</Dialog.Description>
         </Dialog.Header>
-        <div class="flex max-h-[60vh] flex-col gap-4 overflow-y-auto pe-1">
+        <!-- The end padding holds the click area of a control at the end, which reaches 12 pixels past the switch; with less, the fields scroll sideways. -->
+        <div class="flex max-h-[60vh] flex-col gap-4 overflow-y-auto pe-3" data-profile-fields="">
           <Field.Group>
             <Field.Field data-invalid={failedWith(form, 'invalid_name', 'name_taken')}>
               <Field.Label for="profile-name">{m.chat_providers_field_name()}</Field.Label>
               <Input id="profile-name" placeholder={m.chat_providers_field_name_placeholder()} bind:value={form.name} />
             </Field.Field>
-            <Field.Set>
-              <Field.Legend variant="label">{m.chat_providers_field_interface()}</Field.Legend>
+            <!-- The legend also holds the help button, so the group takes its name from the label alone. -->
+            <Field.Set aria-describedby="profile-interface-help" aria-labelledby="profile-interface-legend">
+              <Field.Legend variant="label">
+                <span class="flex items-center gap-1">
+                  <span id="profile-interface-legend">{m.chat_providers_field_interface()}</span>
+                  <FieldHelp
+                    id="profile-interface-help"
+                    field={m.chat_providers_field_interface()}
+                    text={m.chat_providers_field_interface_description()}
+                  />
+                </span>
+              </Field.Legend>
               <RadioGroup.Root class="flex flex-wrap gap-x-6" orientation="horizontal" bind:value={form.api}>
                 {#each INTERFACES as option (option)}
                   <Field.Field class="w-auto" orientation="horizontal">
@@ -114,17 +126,23 @@
                   </Field.Field>
                 {/each}
               </RadioGroup.Root>
-              <Field.Description>{m.chat_providers_field_interface_description()}</Field.Description>
             </Field.Set>
             <Field.Field data-invalid={failedWith(form, 'invalid_base_url', 'insecure_credential_transport')}>
-              <Field.Label for="profile-base-url">{m.chat_providers_field_base_url()}</Field.Label>
+              <div class="flex items-center gap-1">
+                <Field.Label for="profile-base-url">{m.chat_providers_field_base_url()}</Field.Label>
+                <FieldHelp
+                  id="profile-base-url-help"
+                  field={m.chat_providers_field_base_url()}
+                  text={m.chat_providers_field_base_url_description()}
+                />
+              </div>
               <Input
                 id="profile-base-url"
+                aria-describedby="profile-base-url-help"
                 inputmode="url"
                 placeholder={m.chat_providers_field_base_url_placeholder()}
                 bind:value={form.baseUrl}
               />
-              <Field.Description>{m.chat_providers_field_base_url_description()}</Field.Description>
             </Field.Field>
             <Field.Field data-invalid={failedWith(form, 'invalid_model')}>
               <Field.Label for="profile-model">{m.chat_providers_field_model()}</Field.Label>
@@ -139,10 +157,20 @@
               {/if}
             </Field.Field>
             <Field.Field data-invalid={failedWith(form, 'invalid_credential')}>
-              <Field.Label for="profile-credential">{m.chat_providers_field_credential_value()}</Field.Label>
+              <div class="flex items-center gap-1">
+                <Field.Label for="profile-credential">{m.chat_providers_field_credential_value()}</Field.Label>
+                <FieldHelp
+                  id="profile-credential-help"
+                  field={m.chat_providers_field_credential_value()}
+                  text={form.hasStoredCredential
+                    ? m.chat_providers_field_credential_saved_description()
+                    : m.chat_providers_field_credential_description()}
+                />
+              </div>
               <div class="flex gap-2">
                 <Input
                   id="profile-credential"
+                  aria-describedby="profile-credential-help"
                   autocomplete="off"
                   disabled={form.removesCredential}
                   placeholder={credentialPlaceholder(form)}
@@ -155,11 +183,6 @@
                   </Button>
                 {/if}
               </div>
-              <Field.Description>
-                {form.hasStoredCredential
-                  ? m.chat_providers_field_credential_saved_description()
-                  : m.chat_providers_field_credential_description()}
-              </Field.Description>
             </Field.Field>
             {#if form.removesCredential}
               <Alert.Root>
@@ -202,9 +225,16 @@
               </Field.Field>
             </div>
             <Field.Field>
-              <Field.Label for="profile-effort">{m.chat_providers_field_effort()}</Field.Label>
+              <div class="flex items-center gap-1">
+                <Field.Label for="profile-effort">{m.chat_providers_field_effort()}</Field.Label>
+                <FieldHelp
+                  id="profile-effort-help"
+                  field={m.chat_providers_field_effort()}
+                  text={m.chat_providers_field_effort_description()}
+                />
+              </div>
               <Select.Root items={efforts} type="single" bind:value={form.effort}>
-                <Select.Trigger id="profile-effort" class="w-full">
+                <Select.Trigger id="profile-effort" class="w-full" aria-describedby="profile-effort-help">
                   {effortLabel(form.effort)}
                 </Select.Trigger>
                 <Select.Content>
@@ -213,14 +243,17 @@
                   {/each}
                 </Select.Content>
               </Select.Root>
-              <Field.Description>{m.chat_providers_field_effort_description()}</Field.Description>
             </Field.Field>
             <Field.Field orientation="horizontal">
-              <Field.Content>
+              <div class="flex flex-auto items-center gap-1">
                 <Field.Label for="profile-use-tools">{m.chat_providers_field_use_tools()}</Field.Label>
-                <Field.Description>{m.chat_providers_field_use_tools_description()}</Field.Description>
-              </Field.Content>
-              <Switch id="profile-use-tools" bind:checked={form.useTools} />
+                <FieldHelp
+                  id="profile-use-tools-help"
+                  field={m.chat_providers_field_use_tools()}
+                  text={m.chat_providers_field_use_tools_description()}
+                />
+              </div>
+              <Switch id="profile-use-tools" aria-describedby="profile-use-tools-help" bind:checked={form.useTools} />
             </Field.Field>
           </Field.Group>
         </div>

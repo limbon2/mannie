@@ -20,8 +20,9 @@ pub const MAX_TITLE_CHARACTERS: usize = 200;
 /// The longest title taken from a first message, in characters.
 pub const MAX_DERIVED_TITLE_CHARACTERS: usize = 80;
 
-/// The longest global instructions the owner can write, in bytes of UTF-8.
-pub const MAX_INSTRUCTIONS_BYTES: usize = 32 * 1024;
+/// The longest global instructions the owner can write, in characters. It
+/// was 32 KiB of UTF-8 before, so every stored text stays within it.
+pub const MAX_INSTRUCTIONS_CHARACTERS: usize = 32_768;
 
 /// The most earlier turns one request loads.
 pub const MAX_EARLIER_TURNS: u32 = 100;
@@ -33,11 +34,11 @@ pub const MAX_EARLIER_TURNS: u32 = 100;
 pub struct Instructions(String);
 
 impl Instructions {
-    /// Checks the length of the text.
+    /// Checks the length of the text, in characters, as the owner counts it.
     pub fn parse(text: String) -> Result<Self, ChatError> {
-        if text.len() > MAX_INSTRUCTIONS_BYTES {
-            return Err(ChatError::InstructionsTooLong {
-                max_bytes: limit(MAX_INSTRUCTIONS_BYTES),
+        if text.chars().count() > MAX_INSTRUCTIONS_CHARACTERS {
+            return Err(ChatError::InstructionsTooManyCharacters {
+                max_characters: limit(MAX_INSTRUCTIONS_CHARACTERS),
             });
         }
         Ok(Self(text))
@@ -245,7 +246,7 @@ pub struct SetConversationProfile {
 }
 
 /// The argument of `get_checkpoint`.
-#[derive(Debug, Clone, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CheckpointRef {
     /// The conversation.
@@ -255,7 +256,7 @@ pub struct CheckpointRef {
 }
 
 /// The argument of `load_earlier_turns`.
-#[derive(Debug, Clone, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LoadEarlierTurns {
     /// The conversation.
@@ -267,7 +268,7 @@ pub struct LoadEarlierTurns {
 }
 
 /// The result of `load_earlier_turns`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct EarlierTurns {
     /// The turns before the requested position, oldest first.
@@ -297,7 +298,7 @@ pub struct Unsubscribe {
 
 /// Why a chat command failed. The UI shows the message for the code from its
 /// catalog (ADR-0019).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type, thiserror::Error)]
 #[serde(
     tag = "code",
     rename_all = "snake_case",
@@ -322,11 +323,20 @@ pub enum ChatError {
         /// The limit.
         max_characters: u32,
     },
-    /// The instructions are longer than Mannie accepts.
+    /// The instructions were longer than Mannie accepted, in bytes.
+    /// Deprecated: the limit counts characters now, so the core no longer
+    /// returns this; it stays until a later minor release removes it
+    /// (ADR-0002).
     #[error("the instructions are longer than {max_bytes} bytes")]
     InstructionsTooLong {
         /// The limit.
         max_bytes: u32,
+    },
+    /// The instructions are longer than Mannie accepts.
+    #[error("the instructions are longer than {max_characters} characters")]
+    InstructionsTooManyCharacters {
+        /// The limit.
+        max_characters: u32,
     },
     /// The conversation does not exist, for example because it was deleted.
     #[error("the conversation does not exist")]
@@ -406,6 +416,10 @@ pub enum ChatError {
     /// child-agents/tasks.md, task conversations).
     #[error("the conversation belongs to a child agent")]
     TaskConversation,
+    /// The conversation belongs to a task on a worker that cannot be reached
+    /// now (docs/features/workers/delegation.md).
+    #[error("the worker of this conversation cannot be reached")]
+    WorkerUnreachable,
     /// The settings were written by a newer version of Mannie, which this
     /// version does not overwrite.
     #[error("the chat settings were written by a newer version of Mannie")]
@@ -430,6 +444,7 @@ impl ChatError {
             Self::TitleEmpty => "chat.title_empty",
             Self::TitleTooLong { .. } => "chat.title_too_long",
             Self::InstructionsTooLong { .. } => "chat.instructions_too_long",
+            Self::InstructionsTooManyCharacters { .. } => "chat.instructions_too_many_characters",
             Self::ConversationNotFound => "chat.conversation_not_found",
             Self::CheckpointNotFound => "chat.checkpoint_not_found",
             Self::RunActive => "chat.run_active",
@@ -449,6 +464,7 @@ impl ChatError {
             Self::FolderUnreadable { .. } => "chat.folder_unreadable",
             Self::FolderDialogFailed => "chat.folder_dialog_failed",
             Self::TaskConversation => "chat.task_conversation",
+            Self::WorkerUnreachable => "chat.worker_unreachable",
             Self::WrittenByNewerVersion => "chat.written_by_newer_version",
             Self::StorageFailed => "chat.storage_failed",
             Self::StoreUnavailable => "chat.store_unavailable",
@@ -460,8 +476,8 @@ impl ChatError {
 #[cfg(test)]
 mod tests {
     use super::{
-        ChatError, ChatSettings, MAX_INSTRUCTIONS_BYTES, MAX_MESSAGE_BYTES, UpdateChatSettings,
-        check_message, check_title, title_from_message,
+        ChatError, ChatSettings, MAX_INSTRUCTIONS_CHARACTERS, MAX_MESSAGE_BYTES,
+        UpdateChatSettings, check_message, check_title, title_from_message,
     };
 
     #[test]
@@ -511,22 +527,53 @@ mod tests {
         .into_settings()
         .unwrap();
         let too_long = UpdateChatSettings {
-            instructions: "a".repeat(MAX_INSTRUCTIONS_BYTES + 1),
+            instructions: "a".repeat(MAX_INSTRUCTIONS_CHARACTERS + 1),
         }
         .into_settings();
         let stored_too_long = serde_json::from_value::<ChatSettings>(serde_json::json!({
-            "instructions": "a".repeat(MAX_INSTRUCTIONS_BYTES + 1)
+            "instructions": "a".repeat(MAX_INSTRUCTIONS_CHARACTERS + 1)
         }));
 
         assert_eq!(valid.instructions.as_str(), "Answer in English.");
         assert_eq!(
             too_long,
-            Err(ChatError::InstructionsTooLong { max_bytes: 32_768 })
+            Err(ChatError::InstructionsTooManyCharacters {
+                max_characters: 32_768
+            })
         );
         stored_too_long.unwrap_err();
         assert_eq!(
             serde_json::to_value(&valid).unwrap(),
             serde_json::json!({ "instructions": "Answer in English." })
+        );
+    }
+
+    #[test]
+    fn instructions_are_counted_in_characters() {
+        let at_the_limit = |text: &str| UpdateChatSettings {
+            instructions: text.repeat(MAX_INSTRUCTIONS_CHARACTERS),
+        };
+        // 32,768 characters of two, three and four bytes each: all longer
+        // than the 32 KiB that the limit was before.
+        for text in ["é", "語", "🙂"] {
+            let settings = at_the_limit(text).into_settings().unwrap();
+            assert!(settings.instructions.as_str().len() > 32 * 1024, "{text}");
+        }
+        let one_more = UpdateChatSettings {
+            instructions: format!("{}a", "🙂".repeat(MAX_INSTRUCTIONS_CHARACTERS)),
+        };
+        assert_eq!(
+            one_more.into_settings(),
+            Err(ChatError::InstructionsTooManyCharacters {
+                max_characters: 32_768
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(ChatError::InstructionsTooManyCharacters {
+                max_characters: 32_768
+            })
+            .unwrap(),
+            serde_json::json!({ "code": "instructions_too_many_characters", "maxCharacters": 32_768 })
         );
     }
 

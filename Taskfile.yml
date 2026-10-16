@@ -56,7 +56,7 @@ tasks:
   # Formatting and sorting
 
   fmt:
-    desc: Format and sort all code and documentation (ESLint fixes, Prettier, Tombi, rustfmt)
+    desc: Format and sort all code and documentation (ESLint fixes, Prettier, Tombi, buf, rustfmt)
     cmds:
       # ESLint sorts imports, type members and Svelte attributes, then Prettier
       # lays out the result. Problems ESLint cannot fix are left to `task lint`.
@@ -64,6 +64,7 @@ tasks:
         ignore_error: true
       - pnpm exec prettier --write --log-level warn .
       - pnpm exec tombi format --quiet
+      - pnpm exec buf format --write
       - task: fmt:rust
 
   fmt:rust:
@@ -76,6 +77,7 @@ tasks:
     cmds:
       - pnpm exec prettier --check --log-level warn .
       - pnpm exec tombi format --check --quiet
+      - pnpm exec buf format --diff --exit-code
       - task: fmt:check:rust
 
   fmt:check:rust:
@@ -91,6 +93,7 @@ tasks:
       - task: lint:ts
       - task: lint:types
       - task: lint:toml
+      - task: lint:proto
       - task: lint:rust
       - task: lint:deps
       - task: lint:messages
@@ -110,6 +113,12 @@ tasks:
     desc: Lint the TOML files against their schemas with Tombi
     cmds:
       - pnpm exec tombi lint --error-on-warnings --quiet
+
+  lint:proto:
+    desc: Lint the link's protobuf contracts with buf, and check that they only grew since the merge base with origin/main and the newest release that has them (ADR-0016)
+    cmds:
+      - pnpm exec buf lint
+      - node scripts/check-link-contracts.mjs
 
   lint:rust:
     desc: Check that every crate inherits the workspace lints, then run Clippy with warnings denied
@@ -194,7 +203,7 @@ tasks:
       - "{{.LINUX_RUN}} cargo test --workspace --all-features --locked --exclude mannie-desktop"
 
   e2e:
-    desc: Build the validation app and run the end-to-end tests (V1, V2, V3, V11) through tauri-driver
+    desc: Build the validation app and the worker, and run the end-to-end tests (V1, V2, V3, V11) through tauri-driver
     cmds:
       - task: e2e:build
       - pnpm exec wdio run tests/e2e/wdio.conf.ts
@@ -216,6 +225,8 @@ tasks:
       - cmd: node scripts/edgedriver.mjs
         platforms: [windows]
       - pnpm --dir apps/desktop exec tauri build --debug --no-bundle --features validation --config src-tauri/tauri.validation.conf.json
+      # The workers' tests pair the app with a real worker (tests/e2e/support/worker.ts).
+      - cargo build --locked -p mannie-worker
 
   # Releases (docs/engineering/releasing.md)
 

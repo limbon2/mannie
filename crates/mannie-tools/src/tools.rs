@@ -13,7 +13,7 @@ pub(crate) mod move_path;
 pub(crate) mod move_to_project;
 pub(crate) mod read_file;
 pub(crate) mod read_tool_output;
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 pub(crate) mod run_command;
 pub(crate) mod search_text;
 pub(crate) mod system_info;
@@ -47,7 +47,7 @@ pub(crate) fn system_tools() -> Vec<Arc<dyn Tool>> {
         Arc::new(Registered::<move_path::MovePath>::new()),
         Arc::new(Registered::<delete_path::DeletePath>::new()),
     ];
-    #[cfg(any(windows, target_os = "linux"))]
+    #[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
     tools.push(Arc::new(Registered::<run_command::RunCommand>::new()));
     tools.push(Arc::new(
         Registered::<read_tool_output::ReadToolOutput>::new(),

@@ -35,6 +35,7 @@ This is the project's documentation: the vision, scope, architecture, decisions 
 | -   | [Architecture decision records](adr/README.md)       | The decisions behind all of the above                                                                                                                                                                                                              |
 | -   | [Features](features/README.md)                       | One document per feature: [chat](features/chat/README.md), [window and tray](features/window-and-tray.md), [system tools](features/system-tools/README.md), [child agents](features/child-agents/README.md), [workers](features/workers/README.md) |
 | -   | [Glossary](glossary.md)                              | Shared vocabulary                                                                                                                                                                                                                                  |
+| -   | [Setting up a worker](guides/worker-setup.md)        | How the owner installs, pairs, updates and removes a worker on a Windows, Linux or FreeBSD host                                                                                                                                                    |
 
 ## Status
 

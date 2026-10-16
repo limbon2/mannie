@@ -10,7 +10,7 @@ use mannie_store::{ModelPart, ModelTurn};
 use mannie_types::ids::{PartId, RunId};
 use mannie_types::provider::{ApiInterface, ReasoningEffort};
 use mannie_types::run::RunState;
-use mannie_types::tools::{NotRunReason, ToolCallDocument, ToolCallStatus};
+use mannie_types::tools::{NotRunReason, Refusal, ToolCallDocument, ToolCallStatus};
 use mannie_types::transcript::PartKind;
 
 use crate::agents::Requester;
@@ -297,6 +297,10 @@ fn not_run(reason: &NotRunReason, tool: &str) -> String {
         NotRunReason::EarlierCallDenied => texts::SKIPPED_AFTER_DENIAL.to_owned(),
         NotRunReason::OverBudget => texts::OVER_BUDGET.to_owned(),
         NotRunReason::ToolsOff => texts::TOOLS_OFF.to_owned(),
+        NotRunReason::Refused { refusal } => match refusal {
+            Refusal::ReadOnlyHost => texts::READ_ONLY_HOST.to_owned(),
+            Refusal::NoProjectsOnHost => texts::NO_PROJECTS_ON_HOST.to_owned(),
+        },
     }
 }
 

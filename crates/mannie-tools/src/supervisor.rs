@@ -5,34 +5,38 @@
 //! Its platform modules are the only code in Mannie that uses `unsafe`, and
 //! each unsafe block says why it is sound.
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 mod capture;
+#[cfg(target_os = "freebsd")]
+mod freebsd;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+mod unix;
 #[cfg(windows)]
 mod windows;
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 use std::ffi::OsString;
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 use std::path::Path;
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 use std::time::Duration;
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 use mannie_types::tools::CommandEnding;
 use mannie_types::tools::ProcessRecord;
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 use crate::stop::{StopReason, StopSignal};
 use crate::system::ShellFacts;
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 pub(crate) use capture::Captured;
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 use capture::Stream;
 
-#[cfg(target_os = "linux")]
-use linux as platform;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+use unix as platform;
 #[cfg(windows)]
 use windows as platform;
 
@@ -53,10 +57,10 @@ fn platform_shell() -> Option<ShellFacts> {
 }
 
 /// `/bin/sh`, with the shell it links to, such as `dash`.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[expect(
     clippy::unnecessary_wraps,
-    reason = "Windows can fail to find its shell, and FreeBSD has none yet"
+    reason = "Windows can fail to find its shell"
 )]
 fn platform_shell() -> Option<ShellFacts> {
     let path = std::path::PathBuf::from("/bin/sh");
@@ -67,15 +71,15 @@ fn platform_shell() -> Option<ShellFacts> {
     Some(ShellFacts { name, path })
 }
 
-/// Commands arrive on FreeBSD with workers in M4, together with their
-/// containment (docs/features/system-tools/commands.md, the shell).
-#[cfg(not(any(windows, target_os = "linux")))]
+/// No other system runs commands (docs/features/system-tools/commands.md,
+/// the shell).
+#[cfg(not(any(windows, target_os = "linux", target_os = "freebsd")))]
 fn platform_shell() -> Option<ShellFacts> {
     None
 }
 
 /// A command to run.
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 #[derive(Debug)]
 pub(crate) struct CommandSpec<'a> {
     /// The shell.
@@ -91,7 +95,7 @@ pub(crate) struct CommandSpec<'a> {
 }
 
 /// A command that ended, with every process it started.
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 #[derive(Debug)]
 pub(crate) struct Finished {
     /// How it ended.
@@ -109,7 +113,7 @@ pub(crate) struct Finished {
 /// Runs a command contained: when it ends, on its own, at its timeout or by
 /// Stop, every process it started ends with it. `on_start` receives the
 /// shell's process as soon as it runs, for the journal.
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 pub(crate) async fn run(
     spec: &CommandSpec<'_>,
     stop: &StopSignal,
@@ -117,10 +121,10 @@ pub(crate) async fn run(
 ) -> std::io::Result<Finished> {
     let started = tokio::time::Instant::now();
     // The Windows shell receives the command through its standard input,
-    // which the spawn writes; the Linux shell receives it as an argument.
+    // which the spawn writes; the Unix shell receives it as an argument.
     #[cfg(windows)]
     let (mut contained, mut child) = platform::Contained::spawn(spec).await?;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     let (mut contained, mut child) = platform::Contained::spawn(spec)?;
     on_start(contained.record());
     let stdout = child.stdout.take().map(Stream::capture);
@@ -147,14 +151,14 @@ pub(crate) async fn run(
 /// effort (docs/features/system-tools/commands.md, crash recovery). On
 /// Windows the job ended with Mannie, so nothing is left.
 pub async fn end_leftover_command(record: &ProcessRecord) {
-    #[cfg(target_os = "linux")]
-    linux::end_leftovers(record).await;
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    unix::end_leftovers(record).await;
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     let _ = record;
 }
 
 /// How a stopped command ended.
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 fn ending_of(reason: Option<StopReason>) -> CommandEnding {
     match reason {
         Some(StopReason::Interrupted) => CommandEnding::Interrupted,

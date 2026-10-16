@@ -28,6 +28,8 @@
 
   const deciding = $derived(toolsActions.deciding.includes(partId));
   const inProject = $derived(request.project !== null && request.project !== undefined);
+  /** The worker whose host the operation runs on, or `null` on this computer. */
+  const host = $derived(request.host ?? null);
 
   function decide(choice: ApprovalChoice): void {
     void toolsActions.decide(conversationId, partId, request.digest, choice);
@@ -40,6 +42,13 @@
     <p class="text-xs font-medium text-muted-foreground">{m.tools_approval_will()}</p>
     <ToolAccessList {accesses} />
   </div>
+  {#if host !== null}
+    <!-- The worker's name is content, which the worker wrote. -->
+    <div class="flex flex-col gap-1">
+      <p class="text-xs font-medium text-muted-foreground">{m.tools_approval_host()}</p>
+      <p class="text-sm wrap-anywhere" data-approval-host="" data-content dir="auto">{host}</p>
+    </div>
+  {/if}
   {#if request.reasons.length > 0}
     <div class="flex flex-col gap-1">
       <p class="text-xs font-medium text-muted-foreground">{m.tools_approval_why()}</p>

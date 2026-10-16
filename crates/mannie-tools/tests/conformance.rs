@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mannie_store::{Store, StoreOptions};
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 use mannie_tools::StopReason;
 use mannie_tools::{
     Availability, CommandEnvironment, Done, Execution, MoveFailure, MutationLock, PrepareError,
@@ -18,7 +18,7 @@ use mannie_tools::{
 use mannie_types::clock::{Clock, SystemClock, UtcMillis};
 use mannie_types::ids::{ArchiveId, ConversationId, ProjectId};
 use mannie_types::projects::ProjectView;
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 use mannie_types::tools::CommandEnding;
 use mannie_types::tools::{Access, AccessMode, EntryCount, EntryKind, ToolFailure, ToolOutcome};
 use serde_json::{Value, json};
@@ -1431,12 +1431,12 @@ async fn a_folder_whose_content_changed_is_not_deleted() {
 }
 
 /// A command in the platform's shell: PowerShell on Windows, `sh` elsewhere.
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 fn shell<'a>(windows: &'a str, unix: &'a str) -> &'a str {
     if cfg!(windows) { windows } else { unix }
 }
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 #[tokio::test]
 async fn run_command_reports_the_exit_code_and_both_streams() {
     let harness = Harness::new();
@@ -1468,7 +1468,7 @@ async fn run_command_reports_the_exit_code_and_both_streams() {
     ));
 }
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 #[tokio::test]
 async fn run_command_runs_in_the_working_directory_with_unicode_output() {
     let harness = Harness::new();
@@ -1513,7 +1513,7 @@ async fn run_command_runs_multi_line_powershell() {
     );
 }
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 #[tokio::test]
 async fn run_command_receives_only_allowed_variables() {
     let mut harness = Harness::new();
@@ -1544,7 +1544,7 @@ async fn run_command_receives_only_allowed_variables() {
     );
 }
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 #[tokio::test]
 async fn long_output_is_cut_and_archived() {
     let harness = with_small_limit(Harness::new(), 8 * 1024);
@@ -1574,7 +1574,7 @@ async fn long_output_is_cut_and_archived() {
     assert_eq!(archive.content.lines().count(), 5000);
 }
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 #[tokio::test]
 async fn a_command_past_its_timeout_is_ended() {
     let harness = Harness::new();
@@ -1604,7 +1604,7 @@ async fn a_command_past_its_timeout_is_ended() {
     ));
 }
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 #[tokio::test]
 async fn stop_ends_a_command_within_a_second() {
     let harness = Harness::new();
@@ -1637,7 +1637,7 @@ async fn stop_ends_a_command_within_a_second() {
     ));
 }
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 #[tokio::test]
 async fn commands_need_an_existing_working_directory_and_some_text() {
     let harness = Harness::new();

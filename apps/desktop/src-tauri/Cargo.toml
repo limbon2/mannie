@@ -26,6 +26,12 @@ required-features = ["validation"]
 
 [dependencies]
 anyhow = { workspace = true }
+# The master's key of the link in the credential store, as the base64 of its
+# PKCS#8 document.
+base64 = { workspace = true }
+# The link to the paired workers, whose hub the composition root starts and
+# hands to the runtime (ADR-0016, ADR-0027).
+mannie-link = { workspace = true }
 mannie-logging = { workspace = true }
 mannie-provider = { workspace = true }
 mannie-runtime = { workspace = true }

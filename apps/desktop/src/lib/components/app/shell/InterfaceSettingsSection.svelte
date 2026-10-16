@@ -2,6 +2,7 @@
   import CircleAlertIcon from '@lucide/svelte/icons/circle-alert';
   import { resetMode, setMode, userPrefersMode } from 'mode-watcher';
 
+  import FieldHelp from '#lib/components/app/FieldHelp.svelte';
   import * as Alert from '#lib/components/ui/alert/index.js';
   import * as Field from '#lib/components/ui/field/index.js';
   import * as RadioGroup from '#lib/components/ui/radio-group/index.js';
@@ -76,7 +77,14 @@
 {/if}
 <Field.Group>
   <Field.Field>
-    <Field.Label for="interface-language">{m.shell_settings_language_label()}</Field.Label>
+    <div class="flex items-center gap-1">
+      <Field.Label for="interface-language">{m.shell_settings_language_label()}</Field.Label>
+      <FieldHelp
+        id="interface-language-help"
+        field={m.shell_settings_language_label()}
+        text={m.shell_settings_language_description()}
+      />
+    </div>
     <Select.Root
       disabled={languageLocked}
       items={languages}
@@ -84,7 +92,7 @@
       value={selectedLanguage}
       onValueChange={changeLanguage}
     >
-      <Select.Trigger id="interface-language" class="w-full max-w-xs">
+      <Select.Trigger id="interface-language" class="w-full max-w-xs" aria-describedby="interface-language-help">
         <Select.Value />
       </Select.Trigger>
       <Select.Content>
@@ -93,7 +101,6 @@
         {/each}
       </Select.Content>
     </Select.Root>
-    <Field.Description>{m.shell_settings_language_description()}</Field.Description>
     {#if interfaceSettings.saving}
       <p class="flex items-center gap-2 text-sm text-muted-foreground" role="status">
         <Spinner aria-label={m.shell_loading()} />

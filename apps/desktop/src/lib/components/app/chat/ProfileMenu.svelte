@@ -45,7 +45,7 @@
         </Button>
       {/snippet}
     </DropdownMenu.Trigger>
-    <DropdownMenu.Content align="start">
+    <DropdownMenu.Content class="w-72" align="start">
       <DropdownMenu.Group>
         <DropdownMenu.Label>{m.chat_profile_menu_label()}</DropdownMenu.Label>
         <DropdownMenu.RadioGroup value={conversation.profileId ?? DEFAULT_PROFILE} onValueChange={choose}>

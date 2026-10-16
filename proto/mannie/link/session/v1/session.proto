@@ -1,0 +1,48 @@
+// The session of a link between the master and a worker
+// (docs/features/workers/pairing-and-link.md, the services; ADR-0016).
+//
+// Every connection starts with Hello: the master and the worker say which
+// version of Mannie they run and which feature level of each package they
+// speak, and the worker describes itself. The documents that cross the link
+// travel as JSON in fields named `*_json`; their types are the Rust types of
+// mannie-types, which change only by addition.
+syntax = "proto3";
+
+package mannie.link.session.v1;
+
+// Starts and ends the pairing's sessions.
+service SessionService {
+  // The first call of every connection.
+  rpc Hello(HelloRequest) returns (HelloResponse);
+  // Ends the pairing: the worker cancels its tasks, drops its leases and
+  // forgets the master.
+  rpc Unpair(UnpairRequest) returns (UnpairResponse);
+}
+
+// What the master says when it connects.
+message HelloRequest {
+  // The master's version of Mannie, such as "0.4.0".
+  string version = 1;
+  // The feature level that the master speaks of each package, by the
+  // package's name, such as "mannie.link.tasks.v1".
+  map<string, uint32> levels = 2;
+}
+
+// What the worker says about itself.
+message HelloResponse {
+  // The worker's version of Mannie.
+  string version = 1;
+  // The feature level that the worker speaks of each package.
+  map<string, uint32> levels = 2;
+  // The worker's name, from its configuration.
+  string name = 3;
+  // The worker's purpose, host facts, ceiling, version and task limit: the
+  // JSON of `WorkerDetails`.
+  string details_json = 4;
+}
+
+// Asks the worker to end the pairing.
+message UnpairRequest {}
+
+// The worker ended the pairing.
+message UnpairResponse {}

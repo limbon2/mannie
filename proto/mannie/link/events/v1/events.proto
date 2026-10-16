@@ -1,0 +1,71 @@
+// Reading the conversation of a task on its worker (docs/features/workers/
+// delegation.md, worker task conversations; ADR-0027, decision 4).
+//
+// The master shows a worker task's conversation by forwarding the owner's
+// reads to the worker, which keeps the conversation.
+syntax = "proto3";
+
+package mannie.link.events.v1;
+
+// The conversations of a worker's tasks.
+service EventsService {
+  // Follows a conversation from a cursor, or from a snapshot.
+  rpc Subscribe(SubscribeRequest) returns (stream SubscribeResponse);
+  // Earlier turns of a conversation.
+  rpc EarlierTurns(EarlierTurnsRequest) returns (EarlierTurnsResponse);
+  // A checkpoint of a conversation, with its summary.
+  rpc Checkpoint(CheckpointRequest) returns (CheckpointResponse);
+  // A page of an archived output of a tool call.
+  rpc ToolOutput(ToolOutputRequest) returns (ToolOutputResponse);
+}
+
+// Starts following a conversation.
+message SubscribeRequest {
+  // The conversation's ID.
+  string conversation_id = 1;
+  // The sequence number of the last event the owner saw, or absent for a
+  // snapshot.
+  optional uint32 after_seq = 2;
+}
+
+// One update of a conversation.
+message SubscribeResponse {
+  // The JSON of `ConversationUpdate`.
+  string update_json = 1;
+}
+
+// Asks for earlier turns.
+message EarlierTurnsRequest {
+  // The JSON of `LoadEarlierTurns`.
+  string input_json = 1;
+}
+
+// Earlier turns.
+message EarlierTurnsResponse {
+  // The JSON of `EarlierTurns`.
+  string turns_json = 1;
+}
+
+// Asks for a checkpoint.
+message CheckpointRequest {
+  // The JSON of `CheckpointRef`.
+  string input_json = 1;
+}
+
+// A checkpoint.
+message CheckpointResponse {
+  // The JSON of `Checkpoint`.
+  string checkpoint_json = 1;
+}
+
+// Asks for a page of an archived output.
+message ToolOutputRequest {
+  // The JSON of `ReadToolOutput`.
+  string input_json = 1;
+}
+
+// A page of an archived output.
+message ToolOutputResponse {
+  // The JSON of `ToolOutputPage`.
+  string page_json = 1;
+}

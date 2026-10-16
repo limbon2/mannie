@@ -88,18 +88,21 @@ impl Setup {
         waiting_call(&transcript).unwrap()
     }
 
-    fn decide(
+    async fn decide(
         &self,
         conversation: &ConversationId,
         (part_id, request): &(PartId, ApprovalRequest),
         choice: ApprovalChoice,
     ) -> Result<(), ToolsError> {
-        self.harness.runtime.decide_approval(DecideApproval {
-            conversation_id: conversation.clone(),
-            part_id: part_id.clone(),
-            digest: request.digest.clone(),
-            choice,
-        })
+        self.harness
+            .runtime
+            .decide_approval(DecideApproval {
+                conversation_id: conversation.clone(),
+                part_id: part_id.clone(),
+                digest: request.digest.clone(),
+                choice,
+            })
+            .await
     }
 
     async fn project_of(&self, conversation: &ConversationId) -> Option<ProjectId> {
@@ -407,16 +410,19 @@ async fn a_move_that_the_message_does_not_name_asks_the_owner_first() {
     assert_eq!(waiting.1.grants, Vec::new());
     assert_eq!(waiting.1.project, None);
     assert_eq!(
-        setup.decide(
-            &conversation,
-            &waiting,
-            ApprovalChoice::AllowForConversation
-        ),
+        setup
+            .decide(
+                &conversation,
+                &waiting,
+                ApprovalChoice::AllowForConversation
+            )
+            .await,
         Err(ToolsError::GrantNotPossible)
     );
     assert_eq!(setup.project_of(&conversation).await, None);
     setup
         .decide(&conversation, &waiting, ApprovalChoice::AllowOnce)
+        .await
         .unwrap();
     let transcript = setup.harness.wait_for_run(&conversation, &run).await;
 
@@ -451,6 +457,7 @@ async fn a_move_after_another_tool_call_asks_even_when_the_message_names_the_pro
     assert_eq!(waiting.1.reasons, [ApprovalReason::MoveToProject]);
     setup
         .decide(&conversation, &waiting, ApprovalChoice::Deny)
+        .await
         .unwrap();
     let transcript = setup.harness.wait_for_run(&conversation, &run).await;
 
@@ -533,6 +540,7 @@ async fn grants_for_a_project_and_for_every_conversation_reach_other_conversatio
     assert_eq!(waiting.1.project.as_ref(), Some(&project.id));
     setup
         .decide(&first, &waiting, ApprovalChoice::AllowForProject)
+        .await
         .unwrap();
     setup.harness.wait_for_run(&first, &first_run).await;
 
@@ -550,11 +558,14 @@ async fn grants_for_a_project_and_for_every_conversation_reach_other_conversatio
     let waiting = setup.awaiting(&general).await;
     assert_eq!(waiting.1.project, None);
     assert_eq!(
-        setup.decide(&general, &waiting, ApprovalChoice::AllowForProject),
+        setup
+            .decide(&general, &waiting, ApprovalChoice::AllowForProject)
+            .await,
         Err(ToolsError::NotInAProject)
     );
     setup
         .decide(&general, &waiting, ApprovalChoice::AllowAlways)
+        .await
         .unwrap();
     setup.harness.wait_for_run(&general, &general_run).await;
 

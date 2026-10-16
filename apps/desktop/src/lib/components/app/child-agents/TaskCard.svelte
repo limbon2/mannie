@@ -6,6 +6,7 @@
   import CircleStopIcon from '@lucide/svelte/icons/circle-stop';
   import LoaderCircleIcon from '@lucide/svelte/icons/loader-circle';
   import MessagesSquareIcon from '@lucide/svelte/icons/messages-square';
+  import ServerIcon from '@lucide/svelte/icons/server';
   import SquareIcon from '@lucide/svelte/icons/square';
   import { untrack } from 'svelte';
 
@@ -27,8 +28,10 @@
   // child-agent-activity.md, the card of a task): the child's number and
   // title, its agent, its state and what it does now, the call of the child
   // that waits for the owner, and on demand the instruction and the report.
-  // The title, the activity, the instruction and the report are content,
-  // which a model wrote. A status region announces a change of state without
+  // A task on a worker shows the worker's name in place of the agent
+  // (docs/features/workers/worker-activity.md). The title, the activity, the
+  // instruction, the report and the worker's name are content, which a model
+  // or a worker wrote. A status region announces a change of state without
   // taking the focus.
   let { task }: { task: TaskView } = $props();
 
@@ -59,11 +62,22 @@
 
 <div class="flex flex-col gap-3 rounded-lg border p-3" data-task-number={task.number} data-task-state={task.state}>
   <div class="flex items-start gap-2">
-    <BotIcon class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+    {#if task.worker === null}
+      <BotIcon class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+    {:else}
+      <ServerIcon class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+    {/if}
     <p class="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-sm">
       <span class="font-medium">{m.child_agents_task_number({ number })}</span>
       <span class="min-w-0 wrap-anywhere" data-content dir="auto">{task.title}</span>
-      <Badge variant="secondary">{agentLabel(task.agent)}</Badge>
+      {#if task.worker === null}
+        <Badge variant="secondary">{agentLabel(task.agent)}</Badge>
+      {:else}
+        <Badge class="max-w-full" data-task-worker="" variant="secondary">
+          <span class="sr-only">{m.child_agents_worker_prefix()}</span>
+          <span class="min-w-0 truncate" data-content dir="auto">{task.worker.name}</span>
+        </Badge>
+      {/if}
       {#if task.followUp}
         <Badge variant="outline">{m.child_agents_follow_up()}</Badge>
       {/if}
@@ -89,6 +103,9 @@
       <span class="text-muted-foreground">{m.child_agents_tool_calls({ count: task.toolCalls })}</span>
     {/if}
   </div>
+  {#if task.detached}
+    <p class="text-sm text-muted-foreground" data-task-detached="">{m.child_agents_detached()}</p>
+  {/if}
   {#if approval !== null}
     <!-- The child's call renders as a part of the child's conversation, so the
          owner's decision names the child's conversation, part and digest. -->

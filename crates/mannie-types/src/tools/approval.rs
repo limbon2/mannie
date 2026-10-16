@@ -27,6 +27,12 @@ pub enum ApprovalReason {
     /// message of the turn did not name it, or another tool call came first
     /// (docs/features/chat/projects.md, moving a conversation into a project).
     MoveToProject,
+    /// On a worker: a path lies outside the folders that the worker's ceiling
+    /// allows (docs/features/workers/host-and-ceiling.md, the ceiling).
+    OutsideAllowedFolders,
+    /// On a worker: the ceiling's mode asks for this change, which lies
+    /// inside the allowed folders.
+    HostAsks,
 }
 
 /// What a grant covers.
@@ -84,6 +90,10 @@ pub struct ApprovalRequest {
     /// cover, or `None` in a general conversation.
     #[serde(default)]
     pub project: Option<ProjectId>,
+    /// The name of the worker whose host the operation runs on, or `None` on
+    /// the master. A worker's request offers only "Allow once" and "Deny".
+    #[serde(default)]
+    pub host: Option<String>,
 }
 
 /// The owner's answer to an approval request.
@@ -118,7 +128,7 @@ pub enum ApprovalChoice {
 }
 
 /// The argument of `decide_approval`.
-#[derive(Debug, Clone, Deserialize, Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DecideApproval {
     /// The conversation.
@@ -160,6 +170,17 @@ pub enum Decision {
     RuleSaved,
     /// The owner denied it.
     Denied,
+    /// On a worker: a read inside the allowed folders, or a change there in
+    /// autonomous mode.
+    AllowedFolder,
+    /// On a worker in autonomous mode: a rule of the host allowed the command.
+    HostRule,
+    /// The conversation was in full access (ADR-0029): on the master its own
+    /// switch, and on a worker the switch of the conversation on the master
+    /// that delegated the task, which answered the request.
+    FullAccess,
+    /// On a worker whose ceiling is in full access mode (ADR-0029).
+    HostFullAccess,
 }
 
 impl Decision {

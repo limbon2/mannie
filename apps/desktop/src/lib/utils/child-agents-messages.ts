@@ -86,8 +86,20 @@ export function taskRefusalMessage(refusal: TaskRefusal): string {
     case 'still_running': {
       return m.child_agents_refusal_still_running({ number: String(refusal.number) });
     }
+    case 'profile_not_reachable': {
+      return m.child_agents_refusal_profile_not_reachable({ worker: refusal.worker });
+    }
     case 'unknown_task': {
       return m.child_agents_refusal_unknown_task({ number: String(refusal.number) });
+    }
+    case 'worker_incompatible': {
+      return m.child_agents_refusal_worker_incompatible({ worker: refusal.worker });
+    }
+    case 'worker_offline': {
+      return m.child_agents_refusal_worker_offline({ worker: refusal.worker });
+    }
+    case 'worker_unknown': {
+      return m.child_agents_refusal_worker_unknown({ worker: refusal.worker });
     }
   }
 }

@@ -7,7 +7,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 use std::time::{Duration, Instant};
 
 use mannie_provider::testing::Step;
@@ -18,7 +18,7 @@ use mannie_tools::ACTIVITY_ARGUMENT;
 use mannie_types::chat::StartConversation;
 use mannie_types::ids::{ConversationId, PartId, ProjectId, RunId};
 use mannie_types::run::{FinishReason, RunFailure, RunState};
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 use mannie_types::tools::CommandEnding;
 use mannie_types::tools::{
     Access, AccessMode, ApprovalChoice, ApprovalReason, ApprovalRequest, DecideApproval, Decision,
@@ -108,18 +108,21 @@ impl Setup {
         waiting_call(&transcript).unwrap()
     }
 
-    fn decide(
+    async fn decide(
         &self,
         conversation: &ConversationId,
         (part_id, request): &(PartId, ApprovalRequest),
         choice: ApprovalChoice,
     ) -> Result<(), ToolsError> {
-        self.harness.runtime.decide_approval(DecideApproval {
-            conversation_id: conversation.clone(),
-            part_id: part_id.clone(),
-            digest: request.digest.clone(),
-            choice,
-        })
+        self.harness
+            .runtime
+            .decide_approval(DecideApproval {
+                conversation_id: conversation.clone(),
+                part_id: part_id.clone(),
+                digest: request.digest.clone(),
+                choice,
+            })
+            .await
     }
 }
 
@@ -209,6 +212,7 @@ async fn a_change_inside_the_workspace_asks_and_runs_once_allowed() {
     assert!(!target.exists());
     setup
         .decide(&conversation, &waiting, ApprovalChoice::AllowOnce)
+        .await
         .unwrap();
     let transcript = setup.harness.wait_for_run(&conversation, &run).await;
 
@@ -325,6 +329,7 @@ async fn a_misleading_activity_changes_nothing_that_authorization_decides() {
     assert_eq!(waiting.1.reasons, [ApprovalReason::ChangeInWorkspace]);
     setup
         .decide(&conversation, &waiting, ApprovalChoice::Deny)
+        .await
         .unwrap();
     setup.harness.wait_for_run(&conversation, &run).await;
     assert_eq!(
@@ -357,6 +362,7 @@ async fn a_denial_reaches_the_model_and_skips_the_rest_of_the_step() {
     let waiting = setup.awaiting(&conversation).await;
     setup
         .decide(&conversation, &waiting, ApprovalChoice::Deny)
+        .await
         .unwrap();
     let transcript = setup.harness.wait_for_run(&conversation, &run).await;
 
@@ -407,6 +413,7 @@ async fn allowing_for_the_conversation_grants_the_folder() {
             &waiting,
             ApprovalChoice::AllowForConversation,
         )
+        .await
         .unwrap();
     let transcript = setup.harness.wait_for_run(&conversation, &run).await;
 
@@ -440,25 +447,33 @@ async fn a_decision_counts_only_for_the_request_it_names() {
     let (part_id, request) = waiting.clone();
     let other_part = PartId::parse("0199e0f2-0000-7000-8000-000000000999").unwrap();
 
-    let changed = setup.harness.runtime.decide_approval(DecideApproval {
-        conversation_id: conversation.clone(),
-        part_id: part_id.clone(),
-        digest: "0".repeat(64),
-        choice: ApprovalChoice::AllowOnce,
-    });
-    let elsewhere = setup.decide(
-        &conversation,
-        &(other_part, request.clone()),
-        ApprovalChoice::AllowOnce,
-    );
-    let no_rule = setup.decide(
-        &conversation,
-        &waiting,
-        ApprovalChoice::SaveRule {
-            prefix_words: 1,
-            limit_to_folder: false,
-        },
-    );
+    let changed = setup
+        .harness
+        .runtime
+        .decide_approval(DecideApproval {
+            conversation_id: conversation.clone(),
+            part_id: part_id.clone(),
+            digest: "0".repeat(64),
+            choice: ApprovalChoice::AllowOnce,
+        })
+        .await;
+    let elsewhere = setup
+        .decide(
+            &conversation,
+            &(other_part, request.clone()),
+            ApprovalChoice::AllowOnce,
+        )
+        .await;
+    let no_rule = setup
+        .decide(
+            &conversation,
+            &waiting,
+            ApprovalChoice::SaveRule {
+                prefix_words: 1,
+                limit_to_folder: false,
+            },
+        )
+        .await;
 
     assert_eq!(changed, Err(ToolsError::ApprovalChanged));
     assert_eq!(elsewhere, Err(ToolsError::ApprovalNotPending));
@@ -466,10 +481,13 @@ async fn a_decision_counts_only_for_the_request_it_names() {
     assert!(!setup.path("a.txt").exists());
     setup
         .decide(&conversation, &waiting, ApprovalChoice::AllowOnce)
+        .await
         .unwrap();
     setup.harness.wait_for_run(&conversation, &run).await;
     assert_eq!(
-        setup.decide(&conversation, &waiting, ApprovalChoice::AllowOnce),
+        setup
+            .decide(&conversation, &waiting, ApprovalChoice::AllowOnce)
+            .await,
         Err(ToolsError::ApprovalNotPending),
         "a decided request no longer waits"
     );
@@ -494,7 +512,9 @@ async fn stop_during_an_approval_cancels_the_call() {
     assert_eq!(the_call(&transcript, 0).status, ToolCallStatus::Canceled);
     assert!(setup.path("doomed.txt").exists());
     assert_eq!(
-        setup.decide(&conversation, &waiting, ApprovalChoice::AllowOnce),
+        setup
+            .decide(&conversation, &waiting, ApprovalChoice::AllowOnce)
+            .await,
         Err(ToolsError::ApprovalNotPending)
     );
     let summary = setup
@@ -542,10 +562,11 @@ async fn a_run_that_waits_for_the_owner_holds_no_model_slot() {
     assert_eq!(transcript.reply_text(0), "Meanwhile.");
     setup
         .decide(&waiting_conversation, &waiting, ApprovalChoice::Deny)
+        .await
         .unwrap();
 }
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 #[tokio::test]
 async fn stop_ends_a_running_command_and_its_reply_within_a_second() {
     let setup = Setup::new().await;
@@ -564,6 +585,7 @@ async fn stop_ends_a_running_command_and_its_reply_within_a_second() {
     let waiting = setup.awaiting(&conversation).await;
     setup
         .decide(&conversation, &waiting, ApprovalChoice::AllowOnce)
+        .await
         .unwrap();
     // Stop once the command runs.
     setup
@@ -815,6 +837,7 @@ async fn reads_inside_mannies_data_folder_always_ask() {
     assert_eq!(waiting.1.grants, Vec::new());
     setup
         .decide(&conversation, &waiting, ApprovalChoice::Deny)
+        .await
         .unwrap();
 }
 
@@ -873,6 +896,7 @@ async fn a_folder_swapped_for_a_link_while_the_owner_decides_is_not_written() {
     link_folder(&setup.path("docs"), outside.path());
     setup
         .decide(&conversation, &waiting, ApprovalChoice::AllowOnce)
+        .await
         .unwrap();
     let transcript = setup.harness.wait_for_run(&conversation, &run).await;
 
@@ -913,6 +937,7 @@ async fn a_file_replaced_while_the_owner_decides_asks_again() {
     fs::rename(setup.path("other.txt"), setup.path("notes.txt")).unwrap();
     setup
         .decide(&conversation, &first, ApprovalChoice::AllowOnce)
+        .await
         .unwrap();
     // The approval covered the old file; the policy asks about the new one.
     let second = setup
@@ -924,6 +949,7 @@ async fn a_file_replaced_while_the_owner_decides_asks_again() {
     let second = waiting_call(&second).unwrap();
     setup
         .decide(&conversation, &second, ApprovalChoice::Deny)
+        .await
         .unwrap();
     let transcript = setup.harness.wait_for_run(&conversation, &run).await;
 

@@ -100,6 +100,8 @@ impl Fixture {
                 failure: None,
                 started_at: None,
                 ended_at: None,
+                worker: None,
+                detached: false,
             }),
             ..TaskPartDocument::default()
         };
@@ -137,6 +139,7 @@ impl Fixture {
                                 parent_id: parent.conversation.clone(),
                                 number: 1,
                                 agent: "explore".to_owned(),
+                                worker: None,
                             }),
                         },
                     },
@@ -147,7 +150,8 @@ impl Fixture {
                         run,
                         task: Some(NewTask {
                             id: task.clone(),
-                            part_id: parent.part.clone(),
+                            part_id: Some(parent.part.clone()),
+                            assignment: None,
                             follow_up: false,
                             background: false,
                         }),
@@ -237,7 +241,14 @@ async fn a_task_conversation_is_created_with_its_task_and_stays_out_of_the_list(
     assert_eq!(found.title, "Find the sessions");
     let latest = found.latest.unwrap();
     assert_eq!(latest.id, child.task);
-    assert_eq!(latest.part_id, parent.part);
+    assert_eq!(latest.part_id.as_ref(), Some(&parent.part));
+    assert_eq!(latest.worker_id, None);
+    assert_eq!(latest.assignment, None);
+    assert_eq!(
+        latest.state_version, 0,
+        "only assigned tasks take state versions"
+    );
+    assert_eq!(found.worker, None);
     assert_eq!(latest.state, TaskState::Accepted);
     assert_eq!(
         fixture

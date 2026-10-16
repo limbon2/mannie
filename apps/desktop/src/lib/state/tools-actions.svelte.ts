@@ -210,12 +210,34 @@ export class PermissionsRequest {
   }
 }
 
+/**
+ * One switch of a conversation's full access (ADR-0029): the confirmation
+ * before it turns on, or why a switch failed.
+ */
+export class FullAccessRequest {
+  readonly conversationId: ConversationId;
+  /** Whether the switch turns full access on. */
+  readonly enable: boolean;
+  /** Why the core refused the switch, if it did. */
+  failure: ToolsFailure | null = $state(null);
+  /** Whether the switch is being sent. */
+  saving = $state(false);
+
+  constructor(conversationId: ConversationId, enable: boolean) {
+    this.conversationId = conversationId;
+    this.enable = enable;
+  }
+}
+
 /** The owner's actions on tool calls, and the dialogs they open. */
 export class ToolsActions {
   /** Why the core refused the latest decision about a tool call, by its part. */
   decisionFailures: Partial<Record<PartId, ToolsFailure>> = $state({});
   /** The tool calls whose decision is being sent. */
   deciding: PartId[] = $state([]);
+  /** The latest full access dialog, which stays while it closes. */
+  fullAccess: FullAccessRequest | null = $state(null);
+  fullAccessOpen = $state(false);
   /** The latest output dialog, which stays while it closes. */
   output: OutputRequest | null = $state(null);
   outputOpen = $state(false);
@@ -271,6 +293,33 @@ export class ToolsActions {
     }
   }
 
+  /**
+   * Sends a switch of full access. The dialog closes when the core accepted
+   * it, and shows why when it did not.
+   */
+  async saveFullAccess(request: FullAccessRequest): Promise<void> {
+    if (request.saving) {
+      return;
+    }
+    request.saving = true;
+    const outcome = await call(() =>
+      commands.setFullAccess({ conversationId: request.conversationId, enabled: request.enable }),
+    );
+    request.saving = false;
+    const isLatest = this.fullAccess === request;
+    if (outcome.ok) {
+      request.failure = null;
+      if (isLatest) {
+        this.fullAccessOpen = false;
+      }
+      return;
+    }
+    request.failure = outcome.failure;
+    if (isLatest) {
+      this.fullAccessOpen = true;
+    }
+  }
+
   /** Opens the dialog that shows an archived output, and reads its first page. */
   showOutput(conversationId: ConversationId, archive: ArchiveRef): void {
     const request = new OutputRequest(conversationId, archive);
@@ -285,6 +334,21 @@ export class ToolsActions {
     this.permissions = request;
     this.permissionsOpen = true;
     void request.load();
+  }
+
+  /**
+   * Switches a conversation's full access. Turning it on asks first, in a
+   * dialog; turning it off happens at once, and only a failure opens the
+   * dialog.
+   */
+  switchFullAccess(conversationId: ConversationId, enable: boolean): void {
+    const request = new FullAccessRequest(conversationId, enable);
+    this.fullAccess = request;
+    if (enable) {
+      this.fullAccessOpen = true;
+      return;
+    }
+    void this.saveFullAccess(request);
   }
 
   /** Opens the "Save rule" dialog for an approval request that offers a rule. */

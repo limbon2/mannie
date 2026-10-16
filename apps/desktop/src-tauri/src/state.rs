@@ -1,6 +1,8 @@
 //! The core's state, which the commands share, and how it starts and stops:
-//! logging first, then the store, then the runtime, which marks the replies of
-//! a previous process as interrupted before any command runs.
+//! logging first, then the store, then the link's hub, which connects to the
+//! paired workers, then the runtime, which marks the replies of a previous
+//! process as interrupted before any command runs and delegates through the
+//! hub (ADR-0027).
 //!
 //! A store that does not open does not stop the app. The window opens, the
 //! shell asks for the startup status, and it shows what failed and what the
@@ -10,10 +12,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
+use mannie_link::master::{Hub, HubConfig};
 use mannie_logging::{ErrorChain, LogConfig, LoggingGuard, Redactor};
 use mannie_provider::{HttpClient, ProviderRegistry};
 use mannie_runtime::{
-    AgentRegistry, InstructionRegistry, Runtime, RuntimeConfig, RuntimeDeps, ToolsDeps,
+    AgentRegistry, Delegation, InstructionRegistry, Machine, Runtime, RuntimeConfig, RuntimeDeps,
+    ToolsDeps,
 };
 use mannie_store::{Store, StoreError, StoreOptions};
 use mannie_tools::{MutationLock, SystemFacts, ToolRegistry};
@@ -22,7 +26,7 @@ use mannie_types::startup::StartupProblem;
 use mannie_types::window::WindowSettings;
 use tauri::{App, Manager};
 
-use crate::credentials::KeyringVault;
+use crate::credentials::{KeyringKeyStore, KeyringVault};
 use crate::ipc::subscriptions::Subscriptions;
 use crate::window::requests::WindowRequests;
 
@@ -33,6 +37,7 @@ const DATABASE_FILE: &str = "mannie.sqlite";
 #[derive(Debug)]
 struct Services {
     store: Store,
+    hub: Hub,
     runtime: Runtime,
 }
 
@@ -93,6 +98,15 @@ impl Core {
             .as_ref()
             .ok()
             .map(|services| &services.runtime)
+    }
+
+    /// The link's hub, unless the core did not start.
+    pub(crate) fn hub(&self) -> Option<&Hub> {
+        self.inner
+            .services
+            .as_ref()
+            .ok()
+            .map(|services| &services.hub)
     }
 
     /// Why the core did not start, if it did not.
@@ -170,12 +184,16 @@ impl Core {
     }
 
     /// Stops the core: the runtime marks active replies as interrupted and
-    /// waits for them, the store makes everything durable, and the logs are
+    /// waits for them, and lets the tasks on workers run on; the hub ends
+    /// its connections; the store makes everything durable, and the logs are
     /// written out. Mannie quits afterwards.
     pub(crate) async fn shutdown(&self) {
         self.inner.subscriptions.cancel_all();
         if let Some(runtime) = self.runtime() {
             runtime.shutdown().await;
+        }
+        if let Some(hub) = self.hub() {
+            hub.shutdown().await;
         }
         tracing::info!("Mannie stopped");
         drop(lock(&self.inner.logging).take());
@@ -260,8 +278,9 @@ fn open_store(app: &App, clock: Arc<dyn Clock>) -> Result<Store, StartupProblem>
     })
 }
 
-/// Starts the runtime, which first marks the replies of a previous process as
-/// interrupted. The credential store opens on first use.
+/// Starts the link's hub and the runtime, which first marks the replies of a
+/// previous process as interrupted. The credential store opens on first use,
+/// for a provider's credential or the master's key of the link.
 fn start_runtime(
     app: &App,
     store: Store,
@@ -277,6 +296,23 @@ fn start_runtime(
         &app.config().identifier,
         redactor.clone(),
     ));
+    let keys = Arc::new(KeyringKeyStore::new(Arc::clone(&vault)));
+    let hub = tauri::async_runtime::block_on(Hub::start(
+        store.clone(),
+        keys,
+        hub_config(),
+        Arc::clone(&clock),
+    ))
+    .map_err(|error| {
+        tracing::error!(
+            error.code = error.code(),
+            "could not read the paired workers"
+        );
+        StartupProblem::DatabaseUnavailable {
+            path: store.path().display().to_string(),
+        }
+    })?;
+    let delegation: Arc<dyn Delegation> = Arc::new(hub.clone());
     let deps = RuntimeDeps {
         store: store.clone(),
         client,
@@ -286,6 +322,8 @@ fn start_runtime(
         agents: AgentRegistry::with_builtin(),
         instructions: InstructionRegistry::with_builtin(),
         tools: tools(app),
+        machine: Machine::Master,
+        delegation: Some(delegation),
     };
     let runtime = tauri::async_runtime::block_on(Runtime::start(deps, RuntimeConfig::default()))
         .map_err(|error| {
@@ -294,7 +332,23 @@ fn start_runtime(
                 path: store.path().display().to_string(),
             }
         })?;
-    Ok(Services { store, runtime })
+    Ok(Services {
+        store,
+        hub,
+        runtime,
+    })
+}
+
+/// How the hub connects to the workers. The end-to-end tests stop a worker
+/// and wait for it to come back, so validation builds try again sooner.
+fn hub_config() -> HubConfig {
+    let config = HubConfig::new(env!("CARGO_PKG_VERSION").to_owned());
+    #[cfg(feature = "validation")]
+    let config = HubConfig {
+        max_retry_delay: std::time::Duration::from_secs(2),
+        ..config
+    };
+    config
 }
 
 /// The system tools of the master. Mannie's data and log folders are

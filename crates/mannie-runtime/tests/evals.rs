@@ -604,6 +604,8 @@ async fn start(
         agents: AgentRegistry::with_builtin(),
         instructions: InstructionRegistry::with_builtin(),
         tools: test_tools(data),
+        machine: mannie_runtime::Machine::Master,
+        delegation: None,
     };
     let runtime = Runtime::start(deps, config)
         .await
@@ -642,6 +644,7 @@ async fn start(
         .update_tools_settings(UpdateToolsSettings {
             allow_changes_in_workspace: task.allow_changes,
             command_environment: Vec::new(),
+            full_access_for_new_conversations: false,
         })
         .await
         .expect("the settings are valid");
@@ -681,12 +684,14 @@ async fn follow(
             if decided.insert((part_id.clone(), request.digest.clone())) {
                 // A refusal means that the request moved on; the next update
                 // shows where it went.
-                let _refused = runtime.decide_approval(DecideApproval {
-                    conversation_id: waiting_conversation,
-                    part_id,
-                    digest: request.digest.clone(),
-                    choice: owner_choice(task, &call),
-                });
+                let _refused = runtime
+                    .decide_approval(DecideApproval {
+                        conversation_id: waiting_conversation,
+                        part_id,
+                        digest: request.digest.clone(),
+                        choice: owner_choice(task, &call),
+                    })
+                    .await;
             }
         }
         let ended = transcript

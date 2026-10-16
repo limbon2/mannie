@@ -49,23 +49,28 @@ static CREDENTIAL_PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new
     .collect()
 });
 
+/// A form of a registered secret: its raw value or its value inside a JSON
+/// string.
+struct Registered {
+    form: Zeroizing<String>,
+    /// Whether the secret stays registered for the life of the process.
+    permanent: bool,
+    /// The guards of scoped registrations that still hold it.
+    holders: usize,
+}
+
 /// Removes secrets from text. Cloning is cheap, and every clone shares the
 /// registered secrets.
 #[derive(Clone, Default)]
 pub struct Redactor {
-    registered: Arc<RwLock<Vec<Zeroizing<String>>>>,
+    registered: Arc<RwLock<Vec<Registered>>>,
 }
 
 impl std::fmt::Debug for Redactor {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let count = self
-            .registered
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .len();
         formatter
             .debug_struct("Redactor")
-            .field("registered", &count)
+            .field("registered", &self.registered_count())
             .finish()
     }
 }
@@ -76,26 +81,64 @@ impl Redactor {
         Self::default()
     }
 
-    /// Registers a secret whose value must never appear in a log. The code
-    /// that reads a secret into the process registers it.
+    /// Registers a secret whose value must never appear in a log, for the
+    /// life of the process. The code that reads a secret into the process
+    /// registers it.
     pub fn register(&self, secret: &Secret) {
+        drop(self.add(secret, false));
+    }
+
+    /// Registers a secret for as long as the returned guard lives, as for a
+    /// credential that a worker holds only during a task (ADR-0010). When the
+    /// last guard of a secret drops, the redactor forgets it and clears its
+    /// copy, unless the secret is also registered for good.
+    pub fn register_scoped(&self, secret: &Secret) -> RedactionGuard {
+        RedactionGuard {
+            registered: Arc::clone(&self.registered),
+            forms: self.add(secret, true),
+        }
+    }
+
+    /// How many forms of secrets are registered: a secret registers its raw
+    /// form and its form inside JSON, which may be the same.
+    pub fn registered_count(&self) -> usize {
+        self.registered
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
+    }
+
+    /// Adds the forms of a secret, held by a guard or for good, and returns
+    /// the forms that a guard holds.
+    fn add(&self, secret: &Secret, held: bool) -> Vec<Zeroizing<String>> {
         let value = secret.expose();
         if value.len() < MIN_REGISTERED_LENGTH {
-            return;
+            return Vec::new();
         }
         let mut registered = self
             .registered
             .write()
             .unwrap_or_else(PoisonError::into_inner);
-        let forms = [value.to_owned(), json_escaped(value)];
-        for form in forms {
-            if !registered.iter().any(|known| **known == form) {
-                registered.push(Zeroizing::new(form));
+        let mut forms = vec![Zeroizing::new(value.to_owned())];
+        let escaped = Zeroizing::new(json_escaped(value));
+        if *escaped != **forms[0] {
+            forms.push(escaped);
+        }
+        for form in &forms {
+            match registered.iter_mut().find(|known| *known.form == **form) {
+                Some(known) if held => known.holders += 1,
+                Some(known) => known.permanent = true,
+                None => registered.push(Registered {
+                    form: form.clone(),
+                    permanent: !held,
+                    holders: usize::from(held),
+                }),
             }
         }
         // Longer forms first, so a secret that contains another one is
         // replaced as a whole.
-        registered.sort_by_key(|form| std::cmp::Reverse(form.len()));
+        registered.sort_by_key(|known| std::cmp::Reverse(known.form.len()));
+        if held { forms } else { Vec::new() }
     }
 
     /// Returns `text` with every registered secret and every credential-like
@@ -108,8 +151,8 @@ impl Redactor {
                 .read()
                 .unwrap_or_else(PoisonError::into_inner);
             for secret in registered.iter() {
-                if result.contains(secret.as_str()) {
-                    result = Cow::Owned(result.replace(secret.as_str(), REDACTED));
+                if result.contains(secret.form.as_str()) {
+                    result = Cow::Owned(result.replace(secret.form.as_str(), REDACTED));
                 }
             }
         }
@@ -119,6 +162,44 @@ impl Redactor {
             }
         }
         result
+    }
+}
+
+/// Keeps a secret registered with a [`Redactor`] until it drops.
+#[must_use = "the secret is forgotten when the guard drops"]
+pub struct RedactionGuard {
+    registered: Arc<RwLock<Vec<Registered>>>,
+    forms: Vec<Zeroizing<String>>,
+}
+
+impl std::fmt::Debug for RedactionGuard {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RedactionGuard")
+            .field("forms", &self.forms.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl Drop for RedactionGuard {
+    fn drop(&mut self) {
+        if self.forms.is_empty() {
+            return;
+        }
+        let mut registered = self
+            .registered
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
+        for form in &self.forms {
+            if let Some(index) = registered.iter().position(|known| *known.form == **form) {
+                let known = &mut registered[index];
+                known.holders = known.holders.saturating_sub(1);
+                if known.holders == 0 && !known.permanent {
+                    // Dropping the entry clears its copy of the secret.
+                    registered.remove(index);
+                }
+            }
+        }
     }
 }
 
@@ -231,6 +312,47 @@ mod tests {
     use mannie_types::secret::Secret;
 
     use super::{REDACTED, RedactingWriter, Redactor};
+
+    #[test]
+    fn a_scoped_secret_is_redacted_while_its_guard_lives() {
+        let redactor = Redactor::new();
+        let line = format!("leased {PLANTED}");
+
+        let guard = redactor.register_scoped(&Secret::new(PLANTED.to_owned()));
+        assert_eq!(redactor.redact(&line), format!("leased {REDACTED}"));
+        assert_eq!(redactor.registered_count(), 1);
+
+        drop(guard);
+        assert_eq!(redactor.registered_count(), 0);
+        assert_eq!(redactor.redact(&line), line);
+    }
+
+    #[test]
+    fn a_scoped_secret_stays_while_another_holder_or_a_permanent_registration_keeps_it() {
+        let redactor = Redactor::new();
+        let secret = Secret::new(PLANTED.to_owned());
+        let first = redactor.register_scoped(&secret);
+        let second = redactor.register_scoped(&secret);
+
+        drop(first);
+        assert_eq!(redactor.registered_count(), 1);
+        redactor.register(&secret);
+        drop(second);
+
+        assert_eq!(redactor.registered_count(), 1);
+        assert_eq!(redactor.redact(PLANTED), REDACTED);
+    }
+
+    #[test]
+    fn a_secret_with_characters_that_json_escapes_drops_both_forms() {
+        let redactor = Redactor::new();
+        let guard = redactor.register_scoped(&Secret::new("quote\"and\\slash-secret".to_owned()));
+        assert_eq!(redactor.registered_count(), 2);
+
+        drop(guard);
+
+        assert_eq!(redactor.registered_count(), 0);
+    }
 
     const PLANTED: &str = "planted-test-secret-4f9c2a";
 

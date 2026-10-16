@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 use std::time::Instant;
 
 use mannie_provider::testing::Step;
@@ -317,6 +317,7 @@ async fn a_task_returns_the_childs_confirmed_report() {
             parent_id: conversation.clone(),
             number: 1,
             agent: "explore".to_owned(),
+            worker: None,
         })
     );
     assert_eq!(summary.project_id, None);
@@ -540,7 +541,10 @@ async fn a_limit_of_two_runs_two_children_and_a_larger_limit_starts_the_third() 
     let parent_run = still.run(&run).unwrap();
     assert_eq!(
         parent_run.activity,
-        Some(RunActivity::WaitingForTasks { count: 3 })
+        Some(RunActivity::WaitingForTasks {
+            count: 3,
+            workers: 0,
+        })
     );
     assert_eq!(setup.harness.runtime.active_run_count(), 1);
 
@@ -666,7 +670,10 @@ async fn a_reply_with_unread_reports_waits_and_asks_once_without_their_text() {
         matches!(
             event,
             mannie_types::transcript::ConversationEvent::RunUpdated { run }
-                if run.activity == Some(RunActivity::WaitingForTasks { count: 1 })
+                if run.activity == Some(RunActivity::WaitingForTasks {
+            count: 1,
+            workers: 0,
+        })
         )
     });
     assert!(waited);
@@ -746,7 +753,11 @@ async fn a_follow_up_of_a_running_or_unknown_task_assigns_nothing() {
         .harness
         .wait_until(&conversation, |transcript| {
             transcript.run(&run).is_some_and(|view| {
-                view.activity == Some(RunActivity::WaitingForTasks { count: 1 })
+                view.activity
+                    == Some(RunActivity::WaitingForTasks {
+                        count: 1,
+                        workers: 0,
+                    })
             })
         })
         .await;
@@ -804,12 +815,16 @@ async fn a_childs_approval_shows_in_its_parent_and_its_grant_covers_the_family()
     assert!(setup.marked_waiting(&conversation).await);
     // The decision names the child's conversation.
     let request = approval.call.request.clone().unwrap();
-    let wrong_conversation = setup.harness.runtime.decide_approval(DecideApproval {
-        conversation_id: conversation.clone(),
-        part_id: approval.part_id.clone(),
-        digest: request.digest.clone(),
-        choice: ApprovalChoice::AllowOnce,
-    });
+    let wrong_conversation = setup
+        .harness
+        .runtime
+        .decide_approval(DecideApproval {
+            conversation_id: conversation.clone(),
+            part_id: approval.part_id.clone(),
+            digest: request.digest.clone(),
+            choice: ApprovalChoice::AllowOnce,
+        })
+        .await;
     assert_eq!(wrong_conversation, Err(ToolsError::ApprovalNotPending));
     setup
         .harness
@@ -820,6 +835,7 @@ async fn a_childs_approval_shows_in_its_parent_and_its_grant_covers_the_family()
             digest: request.digest,
             choice: ApprovalChoice::AllowForConversation,
         })
+        .await
         .unwrap();
     let transcript = setup.harness.wait_for_run(&conversation, &run).await;
 
@@ -836,7 +852,23 @@ async fn a_childs_approval_shows_in_its_parent_and_its_grant_covers_the_family()
     assert!(!setup.marked_waiting(&conversation).await);
 }
 
-#[cfg(any(windows, target_os = "linux"))]
+/// Answers the call of a child's task that waits for the owner, from the
+/// task's card in the parent.
+async fn answer(setup: &Setup, task: &TaskView, choice: ApprovalChoice) -> Result<(), ToolsError> {
+    let approval = task.approval.clone().unwrap();
+    setup
+        .harness
+        .runtime
+        .decide_approval(DecideApproval {
+            conversation_id: task.conversation_id.clone(),
+            part_id: approval.part_id,
+            digest: approval.call.request.unwrap().digest,
+            choice,
+        })
+        .await
+}
+
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 #[tokio::test]
 async fn stopping_the_parent_ends_every_child_within_a_second() {
     let setup = Setup::new().await;
@@ -889,16 +921,8 @@ async fn stopping_the_parent_ends_every_child_within_a_second() {
         })
         .await;
     let command_task = transcript.tasks(0)[0].clone();
-    let approval = command_task.approval.unwrap();
-    setup
-        .harness
-        .runtime
-        .decide_approval(DecideApproval {
-            conversation_id: command_task.conversation_id.clone(),
-            part_id: approval.part_id,
-            digest: approval.call.request.unwrap().digest,
-            choice: ApprovalChoice::AllowOnce,
-        })
+    answer(&setup, &command_task, ApprovalChoice::AllowOnce)
+        .await
         .unwrap();
     setup
         .harness
@@ -935,13 +959,7 @@ async fn stopping_the_parent_ends_every_child_within_a_second() {
             RunState::Stopped
         );
     }
-    let ask = asking.approval.unwrap();
-    let late = setup.harness.runtime.decide_approval(DecideApproval {
-        conversation_id: asking.conversation_id,
-        part_id: ask.part_id,
-        digest: ask.call.request.unwrap().digest,
-        choice: ApprovalChoice::AllowOnce,
-    });
+    let late = answer(&setup, &asking, ApprovalChoice::AllowOnce).await;
     assert_eq!(late, Err(ToolsError::ApprovalNotPending));
     assert!(!setup.path("asked.txt").exists());
     assert_eq!(setup.harness.runtime.active_run_count(), 0);
@@ -974,7 +992,10 @@ async fn stopping_one_child_gives_its_parent_a_result_that_says_so() {
     assert_eq!(transcript.run_state(&run), Some(RunState::Completed));
     assert_eq!(transcript.tasks(0)[0].state, TaskState::Canceled);
     let parent = setup.harness.model.requests_for("OWNER:");
-    assert_eq!(result(&parent[1], "call_1"), texts::task_stopped(1));
+    assert_eq!(
+        result(&parent[1], "call_1"),
+        texts::task_stopped(1, texts::THE_CHILD)
+    );
 }
 
 #[tokio::test]

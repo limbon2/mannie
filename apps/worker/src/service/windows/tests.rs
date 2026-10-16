@@ -6,19 +6,25 @@ use windows_service::service::{ServiceControlAccept, ServiceExitCode, ServiceSta
 use super::{launch_arguments, service_status};
 
 #[test]
-fn the_service_control_manager_starts_the_worker_with_its_data_folder() {
-    let arguments = launch_arguments(Path::new(r"C:\ProgramData\Mannie Worker"));
+fn the_service_control_manager_starts_the_worker_with_its_configuration() {
+    let arguments = launch_arguments(Path::new(r"C:\ProgramData\Mannie\worker\worker.toml"));
 
     let expected: Vec<OsString> = [
         "service",
         "run",
-        "--data-dir",
-        r"C:\ProgramData\Mannie Worker",
+        "--config",
+        r"C:\ProgramData\Mannie\worker\worker.toml",
     ]
     .into_iter()
     .map(OsString::from)
     .collect();
     assert_eq!(arguments, expected);
+    assert!(
+        !arguments
+            .iter()
+            .any(|argument| argument == "--allow-writable-config"),
+        "a service never runs with a writable configuration"
+    );
 }
 
 #[test]

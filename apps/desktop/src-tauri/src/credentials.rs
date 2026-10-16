@@ -1,14 +1,21 @@
 //! The master's credential vault (ADR-0010): the operating system's credential
 //! store through `mannie-secrets`. Every credential that passes through it is
-//! registered with the log redactor before anything else happens to it.
+//! registered with the log redactor before anything else happens to it. The
+//! master's key of the link lives there too (ADR-0016).
 
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 
+use base64::Engine as _;
+use mannie_link::keys::LinkKey;
+use mannie_link::master::{KeyStoreError, MasterKeyStore};
 use mannie_logging::{ErrorChain, Redactor};
 use mannie_runtime::{CredentialVault, VaultError};
 use mannie_secrets::{CredentialError, CredentialRef, CredentialStore, UnavailableReason};
 use mannie_types::provider::CredentialStoreProblem;
 use mannie_types::secret::Secret;
+
+/// Where the master's key of the link is kept in the credential store.
+const MASTER_KEY_REFERENCE: &str = "link/master-key";
 
 /// The credential store, opened on first use, so that starting Mannie never
 /// waits for it (NFR-PERF-03). A failed open is tried again on the next use,
@@ -108,6 +115,49 @@ impl CredentialVault for KeyringVault {
         self.store()?
             .delete(&reference)
             .map_err(|error| logged(&error, "delete"))
+    }
+}
+
+/// The master's key of the link, kept in the credential store as the base64
+/// of its PKCS#8 document. The hub reads it on first use and makes it before
+/// the first pairing.
+#[derive(Debug)]
+pub(crate) struct KeyringKeyStore {
+    vault: Arc<KeyringVault>,
+}
+
+impl KeyringKeyStore {
+    /// A key store in `vault`.
+    pub(crate) fn new(vault: Arc<KeyringVault>) -> Self {
+        Self { vault }
+    }
+}
+
+impl MasterKeyStore for KeyringKeyStore {
+    fn load(&self) -> Result<Option<LinkKey>, KeyStoreError> {
+        let text = match self.vault.read(MASTER_KEY_REFERENCE) {
+            Ok(text) => text,
+            Err(VaultError::Missing) => return Ok(None),
+            Err(VaultError::Unavailable(_problem)) => return Err(KeyStoreError::Unavailable),
+        };
+        let pkcs8 = base64::engine::general_purpose::STANDARD
+            .decode(text.expose())
+            .map_err(|_invalid| {
+                tracing::error!("the master's key in the credential store is not base64");
+                KeyStoreError::Invalid
+            })?;
+        LinkKey::from_pkcs8(pkcs8).map(Some).map_err(|_invalid| {
+            tracing::error!("the master's key in the credential store is not a valid key");
+            KeyStoreError::Invalid
+        })
+    }
+
+    fn save(&self, key: &LinkKey) -> Result<(), KeyStoreError> {
+        // The text moves into the secret, which clears it when it drops.
+        let text = Secret::new(base64::engine::general_purpose::STANDARD.encode(key.pkcs8()));
+        self.vault
+            .save(MASTER_KEY_REFERENCE, &text)
+            .map_err(|_unavailable| KeyStoreError::Unavailable)
     }
 }
 
