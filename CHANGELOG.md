@@ -4,6 +4,10 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+### Fixed
+
+- Commands on Windows receive `PSModuleAnalysisCachePath`, so Windows PowerShell reads the module cache that the system prepared; without it, a command on GitHub's Windows runners took about 20 seconds to start.
+
 ## 0.2.0 - 2026-10-16
 
 ### Added

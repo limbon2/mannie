@@ -11,9 +11,11 @@ use mannie_types::tools::EnvName;
 
 /// The variables that every command receives on Windows. `PSModulePath` is
 /// left out, so Windows PowerShell finds its own modules even when Mannie was
-/// started from PowerShell 7.
+/// started from PowerShell 7. `PSModuleAnalysisCachePath` passes, so Windows
+/// PowerShell reads the module cache that the system prepared instead of
+/// analyzing every installed module again for each command.
 #[cfg(windows)]
-const ALLOWED: [&str; 28] = [
+const ALLOWED: [&str; 29] = [
     "ALLUSERSPROFILE",
     "APPDATA",
     "CommonProgramFiles",
@@ -33,6 +35,7 @@ const ALLOWED: [&str; 28] = [
     "ProgramFiles",
     "ProgramFiles(x86)",
     "ProgramW6432",
+    "PSModuleAnalysisCachePath",
     "PUBLIC",
     "SystemDrive",
     "SystemRoot",
@@ -169,6 +172,25 @@ mod tests {
         let environment = CommandEnvironment::new(&[], source);
 
         assert_eq!(environment.names().collect::<Vec<_>>(), ["Path"]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_passes_the_module_analysis_cache_and_not_the_module_path() {
+        let source = variables(&[
+            (
+                "PSModuleAnalysisCachePath",
+                "C:\\cache\\ModuleAnalysisCache",
+            ),
+            ("PSModulePath", "C:\\modules"),
+        ]);
+
+        let environment = CommandEnvironment::new(&[], source);
+
+        assert_eq!(
+            environment.names().collect::<Vec<_>>(),
+            ["PSModuleAnalysisCachePath"]
+        );
     }
 
     #[cfg(unix)]
