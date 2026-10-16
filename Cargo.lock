@@ -2635,7 +2635,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-desktop"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2663,7 +2663,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-link"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fastrand",
  "futures-util",
@@ -2694,7 +2694,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-logging"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "mannie-types",
  "regex",
@@ -2709,7 +2709,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-provider"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytes",
  "futures-util",
@@ -2730,7 +2730,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-runtime"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fastrand",
  "futures-util",
@@ -2752,7 +2752,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-secrets"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "keyring-core",
  "mannie-logging",
@@ -2769,7 +2769,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-store"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "mannie-types",
  "rusqlite",
@@ -2784,7 +2784,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-tools"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fastrand",
  "futures-util",
@@ -2812,7 +2812,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-types"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2823,7 +2823,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-worker"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

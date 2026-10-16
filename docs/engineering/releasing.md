@@ -10,7 +10,7 @@
 
 - M0 builds the release pipeline and proves it with a dry run (V10). Nothing is published.
 - M1 ends with v0.1.0, the first build the owner installs and uses.
-- M2, M3 and M4 end with v0.2.0, v0.3.0 and v0.4.0. Patch releases happen in between when a fix cannot wait.
+- M2, M3 and M4 end together with v0.2.0 ([D23](../roadmap/milestones.md#5-decisions)). Patch releases happen in between when a fix cannot wait.
 - Every release meets the Definition of Done for its scope. The scope grows from release to release, and the quality bar stays the same.
 - A later decision declares 1.0, with its own gate: desktop auto-update, a security review, user documentation, and another look at code signing (D16).
 

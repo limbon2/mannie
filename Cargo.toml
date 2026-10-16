@@ -33,7 +33,7 @@ members = [
 # One version for the desktop app and the worker (ADR-0018). `task
 # release:prepare` changes it.
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.99"
 license = "Apache-2.0"

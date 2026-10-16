@@ -21,15 +21,15 @@
 | M0 Foundation   | The engineering platform and the validations features need | None                                                                                  | Dry run |
 | M1 Chat         | Chat with OpenAI models and the owner's own model servers  | [Chat](../features/chat/README.md), [window and tray](../features/window-and-tray.md) | v0.1.0  |
 | M2 System tools | The model works safely on the master's machine             | [System tools](../features/system-tools/README.md)                                    | v0.2.0  |
-| M3 Child agents | Agents split work on their own machine                     | [Child agents](../features/child-agents/README.md)                                    | v0.3.0  |
-| M4 Workers      | Workers own their hosts and take tasks from the master     | [Workers](../features/workers/README.md)                                              | v0.4.0  |
+| M3 Child agents | Agents split work on their own machine                     | [Child agents](../features/child-agents/README.md)                                    | v0.2.0  |
+| M4 Workers      | Workers own their hosts and take tasks from the master     | [Workers](../features/workers/README.md)                                              | v0.2.0  |
 
 ```mermaid
 flowchart LR
   M0[M0 Foundation] --> M1[M1 Chat, v0.1.0]
   M1 --> M2[M2 System tools, v0.2.0]
-  M2 --> M3[M3 Child agents, v0.3.0]
-  M3 --> M4[M4 Workers, v0.4.0]
+  M2 --> M3[M3 Child agents, v0.2.0]
+  M3 --> M4[M4 Workers, v0.2.0]
   M4 --> Later[Later features as they are accepted]
 ```
 
@@ -87,7 +87,7 @@ Exit criteria:
 
 ### M2: System tools
 
-Goal: the model works safely on the master's machine. It ends with v0.2.0.
+Goal: the model works safely on the master's machine. It ends with v0.2.0, together with M3 and M4 (D23).
 
 Features: [System tools](../features/system-tools/README.md), and [projects](../features/chat/projects.md) of chat.
 
@@ -106,7 +106,7 @@ Exit criteria:
 
 ### M3: Child agents
 
-Goal: agents split work on their own machine. It ends with v0.3.0.
+Goal: agents split work on their own machine. It ends with v0.2.0, together with M2 and M4 (D23).
 
 Features: [Child agents](../features/child-agents/README.md).
 
@@ -118,11 +118,11 @@ Exit criteria:
 - Parallel slots, background tasks, waiting and stopping one child all work, and the parent receives only confirmed reports.
 - A follow-up keeps the child's context, and retrying the parent never repeats an operation that a child completed.
 - An evaluation of a multi-step task split across children passes.
-- v0.3.0 is released.
+- v0.2.0 is released.
 
 ### M4: Workers
 
-Goal: workers own their hosts and take tasks from the master. It ends with v0.4.0.
+Goal: workers own their hosts and take tasks from the master. It ends with v0.2.0, together with M2 and M3 (D23).
 
 Features: [Workers](../features/workers/README.md).
 
@@ -136,7 +136,7 @@ Exit criteria:
 - V6 passes.
 - A worker's ceiling holds even against instructions from the master, and approval requests wait while the master is offline.
 - The documented service setups pass smoke tests on each operating system.
-- ADR-0010, ADR-0014, ADR-0016, ADR-0027 and ADR-0028 are Accepted, and v0.4.0 is released.
+- ADR-0010, ADR-0014, ADR-0016, ADR-0027, ADR-0028 and ADR-0029 are Accepted, and v0.2.0 is released.
 
 ### Later
 
@@ -188,6 +188,7 @@ No decision is open. New owner decisions get the next number here, and architect
 | D20 | Worker updates (2026-10-15)                             | The master pushes no worker builds. The owner downloads a new release on the host and applies it with `mannie-worker update`, which checks the release signature, keeps the previous program and restores it when the new one does not start. The link has no Update service.                                                                                                                                                                                                         | [ADR-0016](../adr/0016-link-machines-over-pinned-mtls-grpc.md), [workers](../features/workers/compatibility-and-updates.md)                                                                       |
 | D21 | Policy ceiling outside the allowed folders (2026-10-15) | On a worker, reads and changes outside the allowed folders ask the owner through the master, in every mode but read-only, which refuses every change and command. The allowed folders limit what runs without asking.                                                                                                                                                                                                                                                                 | [Workers](../features/workers/host-and-ceiling.md), [orchestration](../architecture/orchestration.md#4-workers)                                                                                   |
 | D22 | Full access (2026-10-16)                                | A mode like Claude Code's `--dangerously-skip-permissions` or Codex's full access, on the master and on workers. On the master, a default in the Tools settings for new conversations and a switch on each conversation that overrides it. Nothing stays protected: every operation runs without asking, Mannie's own folders included. On a worker, a ceiling mode `full_access` that the host sets, and a conversation in full access also allows the requests of its worker tasks. | [ADR-0029](../adr/0029-let-the-owner-give-conversations-and-hosts-full-access.md)                                                                                                                 |
+| D23 | Releases of M2 to M4 (2026-10-16)                       | M2, M3 and M4 ship together in one release, v0.2.0, the next after v0.1.0. M3 and M4 have no releases of their own.                                                                                                                                                                                                                                                                                                                                                                   | [Releasing](../engineering/releasing.md), [milestones](#3-milestones)                                                                                                                             |
 
 ## 6. Risk register
 

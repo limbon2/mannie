@@ -4,6 +4,8 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+## 0.2.0 - 2026-10-16
+
 ### Added
 
 - System tools for the model on the owner's computer: system information, listing, finding and searching files, reading, writing and editing text files with revisions, creating, copying, moving and deleting files and folders, running commands in Windows PowerShell or `/bin/sh`, and reading back long outputs.

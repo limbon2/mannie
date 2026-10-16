@@ -630,8 +630,9 @@ async fn a_database_with_workspaces_is_upgraded_into_projects() {
 /// The schema of system tools and projects (version 14) has no task
 /// conversations. Migrations 15 and 16 add them; the stored conversation, its
 /// project and its tool call read as before, as one of the owner's
-/// conversations (docs/features/child-agents/tasks.md, data). A fixture
-/// database of v0.2.0 replaces this seed once that release exists.
+/// conversations (docs/features/child-agents/tasks.md, data). No release
+/// writes this schema, since M2, M3 and M4 ship together in v0.2.0
+/// (docs/roadmap/milestones.md, D23), so the seed stays.
 #[tokio::test]
 async fn a_database_from_the_tools_schema_is_upgraded_for_task_conversations() {
     let fixture = Fixture::new();
@@ -712,8 +713,9 @@ async fn a_database_from_the_tools_schema_is_upgraded_for_task_conversations() {
 /// The schema of child agents (version 16) keeps every task with its part
 /// and its turn. Migration 17 builds the tasks table again for worker tasks
 /// and 18 adds the worker of a task conversation; a stored child and its
-/// ended task read as before (docs/features/workers/delegation.md, data). A
-/// fixture database of v0.3.0 replaces this seed once that release exists.
+/// ended task read as before (docs/features/workers/delegation.md, data). No
+/// release writes this schema, since M2, M3 and M4 ship together in v0.2.0
+/// (docs/roadmap/milestones.md, D23), so the seed stays.
 #[tokio::test]
 async fn a_database_from_the_child_agents_schema_is_upgraded_for_worker_tasks() {
     let fixture = Fixture::new();

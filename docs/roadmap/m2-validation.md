@@ -126,4 +126,4 @@ Not done yet, and needed before v0.2.0: the folder dialog of "+" on Windows 11 a
 - Accept, change or supersede ADR-0013, and review the refinements recorded in ADR-0012 and ADR-0014.
 - Review the defaults in the [system tools decisions](../features/system-tools/README.md#decisions) and the [chat decisions](../features/chat/README.md#decisions) of projects, and the text that the model sees, which `crates/mannie-tools/src/texts.rs` and `crates/mannie-runtime/src/texts.rs` hold.
 - Provide the keys and endpoints of an OpenAI model and an open-weight model for the evaluations, with the variables and secrets that `.github/workflows/evals.yml` lists.
-- Release v0.1.0 first; v0.2.0 follows once the open items above are done.
+- Release v0.1.0 first; v0.2.0, which also carries M3 and M4 ([D23](milestones.md#5-decisions)), follows once the open items above are done.
