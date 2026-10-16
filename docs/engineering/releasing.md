@@ -3,7 +3,7 @@
 |              |                                                                                                                                                       |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                      |
-| Last updated | 2026-10-14                                                                                                                                            |
+| Last updated | 2026-10-16                                                                                                                                            |
 | Related      | [ADR-0018](../adr/0018-release-from-tagged-builds.md), [Milestones](../roadmap/milestones.md), [Standards](standards.md), [Repository](repository.md) |
 
 ## 1. When releases happen
@@ -26,7 +26,7 @@
 2. Tag the commit `v0.1.0` and push the tag.
 3. The release workflow (`.github/workflows/release.yml`) checks that the tag matches the workspace version and the changelog, runs every check and the FreeBSD tests, builds the artifacts below, installs each one on a clean runner and starts it, signs the worker artifacts, generates the SBOMs and third-party notices, computes the checksums, and creates a draft GitHub release whose notes are the changelog section (D17).
 4. Install the draft's artifacts on clean Windows 11, Ubuntu LTS, Fedora and FreeBSD 14 machines, including an upgrade from the previous release's data.
-5. Publish the draft.
+5. Publish the draft. When a check fails in CI while the build works and the tests pass on the owner's machines, the workflow drafts nothing. The owner then checks the worker archives' signatures with `node scripts/release.mjs verify release/mannie-release.pub <archives>` and creates the release from the run's artifacts by hand, as for v0.2.0 ([D24](../roadmap/milestones.md#5-decisions)).
 
 ## 4. Artifacts
 

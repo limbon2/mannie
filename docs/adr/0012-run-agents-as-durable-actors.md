@@ -2,7 +2,7 @@
 
 |          |                                                                                                                                               |
 | -------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status   | Proposed                                                                                                                                      |
+| Status   | Accepted                                                                                                                                      |
 | Date     | 2026-10-13                                                                                                                                    |
 | Deciders | Owner                                                                                                                                         |
 | Related  | [ADR-0009](0009-persist-state-in-sqlite.md), [ADR-0013](0013-journal-every-side-effect.md), [Agent runtime](../architecture/agent-runtime.md) |

@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                                            |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                                                           |
-| Last updated | 2026-10-14                                                                                                                                                                                                 |
+| Last updated | 2026-10-16                                                                                                                                                                                                 |
 | Related      | [Milestones](milestones.md#4-validations), [ADR index](../adr/README.md), [Desktop app](../architecture/desktop-app.md), [Security](../architecture/security.md), [Releasing](../engineering/releasing.md) |
 
 This document records what the validations of [M0](milestones.md#m0-foundation) showed, so that the owner can accept, change or supersede the Proposed ADRs they settle. The checks themselves stay in the repository and run in CI. Each section names the checks, where they ran, the result, and the findings that need a decision or a follow-up.
@@ -12,16 +12,16 @@ The runs below were made on 2026-10-14: on the owner's Windows 11 workstation (W
 
 ## 1. Summary
 
-| V   | Result                                                                                          | ADRs               | Open                                                                          |
-| --- | ----------------------------------------------------------------------------------------------- | ------------------ | ----------------------------------------------------------------------------- |
-| V1  | Passed on WebView2 and WebKitGTK, with findings                                                 | ADR-0004, ADR-0005 | The WebKitGTK of Ubuntu 22.04 in CI; the owner's decision on finding 1        |
-| V2  | Passed                                                                                          | ADR-0007           | Events are not exercised until a feature needs one                            |
-| V3  | Passed for the store, and for channels on WebView2 and WebKitGTK                                | ADR-0009, ADR-0012 | None                                                                          |
-| V5  | Passed for the worker's graph, the crate bans and the FreeBSD cross-build                       | ADR-0008           | The worker's tests and service in a FreeBSD 14 virtual machine, nightly in CI |
-| V7  | Passed with Windows Credential Manager, GNOME Keyring and KWallet, and without a Secret Service | ADR-0010           | None                                                                          |
-| V9  | Passed                                                                                          | ADR-0017           | None                                                                          |
-| V10 | The pipeline is built and its steps pass locally; the tagged run has not happened               | ADR-0018           | A test tag on GitHub with the signing key; installs on clean machines         |
-| V11 | Passed on WebView2 and WebKitGTK                                                                | ADR-0019           | None                                                                          |
+| V   | Result                                                                                                              | ADRs               | Open                                                                    |
+| --- | ------------------------------------------------------------------------------------------------------------------- | ------------------ | ----------------------------------------------------------------------- |
+| V1  | Passed on WebView2 and WebKitGTK, with findings                                                                     | ADR-0004, ADR-0005 | The WebKitGTK of Ubuntu 22.04                                           |
+| V2  | Passed                                                                                                              | ADR-0007           | Events are not exercised until a feature needs one                      |
+| V3  | Passed for the store, and for channels on WebView2 and WebKitGTK                                                    | ADR-0009, ADR-0012 | None                                                                    |
+| V5  | Passed for the worker's graph, the crate bans and the FreeBSD cross-build                                           | ADR-0008           | FreeBSD 14; the worker's tests and service passed on FreeBSD 15.1 in M4 |
+| V7  | Passed with Windows Credential Manager, GNOME Keyring and KWallet, and without a Secret Service                     | ADR-0010           | None                                                                    |
+| V9  | Passed                                                                                                              | ADR-0017           | None                                                                    |
+| V10 | The pipeline's steps pass locally, and the tag of v0.2.0 built, signed and installed the artifacts on clean runners | ADR-0018           | None                                                                    |
+| V11 | Passed on WebView2 and WebKitGTK                                                                                    | ADR-0019           | None                                                                    |
 
 ## 2. V1: the webview under the security baseline
 
@@ -34,7 +34,7 @@ Checks: `tests/e2e/specs/security.test.ts` and `tests/e2e/specs/shell.test.ts`, 
 - A script cannot navigate the window away from the app's origin, and `window.open` opens no window and no connection.
 - axe finds no WCAG 2.1 AA violation in the light and dark themes, with the command palette open, and in the settings view; the shell works from the keyboard and shows the focus.
 
-Result: all 30 end-to-end tests pass on WebView2 and on WebKitGTK 2.52.6. CI runs them on the WebKitGTK of Ubuntu 22.04, which V1 names; that run has not happened yet.
+Result: all 30 end-to-end tests pass on WebView2 and on WebKitGTK 2.52.6. V1 names the WebKitGTK of Ubuntu 22.04, where they have not passed yet.
 
 Findings:
 
@@ -70,7 +70,7 @@ Checks: `scripts/check-worker-dependencies.mjs` and cargo-deny in `task lint`, `
 - None of the worker's 112 dependencies, on any target, belongs to Tauri, GTK or WebKitGTK. The same check finds 32 such crates in the desktop app's graph.
 - cargo-deny allows rusqlite only through `mannie-store`, Tauri only through `mannie-desktop` and its plugins, and bans OpenSSL and aws-lc. No crypto provider is in the graph yet; ring arrives with the link.
 - The worker cross-builds for `x86_64-unknown-freebsd` (a 7.2 MB ELF binary for FreeBSD).
-- The worker installs as a systemd unit, runs under its account with a data folder that only the account can open, stops cleanly and uninstalls (`scripts/ci/worker-service-unix.sh`, in a container booted with systemd). The Windows service check needs an elevated session and runs in CI (`scripts/ci/worker-service-windows.ps1`); it has not run yet.
+- The worker installs as a systemd unit, runs under its account with a data folder that only the account can open, stops cleanly and uninstalls (`scripts/ci/worker-service-unix.sh`, in a container booted with systemd). The Windows service check, `scripts/ci/worker-service-windows.ps1`, needs an elevated session; it passed later on GitHub's Windows runners.
 - Not run yet: the worker's tests and its rc.d service in a FreeBSD 14.4 virtual machine (`.github/workflows/nightly.yml`).
 
 ## 6. V7: credentials in the operating system's store
@@ -113,6 +113,6 @@ Checks: `tests/e2e/specs/locale.test.ts`, `scripts/pseudo-locale.mjs` and its te
 
 ## 10. Decisions for the owner
 
-- Accept, change or supersede the ADRs that these validations settle: ADR-0004, ADR-0005, ADR-0007, ADR-0008, ADR-0009, ADR-0012, ADR-0017, ADR-0018 and ADR-0019 are Proposed until then, and ADR-0010 waits for V7 on Linux.
-- V1, finding 1: keep the blocked inline styles with their stylesheet equivalents, or allow exactly those values through a new ADR.
-- V10: create the signing key and run a test tag once the repository has its GitHub remote.
+- The ADRs that these validations settle, ADR-0004, ADR-0005, ADR-0007, ADR-0008, ADR-0009, ADR-0010, ADR-0012, ADR-0017, ADR-0018 and ADR-0019: the owner accepted them on 2026-10-16 ([D25](milestones.md#5-decisions)).
+- V1, finding 1: ADR-0004 is accepted unchanged, so the blocked inline styles keep their stylesheet equivalents; allowing exactly those values would need a new ADR.
+- V10: done. The signing key exists, and the tag of v0.2.0 ran the release pipeline's builds and installs.

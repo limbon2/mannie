@@ -3,7 +3,7 @@
 |              |                                                                                                                                                          |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                         |
-| Last updated | 2026-10-15                                                                                                                                               |
+| Last updated | 2026-10-16                                                                                                                                               |
 | Related      | [ADR index](../adr/README.md), [Overview](overview.md), [Engineering standards](../engineering/standards.md), [Repository](../engineering/repository.md) |
 
 For each building block, this document says what Mannie uses, how, and what it leaves out. The decisions themselves are in the ADRs.
@@ -81,7 +81,7 @@ Verified 2026-10-13; the rustls row, the rows for the tools M0 added, from mode-
 
 - SvelteKit runs as a static single-page app with adapter-static and an `index.html` fallback, without server-side rendering or prerendering ([ADR-0005](../adr/0005-build-the-ui-with-sveltekit-as-a-static-spa.md)).
 - Svelte 5 runes are forced for project files. `$app/state` replaces `$app/stores`.
-- `svelte-check` runs in CI with zero warnings allowed.
+- `svelte-check` runs in `task lint` with zero warnings allowed.
 - SvelteKit 3 takes its configuration in the `sveltekit()` call of `vite.config.ts`, and the app imports its own modules through the `#lib/*` subpath import, which replaces `$lib`.
 - Paraglide JS compiles the message catalogs in `apps/desktop/messages/` into typed message functions: its Vite plugin on every build, and `task gen` for the type checks. A custom strategy reads the locale from the core's settings ([ADR-0019](../adr/0019-keep-visible-text-in-message-catalogs.md)).
 

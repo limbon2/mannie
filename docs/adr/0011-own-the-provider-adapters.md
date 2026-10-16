@@ -2,7 +2,7 @@
 
 |          |                                                                                                                                                              |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Status   | Proposed                                                                                                                                                     |
+| Status   | Accepted                                                                                                                                                     |
 | Date     | 2026-10-13                                                                                                                                                   |
 | Deciders | Owner                                                                                                                                                        |
 | Related  | [ADR-0012](0012-run-agents-as-durable-actors.md), [Agent runtime](../architecture/agent-runtime.md), [Technology stack](../architecture/technology-stack.md) |

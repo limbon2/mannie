@@ -6,6 +6,7 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ### Changed
 
+- The architecture decisions that were Proposed are Accepted, and a failed or missing CI run no longer holds back a change, a milestone or a release.
 - `task test` runs every Rust test binary even when one fails, so a run reports every failing test.
 
 ### Fixed

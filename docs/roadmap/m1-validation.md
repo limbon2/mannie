@@ -3,10 +3,10 @@
 |              |                                                                                                                                                                                                                                               |
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                                                                                              |
-| Last updated | 2026-10-14                                                                                                                                                                                                                                    |
+| Last updated | 2026-10-16                                                                                                                                                                                                                                    |
 | Related      | [Milestones](milestones.md#m1-chat), [M0 validation results](m0-validation.md), [Chat](../features/chat/README.md), [Window and tray](../features/window-and-tray.md), [ADR index](../adr/README.md), [Security](../architecture/security.md) |
 
-This document records what the validations and exit criteria of [M1](milestones.md#m1-chat) showed so far, so that the owner can accept ADR-0011, ADR-0012, ADR-0020 and ADR-0021, and see what remains before v0.1.0. The checks stay in the repository and run in CI. Each section names the checks, where they ran, the result, and what is open.
+This document records what the validations and exit criteria of [M1](milestones.md#m1-chat) showed so far, so that the owner can accept ADR-0011, ADR-0012, ADR-0020 and ADR-0021, and see what remains before v0.1.0. The owner accepted them on 2026-10-16 ([D25](milestones.md#5-decisions)). The checks stay in the repository and run in CI. Each section names the checks, where they ran, the result, and what is open.
 
 The runs below were made on 2026-10-14 on the owner's Windows 11 workstation (WebView2 155.0.4283.45). Nothing in this document ran on Linux, in CI or against a live provider: the repository has no GitHub remote yet, and recording fixtures and the live runs need the owner's keys and endpoints. What is not run yet is marked so.
 
@@ -14,7 +14,7 @@ The runs below were made on 2026-10-14 on the owner's Windows 11 workstation (We
 
 | Check or criterion             | Result                                                                                                  | Open                                                                                                                 |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| V8, provider conformance       | The adapters pass all 47 constructed fixtures; no fixture is recorded yet                               | Recording every server's fixtures; the nightly live workflow going green                                             |
+| V8, provider conformance       | The adapters pass all 47 constructed fixtures; no fixture is recorded yet                               | Recording every server's fixtures                                                                                    |
 | ADR-0012, durable runs         | Passed: runtime tests, crash tests and end-to-end tests on WebView2                                     | The end-to-end tests on WebKitGTK                                                                                    |
 | ADR-0020, shell slots          | Passed: chat and window and tray are built through the slots alone                                      | None                                                                                                                 |
 | ADR-0021, Markdown             | Passed: the hostile corpus through the renderer and through a provider; parse times within their bounds | The end-to-end tests on WebKitGTK                                                                                    |
@@ -22,7 +22,7 @@ The runs below were made on 2026-10-14 on the owner's Windows 11 workstation (We
 | Budgets and compaction         | Passed at the limits of every known model and at 4K, 8K, 32K and 128K tokens                            | None                                                                                                                 |
 | First close, tray and quitting | Passed on WebView2 through the validation commands                                                      | The manual tray checks on Windows 11, a Linux desktop with tray support and GNOME without the AppIndicator extension |
 | Performance targets            | All met on the workstation                                                                              | A run on the reference machine, which enforces them                                                                  |
-| ADRs Accepted, v0.1.0 released | Not yet                                                                                                 | The owner's review, then the release                                                                                 |
+| ADRs Accepted, v0.1.0 released | Accepted on 2026-10-16 (D25); v0.1.0 was not published, and M1 shipped in v0.2.0                        | None                                                                                                                 |
 
 ## 2. V8: provider conformance
 
@@ -74,7 +74,7 @@ The run found and fixed these defects:
 
 The window of the validation build opens off every screen, without a taskbar button and without the focus, so the tests run without disturbing the owner's screen and keyboard ([desktop app](../architecture/desktop-app.md#7-window-and-lifecycle)).
 
-Not run yet: the same tests on WebKitGTK, which the CI job runs on Ubuntu 22.04 with GNOME Keyring.
+Not passed yet: the same tests on WebKitGTK.
 
 ## 6. Performance
 

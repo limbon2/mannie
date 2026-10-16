@@ -2,7 +2,7 @@
 
 |          |                                                                                  |
 | -------- | -------------------------------------------------------------------------------- |
-| Status   | Proposed                                                                         |
+| Status   | Accepted                                                                         |
 | Date     | 2026-10-13                                                                       |
 | Deciders | Owner                                                                            |
 | Related  | [ADR-0013](0013-journal-every-side-effect.md), [Tools](../architecture/tools.md) |

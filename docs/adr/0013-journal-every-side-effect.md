@@ -2,7 +2,7 @@
 
 |          |                                                                                                                       |
 | -------- | --------------------------------------------------------------------------------------------------------------------- |
-| Status   | Proposed                                                                                                              |
+| Status   | Accepted                                                                                                              |
 | Date     | 2026-10-13                                                                                                            |
 | Deciders | Owner                                                                                                                 |
 | Related  | [ADR-0014](0014-contain-process-trees.md), [Tools](../architecture/tools.md), [Security](../architecture/security.md) |

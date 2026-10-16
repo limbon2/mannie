@@ -2,7 +2,7 @@
 
 |          |                                                                                                                                                                           |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status   | Proposed                                                                                                                                                                  |
+| Status   | Accepted                                                                                                                                                                  |
 | Date     | 2026-10-13                                                                                                                                                                |
 | Deciders | Owner                                                                                                                                                                     |
 | Related  | [ADR-0015](0015-run-an-agent-runtime-on-every-machine.md), [ADR-0010](0010-keep-provider-credentials-on-the-master.md), [Orchestration](../architecture/orchestration.md) |

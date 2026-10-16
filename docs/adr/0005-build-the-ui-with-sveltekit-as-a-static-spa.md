@@ -2,7 +2,7 @@
 
 |          |                                                                                                                                                               |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status   | Proposed                                                                                                                                                      |
+| Status   | Accepted                                                                                                                                                      |
 | Date     | 2026-10-13                                                                                                                                                    |
 | Deciders | Owner                                                                                                                                                         |
 | Related  | [ADR-0004](0004-keep-system-access-in-the-rust-core.md), [ADR-0006](0006-use-shadcn-svelte-through-its-cli.md), [Desktop app](../architecture/desktop-app.md) |

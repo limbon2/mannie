@@ -2,7 +2,7 @@
 
 |          |                                                                                                                                                             |
 | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status   | Proposed                                                                                                                                                    |
+| Status   | Accepted                                                                                                                                                    |
 | Date     | 2026-10-13                                                                                                                                                  |
 | Deciders | Owner                                                                                                                                                       |
 | Related  | [ADR-0015](0015-run-an-agent-runtime-on-every-machine.md), [ADR-0016](0016-link-machines-over-pinned-mtls-grpc.md), [Security](../architecture/security.md) |

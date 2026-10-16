@@ -2,7 +2,7 @@
 
 |          |                                                                                                                                                      |
 | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status   | Proposed                                                                                                                                             |
+| Status   | Accepted                                                                                                                                             |
 | Date     | 2026-10-13                                                                                                                                           |
 | Deciders | Owner                                                                                                                                                |
 | Related  | [Releasing](../engineering/releasing.md), [ADR-0017](0017-license-and-dependency-policy.md), [ADR-0016](0016-link-machines-over-pinned-mtls-grpc.md) |

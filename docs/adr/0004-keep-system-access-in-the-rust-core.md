@@ -2,7 +2,7 @@
 
 |          |                                                                                                                                                                                                   |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status   | Proposed                                                                                                                                                                                          |
+| Status   | Accepted                                                                                                                                                                                          |
 | Date     | 2026-10-13                                                                                                                                                                                        |
 | Deciders | Owner                                                                                                                                                                                             |
 | Related  | [ADR-0003](0003-build-the-desktop-app-on-tauri-2.md), [ADR-0007](0007-generate-ipc-bindings-from-rust.md), [Desktop app](../architecture/desktop-app.md), [Security](../architecture/security.md) |

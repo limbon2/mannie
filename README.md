@@ -8,7 +8,7 @@ Mannie is a desktop AI agent harness for one owner. It starts with three capabil
 
 New features are added one at a time through a [feature protocol](docs/features/README.md).
 
-> Status: [M4 (Workers)](docs/roadmap/milestones.md#m4-workers), in progress. [M0](docs/roadmap/milestones.md#m0-foundation) built the engineering platform, M1 chat, M2 system tools and projects, and M3 child agents; their releases wait for the owner's review. M4 built workers, a service on other hosts that pairs with the desktop app and runs the tasks it delegates; its review and release are open.
+> Status: [M4 (Workers)](docs/roadmap/milestones.md#m4-workers) is complete, and v0.2.0 is released. [M0](docs/roadmap/milestones.md#m0-foundation) built the engineering platform, M1 chat, M2 system tools and projects, M3 child agents, and M4 workers, a service on other hosts that pairs with the desktop app and runs the tasks it delegates.
 
 ## Principles
 

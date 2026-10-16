@@ -2,7 +2,7 @@
 
 |          |                                                                                                                                                    |
 | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status   | Proposed                                                                                                                                           |
+| Status   | Accepted                                                                                                                                           |
 | Date     | 2026-10-13                                                                                                                                         |
 | Deciders | Owner                                                                                                                                              |
 | Related  | [ADR-0004](0004-keep-system-access-in-the-rust-core.md), [Desktop app](../architecture/desktop-app.md), [Repository](../engineering/repository.md) |

@@ -2,7 +2,7 @@
 
 |          |                                                                                                                                |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Status   | Proposed                                                                                                                       |
+| Status   | Accepted                                                                                                                       |
 | Date     | 2026-10-13                                                                                                                     |
 | Deciders | Owner                                                                                                                          |
 | Related  | [ADR-0018](0018-release-from-tagged-builds.md), [Engineering standards](../engineering/standards.md), [LICENSE](../../LICENSE) |
