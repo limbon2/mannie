@@ -19,6 +19,7 @@ mod digest;
 mod environment;
 mod identity;
 mod lock;
+mod mentions;
 mod mutate;
 mod output;
 mod paths;
@@ -44,6 +45,11 @@ pub use ceiling::Ceiling;
 pub use digest::digest;
 pub use environment::CommandEnvironment;
 pub use lock::MutationLock;
+pub use mentions::{
+    FileMention, FolderMention, IndexMatch, IndexMatches, MAX_FOLDER_ENTRIES, MAX_INDEX_ENTRIES,
+    MentionIndex, MentionPage, MentionPathError, MentionReadFailure, MentionTarget, PageShows,
+    may_hold_secrets, resolve_mention,
+};
 pub use output::output_page;
 pub use paths::{FolderError, canonical_folder, workspace_folder};
 pub use policy::{Grants, PolicyInputs, Verdict, decide, saved_rule};

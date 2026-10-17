@@ -208,6 +208,59 @@ pub fn compaction_tool_call(tool: &str, arguments: &str, result: &str) -> String
     format!("Assistant used the tool {tool} with {arguments}. Result: {result}")
 }
 
+/// Something that the owner's message mentioned, in the transcript of a
+/// compaction request.
+pub fn compaction_mention(text: &str) -> String {
+    format!("Owner's mention: {text}")
+}
+
+/// Introduces a file that the owner's message mentions, before its page
+/// (docs/features/chat/mentions.md, what the model gets).
+pub fn mention_file(path: &str) -> String {
+    format!("The owner mentioned the file {path}. Its text follows, as read_file shows it.\n")
+}
+
+/// Introduces a folder that the owner's message mentions, before its
+/// listing.
+pub fn mention_folder(path: &str) -> String {
+    format!(
+        "The owner mentioned the folder {path}. Its entries follow, breadth first, as paths below the workspace; a folder's path ends with /.\n"
+    )
+}
+
+/// Stands in for a mentioned file that is not text.
+pub fn mention_not_text(path: &str) -> String {
+    format!(
+        "The owner mentioned the file {path}, which is not text, so its content is not included."
+    )
+}
+
+/// Stands in for a mentioned file that is larger than the text tools read.
+pub fn mention_too_large(path: &str, limit_mebibytes: u32) -> String {
+    format!(
+        "The owner mentioned the file {path}, which is larger than {limit_mebibytes} MiB, so its content is not included."
+    )
+}
+
+/// Stands in for a mention that could not be read.
+pub fn mention_unreadable(path: &str) -> String {
+    format!("The owner mentioned {path}, which could not be read, so its content is not included.")
+}
+
+/// Stands in for a mention that the policy would ask about, such as a file
+/// inside Mannie's own folders.
+pub fn mention_needs_approval(path: &str, folder: bool) -> String {
+    let kind = if folder { "folder" } else { "file" };
+    format!(
+        "The owner mentioned the {kind} {path}. Reading it needs the owner's approval, so its content is not included."
+    )
+}
+
+/// Stands in for a mentioned path that does not exist.
+pub fn mention_not_found(path: &str) -> String {
+    format!("The owner mentioned {path}, which does not exist.")
+}
+
 /// Stands in for the middle of a turn that is too long for one compaction
 /// call.
 pub const COMPACTION_OMITTED: &str =

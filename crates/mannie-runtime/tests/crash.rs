@@ -95,6 +95,7 @@ fn child_reply() {
             .unwrap();
         let started = runtime
             .start_conversation(StartConversation {
+                mentions: Vec::new(),
                 text: "Question".to_owned(),
                 profile_id: None,
                 project_id: None,

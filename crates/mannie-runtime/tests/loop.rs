@@ -33,6 +33,7 @@ async fn start(harness: &Harness, text: &str) -> StartedConversation {
     harness
         .runtime
         .start_conversation(StartConversation {
+            mentions: Vec::new(),
             text: text.to_owned(),
             profile_id: None,
             project_id: None,
@@ -164,6 +165,7 @@ async fn reasoning_items_go_back_only_to_the_binding_that_wrote_them() {
     let second = harness
         .runtime
         .send_message(SendMessage {
+            mentions: Vec::new(),
             conversation_id: first.conversation_id.clone(),
             text: "Again".to_owned(),
         })
@@ -182,6 +184,7 @@ async fn reasoning_items_go_back_only_to_the_binding_that_wrote_them() {
     let third = harness
         .runtime
         .send_message(SendMessage {
+            mentions: Vec::new(),
             conversation_id: first.conversation_id.clone(),
             text: "Once more".to_owned(),
         })
@@ -245,6 +248,7 @@ async fn an_empty_step_gets_continuation_notes_up_to_the_limit() {
     let second = harness
         .runtime
         .send_message(SendMessage {
+            mentions: Vec::new(),
             conversation_id: first.conversation_id.clone(),
             text: "And?".to_owned(),
         })
@@ -512,6 +516,7 @@ async fn a_conversation_has_one_active_run() {
     let second = harness
         .runtime
         .send_message(SendMessage {
+            mentions: Vec::new(),
             conversation_id: started.conversation_id.clone(),
             text: "Another".to_owned(),
         })
@@ -546,6 +551,7 @@ async fn a_context_overflow_compacts_once_and_a_second_one_fails() {
         let sent = harness
             .runtime
             .send_message(SendMessage {
+                mentions: Vec::new(),
                 conversation_id: started.conversation_id.clone(),
                 text: text.to_owned(),
             })
@@ -622,6 +628,7 @@ async fn shutdown_interrupts_active_runs_and_refuses_new_ones() {
     let refused = harness
         .runtime
         .send_message(SendMessage {
+            mentions: Vec::new(),
             conversation_id: started.conversation_id.clone(),
             text: "More".to_owned(),
         })
@@ -722,6 +729,7 @@ async fn reported_usage_feeds_the_context_meter() {
     let second = harness
         .runtime
         .send_message(SendMessage {
+            mentions: Vec::new(),
             conversation_id: first.conversation_id.clone(),
             text: "Hello again".to_owned(),
         })
@@ -818,6 +826,7 @@ async fn a_run_that_panics_fails_as_internal_and_frees_the_conversation() {
 
     let started = runtime
         .start_conversation(StartConversation {
+            mentions: Vec::new(),
             text: "Question".to_owned(),
             profile_id: None,
             project_id: None,
@@ -859,6 +868,7 @@ async fn a_new_conversation_needs_a_profile() {
 
     let refused = runtime
         .start_conversation(StartConversation {
+            mentions: Vec::new(),
             text: "Question".to_owned(),
             profile_id: None,
             project_id: None,
@@ -866,6 +876,7 @@ async fn a_new_conversation_needs_a_profile() {
         .await;
     let empty = runtime
         .start_conversation(StartConversation {
+            mentions: Vec::new(),
             text: " \n".to_owned(),
             profile_id: None,
             project_id: None,
@@ -902,6 +913,7 @@ async fn reported_cuts(harness: &Harness) -> (bool, bool) {
     let second = harness
         .runtime
         .send_message(SendMessage {
+            mentions: Vec::new(),
             conversation_id: first.conversation_id.clone(),
             text: "A long message that the server cannot fit. ".repeat(100),
         })

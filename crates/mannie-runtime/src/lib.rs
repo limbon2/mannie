@@ -28,7 +28,9 @@ mod executors;
 mod hub;
 mod ids;
 mod instructions;
+mod mentions;
 mod plugins;
+mod policy;
 mod profiles;
 mod projects;
 mod retry;
@@ -68,6 +70,10 @@ pub use hub::{ConversationSubscription, ListSubscription, SubscriptionLimits};
 pub use instructions::{
     DuplicateSection, InstructionContext, InstructionRegistry, InstructionSection, MachineContext,
     SectionText, ToolEnvironment, builtin_sections, checkpoint_section,
+};
+pub use mentions::{
+    DuplicateMentionProvider, FILES, FileMentions, MentionContent, MentionContext, MentionProvider,
+    MentionRegistry, ProviderSuggestions, RenderedMention,
 };
 pub use plugins::{ContributionError, PluginContributions, PluginTool};
 pub use profiles::{CredentialVault, VaultError};
@@ -146,6 +152,9 @@ pub struct RuntimeDeps {
     pub tools: ToolsDeps,
     /// The machine that the runtime serves.
     pub machine: MachineSettings,
+    /// The core's mention providers (ADR-0032), which a machine without a
+    /// message box leaves empty.
+    pub mentions: MentionRegistry,
 }
 
 /// The runtime's limits and timings.
@@ -206,6 +215,7 @@ struct Inner {
     instructions: InstructionRegistry,
     tools: ToolsDeps,
     machine: MachineSettings,
+    mentions: MentionRegistry,
     /// The executors of plugins, and the runs that follow their tasks.
     executors: Executors,
     /// The other contributions of the plugins that are on (ADR-0030,
@@ -331,6 +341,7 @@ impl Runtime {
             instructions: deps.instructions,
             tools: deps.tools,
             machine: deps.machine,
+            mentions: deps.mentions,
             executors: Executors::default(),
             plugins: Plugins::default(),
             assigned: Arc::default(),

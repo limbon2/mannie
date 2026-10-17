@@ -147,6 +147,7 @@ impl Fixture {
                     Change::StartTurn {
                         turn_id: self.turn_id(),
                         user_part_id: self.part_id(),
+                        mentions: Vec::new(),
                         text: instruction.to_owned(),
                         run,
                         task: Some(NewTask {
@@ -604,6 +605,7 @@ async fn removing_a_project_reports_the_task_conversations_it_deleted() {
                 Change::StartTurn {
                     turn_id: turn.clone(),
                     user_part_id: fixture.part_id(),
+                    mentions: Vec::new(),
                     text: "Split the work".to_owned(),
                     run,
                     task: None,

@@ -142,6 +142,7 @@ async fn seed(
             changes.push(Change::StartTurn {
                 turn_id: turn_id.clone(),
                 user_part_id,
+                mentions: Vec::new(),
                 text: format!("Question number {written}: how does this work?"),
                 run: NewRun {
                     id: run_id.clone(),

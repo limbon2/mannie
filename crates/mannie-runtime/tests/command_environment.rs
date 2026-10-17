@@ -68,6 +68,7 @@ async fn child_runs_env() {
     let started = harness
         .runtime
         .start_conversation(StartConversation {
+            mentions: Vec::new(),
             text: "Show the environment".to_owned(),
             profile_id: None,
             project_id: Some(project.id),

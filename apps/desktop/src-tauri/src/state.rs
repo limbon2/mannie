@@ -16,8 +16,8 @@ use mannie_logging::{ErrorChain, LogConfig, LoggingGuard, Redactor};
 use mannie_plugins::{Grants, HostedPlugin, Plugin, PluginHost};
 use mannie_provider::{HttpClient, ProviderRegistry};
 use mannie_runtime::{
-    AgentRegistry, InstructionRegistry, MachineSettings, Runtime, RuntimeConfig, RuntimeDeps,
-    ToolsDeps,
+    AgentRegistry, FileMentions, InstructionRegistry, MachineSettings, MentionRegistry, Runtime,
+    RuntimeConfig, RuntimeDeps, ToolsDeps,
 };
 use mannie_store::{Store, StoreError, StoreModule, StoreOptions};
 use mannie_tools::{MutationLock, SystemFacts, ToolRegistry};
@@ -342,6 +342,7 @@ fn start_runtime(
         instructions: InstructionRegistry::with_builtin(),
         tools: tools(app),
         machine: MachineSettings::default(),
+        mentions: mentions(),
     };
     let runtime = tauri::async_runtime::block_on(Runtime::start(deps, RuntimeConfig::default()))
         .map_err(|error| {
@@ -383,6 +384,17 @@ fn start_runtime(
         plugins,
         workers,
     })
+}
+
+/// The core's mention providers (ADR-0032, decision 9): the files and folders
+/// of a conversation's project.
+fn mentions() -> MentionRegistry {
+    let mut mentions = MentionRegistry::new();
+    // The registry starts empty, so the ID is free.
+    if let Err(error) = mentions.register(Arc::new(FileMentions::new())) {
+        tracing::error!(%error, "could not register the mentions of files");
+    }
+    mentions
 }
 
 /// The system tools of the master. Mannie's data and log folders are

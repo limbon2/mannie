@@ -173,6 +173,7 @@ async fn drive(
     let started = harness
         .runtime
         .start_conversation(StartConversation {
+            mentions: Vec::new(),
             text: "Turn 0".to_owned(),
             profile_id: None,
             project_id: None,
@@ -189,6 +190,7 @@ async fn drive(
             if index > 0 {
                 run = runtime
                     .send_message(SendMessage {
+                        mentions: Vec::new(),
                         conversation_id: background_conversation.clone(),
                         text: format!("Turn {index}"),
                     })

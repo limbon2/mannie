@@ -131,6 +131,14 @@ fn append_turn(messages: &mut Vec<Message>, turn: &ModelTurn, shape: RequestShap
             Some(PartKind::UserText) => {
                 messages.push(Message::text(Role::User, part.text.clone()));
             }
+            // What the owner's message mentions follows it, in the same
+            // message (ADR-0032, decision 7).
+            Some(PartKind::Mention) => match messages.last_mut() {
+                Some(owner) if owner.role == Role::User => {
+                    owner.content.push(Content::Text(part.text.clone()));
+                }
+                _ => messages.push(Message::text(Role::User, part.text.clone())),
+            },
             Some(PartKind::Text) => {
                 if !part.text.is_empty() {
                     reply.content.push(Content::Text(part.text.clone()));

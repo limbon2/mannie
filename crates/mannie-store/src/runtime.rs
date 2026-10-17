@@ -20,6 +20,7 @@ use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{
     ArchiveId, CheckpointId, ConversationId, PartId, ProfileId, ProjectId, RunId, TaskId, TurnId,
 };
+use mannie_types::mentions::MentionView;
 use mannie_types::run::{RunActivity, RunFailure, RunOutcome, RunState};
 use mannie_types::tasks::{TaskExecutorRef, TaskPartDocument, TaskState};
 use mannie_types::tools::ToolCallDocument;
@@ -203,6 +204,18 @@ pub struct NewPart {
     pub tool_call: Option<ToolCallDocument>,
 }
 
+/// Something that the owner's message mentions, which the turn stores as an
+/// owner part after the message (ADR-0032).
+#[derive(Debug, Clone)]
+pub struct NewMention {
+    /// The part.
+    pub part_id: PartId,
+    /// What the model reads.
+    pub text: String,
+    /// What the owner sees.
+    pub view: MentionView,
+}
+
 /// An output of a tool call to archive with the call's part.
 #[derive(Debug, Clone)]
 pub struct NewArchive {
@@ -266,6 +279,9 @@ pub enum Change {
         /// The task that the turn works on, in a task conversation. Creating
         /// a task with an existing ID leaves that task as it is.
         task: Option<NewTask>,
+        /// What the owner's message mentions, stored after it in the
+        /// message's order (ADR-0032).
+        mentions: Vec<NewMention>,
     },
     /// Adds a queued run that replaces the reply of the latest turn. Refused
     /// unless the turn's current run failed, stopped or was interrupted.

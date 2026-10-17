@@ -39,6 +39,7 @@ words:
   - fpid
   - globset
   - HMAC
+  - htpasswd
   - huntabyte
   - inlang
   - jexec
@@ -61,8 +62,10 @@ words:
   - LOGNAME
   - Mannie
   - Mannie's
+  - mebibytes
   - metacharacters
   - msvc
+  - netrc
   - nohup
   - nologin
   - NSIS
@@ -71,6 +74,7 @@ words:
   - PaneForge
   - Paraglide
   - PATHEXT
+  - pgpass
   - pidfds
   - prerender
   - prerendered
@@ -80,6 +84,7 @@ words:
   - prost
   - protoc
   - protox
+  - pypirc
   - QUIC
   - redb
   - redirections

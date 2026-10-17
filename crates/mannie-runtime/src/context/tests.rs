@@ -175,6 +175,42 @@ fn turns_become_alternating_messages() {
     );
 }
 
+/// A part that the owner's message mentions, which belongs to no run.
+fn mention(number: u32, text: &str) -> ModelPart {
+    ModelPart {
+        run_id: None,
+        attempt: 0,
+        ..part(number, Some(PartKind::Mention), text)
+    }
+}
+
+#[test]
+fn mentions_follow_the_owner_s_text_in_the_same_message() {
+    let turns = [turn(
+        0,
+        Some(RunState::Running),
+        vec![
+            part(1, Some(PartKind::UserText), "Compare @a.rs with @b.rs"),
+            mention(2, "The owner mentioned the file a.rs."),
+            mention(3, "The owner mentioned the file b.rs."),
+        ],
+    )];
+
+    let request = build_request(shape(ApiInterface::Responses), &turns);
+
+    assert_eq!(
+        request.messages,
+        [Message {
+            role: Role::User,
+            content: vec![
+                Content::Text("Compare @a.rs with @b.rs".to_owned()),
+                Content::Text("The owner mentioned the file a.rs.".to_owned()),
+                Content::Text("The owner mentioned the file b.rs.".to_owned()),
+            ],
+        }]
+    );
+}
+
 #[test]
 fn encrypted_reasoning_goes_back_only_to_its_binding_on_the_responses_api() {
     let same = [turn(

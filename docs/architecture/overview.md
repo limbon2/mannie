@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                                                                                                                                   |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                                                                                                                                                  |
-| Last updated | 2026-10-16                                                                                                                                                                                                                                                                                        |
+| Last updated | 2026-10-17                                                                                                                                                                                                                                                                                        |
 | Related      | [Domain model](domain-model.md), [Extension points](extension-points.md), [Orchestration](orchestration.md), [Security](security.md), [ADR index](../adr/README.md), [ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md), [Workers architecture](../features/workers/architecture.md) |
 
 ## 1. Reading guide
@@ -49,22 +49,22 @@ The owner works only with the desktop app. Its core calls model providers and ru
 | ----------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Desktop app, webview UI | Master's machine                        | Shows conversations, tool activity, approvals, settings and what the plugins that are on add. Holds no trusted state ([ADR-0004](../adr/0004-keep-system-access-in-the-rust-core.md)). |
 | Desktop app, Rust core  | Master's machine                        | Agent runtime, tools for the master's machine, store, credential store, the plugin host, IPC commands and channels.                                                                    |
-| Plugins                 | Master's machine, in the core's process | Optional features that the owner turns on and off. A plugin contributes tools, agents, instruction sections, task executors and UI entries while it is on.                             |
+| Plugins                 | Master's machine, in the core's process | Optional features that the owner turns on and off. A plugin contributes tools, agents, instruction sections, task executors, mention providers and UI entries while it is on.          |
 | Worker                  | Each host, with the Workers plugin      | Agent runtime, tools for its host, store, link server, host facts, policy ceiling, service integration.                                                                                |
 | Model providers         | External                                | The OpenAI Responses API and OpenAI-compatible Chat Completions servers.                                                                                                               |
 
 The Rust code is split into crates with enforced dependency rules ([ADR-0008](../adr/0008-one-workspace-two-binaries.md), [repository](../engineering/repository.md)). The core's crates are in `crates/`, and each plugin's crates are in `plugins/<id>/`. No core crate depends on a plugin's crate, and no plugin depends on another plugin.
 
-| Crate             | Contents                                                                                                                     |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `mannie-types`    | Shared domain, IPC and settings types, and the redacting secret type. No I/O.                                                |
-| `mannie-store`    | SQLite access, the migrations of each module and the core's repositories.                                                    |
-| `mannie-provider` | Provider adapters and quirk profiles.                                                                                        |
-| `mannie-tools`    | The tool registry, built-in tools, operations and the process supervisor.                                                    |
-| `mannie-runtime`  | Runs, the agent loop, context management, agent definitions, tasks, child agents, task executors and plugins' contributions. |
-| `mannie-plugins`  | What plugins build on: the plugin definition, the start context and its grants, and the host that starts and stops plugins.  |
-| `mannie-secrets`  | Access to the operating system credential store. Used by the master only.                                                    |
-| `mannie-desktop`  | The Tauri application: composition root, IPC commands and capabilities.                                                      |
+| Crate             | Contents                                                                                                                                        |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mannie-types`    | Shared domain, IPC and settings types, and the redacting secret type. No I/O.                                                                   |
+| `mannie-store`    | SQLite access, the migrations of each module and the core's repositories.                                                                       |
+| `mannie-provider` | Provider adapters and quirk profiles.                                                                                                           |
+| `mannie-tools`    | The tool registry, built-in tools, operations and the process supervisor.                                                                       |
+| `mannie-runtime`  | Runs, the agent loop, context management, agent definitions, tasks, child agents, task executors, mention providers and plugins' contributions. |
+| `mannie-plugins`  | What plugins build on: the plugin definition, the start context and its grants, and the host that starts and stops plugins.                     |
+| `mannie-secrets`  | Access to the operating system credential store. Used by the master only.                                                                       |
+| `mannie-desktop`  | The Tauri application: composition root, IPC commands and capabilities.                                                                         |
 
 The Workers plugin, in `plugins/workers/`, adds `mannie-link` with the link's contracts, client, server and pairing; `mannie-workers` with the master's side of workers and the plugin's definition; and the worker service `mannie-worker` with its composition root and service integration ([workers architecture](../features/workers/architecture.md)).
 

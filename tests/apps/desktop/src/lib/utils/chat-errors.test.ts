@@ -1,4 +1,5 @@
 // Every code of the chat feature has a message of its own (ADR-0019).
+import type { Component } from 'svelte';
 import { describe, expect, it } from 'vitest';
 
 import type {
@@ -81,6 +82,9 @@ const CHAT_ERRORS: ChatError[] = [
   { code: 'task_target_unreachable', kind: 'workers', target: 'build-01' },
   { code: 'worker_unreachable' },
   { code: 'plugin_off', plugin: 'workers' },
+  { code: 'too_many_mentions', max: 20 },
+  { code: 'mention_unavailable', provider: 'notes' },
+  { code: 'mention_refused', provider: 'files', reason: 'outside_workspace' },
 ];
 
 const PROFILE_ERRORS: ProviderProfileError[] = [
@@ -127,6 +131,27 @@ describe('chat messages', () => {
         kind: 'core',
       }),
     ).toContain('build-01');
+  });
+
+  it('word a mention’s refusal through its kind, or generically without one', () => {
+    const refused: ChatError = { code: 'mention_refused', provider: 'files', reason: 'outside_workspace' };
+    const kind = {
+      group: () => 'Files',
+      icon: () => (() => undefined) as unknown as Component,
+      id: 'files',
+      order: 0,
+      refusal: (code: string) => (code === 'outside_workspace' ? 'Outside the folder.' : null),
+      summary: () => null,
+      variantName: () => null,
+      warning: () => null,
+    };
+
+    const worded = chatFailureMessage({ error: refused, kind: 'core' }, () => kind);
+    const generic = chatFailureMessage({ error: refused, kind: 'core' });
+
+    expect(worded).toContain('Outside the folder.');
+    expect(generic).toContain('This mention is not available here.');
+    expect(chatFailureMessage({ error: { code: 'too_many_mentions', max: 20 }, kind: 'core' })).toContain('20');
   });
 
   it('find the plugin of a task conversation that cannot be followed while the plugin is off', () => {

@@ -14,6 +14,8 @@ use mannie_types::chat::{
     check_message, check_title, title_from_message,
 };
 use mannie_types::ids::{ConversationId, ProfileId};
+use mannie_types::mentions::check_mentions;
+use mannie_types::provider::context_budget;
 use mannie_types::transcript::{Checkpoint, ConversationSummary};
 
 use crate::agents::CONVERSATION_AGENT;
@@ -164,6 +166,7 @@ impl Runtime {
     ) -> Result<StartedConversation, ChatError> {
         self.refuse_when_quitting()?;
         check_message(&input.text)?;
+        let mentions = check_mentions(input.mentions)?;
         let profile = match &input.profile_id {
             Some(id) => self
                 .inner
@@ -184,6 +187,24 @@ impl Runtime {
         let full_access = self.full_access_for_new_conversations().await;
         let conversation_id = self.inner.ids.conversation();
         let reservation = self.reserve(&conversation_id, Busy::Starting)?;
+        let mentions = if mentions.is_empty() {
+            Vec::new()
+        } else {
+            let folder = match &input.project_id {
+                Some(project) => Some(self.mention_project_folder(project).await?),
+                None => None,
+            };
+            let context = self
+                .mention_context_for(
+                    None,
+                    input.project_id.as_ref(),
+                    folder.as_deref(),
+                    full_access,
+                )
+                .await?;
+            let budget = context_budget(profile.context_window, profile.output_limit);
+            self.resolve_mentions(&context, &mentions, budget).await?
+        };
         let turn_id = self.inner.ids.turn();
         let run = self.new_run(&profile);
         let mut changes = vec![Change::CreateConversation {
@@ -206,6 +227,7 @@ impl Runtime {
             text: input.text,
             run: run.clone(),
             task: None,
+            mentions,
         });
         self.inner
             .hubs
@@ -229,6 +251,7 @@ impl Runtime {
     pub async fn send_message(&self, input: SendMessage) -> Result<StartedReply, ChatError> {
         self.refuse_when_quitting()?;
         check_message(&input.text)?;
+        let mentions = check_mentions(input.mentions)?;
         let reservation = self.reserve(&input.conversation_id, Busy::Starting)?;
         let summary = self
             .inner
@@ -239,6 +262,20 @@ impl Runtime {
             .ok_or(ChatError::ConversationNotFound)?;
         refuse_task_conversation(&summary)?;
         let profile = self.profile_for(summary.profile_id.as_ref()).await?;
+        let mentions = if mentions.is_empty() {
+            Vec::new()
+        } else {
+            let context = self
+                .mention_context_for(
+                    Some(&input.conversation_id),
+                    summary.project_id.as_ref(),
+                    summary.workspace.as_deref(),
+                    summary.full_access,
+                )
+                .await?;
+            let budget = context_budget(profile.context_window, profile.output_limit);
+            self.resolve_mentions(&context, &mentions, budget).await?
+        };
         let turn_id = self.inner.ids.turn();
         let run = self.new_run(&profile);
         let change = Change::StartTurn {
@@ -247,6 +284,7 @@ impl Runtime {
             text: input.text,
             run: run.clone(),
             task: None,
+            mentions,
         };
         self.inner
             .hubs

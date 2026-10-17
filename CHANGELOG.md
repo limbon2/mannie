@@ -6,6 +6,7 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ### Added
 
+- Typing "@" in the message box lists the files and folders of the conversation's project, hidden and ignored ones included, and a file that may hold secrets shows a warning. The model reads a bounded page of each mentioned file and a listing of each mentioned folder after the message, and the transcript shows what it got.
 - The Plugins settings list the plugins built into Mannie, each with a switch that takes effect at once, without a restart; a plugin that starts, stops or failed says so, a failed one offers "Try again", and turning off a plugin with work in progress asks first.
 - While a plugin is off, its parts of the interface are gone, the address of one of its pages says that it is off and leads to the Plugins settings, and what it added to conversations stays readable.
 

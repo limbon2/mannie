@@ -11,6 +11,7 @@ use mannie_types::chat::{
     UpdateChatSettings,
 };
 use mannie_types::ipc::{ChannelBatch, CommandError};
+use mannie_types::mentions::{MentionSuggestions, SuggestMentions};
 use mannie_types::transcript::{
     Checkpoint, ConversationListUpdate, ConversationUpdate, SubscriptionId,
 };
@@ -136,6 +137,20 @@ pub(crate) async fn send_message(
         .send_message(input)
         .await
         .map_err(refused("send_message"))
+}
+
+/// What the owner can mention after "@" in the message box (ADR-0032): a
+/// group for each kind of mention that the place offers.
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn suggest_mentions(
+    core: State<'_, Core>,
+    input: SuggestMentions,
+) -> Result<MentionSuggestions, CommandError<ChatError>> {
+    runtime(&core)?
+        .suggest_mentions(input)
+        .await
+        .map_err(refused("suggest_mentions"))
 }
 
 /// Stops the conversation's reply and waits until it has ended.

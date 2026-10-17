@@ -855,6 +855,7 @@ impl LinkedMaster {
     pub async fn start_conversation(&self, text: &str) -> ConversationId {
         self.runtime
             .start_conversation(StartConversation {
+                mentions: Vec::new(),
                 text: text.to_owned(),
                 profile_id: None,
                 project_id: None,

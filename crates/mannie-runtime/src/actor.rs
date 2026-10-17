@@ -37,7 +37,7 @@ pub(crate) use self::child::ChildLink;
 use self::child::ChildRun;
 use self::tasks::TaskLane;
 use crate::assigned::AssignedRun;
-use crate::budget::{Ledger, estimate_text, usage};
+use crate::budget::{Ledger, budget_bytes, estimate_text, usage};
 use crate::calls::{CallError, CallOptions, Prepared, Setup};
 use crate::compaction::{self, ContextSize, Trigger};
 use crate::retry::RetryDecision;
@@ -287,12 +287,6 @@ fn keep_tail(text: &mut String) {
         start += 1;
     }
     text.drain(..start);
-}
-
-/// The bytes of a context budget in tokens, the inverse of the estimate of
-/// two tokens for every five bytes.
-fn budget_bytes(tokens: u32) -> usize {
-    usize::try_from(u64::from(tokens) * 5 / 2).unwrap_or(usize::MAX)
 }
 
 impl Runtime {

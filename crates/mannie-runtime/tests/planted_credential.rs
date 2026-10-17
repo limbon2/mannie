@@ -129,6 +129,7 @@ async fn start_with_adapters(store: mannie_store::Store, base_url: &str) -> Runt
                 system: Arc::new(mannie_tools::SystemFacts::detect()),
             },
             machine: mannie_runtime::MachineSettings::default(),
+            mentions: mannie_runtime::MentionRegistry::new(),
         },
         fast_config(),
     )
@@ -173,6 +174,7 @@ async fn a_planted_credential_reaches_only_the_authorization_header() {
 
     let started = runtime
         .start_conversation(StartConversation {
+            mentions: Vec::new(),
             text: "Hello".to_owned(),
             profile_id: None,
             project_id: None,

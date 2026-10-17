@@ -84,6 +84,7 @@ async fn check(window: u32, output: u32) {
     let started = harness
         .runtime
         .start_conversation(StartConversation {
+            mentions: Vec::new(),
             text: messages[0].clone(),
             profile_id: None,
             project_id: None,
@@ -97,6 +98,7 @@ async fn check(window: u32, output: u32) {
         let sent = harness
             .runtime
             .send_message(SendMessage {
+                mentions: Vec::new(),
                 conversation_id: conversation.clone(),
                 text: text.clone(),
             })
@@ -179,6 +181,7 @@ async fn the_owner_can_compact_by_hand_and_read_the_checkpoint() {
     let started = harness
         .runtime
         .start_conversation(StartConversation {
+            mentions: Vec::new(),
             text: "First".to_owned(),
             profile_id: None,
             project_id: None,
@@ -192,6 +195,7 @@ async fn the_owner_can_compact_by_hand_and_read_the_checkpoint() {
     let second = harness
         .runtime
         .send_message(SendMessage {
+            mentions: Vec::new(),
             conversation_id: conversation.clone(),
             text: "Second".to_owned(),
         })
@@ -215,6 +219,7 @@ async fn the_owner_can_compact_by_hand_and_read_the_checkpoint() {
     let third = harness
         .runtime
         .send_message(SendMessage {
+            mentions: Vec::new(),
             conversation_id: conversation.clone(),
             text: "Third".to_owned(),
         })

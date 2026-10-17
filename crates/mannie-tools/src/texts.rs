@@ -135,6 +135,22 @@ pub(crate) fn read_on(offset: usize) -> String {
     format!("More follows: call again with offset {offset}.")
 }
 
+/// The page of a file without lines.
+pub(crate) const EMPTY_FILE: &str = "The file is empty.";
+
+/// The note after the page of a mentioned file that more follows
+/// (docs/features/chat/mentions.md).
+pub(crate) fn mention_read_on(offset: usize) -> String {
+    format!("More follows: read_file reads on with offset {offset}.")
+}
+
+/// The listing of a mentioned folder without entries.
+pub(crate) const EMPTY_FOLDER: &str = "The folder is empty.";
+
+/// The note after the listing of a mentioned folder that leaves entries out.
+pub(crate) const LISTING_CUT: &str =
+    "Not every entry is shown: list_directory and find_files show the rest.";
+
 /// The note on a line that was cut.
 pub(crate) fn line_cut(left_out: usize) -> String {
     format!(" [cut: {left_out} more characters]")

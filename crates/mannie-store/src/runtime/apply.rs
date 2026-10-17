@@ -13,8 +13,8 @@ use super::rows::{
     self, CheckpointDocument, EventBody, PartDocument, StoredRow, kinds, streaming_text, to_json,
 };
 use super::{
-    Applied, Change, DOCUMENT_VERSION, NewArchive, NewCheckpoint, NewConversation, NewPart, NewRun,
-    NewTask, ProviderItem, RuntimeStoreError, TaskEnding, archives, tasks,
+    Applied, Change, DOCUMENT_VERSION, NewArchive, NewCheckpoint, NewConversation, NewMention,
+    NewPart, NewRun, NewTask, ProviderItem, RuntimeStoreError, TaskEnding, archives, tasks,
 };
 use crate::writer::TransactError;
 use crate::{Durability, Store};
@@ -265,7 +265,8 @@ impl Batch<'_> {
                 text,
                 run,
                 task,
-            } => self.start_turn(turn_id, &user_part_id, &text, run, task.as_ref()),
+                mentions,
+            } => self.start_turn(turn_id, &user_part_id, &text, run, task.as_ref(), &mentions),
             Change::RetryTurn { turn_id, run } => self.retry_turn(&turn_id, run),
             Change::StartRun { run_id } => self.start_run(run_id),
             Change::SetActivity { run_id, activity } => self.set_activity(run_id, &activity),
@@ -395,6 +396,7 @@ impl Batch<'_> {
         text: &str,
         run: NewRun,
         task: Option<&NewTask>,
+        mentions: &[NewMention],
     ) -> Result<(), RuntimeStoreError> {
         self.refuse_active_run()?;
         let position: i64 = self
@@ -429,6 +431,32 @@ impl Batch<'_> {
                 self.now,
                 self.now
             ])?;
+        // The mentions follow the owner's text, which stays at position 0
+        // (ADR-0032, decision 7).
+        for (index, mention) in mentions.iter().enumerate() {
+            let document = PartDocument {
+                mention: Some(mention.view.clone()),
+                ..PartDocument::default()
+            };
+            self.transaction
+                .prepare_cached(INSERT_PART)?
+                .execute(params![
+                    mention.part_id.as_str(),
+                    self.conversation,
+                    turn_id.as_str(),
+                    Option::<&str>::None,
+                    Option::<u32>::None,
+                    u32::try_from(index + 1).unwrap_or(u32::MAX),
+                    PartKind::Mention.as_str(),
+                    PartKind::Mention.audience().as_str(),
+                    PartState::Complete.as_str(),
+                    mention.text,
+                    DOCUMENT_VERSION,
+                    to_json(&document)?,
+                    self.now,
+                    self.now
+                ])?;
+        }
         // A task is stored with the turn that works on it, in the same
         // transaction (ADR-0024, decision 4).
         if let Some(task) = task {
@@ -641,6 +669,7 @@ impl Batch<'_> {
             failure: None,
             tool_call: Some(tool_call.clone()),
             task: None,
+            mention: None,
         };
         self.transaction
             .prepare_cached(UPDATE_PART_DOCUMENT)?
@@ -690,6 +719,7 @@ impl Batch<'_> {
             failure: None,
             tool_call: Some(tool_call),
             task: Some(task),
+            mention: None,
         };
         self.transaction
             .prepare_cached(UPDATE_PART_DOCUMENT)?
@@ -895,6 +925,7 @@ impl Batch<'_> {
             failure: part.failure.clone(),
             tool_call: part.tool_call.clone(),
             task: None,
+            mention: None,
         };
         let finished_at = (state != PartState::Streaming).then_some(self.now);
         self.transaction

@@ -69,7 +69,10 @@ const SELECT_LATEST_TURN: &str = "SELECT t.id, r.state FROM runtime_turns t \
      LEFT JOIN runtime_runs r ON r.id = t.current_run_id \
      WHERE t.conversation_id = ?1 ORDER BY t.position DESC LIMIT 1";
 const DELETE_CONVERSATION: &str = "DELETE FROM runtime_conversations WHERE id = ?1";
-const SELECT_TURN_REQUEST: &str = "SELECT text FROM runtime_parts      WHERE turn_id = ?1 AND run_id IS NULL ORDER BY position LIMIT 1";
+// Only the owner's own text, never what the message mentions (ADR-0032,
+// decision 7; T-19).
+const SELECT_TURN_REQUEST: &str = "SELECT text FROM runtime_parts \
+     WHERE turn_id = ?1 AND run_id IS NULL AND kind = 'user_text' ORDER BY position LIMIT 1";
 const SELECT_TOOL_CALLS_BEFORE: &str = "SELECT COUNT(*) FROM runtime_parts p \
      JOIN runtime_parts c ON c.turn_id = p.turn_id \
      WHERE c.id = ?1 AND p.kind IN ('tool_call', 'task') AND p.position < c.position";

@@ -241,6 +241,7 @@ async fn assigned(fixture: &Fixture) -> (ConversationId, RunId, TaskId) {
                 Change::StartTurn {
                     turn_id: fixture.turn_id(),
                     user_part_id: fixture.part_id(),
+                    mentions: Vec::new(),
                     text: "Build the backend and run its tests.".to_owned(),
                     run,
                     task: Some(NewTask {
@@ -594,6 +595,7 @@ async fn a_task_needs_the_part_or_the_assignment_that_started_it() {
                 Change::StartTurn {
                     turn_id: fixture.turn_id(),
                     user_part_id: fixture.part_id(),
+                    mentions: Vec::new(),
                     text: "Nobody asked".to_owned(),
                     run: fixture.new_run(),
                     task: Some(NewTask {

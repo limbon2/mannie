@@ -54,6 +54,7 @@
     "allow-subscribe-plugins",
     "allow-subscribe-window-requests",
     "allow-subscribe-workers",
+    "allow-suggest-mentions",
     "allow-test-provider-profile",
     "allow-unsubscribe",
     "allow-update-chat-settings",

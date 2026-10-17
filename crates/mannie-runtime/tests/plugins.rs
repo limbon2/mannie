@@ -117,6 +117,7 @@ fn contributions() -> PluginContributions {
             Some(SECTION.to_owned())
         })],
         executors: Vec::new(),
+        mentions: Vec::new(),
     }
 }
 
@@ -132,6 +133,7 @@ async fn start(harness: &Harness, text: &str) -> (ConversationId, RunId) {
     let started = harness
         .runtime
         .start_conversation(StartConversation {
+            mentions: Vec::new(),
             text: text.to_owned(),
             profile_id: None,
             project_id: None,

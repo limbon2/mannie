@@ -93,6 +93,13 @@ required-features = ["testing"]
 name = "plugins"
 required-features = ["testing"]
 
+# Mentions (ADR-0032): the suggestions, the core's files and folders, the
+# checks of a message's references, the budget that they share, and a fake
+# plugin's provider.
+[[test]]
+name = "mentions"
+required-features = ["testing"]
+
 # The tasks of a plugin's executor (ADR-0031): the tool and section of a
 # registered executor, plans, refusals, reports, background tasks, waits,
 # follow-ups, Stop, a stopped plugin and the reads of task conversations.

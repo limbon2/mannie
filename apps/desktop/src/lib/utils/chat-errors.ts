@@ -12,6 +12,7 @@ import type {
 import { m } from '#lib/paraglide/messages.js';
 import { pluginName } from '#lib/state/plugin-catalog.js';
 import type { ChatFailure, ProfileFailure } from '#lib/types/chat.js';
+import { type FindMentionKind, mentionRefusal } from '#lib/utils/mention-kinds.js';
 
 const counts = new Intl.NumberFormat();
 
@@ -102,8 +103,11 @@ export function runFailureMessage(failure: RunFailure): string {
   }
 }
 
-/** What to tell the owner about a chat command that failed. */
-export function chatFailureMessage(failure: ChatFailure): string {
+/**
+ * What to tell the owner about a chat command that failed. `findMentionKind`
+ * words a mention's refusal through its kind (ADR-0032).
+ */
+export function chatFailureMessage(failure: ChatFailure, findMentionKind?: FindMentionKind): string {
   if (failure.kind === 'ipc') {
     return m.shell_error_ipc_failed();
   }
@@ -138,6 +142,12 @@ export function chatFailureMessage(failure: ChatFailure): string {
     }
     case 'message_empty': {
       return m.chat_error_message_empty();
+    }
+    case 'mention_refused': {
+      return m.chat_error_mention_refused({ reason: mentionRefusal(findMentionKind?.(error.provider), error.reason) });
+    }
+    case 'mention_unavailable': {
+      return m.chat_error_mention_unavailable();
     }
     case 'message_too_long': {
       return m.chat_error_message_too_long({ maxBytes: formatCount(error.maxBytes) });
@@ -200,6 +210,9 @@ export function chatFailureMessage(failure: ChatFailure): string {
     }
     case 'title_empty': {
       return m.chat_error_title_empty();
+    }
+    case 'too_many_mentions': {
+      return m.chat_error_too_many_mentions({ max: error.max });
     }
     case 'title_too_long': {
       return m.chat_error_title_too_long({ maxCharacters: formatCount(error.maxCharacters) });

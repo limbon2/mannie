@@ -115,6 +115,32 @@ describe('ShellSlots', () => {
     expect(slots.commands.pluginOff('workers.pair')).toBe('workers');
   });
 
+  it('lists a plugin’s kind of mention only while the plugin is on', () => {
+    const plugins = pluginsOn();
+    const slots = new ShellSlots(plugins.isOn);
+    const kind = {
+      group: () => 'Notes',
+      icon: () => (() => ({})) as never,
+      id: 'fake',
+      order: 10,
+      refusal: () => null,
+      summary: () => null,
+      variantName: () => null,
+      warning: () => null,
+    };
+
+    slots.forPlugin('fake').mentionKinds.register(kind);
+    const whileOff = slots.mentionKinds.find('fake');
+    plugins.on.add('fake');
+
+    expect(whileOff).toBeUndefined();
+    expect(slots.mentionKinds.find('fake')).toBe(kind);
+    expect(slots.mentionKinds.find('files')).toBeUndefined();
+    expect(() => {
+      slots.mentionKinds.register(kind);
+    }).toThrow('The mention kinds slot already has an entry with the ID fake.');
+  });
+
   it('has a slot for panels, overlays and part renderers that refuses duplicates', () => {
     const slots = new ShellSlots();
     const component = () => ({});

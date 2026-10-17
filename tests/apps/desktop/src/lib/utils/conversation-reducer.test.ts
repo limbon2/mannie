@@ -72,6 +72,17 @@ function toolPart(id: string, turnId: string, runId: string, position: number, s
   return { content: { call, kind: 'tool_call' }, createdAt: 0, id, position, runId, state: 'streaming', turnId };
 }
 
+function mentionPart(id: string, turnId: string, position: number): PartView {
+  const mention = {
+    key: 'src/main.rs',
+    label: 'src/main.rs',
+    provider: 'files',
+    summary: { code: 'lines', values: { first: 1, last: 3, total: 3 } },
+    variant: 'file',
+  };
+  return { content: { kind: 'mention', mention }, createdAt: 0, id, position, runId: null, state: 'complete', turnId };
+}
+
 function turn(position: number, runState: RunView['state'] = 'running'): TurnView {
   const id = `turn-${String(position)}`;
   return {
@@ -174,6 +185,20 @@ describe('applyUpdate', () => {
 
     expect(state.turns[0]?.run?.id).toBe('run-retry');
     expect(state.turns[0]?.parts.map((part) => part.id)).toEqual(['user-0', 'new']);
+  });
+
+  it('keeps the mentions of the owner’s message through a retry, and ignores text for them', () => {
+    const state = emptyTranscript();
+    const failed = turn(0, 'failed');
+    failed.parts.push(mentionPart('mention', 'turn-0', 1));
+    failed.parts.push(textPart('old', 'turn-0', 'run-0', 2, 'old reply'));
+    applyUpdate(state, snapshot([failed], 5));
+
+    applyUpdate(state, event(6, { kind: 'part_delta', partId: 'mention', text: 'more' }));
+    applyUpdate(state, event(7, { kind: 'run_started', run: run('run-retry', 'turn-0', 'queued') }));
+
+    expect(state.turns[0]?.parts.map((part) => part.id)).toEqual(['user-0', 'mention']);
+    expect(state.turns[0]?.parts[1]?.content).toEqual(mentionPart('mention', 'turn-0', 1).content);
   });
 
   it('replaces a tool call with each update, and ignores text for it', () => {

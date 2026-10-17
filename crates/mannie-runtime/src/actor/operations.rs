@@ -28,9 +28,11 @@ use mannie_types::tools::{
 };
 use tokio::sync::oneshot;
 
-use super::{Ending, MAX_DETAIL_CHARS, RunActor, StepCall, budget_bytes, halt};
+use super::{Ending, MAX_DETAIL_CHARS, RunActor, StepCall, halt};
 use crate::approvals::Answer;
+use crate::budget::budget_bytes;
 use crate::calls::Setup;
+use crate::policy::PolicyGrants;
 use crate::projects::Moves;
 
 /// How a tool call ended, for the calls after it in the same step.
@@ -517,42 +519,21 @@ impl RunActor {
         let full_access = summary.as_ref().is_some_and(|summary| summary.full_access);
         let project = summary.and_then(|summary| summary.project_id);
         let projects = inner.store.projects().await?;
-        let mut project_grants = Vec::new();
-        let mut always_grants = Vec::new();
-        let shared = inner
-            .store
-            .shared_grants()
+        let PolicyGrants {
+            settings,
+            conversation: grants,
+            project: project_grants,
+            always: always_grants,
+            rules,
+        } = self
+            .runtime
+            .policy_grants(Some(&self.authority), project.as_ref())
             .await
-            .map_err(|error| internal(&error, "the shared grants"))?;
-        for grant in shared {
-            match &grant.project_id {
-                None => always_grants.push(grant.scope),
-                Some(owner) if Some(owner) == project.as_ref() => project_grants.push(grant.scope),
-                Some(_other) => {}
-            }
-        }
+            .map_err(|failure| internal(&failure.error, failure.what))?;
         let current = project
             .as_ref()
             .and_then(|id| projects.iter().find(|candidate| candidate.id == *id))
             .cloned();
-        let settings = inner
-            .store
-            .load_settings::<ToolsSettings>()
-            .await
-            .map_err(|error| internal(&error, "the tools settings"))?;
-        let grants = inner
-            .store
-            .grants(&self.authority)
-            .await
-            .map_err(|error| internal(&error, "the grants"))?
-            .into_iter()
-            .map(|grant| grant.scope)
-            .collect();
-        let rules = inner
-            .store
-            .rules()
-            .await
-            .map_err(|error| internal(&error, "the rules"))?;
         // A child knows only its parent's project and never moves a
         // conversation.
         let projects = if self.child.is_some() {

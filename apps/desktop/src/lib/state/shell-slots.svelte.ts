@@ -10,6 +10,7 @@ import { createContext } from 'svelte';
 
 import type {
   ConversationControl,
+  MentionKind,
   NavigationEntry,
   Overlay,
   PartRenderer,
@@ -128,6 +129,7 @@ function checkSidePanelKind(kind: SidePanelKind): string | null {
 export class ShellSlots {
   readonly commands: Slot<ShellCommand>;
   readonly conversationControls: Slot<ConversationControl>;
+  readonly mentionKinds: Slot<MentionKind>;
   readonly navigation: Slot<NavigationEntry>;
   readonly overlays: Slot<Overlay>;
   readonly partRenderers: Slot<PartRenderer>;
@@ -141,6 +143,7 @@ export class ShellSlots {
   constructor(isOn: PluginIsOn = () => true) {
     this.commands = new Slot('commands', isOn);
     this.conversationControls = new Slot('conversation controls', isOn);
+    this.mentionKinds = new Slot('mention kinds', isOn);
     this.navigation = new Slot('navigation', isOn);
     this.overlays = new Slot('overlays', isOn);
     this.partRenderers = new Slot('part renderers', isOn);
@@ -161,6 +164,7 @@ export class ShellSlots {
 export class PluginSlots {
   readonly commands: PluginSlot<ShellCommand>;
   readonly conversationControls: PluginSlot<ConversationControl>;
+  readonly mentionKinds: PluginSlot<MentionKind>;
   readonly navigation: PluginSlot<NavigationEntry>;
   readonly overlays: PluginSlot<Overlay>;
   readonly partRenderers: PluginSlot<PartRenderer>;
@@ -173,6 +177,7 @@ export class PluginSlots {
   constructor(slots: ShellSlots, plugin: string) {
     this.commands = new PluginSlot(slots.commands, plugin);
     this.conversationControls = new PluginSlot(slots.conversationControls, plugin);
+    this.mentionKinds = new PluginSlot(slots.mentionKinds, plugin);
     this.navigation = new PluginSlot(slots.navigation, plugin);
     this.overlays = new PluginSlot(slots.overlays, plugin);
     this.partRenderers = new PluginSlot(slots.partRenderers, plugin);

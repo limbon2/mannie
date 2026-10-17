@@ -923,6 +923,7 @@ impl RunActor {
         changes.push(Change::StartTurn {
             turn_id: turn.clone(),
             user_part_id: ids.part(),
+            mentions: Vec::new(),
             text: instruction,
             run: NewRun {
                 id: run.clone(),

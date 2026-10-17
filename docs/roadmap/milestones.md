@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                      |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                     |
-| Last updated | 2026-10-16                                                                                                                                                           |
+| Last updated | 2026-10-17                                                                                                                                                           |
 | Related      | [Goals and scope](../product/goals-and-scope.md), [Feature protocol](../features/README.md), [Releasing](../engineering/releasing.md), [ADR index](../adr/README.md) |
 
 ## 1. Delivery approach
@@ -16,14 +16,15 @@
 
 ## 2. Overview
 
-| Milestone       | Goal                                                               | Features                                                                                | Release |
-| --------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------- | ------- |
-| M0 Foundation   | The engineering platform and the validations features need         | None                                                                                    | Dry run |
-| M1 Chat         | Chat with OpenAI models and the owner's own model servers          | [Chat](../features/chat/README.md), [window and tray](../features/window-and-tray.md)   | v0.1.0  |
-| M2 System tools | The model works safely on the master's machine                     | [System tools](../features/system-tools/README.md)                                      | v0.2.0  |
-| M3 Child agents | Agents split work on their own machine                             | [Child agents](../features/child-agents/README.md)                                      | v0.2.0  |
-| M4 Workers      | Workers own their hosts and take tasks from the master             | [Workers](../features/workers/README.md)                                                | v0.2.0  |
-| M5 Plugins      | A core that every owner gets, and plugins that each owner turns on | [Plugins](../features/plugins.md), [workers as a plugin](../features/workers/plugin.md) | v0.3.0  |
+| Milestone       | Goal                                                                                                                   | Features                                                                                | Release |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------- |
+| M0 Foundation   | The engineering platform and the validations features need                                                             | None                                                                                    | Dry run |
+| M1 Chat         | Chat with OpenAI models and the owner's own model servers                                                              | [Chat](../features/chat/README.md), [window and tray](../features/window-and-tray.md)   | v0.1.0  |
+| M2 System tools | The model works safely on the master's machine                                                                         | [System tools](../features/system-tools/README.md)                                      | v0.2.0  |
+| M3 Child agents | Agents split work on their own machine                                                                                 | [Child agents](../features/child-agents/README.md)                                      | v0.2.0  |
+| M4 Workers      | Workers own their hosts and take tasks from the master                                                                 | [Workers](../features/workers/README.md)                                                | v0.2.0  |
+| M5 Plugins      | A core that every owner gets, and plugins that each owner turns on                                                     | [Plugins](../features/plugins.md), [workers as a plugin](../features/workers/plugin.md) | v0.3.0  |
+| M6 Mentions     | The owner mentions a project's files and folders in a message, and features and plugins can add more kinds of mentions | [Mentions](../features/chat/mentions.md)                                                | v0.3.0  |
 
 ```mermaid
 flowchart LR
@@ -32,7 +33,8 @@ flowchart LR
   M2 --> M3[M3 Child agents, v0.2.0]
   M3 --> M4[M4 Workers, v0.2.0]
   M4 --> M5[M5 Plugins, v0.3.0]
-  M5 --> Later[Later features as they are accepted]
+  M5 --> M6[M6 Mentions, v0.3.0]
+  M6 --> Later[Later features as they are accepted]
 ```
 
 ## 3. Milestones
@@ -142,7 +144,7 @@ Exit criteria:
 
 ### M5: Plugins
 
-Goal: a core that every owner gets, and plugins that each owner turns on and off, with the worker system as the first plugin (D26). It ends with v0.3.0.
+Goal: a core that every owner gets, and plugins that each owner turns on and off, with the worker system as the first plugin (D26). It ends with v0.3.0, together with M6 (D29).
 
 Features: [Plugins](../features/plugins.md), and [workers as a plugin](../features/workers/plugin.md).
 
@@ -155,6 +157,22 @@ Exit criteria:
 - With Workers on, the workers' tests and end-to-end tests pass as they did in M4.
 - The update from the 0.2.0 fixture database keeps Workers on when a worker is paired, and every conversation and task stays readable.
 - ADR-0030 and ADR-0031 are Accepted, and v0.3.0 is released.
+
+### M6: Mentions
+
+Goal: the owner mentions the files and folders of a project in a message with "@", and features and plugins can add more kinds of mentions ([ADR-0032](../adr/0032-let-features-and-plugins-add-kinds-of-mentions.md)). It ends with v0.3.0, together with M5 (D29).
+
+Features: [Mentions](../features/chat/mentions.md).
+
+Scope: mention providers and the slot of mention kinds; the core's `files` provider, with its index of a project's folder, its suggestions and what the model reads; the "@" list and the chips of the message box; the part `mention` in the transcript; and the mentions of `send_message` and `start_conversation`.
+
+Exit criteria:
+
+- A message in a project's conversation mentions a file and a folder, and the model's request holds their text within the room of one `read_file` result.
+- A fake provider and a fake kind pass the tests of the extension point, and a plugin's provider leaves with its plugin.
+- A key outside the workspace, a provider that is not there and a 21st mention are refused, and a mentioned file never lets `move_to_project` run without asking.
+- Axe finds no WCAG 2.1 AA violation with the list open, on WebView2 and WebKitGTK.
+- ADR-0032 is Accepted, and v0.3.0 is released.
 
 ### Later
 
@@ -212,6 +230,8 @@ No decision is open. New owner decisions get the next number here, and architect
 | D26 | Core and plugins (2026-10-16)                           | Mannie consists of a core, which holds what every agent harness needs, such as chat, tool use and child agents, and plugins, which each owner turns on and off: later integrations such as Jira, git, a code editor, a terminal, databases and log viewers, and first the worker system, which not every owner needs. Plugins are internal for now, built from this repository and shipped with Mannie, and an API or SDK for third-party plugins may come later. Turning a plugin on or off takes effect at once, without restarting Mannie. Each plugin's code lives in a folder of its own, `plugins/<id>/`. | [ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md), [ADR-0031](../adr/0031-move-workers-into-the-first-plugin.md), [plugins](../features/plugins.md)                                 |
 | D27 | CI runners (2026-10-16)                                 | CI's jobs, the live provider tests and the evaluations run on the owner's self-hosted runners, virtual machines that are reset after each job, because GitHub bills the minutes of its hosted runners in a private repository. The FreeBSD virtual machine jobs and the release's own jobs stay on GitHub's runners.                                                                                                                                                                                                                                                                                            | [CI runners](../engineering/ci-runners.md), [releasing](../engineering/releasing.md#3-steps)                                                                                                      |
 | D28 | Plugins in M5 (2026-10-16)                              | The owner accepts ADR-0030 and ADR-0031 and the defaults that the plugins feature documents chose: a plugin is on or off for the whole of Mannie; a new installation starts with every plugin off, and the update from 0.2.0 turns Workers on when a worker is paired; turning a plugin off keeps its data; and turning off a plugin with work in progress asks first. Building M5 starts.                                                                                                                                                                                                                      | [ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md), [ADR-0031](../adr/0031-move-workers-into-the-first-plugin.md), [plugins](../features/plugins.md#decisions)                       |
+| D29 | Releases of M5 and M6 (2026-10-16)                      | M6 ships together with M5 in one release, v0.3.0, because M5 was mostly a refactoring. M6 has no release of its own.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | [Milestones](#3-milestones), [mentions](../features/chat/mentions.md)                                                                                                                             |
+| D30 | Mentions in M6 (2026-10-17)                             | The owner accepts ADR-0032 and the defaults that the mentions feature document chose: a message has at most 20 mentions; the mentions of one message share the room of one `read_file` result; the list shows at most 50 files and folders, and a folder's listing at most 50 entries for each folder; the index of a project holds at most 100,000 entries and is kept for 15 seconds; the names of the files that may hold secrets; and a typed token counts when the list showed it. Building M6 starts.                                                                                                     | [ADR-0032](../adr/0032-let-features-and-plugins-add-kinds-of-mentions.md), [mentions](../features/chat/mentions.md#decisions)                                                                     |
 
 ## 6. Risk register
 

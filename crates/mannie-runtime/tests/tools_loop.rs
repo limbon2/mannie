@@ -87,6 +87,7 @@ impl Setup {
             .harness
             .runtime
             .start_conversation(StartConversation {
+                mentions: Vec::new(),
                 text: text.to_owned(),
                 profile_id: None,
                 project_id: project.cloned(),

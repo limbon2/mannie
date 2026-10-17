@@ -160,9 +160,79 @@
   ],
   "chat_composer_label": "Message",
   "chat_composer_placeholder": "Write a message",
-  "chat_composer_hint": "Enter sends, Shift+Enter starts a new line, and Escape stops the reply.",
+  "chat_composer_hint": "Enter sends, Shift+Enter starts a new line, @ mentions a file or folder, and Escape stops the reply.",
   "chat_send": "Send",
   "chat_stop": "Stop",
+  "chat_mention_list_label": "What you can mention",
+  "chat_mention_loading": "Looking for matches…",
+  "chat_mention_nothing_here": "Nothing can be mentioned in this conversation. The conversations of a project can mention its files and folders.",
+  "chat_mention_no_matches": "Nothing matches.",
+  "chat_mention_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "1 match. Up and Down choose, and Enter or Tab inserts it.",
+        "countPlural=other": "{count: number} matches. Up and Down choose, and Enter or Tab inserts one."
+      }
+    }
+  ],
+  "chat_mention_incomplete": "{group}: there is more than the list shows, so type more of the name.",
+  "chat_mention_group_failure": "{group} could not be listed. {reason}",
+  "chat_mention_group_other": "Other mentions",
+  "chat_mention_variant_other": "Mention",
+  "chat_mention_warning_other": "check this before you send it",
+  "chat_mention_refusal_other": "This mention is not available here.",
+  "chat_mention_chips_label": "Mentioned in this message",
+  "chat_mention_files_group": "Files and folders",
+  "chat_mention_files_file": "File",
+  "chat_mention_files_folder": "Folder",
+  "chat_mention_files_secret": "may hold secrets",
+  "chat_mention_files_outside_workspace": "The mention names a path outside the project's folder.",
+  "chat_mention_files_no_workspace": "Files can be mentioned only in the conversations of a project.",
+  "chat_mention_files_folder_unreadable": "The project's folder could not be read. Check that it still exists.",
+  "chat_mention_files_lines": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "1 line",
+        "countPlural=other": "{count: number} lines"
+      }
+    }
+  ],
+  "chat_mention_files_lines_cut": "lines {first: number} to {last: number} of {total: number}",
+  "chat_mention_files_lines_none": "none of its {total: number} lines fit",
+  "chat_mention_files_empty_file": "empty file",
+  "chat_mention_files_entries": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "1 entry",
+        "countPlural=other": "{count: number} entries"
+      }
+    }
+  ],
+  "chat_mention_files_empty_folder": "empty folder",
+  "chat_mention_files_entries_cut": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "the first entry",
+        "countPlural=other": "the first {count: number} entries"
+      }
+    }
+  ],
+  "chat_mention_files_not_text": "not text, so only its name was sent",
+  "chat_mention_files_too_large": "larger than {limit: number} MiB, so only its name was sent",
+  "chat_mention_files_unreadable": "could not be read, so only its name was sent",
+  "chat_mention_files_needs_approval": "reading it needs your approval, so only its name was sent",
+  "chat_mention_files_not_found": "does not exist",
+  "chat_error_too_many_mentions": "A message can mention at most {max: number} things. Remove some mentions, then send again.",
+  "chat_error_mention_unavailable": "Something that this message mentions is not available here anymore. Remove the mention, then send again.",
+  "chat_error_mention_refused": "Mannie refused a mention of this message. {reason} Remove the mention, then send again.",
   "chat_profile_trigger": "Provider profile: {name}",
   "chat_profile_menu_label": "Provider profile for the next replies",
   "chat_profile_default": "Default ({name})",

@@ -5,6 +5,7 @@ use specta::Type;
 
 use crate::clock::UtcMillis;
 use crate::ids::{PartId, RunId, TurnId};
+use crate::mentions::MentionView;
 use crate::run::RunFailure;
 use crate::tasks::TaskCallView;
 use crate::tools::ToolCallView;
@@ -31,11 +32,14 @@ pub enum PartKind {
     /// for tasks, and is the task's record in the parent conversation
     /// (docs/features/child-agents/tasks.md, the task part).
     Task,
+    /// Something that the owner's message mentions, with what the model reads
+    /// of it (ADR-0032).
+    Mention,
 }
 
 impl PartKind {
     /// Every kind this version knows.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::UserText,
         Self::Text,
         Self::Reasoning,
@@ -43,6 +47,7 @@ impl PartKind {
         Self::ContinuationNote,
         Self::ToolCall,
         Self::Task,
+        Self::Mention,
     ];
 
     /// The kind's name as the store and the UI know it.
@@ -55,6 +60,7 @@ impl PartKind {
             Self::ContinuationNote => "continuation_note",
             Self::ToolCall => "tool_call",
             Self::Task => "task",
+            Self::Mention => "mention",
         }
     }
 
@@ -73,9 +79,12 @@ impl PartKind {
     /// Who the part is for.
     pub fn audience(self) -> Audience {
         match self {
-            Self::UserText | Self::Text | Self::Reasoning | Self::ToolCall | Self::Task => {
-                Audience::Both
-            }
+            Self::UserText
+            | Self::Text
+            | Self::Reasoning
+            | Self::ToolCall
+            | Self::Task
+            | Self::Mention => Audience::Both,
             Self::Error => Audience::Owner,
             Self::ContinuationNote => Audience::Model,
         }
@@ -208,6 +217,11 @@ pub enum PartContent {
     Task {
         /// The call and its task.
         call: Box<TaskCallView>,
+    },
+    /// Something that the owner's message mentions.
+    Mention {
+        /// What the mention names and what the model got.
+        mention: MentionView,
     },
     /// A kind of part that this version does not know.
     Unknown {

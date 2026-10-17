@@ -202,6 +202,7 @@ async fn start_conversation(directory: &Path, parent_ends: bool) -> (Runtime, Co
         .unwrap();
     let started = runtime
         .start_conversation(StartConversation {
+            mentions: Vec::new(),
             text: "OWNER: mark it".to_owned(),
             profile_id: None,
             project_id: Some(project.id),
@@ -491,6 +492,7 @@ async fn follow_up_reads_the_result(
     model.push_reply_for(CHILD, reply("Report: the command ran."));
     let sent = runtime
         .send_message(SendMessage {
+            mentions: Vec::new(),
             conversation_id: conversation.clone(),
             text: "Did it run?".to_owned(),
         })

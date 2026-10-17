@@ -3,7 +3,13 @@
 // shell renders whatever is registered and never imports a feature directly.
 import type { Component } from 'svelte';
 
-import type { ConversationId, ConversationSummary, PartView, TurnView } from '#lib/generated/bindings.js';
+import type {
+  ConversationId,
+  ConversationSummary,
+  MentionSummary,
+  PartView,
+  TurnView,
+} from '#lib/generated/bindings.js';
 
 /** A message function from the catalog, called when the text is shown (ADR-0019). */
 export type Message = () => string;
@@ -197,4 +203,29 @@ export interface TaskKind {
   readonly untitledCall: Message;
   /** The status line of a reply that waits only for tasks of the kind. */
   readonly waiting: (count: number) => string;
+}
+
+/**
+ * A kind of mention (ADR-0032, decision 4): how the "@" list, the chips of
+ * the message box and the transcript name the mentions of one provider.
+ * Without an entry for a provider, such as while its plugin is off, they
+ * show generic texts.
+ */
+export interface MentionKind {
+  /** The heading of the provider's group in the list. */
+  readonly group: Message;
+  /** An icon from @lucide/svelte for an entry of a variant, such as `file` or `folder`. */
+  readonly icon: (variant: string) => Component;
+  /** The provider's ID. */
+  readonly id: string;
+  /** The list's groups are sorted by this number, lowest first. */
+  readonly order: number;
+  /** The sentence of one of the provider's refusal or failure codes, or `null` for a code it does not know. */
+  readonly refusal: (code: string) => string | null;
+  /** What the model got of a sent mention, or `null` for a code it does not know. */
+  readonly summary: (summary: MentionSummary) => string | null;
+  /** What an entry of a variant is, for screen readers, such as "File", or `null` for a variant it does not know. */
+  readonly variantName: (variant: string) => string | null;
+  /** The words of a warning code, such as "may hold secrets", or `null` for a code it does not know. */
+  readonly warning: (code: string) => string | null;
 }

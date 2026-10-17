@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                                                                                                    |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Status       | Draft for review                                                                                                                                                                                                                                                   |
-| Last updated | 2026-10-16                                                                                                                                                                                                                                                         |
+| Last updated | 2026-10-17                                                                                                                                                                                                                                                         |
 | Related      | [ADR-0008](../adr/0008-one-workspace-two-binaries.md), [ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md), [Extension points](../architecture/extension-points.md), [Standards](standards.md), [Releasing](releasing.md), [CI runners](ci-runners.md) |
 
 ## 1. Principles
@@ -39,7 +39,7 @@ mannie/
 │   ├── mannie-secrets/          # operating system credential store (master only)
 │   ├── mannie-provider/         # provider adapters, quirk profiles; fixtures in tests/fixtures/
 │   ├── mannie-tools/            # the system tools, their policy and ceiling, file safety and the process supervisor
-│   ├── mannie-runtime/          # runs as actors, the event log's hubs, context, compaction, tool calls, tasks, task executors and plugins' contributions; evaluations in tests/evals/
+│   ├── mannie-runtime/          # runs as actors, the event log's hubs, context, compaction, tool calls, tasks, task executors, mention providers and plugins' contributions; evaluations in tests/evals/
 │   └── mannie-plugins/          # the plugin definition, the start context and its grants, and the plugin host
 ├── plugins/
 │   └── workers/                 # the Workers plugin

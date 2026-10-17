@@ -14,7 +14,7 @@ pub const RESULT_LIMIT_BYTES: usize = 64 * 1024;
 pub const MIN_RESULT_LIMIT_BYTES: usize = 4 * 1024;
 
 /// The bytes that a page keeps free for its header and its last line.
-const FRAME_BYTES: usize = 512;
+pub(crate) const FRAME_BYTES: usize = 512;
 
 /// The result limit for a context budget in bytes: 64 KiB, or a quarter of the
 /// budget when that is smaller.

@@ -61,6 +61,7 @@ macro_rules! app_commands {
             chat::load_earlier_turns,
             chat::start_conversation,
             chat::send_message,
+            chat::suggest_mentions,
             chat::stop_reply,
             chat::retry_reply,
             chat::rename_conversation,

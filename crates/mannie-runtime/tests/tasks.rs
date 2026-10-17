@@ -93,6 +93,7 @@ impl Setup {
             .harness
             .runtime
             .start_conversation(StartConversation {
+                mentions: Vec::new(),
                 text: text.to_owned(),
                 profile_id: None,
                 project_id: Some(self.project.clone()),
@@ -465,6 +466,7 @@ async fn a_profile_without_tools_is_offered_no_task_tools() {
     let started = harness
         .runtime
         .start_conversation(StartConversation {
+            mentions: Vec::new(),
             text: "Hi".to_owned(),
             profile_id: None,
             project_id: None,
@@ -1132,6 +1134,7 @@ async fn the_owners_commands_refuse_a_task_conversation_and_deleting_the_parent_
 
     let sent = runtime
         .send_message(SendMessage {
+            mentions: Vec::new(),
             conversation_id: child.clone(),
             text: "Hello, child.".to_owned(),
         })

@@ -12,14 +12,14 @@ use super::{existing_file, path_access};
 use crate::digest::revision;
 use crate::paths::{Resolved, for_read, io_failure};
 use crate::results::{Page, count, cut_line};
-use crate::text::{Encoding, NotText, decode, lines};
+use crate::text::{Encoding, FileText, NotText, decode, lines};
 use crate::texts;
 use crate::tool::{
     Done, PermissionClass, PrepareError, ToolContext, TypedExecution, TypedTool, blocking,
 };
 
 /// The most lines of a page.
-const MAX_LIMIT: u32 = 2_000;
+pub(crate) const MAX_LIMIT: u32 = 2_000;
 /// The most characters of a line that a page shows.
 const MAX_LINE_CHARS: usize = 2_000;
 /// The largest file that the text tools read or change.
@@ -106,24 +106,16 @@ fn read(context: &ToolContext, input: &Input) -> Result<Done, ToolFailure> {
     let mut page = Page::new(context.result_limit, &[&path, &revision]);
     let mut last = first - 1;
     for (index, line) in all.iter().enumerate().skip(first - 1).take(limit) {
-        let (shown, left_out) = cut_line(line, MAX_LINE_CHARS);
-        let mut numbered = format!("{:>6}\t{shown}", index + 1);
-        if left_out > 0 {
-            numbered.push_str(&texts::line_cut(left_out));
-        }
-        if !page.push(&numbered) {
+        if !page.push(&numbered_line(index, line)) {
             break;
         }
         last = index + 1;
     }
 
-    let mut output = format!("File: {path}\nRevision: {revision}\n");
-    if let Some(note) = encoding_note(text.encoding, text.crlf) {
-        output.push_str(note);
-        output.push('\n');
-    }
+    let mut output = file_header(&path, &revision, &text);
     if total == 0 {
-        output.push_str("The file is empty.\n");
+        output.push_str(texts::EMPTY_FILE);
+        output.push('\n');
     } else {
         output.push_str(&texts::lines_shown(first, last, total));
         output.push('\n');
@@ -143,6 +135,28 @@ fn read(context: &ToolContext, input: &Input) -> Result<Done, ToolFailure> {
         output,
         archives: Vec::new(),
     })
+}
+
+/// A line of a page: its number, from 1 at `index` 0, and its text, cut to
+/// [`MAX_LINE_CHARS`] characters.
+pub(crate) fn numbered_line(index: usize, line: &str) -> String {
+    let (shown, left_out) = cut_line(line, MAX_LINE_CHARS);
+    let mut numbered = format!("{:>6}\t{shown}", index + 1);
+    if left_out > 0 {
+        numbered.push_str(&texts::line_cut(left_out));
+    }
+    numbered
+}
+
+/// The header of a page: the path, the revision and, when the file does not
+/// store UTF-8 with LF, how it does.
+pub(crate) fn file_header(path: &str, revision: &str, text: &FileText) -> String {
+    let mut header = format!("File: {path}\nRevision: {revision}\n");
+    if let Some(note) = encoding_note(text.encoding, text.crlf) {
+        header.push_str(note);
+        header.push('\n');
+    }
+    header
 }
 
 /// How a file stores its text, when that is not UTF-8 with LF.

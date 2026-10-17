@@ -6,6 +6,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use specta::Type;
 
 use crate::ids::{CheckpointId, ConversationId, ProfileId, ProjectId, RunId, TurnId};
+use crate::mentions::MentionRef;
 use crate::run::RunFailure;
 use crate::settings::SettingsSection;
 use crate::tools::PathRefusal;
@@ -169,6 +170,9 @@ pub struct StartConversation {
     /// The project the conversation starts in, or `None` for a general
     /// conversation.
     pub project_id: Option<ProjectId>,
+    /// What the message mentions, in the order of its text (ADR-0032).
+    #[serde(default)]
+    pub mentions: Vec<MentionRef>,
 }
 
 /// The result of `start_conversation`.
@@ -195,6 +199,9 @@ pub struct SendMessage {
     pub conversation_id: ConversationId,
     /// The message.
     pub text: String,
+    /// What the message mentions, in the order of its text (ADR-0032).
+    #[serde(default)]
+    pub mentions: Vec<MentionRef>,
 }
 
 /// The result of `send_message` and `retry_reply`.
@@ -449,6 +456,27 @@ pub enum ChatError {
     /// Mannie is quitting and starts no more replies.
     #[error("Mannie is quitting")]
     ShuttingDown,
+    /// The message mentions more than Mannie sends with one message.
+    #[error("a message mentions at most {max} things")]
+    TooManyMentions {
+        /// The limit.
+        max: u32,
+    },
+    /// A mention's provider is not there, for example because its plugin is
+    /// off, or it is not offered in this conversation (ADR-0032).
+    #[error("the mentions of {provider} are not available here")]
+    MentionUnavailable {
+        /// The provider's ID.
+        provider: String,
+    },
+    /// A mention's provider refused what the mention names.
+    #[error("{provider} refused a mention: {reason}")]
+    MentionRefused {
+        /// The provider's ID.
+        provider: String,
+        /// The provider's code for why, such as `outside_workspace`.
+        reason: String,
+    },
 }
 
 impl ChatError {
@@ -487,6 +515,9 @@ impl ChatError {
             Self::StorageFailed => "chat.storage_failed",
             Self::StoreUnavailable => "chat.store_unavailable",
             Self::ShuttingDown => "chat.shutting_down",
+            Self::TooManyMentions { .. } => "chat.too_many_mentions",
+            Self::MentionUnavailable { .. } => "chat.mention_unavailable",
+            Self::MentionRefused { .. } => "chat.mention_refused",
         }
     }
 }

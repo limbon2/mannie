@@ -13,6 +13,7 @@ import ConversationPanel from '#lib/components/app/chat/ConversationPanel.svelte
 import ConversationView from '#lib/components/app/chat/ConversationView.svelte';
 import ErrorPart from '#lib/components/app/chat/ErrorPart.svelte';
 import InstructionsSettingsSection from '#lib/components/app/chat/InstructionsSettingsSection.svelte';
+import MentionPart from '#lib/components/app/chat/MentionPart.svelte';
 import ProjectsPanel from '#lib/components/app/chat/ProjectsPanel.svelte';
 import ProviderSettingsSection from '#lib/components/app/chat/ProviderSettingsSection.svelte';
 import ReasoningPart from '#lib/components/app/chat/ReasoningPart.svelte';
@@ -30,6 +31,14 @@ import {
   PROVIDER_SETTINGS_SECTION,
   startNewConversation,
 } from '#lib/utils/chat-urls.js';
+import {
+  fileMentionIcon,
+  fileMentionRefusal,
+  fileMentionSummary,
+  fileMentionVariantName,
+  fileMentionWarning,
+  FILES_PROVIDER,
+} from '#lib/utils/file-mentions.js';
 
 /** The open conversation as the list knows it. */
 function openSummary(): ReturnType<typeof conversationList.find> {
@@ -58,6 +67,17 @@ export function registerChat(slots: ShellSlots): void {
   slots.partRenderers.register({ component: TextPart, id: 'text' });
   slots.partRenderers.register({ component: ReasoningPart, id: 'reasoning' });
   slots.partRenderers.register({ component: ErrorPart, id: 'error' });
+  slots.partRenderers.register({ component: MentionPart, id: 'mention' });
+  slots.mentionKinds.register({
+    group: m.chat_mention_files_group,
+    icon: fileMentionIcon,
+    id: FILES_PROVIDER,
+    order: 0,
+    refusal: fileMentionRefusal,
+    summary: fileMentionSummary,
+    variantName: fileMentionVariantName,
+    warning: fileMentionWarning,
+  });
   slots.commands.register({
     group: m.chat_command_group,
     id: 'chat.new-conversation',

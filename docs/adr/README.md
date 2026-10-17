@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                           |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Living index                                                                                                                                                                              |
-| Last updated | 2026-10-16                                                                                                                                                                                |
+| Last updated | 2026-10-17                                                                                                                                                                                |
 | Related      | [ADR-0001](0001-record-architecture-decisions.md), [Template](0000-template.md), [Decisions](../roadmap/milestones.md#5-decisions), [Validations](../roadmap/milestones.md#4-validations) |
 
 [ADR-0001](0001-record-architecture-decisions.md) describes the process, and new ADRs start from the [template](0000-template.md).
@@ -49,3 +49,4 @@ Each ADR has exactly one of these statuses:
 | [0029](0029-let-the-owner-give-conversations-and-hosts-full-access.md) | Let the owner give conversations and hosts full access                                        | Accepted               | M4         |
 | [0030](0030-split-mannie-into-a-core-and-plugins.md)                   | Split Mannie into a core and internal plugins that the owner turns on and off                 | Accepted (D28)         | M5         |
 | [0031](0031-move-workers-into-the-first-plugin.md)                     | Move the worker system into the first plugin, behind extension points of the core             | Accepted (D28)         | M5         |
+| [0032](0032-let-features-and-plugins-add-kinds-of-mentions.md)         | Let features and plugins add kinds of mentions to the message box                             | Accepted (D30)         | M6         |

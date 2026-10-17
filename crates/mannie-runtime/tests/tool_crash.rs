@@ -147,6 +147,7 @@ fn child_tool_call() {
             .unwrap();
         let started = runtime
             .start_conversation(StartConversation {
+                mentions: Vec::new(),
                 text: "Mark it".to_owned(),
                 profile_id: None,
                 project_id: Some(project.id),

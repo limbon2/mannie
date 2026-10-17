@@ -23,6 +23,12 @@ pub(crate) fn estimate_text(text: &str) -> u32 {
     u32::try_from((bytes * 2).div_ceil(5)).unwrap_or(u32::MAX)
 }
 
+/// The bytes of a context budget in tokens, the inverse of the estimate of
+/// two tokens for every five bytes.
+pub(crate) fn budget_bytes(tokens: u32) -> usize {
+    usize::try_from(u64::from(tokens) * 5 / 2).unwrap_or(usize::MAX)
+}
+
 /// The estimated tokens of one message.
 pub(crate) fn estimate_message(message: &Message) -> u32 {
     message

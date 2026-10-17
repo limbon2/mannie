@@ -1,6 +1,7 @@
 //! What plugins contribute to the runtime while they are on (ADR-0030,
-//! decision 5): tools, agent definitions, instruction sections and task
-//! executors, each kept with the ID of the plugin that made it.
+//! decision 5): tools, agent definitions, instruction sections, task
+//! executors and mention providers (ADR-0032), each kept with the ID of the
+//! plugin that made it.
 //!
 //! The runtime takes a plugin's contributions when the plugin starts and
 //! drops them when it stops. A run reads them once, when it starts, so the
@@ -17,6 +18,7 @@ use crate::Runtime;
 use crate::agents::AgentDefinition;
 use crate::executors::TaskExecutor;
 use crate::instructions::InstructionSection;
+use crate::mentions::MentionProvider;
 
 /// A tool of a plugin, with the agents that are offered it.
 #[derive(Debug, Clone)]
@@ -39,6 +41,9 @@ pub struct PluginContributions {
     pub sections: Vec<InstructionSection>,
     /// Task executors, whose kind is the plugin's ID (ADR-0031, decision 4).
     pub executors: Vec<Arc<dyn TaskExecutor>>,
+    /// Mention providers, whose IDs are the plugin's ID or start with it and a
+    /// dot (ADR-0032, decision 3).
+    pub mentions: Vec<Arc<dyn MentionProvider>>,
 }
 
 /// Why the runtime did not take a plugin's contributions. It took none of
@@ -78,6 +83,21 @@ pub enum ContributionError {
         /// The executor's kind.
         kind: String,
     },
+    /// The core or another plugin has a mention provider with this ID.
+    #[error("a mention provider with the ID {id} is registered already")]
+    DuplicateMentionProvider {
+        /// The provider's ID.
+        id: String,
+    },
+    /// A mention provider's ID is neither the plugin's ID nor starts with
+    /// it and a dot.
+    #[error("the plugin {plugin} cannot register the mention provider {id}")]
+    MentionProviderId {
+        /// The plugin.
+        plugin: String,
+        /// The provider's ID.
+        id: String,
+    },
 }
 
 /// The contributions of one plugin that is on, without its executors, which
@@ -88,6 +108,7 @@ struct Registered {
     tools: Vec<PluginTool>,
     agents: Vec<AgentDefinition>,
     sections: Vec<InstructionSection>,
+    mentions: Vec<Arc<dyn MentionProvider>>,
 }
 
 /// The contributions of the plugins that are on.
@@ -133,6 +154,7 @@ impl Runtime {
             agents,
             sections,
             executors,
+            mentions,
         } = contributions;
         for executor in executors {
             // Checked above: the kind is the plugin's and free.
@@ -159,6 +181,7 @@ impl Runtime {
             tools = tools.len(),
             agents = agents.len(),
             sections = sections.len(),
+            mentions = mentions.len(),
             "a plugin's contributions were registered"
         );
         registered.push(Registered {
@@ -166,6 +189,7 @@ impl Runtime {
             tools,
             agents,
             sections,
+            mentions,
         });
         Ok(())
     }
@@ -184,6 +208,7 @@ impl Runtime {
             agents,
             sections,
             executors,
+            mentions,
         } = contributions;
         let mut names: Vec<&str> = Vec::new();
         for offered in tools {
@@ -240,6 +265,30 @@ impl Runtime {
                 plugin: plugin.to_owned(),
                 kind: executor.kind().to_owned(),
             });
+        }
+        let mut provider_ids: Vec<&str> = Vec::new();
+        for provider in mentions {
+            let id = provider.id();
+            let owned = id == plugin
+                || id
+                    .strip_prefix(plugin)
+                    .is_some_and(|rest| rest.len() > 1 && rest.starts_with('.'));
+            if !owned {
+                return Err(ContributionError::MentionProviderId {
+                    plugin: plugin.to_owned(),
+                    id: id.to_owned(),
+                });
+            }
+            let taken = self.inner.mentions.contains(id)
+                || provider_ids.contains(&id)
+                || registered
+                    .iter()
+                    .flat_map(|entry| &entry.mentions)
+                    .any(|other| other.id() == id);
+            if taken {
+                return Err(ContributionError::DuplicateMentionProvider { id: id.to_owned() });
+            }
+            provider_ids.push(id);
         }
         Ok(())
     }
@@ -306,6 +355,19 @@ impl Runtime {
                     .iter()
                     .map(|definition| (entry.plugin.clone(), definition.clone()))
             })
+            .collect()
+    }
+
+    /// The mention providers of the plugins that are on, in the order in
+    /// which the plugins started.
+    pub(crate) fn plugin_mention_providers(&self) -> Vec<Arc<dyn MentionProvider>> {
+        self.inner
+            .plugins
+            .registered
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .flat_map(|entry| entry.mentions.iter().map(Arc::clone))
             .collect()
     }
 

@@ -6,6 +6,7 @@ use mannie_types::clock::{Clock, ManualClock, UtcMillis};
 use mannie_types::ids::{
     CheckpointId, ConversationId, PartId, ProfileId, ProjectId, RunId, TurnId,
 };
+use mannie_types::mentions::{MentionSummary, MentionView};
 use mannie_types::run::{FinishReason, RunFailure, RunOutcome, RunState};
 use mannie_types::tools::ToolCallDocument;
 use mannie_types::transcript::{
@@ -13,8 +14,8 @@ use mannie_types::transcript::{
 };
 
 use super::{
-    Applied, Change, EventsAfter, NewCheckpoint, NewConversation, NewPart, NewRun, ProviderItem,
-    RuntimeStoreError,
+    Applied, Change, EventsAfter, NewCheckpoint, NewConversation, NewMention, NewPart, NewRun,
+    ProviderItem, RuntimeStoreError,
 };
 use crate::{Durability, Store, StoreOptions};
 
@@ -124,6 +125,7 @@ impl Fixture {
                     Change::StartTurn {
                         turn_id: turn.clone(),
                         user_part_id: self.part_id(),
+                        mentions: Vec::new(),
                         text: text.to_owned(),
                         run,
                         task: None,
@@ -333,8 +335,123 @@ fn text_of(content: &PartContent) -> String {
             format!("{} {:?} {}", call.tool, call.status, call.arguments)
         }
         PartContent::Task { call } => format!("{} {:?}", call.tool, call.status),
+        PartContent::Mention { mention } => format!("@{}", mention.label),
         PartContent::Unknown { name } => name.clone(),
     }
+}
+
+/// A mention of a file as the files provider stores it.
+fn mention(fixture: &Fixture, label: &str, code: &str) -> NewMention {
+    NewMention {
+        part_id: fixture.part_id(),
+        text: format!("The owner mentioned the file {label}."),
+        view: MentionView {
+            provider: "files".to_owned(),
+            key: label.to_owned(),
+            label: label.to_owned(),
+            variant: "file".to_owned(),
+            summary: MentionSummary {
+                code: code.to_owned(),
+                values: BTreeMap::new(),
+            },
+        },
+    }
+}
+
+#[tokio::test]
+async fn a_turn_keeps_its_mentions_after_the_owner_s_text() {
+    let fixture = Fixture::new();
+    let conversation = fixture.conversation_id();
+    let turn = fixture.turn_id();
+    let first = mention(&fixture, "a.rs", "lines");
+    let second = mention(&fixture, "b.png", "not_text");
+    let stored_views = [first.view.clone(), second.view.clone()];
+
+    let applied = fixture
+        .apply(
+            &conversation,
+            vec![
+                Change::CreateConversation {
+                    conversation: NewConversation {
+                        id: conversation.clone(),
+                        title: "A title".to_owned(),
+                        profile_id: None,
+                        project_id: None,
+                        task: None,
+                    },
+                },
+                Change::StartTurn {
+                    turn_id: turn.clone(),
+                    user_part_id: fixture.part_id(),
+                    mentions: vec![first, second],
+                    text: "Compare @a.rs with @b.png".to_owned(),
+                    run: fixture.new_run(),
+                    task: None,
+                },
+            ],
+        )
+        .await;
+
+    let [(_, ConversationEvent::TurnStarted { turn: started })] = applied.events.as_slice() else {
+        panic!("{:?}", applied.events);
+    };
+    let announced: Vec<(u32, String)> = started
+        .parts
+        .iter()
+        .map(|part| (part.position, text_of(&part.content)))
+        .collect();
+    assert_eq!(
+        announced,
+        [
+            (0, "Compare @a.rs with @b.png".to_owned()),
+            (1, "@a.rs".to_owned()),
+            (2, "@b.png".to_owned())
+        ]
+    );
+    let snapshot = fixture
+        .store
+        .snapshot(&conversation, 50, 400)
+        .await
+        .unwrap()
+        .unwrap();
+    let views: Vec<MentionView> = snapshot.turns[0]
+        .parts
+        .iter()
+        .filter_map(|part| match &part.content {
+            PartContent::Mention { mention } => Some(mention.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(views, stored_views);
+    let model_turns = fixture
+        .store
+        .model_turns(&conversation, None)
+        .await
+        .unwrap();
+    let read: Vec<(Option<PartKind>, &str)> = model_turns[0]
+        .parts
+        .iter()
+        .map(|part| (part.kind, part.text.as_str()))
+        .collect();
+    assert_eq!(
+        read,
+        [
+            (Some(PartKind::UserText), "Compare @a.rs with @b.png"),
+            (
+                Some(PartKind::Mention),
+                "The owner mentioned the file a.rs."
+            ),
+            (
+                Some(PartKind::Mention),
+                "The owner mentioned the file b.png."
+            )
+        ]
+    );
+    // The policy reads the owner's words, never what the message mentions.
+    assert_eq!(
+        fixture.store.turn_request(&turn).await.unwrap().as_deref(),
+        Some("Compare @a.rs with @b.png")
+    );
 }
 
 #[tokio::test]
@@ -383,6 +500,7 @@ async fn a_second_turn_is_refused_while_a_run_is_active_and_nothing_is_stored() 
             vec![Change::StartTurn {
                 turn_id: fixture.turn_id(),
                 user_part_id: fixture.part_id(),
+                mentions: Vec::new(),
                 text: "Second".to_owned(),
                 run: fixture.new_run(),
                 task: None,
@@ -943,6 +1061,7 @@ async fn snapshots_and_earlier_turns_page_through_long_conversations() {
                     Change::StartTurn {
                         turn_id: fixture.turn_id(),
                         user_part_id: fixture.part_id(),
+                        mentions: Vec::new(),
                         text: format!("Turn {index}"),
                         run: next,
                         task: None,
@@ -1531,6 +1650,7 @@ async fn a_conversation_in_a_project_works_in_its_folder_and_shows_a_waiting_app
                 Change::StartTurn {
                     turn_id: turn,
                     user_part_id: fixture.part_id(),
+                    mentions: Vec::new(),
                     text: "Hello".to_owned(),
                     run,
                     task: None,

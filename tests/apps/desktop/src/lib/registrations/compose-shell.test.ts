@@ -110,9 +110,11 @@ describe('composeShell', () => {
       'text',
       'reasoning',
       'error',
+      'mention',
       'tool_call',
       'task',
     ]);
+    expect(slots.mentionKinds.entries.map((kind) => kind.id)).toEqual(['files']);
     expect(slots.settingsSections.entries.map((section) => section.id)).toEqual([
       'shell.interface',
       'chat.providers',

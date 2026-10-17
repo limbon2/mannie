@@ -605,6 +605,7 @@ async fn start(
         instructions: InstructionRegistry::with_builtin(),
         tools: test_tools(data),
         machine: mannie_runtime::MachineSettings::default(),
+        mentions: mannie_runtime::MentionRegistry::new(),
     };
     let runtime = Runtime::start(deps, config)
         .await
@@ -734,6 +735,7 @@ async fn run_task(subject: &Subject, task: &Task) -> TaskReport {
     let (runtime, store, root, project) = start(subject, task, data.path(), &workspace).await;
     let started_conversation = runtime
         .start_conversation(StartConversation {
+            mentions: Vec::new(),
             text: task.prompt.clone(),
             profile_id: None,
             project_id: (!task.general).then_some(project),

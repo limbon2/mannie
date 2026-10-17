@@ -58,6 +58,7 @@ const APP_COMMANDS: &[&str] = &[
     "subscribe_plugins",
     "subscribe_window_requests",
     "subscribe_workers",
+    "suggest_mentions",
     "test_provider_profile",
     "unsubscribe",
     "update_chat_settings",

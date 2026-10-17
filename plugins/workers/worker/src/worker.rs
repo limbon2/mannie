@@ -15,7 +15,8 @@ use mannie_link::worker::{LeaseVault, WorkerLink, WorkerLinkError};
 use mannie_logging::{ErrorChain, LogConfig, LoggingError, LoggingGuard, Redactor};
 use mannie_provider::{HttpClient, ProviderRegistry};
 use mannie_runtime::{
-    CredentialVault, MachineSettings, Runtime, RuntimeConfig, RuntimeDeps, ToolsDeps,
+    CredentialVault, MachineSettings, MentionRegistry, Runtime, RuntimeConfig, RuntimeDeps,
+    ToolsDeps,
 };
 use mannie_store::{Store, StoreError, StoreOptions};
 use mannie_tools::{MutationLock, SystemFacts, ToolRegistry};
@@ -336,6 +337,8 @@ async fn start_runtime(
             system: Arc::new(system),
         },
         machine,
+        // A worker has no message box, so nothing is mentioned there.
+        mentions: MentionRegistry::new(),
     };
     Runtime::start(deps, RuntimeConfig::default())
         .await

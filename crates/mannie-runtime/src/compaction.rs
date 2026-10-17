@@ -190,6 +190,12 @@ pub(crate) fn render_turns(turns: &[ModelTurn], requester: Requester) -> Vec<Str
                         }
                         continue;
                     }
+                    // A mention's text can be a whole page, so the summary
+                    // reads its start (ADR-0032, decision 7).
+                    Some(PartKind::Mention) => {
+                        lines.push(texts::compaction_mention(&cut(&part.text)));
+                        continue;
+                    }
                     _ => continue,
                 };
                 if !part.text.trim().is_empty() {

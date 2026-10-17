@@ -94,6 +94,7 @@ async fn crash_after_the_part(store: &Store, profile: &ProfileId) -> (Crashed, P
                 Change::StartTurn {
                     turn_id: turn.clone(),
                     user_part_id: new_id(PartId::parse),
+                    mentions: Vec::new(),
                     text: "Build it on the server".to_owned(),
                     run: NewRun {
                         id: run.clone(),

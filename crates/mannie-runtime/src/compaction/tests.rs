@@ -241,6 +241,23 @@ fn rendered_turns_name_the_speakers_and_leave_reasoning_out() {
 }
 
 #[test]
+fn mentions_reach_summaries_cut_to_their_start() {
+    let page = format!("The owner mentioned the file a.rs.\n{}", "x".repeat(5_000));
+    let mut mentioned = turn(0, 1);
+    mentioned.parts.insert(1, part(2, PartKind::Mention, &page));
+
+    let rendered = render_turns(&[mentioned.clone()], Requester::Owner);
+
+    assert!(
+        rendered[0].contains("Owner's mention: The owner mentioned the file a.rs."),
+        "{rendered:?}"
+    );
+    assert!(rendered[0].contains("[...]"), "{rendered:?}");
+    assert!(rendered[0].len() < page.len(), "{}", rendered[0].len());
+    assert!(turns_estimate(&[mentioned], Requester::Owner) > estimate_text(&page));
+}
+
+#[test]
 fn chunks_keep_the_order_and_respect_the_limit() {
     let rendered: Vec<String> = [
         "a".repeat(100),

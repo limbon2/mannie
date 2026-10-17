@@ -6,6 +6,7 @@ use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{
     CheckpointId, ConversationId, PartId, ProfileId, ProjectId, RunId, TurnId,
 };
+use mannie_types::mentions::MentionView;
 use mannie_types::run::{RunActivity, RunFailure, RunOutcome, RunState, RunView};
 use mannie_types::tasks::{TaskConversation, TaskPartDocument};
 use mannie_types::tools::ToolCallDocument;
@@ -49,8 +50,8 @@ pub(crate) const SELECT_KEPT_RUNS: &str = "SELECT k.id FROM runtime_runs k \
      WHERE r.id = ?1 AND k.kept = 1 AND k.id <> ?1 ORDER BY k.created_at, k.id";
 pub(crate) const SELECT_TURN: &str =
     "SELECT id, position, current_run_id, created_at FROM runtime_turns WHERE id = ?1";
-pub(crate) const SELECT_USER_PART: &str = "SELECT id FROM runtime_parts \
-     WHERE turn_id = ?1 AND run_id IS NULL ORDER BY position LIMIT 1";
+pub(crate) const SELECT_OWNER_PARTS: &str = "SELECT id FROM runtime_parts \
+     WHERE turn_id = ?1 AND run_id IS NULL ORDER BY position";
 pub(crate) const SELECT_CHECKPOINT_VIEW: &str = "SELECT id, covers_through_turn, document, created_at \
      FROM runtime_checkpoints WHERE id = ?1";
 
@@ -63,7 +64,7 @@ pub(crate) const STATEMENTS: &[&str] = &[
     SELECT_SUMMARY,
     SELECT_KEPT_RUNS,
     SELECT_TURN,
-    SELECT_USER_PART,
+    SELECT_OWNER_PARTS,
     SELECT_CHECKPOINT_VIEW,
 ];
 
@@ -81,6 +82,9 @@ pub(crate) struct PartDocument {
     /// The task section of a task part (ADR-0024, decision 2).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) task: Option<TaskPartDocument>,
+    /// What a mention part names and what the model got of it (ADR-0032).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) mention: Option<MentionView>,
 }
 
 /// The document of a checkpoint.
@@ -337,6 +341,15 @@ impl PartRow {
                 let (call, task) = self.task_call()?;
                 PartContent::Task {
                     call: Box::new(task.view(&call)),
+                }
+            }
+            Some(PartKind::Mention) => {
+                let document: PartDocument = from_json(&self.document, "part document")?;
+                match document.mention {
+                    Some(mention) => PartContent::Mention { mention },
+                    None => PartContent::Unknown {
+                        name: self.kind.clone(),
+                    },
                 }
             }
             None => PartContent::Unknown {
@@ -659,8 +672,8 @@ pub(crate) fn kept_runs(
     Ok(kept)
 }
 
-/// The turn as `turn_started` shows it: the owner's message and the run that
-/// started with the turn.
+/// The turn as `turn_started` shows it: the owner's parts, which are the
+/// message and what it mentions, and the run that started with the turn.
 fn turn_started(
     connection: &Connection,
     turn_id: &str,
@@ -674,16 +687,17 @@ fn turn_started(
         return Ok(None);
     };
     let run = run_view(connection, run_id)?;
-    let user_part_id: Option<String> = connection
-        .prepare_cached(SELECT_USER_PART)?
-        .query_row([turn_id], |row| row.get(0))
-        .optional()?;
+    let owner_part_ids: Vec<String> = connection
+        .prepare_cached(SELECT_OWNER_PARTS)?
+        .query_map([turn_id], |row| row.get(0))?
+        .collect::<Result<_, _>>()?;
     let mut parts = Vec::new();
-    if let Some(user_part_id) = user_part_id
-        && let Some(row) = part_row(connection, &user_part_id)?
-        && let Some(view) = row.view(connection)?
-    {
-        parts.push(view);
+    for part_id in owner_part_ids {
+        if let Some(row) = part_row(connection, &part_id)?
+            && let Some(view) = row.view(connection)?
+        {
+            parts.push(view);
+        }
     }
     Ok(Some(turn.view(run, parts)?))
 }

@@ -50,9 +50,10 @@ use tokio::sync::watch;
 
 use crate::{
     AgentDefinition, AgentRegistry, CredentialVault, ExecutorRefusal, ExecutorSection,
-    FollowUpPlan, GENERAL, InstructionRegistry, InstructionSection, MachineSettings, PlanCall,
-    PlanError, Requester, RetryPolicy, Runtime, RuntimeConfig, RuntimeDeps, SubmitError,
-    TaskExecutor, TaskPlan, TaskSubmission, ToolsDeps, VaultError, checkpoint_section, texts,
+    FileMentions, FollowUpPlan, GENERAL, InstructionRegistry, InstructionSection, MachineSettings,
+    MentionRegistry, PlanCall, PlanError, Requester, RetryPolicy, Runtime, RuntimeConfig,
+    RuntimeDeps, SubmitError, TaskExecutor, TaskPlan, TaskSubmission, ToolsDeps, VaultError,
+    checkpoint_section, texts,
 };
 
 /// How long a helper waits for a state before it fails the test. Shared CI
@@ -666,6 +667,19 @@ pub async fn start_runtime_with_tools(
     start_master(store, provider, vault, config, tools, agents).await
 }
 
+/// The core's mention providers, as the desktop app registers them.
+///
+/// # Panics
+///
+/// Never: the registry starts empty, so the ID is free.
+pub fn core_mentions() -> MentionRegistry {
+    let mut mentions = MentionRegistry::new();
+    mentions
+        .register(Arc::new(FileMentions::new()))
+        .expect("the registry starts empty");
+    mentions
+}
+
 /// Starts the runtime of the machine that the owner works on, as
 /// [`start_runtime_with_tools`] does. A test adds executors to it afterwards.
 ///
@@ -696,6 +710,7 @@ pub async fn start_master(
         instructions: InstructionRegistry::with_builtin(),
         tools,
         machine: MachineSettings::default(),
+        mentions: core_mentions(),
     };
     Runtime::start(deps, config)
         .await
@@ -1273,6 +1288,8 @@ async fn start_worker_runtime(
         instructions: harness_worker_sections(),
         tools,
         machine,
+        // A worker has no message box.
+        mentions: MentionRegistry::new(),
     };
     Runtime::start(deps, options.config.clone())
         .await
@@ -1631,10 +1648,12 @@ fn append_text(content: &mut PartContent, delta: &str) {
         | PartContent::Reasoning { text } => {
             text.push_str(delta);
         }
-        // A call's arguments arrive with the part's next update.
+        // A call's arguments arrive with the part's next update, and a
+        // mention is complete when its turn starts.
         PartContent::ToolCall { .. }
         | PartContent::Task { .. }
         | PartContent::Error { .. }
+        | PartContent::Mention { .. }
         | PartContent::Unknown { .. } => {}
     }
 }
