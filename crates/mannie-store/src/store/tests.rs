@@ -187,7 +187,7 @@ async fn a_new_database_gets_the_whole_schema_in_wal_mode_without_a_backup() {
         records(&fixture.database()),
         [
             ("provider".to_owned(), 1),
-            ("runtime".to_owned(), 19),
+            ("runtime".to_owned(), 20),
             ("settings".to_owned(), 1),
             ("tools".to_owned(), 3),
         ]
@@ -356,7 +356,7 @@ async fn a_database_of_0_2_0_gets_the_version_of_each_module() {
         records(&fixture.database()),
         [
             ("provider".to_owned(), 1),
-            ("runtime".to_owned(), 19),
+            ("runtime".to_owned(), 20),
             ("settings".to_owned(), 1),
             ("tools".to_owned(), 3),
         ]

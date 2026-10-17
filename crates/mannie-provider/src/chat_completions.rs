@@ -8,8 +8,8 @@ use serde_json::{Map, Value, json};
 
 use crate::errors::{self, Context, ErrorDetails};
 use crate::provider::{
-    Content, EventStream, ModelRequest, Provider, ProviderError, ProviderEvent, Role, Target,
-    ToolChoice,
+    Content, EventStream, ImageInput, ModelRequest, Provider, ProviderError, ProviderEvent, Role,
+    Target, ToolChoice,
 };
 use crate::quirks::{EffortShape, OutputLimitField, Quirks};
 use crate::sse::SseEvent;
@@ -67,24 +67,34 @@ impl Provider for ChatCompletionsAdapter {
 }
 
 /// A message as Chat Completions takes it.
-enum Wire {
-    /// Text of the owner or the model.
-    Text { role: Role, text: String },
+enum Wire<'a> {
+    /// Text and images of the owner, or text of the model.
+    Text {
+        role: Role,
+        parts: Vec<WirePart<'a>>,
+    },
     /// The model's tool calls, with the text it wrote before them.
     Calls { text: String, calls: Vec<Value> },
     /// The result of one tool call.
     Result { call_id: String, output: String },
 }
 
+/// One element of a text message, in order.
+enum WirePart<'a> {
+    Text(&'a str),
+    Image(&'a ImageInput),
+}
+
 /// The messages of a request in the shape Chat Completions takes.
-fn wire_messages(request: &ModelRequest) -> Vec<Wire> {
-    let mut wire: Vec<Wire> = Vec::new();
+fn wire_messages(request: &ModelRequest) -> Vec<Wire<'_>> {
+    let mut wire: Vec<Wire<'_>> = Vec::new();
     for message in &request.messages {
-        let mut texts = Vec::new();
+        let mut parts = Vec::new();
         let mut calls = Vec::new();
         for content in &message.content {
             match content {
-                Content::Text(text) => texts.push(text.as_str()),
+                Content::Text(text) => parts.push(WirePart::Text(text)),
+                Content::Image(image) => parts.push(WirePart::Image(image)),
                 // Provider-private data belongs to the Responses API.
                 Content::ProviderItem(_) => {}
                 Content::ToolCall {
@@ -104,12 +114,17 @@ fn wire_messages(request: &ModelRequest) -> Vec<Wire> {
                 }),
             }
         }
-        let text = texts.join("\n\n");
         if !calls.is_empty() {
-            wire.push(Wire::Calls { text, calls });
+            // Only the owner's messages hold images, and the model's calls
+            // never do.
+            wire.push(Wire::Calls {
+                text: joined_text(&parts),
+                calls,
+            });
             continue;
         }
-        if text.is_empty() {
+        let has_images = parts.iter().any(|part| matches!(part, WirePart::Image(_)));
+        if !has_images && joined_text(&parts).is_empty() {
             continue;
         }
         // Some chat templates refuse two messages of the same role in a row,
@@ -117,18 +132,62 @@ fn wire_messages(request: &ModelRequest) -> Vec<Wire> {
         match wire.last_mut() {
             Some(Wire::Text {
                 role,
-                text: existing,
-            }) if *role == message.role => {
-                existing.push_str("\n\n");
-                existing.push_str(&text);
-            }
+                parts: existing,
+            }) if *role == message.role => existing.extend(parts),
             _ => wire.push(Wire::Text {
                 role: message.role,
-                text,
+                parts,
             }),
         }
     }
     wire
+}
+
+/// The text parts of a message, separated by empty lines.
+fn joined_text(parts: &[WirePart<'_>]) -> String {
+    let texts: Vec<&str> = parts
+        .iter()
+        .filter_map(|part| match part {
+            WirePart::Text(text) => Some(*text),
+            WirePart::Image(_) => None,
+        })
+        .collect();
+    texts.join("\n\n")
+}
+
+/// The content of a text message: a string when it holds only text, as every
+/// server takes it, and otherwise an array of text and `image_url` parts, in
+/// which the text between two images is one part (ADR-0033, decision 5).
+fn wire_content(parts: &[WirePart<'_>]) -> Value {
+    let has_images = parts.iter().any(|part| matches!(part, WirePart::Image(_)));
+    if !has_images {
+        return json!(joined_text(parts));
+    }
+    let mut content = Vec::new();
+    let mut texts: Vec<&str> = Vec::new();
+    for part in parts {
+        match part {
+            WirePart::Text(text) => texts.push(text),
+            WirePart::Image(image) => {
+                push_text(&mut content, &mut texts);
+                content.push(json!({
+                    "type": "image_url",
+                    "image_url": { "url": image.data_url() },
+                }));
+            }
+        }
+    }
+    push_text(&mut content, &mut texts);
+    Value::Array(content)
+}
+
+/// Adds the texts collected so far as one text part, unless they are empty.
+fn push_text(content: &mut Vec<Value>, texts: &mut Vec<&str>) {
+    let text = texts.join("\n\n");
+    texts.clear();
+    if !text.is_empty() {
+        content.push(json!({ "type": "text", "text": text }));
+    }
 }
 
 /// The request body of a call.
@@ -140,12 +199,12 @@ pub(crate) fn request_body(request: &ModelRequest, quirks: &Quirks) -> Value {
     }
     for message in messages {
         wire.push(match message {
-            Wire::Text { role, text } => {
+            Wire::Text { role, parts } => {
                 let role = match role {
                     Role::User | Role::Tool => "user",
                     Role::Assistant => "assistant",
                 };
-                json!({ "role": role, "content": text })
+                json!({ "role": role, "content": wire_content(&parts) })
             }
             // Some chat templates fail on a null content, so a call without
             // text has an empty one.

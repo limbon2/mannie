@@ -13,6 +13,7 @@
 //! | `MANNIE_LIVE_REASONING_EFFORT`   | An effort such as `low`, for the reasoning scenarios           |
 //! | `MANNIE_LIVE_CONTEXT_WINDOW`     | The model's context window, for the overflow scenario          |
 //! | `MANNIE_LIVE_SERVER_VERSION`     | The server's version, for the fixtures' manifests              |
+//! | `MANNIE_LIVE_IMAGES`             | `1` when the model reads images, for the image scenario        |
 //! | `MANNIE_RECORD_FIXTURES`         | `1` writes each scenario as a recorded fixture                 |
 //!
 //! Recording never writes a file that contains the credential.
@@ -22,14 +23,17 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use futures_util::StreamExt;
 use mannie_provider::testing::{Exchange, RecordingProxy};
 use mannie_provider::{
-    Content, HttpClient, Message, ModelList, ModelRequest, ProviderError, ProviderEvent,
-    ProviderRegistry, Role, TOOL_PROMPT, Target, ToolChoice, ToolDefinition, list_models,
-    quirks_for,
+    Content, HttpClient, ImageInput, Message, ModelList, ModelRequest, ProviderError,
+    ProviderEvent, ProviderRegistry, Role, TOOL_PROMPT, Target, ToolChoice, ToolDefinition,
+    list_models, quirks_for,
 };
 use mannie_types::clock::{Clock, SystemClock};
+use mannie_types::images::{ImageBytes, ImageFormat};
 use mannie_types::provider::{ApiInterface, ReasoningEffort, ServerKind};
 use mannie_types::run::{FinishReason, RunFailure};
 use mannie_types::secret::Secret;
@@ -46,6 +50,7 @@ struct Live {
     effort: ReasoningEffort,
     context_window: Option<u32>,
     server_version: Option<String>,
+    images: bool,
     record: bool,
 }
 
@@ -74,6 +79,7 @@ impl Live {
             context_window: variable("MANNIE_LIVE_CONTEXT_WINDOW")
                 .and_then(|text| text.parse().ok()),
             server_version: variable("MANNIE_LIVE_SERVER_VERSION"),
+            images: variable("MANNIE_LIVE_IMAGES").as_deref() == Some("1"),
             record: variable("MANNIE_RECORD_FIXTURES").as_deref() == Some("1"),
         })
     }
@@ -231,45 +237,7 @@ impl Runner {
             .unwrap()
             .date()
             .to_string();
-        let messages: Vec<Value> = request
-            .messages
-            .iter()
-            .map(|message| {
-                let role = match message.role {
-                    Role::User => "user",
-                    Role::Assistant => "assistant",
-                    Role::Tool => "tool",
-                };
-                let mut entry = json!({ "role": role });
-                let mut calls = Vec::new();
-                let mut results = Vec::new();
-                for content in &message.content {
-                    match content {
-                        Content::Text(text) => entry["text"] = json!(text),
-                        Content::ProviderItem(item) => {
-                            entry["item"] = serde_json::from_str(item).unwrap();
-                        }
-                        Content::ToolCall {
-                            call_id,
-                            name,
-                            arguments,
-                        } => calls.push(
-                            json!({ "callId": call_id, "name": name, "arguments": arguments }),
-                        ),
-                        Content::ToolResult { call_id, output } => {
-                            results.push(json!({ "callId": call_id, "output": output }));
-                        }
-                    }
-                }
-                if !calls.is_empty() {
-                    entry["toolCalls"] = json!(calls);
-                }
-                if !results.is_empty() {
-                    entry["toolResults"] = json!(results);
-                }
-                entry
-            })
-            .collect();
+        let messages: Vec<Value> = request.messages.iter().map(manifest_message).collect();
         let manifest = json!({
             "server": self.live.server,
             "serverVersion": self.live.server_version,
@@ -325,6 +293,105 @@ impl Runner {
         }
         println!("recorded {}", folder.display());
     }
+}
+
+/// A message of a request as a fixture's manifest records it.
+fn manifest_message(message: &Message) -> Value {
+    let role = match message.role {
+        Role::User => "user",
+        Role::Assistant => "assistant",
+        Role::Tool => "tool",
+    };
+    let mut entry = json!({ "role": role });
+    let mut calls = Vec::new();
+    let mut results = Vec::new();
+    let mut images = Vec::new();
+    for content in &message.content {
+        match content {
+            Content::Text(text) => entry["text"] = json!(text),
+            Content::Image(image) => images.push(json!({
+                "format": image.format,
+                "width": image.width,
+                "height": image.height,
+                "data": BASE64.encode(image.data.as_slice()),
+            })),
+            Content::ProviderItem(item) => {
+                entry["item"] = serde_json::from_str(item).unwrap();
+            }
+            Content::ToolCall {
+                call_id,
+                name,
+                arguments,
+            } => calls.push(json!({ "callId": call_id, "name": name, "arguments": arguments })),
+            Content::ToolResult { call_id, output } => {
+                results.push(json!({ "callId": call_id, "output": output }));
+            }
+        }
+    }
+    if !calls.is_empty() {
+        entry["toolCalls"] = json!(calls);
+    }
+    if !results.is_empty() {
+        entry["toolResults"] = json!(results);
+    }
+    if !images.is_empty() {
+        entry["images"] = json!(images);
+    }
+    entry
+}
+
+/// A PNG of one color, with its pixels in stored deflate blocks, so that the
+/// test needs no image encoder.
+fn solid_png(width: u32, height: u32, rgb: [u8; 3]) -> Vec<u8> {
+    // Each row starts with its filter type, 0 for none.
+    let mut row = vec![0];
+    row.extend(rgb.repeat(usize::try_from(width).unwrap()));
+    let raw = row.repeat(usize::try_from(height).unwrap());
+    let mut zlib = vec![0x78, 0x01];
+    let blocks: Vec<&[u8]> = raw.chunks(65_535).collect();
+    for (index, block) in blocks.iter().enumerate() {
+        let last = u8::from(index + 1 == blocks.len());
+        let length = u16::try_from(block.len()).unwrap();
+        zlib.push(last);
+        zlib.extend_from_slice(&length.to_le_bytes());
+        zlib.extend_from_slice(&(!length).to_le_bytes());
+        zlib.extend_from_slice(block);
+    }
+    zlib.extend_from_slice(&adler32(&raw).to_be_bytes());
+    let mut header = Vec::new();
+    header.extend_from_slice(&width.to_be_bytes());
+    header.extend_from_slice(&height.to_be_bytes());
+    header.extend_from_slice(&[8, 2, 0, 0, 0]);
+    let mut png = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+    for (kind, data) in [(*b"IHDR", header), (*b"IDAT", zlib), (*b"IEND", Vec::new())] {
+        png.extend_from_slice(&u32::try_from(data.len()).unwrap().to_be_bytes());
+        let mut chunk = kind.to_vec();
+        chunk.extend_from_slice(&data);
+        png.extend_from_slice(&chunk);
+        png.extend_from_slice(&crc32(&chunk).to_be_bytes());
+    }
+    png
+}
+
+fn adler32(bytes: &[u8]) -> u32 {
+    let (mut a, mut b) = (1_u32, 0_u32);
+    for byte in bytes {
+        a = (a + u32::from(*byte)) % 65_521;
+        b = (b + a) % 65_521;
+    }
+    (b << 16) | a
+}
+
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = 0xffff_ffff_u32;
+    for byte in bytes {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xedb8_8320 & mask);
+        }
+    }
+    !crc
 }
 
 fn pretty(value: &Value) -> Vec<u8> {
@@ -520,6 +587,34 @@ impl Runner {
         assert_eq!(answered.error, None, "tool replay");
     }
 
+    /// A model that reads images answers about one (ADR-0033).
+    async fn check_image(&self) {
+        let live = &self.live;
+        let image = Content::Image(ImageInput {
+            format: ImageFormat::Png,
+            width: 64,
+            height: 64,
+            data: ImageBytes::from(solid_png(64, 64, [220, 30, 30])),
+        });
+        let request = ModelRequest {
+            messages: vec![Message {
+                role: Role::User,
+                content: vec![
+                    Content::Text(
+                        "What is the main color of this image? Reply with one word.".to_owned(),
+                    ),
+                    image,
+                ],
+            }],
+            ..live.request("", 2_048, live.effort)
+        };
+        let answer = self
+            .scenario("image", live.credential.clone(), request)
+            .await;
+        assert_eq!(answer.error, None, "image");
+        assert!(!answer.text().trim().is_empty(), "image: no answer");
+    }
+
     async fn check_model_list(&self) {
         let listed = list_models(
             &self.client,
@@ -548,4 +643,7 @@ async fn the_live_server_behaves_as_the_fixtures_say() {
     runner.check_overflow().await;
     runner.check_tools().await;
     runner.check_model_list().await;
+    if runner.live.images {
+        runner.check_image().await;
+    }
 }

@@ -10,6 +10,7 @@
 
 mod apply;
 mod archives;
+mod images;
 mod projects;
 mod reads;
 mod recovery;
@@ -20,6 +21,7 @@ use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{
     ArchiveId, CheckpointId, ConversationId, PartId, ProfileId, ProjectId, RunId, TaskId, TurnId,
 };
+use mannie_types::images::{ImageBytes, ImageFormat, ImageView};
 use mannie_types::mentions::MentionView;
 use mannie_types::run::{RunActivity, RunFailure, RunOutcome, RunState};
 use mannie_types::tasks::{TaskExecutorRef, TaskPartDocument, TaskState};
@@ -32,8 +34,9 @@ use serde::{Deserialize, Serialize};
 use crate::error::StoreError;
 
 pub use archives::StoredArchive;
+pub use images::StoredImage;
 pub use projects::{AddedProject, ConversationList, ProjectDeletion};
-pub use reads::{EventsAfter, KeptRun, ModelPart, ModelTurn, StoredCheckpoint};
+pub use reads::{EventsAfter, KeptRun, ModelImage, ModelPart, ModelTurn, StoredCheckpoint};
 pub use recovery::{Recovered, UncertainCall};
 pub use tasks::{NewExecutorTask, OutboxEntry};
 
@@ -216,6 +219,26 @@ pub struct NewMention {
     pub view: MentionView,
 }
 
+/// An image of the owner's message, which the turn stores as an owner part
+/// after the message and its mentions, with its bytes beside it (ADR-0033).
+#[derive(Debug, Clone)]
+pub struct NewImage {
+    /// The part.
+    pub part_id: PartId,
+    /// The source that gave the image, for the log and the owner.
+    pub source: String,
+    /// What the owner sees: the name, format, dimensions and size.
+    pub view: ImageView,
+    /// The SHA-256 digest of the image's bytes, in hexadecimal.
+    pub digest: String,
+    /// The image.
+    pub data: ImageBytes,
+    /// The format of the thumbnail.
+    pub thumbnail_format: ImageFormat,
+    /// The thumbnail.
+    pub thumbnail: ImageBytes,
+}
+
 /// An output of a tool call to archive with the call's part.
 #[derive(Debug, Clone)]
 pub struct NewArchive {
@@ -282,6 +305,9 @@ pub enum Change {
         /// What the owner's message mentions, stored after it in the
         /// message's order (ADR-0032).
         mentions: Vec<NewMention>,
+        /// The images of the owner's message, stored after its mentions in
+        /// the order the owner added them (ADR-0033).
+        images: Vec<NewImage>,
     },
     /// Adds a queued run that replaces the reply of the latest turn. Refused
     /// unless the turn's current run failed, stopped or was interrupted.
@@ -537,6 +563,7 @@ pub(crate) fn statements() -> impl Iterator<Item = &'static str> {
     apply::STATEMENTS
         .iter()
         .chain(archives::STATEMENTS)
+        .chain(images::STATEMENTS)
         .chain(projects::STATEMENTS)
         .chain(reads::STATEMENTS)
         .chain(recovery::STATEMENTS)

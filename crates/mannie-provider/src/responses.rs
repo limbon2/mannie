@@ -72,6 +72,9 @@ pub(crate) fn request_body(request: &ModelRequest, quirks: &Quirks) -> Value {
         for content in &message.content {
             match content {
                 Content::Text(text) => parts.push(json!({ "type": text_type, "text": text })),
+                Content::Image(image) => {
+                    parts.push(json!({ "type": "input_image", "image_url": image.data_url() }));
+                }
                 // Reasoning items precede the message or the calls they led
                 // to; the API wants them back with the calls when tools are
                 // used.
@@ -152,7 +155,7 @@ pub(crate) fn request_body(request: &ModelRequest, quirks: &Quirks) -> Value {
     Value::Object(body)
 }
 
-/// Adds the text parts collected so far as one message.
+/// Adds the text and image parts collected so far as one message.
 fn flush_message(input: &mut Vec<Value>, role: &str, parts: &mut Vec<Value>) {
     if !parts.is_empty() {
         input.push(json!({ "role": role, "content": std::mem::take(parts) }));

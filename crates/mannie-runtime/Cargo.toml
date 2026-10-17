@@ -100,6 +100,10 @@ required-features = ["testing"]
 name = "mentions"
 required-features = ["testing"]
 
+[[test]]
+name = "images"
+required-features = ["testing"]
+
 # The tasks of a plugin's executor (ADR-0031): the tool and section of a
 # registered executor, plans, refusals, reports, background tasks, waits,
 # follow-ups, Stop, a stopped plugin and the reads of task conversations.
@@ -120,6 +124,8 @@ name = "planted_credential"
 required-features = ["testing"]
 
 [dependencies]
+# The bytes of a stored image as `read_image` returns them (ADR-0033).
+base64 = { workspace = true }
 # The jitter of retry delays.
 fastrand = { workspace = true }
 futures-util = { workspace = true }
@@ -131,7 +137,7 @@ mannie-tools = { workspace = true }
 mannie-types = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-# The hash of the text that a checkpoint covers.
+# The hash of the text that a checkpoint covers, and the digest of an image.
 sha2 = { workspace = true }
 # The temporary store of the test runtime, with the testing feature.
 tempfile = { workspace = true, optional = true }

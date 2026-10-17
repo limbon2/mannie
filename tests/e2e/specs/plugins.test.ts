@@ -76,6 +76,7 @@ describe('plugins', () => {
 
     await expect($(WORKERS)).toHaveAttribute('data-plugin-state', 'off');
     await expect($(WORKERS_SWITCH)).toHaveAttribute('aria-checked', 'false');
+    await expect($('[data-plugin="images"]')).toHaveAttribute('data-plugin-state', 'off');
     await expect($(WORKERS_SETTINGS_LINK)).not.toBeExisting();
     await axeInBothThemes();
     await leaveSettings();

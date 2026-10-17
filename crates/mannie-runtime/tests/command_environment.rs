@@ -69,6 +69,7 @@ async fn child_runs_env() {
         .runtime
         .start_conversation(StartConversation {
             mentions: Vec::new(),
+            images: Vec::new(),
             text: "Show the environment".to_owned(),
             profile_id: None,
             project_id: Some(project.id),

@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
 use mannie_types::clock::{ManualClock, UtcMillis};
+use mannie_types::images::{ImageBytes, ImageFormat};
 use mannie_types::provider::{ApiInterface, ReasoningEffort, ServerKind};
 use mannie_types::run::{FinishReason, RunFailure, Usage};
 use serde_json::json;
 
 use super::{ResponsesTranslator, request_body};
 use crate::provider::{
-    Content, Message, ModelRequest, ProviderError, ProviderEvent, Role, ToolChoice,
+    Content, ImageInput, Message, ModelRequest, ProviderError, ProviderEvent, Role, ToolChoice,
 };
 use crate::quirks::quirks_for;
 use crate::sse::SseEvent;
@@ -111,6 +112,75 @@ fn without_an_effort_the_request_asks_for_no_reasoning() {
     assert!(body.get("reasoning").is_none());
     assert!(body.get("include").is_none());
     assert!(body.get("instructions").is_none());
+}
+
+#[test]
+fn images_follow_the_text_of_their_message_as_data_urls() {
+    let image = |byte: u8| {
+        Content::Image(ImageInput {
+            format: ImageFormat::Jpeg,
+            width: 4,
+            height: 3,
+            data: ImageBytes::from(vec![byte]),
+        })
+    };
+    let request = ModelRequest {
+        model: "gpt-4.1".to_owned(),
+        instructions: String::new(),
+        messages: vec![
+            Message {
+                role: Role::User,
+                content: vec![Content::Text("What is this?".to_owned()), image(1)],
+            },
+            Message::text(Role::Assistant, "A cat."),
+            Message {
+                role: Role::User,
+                content: vec![image(2)],
+            },
+        ],
+        max_output_tokens: 100,
+        reasoning_effort: ReasoningEffort::ServerDefault,
+        tools: Vec::new(),
+        tool_choice: ToolChoice::Auto,
+    };
+
+    let body = request_body(
+        &request,
+        &quirks_for(ApiInterface::Responses, Some(ServerKind::OpenAi)),
+    );
+
+    assert_eq!(
+        body["input"],
+        json!([
+            {
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "What is this?" },
+                    { "type": "input_image", "image_url": "data:image/jpeg;base64,AQ==" }
+                ]
+            },
+            { "role": "assistant", "content": [{ "type": "output_text", "text": "A cat." }] },
+            {
+                "role": "user",
+                "content": [{ "type": "input_image", "image_url": "data:image/jpeg;base64,Ag==" }]
+            }
+        ])
+    );
+}
+
+#[test]
+fn an_image_shows_only_the_number_of_its_bytes_when_debugged() {
+    let image = ImageInput {
+        format: ImageFormat::Png,
+        width: 1,
+        height: 1,
+        data: ImageBytes::from(vec![0; 2_048]),
+    };
+
+    let debugged = format!("{:?}", Content::Image(image));
+
+    assert!(debugged.contains("ImageBytes(2048 bytes)"), "{debugged}");
+    assert!(debugged.len() < 200, "{debugged}");
 }
 
 #[test]

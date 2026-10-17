@@ -12,6 +12,7 @@ import ConversationListPanel from '#lib/components/app/chat/ConversationListPane
 import ConversationPanel from '#lib/components/app/chat/ConversationPanel.svelte';
 import ConversationView from '#lib/components/app/chat/ConversationView.svelte';
 import ErrorPart from '#lib/components/app/chat/ErrorPart.svelte';
+import ImagePart from '#lib/components/app/chat/ImagePart.svelte';
 import InstructionsSettingsSection from '#lib/components/app/chat/InstructionsSettingsSection.svelte';
 import MentionPart from '#lib/components/app/chat/MentionPart.svelte';
 import ProjectsPanel from '#lib/components/app/chat/ProjectsPanel.svelte';
@@ -68,6 +69,7 @@ export function registerChat(slots: ShellSlots): void {
   slots.partRenderers.register({ component: ReasoningPart, id: 'reasoning' });
   slots.partRenderers.register({ component: ErrorPart, id: 'error' });
   slots.partRenderers.register({ component: MentionPart, id: 'mention' });
+  slots.partRenderers.register({ component: ImagePart, id: 'image' });
   slots.mentionKinds.register({
     group: m.chat_mention_files_group,
     icon: fileMentionIcon,

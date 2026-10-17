@@ -37,7 +37,7 @@
 
 ### Transcript and events
 
-- The transcript is a list of parts per turn: the owner's text, the reply's text, reasoning, errors, continuation notes and checkpoint markers. Parts are appended. A part's text grows while it streams, a tool call's document changes while Mannie handles it, and both are final once the part is finished.
+- The transcript is a list of parts per turn: the owner's text, its mentions and images, the reply's text, reasoning, errors, continuation notes and checkpoint markers. Parts are appended. A part's text grows while it streams, a tool call's document changes while Mannie handles it, and both are final once the part is finished.
 - Each part has an audience: the owner and the model, only the model (continuation notes), or only the owner (errors).
 - Every change is an event with the conversation's next sequence number, stored before it is published. Streamed text is stored in batches every 50 ms with normal durability; every other change is stored with full durability ([ADR-0009](../../adr/0009-persist-state-in-sqlite.md)).
 - When a part finishes, its full text is stored with the part and its streamed deltas are dropped from the event log. The finished event carries the whole text, so replaying the log from any cursor still reproduces the conversation ([ADR-0012](../../adr/0012-run-agents-as-durable-actors.md), decision 9).
@@ -80,7 +80,8 @@ A failed reply shows the cause from the run failure codes: `invalid_credential`,
 
 ### Contracts
 
-- Commands (`apps/desktop/src-tauri/src/commands/chat.rs`): `subscribe_conversations`, `subscribe_conversation`, `unsubscribe`, `load_earlier_turns`, `start_conversation` (with the first message, and the project of a conversation that starts in one), `send_message`, `stop_reply`, `retry_reply`, `rename_conversation`, `delete_conversation`, `set_conversation_profile`, `compact_conversation`, `get_checkpoint`, `get_chat_settings` and `update_chat_settings`.
+- Commands (`apps/desktop/src-tauri/src/commands/chat.rs`): `subscribe_conversations`, `subscribe_conversation`, `unsubscribe`, `load_earlier_turns`, `start_conversation` (with the first message, and the project of a conversation that starts in one), `send_message`, `stop_reply`, `retry_reply`, `rename_conversation`, `delete_conversation`, `set_conversation_profile`, `compact_conversation`, `get_checkpoint`, `get_chat_settings`, `update_chat_settings` and `read_image` ([images](../images.md)).
+- `start_conversation` and `send_message` take the message's `mentions` ([mentions](mentions.md)) and `images` ([images](../images.md)). A message with images may have no text, and a new conversation whose first message has none takes the name of its first image as its title.
 - Channels carry `ChannelBatch<ConversationUpdate>` and `ChannelBatch<ConversationListUpdate>`. The batch's own counter detects lost batches; each conversation event carries the conversation's sequence number, which is the cursor.
 - Limits: a message is at most 256 KiB, a title at most 200 characters, and instructions at most 32,768 characters.
 - Numbers that cross IPC are 32-bit integers, and times are milliseconds since the Unix epoch as JSON numbers.

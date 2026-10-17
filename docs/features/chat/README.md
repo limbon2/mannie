@@ -16,6 +16,7 @@ The owner wants general chat with AI models in the desktop app, using OpenAI mod
 - Conversations: the owner creates, opens, renames and deletes conversations. The list shows the most recent first. A new conversation takes its title from the first message until the owner renames it. Deleting asks for confirmation and removes the conversation for good.
 - Projects: the owner adds folders as projects in the sidebar, above the general conversations. A conversation started in a project works in its folder, a general conversation moves into a project when the owner's request is about it, and removing a project deletes its conversations ([projects](projects.md)).
 - Mentions: "@" in the message box lists what the message can mention, such as the files and folders of the conversation's project, and the model reads a bounded part of each mention after the message ([mentions](mentions.md)).
+- Images: the plugin Images adds images to a message, which the model reads after the message and its mentions ([images](../images.md)). The message box and the transcript show them, also while the plugin is off.
 - Sending: the owner writes a message, and the reply streams in as the model generates it. When the model provides reasoning summaries, they appear collapsed above the answer.
 - Rendering: replies render as Markdown with code blocks and a copy button. Raw HTML is not rendered, remote images do not load, and links open in the system browser only after the owner confirms the full URL.
 - Stop and retry: the owner can stop a reply at any time, and the partial text stays, marked as stopped. A failed, stopped or interrupted reply can be retried, and the new attempt replaces it.
@@ -25,7 +26,7 @@ The owner wants general chat with AI models in the desktop app, using OpenAI mod
 - Testing a profile: a test sends a short request and reports what worked and what failed, including a round trip with a tool ([system tools](../system-tools/README.md)).
 - Context: a meter shows how much of the model's context the conversation uses. When it runs low, Mannie compacts older turns into a checkpoint automatically. The owner can view the checkpoint and start a compaction by hand. The stored conversation never changes.
 - Instructions: the owner can write global instructions that apply to every conversation.
-- Not included: attachments other than mentions, images, search, export, branching from a message, and more than one window. Each of these would be a feature of its own.
+- Not included: attachments other than mentions and images, search, export, branching from a message, and more than one window. Each of these would be a feature of its own.
 
 ## Fit
 

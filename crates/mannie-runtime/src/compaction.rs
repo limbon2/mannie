@@ -13,7 +13,7 @@ use mannie_types::transcript::PartKind;
 use sha2::{Digest, Sha256};
 
 use crate::agents::Requester;
-use crate::budget::{estimate_message, estimate_text};
+use crate::budget::{estimate_image, estimate_message, estimate_text};
 use crate::context::part_result;
 use crate::{tasks, texts};
 
@@ -155,7 +155,11 @@ pub(crate) fn turns_estimate(turns: &[ModelTurn], requester: Requester) -> u32 {
         .map(|part| {
             let text = estimate_message(&Message::text(Role::User, part.text.clone()));
             let result = call_result(part, requester).map_or(0, |result| estimate_text(&result));
-            text.saturating_add(result)
+            let image = part
+                .image
+                .as_ref()
+                .map_or(0, |image| estimate_image(image.width, image.height));
+            text.saturating_add(result).saturating_add(image)
         })
         .fold(0, u32::saturating_add)
 }
@@ -194,6 +198,14 @@ pub(crate) fn render_turns(turns: &[ModelTurn], requester: Requester) -> Vec<Str
                     // reads its start (ADR-0032, decision 7).
                     Some(PartKind::Mention) => {
                         lines.push(texts::compaction_mention(&cut(&part.text)));
+                        continue;
+                    }
+                    // The summary's model reads no image, only its size
+                    // (ADR-0033, decision 6).
+                    Some(PartKind::Image) => {
+                        if let Some(image) = &part.image {
+                            lines.push(texts::compaction_image(image.width, image.height));
+                        }
                         continue;
                     }
                     _ => continue,
@@ -353,6 +365,11 @@ pub(crate) fn content_hash(previous: Option<&str>, turns: &[ModelTurn]) -> Strin
                     hasher.update(result.output.as_bytes());
                 }
             }
+            // An image part covers its image through the image's digest.
+            if let Some(image) = &part.image {
+                hasher.update([0x1f]);
+                hasher.update(image.digest.as_bytes());
+            }
             // A task part covers its tasks' numbers and the result that the
             // model read, which hold whatever matters of its task.
             if let Some(section) = &part.task {
@@ -369,8 +386,13 @@ pub(crate) fn content_hash(previous: Option<&str>, turns: &[ModelTurn]) -> Strin
         }
         hasher.update([0x1d]);
     }
-    let mut hex = String::with_capacity(64);
-    for byte in hasher.finalize() {
+    to_hex(&hasher.finalize())
+}
+
+/// Bytes in hexadecimal, two lowercase digits each.
+pub(crate) fn to_hex(bytes: &[u8]) -> String {
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
         hex.push(hex_digit(byte >> 4));
         hex.push(hex_digit(byte & 0x0f));
     }

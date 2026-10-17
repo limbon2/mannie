@@ -9,12 +9,14 @@ use mannie_types::tools::{ToolCallDocument, ToolCallStatus};
 use mannie_types::transcript::{ContextUsage, ConversationEvent, PartKind, PartState};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
+use super::rows::ImageDocument;
 use super::rows::{
     self, CheckpointDocument, EventBody, PartDocument, StoredRow, kinds, streaming_text, to_json,
 };
 use super::{
-    Applied, Change, DOCUMENT_VERSION, NewArchive, NewCheckpoint, NewConversation, NewMention,
-    NewPart, NewRun, NewTask, ProviderItem, RuntimeStoreError, TaskEnding, archives, tasks,
+    Applied, Change, DOCUMENT_VERSION, NewArchive, NewCheckpoint, NewConversation, NewImage,
+    NewMention, NewPart, NewRun, NewTask, ProviderItem, RuntimeStoreError, TaskEnding, archives,
+    images, tasks,
 };
 use crate::writer::TransactError;
 use crate::{Durability, Store};
@@ -255,6 +257,13 @@ fn apply_in(
     })
 }
 
+/// What follows the owner's text in a new turn: its mentions, then its
+/// images.
+struct Attached<'a> {
+    mentions: &'a [NewMention],
+    images: &'a [NewImage],
+}
+
 impl Batch<'_> {
     fn apply(&mut self, change: Change) -> Result<(), RuntimeStoreError> {
         match change {
@@ -266,7 +275,18 @@ impl Batch<'_> {
                 run,
                 task,
                 mentions,
-            } => self.start_turn(turn_id, &user_part_id, &text, run, task.as_ref(), &mentions),
+                images,
+            } => self.start_turn(
+                turn_id,
+                &user_part_id,
+                &text,
+                run,
+                task.as_ref(),
+                &Attached {
+                    mentions: &mentions,
+                    images: &images,
+                },
+            ),
             Change::RetryTurn { turn_id, run } => self.retry_turn(&turn_id, run),
             Change::StartRun { run_id } => self.start_run(run_id),
             Change::SetActivity { run_id, activity } => self.set_activity(run_id, &activity),
@@ -396,7 +416,7 @@ impl Batch<'_> {
         text: &str,
         run: NewRun,
         task: Option<&NewTask>,
-        mentions: &[NewMention],
+        attached: &Attached<'_>,
     ) -> Result<(), RuntimeStoreError> {
         self.refuse_active_run()?;
         let position: i64 = self
@@ -433,7 +453,7 @@ impl Batch<'_> {
             ])?;
         // The mentions follow the owner's text, which stays at position 0
         // (ADR-0032, decision 7).
-        for (index, mention) in mentions.iter().enumerate() {
+        for (index, mention) in attached.mentions.iter().enumerate() {
             let document = PartDocument {
                 mention: Some(mention.view.clone()),
                 ..PartDocument::default()
@@ -456,6 +476,33 @@ impl Batch<'_> {
                     self.now,
                     self.now
                 ])?;
+        }
+        // The images follow the mentions, and their bytes are stored with
+        // them, so that `turn_started` carries them (ADR-0033, decision 4).
+        for (index, image) in attached.images.iter().enumerate() {
+            let document = PartDocument {
+                image: Some(ImageDocument::of(image)),
+                ..PartDocument::default()
+            };
+            self.transaction
+                .prepare_cached(INSERT_PART)?
+                .execute(params![
+                    image.part_id.as_str(),
+                    self.conversation,
+                    turn_id.as_str(),
+                    Option::<&str>::None,
+                    Option::<u32>::None,
+                    u32::try_from(1 + attached.mentions.len() + index).unwrap_or(u32::MAX),
+                    PartKind::Image.as_str(),
+                    PartKind::Image.audience().as_str(),
+                    PartState::Complete.as_str(),
+                    "",
+                    DOCUMENT_VERSION,
+                    to_json(&document)?,
+                    self.now,
+                    self.now
+                ])?;
+            images::insert(self.transaction, self.conversation, image, self.now)?;
         }
         // A task is stored with the turn that works on it, in the same
         // transaction (ADR-0024, decision 4).
@@ -670,6 +717,7 @@ impl Batch<'_> {
             tool_call: Some(tool_call.clone()),
             task: None,
             mention: None,
+            image: None,
         };
         self.transaction
             .prepare_cached(UPDATE_PART_DOCUMENT)?
@@ -720,6 +768,7 @@ impl Batch<'_> {
             tool_call: Some(tool_call),
             task: Some(task),
             mention: None,
+            image: None,
         };
         self.transaction
             .prepare_cached(UPDATE_PART_DOCUMENT)?
@@ -926,6 +975,7 @@ impl Batch<'_> {
             tool_call: part.tool_call.clone(),
             task: None,
             mention: None,
+            image: None,
         };
         let finished_at = (state != PartState::Streaming).then_some(self.now);
         self.transaction

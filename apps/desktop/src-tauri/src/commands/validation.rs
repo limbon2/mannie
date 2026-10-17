@@ -41,6 +41,18 @@ pub(crate) fn validation_set_folder_choice(core: State<'_, Core>, folder: Option
     core.set_folder_choice(choice);
 }
 
+/// Sets what the next file dialog answers instead of opening: the files, or
+/// none for a dialog that the owner closed.
+#[tauri::command]
+#[specta::specta]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri hands command arguments over by value"
+)]
+pub(crate) fn validation_set_file_choice(core: State<'_, Core>, files: Vec<String>) {
+    core.set_file_choice(files);
+}
+
 /// Streams a synthetic load to the webview: `load.runs` simulated runs that
 /// each send `load.deltas_per_second` deltas for `load.duration_millis`, over
 /// one batched channel (V2, V3).

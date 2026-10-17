@@ -736,6 +736,7 @@ async fn run_task(subject: &Subject, task: &Task) -> TaskReport {
     let started_conversation = runtime
         .start_conversation(StartConversation {
             mentions: Vec::new(),
+            images: Vec::new(),
             text: task.prompt.clone(),
             profile_id: None,
             project_id: (!task.general).then_some(project),

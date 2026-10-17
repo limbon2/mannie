@@ -1649,11 +1649,12 @@ fn append_text(content: &mut PartContent, delta: &str) {
             text.push_str(delta);
         }
         // A call's arguments arrive with the part's next update, and a
-        // mention is complete when its turn starts.
+        // mention or an image is complete when its turn starts.
         PartContent::ToolCall { .. }
         | PartContent::Task { .. }
         | PartContent::Error { .. }
         | PartContent::Mention { .. }
+        | PartContent::Image { .. }
         | PartContent::Unknown { .. } => {}
     }
 }

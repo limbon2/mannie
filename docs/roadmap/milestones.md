@@ -25,6 +25,7 @@
 | M4 Workers      | Workers own their hosts and take tasks from the master                                                                 | [Workers](../features/workers/README.md)                                                | v0.2.0  |
 | M5 Plugins      | A core that every owner gets, and plugins that each owner turns on                                                     | [Plugins](../features/plugins.md), [workers as a plugin](../features/workers/plugin.md) | v0.3.0  |
 | M6 Mentions     | The owner mentions a project's files and folders in a message, and features and plugins can add more kinds of mentions | [Mentions](../features/chat/mentions.md)                                                | v0.3.0  |
+| M7 Images       | The owner sends images in a message, through the Images plugin                                                         | [Images](../features/images.md)                                                         | v0.3.0  |
 
 ```mermaid
 flowchart LR
@@ -34,7 +35,8 @@ flowchart LR
   M3 --> M4[M4 Workers, v0.2.0]
   M4 --> M5[M5 Plugins, v0.3.0]
   M5 --> M6[M6 Mentions, v0.3.0]
-  M6 --> Later[Later features as they are accepted]
+  M6 --> M7[M7 Images, v0.3.0]
+  M7 --> Later[Later features as they are accepted]
 ```
 
 ## 3. Milestones
@@ -144,7 +146,7 @@ Exit criteria:
 
 ### M5: Plugins
 
-Goal: a core that every owner gets, and plugins that each owner turns on and off, with the worker system as the first plugin (D26). It ends with v0.3.0, together with M6 (D29).
+Goal: a core that every owner gets, and plugins that each owner turns on and off, with the worker system as the first plugin (D26). It ends with v0.3.0, together with M6 (D29) and M7 (D31).
 
 Features: [Plugins](../features/plugins.md), and [workers as a plugin](../features/workers/plugin.md).
 
@@ -160,7 +162,7 @@ Exit criteria:
 
 ### M6: Mentions
 
-Goal: the owner mentions the files and folders of a project in a message with "@", and features and plugins can add more kinds of mentions ([ADR-0032](../adr/0032-let-features-and-plugins-add-kinds-of-mentions.md)). It ends with v0.3.0, together with M5 (D29).
+Goal: the owner mentions the files and folders of a project in a message with "@", and features and plugins can add more kinds of mentions ([ADR-0032](../adr/0032-let-features-and-plugins-add-kinds-of-mentions.md)). It ends with v0.3.0, together with M5 (D29) and M7 (D31).
 
 Features: [Mentions](../features/chat/mentions.md).
 
@@ -173,6 +175,22 @@ Exit criteria:
 - A key outside the workspace, a provider that is not there and a 21st mention are refused, and a mentioned file never lets `move_to_project` run without asking.
 - Axe finds no WCAG 2.1 AA violation with the list open, on WebView2 and WebKitGTK.
 - ADR-0032 is Accepted, and v0.3.0 is released.
+
+### M7: Images
+
+Goal: the owner sends images in a message, which Mannie shrinks before the model reads them, through the plugin Images ([ADR-0033](../adr/0033-let-plugins-attach-images-to-the-owners-messages.md)). It ends with v0.3.0, together with M5 and M6 (D31).
+
+Features: [Images](../features/images.md).
+
+Scope: image content in the provider adapters; the part `image` and its table of bytes; image sources; `images` on `send_message` and `start_conversation`, and `read_image`; the slot of image sources in the message box, with its chips, paste and drop; the transcript's thumbnails and the full image; and the plugin `images` in `plugins/images/`, with the file dialog and the processing of images.
+
+Exit criteria:
+
+- An image from the button, a paste and a drop reaches the model's request, shrunk to at most 2048 pixels and without metadata, for the Responses API and Chat Completions.
+- A fake source passes the tests of the extension point, and stored images still reach the model and show in the transcript while Images is off.
+- Hostile files, an 11th image and a refused key are refused, and deleting a conversation leaves none of its images' bytes in the database.
+- Axe finds no WCAG 2.1 AA violation with the chips and the full image open, on WebView2 and WebKitGTK.
+- ADR-0033 is Accepted, and v0.3.0 is released.
 
 ### Later
 
@@ -232,6 +250,7 @@ No decision is open. New owner decisions get the next number here, and architect
 | D28 | Plugins in M5 (2026-10-16)                              | The owner accepts ADR-0030 and ADR-0031 and the defaults that the plugins feature documents chose: a plugin is on or off for the whole of Mannie; a new installation starts with every plugin off, and the update from 0.2.0 turns Workers on when a worker is paired; turning a plugin off keeps its data; and turning off a plugin with work in progress asks first. Building M5 starts.                                                                                                                                                                                                                      | [ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md), [ADR-0031](../adr/0031-move-workers-into-the-first-plugin.md), [plugins](../features/plugins.md#decisions)                       |
 | D29 | Releases of M5 and M6 (2026-10-16)                      | M6 ships together with M5 in one release, v0.3.0, because M5 was mostly a refactoring. M6 has no release of its own.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | [Milestones](#3-milestones), [mentions](../features/chat/mentions.md)                                                                                                                             |
 | D30 | Mentions in M6 (2026-10-17)                             | The owner accepts ADR-0032 and the defaults that the mentions feature document chose: a message has at most 20 mentions; the mentions of one message share the room of one `read_file` result; the list shows at most 50 files and folders, and a folder's listing at most 50 entries for each folder; the index of a project holds at most 100,000 entries and is kept for 15 seconds; the names of the files that may hold secrets; and a typed token counts when the list showed it. Building M6 starts.                                                                                                     | [ADR-0032](../adr/0032-let-features-and-plugins-add-kinds-of-mentions.md), [mentions](../features/chat/mentions.md#decisions)                                                                     |
+| D31 | Images in M7 (2026-10-17)                               | The owner accepts ADR-0033: images are a plugin, Images, that adds them to a message through a button with the file dialog, a paste and a drop; Mannie shrinks them before sending; every model receives them, and a model that cannot read them fails with the provider's error; the model never reads an image's name; Images starts off, like every plugin. M7 ships together with M5 and M6 in v0.3.0. Building M7 starts with the defaults that the images feature document chose, for the owner's review.                                                                                                 | [ADR-0033](../adr/0033-let-plugins-attach-images-to-the-owners-messages.md), [images](../features/images.md#decisions)                                                                            |
 
 ## 6. Risk register
 

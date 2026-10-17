@@ -12,7 +12,11 @@ import type {
 import { m } from '#lib/paraglide/messages.js';
 import { pluginName } from '#lib/state/plugin-catalog.js';
 import type { ChatFailure, ProfileFailure } from '#lib/types/chat.js';
+import type { ImageSourceKind } from '#lib/types/shell-slots.js';
 import { type FindMentionKind, mentionRefusal } from '#lib/utils/mention-kinds.js';
+
+/** Finds the image source with an ID, as the slot of image sources knows it. */
+export type FindImageSource = (source: string) => ImageSourceKind | undefined;
 
 const counts = new Intl.NumberFormat();
 
@@ -105,9 +109,14 @@ export function runFailureMessage(failure: RunFailure): string {
 
 /**
  * What to tell the owner about a chat command that failed. `findMentionKind`
- * words a mention's refusal through its kind (ADR-0032).
+ * words a mention's refusal through its kind (ADR-0032), and
+ * `findImageSource` an image's refusal through its source (ADR-0033).
  */
-export function chatFailureMessage(failure: ChatFailure, findMentionKind?: FindMentionKind): string {
+export function chatFailureMessage(
+  failure: ChatFailure,
+  findMentionKind?: FindMentionKind,
+  findImageSource?: FindImageSource,
+): string {
   if (failure.kind === 'ipc') {
     return m.shell_error_ipc_failed();
   }
@@ -133,6 +142,16 @@ export function chatFailureMessage(failure: ChatFailure, findMentionKind?: FindM
     }
     case 'folder_unreadable': {
       return m.chat_error_folder_unreadable();
+    }
+    case 'image_not_found': {
+      return m.chat_error_image_not_found();
+    }
+    case 'image_refused': {
+      const reason = findImageSource?.(error.imageSource)?.refusal(error.reason) ?? m.chat_image_refusal_other();
+      return m.chat_error_image_refused({ reason });
+    }
+    case 'image_unavailable': {
+      return m.chat_error_image_unavailable();
     }
     case 'instructions_too_long': {
       return m.chat_error_instructions_too_long({ maxBytes: formatCount(error.maxBytes) });
@@ -210,6 +229,9 @@ export function chatFailureMessage(failure: ChatFailure, findMentionKind?: FindM
     }
     case 'title_empty': {
       return m.chat_error_title_empty();
+    }
+    case 'too_many_images': {
+      return m.chat_error_too_many_images({ max: error.max });
     }
     case 'too_many_mentions': {
       return m.chat_error_too_many_mentions({ max: error.max });

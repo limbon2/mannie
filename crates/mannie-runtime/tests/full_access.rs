@@ -78,6 +78,7 @@ impl Setup {
             .runtime
             .start_conversation(StartConversation {
                 mentions: Vec::new(),
+                images: Vec::new(),
                 text: text.to_owned(),
                 profile_id: None,
                 project_id: Some(self.project.clone()),
@@ -92,6 +93,7 @@ impl Setup {
             .runtime
             .send_message(SendMessage {
                 mentions: Vec::new(),
+                images: Vec::new(),
                 conversation_id: conversation.clone(),
                 text: text.to_owned(),
             })

@@ -23,13 +23,16 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use futures_util::StreamExt;
 use mannie_provider::testing::{Chunking, FixtureResponse, FixtureServer};
 use mannie_provider::{
-    Content, HttpClient, Message, ModelRequest, ProviderError, ProviderEvent, ProviderRegistry,
-    Role, Target, ToolChoice, ToolDefinition, quirks_for,
+    Content, HttpClient, ImageInput, Message, ModelRequest, ProviderError, ProviderEvent,
+    ProviderRegistry, Role, Target, ToolChoice, ToolDefinition, quirks_for,
 };
 use mannie_types::clock::{ManualClock, UtcMillis};
+use mannie_types::images::{ImageBytes, ImageFormat};
 use mannie_types::provider::{ApiInterface, ReasoningEffort, ServerKind};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -95,6 +98,18 @@ struct MessageManifest {
     /// The results of a tool message.
     #[serde(default)]
     tool_results: Vec<ToolResultManifest>,
+    /// The images of a user message, after its text.
+    #[serde(default)]
+    images: Vec<ImageManifest>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ImageManifest {
+    format: ImageFormat,
+    width: u32,
+    height: u32,
+    /// The bytes, as base64.
+    data: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -163,6 +178,14 @@ fn model_request(manifest: &RequestManifest) -> ModelRequest {
             }
             if let Some(text) = &message.text {
                 content.push(Content::Text(text.clone()));
+            }
+            for image in &message.images {
+                content.push(Content::Image(ImageInput {
+                    format: image.format,
+                    width: image.width,
+                    height: image.height,
+                    data: ImageBytes::from(BASE64.decode(&image.data).unwrap()),
+                }));
             }
             for call in &message.tool_calls {
                 content.push(Content::ToolCall {

@@ -15,6 +15,7 @@ use mannie_provider::{Content, known_models};
 use mannie_runtime::testing::{Harness, HarnessOptions, estimate, reply};
 use mannie_runtime::texts;
 use mannie_types::chat::{MAX_MESSAGE_BYTES, SendMessage, StartConversation};
+use mannie_types::ids::ConversationId;
 use mannie_types::provider::context_budget;
 use mannie_types::run::RunState;
 use mannie_types::transcript::PartContent;
@@ -46,6 +47,16 @@ fn filler(marker: &str, bytes: usize) -> String {
     text
 }
 
+/// The owner's message `text`, without mentions or images.
+fn owner_message(conversation: &ConversationId, text: &str) -> SendMessage {
+    SendMessage {
+        conversation_id: conversation.clone(),
+        text: text.to_owned(),
+        mentions: Vec::new(),
+        images: Vec::new(),
+    }
+}
+
 fn mentions(request: &mannie_provider::ModelRequest, marker: &str) -> bool {
     request.instructions.contains(marker)
         || request.messages.iter().any(|message| {
@@ -54,6 +65,7 @@ fn mentions(request: &mannie_provider::ModelRequest, marker: &str) -> bool {
                 | Content::ProviderItem(text)
                 | Content::ToolResult { output: text, .. } => text.contains(marker),
                 Content::ToolCall { arguments, .. } => arguments.contains(marker),
+                Content::Image(_) => false,
             })
         })
 }
@@ -85,6 +97,7 @@ async fn check(window: u32, output: u32) {
         .runtime
         .start_conversation(StartConversation {
             mentions: Vec::new(),
+            images: Vec::new(),
             text: messages[0].clone(),
             profile_id: None,
             project_id: None,
@@ -97,11 +110,7 @@ async fn check(window: u32, output: u32) {
     for text in &messages[1..] {
         let sent = harness
             .runtime
-            .send_message(SendMessage {
-                mentions: Vec::new(),
-                conversation_id: conversation.clone(),
-                text: text.clone(),
-            })
+            .send_message(owner_message(&conversation, text))
             .await
             .unwrap();
         harness.wait_for_run(&conversation, &sent.run_id).await;
@@ -182,6 +191,7 @@ async fn the_owner_can_compact_by_hand_and_read_the_checkpoint() {
         .runtime
         .start_conversation(StartConversation {
             mentions: Vec::new(),
+            images: Vec::new(),
             text: "First".to_owned(),
             profile_id: None,
             project_id: None,
@@ -196,6 +206,7 @@ async fn the_owner_can_compact_by_hand_and_read_the_checkpoint() {
         .runtime
         .send_message(SendMessage {
             mentions: Vec::new(),
+            images: Vec::new(),
             conversation_id: conversation.clone(),
             text: "Second".to_owned(),
         })
@@ -220,6 +231,7 @@ async fn the_owner_can_compact_by_hand_and_read_the_checkpoint() {
         .runtime
         .send_message(SendMessage {
             mentions: Vec::new(),
+            images: Vec::new(),
             conversation_id: conversation.clone(),
             text: "Third".to_owned(),
         })

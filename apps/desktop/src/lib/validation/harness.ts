@@ -77,6 +77,11 @@ export interface ValidationHarness {
   /** Adds a conversation with this many turns, and returns its ID. */
   seedConversation(turns: number): Promise<string>;
   /**
+   * Sets the files that the next file dialog answers instead of opening, or
+   * none for a dialog that the owner closed.
+   */
+  setFileChoice(files: string[]): Promise<void>;
+  /**
    * Sets what the next folder dialog answers instead of opening: a folder, or
    * `null` for a dialog that the owner closed.
    */
@@ -297,6 +302,9 @@ window.mannieValidation = {
   processId: async () => commands.validationProcessId(),
   runChannelLoad,
   seedConversation: async (turns) => unwrap(await commands.validationSeedConversation({ turns })),
+  setFileChoice: async (files) => {
+    await commands.validationSetFileChoice(files);
+  },
   setFolderChoice: async (folder) => {
     await commands.validationSetFolderChoice(folder);
   },

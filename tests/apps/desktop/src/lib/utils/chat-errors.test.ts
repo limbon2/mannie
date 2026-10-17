@@ -12,6 +12,7 @@ import type {
   RunFailure,
   SkipReason,
 } from '../../../../../../apps/desktop/src/lib/generated/bindings.js';
+import type { ImageSourceKind } from '../../../../../../apps/desktop/src/lib/types/shell-slots.js';
 import {
   chatFailureMessage,
   checkLabel,
@@ -85,6 +86,10 @@ const CHAT_ERRORS: ChatError[] = [
   { code: 'too_many_mentions', max: 20 },
   { code: 'mention_unavailable', provider: 'notes' },
   { code: 'mention_refused', provider: 'files', reason: 'outside_workspace' },
+  { code: 'too_many_images', max: 10 },
+  { code: 'image_unavailable', imageSource: 'images' },
+  { code: 'image_refused', imageSource: 'images', reason: 'not_found' },
+  { code: 'image_not_found' },
 ];
 
 const PROFILE_ERRORS: ProviderProfileError[] = [
@@ -152,6 +157,25 @@ describe('chat messages', () => {
     expect(worded).toContain('Outside the folder.');
     expect(generic).toContain('This mention is not available here.');
     expect(chatFailureMessage({ error: { code: 'too_many_mentions', max: 20 }, kind: 'core' })).toContain('20');
+  });
+
+  it('word an image’s refusal through its source, or generically without one', () => {
+    const refused: ChatError = { code: 'image_refused', imageSource: 'images', reason: 'not_found' };
+    const source = {
+      button: (() => undefined) as unknown as ImageSourceKind['button'],
+      id: 'images',
+      order: 0,
+      refusal: (code: string) => (code === 'not_found' ? 'It was removed.' : null),
+      take: () => undefined,
+      takes: () => true,
+    };
+
+    const worded = chatFailureMessage({ error: refused, kind: 'core' }, undefined, () => source);
+    const generic = chatFailureMessage({ error: refused, kind: 'core' });
+
+    expect(worded).toContain('It was removed.');
+    expect(generic).toContain('Mannie no longer has the image.');
+    expect(chatFailureMessage({ error: { code: 'too_many_images', max: 10 }, kind: 'core' })).toContain('10');
   });
 
   it('find the plugin of a task conversation that cannot be followed while the plugin is off', () => {

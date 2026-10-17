@@ -229,3 +229,66 @@ export interface MentionKind {
   /** The words of a warning code, such as "may hold secrets", or `null` for a code it does not know. */
   readonly warning: (code: string) => string | null;
 }
+
+/** An image that a source prepared, as the message box shows and sends it (ADR-0033, decision 7). */
+export interface ReadyImage {
+  /** Lets the source drop the image, when the owner removes it from the message. */
+  readonly discard: () => void;
+  /** The image's height in pixels. */
+  readonly height: number;
+  /** The key that the message's reference names. */
+  readonly key: string;
+  /** The thumbnail, as a `data:` URL. */
+  readonly thumbnailUrl: string;
+  /** The image's width in pixels. */
+  readonly width: number;
+}
+
+/** An image of the message that its source prepares. */
+export interface PendingImage {
+  /** The image could not be prepared: its chip leaves, and the sentence shows below the message box. */
+  readonly fail: (sentence: string) => void;
+  /** The image is ready to send. */
+  readonly ready: (image: ReadyImage) => void;
+}
+
+/** The message that the owner writes, as an image source adds images to it. */
+export interface ImageTarget {
+  /**
+   * Starts an image of the source, which shows as a chip with its name while
+   * the source prepares it, or returns `null` when the message holds as many
+   * images as it can, which the message box then says.
+   */
+  readonly begin: (source: string, name: string) => PendingImage | null;
+  /** Says below the message box why an image could not be added. */
+  readonly refuse: (sentence: string) => void;
+}
+
+/** What the button of an image source receives. */
+export interface ImageSourceButtonProps {
+  /** Whether the message box takes no images now. */
+  readonly disabled: boolean;
+  /** The message that the owner writes. */
+  readonly target: ImageTarget;
+}
+
+/**
+ * A source of images for the message box (ADR-0033, decision 7): its button,
+ * the files it takes from a paste or a drop, and the words of its refusal
+ * codes. Without an entry, such as while its plugin is off, the message box
+ * offers no images from the source, and pasting and dropping files do nothing.
+ */
+export interface ImageSourceKind {
+  /** The button before the text, such as one that opens the system's file dialog. */
+  readonly button: Component<ImageSourceButtonProps>;
+  /** The source's ID, as the core knows it. */
+  readonly id: string;
+  /** Buttons are sorted by this number, lowest first, and the first source that takes a file gets it. */
+  readonly order: number;
+  /** The sentence of one of the source's refusal codes, or `null` for a code it does not know. */
+  readonly refusal: (code: string) => string | null;
+  /** Adds files of a paste or a drop that it takes to the message. */
+  readonly take: (files: readonly File[], target: ImageTarget) => void;
+  /** Whether the source takes a file of a paste or a drop. */
+  readonly takes: (file: File) => boolean;
+}

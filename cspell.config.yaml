@@ -33,6 +33,7 @@ words:
   - EFAULT
   - egui
   - evals
+  - EXIF
   - execve
   - exmarkdown
   - fastrand
@@ -46,6 +47,7 @@ words:
   - journaled
   - keepalive
   - kwallet
+  - Lanczos
   - libappindicator
   - libayatana
   - libc

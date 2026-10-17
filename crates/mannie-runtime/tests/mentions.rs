@@ -81,6 +81,7 @@ impl Setup {
                 profile_id: None,
                 project_id: project.cloned(),
                 mentions,
+                images: Vec::new(),
             })
             .await
     }
@@ -470,6 +471,7 @@ async fn a_file_in_mannie_s_folders_gives_a_note_unless_the_conversation_has_ful
             conversation_id: started.conversation_id.clone(),
             text: "Again @notes.txt".to_owned(),
             mentions: vec![file("notes.txt")],
+            images: Vec::new(),
         })
         .await
         .unwrap();

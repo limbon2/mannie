@@ -10,6 +10,7 @@ use mannie_types::chat::{
     StartedConversation, StartedReply, StopOutcome, SubscribeConversation, Unsubscribe,
     UpdateChatSettings,
 };
+use mannie_types::images::{ImageData, ReadImage};
 use mannie_types::ipc::{ChannelBatch, CommandError};
 use mannie_types::mentions::{MentionSuggestions, SuggestMentions};
 use mannie_types::transcript::{
@@ -151,6 +152,20 @@ pub(crate) async fn suggest_mentions(
         .suggest_mentions(input)
         .await
         .map_err(refused("suggest_mentions"))
+}
+
+/// The thumbnail or the full image of an image part (ADR-0033, decision 4),
+/// also while the plugin that added it is off.
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn read_image(
+    core: State<'_, Core>,
+    input: ReadImage,
+) -> Result<ImageData, CommandError<ChatError>> {
+    runtime(&core)?
+        .read_image(input)
+        .await
+        .map_err(refused("read_image"))
 }
 
 /// Stops the conversation's reply and waits until it has ended.

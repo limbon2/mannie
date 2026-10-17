@@ -32,6 +32,8 @@ name = "live"
 required-features = ["testing"]
 
 [dependencies]
+# The `data:` URLs of the images in a request (ADR-0033).
+base64 = { workspace = true }
 # The chunks of a streamed response body.
 bytes = { workspace = true }
 futures-util = { workspace = true }

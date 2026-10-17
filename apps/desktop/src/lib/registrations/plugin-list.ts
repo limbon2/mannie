@@ -4,7 +4,8 @@
 // lets it (ADR-0030, decision 10).
 import type { PluginRegistration } from '#lib/types/plugins.js';
 
+import { imagesPlugin } from './images.js';
 import { workersPlugin } from './workers.js';
 
 /** Every internal plugin. */
-export const plugins: readonly PluginRegistration[] = [workersPlugin];
+export const plugins: readonly PluginRegistration[] = [workersPlugin, imagesPlugin];

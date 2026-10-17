@@ -11,6 +11,7 @@
   import { getShellSlots } from '#lib/state/shell-slots.svelte.js';
   import { MAIN_AREA_ID, sidePanels } from '#lib/state/side-panels.svelte.js';
   import { openSettings } from '#lib/utils/settings-sections.js';
+  import { carriesFiles } from '#lib/utils/transfer-files.js';
   import { activeView } from '#lib/utils/views.js';
 
   import CommandPalette from './CommandPalette.svelte';
@@ -84,6 +85,22 @@
     }
   }
 
+  /**
+   * Files dragged anywhere but on a message box that takes them do nothing:
+   * the webview would otherwise open a dropped file in place of Mannie
+   * (ADR-0033, decision 7). A message box that takes the files handles the
+   * event first.
+   */
+  function refuseStrayFiles(event: DragEvent): void {
+    if (event.defaultPrevented || !carriesFiles(event.dataTransfer)) {
+      return;
+    }
+    event.preventDefault();
+    if (event.dataTransfer !== null) {
+      event.dataTransfer.dropEffect = 'none';
+    }
+  }
+
   // The slots show a plugin's entries while the core reports the plugin as
   // on, so the window follows the plugins' states from its start (ADR-0030,
   // decision 11).
@@ -101,7 +118,7 @@
   });
 </script>
 
-<svelte:window onkeydown={handleShortcut} />
+<svelte:window ondragover={refuseStrayFiles} ondrop={refuseStrayFiles} onkeydown={handleShortcut} />
 
 <svelte:head>
   <title>{title}</title>

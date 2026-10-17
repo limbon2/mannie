@@ -4,6 +4,7 @@
 
 pub(crate) mod chat;
 pub(crate) mod child_agents;
+pub(crate) mod images;
 pub(crate) mod interface;
 pub(crate) mod links;
 pub(crate) mod plugins;

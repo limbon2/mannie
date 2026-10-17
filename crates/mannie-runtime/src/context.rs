@@ -5,7 +5,9 @@
 
 use std::collections::HashSet;
 
-use mannie_provider::{Content, Message, ModelRequest, Role, ToolChoice, ToolDefinition};
+use mannie_provider::{
+    Content, ImageInput, Message, ModelRequest, Role, ToolChoice, ToolDefinition,
+};
 use mannie_store::{ModelPart, ModelTurn};
 use mannie_types::ids::{PartId, RunId};
 use mannie_types::provider::{ApiInterface, ReasoningEffort};
@@ -128,8 +130,18 @@ fn append_turn(messages: &mut Vec<Message>, turn: &ModelTurn, shape: RequestShap
             calling_attempt = Some(part.attempt);
         }
         match part.kind {
+            // A message with images may have no text (ADR-0033, decision 1),
+            // and no API takes an empty text part.
             Some(PartKind::UserText) => {
-                messages.push(Message::text(Role::User, part.text.clone()));
+                let content = if part.text.trim().is_empty() {
+                    Vec::new()
+                } else {
+                    vec![Content::Text(part.text.clone())]
+                };
+                messages.push(Message {
+                    role: Role::User,
+                    content,
+                });
             }
             // What the owner's message mentions follows it, in the same
             // message (ADR-0032, decision 7).
@@ -139,6 +151,27 @@ fn append_turn(messages: &mut Vec<Message>, turn: &ModelTurn, shape: RequestShap
                 }
                 _ => messages.push(Message::text(Role::User, part.text.clone())),
             },
+            // The images follow the text and the mentions, in the same
+            // message, and the model never reads their names (ADR-0033,
+            // decision 6).
+            Some(PartKind::Image) => {
+                let content = match &part.image {
+                    Some(image) => Content::Image(ImageInput {
+                        format: image.format,
+                        width: image.width,
+                        height: image.height,
+                        data: image.data.clone(),
+                    }),
+                    None => Content::Text(texts::IMAGE_MISSING.to_owned()),
+                };
+                match messages.last_mut() {
+                    Some(owner) if owner.role == Role::User => owner.content.push(content),
+                    _ => messages.push(Message {
+                        role: Role::User,
+                        content: vec![content],
+                    }),
+                }
+            }
             Some(PartKind::Text) => {
                 if !part.text.is_empty() {
                     reply.content.push(Content::Text(part.text.clone()));

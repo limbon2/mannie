@@ -73,6 +73,7 @@ async fn offers_delegate_task(harness: &Harness, marker: &str) -> bool {
         .runtime
         .start_conversation(StartConversation {
             mentions: Vec::new(),
+            images: Vec::new(),
             text: format!("{marker}: hello"),
             profile_id: None,
             project_id: None,

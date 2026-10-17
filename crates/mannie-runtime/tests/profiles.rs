@@ -289,6 +289,7 @@ async fn a_profile_that_a_running_reply_uses_is_kept_until_the_reply_ends() {
         .runtime
         .start_conversation(StartConversation {
             mentions: Vec::new(),
+            images: Vec::new(),
             text: "Question".to_owned(),
             profile_id: None,
             project_id: None,

@@ -6,6 +6,7 @@ use mannie_types::clock::{Clock, ManualClock, UtcMillis};
 use mannie_types::ids::{
     CheckpointId, ConversationId, PartId, ProfileId, ProjectId, RunId, TurnId,
 };
+use mannie_types::images::{ImageBytes, ImageFormat, ImageSize, ImageView};
 use mannie_types::mentions::{MentionSummary, MentionView};
 use mannie_types::run::{FinishReason, RunFailure, RunOutcome, RunState};
 use mannie_types::tools::ToolCallDocument;
@@ -14,8 +15,8 @@ use mannie_types::transcript::{
 };
 
 use super::{
-    Applied, Change, EventsAfter, NewCheckpoint, NewConversation, NewMention, NewPart, NewRun,
-    ProviderItem, RuntimeStoreError,
+    Applied, Change, EventsAfter, NewCheckpoint, NewConversation, NewImage, NewMention, NewPart,
+    NewRun, ProviderItem, RuntimeStoreError, StoredImage,
 };
 use crate::{Durability, Store, StoreOptions};
 
@@ -126,6 +127,7 @@ impl Fixture {
                         turn_id: turn.clone(),
                         user_part_id: self.part_id(),
                         mentions: Vec::new(),
+                        images: Vec::new(),
                         text: text.to_owned(),
                         run,
                         task: None,
@@ -190,14 +192,17 @@ impl Fixture {
     }
 
     fn files_contain(&self, needle: &str) -> bool {
+        self.files_contain_bytes(needle.as_bytes())
+    }
+
+    /// Whether the database or its write-ahead log holds these bytes.
+    fn files_contain_bytes(&self, needle: &[u8]) -> bool {
         let mut found = false;
         for entry in std::fs::read_dir(self.directory.path()).unwrap() {
             let path = entry.unwrap().path();
             if path.is_file() {
                 let bytes = std::fs::read(&path).unwrap();
-                found |= bytes
-                    .windows(needle.len())
-                    .any(|window| window == needle.as_bytes());
+                found |= bytes.windows(needle.len()).any(|window| window == needle);
             }
         }
         found
@@ -336,8 +341,201 @@ fn text_of(content: &PartContent) -> String {
         }
         PartContent::Task { call } => format!("{} {:?}", call.tool, call.status),
         PartContent::Mention { mention } => format!("@{}", mention.label),
+        PartContent::Image { image } => format!("image {}", image.name),
         PartContent::Unknown { name } => name.clone(),
     }
+}
+
+/// An image as a source gives it, with bytes that start with `marker`, which
+/// a test can look for in the database's files.
+fn image(fixture: &Fixture, name: &str, marker: &[u8]) -> NewImage {
+    let mut data = b"\x89PNG\r\n\x1a\n".to_vec();
+    data.extend_from_slice(marker);
+    let mut thumbnail = b"\xff\xd8\xff".to_vec();
+    thumbnail.extend_from_slice(marker);
+    thumbnail.extend_from_slice(b"-thumbnail");
+    NewImage {
+        part_id: fixture.part_id(),
+        source: "images".to_owned(),
+        view: ImageView {
+            name: name.to_owned(),
+            format: ImageFormat::Png,
+            width: 640,
+            height: 480,
+            bytes: u32::try_from(data.len()).unwrap(),
+        },
+        digest: format!("digest-of-{name}"),
+        data: ImageBytes::from(data),
+        thumbnail_format: ImageFormat::Jpeg,
+        thumbnail: ImageBytes::from(thumbnail),
+    }
+}
+
+/// Starts a conversation whose first message has no text, a mention of
+/// `a.rs` and `images`, and returns the conversation and what was applied.
+async fn start_with_images(fixture: &Fixture, images: Vec<NewImage>) -> (ConversationId, Applied) {
+    let conversation = fixture.conversation_id();
+    let applied = fixture
+        .apply(
+            &conversation,
+            vec![
+                Change::CreateConversation {
+                    conversation: NewConversation {
+                        id: conversation.clone(),
+                        title: "Pictures".to_owned(),
+                        profile_id: None,
+                        project_id: None,
+                        task: None,
+                    },
+                },
+                Change::StartTurn {
+                    turn_id: fixture.turn_id(),
+                    user_part_id: fixture.part_id(),
+                    mentions: vec![mention(fixture, "a.rs", "lines")],
+                    images,
+                    text: String::new(),
+                    run: fixture.new_run(),
+                    task: None,
+                },
+            ],
+        )
+        .await;
+    (conversation, applied)
+}
+
+#[tokio::test]
+async fn a_turn_shows_its_images_after_its_mentions_without_their_bytes() {
+    let fixture = Fixture::new();
+    let first = image(&fixture, "one.png", b"first-image-bytes");
+    let second = image(&fixture, "two.png", b"second-image-bytes");
+    let views = [first.view.clone(), second.view.clone()];
+
+    let (conversation, applied) = start_with_images(&fixture, vec![first, second]).await;
+
+    let [(_, ConversationEvent::TurnStarted { turn: started })] = applied.events.as_slice() else {
+        panic!("{:?}", applied.events);
+    };
+    let announced: Vec<(u32, String)> = started
+        .parts
+        .iter()
+        .map(|part| (part.position, text_of(&part.content)))
+        .collect();
+    assert_eq!(
+        announced,
+        [
+            (0, String::new()),
+            (1, "@a.rs".to_owned()),
+            (2, "image one.png".to_owned()),
+            (3, "image two.png".to_owned())
+        ]
+    );
+    let snapshot = fixture
+        .store
+        .snapshot(&conversation, 50, 400)
+        .await
+        .unwrap()
+        .unwrap();
+    let shown: Vec<ImageView> = snapshot.turns[0]
+        .parts
+        .iter()
+        .filter_map(|part| match &part.content {
+            PartContent::Image { image } => Some(image.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(shown, views);
+}
+
+#[tokio::test]
+async fn the_model_reads_an_image_s_bytes_and_the_ui_reads_them_by_size() {
+    let fixture = Fixture::new();
+    let first = image(&fixture, "one.png", b"first-image-bytes");
+    let second = image(&fixture, "two.png", b"second-image-bytes");
+    let part = first.part_id.clone();
+    let (data, thumbnail) = (first.data.clone(), first.thumbnail.clone());
+    let (conversation, applied) = start_with_images(&fixture, vec![first, second]).await;
+    let (other, _, _, _) = fixture.start("Elsewhere").await;
+
+    let model_turns = fixture
+        .store
+        .model_turns(&conversation, None)
+        .await
+        .unwrap();
+    let read = |conversation: &ConversationId, part: &PartId, size| {
+        let store = fixture.store.clone();
+        let (conversation, part) = (conversation.clone(), part.clone());
+        async move { store.image(&conversation, &part, size).await.unwrap() }
+    };
+
+    let kinds: Vec<Option<PartKind>> = model_turns[0].parts.iter().map(|part| part.kind).collect();
+    let images: Vec<(u32, &str, usize)> = model_turns[0]
+        .parts
+        .iter()
+        .filter_map(|part| part.image.as_ref())
+        .map(|image| (image.width, image.digest.as_str(), image.data.len()))
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            Some(PartKind::UserText),
+            Some(PartKind::Mention),
+            Some(PartKind::Image),
+            Some(PartKind::Image)
+        ]
+    );
+    assert_eq!(
+        images,
+        [
+            (640, "digest-of-one.png", 25),
+            (640, "digest-of-two.png", 26)
+        ]
+    );
+    assert_eq!(
+        read(&conversation, &part, ImageSize::Full).await,
+        Some(StoredImage {
+            format: ImageFormat::Png,
+            data
+        })
+    );
+    assert_eq!(
+        read(&conversation, &part, ImageSize::Thumbnail).await,
+        Some(StoredImage {
+            format: ImageFormat::Jpeg,
+            data: thumbnail
+        })
+    );
+    // An image is read only through its own conversation, and only an image
+    // part has one.
+    let [(_, ConversationEvent::TurnStarted { turn: started })] = applied.events.as_slice() else {
+        panic!("{:?}", applied.events);
+    };
+    assert_eq!(read(&other, &part, ImageSize::Full).await, None);
+    assert_eq!(
+        read(&conversation, &started.parts[0].id, ImageSize::Full).await,
+        None
+    );
+}
+
+#[tokio::test]
+async fn a_deleted_conversation_leaves_no_image_bytes_behind() {
+    let fixture = Fixture::new();
+    let planted = image(&fixture, "secret.png", b"planted-image-bytes-4be1c0");
+    let (conversation, _) = start_with_images(&fixture, vec![planted]).await;
+    assert!(fixture.files_contain_bytes(b"planted-image-bytes-4be1c0"));
+    assert!(fixture.files_contain_bytes(b"planted-image-bytes-4be1c0-thumbnail"));
+
+    assert!(
+        fixture
+            .store
+            .delete_conversation(&conversation)
+            .await
+            .unwrap()
+    );
+
+    assert!(
+        !fixture.files_contain_bytes(b"planted-image-bytes-4be1c0"),
+        "the image and its thumbnail are gone from every file"
+    );
 }
 
 /// A mention of a file as the files provider stores it.
@@ -384,6 +582,7 @@ async fn a_turn_keeps_its_mentions_after_the_owner_s_text() {
                     turn_id: turn.clone(),
                     user_part_id: fixture.part_id(),
                     mentions: vec![first, second],
+                    images: Vec::new(),
                     text: "Compare @a.rs with @b.png".to_owned(),
                     run: fixture.new_run(),
                     task: None,
@@ -501,6 +700,7 @@ async fn a_second_turn_is_refused_while_a_run_is_active_and_nothing_is_stored() 
                 turn_id: fixture.turn_id(),
                 user_part_id: fixture.part_id(),
                 mentions: Vec::new(),
+                images: Vec::new(),
                 text: "Second".to_owned(),
                 run: fixture.new_run(),
                 task: None,
@@ -1062,6 +1262,7 @@ async fn snapshots_and_earlier_turns_page_through_long_conversations() {
                         turn_id: fixture.turn_id(),
                         user_part_id: fixture.part_id(),
                         mentions: Vec::new(),
+                        images: Vec::new(),
                         text: format!("Turn {index}"),
                         run: next,
                         task: None,
@@ -1651,6 +1852,7 @@ async fn a_conversation_in_a_project_works_in_its_folder_and_shows_a_waiting_app
                     turn_id: turn,
                     user_part_id: fixture.part_id(),
                     mentions: Vec::new(),
+                    images: Vec::new(),
                     text: "Hello".to_owned(),
                     run,
                     task: None,

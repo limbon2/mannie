@@ -208,6 +208,16 @@ pub fn compaction_tool_call(tool: &str, arguments: &str, result: &str) -> String
     format!("Assistant used the tool {tool} with {arguments}. Result: {result}")
 }
 
+/// An image of the owner's message, in the transcript of a compaction request
+/// (docs/features/images.md, the text the model sees).
+pub fn compaction_image(width: u32, height: u32) -> String {
+    format!("Owner's image: {width}×{height} pixels.")
+}
+
+/// Stands in for an image whose bytes Mannie can no longer read.
+pub const IMAGE_MISSING: &str =
+    "[The owner attached an image here that Mannie can no longer read.]";
+
 /// Something that the owner's message mentioned, in the transcript of a
 /// compaction request.
 pub fn compaction_mention(text: &str) -> String {

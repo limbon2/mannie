@@ -1,0 +1,40 @@
+[package]
+name = "mannie-images"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The Images plugin: the images that the owner attaches to a message, prepared for the model, and the image source that gives them to the runtime (ADR-0033)."
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The thumbnails and the pasted or dropped files that cross IPC as text
+# (ADR-0007).
+base64 = { workspace = true }
+futures-util = { workspace = true }
+# Decoding, turning, shrinking and encoding images (ADR-0033, decision 10).
+image = { workspace = true }
+mannie-plugins = { workspace = true }
+mannie-runtime = { workspace = true }
+mannie-store = { workspace = true }
+mannie-types = { workspace = true }
+serde = { workspace = true }
+# The plugin's IPC types, from which the desktop app generates bindings
+# (ADR-0007).
+specta = { workspace = true }
+thiserror = { workspace = true }
+# One decode at a time, on a blocking thread.
+tokio = { workspace = true, features = ["rt", "sync"] }
+tracing = { workspace = true }
+# The keys of waiting images and the IDs of chosen files.
+uuid = { workspace = true }
+
+[dev-dependencies]
+mannie-provider = { workspace = true }
+mannie-runtime = { workspace = true, features = ["testing"] }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync"] }
+
+[lints]
+workspace = true

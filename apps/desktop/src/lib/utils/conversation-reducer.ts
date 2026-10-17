@@ -93,13 +93,14 @@ function appendText(part: PartView, text: string): void {
       return;
     }
     case 'error':
+    case 'image':
     case 'mention':
     case 'task':
     case 'tool_call':
     case 'unknown': {
       // A call's arguments arrive whole, with the part's next update; a
-      // task's view never carries them, and a mention is whole when its
-      // turn starts.
+      // task's view never carries them, and a mention or an image is whole
+      // when its turn starts.
       return;
     }
   }

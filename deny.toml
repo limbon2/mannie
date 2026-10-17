@@ -97,6 +97,12 @@ deny = [
   { crate = "mannie-workers", wrappers = [
     "mannie-desktop",
   ], reason = "a plugin's crates are used only by the desktop app's composition root (ADR-0030)" },
+  { crate = "mannie-images", wrappers = [
+    "mannie-desktop",
+  ], reason = "a plugin's crates are used only by the desktop app's composition root (ADR-0030)" },
+  { crate = "image", wrappers = [
+    "mannie-images",
+  ], reason = "only the Images plugin decodes images, which come from outside Mannie (ADR-0033, T-32)" },
 ]
 
 [sources]

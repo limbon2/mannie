@@ -88,6 +88,7 @@ impl Setup {
             .runtime
             .start_conversation(StartConversation {
                 mentions: Vec::new(),
+                images: Vec::new(),
                 text: text.to_owned(),
                 profile_id: None,
                 project_id: project.cloned(),

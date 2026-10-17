@@ -23,6 +23,17 @@ pub(crate) fn estimate_text(text: &str) -> u32 {
     u32::try_from((bytes * 2).div_ceil(5)).unwrap_or(u32::MAX)
 }
 
+/// A conservative estimate of the tokens of an image: its pixels divided by
+/// 750, as Anthropic documents its count, which is above what OpenAI counts
+/// for the same image at its detailed reading. Never the text of its `data:`
+/// URL (ADR-0033, decision 5).
+pub(crate) fn estimate_image(width: u32, height: u32) -> u32 {
+    let pixels = u64::from(width) * u64::from(height);
+    u32::try_from(pixels.div_ceil(750))
+        .unwrap_or(u32::MAX)
+        .saturating_add(MESSAGE_OVERHEAD)
+}
+
 /// The bytes of a context budget in tokens, the inverse of the estimate of
 /// two tokens for every five bytes.
 pub(crate) fn budget_bytes(tokens: u32) -> usize {
@@ -47,6 +58,7 @@ pub(crate) fn estimate_message(message: &Message) -> u32 {
             Content::ToolResult { call_id, output } => estimate_text(call_id)
                 .saturating_add(estimate_text(output))
                 .saturating_add(MESSAGE_OVERHEAD),
+            Content::Image(image) => estimate_image(image.width, image.height),
         })
         .fold(MESSAGE_OVERHEAD, u32::saturating_add)
 }
@@ -162,7 +174,25 @@ mod tests {
     use mannie_provider::{Content, Message, ModelRequest, Role, ToolChoice, ToolDefinition};
     use mannie_types::provider::ReasoningEffort;
 
-    use super::{Ledger, estimate_request, estimate_text};
+    use super::{Ledger, estimate_image, estimate_message, estimate_request, estimate_text};
+
+    #[test]
+    fn an_image_counts_its_pixels_never_its_bytes() {
+        let image = Content::Image(mannie_provider::ImageInput {
+            format: mannie_types::images::ImageFormat::Png,
+            width: 2_048,
+            height: 1_536,
+            data: mannie_types::images::ImageBytes::from(vec![0; 3_000_000]),
+        });
+        let message = Message {
+            role: Role::User,
+            content: vec![image],
+        };
+
+        assert_eq!(estimate_image(2_048, 1_536), 4_195 + 4);
+        assert_eq!(estimate_image(1, 1), 1 + 4);
+        assert_eq!(estimate_message(&message), 4 + 4_195 + 4);
+    }
 
     #[test]
     fn estimates_round_up_two_tokens_per_five_bytes() {

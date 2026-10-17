@@ -494,6 +494,7 @@ impl Runtime {
             turn_id: turn.clone(),
             user_part_id: ids.part(),
             mentions: Vec::new(),
+            images: Vec::new(),
             text: assignment.instruction.clone(),
             run: run.clone(),
             task: Some(NewTask {

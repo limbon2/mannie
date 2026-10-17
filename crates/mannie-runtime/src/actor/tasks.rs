@@ -924,6 +924,7 @@ impl RunActor {
             turn_id: turn.clone(),
             user_part_id: ids.part(),
             mentions: Vec::new(),
+            images: Vec::new(),
             text: instruction,
             run: NewRun {
                 id: run.clone(),

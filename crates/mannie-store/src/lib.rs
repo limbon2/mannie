@@ -32,11 +32,11 @@ pub use error::{DatabaseError, StoreError};
 pub use module_store::ModuleStore;
 pub use provider::{ProfileFields, ProfileStoreError, StoredProfile};
 pub use runtime::{
-    AddedProject, Applied, Change, ConversationList, EventsAfter, KeptRun, ModelPart, ModelTurn,
-    NewArchive, NewCheckpoint, NewConversation, NewExecutorTask, NewMention, NewPart, NewRun,
-    NewTask, OutboxEntry, ProjectDeletion, ProviderItem, Recovered, RuntimeStoreError,
-    StoredArchive, StoredCheckpoint, StoredChild, StoredTask, TaskEnding, TaskExecution,
-    TaskOrigin, UncertainCall,
+    AddedProject, Applied, Change, ConversationList, EventsAfter, KeptRun, ModelImage, ModelPart,
+    ModelTurn, NewArchive, NewCheckpoint, NewConversation, NewExecutorTask, NewImage, NewMention,
+    NewPart, NewRun, NewTask, OutboxEntry, ProjectDeletion, ProviderItem, Recovered,
+    RuntimeStoreError, StoredArchive, StoredCheckpoint, StoredChild, StoredImage, StoredTask,
+    TaskEnding, TaskExecution, TaskOrigin, UncertainCall,
 };
 pub use schema::{Migration, StoreModule};
 pub use settings::SettingsStoreError;

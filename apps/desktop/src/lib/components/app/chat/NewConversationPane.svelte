@@ -2,7 +2,7 @@
   import MessagesSquareIcon from '@lucide/svelte/icons/messages-square';
 
   import * as Empty from '#lib/components/ui/empty/index.js';
-  import { commands, type MentionRef } from '#lib/generated/bindings.js';
+  import { commands, type ImageRef, type MentionRef } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
   import { conversationList } from '#lib/state/conversation-list.svelte.js';
   import { providerProfiles } from '#lib/state/provider-profiles.svelte.js';
@@ -23,8 +23,10 @@
   const projectId = $derived(newConversationProjectId());
   const project = $derived(projectId === null ? undefined : conversationList.findProject(projectId));
 
-  async function start(text: string, mentions: MentionRef[]): Promise<ChatFailure | null> {
-    const outcome = await call(() => commands.startConversation({ mentions, profileId: null, projectId, text }));
+  async function start(text: string, mentions: MentionRef[], images: ImageRef[]): Promise<ChatFailure | null> {
+    const outcome = await call(() =>
+      commands.startConversation({ images, mentions, profileId: null, projectId, text }),
+    );
     if (!outcome.ok) {
       return outcome.failure;
     }

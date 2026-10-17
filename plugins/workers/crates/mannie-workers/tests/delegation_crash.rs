@@ -47,6 +47,16 @@ fn the_worker() -> TaskExecutorRef {
     }
 }
 
+/// The conversation agent's run of the parent's turn.
+fn conversation_run(run: &RunId, profile: &ProfileId) -> NewRun {
+    NewRun {
+        id: run.clone(),
+        agent: "conversation".to_owned(),
+        profile_id: profile.clone(),
+        binding: format!("{profile}:1"),
+    }
+}
+
 /// Writes a parent whose reply runs and whose `delegate_task` part recorded
 /// a task, as the run stores it before it stores the task's rows.
 async fn crash_after_the_part(store: &Store, profile: &ProfileId) -> (Crashed, PartId) {
@@ -95,13 +105,9 @@ async fn crash_after_the_part(store: &Store, profile: &ProfileId) -> (Crashed, P
                     turn_id: turn.clone(),
                     user_part_id: new_id(PartId::parse),
                     mentions: Vec::new(),
+                    images: Vec::new(),
                     text: "Build it on the server".to_owned(),
-                    run: NewRun {
-                        id: run.clone(),
-                        agent: "conversation".to_owned(),
-                        profile_id: profile.clone(),
-                        binding: format!("{profile}:1"),
-                    },
+                    run: conversation_run(&run, profile),
                     task: None,
                 },
                 Change::StartRun {

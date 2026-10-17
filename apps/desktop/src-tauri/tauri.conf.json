@@ -20,7 +20,8 @@
         "minWidth": 800,
         "minHeight": 480,
         "center": true,
-        "useHttpsScheme": true
+        "useHttpsScheme": true,
+        "dragDropEnabled": false
       }
     ],
     "security": {

@@ -4,7 +4,10 @@ use std::fmt;
 use std::pin::Pin;
 use std::time::Duration;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use futures_util::Stream;
+use mannie_types::images::{ImageBytes, ImageFormat};
 use mannie_types::provider::{ApiInterface, ReasoningEffort};
 use mannie_types::run::{FinishReason, RunFailure, Usage};
 use mannie_types::secret::Secret;
@@ -59,6 +62,33 @@ pub enum Content {
         /// The result as the model reads it.
         output: String,
     },
+    /// An image of the owner's message (ADR-0033, decision 5).
+    Image(ImageInput),
+}
+
+/// An image that a message holds. The adapters send it inline, as a `data:`
+/// URL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageInput {
+    /// The format of the bytes.
+    pub format: ImageFormat,
+    /// The width in pixels, for the context estimate.
+    pub width: u32,
+    /// The height in pixels, for the context estimate.
+    pub height: u32,
+    /// The image.
+    pub data: ImageBytes,
+}
+
+impl ImageInput {
+    /// The image as a `data:` URL, such as `data:image/png;base64,iVBOR…`.
+    pub fn data_url(&self) -> String {
+        format!(
+            "data:{};base64,{}",
+            self.format.media_type(),
+            BASE64.encode(self.data.as_slice())
+        )
+    }
 }
 
 /// A message of the conversation that the model reads.

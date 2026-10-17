@@ -6,6 +6,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use specta::Type;
 
 use crate::ids::{CheckpointId, ConversationId, ProfileId, ProjectId, RunId, TurnId};
+use crate::images::ImageRef;
 use crate::mentions::MentionRef;
 use crate::run::RunFailure;
 use crate::settings::SettingsSection;
@@ -94,10 +95,10 @@ impl UpdateChatSettings {
     }
 }
 
-/// Checks the text of a message: not blank, and not longer than
-/// [`MAX_MESSAGE_BYTES`].
-pub fn check_message(text: &str) -> Result<(), ChatError> {
-    if text.trim().is_empty() {
+/// Checks the text of a message: not longer than [`MAX_MESSAGE_BYTES`], and
+/// not blank unless the message has images (ADR-0033, decision 1).
+pub fn check_message(text: &str, has_images: bool) -> Result<(), ChatError> {
+    if text.trim().is_empty() && !has_images {
         return Err(ChatError::MessageEmpty);
     }
     if text.len() > MAX_MESSAGE_BYTES {
@@ -173,6 +174,10 @@ pub struct StartConversation {
     /// What the message mentions, in the order of its text (ADR-0032).
     #[serde(default)]
     pub mentions: Vec<MentionRef>,
+    /// The images of the message, in the order the owner added them
+    /// (ADR-0033).
+    #[serde(default)]
+    pub images: Vec<ImageRef>,
 }
 
 /// The result of `start_conversation`.
@@ -202,6 +207,10 @@ pub struct SendMessage {
     /// What the message mentions, in the order of its text (ADR-0032).
     #[serde(default)]
     pub mentions: Vec<MentionRef>,
+    /// The images of the message, in the order the owner added them
+    /// (ADR-0033).
+    #[serde(default)]
+    pub images: Vec<ImageRef>,
 }
 
 /// The result of `send_message` and `retry_reply`.
@@ -477,6 +486,33 @@ pub enum ChatError {
         /// The provider's code for why, such as `outside_workspace`.
         reason: String,
     },
+    /// The message has more images than Mannie sends with one message.
+    #[error("a message has at most {max} images")]
+    TooManyImages {
+        /// The limit.
+        max: u32,
+    },
+    /// An image's source is not there, for example because its plugin is off
+    /// (ADR-0033).
+    #[error("the images of {image_source} are not available")]
+    ImageUnavailable {
+        /// The source's ID.
+        image_source: String,
+    },
+    /// An image's source refused its key, or returned an image outside the
+    /// core's limits.
+    #[error("{image_source} refused an image: {reason}")]
+    ImageRefused {
+        /// The source's ID.
+        image_source: String,
+        /// The source's code for why, such as `not_found`, or
+        /// `invalid_image` from the core's checks.
+        reason: String,
+    },
+    /// The image does not exist in the conversation, for example because the
+    /// conversation was deleted.
+    #[error("the image does not exist")]
+    ImageNotFound,
 }
 
 impl ChatError {
@@ -518,6 +554,10 @@ impl ChatError {
             Self::TooManyMentions { .. } => "chat.too_many_mentions",
             Self::MentionUnavailable { .. } => "chat.mention_unavailable",
             Self::MentionRefused { .. } => "chat.mention_refused",
+            Self::TooManyImages { .. } => "chat.too_many_images",
+            Self::ImageUnavailable { .. } => "chat.image_unavailable",
+            Self::ImageRefused { .. } => "chat.image_refused",
+            Self::ImageNotFound => "chat.image_not_found",
         }
     }
 }
@@ -531,13 +571,42 @@ mod tests {
 
     #[test]
     fn messages_must_have_text_within_the_limit() {
-        assert_eq!(check_message("Hello"), Ok(()));
-        assert_eq!(check_message(" \n\t"), Err(ChatError::MessageEmpty));
+        assert_eq!(check_message("Hello", false), Ok(()));
+        assert_eq!(check_message(" \n\t", false), Err(ChatError::MessageEmpty));
         assert_eq!(
-            check_message(&"a".repeat(MAX_MESSAGE_BYTES + 1)),
+            check_message(&"a".repeat(MAX_MESSAGE_BYTES + 1), false),
             Err(ChatError::MessageTooLong { max_bytes: 262_144 })
         );
-        assert_eq!(check_message(&"a".repeat(MAX_MESSAGE_BYTES)), Ok(()));
+        assert_eq!(check_message(&"a".repeat(MAX_MESSAGE_BYTES), false), Ok(()));
+    }
+
+    #[test]
+    fn a_message_with_images_may_have_no_text_but_not_too_much() {
+        assert_eq!(check_message("", true), Ok(()));
+        assert_eq!(check_message(" \n", true), Ok(()));
+        assert_eq!(
+            check_message(&"a".repeat(MAX_MESSAGE_BYTES + 1), true),
+            Err(ChatError::MessageTooLong { max_bytes: 262_144 })
+        );
+    }
+
+    #[test]
+    fn image_errors_name_their_source_for_the_ui() {
+        let refused = ChatError::ImageRefused {
+            image_source: "images".to_owned(),
+            reason: "not_found".to_owned(),
+        };
+
+        assert_eq!(
+            serde_json::to_value(&refused).unwrap(),
+            serde_json::json!({
+                "code": "image_refused",
+                "imageSource": "images",
+                "reason": "not_found"
+            })
+        );
+        assert_eq!(refused.code(), "chat.image_refused");
+        assert_eq!(ChatError::ImageNotFound.code(), "chat.image_not_found");
     }
 
     #[test]

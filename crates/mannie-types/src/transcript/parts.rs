@@ -5,6 +5,7 @@ use specta::Type;
 
 use crate::clock::UtcMillis;
 use crate::ids::{PartId, RunId, TurnId};
+use crate::images::ImageView;
 use crate::mentions::MentionView;
 use crate::run::RunFailure;
 use crate::tasks::TaskCallView;
@@ -35,11 +36,14 @@ pub enum PartKind {
     /// Something that the owner's message mentions, with what the model reads
     /// of it (ADR-0032).
     Mention,
+    /// An image that the owner's message holds, whose bytes the store keeps
+    /// beside the part (ADR-0033).
+    Image,
 }
 
 impl PartKind {
     /// Every kind this version knows.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::UserText,
         Self::Text,
         Self::Reasoning,
@@ -48,6 +52,7 @@ impl PartKind {
         Self::ToolCall,
         Self::Task,
         Self::Mention,
+        Self::Image,
     ];
 
     /// The kind's name as the store and the UI know it.
@@ -61,6 +66,7 @@ impl PartKind {
             Self::ToolCall => "tool_call",
             Self::Task => "task",
             Self::Mention => "mention",
+            Self::Image => "image",
         }
     }
 
@@ -84,7 +90,8 @@ impl PartKind {
             | Self::Reasoning
             | Self::ToolCall
             | Self::Task
-            | Self::Mention => Audience::Both,
+            | Self::Mention
+            | Self::Image => Audience::Both,
             Self::Error => Audience::Owner,
             Self::ContinuationNote => Audience::Model,
         }
@@ -223,6 +230,11 @@ pub enum PartContent {
         /// What the mention names and what the model got.
         mention: MentionView,
     },
+    /// An image that the owner's message holds.
+    Image {
+        /// What the image is; its bytes come from `read_image`.
+        image: ImageView,
+    },
     /// A kind of part that this version does not know.
     Unknown {
         /// The kind's name.
@@ -253,6 +265,7 @@ pub struct PartView {
 #[cfg(test)]
 mod tests {
     use super::{Audience, PartContent, PartKind, PartState};
+    use crate::images::{ImageFormat, ImageView};
 
     #[test]
     fn kinds_round_trip_through_their_names() {
@@ -290,6 +303,35 @@ mod tests {
         assert!(PartKind::Error.audience().includes_owner());
         assert!(!PartKind::Error.audience().includes_model());
         assert_eq!(PartKind::Text.audience(), Audience::Both);
+    }
+
+    #[test]
+    fn images_are_for_both_and_their_content_carries_no_bytes() {
+        let image = PartContent::Image {
+            image: ImageView {
+                name: "shot.png".to_owned(),
+                format: ImageFormat::Png,
+                width: 800,
+                height: 600,
+                bytes: 12_345,
+            },
+        };
+
+        assert_eq!(PartKind::Image.audience(), Audience::Both);
+        assert_eq!(PartKind::parse("image"), Some(PartKind::Image));
+        assert_eq!(
+            serde_json::to_value(&image).unwrap(),
+            serde_json::json!({
+                "kind": "image",
+                "image": {
+                    "name": "shot.png",
+                    "format": "png",
+                    "width": 800,
+                    "height": 600,
+                    "bytes": 12345
+                }
+            })
+        );
     }
 
     #[test]

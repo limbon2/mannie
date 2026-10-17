@@ -50,3 +50,4 @@ Each ADR has exactly one of these statuses:
 | [0030](0030-split-mannie-into-a-core-and-plugins.md)                   | Split Mannie into a core and internal plugins that the owner turns on and off                 | Accepted (D28)         | M5         |
 | [0031](0031-move-workers-into-the-first-plugin.md)                     | Move the worker system into the first plugin, behind extension points of the core             | Accepted (D28)         | M5         |
 | [0032](0032-let-features-and-plugins-add-kinds-of-mentions.md)         | Let features and plugins add kinds of mentions to the message box                             | Accepted (D30)         | M6         |
+| [0033](0033-let-plugins-attach-images-to-the-owners-messages.md)       | Let plugins attach images to the owner's messages                                             | Accepted (D31)         | M7         |

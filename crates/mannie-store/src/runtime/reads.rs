@@ -4,6 +4,7 @@
 
 use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{CheckpointId, ConversationId, PartId, RunId, TurnId};
+use mannie_types::images::{ImageBytes, ImageFormat};
 use mannie_types::run::RunState;
 use mannie_types::tasks::TaskPartDocument;
 use mannie_types::tools::ToolCallDocument;
@@ -56,9 +57,11 @@ const SELECT_MODEL_TURNS: &str = "SELECT t.id, t.position, t.current_run_id, r.s
      WHERE t.conversation_id = ?1 AND t.position > ?2 ORDER BY t.position";
 // A task in the background keeps its part open until it ends, and the model
 // reads the call with the result it was given meanwhile (ADR-0024, decision 2).
+// An image part brings its bytes (ADR-0033, decision 6).
 const SELECT_MODEL_PARTS: &str = "SELECT p.id, p.kind, p.audience, p.state, p.text, i.binding, i.item, \
-     p.run_id, p.document, p.attempt \
+     p.run_id, p.document, p.attempt, m.format, m.data \
      FROM runtime_parts p LEFT JOIN runtime_provider_items i ON i.part_id = p.id \
+     LEFT JOIN runtime_images m ON m.part_id = p.id \
      WHERE p.turn_id = ?1 AND (p.run_id IS NULL OR p.run_id = ?2 \
      OR p.run_id IN (SELECT id FROM runtime_runs WHERE turn_id = ?1 AND kept = 1)) \
      AND (p.state NOT IN ('discarded', 'streaming') OR (p.state = 'streaming' AND p.kind = 'task')) \
@@ -189,6 +192,24 @@ pub struct ModelPart {
     /// The model call of its run that wrote it, counting from 1, which tells
     /// the steps of a reply apart; 0 for the owner's message.
     pub attempt: u32,
+    /// The image of an image part, or `None` for other parts and for an
+    /// image whose document or bytes are missing.
+    pub image: Option<ModelImage>,
+}
+
+/// An image as the model reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelImage {
+    /// The format of the bytes.
+    pub format: ImageFormat,
+    /// The width in pixels.
+    pub width: u32,
+    /// The height in pixels.
+    pub height: u32,
+    /// The SHA-256 digest of the bytes, in hexadecimal.
+    pub digest: String,
+    /// The image.
+    pub data: ImageBytes,
 }
 
 impl Store {
@@ -649,6 +670,9 @@ struct ModelPartRow {
     document: String,
     /// `NULL` for the owner's message, which no model call wrote.
     attempt: Option<i64>,
+    /// `NULL` but for an image part.
+    image_format: Option<String>,
+    image_data: Option<Vec<u8>>,
 }
 
 fn model_parts(
@@ -670,6 +694,8 @@ fn model_parts(
                 run_id: row.get(7)?,
                 document: row.get(8)?,
                 attempt: row.get(9)?,
+                image_format: row.get(10)?,
+                image_data: row.get(11)?,
             })
         })?;
         rows.collect::<Result<_, _>>()?
@@ -699,6 +725,11 @@ fn model_parts(
         } else {
             (None, None)
         };
+        let image = if kind == Some(PartKind::Image) {
+            model_image(&row.document, row.image_format.as_deref(), row.image_data)?
+        } else {
+            None
+        };
         parts.push(ModelPart {
             id: parse_id(&row.id, PartId::parse)?,
             run_id: row
@@ -714,9 +745,33 @@ fn model_parts(
             tool_call,
             task,
             attempt: position(row.attempt.unwrap_or(0), "a part's attempt")?,
+            image,
         });
     }
     Ok(parts)
+}
+
+/// The image of an image part from its document and its row of bytes, or
+/// `None` when either is missing or names a format this version does not
+/// know, so that the model reads a note instead.
+fn model_image(
+    document: &str,
+    format: Option<&str>,
+    data: Option<Vec<u8>>,
+) -> Result<Option<ModelImage>, RuntimeStoreError> {
+    let document: PartDocument = from_json(document, "part document")?;
+    let image = document
+        .image
+        .zip(format.and_then(ImageFormat::parse))
+        .zip(data)
+        .map(|((image, format), data)| ModelImage {
+            format,
+            width: image.view.width,
+            height: image.view.height,
+            digest: image.digest,
+            data: ImageBytes::from(data),
+        });
+    Ok(image)
 }
 
 /// The earlier runs of a turn that it keeps, oldest first, without its

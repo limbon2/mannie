@@ -1,7 +1,7 @@
 //! What plugins contribute to the runtime while they are on (ADR-0030,
 //! decision 5): tools, agent definitions, instruction sections, task
-//! executors and mention providers (ADR-0032), each kept with the ID of the
-//! plugin that made it.
+//! executors, mention providers (ADR-0032) and image sources (ADR-0033), each
+//! kept with the ID of the plugin that made it.
 //!
 //! The runtime takes a plugin's contributions when the plugin starts and
 //! drops them when it stops. A run reads them once, when it starts, so the
@@ -17,6 +17,7 @@ use mannie_tools::Tool;
 use crate::Runtime;
 use crate::agents::AgentDefinition;
 use crate::executors::TaskExecutor;
+use crate::images::ImageSource;
 use crate::instructions::InstructionSection;
 use crate::mentions::MentionProvider;
 
@@ -44,6 +45,9 @@ pub struct PluginContributions {
     /// Mention providers, whose IDs are the plugin's ID or start with it and a
     /// dot (ADR-0032, decision 3).
     pub mentions: Vec<Arc<dyn MentionProvider>>,
+    /// Image sources, whose IDs follow the rule of mention providers
+    /// (ADR-0033, decision 2).
+    pub images: Vec<Arc<dyn ImageSource>>,
 }
 
 /// Why the runtime did not take a plugin's contributions. It took none of
@@ -98,6 +102,59 @@ pub enum ContributionError {
         /// The provider's ID.
         id: String,
     },
+    /// Another plugin has an image source with this ID.
+    #[error("an image source with the ID {id} is registered already")]
+    DuplicateImageSource {
+        /// The source's ID.
+        id: String,
+    },
+    /// An image source's ID is neither the plugin's ID nor starts with it and
+    /// a dot.
+    #[error("the plugin {plugin} cannot register the image source {id}")]
+    ImageSourceId {
+        /// The plugin.
+        plugin: String,
+        /// The source's ID.
+        id: String,
+    },
+}
+
+/// Refuses image sources whose IDs are not the plugin's, or that another
+/// plugin or the contributions themselves already use (ADR-0033, decision 2).
+fn check_image_sources(
+    plugin: &str,
+    registered: &[Registered],
+    images: &[Arc<dyn ImageSource>],
+) -> Result<(), ContributionError> {
+    let mut source_ids: Vec<&str> = Vec::new();
+    for source in images {
+        let id = source.id();
+        if !owned_by(plugin, id) {
+            return Err(ContributionError::ImageSourceId {
+                plugin: plugin.to_owned(),
+                id: id.to_owned(),
+            });
+        }
+        let taken = source_ids.contains(&id)
+            || registered
+                .iter()
+                .flat_map(|entry| &entry.images)
+                .any(|other| other.id() == id);
+        if taken {
+            return Err(ContributionError::DuplicateImageSource { id: id.to_owned() });
+        }
+        source_ids.push(id);
+    }
+    Ok(())
+}
+
+/// Whether an ID of a mention provider or an image source belongs to the
+/// plugin: the plugin's ID, or one that starts with it and a dot.
+fn owned_by(plugin: &str, id: &str) -> bool {
+    id == plugin
+        || id
+            .strip_prefix(plugin)
+            .is_some_and(|rest| rest.len() > 1 && rest.starts_with('.'))
 }
 
 /// The contributions of one plugin that is on, without its executors, which
@@ -109,6 +166,7 @@ struct Registered {
     agents: Vec<AgentDefinition>,
     sections: Vec<InstructionSection>,
     mentions: Vec<Arc<dyn MentionProvider>>,
+    images: Vec<Arc<dyn ImageSource>>,
 }
 
 /// The contributions of the plugins that are on.
@@ -155,6 +213,7 @@ impl Runtime {
             sections,
             executors,
             mentions,
+            images,
         } = contributions;
         for executor in executors {
             // Checked above: the kind is the plugin's and free.
@@ -182,6 +241,7 @@ impl Runtime {
             agents = agents.len(),
             sections = sections.len(),
             mentions = mentions.len(),
+            images = images.len(),
             "a plugin's contributions were registered"
         );
         registered.push(Registered {
@@ -190,6 +250,7 @@ impl Runtime {
             agents,
             sections,
             mentions,
+            images,
         });
         Ok(())
     }
@@ -209,6 +270,7 @@ impl Runtime {
             sections,
             executors,
             mentions,
+            images,
         } = contributions;
         let mut names: Vec<&str> = Vec::new();
         for offered in tools {
@@ -269,11 +331,7 @@ impl Runtime {
         let mut provider_ids: Vec<&str> = Vec::new();
         for provider in mentions {
             let id = provider.id();
-            let owned = id == plugin
-                || id
-                    .strip_prefix(plugin)
-                    .is_some_and(|rest| rest.len() > 1 && rest.starts_with('.'));
-            if !owned {
+            if !owned_by(plugin, id) {
                 return Err(ContributionError::MentionProviderId {
                     plugin: plugin.to_owned(),
                     id: id.to_owned(),
@@ -290,7 +348,7 @@ impl Runtime {
             }
             provider_ids.push(id);
         }
-        Ok(())
+        check_image_sources(plugin, registered, images)
     }
 
     /// Drops a plugin's contributions, as the plugin stops (ADR-0030,
@@ -368,6 +426,19 @@ impl Runtime {
             .unwrap_or_else(PoisonError::into_inner)
             .iter()
             .flat_map(|entry| entry.mentions.iter().map(Arc::clone))
+            .collect()
+    }
+
+    /// The image sources of the plugins that are on, in the order in which
+    /// the plugins started.
+    pub(crate) fn image_sources(&self) -> Vec<Arc<dyn ImageSource>> {
+        self.inner
+            .plugins
+            .registered
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .flat_map(|entry| entry.images.iter().map(Arc::clone))
             .collect()
     }
 

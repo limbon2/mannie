@@ -28,6 +28,7 @@ members = [
   "crates/mannie-store",
   "crates/mannie-tools",
   "crates/mannie-types",
+  "plugins/images/crates/mannie-images",
   "plugins/workers/crates/mannie-link",
   "plugins/workers/crates/mannie-workers",
   "plugins/workers/worker",
@@ -63,12 +64,17 @@ hyper-util = { version = "0.1.21", default-features = false, features = ["tokio"
 # Walking folders the way `.gitignore` files say, for `find_files` and
 # `search_text`.
 ignore = "0.4.33"
+# Decoding, turning, shrinking and encoding the images that the owner attaches
+# to a message, with decoders written in Rust and only the formats that the
+# Images plugin takes (ADR-0033).
+image = { version = "0.25.10", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 keyring-core = "1.0.1"
 # The FreeBSD process supervisor's calls that rustix cannot make for it: a
 # process's start time from sysctl, which it has no binding for, and
 # procctl(PROC_REAP_KILL), whose binding panics on the kernel's answer
 # (ADR-0014).
 libc = "0.2.190"
+mannie-images = { path = "plugins/images/crates/mannie-images" }
 mannie-link = { path = "plugins/workers/crates/mannie-link" }
 mannie-logging = { path = "crates/mannie-logging" }
 mannie-plugins = { path = "crates/mannie-plugins" }

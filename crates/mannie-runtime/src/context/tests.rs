@@ -1,9 +1,10 @@
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
-use mannie_provider::{Content, Message, Role, ToolChoice, ToolDefinition};
-use mannie_store::{KeptRun, ModelPart, ModelTurn, ProviderItem};
+use mannie_provider::{Content, ImageInput, Message, Role, ToolChoice, ToolDefinition};
+use mannie_store::{KeptRun, ModelImage, ModelPart, ModelTurn, ProviderItem};
 use mannie_types::ids::{ArchiveId, ConversationId, PartId, RunId, TaskId, TurnId};
+use mannie_types::images::{ImageBytes, ImageFormat};
 use mannie_types::provider::{ApiInterface, ReasoningEffort};
 use mannie_types::run::RunState;
 use mannie_types::tasks::{AwaitedTask, TaskDocument, TaskPartDocument, TaskRefusal, TaskState};
@@ -36,6 +37,7 @@ fn part(number: u32, kind: Option<PartKind>, text: &str) -> ModelPart {
         tool_call: None,
         task: None,
         attempt: u32::from(kind != Some(PartKind::UserText)),
+        image: None,
     }
 }
 
@@ -206,6 +208,86 @@ fn mentions_follow_the_owner_s_text_in_the_same_message() {
                 Content::Text("Compare @a.rs with @b.rs".to_owned()),
                 Content::Text("The owner mentioned the file a.rs.".to_owned()),
                 Content::Text("The owner mentioned the file b.rs.".to_owned()),
+            ],
+        }]
+    );
+}
+
+/// An image of the owner's message, whose bytes are `byte` repeated.
+fn image(number: u32, byte: u8) -> ModelPart {
+    ModelPart {
+        run_id: None,
+        attempt: 0,
+        image: Some(ModelImage {
+            format: ImageFormat::Png,
+            width: 4,
+            height: 2,
+            digest: format!("digest-{byte}"),
+            data: ImageBytes::from(vec![byte; 3]),
+        }),
+        ..part(number, Some(PartKind::Image), "")
+    }
+}
+
+fn image_content(byte: u8) -> Content {
+    Content::Image(ImageInput {
+        format: ImageFormat::Png,
+        width: 4,
+        height: 2,
+        data: ImageBytes::from(vec![byte; 3]),
+    })
+}
+
+#[test]
+fn images_follow_the_text_and_mentions_in_the_same_message() {
+    let turns = [turn(
+        0,
+        Some(RunState::Running),
+        vec![
+            part(1, Some(PartKind::UserText), "What differs?"),
+            mention(2, "The owner mentioned the file a.rs."),
+            image(3, 7),
+            image(4, 8),
+        ],
+    )];
+
+    let request = build_request(shape(ApiInterface::ChatCompletions), &turns);
+
+    assert_eq!(
+        request.messages,
+        [Message {
+            role: Role::User,
+            content: vec![
+                Content::Text("What differs?".to_owned()),
+                Content::Text("The owner mentioned the file a.rs.".to_owned()),
+                image_content(7),
+                image_content(8),
+            ],
+        }]
+    );
+}
+
+#[test]
+fn a_message_with_only_an_image_has_no_empty_text_and_a_lost_image_a_note() {
+    let lost = ModelPart {
+        image: None,
+        ..image(3, 9)
+    };
+    let turns = [turn(
+        0,
+        Some(RunState::Running),
+        vec![part(1, Some(PartKind::UserText), " "), image(2, 7), lost],
+    )];
+
+    let request = build_request(shape(ApiInterface::Responses), &turns);
+
+    assert_eq!(
+        request.messages,
+        [Message {
+            role: Role::User,
+            content: vec![
+                image_content(7),
+                Content::Text(texts::IMAGE_MISSING.to_owned()),
             ],
         }]
     );

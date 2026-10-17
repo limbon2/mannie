@@ -174,6 +174,7 @@ async fn drive(
         .runtime
         .start_conversation(StartConversation {
             mentions: Vec::new(),
+            images: Vec::new(),
             text: "Turn 0".to_owned(),
             profile_id: None,
             project_id: None,
@@ -191,6 +192,7 @@ async fn drive(
                 run = runtime
                     .send_message(SendMessage {
                         mentions: Vec::new(),
+                        images: Vec::new(),
                         conversation_id: background_conversation.clone(),
                         text: format!("Turn {index}"),
                     })

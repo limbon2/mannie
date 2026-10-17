@@ -1,5 +1,6 @@
-use mannie_store::{ModelPart, ModelTurn};
+use mannie_store::{ModelImage, ModelPart, ModelTurn};
 use mannie_types::ids::{PartId, TurnId};
+use mannie_types::images::{ImageBytes, ImageFormat};
 use mannie_types::run::RunState;
 use mannie_types::transcript::{PartKind, PartState};
 
@@ -8,7 +9,7 @@ use super::{
     summary_allowance, turns_estimate,
 };
 use crate::agents::Requester;
-use crate::budget::estimate_text;
+use crate::budget::{estimate_image, estimate_text};
 use crate::texts;
 
 fn part(id: u32, kind: PartKind, text: &str) -> ModelPart {
@@ -23,6 +24,7 @@ fn part(id: u32, kind: PartKind, text: &str) -> ModelPart {
         tool_call: None,
         task: None,
         attempt: 1,
+        image: None,
     }
 }
 
@@ -255,6 +257,45 @@ fn mentions_reach_summaries_cut_to_their_start() {
     assert!(rendered[0].contains("[...]"), "{rendered:?}");
     assert!(rendered[0].len() < page.len(), "{}", rendered[0].len());
     assert!(turns_estimate(&[mentioned], Requester::Owner) > estimate_text(&page));
+}
+
+fn image(id: u32, digest: &str) -> ModelPart {
+    ModelPart {
+        image: Some(ModelImage {
+            format: ImageFormat::Jpeg,
+            width: 1_600,
+            height: 1_200,
+            digest: digest.to_owned(),
+            data: ImageBytes::from(vec![1; 10_000]),
+        }),
+        ..part(id, PartKind::Image, "")
+    }
+}
+
+#[test]
+fn images_reach_summaries_as_their_size_and_count_their_pixels() {
+    let mut pictured = turn(0, 1);
+    pictured.parts.insert(1, image(2, "digest-a"));
+
+    let rendered = render_turns(&[pictured.clone()], Requester::Owner);
+    let with_image = turns_estimate(&[pictured], Requester::Owner);
+    let without = turns_estimate(&[turn(0, 1)], Requester::Owner);
+
+    assert!(
+        rendered[0].contains("Owner's image: 1600×1200 pixels."),
+        "{rendered:?}"
+    );
+    assert!(with_image >= without + estimate_image(1_600, 1_200));
+}
+
+#[test]
+fn an_image_s_digest_is_part_of_the_hash() {
+    let mut first = turn(0, 1);
+    first.parts.insert(1, image(2, "digest-a"));
+    let mut second = turn(0, 1);
+    second.parts.insert(1, image(2, "digest-b"));
+
+    assert_ne!(content_hash(None, &[first]), content_hash(None, &[second]));
 }
 
 #[test]

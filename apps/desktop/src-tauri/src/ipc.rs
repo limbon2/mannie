@@ -15,8 +15,8 @@ use tauri::Wry;
 use tauri_specta::{Builder, ErrorHandlingMode, collect_commands};
 
 use crate::commands::{
-    chat, child_agents, interface, links, plugins, projects, providers, startup, tools, window,
-    workers,
+    chat, child_agents, images, interface, links, plugins, projects, providers, startup, tools,
+    window, workers,
 };
 
 /// The first line of every generated file.
@@ -62,6 +62,7 @@ macro_rules! app_commands {
             chat::start_conversation,
             chat::send_message,
             chat::suggest_mentions,
+            chat::read_image,
             chat::stop_reply,
             chat::retry_reply,
             chat::rename_conversation,
@@ -111,6 +112,10 @@ macro_rules! app_commands {
             workers::pair_worker,
             workers::rename_worker,
             workers::remove_worker,
+            images::pick_images,
+            images::prepare_picked_image,
+            images::prepare_image,
+            images::discard_prepared_image,
             $($extra)*
         ]
     };
@@ -146,6 +151,7 @@ fn validation_builder() -> Builder<Wry> {
             crate::commands::validation::validation_seed_conversation,
             crate::commands::validation::validation_opened_links,
             crate::commands::validation::validation_set_folder_choice,
+            crate::commands::validation::validation_set_file_choice,
         ])
 }
 
@@ -177,6 +183,7 @@ pub(crate) fn runtime_builder() -> Builder<Wry> {
                 crate::commands::validation::validation_seed_conversation,
                 crate::commands::validation::validation_opened_links,
                 crate::commands::validation::validation_set_folder_choice,
+                crate::commands::validation::validation_set_file_choice,
             ])
     }
 }

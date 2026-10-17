@@ -78,6 +78,7 @@ describe('composeShell', () => {
     expect(slots.partRenderers.entries).toEqual([]);
     expect(slots.sidePanels.entries).toEqual([]);
     expect(slots.conversationControls.entries).toEqual([]);
+    expect(slots.imageSources.entries).toEqual([]);
   });
 
   it('composes the app’s features and plugins beside the shell, with chat first and every plugin on', async () => {
@@ -86,7 +87,7 @@ describe('composeShell', () => {
 
     const slots = composeShell(features, plugins, () => true);
 
-    expect(pluginCatalog().map((plugin) => plugin.id)).toEqual(['workers']);
+    expect(pluginCatalog().map((plugin) => plugin.id)).toEqual(['workers', 'images']);
     expect(slots.views.entries.map((view) => view.id)).toEqual(['chat']);
     expect(slots.sidebarPanels.entries.map((panel) => panel.id)).toEqual([
       'chat.projects',
@@ -111,10 +112,12 @@ describe('composeShell', () => {
       'reasoning',
       'error',
       'mention',
+      'image',
       'tool_call',
       'task',
     ]);
     expect(slots.mentionKinds.entries.map((kind) => kind.id)).toEqual(['files']);
+    expect(slots.imageSources.entries.map((source) => source.id)).toEqual(['images']);
     expect(slots.settingsSections.entries.map((section) => section.id)).toEqual([
       'shell.interface',
       'chat.providers',

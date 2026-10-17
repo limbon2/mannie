@@ -13,7 +13,7 @@ The owner wants Mannie's core to hold what every agent harness needs, such as ch
 
 ## Behavior
 
-- Settings has a Plugins page that lists every plugin built into this version of Mannie, each with its name, a sentence on what it adds and a switch. The first version lists one plugin, Workers.
+- Settings has a Plugins page that lists every plugin built into this version of Mannie, each with its name, a sentence on what it adds and a switch. It lists Workers and [Images](images.md).
 - Turning a plugin on takes effect at once, without restarting Mannie. Its parts of the interface appear, such as the Workers group in the sidebar, its settings page and its commands, and replies that start from then on can use its tools.
 - Turning a plugin off also takes effect at once. Its parts of the interface disappear, replies that start from then on no longer get its tools, and its background work ends. When the plugin has work in progress, the switch asks first and says what happens to it. For Workers, running tasks keep running on their workers, and Mannie follows them again when Workers is back on.
 - A reply that is already running keeps the tools it started with, whatever the owner switches meanwhile. If it calls a tool of a plugin that was turned off, the call does not run, and the model reads that the plugin is off.

@@ -42,6 +42,11 @@ export const MODELS = {
   tools: 'e2e-tools',
   /** Refuses every request as if the credential were wrong, and repeats the credential as some servers do. */
   unauthorized: 'e2e-unauthorized',
+  /**
+   * Refuses a request that holds an image with 400, as a server whose model
+   * reads no images does, and answers the others as `echo` does.
+   */
+  withoutImages: 'e2e-without-images',
 } as const;
 
 /** How many words the paced scenario sends. */
@@ -402,6 +407,21 @@ function interfaceOf(path: string): Interface | null {
   return null;
 }
 
+/** The types of the image parts of either interface. */
+const IMAGE_PART_TYPES = new Set(['image_url', 'input_image']);
+
+/** Whether a request body of either interface holds an image. */
+export function holdsImage(body: Record<string, unknown>): boolean {
+  const entries = (body.messages ?? body.input ?? []) as Record<string, unknown>[];
+  return entries.some((entry) => {
+    const content = entry.content;
+    if (!Array.isArray(content)) {
+      return false;
+    }
+    return content.some((part: { type?: string }) => IMAGE_PART_TYPES.has(part.type ?? ''));
+  });
+}
+
 /** Whether a request asks for a checkpoint: the compaction call ends its only message with this request. */
 export function isSummaryRequest(body: Record<string, unknown> | null): boolean {
   if (body === null) {
@@ -617,6 +637,15 @@ export async function startProviderServer(): Promise<ProviderServer> {
       refuse(response, 401, {
         code: 'invalid_api_key',
         message: `Incorrect API key provided: ${credential}.`,
+        type: 'invalid_request_error',
+      });
+      return;
+    }
+    const refusesImage = model === MODELS.withoutImages && holdsImage(body);
+    if (refusesImage) {
+      refuse(response, 400, {
+        code: null,
+        message: 'This model does not support image input.',
         type: 'invalid_request_error',
       });
       return;

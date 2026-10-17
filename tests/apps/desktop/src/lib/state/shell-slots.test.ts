@@ -141,6 +141,29 @@ describe('ShellSlots', () => {
     }).toThrow('The mention kinds slot already has an entry with the ID fake.');
   });
 
+  it('lists a plugin’s source of images only while the plugin is on', () => {
+    const plugins = pluginsOn();
+    const slots = new ShellSlots(plugins.isOn);
+    const source = {
+      button: (() => ({})) as never,
+      id: 'images',
+      order: 0,
+      refusal: () => null,
+      take: () => undefined,
+      takes: () => true,
+    };
+
+    slots.forPlugin('images').imageSources.register(source);
+    const whileOff = slots.imageSources.entries;
+    plugins.on.add('images');
+
+    expect(whileOff).toEqual([]);
+    expect(slots.imageSources.find('images')).toBe(source);
+    expect(() => {
+      slots.imageSources.register(source);
+    }).toThrow('The image sources slot already has an entry with the ID images.');
+  });
+
   it('has a slot for panels, overlays and part renderers that refuses duplicates', () => {
     const slots = new ShellSlots();
     const component = () => ({});

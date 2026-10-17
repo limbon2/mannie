@@ -12,6 +12,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
+use mannie_images::ImagesPlugin;
 use mannie_logging::{ErrorChain, LogConfig, LoggingGuard, Redactor};
 use mannie_plugins::{Grants, HostedPlugin, Plugin, PluginHost};
 use mannie_provider::{HttpClient, ProviderRegistry};
@@ -45,7 +46,32 @@ struct Services {
     store: Store,
     runtime: Runtime,
     plugins: PluginHost,
+    built_in: BuiltInPlugins,
+}
+
+/// The plugins built into this version of Mannie (ADR-0030, decision 2),
+/// which their commands reach.
+#[derive(Debug, Clone)]
+struct BuiltInPlugins {
     workers: WorkersPlugin,
+    images: ImagesPlugin,
+}
+
+impl BuiltInPlugins {
+    fn new() -> Self {
+        Self {
+            workers: workers_plugin(),
+            images: ImagesPlugin::new(),
+        }
+    }
+
+    /// The store modules of every plugin, whose migrations run whether or
+    /// not the plugins are on (ADR-0030, decision 5).
+    fn store_modules(&self) -> Vec<StoreModule> {
+        let mut modules = self.workers.store_modules();
+        modules.extend(self.images.store_modules());
+        modules
+    }
 }
 
 #[derive(Debug)]
@@ -65,6 +91,10 @@ struct Inner {
     /// instead of opening.
     #[cfg(feature = "validation")]
     folder_choice: Mutex<Option<FolderChoice>>,
+    /// The files that the next file dialog of a validation build gives
+    /// instead of opening.
+    #[cfg(feature = "validation")]
+    file_choice: Mutex<Option<Vec<String>>>,
 }
 
 /// What the next folder dialog of a validation build answers.
@@ -122,7 +152,16 @@ impl Core {
             .services
             .as_ref()
             .ok()
-            .map(|services| &services.workers)
+            .map(|services| &services.built_in.workers)
+    }
+
+    /// The Images plugin, for its commands, unless the core did not start.
+    pub(crate) fn images(&self) -> Option<&ImagesPlugin> {
+        self.inner
+            .services
+            .as_ref()
+            .ok()
+            .map(|services| &services.built_in.images)
     }
 
     /// Why the core did not start, if it did not.
@@ -199,6 +238,18 @@ impl Core {
         lock(&self.inner.folder_choice).take()
     }
 
+    /// Sets the files that the next file dialog of a validation build gives.
+    #[cfg(feature = "validation")]
+    pub(crate) fn set_file_choice(&self, files: Vec<String>) {
+        *lock(&self.inner.file_choice) = Some(files);
+    }
+
+    /// Takes the files of the next file dialog, if a test set them.
+    #[cfg(feature = "validation")]
+    pub(crate) fn take_file_choice(&self) -> Option<Vec<String>> {
+        lock(&self.inner.file_choice).take()
+    }
+
     /// Stops the core: the runtime marks active replies as interrupted and
     /// waits for them, and lets the tasks of plugins' executors run on; the
     /// plugins that are on stop and keep the owner's choices; the store makes
@@ -224,9 +275,9 @@ pub(crate) fn start(app: &App) -> Core {
     let redactor = Redactor::new();
     let logging = start_logging(app, &redactor, &clock);
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "Mannie is starting");
-    let workers = workers_plugin();
-    let services = open_store(app, Arc::clone(&clock), workers.store_modules())
-        .and_then(|store| start_runtime(app, store, &redactor, clock, workers));
+    let built_in = BuiltInPlugins::new();
+    let services = open_store(app, Arc::clone(&clock), built_in.store_modules())
+        .and_then(|store| start_runtime(app, store, &redactor, clock, built_in));
     if let Err(problem) = &services {
         tracing::error!(?problem, "Mannie started without its database");
     }
@@ -245,6 +296,8 @@ pub(crate) fn start(app: &App) -> Core {
             opened_links: Mutex::default(),
             #[cfg(feature = "validation")]
             folder_choice: Mutex::default(),
+            #[cfg(feature = "validation")]
+            file_choice: Mutex::default(),
         }),
     }
 }
@@ -321,7 +374,7 @@ fn start_runtime(
     store: Store,
     redactor: &Redactor,
     clock: Arc<dyn Clock>,
-    workers: WorkersPlugin,
+    built_in: BuiltInPlugins,
 ) -> Result<Services, StartupProblem> {
     let client = HttpClient::new(Arc::clone(&clock)).map_err(|error| {
         tracing::error!(error = %ErrorChain(&error), "could not set up the HTTP client for model providers");
@@ -351,16 +404,24 @@ fn start_runtime(
                 path: store.path().display().to_string(),
             }
         })?;
-    // What each plugin may use, in one place (ADR-0030, decision 13).
-    let workers_plugin: Arc<dyn Plugin> = Arc::new(workers.clone());
-    let hosted = vec![HostedPlugin {
-        plugin: workers_plugin,
-        grants: Grants {
-            executors: Some(runtime.executor_services()),
-            credentials: Some(runtime.credential_lender()),
-            secrets: Some(Arc::new(ScopedSecrets::new(vault, WORKERS_SECRETS))),
+    // What each plugin may use, in one place (ADR-0030, decision 13). Images
+    // needs no service of the core: its image source is its contribution.
+    let workers_plugin: Arc<dyn Plugin> = Arc::new(built_in.workers.clone());
+    let images_plugin: Arc<dyn Plugin> = Arc::new(built_in.images.clone());
+    let hosted = vec![
+        HostedPlugin {
+            plugin: workers_plugin,
+            grants: Grants {
+                executors: Some(runtime.executor_services()),
+                credentials: Some(runtime.credential_lender()),
+                secrets: Some(Arc::new(ScopedSecrets::new(vault, WORKERS_SECRETS))),
+            },
         },
-    }];
+        HostedPlugin {
+            plugin: images_plugin,
+            grants: Grants::default(),
+        },
+    ];
     let plugins = PluginHost::new(
         runtime.clone(),
         store.clone(),
@@ -382,7 +443,7 @@ fn start_runtime(
         store,
         runtime,
         plugins,
-        workers,
+        built_in,
     })
 }
 

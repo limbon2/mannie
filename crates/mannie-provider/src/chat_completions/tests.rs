@@ -1,13 +1,16 @@
 use std::sync::Arc;
 
 use mannie_types::clock::{ManualClock, UtcMillis};
+use mannie_types::images::{ImageBytes, ImageFormat};
 use mannie_types::provider::{ApiInterface, ReasoningEffort, ServerKind};
 use mannie_types::run::{FinishReason, RunFailure, Usage};
 use proptest::prelude::*;
 use serde_json::json;
 
 use super::{ChatTranslator, ThinkSplitter, request_body};
-use crate::provider::{Content, Message, ModelRequest, ProviderError, ProviderEvent, Role};
+use crate::provider::{
+    Content, ImageInput, Message, ModelRequest, ProviderError, ProviderEvent, Role,
+};
 use crate::quirks::quirks_for;
 use crate::sse::SseEvent;
 use crate::stream::{Flow, Translator};
@@ -101,6 +104,101 @@ fn the_request_merges_consecutive_roles_and_follows_the_quirks() {
     assert!(openrouter.get("reasoning_effort").is_none());
     assert_eq!(openai["max_completion_tokens"], json!(512));
     assert!(openai.get("reasoning_effort").is_none());
+}
+
+fn image(byte: u8) -> Content {
+    Content::Image(ImageInput {
+        format: ImageFormat::Png,
+        width: 2,
+        height: 1,
+        data: ImageBytes::from(vec![byte, byte]),
+    })
+}
+
+fn with_messages(messages: Vec<Message>) -> ModelRequest {
+    ModelRequest {
+        messages,
+        instructions: String::new(),
+        ..request(ReasoningEffort::ServerDefault)
+    }
+}
+
+#[test]
+fn images_make_an_array_of_parts_in_their_order_and_text_stays_a_string() {
+    let body = request_body(
+        &with_messages(vec![
+            Message::text(Role::User, "Before"),
+            Message {
+                role: Role::User,
+                content: vec![
+                    Content::Text("Look".to_owned()),
+                    Content::Text("Mentioned".to_owned()),
+                    image(1),
+                    image(2),
+                ],
+            },
+            Message::text(Role::Assistant, "A cat."),
+        ]),
+        &quirks_for(ApiInterface::ChatCompletions, None),
+    );
+
+    assert_eq!(
+        body["messages"],
+        json!([
+            {
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "Before\n\nLook\n\nMentioned" },
+                    { "type": "image_url", "image_url": { "url": "data:image/png;base64,AQE=" } },
+                    { "type": "image_url", "image_url": { "url": "data:image/png;base64,AgI=" } }
+                ]
+            },
+            { "role": "assistant", "content": "A cat." }
+        ])
+    );
+}
+
+#[test]
+fn a_message_with_only_an_image_is_sent() {
+    let body = request_body(
+        &with_messages(vec![Message {
+            role: Role::User,
+            content: vec![image(1)],
+        }]),
+        &quirks_for(ApiInterface::ChatCompletions, Some(ServerKind::Ollama)),
+    );
+
+    assert_eq!(
+        body["messages"],
+        json!([{
+            "role": "user",
+            "content": [
+                { "type": "image_url", "image_url": { "url": "data:image/png;base64,AQE=" } }
+            ]
+        }])
+    );
+}
+
+#[test]
+fn text_after_an_image_is_a_part_of_its_own() {
+    let body = request_body(
+        &with_messages(vec![
+            Message {
+                role: Role::User,
+                content: vec![image(1)],
+            },
+            Message::text(Role::User, "Then this"),
+        ]),
+        &quirks_for(ApiInterface::ChatCompletions, None),
+    );
+
+    assert_eq!(
+        body["messages"][0]["content"],
+        json!([
+            { "type": "image_url", "image_url": { "url": "data:image/png;base64,AQE=" } },
+            { "type": "text", "text": "Then this" }
+        ])
+    );
 }
 
 #[test]

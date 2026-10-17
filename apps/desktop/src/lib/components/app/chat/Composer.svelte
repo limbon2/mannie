@@ -7,13 +7,16 @@
   import { Button } from '#lib/components/ui/button/index.js';
   import { Textarea } from '#lib/components/ui/textarea/index.js';
   import * as Tooltip from '#lib/components/ui/tooltip/index.js';
-  import type { MentionPlace, MentionRef } from '#lib/generated/bindings.js';
+  import type { ImageRef, MentionPlace, MentionRef } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
+  import { MessageImages } from '#lib/state/message-images.svelte.js';
   import { type MentionChoice, MessageMentions } from '#lib/state/message-mentions.svelte.js';
   import { getShellSlots } from '#lib/state/shell-slots.svelte.js';
   import type { ChatFailure } from '#lib/types/chat.js';
   import { chatFailureMessage } from '#lib/utils/chat-errors.js';
+  import { assignFiles, carriesFiles, pastedFiles } from '#lib/utils/transfer-files.js';
 
+  import AttachedImages from './AttachedImages.svelte';
   import MentionChips from './MentionChips.svelte';
   import MentionPicker from './MentionPicker.svelte';
 
@@ -21,14 +24,16 @@
   // box): Enter sends, Shift+Enter starts a new line, and Escape stops the
   // reply while the box has the focus. The text stays when sending fails.
   // "@" opens the list of what the message can mention, whose keys come first
-  // while it shows (docs/features/chat/mentions.md).
+  // while it shows (docs/features/chat/mentions.md). Image sources add their
+  // buttons before the text, and take the files of a paste or a drop
+  // (ADR-0033, decision 7); the images stay too when sending fails.
   interface Props {
     /** Whether the box takes no message, such as without a provider profile. */
     disabled?: boolean;
     /** Where the message is written, which decides what it can mention (ADR-0032). */
     mentionPlace: MentionPlace;
-    /** Sends a message with what it mentions; resolves to why it failed, or `null`. */
-    onSend: (text: string, mentions: MentionRef[]) => Promise<ChatFailure | null>;
+    /** Sends a message with what it mentions and its images; resolves to why it failed, or `null`. */
+    onSend: (text: string, mentions: MentionRef[], images: ImageRef[]) => Promise<ChatFailure | null>;
     /** Stops the reply that is being written, when there can be one. */
     onStop?: () => Promise<void>;
     /** Whether a reply is being written, which the button then stops. */
@@ -53,14 +58,21 @@
   let text = $state('');
   let sending = $state(false);
   let failure = $state<ChatFailure | null>(null);
+  /** How many drags with files are over the box, which counts the entries into its children. */
+  let dragDepth = $state(0);
 
   const mentions = new MessageMentions(
     () => mentionPlace,
     (provider) => slots.mentionKinds.find(provider),
   );
+  const images = new MessageImages();
+  /** The sources of images, in the order of their buttons. */
+  const sources = $derived([...slots.imageSources.entries].sort((left, right) => left.order - right.order));
 
   const hasText = $derived(text.trim() !== '');
-  const canSend = $derived(hasText && !disabled && !sending && !replying);
+  const hasContent = $derived(hasText || images.hasReady);
+  const canSend = $derived(hasContent && !images.preparing && !disabled && !sending && !replying);
+  const takesFiles = $derived(sources.length > 0 && !disabled);
   const mentioned = $derived(mentions.inText(text));
   const listShowsEntries = $derived(mentions.open && mentions.choices.length > 0);
   const hasActiveOption = $derived(listShowsEntries && mentions.active !== undefined);
@@ -103,14 +115,77 @@
     }
     sending = true;
     failure = null;
-    const result = await onSend(text, mentions.refs(text));
+    const result = await onSend(text, mentions.refs(text), images.refs());
     sending = false;
     if (result === null) {
       text = '';
       mentions.reset();
+      images.reset();
     } else {
       failure = result;
     }
+  }
+
+  /** Gives files to the sources that take them, and says which no source takes. */
+  function takeFiles(files: readonly File[]): void {
+    const { assigned, refused } = assignFiles(files, sources);
+    for (const [source, taken] of assigned) {
+      source.take(taken, images);
+    }
+    for (const file of refused) {
+      images.refuse(m.chat_image_not_taken({ name: file.name }));
+    }
+  }
+
+  /** A paste of files adds images; a paste that carries text pastes the text, as before. */
+  function handlePaste(event: ClipboardEvent): void {
+    if (!takesFiles) {
+      return;
+    }
+    const files = event.clipboardData === null ? [] : pastedFiles(event.clipboardData);
+    if (files.length === 0) {
+      return;
+    }
+    event.preventDefault();
+    takeFiles(files);
+  }
+
+  /** Whether the box takes the files that this drag carries. */
+  function takesDrag(event: DragEvent): boolean {
+    return takesFiles && carriesFiles(event.dataTransfer);
+  }
+
+  function handleDragEnter(event: DragEvent): void {
+    if (!takesDrag(event)) {
+      return;
+    }
+    event.preventDefault();
+    dragDepth += 1;
+  }
+
+  function handleDragOver(event: DragEvent): void {
+    if (!takesDrag(event)) {
+      return;
+    }
+    event.preventDefault();
+    if (event.dataTransfer !== null) {
+      event.dataTransfer.dropEffect = 'copy';
+    }
+  }
+
+  function handleDragLeave(event: DragEvent): void {
+    if (carriesFiles(event.dataTransfer)) {
+      dragDepth = Math.max(0, dragDepth - 1);
+    }
+  }
+
+  function handleDrop(event: DragEvent): void {
+    dragDepth = 0;
+    if (!takesDrag(event)) {
+      return;
+    }
+    event.preventDefault();
+    takeFiles(Array.from(event.dataTransfer?.files ?? []));
   }
 
   /** Handles a key of the "@" list, and says whether it was one. */
@@ -198,11 +273,28 @@
   };
 </script>
 
-<form class="relative flex flex-col gap-2 border-t bg-background p-3" onsubmit={handleSubmit}>
+<form
+  class={[
+    'relative flex flex-col gap-2 border-t bg-background p-3',
+    dragDepth > 0 && 'outline-2 -outline-offset-4 outline-primary outline-dashed',
+  ]}
+  data-composer
+  ondragenter={handleDragEnter}
+  ondragleave={handleDragLeave}
+  ondragover={handleDragOver}
+  ondrop={handleDrop}
+  onsubmit={handleSubmit}
+>
   {#if mentions.open}
     <MentionPicker {listId} {mentions} {optionId} onChoose={choose} />
   {/if}
+  {#if dragDepth > 0}
+    <p class="text-sm text-primary" role="status">{m.chat_image_drop_hint()}</p>
+  {/if}
   <div class="flex items-end gap-2">
+    {#each sources as source (source.id)}
+      <source.button disabled={disabled || sending} target={images} />
+    {/each}
     <Textarea
       class="max-h-48 min-h-10 resize-none"
       {@attach takeFocusWhenEnabled}
@@ -221,6 +313,7 @@
       oninput={follow}
       onkeydown={handleKeydown}
       onkeyup={follow}
+      onpaste={handlePaste}
     />
     {#if replying}
       <Button type="button" variant="outline" onclick={() => void onStop?.()}>
@@ -240,12 +333,17 @@
       </Tooltip.Root>
     {/if}
   </div>
+  <AttachedImages {images} />
   {#if mentioned.length > 0}
     <MentionChips mentions={mentioned} />
   {/if}
   {#if failure !== null}
     <p class="text-sm text-destructive" role="alert">
-      {chatFailureMessage(failure, (provider) => slots.mentionKinds.find(provider))}
+      {chatFailureMessage(
+        failure,
+        (provider) => slots.mentionKinds.find(provider),
+        (source) => slots.imageSources.find(source),
+      )}
     </p>
   {/if}
   <p id="composer-hint" class="text-xs text-muted-foreground">{m.chat_composer_hint()}</p>

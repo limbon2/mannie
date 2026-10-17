@@ -27,6 +27,7 @@ mod conversations;
 mod executors;
 mod hub;
 mod ids;
+mod images;
 mod instructions;
 mod mentions;
 mod plugins;
@@ -67,6 +68,7 @@ pub use executors::{
     TaskPlan, TaskSubmission,
 };
 pub use hub::{ConversationSubscription, ListSubscription, SubscriptionLimits};
+pub use images::{ImageSource, SourcedImage};
 pub use instructions::{
     DuplicateSection, InstructionContext, InstructionRegistry, InstructionSection, MachineContext,
     SectionText, ToolEnvironment, builtin_sections, checkpoint_section,

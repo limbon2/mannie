@@ -128,6 +128,7 @@ async fn start(setup: &DelegationHarness, text: &str) -> (ConversationId, RunId)
         .runtime
         .start_conversation(StartConversation {
             mentions: Vec::new(),
+            images: Vec::new(),
             text: text.to_owned(),
             profile_id: None,
             project_id: None,
@@ -763,6 +764,7 @@ async fn quitting_leaves_a_worker_task_running_and_a_wait_takes_it_up_after_a_re
         .runtime
         .send_message(SendMessage {
             mentions: Vec::new(),
+            images: Vec::new(),
             conversation_id: conversation.clone(),
             text: "Is it done?".to_owned(),
         })
@@ -1093,6 +1095,7 @@ async fn send(setup: &DelegationHarness, conversation: &ConversationId, text: &s
         .runtime
         .send_message(SendMessage {
             mentions: Vec::new(),
+            images: Vec::new(),
             conversation_id: conversation.clone(),
             text: text.to_owned(),
         })
@@ -1257,6 +1260,7 @@ async fn delegate_task_is_offered_only_while_workers_are_paired_as_its_reviewed_
         .runtime
         .start_conversation(StartConversation {
             mentions: Vec::new(),
+            images: Vec::new(),
             text: "Hi".to_owned(),
             profile_id: None,
             project_id: None,

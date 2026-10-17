@@ -14,6 +14,7 @@ use mannie_types::chat::{
     check_message, check_title, title_from_message,
 };
 use mannie_types::ids::{ConversationId, ProfileId};
+use mannie_types::images::check_images;
 use mannie_types::mentions::check_mentions;
 use mannie_types::provider::context_budget;
 use mannie_types::transcript::{Checkpoint, ConversationSummary};
@@ -44,7 +45,7 @@ impl Drop for Reservation<'_> {
     }
 }
 
-fn store_failure(error: RuntimeStoreError) -> ChatError {
+pub(crate) fn store_failure(error: RuntimeStoreError) -> ChatError {
     match error {
         RuntimeStoreError::ConversationNotFound => ChatError::ConversationNotFound,
         RuntimeStoreError::RunActive => ChatError::RunActive,
@@ -165,8 +166,9 @@ impl Runtime {
         input: StartConversation,
     ) -> Result<StartedConversation, ChatError> {
         self.refuse_when_quitting()?;
-        check_message(&input.text)?;
+        check_message(&input.text, !input.images.is_empty())?;
         let mentions = check_mentions(input.mentions)?;
+        let image_refs = check_images(input.images)?;
         let profile = match &input.profile_id {
             Some(id) => self
                 .inner
@@ -205,12 +207,21 @@ impl Runtime {
             let budget = context_budget(profile.context_window, profile.output_limit);
             self.resolve_mentions(&context, &mentions, budget).await?
         };
+        let images = self.resolve_images(&image_refs).await?;
+        // A first message with only images takes its title from the first
+        // image's name (ADR-0033, decision 1).
+        let mut title = title_from_message(&input.text);
+        if title.is_empty()
+            && let Some(first) = images.first()
+        {
+            title = title_from_message(&first.view.name);
+        }
         let turn_id = self.inner.ids.turn();
         let run = self.new_run(&profile);
         let mut changes = vec![Change::CreateConversation {
             conversation: NewConversation {
                 id: conversation_id.clone(),
-                title: title_from_message(&input.text),
+                title,
                 profile_id: input.profile_id,
                 project_id: input.project_id,
                 task: None,
@@ -228,6 +239,7 @@ impl Runtime {
             run: run.clone(),
             task: None,
             mentions,
+            images,
         });
         self.inner
             .hubs
@@ -239,6 +251,7 @@ impl Runtime {
             )
             .await
             .map_err(store_failure)?;
+        self.release_images(&image_refs);
         self.start_reserved(reservation, &turn_id, &run);
         Ok(StartedConversation {
             conversation_id,
@@ -250,8 +263,9 @@ impl Runtime {
     /// Adds the owner's message to a conversation and starts the reply.
     pub async fn send_message(&self, input: SendMessage) -> Result<StartedReply, ChatError> {
         self.refuse_when_quitting()?;
-        check_message(&input.text)?;
+        check_message(&input.text, !input.images.is_empty())?;
         let mentions = check_mentions(input.mentions)?;
+        let image_refs = check_images(input.images)?;
         let reservation = self.reserve(&input.conversation_id, Busy::Starting)?;
         let summary = self
             .inner
@@ -276,6 +290,7 @@ impl Runtime {
             let budget = context_budget(profile.context_window, profile.output_limit);
             self.resolve_mentions(&context, &mentions, budget).await?
         };
+        let images = self.resolve_images(&image_refs).await?;
         let turn_id = self.inner.ids.turn();
         let run = self.new_run(&profile);
         let change = Change::StartTurn {
@@ -285,6 +300,7 @@ impl Runtime {
             run: run.clone(),
             task: None,
             mentions,
+            images,
         };
         self.inner
             .hubs
@@ -296,6 +312,9 @@ impl Runtime {
             )
             .await
             .map_err(store_failure)?;
+        // Only once the message is stored: until then, a failed send keeps
+        // its images in the message box for another try.
+        self.release_images(&image_refs);
         self.start_reserved(reservation, &turn_id, &run);
         Ok(StartedReply {
             turn_id,

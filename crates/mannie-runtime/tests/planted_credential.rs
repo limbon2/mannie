@@ -175,6 +175,7 @@ async fn a_planted_credential_reaches_only_the_authorization_header() {
     let started = runtime
         .start_conversation(StartConversation {
             mentions: Vec::new(),
+            images: Vec::new(),
             text: "Hello".to_owned(),
             profile_id: None,
             project_id: None,

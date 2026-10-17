@@ -11,6 +11,7 @@ pub mod ceiling;
 pub mod chat;
 pub mod clock;
 pub mod ids;
+pub mod images;
 pub mod interface;
 pub mod ipc;
 pub mod links;

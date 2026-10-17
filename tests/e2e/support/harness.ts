@@ -72,6 +72,7 @@ interface Harness {
   processId(): Promise<number>;
   runChannelLoad(load: ChannelLoad): Promise<ChannelLoadReport>;
   seedConversation(turns: number): Promise<string>;
+  setFileChoice(files: string[]): Promise<void>;
   setFolderChoice(folder: string | null): Promise<void>;
   trayMenu(item: 'open' | 'quit'): Promise<void>;
   windowState(): Promise<WindowState>;
@@ -240,6 +241,20 @@ export async function setFolderChoice(folder: string | null): Promise<void> {
     }
     await harness.setFolderChoice(chosen);
   }, folder);
+}
+
+/**
+ * Sets the files that the next file dialog answers, since WebDriver cannot
+ * reach the system's dialog: none for a dialog that the owner closed.
+ */
+export async function setFileChoice(files: readonly string[]): Promise<void> {
+  await browser.execute(async (chosen) => {
+    const harness = window.mannieValidation;
+    if (harness === undefined) {
+      throw new Error('the validation harness is missing: run the validation build');
+    }
+    await harness.setFileChoice(chosen);
+  }, files as string[]);
 }
 
 /**

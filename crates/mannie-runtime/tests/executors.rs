@@ -62,6 +62,7 @@ impl Setup {
             .runtime
             .start_conversation(StartConversation {
                 mentions: Vec::new(),
+                images: Vec::new(),
                 text: text.to_owned(),
                 profile_id: None,
                 project_id: None,
@@ -228,6 +229,7 @@ async fn mannie_without_executors_offers_their_tools_to_no_run() {
         .runtime
         .start_conversation(StartConversation {
             mentions: Vec::new(),
+            images: Vec::new(),
             text: "OWNER: anything?".to_owned(),
             profile_id: None,
             project_id: None,
@@ -394,6 +396,7 @@ async fn stopping_the_reply_cancels_the_task_and_lets_it_go_until_a_wait_takes_i
         .runtime
         .send_message(mannie_types::chat::SendMessage {
             mentions: Vec::new(),
+            images: Vec::new(),
             conversation_id: conversation.clone(),
             text: "OWNER-2: did it finish?".to_owned(),
         })
@@ -532,6 +535,7 @@ async fn turning_the_plugin_off_lets_a_running_task_go_and_a_later_wait_takes_it
         .runtime
         .send_message(mannie_types::chat::SendMessage {
             mentions: Vec::new(),
+            images: Vec::new(),
             conversation_id: conversation.clone(),
             text: "OWNER-2: did it finish?".to_owned(),
         })

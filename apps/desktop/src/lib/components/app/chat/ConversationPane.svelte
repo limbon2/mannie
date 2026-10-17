@@ -10,7 +10,7 @@
   import * as Empty from '#lib/components/ui/empty/index.js';
   import { Skeleton } from '#lib/components/ui/skeleton/index.js';
   import { Spinner } from '#lib/components/ui/spinner/index.js';
-  import { commands, type MentionRef } from '#lib/generated/bindings.js';
+  import { commands, type ImageRef, type MentionRef } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
   import { chatActions } from '#lib/state/chat-actions.svelte.js';
   import { OpenConversation } from '#lib/state/conversation.svelte.js';
@@ -56,8 +56,8 @@
   const offPlugin = $derived(pluginOffOf(conversation.failure));
   const pluginBackOn = $derived(offPlugin !== null && pluginStates.isOn(offPlugin));
 
-  async function send(text: string, mentions: MentionRef[]): Promise<ChatFailure | null> {
-    const outcome = await call(() => commands.sendMessage({ conversationId: id, mentions, text }));
+  async function send(text: string, mentions: MentionRef[], images: ImageRef[]): Promise<ChatFailure | null> {
+    const outcome = await call(() => commands.sendMessage({ conversationId: id, images, mentions, text }));
     return outcome.ok ? null : outcome.failure;
   }
 

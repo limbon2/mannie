@@ -118,6 +118,7 @@ fn contributions() -> PluginContributions {
         })],
         executors: Vec::new(),
         mentions: Vec::new(),
+        images: Vec::new(),
     }
 }
 
@@ -134,6 +135,7 @@ async fn start(harness: &Harness, text: &str) -> (ConversationId, RunId) {
         .runtime
         .start_conversation(StartConversation {
             mentions: Vec::new(),
+            images: Vec::new(),
             text: text.to_owned(),
             profile_id: None,
             project_id: None,

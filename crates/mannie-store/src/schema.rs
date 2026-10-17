@@ -199,6 +199,12 @@ const RUNTIME: StoreModule = StoreModule {
             description: "keep the texts of workers' refusals in their task parts",
             sql: include_str!("runtime/migrations/0027_keep_worker_refusal_texts.sql"),
         },
+        Migration {
+            version: 20,
+            legacy_version: None,
+            description: "create the table of the images that the owner's messages hold",
+            sql: include_str!("runtime/migrations/0029_create_images.sql"),
+        },
     ],
 };
 

@@ -6,6 +6,7 @@ use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{
     CheckpointId, ConversationId, PartId, ProfileId, ProjectId, RunId, TurnId,
 };
+use mannie_types::images::ImageView;
 use mannie_types::mentions::MentionView;
 use mannie_types::run::{RunActivity, RunFailure, RunOutcome, RunState, RunView};
 use mannie_types::tasks::{TaskConversation, TaskPartDocument};
@@ -17,7 +18,7 @@ use mannie_types::transcript::{
 use rusqlite::{Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 
-use super::RuntimeStoreError;
+use super::{NewImage, RuntimeStoreError};
 
 pub(crate) const SELECT_RUN: &str = "SELECT id, turn_id, profile_id, state, activity, outcome, created_at, ended_at \
      FROM runtime_runs WHERE id = ?1";
@@ -85,6 +86,32 @@ pub(crate) struct PartDocument {
     /// What a mention part names and what the model got of it (ADR-0032).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) mention: Option<MentionView>,
+    /// What an image part's image is; its bytes are in `runtime_images`
+    /// (ADR-0033).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) image: Option<ImageDocument>,
+}
+
+/// The document of an image part.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ImageDocument {
+    /// The source that gave the image.
+    pub(crate) source: String,
+    /// What the owner sees.
+    pub(crate) view: ImageView,
+    /// The SHA-256 digest of the image's bytes, in hexadecimal.
+    pub(crate) digest: String,
+}
+
+impl ImageDocument {
+    pub(crate) fn of(image: &NewImage) -> Self {
+        Self {
+            source: image.source.clone(),
+            view: image.view.clone(),
+            digest: image.digest.clone(),
+        }
+    }
 }
 
 /// The document of a checkpoint.
@@ -347,6 +374,15 @@ impl PartRow {
                 let document: PartDocument = from_json(&self.document, "part document")?;
                 match document.mention {
                     Some(mention) => PartContent::Mention { mention },
+                    None => PartContent::Unknown {
+                        name: self.kind.clone(),
+                    },
+                }
+            }
+            Some(PartKind::Image) => {
+                let document: PartDocument = from_json(&self.document, "part document")?;
+                match document.image {
+                    Some(image) => PartContent::Image { image: image.view },
                     None => PartContent::Unknown {
                         name: self.kind.clone(),
                     },

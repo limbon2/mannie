@@ -68,6 +68,7 @@ impl Setup {
             .runtime
             .start_conversation(StartConversation {
                 mentions: Vec::new(),
+                images: Vec::new(),
                 text: text.to_owned(),
                 profile_id: None,
                 project_id: project.cloned(),
@@ -323,6 +324,7 @@ async fn only_an_existing_folder_becomes_a_project_and_names_are_checked() {
         .runtime
         .start_conversation(StartConversation {
             mentions: Vec::new(),
+            images: Vec::new(),
             text: "Hi".to_owned(),
             profile_id: None,
             project_id: Some(ProjectId::parse("0199e0f2-0000-7000-a000-000000000099").unwrap()),

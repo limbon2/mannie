@@ -15,7 +15,7 @@
 
 ## 2. Layout
 
-M0 to M4 built this layout, and M5 moved the worker's code into `plugins/workers/` ([ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md), [ADR-0031](../adr/0031-move-workers-into-the-first-plugin.md)):
+M0 to M4 built this layout, M5 moved the worker's code into `plugins/workers/`, and M7 added `plugins/images/` ([ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md), [ADR-0031](../adr/0031-move-workers-into-the-first-plugin.md), [ADR-0033](../adr/0033-let-plugins-attach-images-to-the-owners-messages.md)):
 
 ```text
 mannie/
@@ -39,9 +39,11 @@ mannie/
 │   ├── mannie-secrets/          # operating system credential store (master only)
 │   ├── mannie-provider/         # provider adapters, quirk profiles; fixtures in tests/fixtures/
 │   ├── mannie-tools/            # the system tools, their policy and ceiling, file safety and the process supervisor
-│   ├── mannie-runtime/          # runs as actors, the event log's hubs, context, compaction, tool calls, tasks, task executors, mention providers and plugins' contributions; evaluations in tests/evals/
+│   ├── mannie-runtime/          # runs as actors, the event log's hubs, context, compaction, tool calls, tasks, task executors, mention providers, image sources and plugins' contributions; evaluations in tests/evals/
 │   └── mannie-plugins/          # the plugin definition, the start context and its grants, and the plugin host
 ├── plugins/
+│   ├── images/                  # the Images plugin
+│   │   └── crates/mannie-images/    # preparing the owner's images, the image source and the plugin's definition
 │   └── workers/                 # the Workers plugin
 │       ├── crates/mannie-link/  # the link: contracts, TLS with pinned keys, pairing, the master's and the worker's sides
 │       ├── crates/mannie-workers/   # the master's side of workers, its executor and store module, and the plugin's definition
@@ -67,7 +69,7 @@ SvelteKit 3 keeps its configuration in the `sveltekit()` call of `apps/desktop/v
 
 ## 3. Later crates
 
-Each crate arrives with the milestone that first needs it, so no crate is a placeholder. M1 brought `mannie-provider` and `mannie-runtime`, M2 brought `mannie-tools`, and M4 brought `mannie-link`, together with the link's contracts and `buf.yaml`. M5 brought `mannie-plugins` and `mannie-workers`, and moved `mannie-link`, the contracts and the worker service into `plugins/workers/` with their names unchanged.
+Each crate arrives with the milestone that first needs it, so no crate is a placeholder. M1 brought `mannie-provider` and `mannie-runtime`, M2 brought `mannie-tools`, and M4 brought `mannie-link`, together with the link's contracts and `buf.yaml`. M5 brought `mannie-plugins` and `mannie-workers`, and moved `mannie-link`, the contracts and the worker service into `plugins/workers/` with their names unchanged. M7 brought `mannie-images`.
 
 A plugin's crates, programs and contracts live in `plugins/<id>/`, and the core's crates in `crates/`. A plugin's UI and its Tauri commands stay in the desktop app's folders under the plugin's ID, because Tauri and the UI bundle belong to the desktop app ([desktop app](../architecture/desktop-app.md#6-frontend-structure)).
 
@@ -85,10 +87,11 @@ A plugin's crates, programs and contracts live in `plugins/<id>/`, and the core'
 | `mannie-secrets`  | The operating system credential store                                          | `mannie-types`, keyring-core and its stores                                                                              |
 | `mannie-link`     | The Workers plugin's link between master and workers                           | `mannie-types`, `mannie-runtime`, `mannie-logging`, tonic, prost, rustls, tokio-rustls, ring                             |
 | `mannie-workers`  | The Workers plugin: the master's side of workers and the plugin's definition   | The core's library crates except `mannie-secrets`, `mannie-plugins`, `mannie-link`, tonic                                |
+| `mannie-images`   | The Images plugin: preparing the owner's images and the plugin's definition    | The core's library crates except `mannie-secrets`, image                                                                 |
 | `mannie-desktop`  | The Tauri application, its IPC and the composition root that lists the plugins | Every library crate and every plugin's crates, tauri, rfd                                                                |
 | `mannie-worker`   | The Workers plugin's worker service                                            | The core's library crates except `mannie-secrets` and `mannie-plugins`, `mannie-link`, windows-service, clap, toml, ring |
 
-cargo-deny enforces the rules that matter most: only `mannie-desktop` depends on `tauri`, only `mannie-store` on `rusqlite`, only `mannie-secrets` on keyring-core, and only `mannie-desktop` on `mannie-secrets`; ring is the only crypto provider, and `openssl-sys` and `aws-lc-sys` are banned ([ADR-0008](../adr/0008-one-workspace-two-binaries.md)). It also keeps the plugins' boundaries: only the Workers plugin's crates depend on `mannie-link` and `tonic`, and only `mannie-desktop` depends on `mannie-workers`, so no core crate and no other plugin reaches a plugin ([ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md), decision 10). `scripts/check-worker-dependencies.mjs` checks that no crate of Tauri, GTK or WebKitGTK reaches the worker on any target (V5).
+cargo-deny enforces the rules that matter most: only `mannie-desktop` depends on `tauri`, only `mannie-store` on `rusqlite`, only `mannie-secrets` on keyring-core, and only `mannie-desktop` on `mannie-secrets`; ring is the only crypto provider, and `openssl-sys` and `aws-lc-sys` are banned ([ADR-0008](../adr/0008-one-workspace-two-binaries.md)). It also keeps the plugins' boundaries: only the Workers plugin's crates depend on `mannie-link` and `tonic`, and only `mannie-desktop` depends on `mannie-workers` and `mannie-images`, so no core crate and no other plugin reaches a plugin. Only `mannie-images` decodes images with the `image` crate ([ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md), decision 10). `scripts/check-worker-dependencies.mjs` checks that no crate of Tauri, GTK or WebKitGTK reaches the worker on any target (V5).
 
 ## 5. Generated artifacts
 
