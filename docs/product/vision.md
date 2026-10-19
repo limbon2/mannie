@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                         |
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                                        |
-| Last updated | 2026-10-16                                                                                                                                                                              |
+| Last updated | 2026-10-20                                                                                                                                                                              |
 | Related      | [Goals and scope](goals-and-scope.md), [Feature protocol](../features/README.md), [Milestones](../roadmap/milestones.md), [Glossary](../glossary.md), [Plugins](../features/plugins.md) |
 
 ## 1. Summary
@@ -66,5 +66,5 @@ These principles decide trade-offs. A design that conflicts with one of them nee
 [Goals and scope](goals-and-scope.md#3-non-goals) lists every non-goal. These three affect most design decisions:
 
 - Mannie is not a hosted or multi-user service. It runs on the owner's machines for the owner.
-- Mannie is not a remote shell. The master never runs tools on a worker's host; it gives the worker a task.
+- Mannie is not an interactive remote shell. The master never runs tools on a worker's host; it gives the worker a task. On a remote host that the owner registered with a plugin, an agent runs single commands, each under the master's policy.
 - No release trades quality for scope.

@@ -7,6 +7,8 @@
 | Deciders | Owner                                                                            |
 | Related  | [ADR-0013](0013-journal-every-side-effect.md), [Tools](../architecture/tools.md) |
 
+Later changes: [ADR-0036](0036-let-plugins-run-commands-on-remote-hosts.md) refines decisions 1 and 8: a command on a remote host is outside the supervisor, and Stop and timeout ask the host to end it.
+
 ## Context
 
 - Commands start child processes, and those can start more. Stopping a command, or a timeout, has to end the whole tree, including children that detach on purpose with `setsid` or a double fork.

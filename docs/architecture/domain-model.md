@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                                                                                                                   |
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                                                                                                                                  |
-| Last updated | 2026-10-16                                                                                                                                                                                                                                                                        |
+| Last updated | 2026-10-20                                                                                                                                                                                                                                                                        |
 | Related      | [Glossary](../glossary.md), [Agent runtime](agent-runtime.md), [Tools](tools.md), [Orchestration](orchestration.md), [Overview](overview.md), [ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md), [Workers architecture](../../plugins/workers/docs/architecture.md) |
 
 This document defines the core concepts, their lifecycles and the invariants every contract follows. The [glossary](../glossary.md) gives short definitions; this document shows how the concepts relate.
@@ -168,7 +168,7 @@ stateDiagram-v2
 2. An event is stored before it is published.
 3. An operation executes at most once. An uncertain operation is never repeated automatically.
 4. A side effect needs an allow decision from policy or from the owner. Content that the model reads never grants a permission.
-5. An agent's tools act only on the machine where the agent runs. The master never runs tools on a worker's host.
+5. An agent's tools act on the machine where the agent runs, and on a remote host only through a remote command that the master's policy authorized ([ADR-0036](../adr/0036-let-plugins-run-commands-on-remote-hosts.md)). The master never runs tools on a worker's host.
 6. A machine's policy ceiling, such as a worker's, can be narrowed for a task and never widened.
 7. Provider credentials are at rest only in the master's operating system credential store.
 8. Contracts and stored data change only by addition, with deprecation before removal.

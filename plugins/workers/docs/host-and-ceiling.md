@@ -4,7 +4,7 @@
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Status       | Building                                                                                                                                                                                                                                                                                                                 |
 | Milestone    | M4                                                                                                                                                                                                                                                                                                                       |
-| Last updated | 2026-10-16                                                                                                                                                                                                                                                                                                               |
+| Last updated | 2026-10-20                                                                                                                                                                                                                                                                                                               |
 | Part of      | [Workers](README.md)                                                                                                                                                                                                                                                                                                     |
 | Related      | [ADR-0028](../../../docs/adr/0028-run-assigned-tasks-under-the-host-ceiling.md), [Workers architecture](architecture.md#workers), [Operations and approvals](../../../docs/features/system-tools/operations-and-approvals.md), [Tools](../../../docs/architecture/tools.md#4-authorization), [Delegation](delegation.md) |
 
@@ -65,12 +65,14 @@ The ceiling is the most that the worker's tools may do. The owner sets it in the
 | A command                                  | Refused                 | Asks    | Runs when a host rule matches; otherwise asks | Runs        |
 | Any access inside the worker's own folders | Refused when it changes | Asks    | Asks                                          | Runs        |
 | A move into a project                      | Refused                 | Refused | Refused                                       | Refused     |
+| A command on a remote host                 | Refused                 | Refused | Refused                                       | Refused     |
 
 - The worker's own folders are its data, log and configuration folders and its program's folder, as Mannie's folders are on the master (T-18). In full access they run too, as the owner chose ([ADR-0029](../../../docs/adr/0029-let-the-owner-give-conversations-and-hosts-full-access.md)); the configuration and the program stay out of the account's reach through their owners.
 - A host rule never matches a command with shell metacharacters, and a rule limited to a folder matches only in it, as the master's rules do.
 - An operation with several accesses runs only when every access does; when one is refused, the operation is.
 - In read-only mode, the worker offers the model only the tools that read, so the model rarely meets a refusal; a call that comes anyway ends as not run with the refusal.
 - A refused call ends as not run with the reason `read_only_host`, and the model reads the refusal text above.
+- No plugin runs on a worker, so no tool there runs commands on a remote host. The ceiling still answers such an access, with the refusal `no_remote_commands`, so it has an answer for every kind of access ([ADR-0036](../../../docs/adr/0036-let-plugins-run-commands-on-remote-hosts.md)).
 
 ### Approvals
 
@@ -80,7 +82,7 @@ When the task's parent conversation on the master is in full access, the master 
 
 ### Contracts
 
-- The decisions `allowed_folder` and `host_rule`, the reasons `outside_allowed_folders` and `host_asks`, the not-run reason `read_only_host`, and the host on `ApprovalRequest`.
+- The decisions `allowed_folder` and `host_rule`, the reasons `outside_allowed_folders` and `host_asks`, the not-run reasons `read_only_host` and `no_remote_commands`, and the host on `ApprovalRequest`.
 - The mode `full_access`, the decisions `full_access` and `host_full_access`, `acceptsMasterFullAccess` in the ceiling that `Hello` shows, and `by_full_access` in `Approvals.Decide` (ADR-0029).
 - The definition `worker`, and the instruction context's host.
 

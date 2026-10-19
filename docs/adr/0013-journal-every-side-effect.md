@@ -7,6 +7,8 @@
 | Deciders | Owner                                                                                                                 |
 | Related  | [ADR-0014](0014-contain-process-trees.md), [Tools](../architecture/tools.md), [Security](../architecture/security.md) |
 
+Later changes: [ADR-0036](0036-let-plugins-run-commands-on-remote-hosts.md) refines decisions 2 and 3: an operation's accesses also name commands on remote hosts, which a plugin's prepare returns, and their grants and rules are bound to the host.
+
 ## Context
 
 - Tools change files and run commands on the owner's machines. A crash or a dropped link in the middle of a change must not lead to the change running twice.

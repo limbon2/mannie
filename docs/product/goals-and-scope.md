@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                           |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                                          |
-| Last updated | 2026-10-16                                                                                                                                                                                |
+| Last updated | 2026-10-20                                                                                                                                                                                |
 | Related      | [Vision](vision.md), [Feature protocol](../features/README.md), [Milestones](../roadmap/milestones.md), [Releasing](../engineering/releasing.md), [Security](../architecture/security.md) |
 
 ## 1. What Mannie is for
@@ -23,19 +23,19 @@ Mannie lets one owner put AI agents to work on their own machines: chat on the d
 
 ## 3. Non-goals
 
-| Non-goal                                                          | Status                                                                                                                                                     |
-| ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| macOS as a desktop or worker platform                             | Not planned (D6)                                                                                                                                           |
-| More than one user: accounts, teams, a hosted service             | Not planned                                                                                                                                                |
-| Remote access to the master from a browser or a phone             | Not planned                                                                                                                                                |
-| The master running tools on a worker's host                       | Never ([ADR-0015](../adr/0015-run-an-agent-runtime-on-every-machine.md))                                                                                   |
-| Workers delegating tasks to other workers                         | Not planned. It can return as a feature request.                                                                                                           |
-| Interface languages other than English                            | Not yet. Adding one takes a new message catalog and no code changes (D10, [ADR-0019](../adr/0019-keep-visible-text-in-message-catalogs.md))                |
-| Telemetry, usage reporting or any other phone-home                | Never                                                                                                                                                      |
-| Releases below the Definition of Done, such as prototypes or MVPs | Never (D2)                                                                                                                                                 |
-| An LLM framework or agent library in the core                     | Never ([ADR-0011](../adr/0011-own-the-provider-adapters.md))                                                                                               |
-| Third-party scripts or plugins running inside the webview         | Never ([ADR-0004](../adr/0004-keep-system-access-in-the-rust-core.md))                                                                                     |
-| Third-party plugins, or an API or SDK for them                    | Not yet. Plugins are internal, and opening them to third parties needs an ADR of its own ([ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md)) |
+| Non-goal                                                          | Status                                                                                                                                                                                                                          |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| macOS as a desktop or worker platform                             | Not planned (D6)                                                                                                                                                                                                                |
+| More than one user: accounts, teams, a hosted service             | Not planned                                                                                                                                                                                                                     |
+| Remote access to the master from a browser or a phone             | Not planned                                                                                                                                                                                                                     |
+| The master running tools on a worker's host                       | Never ([ADR-0015](../adr/0015-run-an-agent-runtime-on-every-machine.md)). A computer without Mannie is reached through a plugin's remote commands instead ([ADR-0036](../adr/0036-let-plugins-run-commands-on-remote-hosts.md)) |
+| Workers delegating tasks to other workers                         | Not planned. It can return as a feature request.                                                                                                                                                                                |
+| Interface languages other than English                            | Not yet. Adding one takes a new message catalog and no code changes (D10, [ADR-0019](../adr/0019-keep-visible-text-in-message-catalogs.md))                                                                                     |
+| Telemetry, usage reporting or any other phone-home                | Never                                                                                                                                                                                                                           |
+| Releases below the Definition of Done, such as prototypes or MVPs | Never (D2)                                                                                                                                                                                                                      |
+| An LLM framework or agent library in the core                     | Never ([ADR-0011](../adr/0011-own-the-provider-adapters.md))                                                                                                                                                                    |
+| Third-party scripts or plugins running inside the webview         | Never ([ADR-0004](../adr/0004-keep-system-access-in-the-rust-core.md))                                                                                                                                                          |
+| Third-party plugins, or an API or SDK for them                    | Not yet. Plugins are internal, and opening them to third parties needs an ADR of its own ([ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md))                                                                      |
 
 ## 4. Non-functional requirements
 
@@ -78,7 +78,7 @@ Every feature meets these requirements. The targets in §4.1 are checked by benc
 | NFR-OPS-01 | Logs are structured, stay on the machine, rotate, and contain no secrets.                                           |
 | NFR-OPS-02 | Following the documentation, the owner installs a worker as a service in under 10 minutes on each supported system. |
 | NFR-OPS-03 | The master works with workers that are one minor version behind.                                                    |
-| NFR-OPS-04 | Mannie needs no network access other than to the providers and workers the owner configured.                        |
+| NFR-OPS-04 | Mannie needs no network access other than to the providers, workers and remote hosts that the owner configured.     |
 
 ### 4.5 Usability
 

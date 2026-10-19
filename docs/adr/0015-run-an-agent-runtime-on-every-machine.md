@@ -7,6 +7,8 @@
 | Deciders | Owner                                                                                                                                                                                                                    |
 | Related  | [Orchestration](../architecture/orchestration.md), [ADR-0010](0010-keep-provider-credentials-on-the-master.md), [ADR-0016](0016-link-machines-over-pinned-mtls-grpc.md), [Workers](../../plugins/workers/docs/README.md) |
 
+Later changes: [ADR-0036](0036-let-plugins-run-commands-on-remote-hosts.md) supersedes decision 2 in part: an agent's tools also act on a remote host that the owner registered with a plugin, through a remote-command access that the master's policy authorizes. The master still never runs tools on a worker's host.
+
 ## Context
 
 - The owner's direction ([decision D5](../roadmap/milestones.md#5-decisions)): the master takes care of the owner's request and orchestrates. Workers are autonomous agents, each running on a host that may serve a particular purpose. A worker takes care of the master's request and of its host's environment, so the master does not need to know how a FreeBSD host works or which commands to run there.

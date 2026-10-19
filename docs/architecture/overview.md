@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                                                                                                                                          |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                                                                                                                                                         |
-| Last updated | 2026-10-17                                                                                                                                                                                                                                                                                               |
+| Last updated | 2026-10-20                                                                                                                                                                                                                                                                                               |
 | Related      | [Domain model](domain-model.md), [Extension points](extension-points.md), [Orchestration](orchestration.md), [Security](security.md), [ADR index](../adr/README.md), [ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md), [Workers architecture](../../plugins/workers/docs/architecture.md) |
 
 ## 1. Reading guide
@@ -41,7 +41,7 @@ flowchart LR
   WorkerB -->|tools| HostB[("Host B")]
 ```
 
-The owner works only with the desktop app. Its core calls model providers and runs tools on the owner's machine. Plugins add to it while they are on: with the Workers plugin, the master delegates tasks to workers on other hosts, each of which calls the providers itself, and tools act on the machine of the agent that calls them ([ADR-0015](../adr/0015-run-an-agent-runtime-on-every-machine.md), [ADR-0031](../adr/0031-move-workers-into-the-first-plugin.md)).
+The owner works only with the desktop app. Its core calls model providers and runs tools on the owner's machine. Plugins add to it while they are on: with the Workers plugin, the master delegates tasks to workers on other hosts, each of which calls the providers itself, and tools act on the machine of the agent that calls them ([ADR-0015](../adr/0015-run-an-agent-runtime-on-every-machine.md), [ADR-0031](../adr/0031-move-workers-into-the-first-plugin.md)); with the SSH plugin, the master's agents also run single commands on computers without Mannie that the owner registered, each under the master's policy ([ADR-0036](../adr/0036-let-plugins-run-commands-on-remote-hosts.md)).
 
 ## 3. Components
 
@@ -70,7 +70,7 @@ The Rust code is split into crates with enforced dependency rules ([ADR-0008](..
 | `mannie-desktop-core`   | The desktop app's library: composition root, IPC commands and the forwarders of the plugins' calls.                                                            |
 | `mannie-desktop`        | The Tauri binary: its configuration, build script, capabilities and icons, built with the plugins that `task gen` lists.                                       |
 
-The Workers plugin, in `plugins/workers/`, adds `mannie-link` with the link's contracts, TLS and pairing; `mannie-link-worker` with the worker's side of the link; `mannie-workers` with the master's side of workers and the plugin's definition; and the worker service `mannie-worker` with its composition root and service integration, which reaches the core through the host kit, `mannie-host-kit` ([workers architecture](../../plugins/workers/docs/architecture.md)). The Images plugin, in `plugins/images/`, adds `mannie-images`, which prepares the owner's images and gives them to the runtime ([images](../../plugins/images/docs/README.md)).
+The Workers plugin, in `plugins/workers/`, adds `mannie-link` with the link's contracts, TLS and pairing; `mannie-link-worker` with the worker's side of the link; `mannie-workers` with the master's side of workers and the plugin's definition; and the worker service `mannie-worker` with its composition root and service integration, which reaches the core through the host kit, `mannie-host-kit` ([workers architecture](../../plugins/workers/docs/architecture.md)). The Images plugin, in `plugins/images/`, adds `mannie-images`, which prepares the owner's images and gives them to the runtime ([images](../../plugins/images/docs/README.md)). The SSH plugin, in `plugins/ssh/`, adds `mannie-ssh`, which keeps the owner's SSH hosts and runs commands on them through russh, and the test server `mannie-ssh-testing` ([SSH hosts](../../plugins/ssh/docs/README.md)).
 
 ## 4. Process model
 

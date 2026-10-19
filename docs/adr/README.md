@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                           |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Living index                                                                                                                                                                              |
-| Last updated | 2026-10-17                                                                                                                                                                                |
+| Last updated | 2026-10-20                                                                                                                                                                                |
 | Related      | [ADR-0001](0001-record-architecture-decisions.md), [Template](0000-template.md), [Decisions](../roadmap/milestones.md#5-decisions), [Validations](../roadmap/milestones.md#4-validations) |
 
 [ADR-0001](0001-record-architecture-decisions.md) describes the process, and new ADRs start from the [template](0000-template.md).
@@ -53,3 +53,4 @@ Each ADR has exactly one of these statuses:
 | [0033](0033-let-plugins-attach-images-to-the-owners-messages.md)       | Let plugins attach images to the owner's messages                                             | Accepted (D31)         | M7         |
 | [0034](0034-build-plugins-on-a-plugin-sdk.md)                          | Build plugins on a plugin SDK that bridges them to the core                                   | Accepted (D33)         | M5         |
 | [0035](0035-find-plugins-at-build-time-in-folders-of-their-own.md)     | Find plugins at build time, each in a folder and a Cargo workspace of its own                 | Accepted (D33)         | M5         |
+| [0036](0036-let-plugins-run-commands-on-remote-hosts.md)               | Let plugins run commands on remote hosts under the master's policy                            | Accepted (D35)         | M8         |
