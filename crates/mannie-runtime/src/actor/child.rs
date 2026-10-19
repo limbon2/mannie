@@ -154,7 +154,7 @@ impl RunActor {
     }
 
     /// Waits until the vault holds the credential lease of the run's
-    /// assigned task (docs/features/workers/credential-leases.md). The run
+    /// assigned task (plugins/workers/docs/credential-leases.md). The run
     /// holds its slot and no model slot meanwhile, and the master sees that
     /// it waits. A run of a profile without a credential, or of no assigned
     /// task, does not wait; nor does one on a vault whose credentials never

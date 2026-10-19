@@ -174,7 +174,7 @@ The tasks section stands after the tool guidance, at position 160, in runs that 
 - The run activity `waiting_for_tasks`, with the number of tasks it waits for.
 - `ConversationSummary.task`, the parent and the agent of a task conversation.
 - The chat failure `task_conversation`.
-- The settings section `child_agents` and the commands `get_child_agents_settings` and `update_child_agents_settings` (`apps/desktop/src-tauri/src/commands/child_agents.rs`), with the errors `ChildAgentsError`: `parallel_children_invalid`, `written_by_newer_version`, `storage_failed` and `store_unavailable`.
+- The settings section `child_agents` and the commands `get_child_agents_settings` and `update_child_agents_settings` (`apps/desktop/core/src/commands/child_agents.rs`), with the errors `ChildAgentsError`: `parallel_children_invalid`, `written_by_newer_version`, `storage_failed` and `store_unavailable`.
 - The agent definitions' `requester` and `max_tasks`, and the instruction context's `offers_tasks`.
 
 ### Data

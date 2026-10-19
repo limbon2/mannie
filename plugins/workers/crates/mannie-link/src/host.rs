@@ -1,9 +1,9 @@
-//! What a worker says about its host in `Hello` (docs/features/workers/
+//! What a worker says about its host in `Hello` (plugins/workers/docs/
 //! host-and-ceiling.md): its facts, its ceiling and its versions. The worker
 //! writes all of it, so the master treats it as content. The master keeps it
 //! with the worker and shows it in the Workers plugin's views.
 
-use mannie_types::ceiling::CeilingMode;
+use mannie_plugin_sdk::contracts::CeilingMode;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 

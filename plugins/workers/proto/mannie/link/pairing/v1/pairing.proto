@@ -1,4 +1,4 @@
-// Pairing a master with a worker (docs/features/workers/pairing-and-link.md,
+// Pairing a master with a worker (plugins/workers/docs/pairing-and-link.md,
 // pairing; ADR-0016).
 //
 // The owner runs `mannie-worker pair` on the host, which prints a code, and

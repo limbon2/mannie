@@ -1,0 +1,46 @@
+[package]
+name = "mannie-plugin-harness"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The plugin harness: what a plugin's tests use of the core. It hosts one plugin through the real plugin host on the core's test runtime, checks that a plugin keeps the SDK's rules, and re-exports the parts of the core that plugin tests drive and read (ADR-0034)."
+license.workspace = true
+publish.workspace = true
+
+# Plugins of the tests, hosted and checked as plugins' tests do: a hosted
+# plugin's calls and states, and the findings of the conformance check for a
+# plugin that keeps the rules and for planted breaches.
+[[test]]
+name = "harness"
+
+[dependencies]
+futures-util = { workspace = true }
+# The plugin's definition and manifest, the host's providers, the stand-ins
+# of the services, and the check of a plugin's error codes against the
+# host's (ADR-0034, decisions 1, 5 and 9).
+mannie-plugin-sdk = { workspace = true, features = ["bindings", "host", "manifest", "testing"] }
+# The real host and its dispatch.
+mannie-plugins = { workspace = true }
+# The model's requests, and the fixtures of a provider that tests script.
+mannie-provider = { workspace = true, features = ["testing"] }
+# The core's test runtime with its fake model, and the runtime's handles and
+# texts.
+mannie-runtime = { workspace = true, features = ["testing"] }
+# The store that tests read and seed, with the plugins' modules.
+mannie-store = { workspace = true, features = ["testing"] }
+# Whether a tool's arguments take the activity that the runtime adds.
+mannie-tools = { workspace = true }
+# The contract types that tests build and read, which the SDK's contracts
+# leave out.
+mannie-types = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+# The plugins of the tests declare a command and a channel as plugins do.
+serde = { workspace = true }
+specta = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+
+[lints]
+workspace = true

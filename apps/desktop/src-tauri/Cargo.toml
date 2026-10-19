@@ -3,55 +3,30 @@ name = "mannie-desktop"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "The Mannie desktop app: the Tauri composition root of the master, its IPC commands and capabilities."
+description = "The Mannie desktop app's binary: Tauri's configuration, build script, capabilities and icons, and the main function that runs mannie-desktop-core with the plugins that `task gen` lists (ADR-0035)."
 license.workspace = true
+# The launcher that `task gen` writes, whose members are this binary and the
+# generated plugin list (ADR-0035, decision 4). Before `task gen` has run,
+# cargo cannot read this manifest's workspace; CONTRIBUTING says so.
+workspace = "../../../.generated/desktop"
 publish.workspace = true
-default-run = "mannie-desktop"
-
-[lib]
-name = "mannie_desktop"
-path = "src/lib.rs"
 
 [[bin]]
 name = "mannie-desktop"
 path = "src/main.rs"
 
-# Writes the TypeScript IPC bindings (`task gen`, ADR-0007). It needs the
-# validation feature because it also writes the bindings of the validation
-# commands.
-[[bin]]
-name = "mannie-desktop-bindings"
-path = "src/bin/bindings.rs"
-required-features = ["validation"]
-
 [dependencies]
 anyhow = { workspace = true }
-# The Workers plugin, the first internal plugin, whose commands the app's IPC
-# calls into (ADR-0031).
-mannie-images = { workspace = true }
-mannie-logging = { workspace = true }
-# The plugin host, which the composition root runs with the list of plugins
-# and what each may use (ADR-0030).
-mannie-plugins = { workspace = true }
-mannie-provider = { workspace = true }
-mannie-runtime = { workspace = true }
-# Provider credentials in the operating system's credential store (ADR-0010).
-mannie-secrets = { workspace = true }
-mannie-store = { workspace = true }
-# The system tools, which the composition root registers and hands to the
-# runtime.
-mannie-tools = { workspace = true }
-mannie-types = { workspace = true }
-mannie-workers = { workspace = true }
-# The system's folder dialog. The core opens it, so the webview gets no access
-# to the file system (ADR-0004).
-rfd = { workspace = true }
-serde = { workspace = true }
-specta = { workspace = true }
-specta-typescript = { workspace = true }
+# The desktop app's library, which this binary runs.
+mannie-desktop-core = { workspace = true }
+# The plugins in plugins/*/plugin.toml when `task gen` ran, in the manifests'
+# order (ADR-0035, decisions 3 and 4).
+mannie-plugin-list = { workspace = true }
 # Without `dynamic-acl`: capabilities are fixed at build time and nothing adds
 # one at runtime (ADR-0004). `tray-icon` adds the tray (window and tray
-# feature); the other features are Tauri's defaults.
+# feature); the other features are Tauri's defaults. `common-controls-v6`
+# belongs to the binary, which tauri-build gives the Windows application
+# manifest that the feature needs.
 tauri = {
   workspace = true,
   default-features = false,
@@ -64,27 +39,26 @@ tauri = {
     "x11",
   ]
 }
-# Opens links in the system browser after the owner confirmed them (ADR-0003,
-# decision 3). Only its Rust function is used: the plugin is not registered,
-# so the webview has no opener command.
-tauri-plugin-opener = { workspace = true }
-tauri-plugin-single-instance = { workspace = true }
-tauri-specta = { workspace = true }
-thiserror = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
-tracing = { workspace = true }
 
 [dev-dependencies]
-# test-util lets the channel tests run on a paused clock.
-tokio = { workspace = true, features = ["macros", "rt", "sync", "test-util", "time"] }
+# The test of the bundled plugins parses their manifests and builds the host's
+# list from them.
+mannie-plugin-sdk = { workspace = true, features = ["manifest"] }
+mannie-plugins = { workspace = true }
 
 [build-dependencies]
+# Reads the plugins' interfaces that `task gen` wrote, whose commands and
+# channels the build grants (ADR-0034, decision 8).
+serde_json = { workspace = true }
+# Compares the plugins' files with the fingerprint that `task gen` wrote
+# (ADR-0035, decision 3).
+sha2 = { workspace = true }
 tauri-build = { workspace = true }
 
 [features]
 # The commands and the capability that the end-to-end validations use (V1, V2,
 # V3). Only validation builds enable it; a release never does.
-validation = ["mannie-runtime/validation", "mannie-types/validation"]
+validation = ["mannie-desktop-core/validation", "mannie-plugin-list/validation"]
 
 [lints]
 workspace = true

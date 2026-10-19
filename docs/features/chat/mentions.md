@@ -90,7 +90,7 @@ None.
 
 ### Contracts
 
-- The command `suggest_mentions` (`apps/desktop/src-tauri/src/commands/chat.rs`) takes the place and the query, and returns a group for each provider that the place offers. A group has its entries, whether the provider holds more than it looked through, and a failure code. An entry has a key, a label, the token that it inserts, a variant, a warning code and whether it expands.
+- The command `suggest_mentions` (`apps/desktop/core/src/commands/chat.rs`) takes the place and the query, and returns a group for each provider that the place offers. A group has its entries, whether the provider holds more than it looked through, and a failure code. An entry has a key, a label, the token that it inserts, a variant, a warning code and whether it expands.
 - `send_message` and `start_conversation` gain `mentions`, a list of references with a provider and a key, which is empty when left out.
 - Errors: `too_many_mentions` with the limit, `mention_unavailable` with the provider, and `mention_refused` with the provider and its reason. `suggest_mentions` also fails with `conversation_not_found`, `project_not_found` and `storage_failed`.
 - The part `mention` holds its provider, key, label and variant, and a summary: the provider's code with its numbers by name.

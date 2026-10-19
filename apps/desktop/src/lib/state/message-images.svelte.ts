@@ -1,5 +1,5 @@
 // The images of the message that the owner writes (ADR-0033, decision 7;
-// docs/features/images.md, adding images). Image sources add them through
+// plugins/images/docs/README.md, adding images). Image sources add them through
 // `begin`, each shows as a chip while its source prepares it, and the message
 // sends the references of the ready ones. Sending keeps them when it fails,
 // and the core lets the sources drop them once the message is stored.

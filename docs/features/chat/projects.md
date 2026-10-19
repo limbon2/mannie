@@ -51,7 +51,7 @@ The command palette offers "Add a project…" and "Add a project from a path…"
 
 ### Contracts
 
-- Commands (`apps/desktop/src-tauri/src/commands/projects.rs`): `add_project`, which shows the folder dialog and returns the project, or nothing when the owner closed the dialog; `add_project_from_path`; `rename_project`; `remove_project`, with the number of conversations that the owner confirmed. In validation builds, `add_project` takes the folder that `validation_set_folder_choice` set.
+- Commands (`apps/desktop/core/src/commands/projects.rs`): `add_project`, which shows the folder dialog and returns the project, or nothing when the owner closed the dialog; `add_project_from_path`; `rename_project`; `remove_project`, with the number of conversations that the owner confirmed. In validation builds, `add_project` takes the folder that `validation_set_folder_choice` set.
 - `ProjectView`: the ID, the name, the folder and the time it was added. `ConversationSummary` gains `projectId`, and `StartConversation` gains `projectId`.
 - The conversation list's channel: the snapshot gains the projects, and a message follows each project that is added, renamed or removed.
 - Errors: `project_not_found`, `project_name_invalid`, `project_busy`, `project_changed` with the number of conversations, and the folder errors `path_refused`, `folder_not_found`, `not_a_folder`, `folder_unreadable` and `folder_dialog_failed`.

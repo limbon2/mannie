@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use mannie_types::ceiling::CeilingMode;
-use mannie_types::clock::UtcMillis;
+use mannie_plugin_sdk::contracts::CeilingMode;
+use mannie_plugin_sdk::contracts::UtcMillis;
 use tempfile::TempDir;
 
 use super::{ConfigError, initial_file, parse};
@@ -94,7 +94,7 @@ fn a_configuration_with_every_key_is_read() {
     assert_eq!(
         config.ceiling.allowed_folders,
         [PathBuf::from(
-            mannie_tools::canonical_folder(&host.work).unwrap()
+            mannie_host_kit::tools::canonical_folder(&host.work).unwrap()
         )]
     );
     let words: Vec<_> = config
@@ -107,7 +107,7 @@ fn a_configuration_with_every_key_is_read() {
     assert_eq!(config.ceiling.rules[0].folder, None);
     assert_eq!(
         config.ceiling.rules[1].folder,
-        Some(mannie_tools::canonical_folder(&app).unwrap())
+        Some(mannie_host_kit::tools::canonical_folder(&app).unwrap())
     );
     assert!(!config.accepts_master_full_access);
 }

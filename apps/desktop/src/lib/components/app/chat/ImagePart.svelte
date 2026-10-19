@@ -8,7 +8,7 @@
   import ImageViewerDialog from './ImageViewerDialog.svelte';
 
   // An image of the owner's message, below its text and mentions
-  // (docs/features/images.md, the transcript): its thumbnail, which opens the
+  // (plugins/images/docs/README.md, the transcript): its thumbnail, which opens the
   // image at full size. The core keeps the bytes, so the image shows also
   // while the plugin that added it is off (ADR-0033, decision 8).
   let { conversationId, part }: PartRendererProps = $props();

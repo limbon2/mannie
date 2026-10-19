@@ -87,7 +87,7 @@ Ollama serves a model with the context size of its `num_ctx` setting, which is s
 
 ### Contracts
 
-- Commands (`apps/desktop/src-tauri/src/commands/providers.rs`): `list_provider_profiles`, `create_provider_profile`, `update_provider_profile` (the credential is kept, replaced or removed), `delete_provider_profile`, `set_default_provider_profile`, `test_provider_profile`, and `get_model_defaults` for the known limits of a model name.
+- Commands (`apps/desktop/core/src/commands/providers.rs`): `list_provider_profiles`, `create_provider_profile`, `update_provider_profile` (the credential is kept, replaced or removed), `delete_provider_profile`, `set_default_provider_profile`, `test_provider_profile`, and `get_model_defaults` for the known limits of a model name.
 - Errors use the `ProviderProfileError` codes, such as `name_taken`, `invalid_base_url`, `insecure_credential_transport`, `invalid_limits`, `credential_store_unavailable` (with its reason), `profile_in_use` and `not_found`. Failures of a reply use the run failure codes in [conversations](conversations.md#errors).
 
 ### Data

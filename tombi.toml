@@ -5,10 +5,11 @@
 # release are used, so results change only with a Tombi upgrade and need no
 # network.
 
-# Build output holds generated TOML. Outside a Git checkout, such as a source
-# archive, .gitignore does not keep Tombi out of it.
+# Build output and the launcher that `task gen` writes hold generated TOML.
+# Outside a Git checkout, such as a source archive, .gitignore does not keep
+# Tombi out of them.
 [files]
-exclude = ["**/node_modules/**", "**/target/**"]
+exclude = ["**/.generated/**", "**/node_modules/**", "**/target/**"]
 
 [format.rules]
 line-width = 120

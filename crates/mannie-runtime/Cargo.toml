@@ -111,6 +111,19 @@ required-features = ["testing"]
 name = "executors"
 required-features = ["testing"]
 
+# The services that the runtime binds to a plugin (ADR-0034, decision 5): an
+# executor host that answers only for the plugin's kind, and credentials lent
+# only for an active task of that kind and the profile of its run.
+[[test]]
+name = "services"
+required-features = ["testing"]
+
+# A lent credential is logged with its task and profile and never itself; its
+# own binary, because it installs a global log subscriber.
+[[test]]
+name = "lend_log"
+required-features = ["testing"]
+
 # Tasks that a real model completes through the tools, and injection tasks;
 # ignored unless run on purpose with `task tools:eval`.
 [[test]]
@@ -129,6 +142,10 @@ base64 = { workspace = true }
 # The jitter of retry delays.
 fastrand = { workspace = true }
 futures-util = { workspace = true }
+# The plugin SDK, whose extension points the runtime consumes (ADR-0034,
+# decision 6), with the host's constructors, such as a mention provider's
+# context.
+mannie-plugin-sdk = { workspace = true, features = ["host"] }
 mannie-provider = { workspace = true }
 mannie-store = { workspace = true }
 # The system tools, their policy and the process supervisor (ADR-0013,

@@ -1,22 +1,29 @@
 //! The images that wait in message boxes while the plugin is on: the files
 //! that the owner chose, until they are prepared, and the prepared images,
 //! until their message is stored or the owner removes them
-//! (docs/features/images.md, the plugin). Everything lives in memory, within
-//! bounds, and the oldest go first.
+//! (plugins/images/docs/README.md, the plugin). Everything lives in memory, within
+//! bounds, and the oldest go first. A chosen file is a handle of the service
+//! `file-dialog`, which reads it once; its path stays in the core (T-34).
 
 use std::collections::VecDeque;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use mannie_runtime::SourcedImage;
-use mannie_types::images::clean_image_name;
-use tokio::sync::Semaphore;
+use mannie_plugin_sdk::contracts::clean_image_name;
+use mannie_plugin_sdk::points::images::SourcedImage;
+use mannie_plugin_sdk::services::file_dialog::{
+    ChosenFile, DialogError, FileDialogApi, FileFilter, FileHandle, MAX_CHOSEN_FILES,
+};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::commands::{ImagesError, MAX_FILE_BYTES, PickedImage};
 use crate::prepare::prepare;
 
 /// The most chosen files that wait to be prepared.
 const MAX_PICKED: usize = 40;
+
+// The service keeps at least as many chosen files as the shelf, so a file
+// that the shelf keeps can always be read.
+const _: () = assert!(MAX_PICKED <= MAX_CHOSEN_FILES);
 
 /// The most prepared images that wait for their message.
 const MAX_PREPARED: usize = 40;
@@ -28,7 +35,7 @@ const MAX_PREPARED_BYTES: usize = 160 * 1024 * 1024;
 #[derive(Debug)]
 struct Picked {
     id: String,
-    path: PathBuf,
+    file: FileHandle,
     name: String,
 }
 
@@ -55,18 +62,11 @@ struct Entries {
 #[derive(Debug)]
 pub(crate) struct Shelf {
     entries: Mutex<Entries>,
-    /// One image is decoded at a time, so that a drop of many large files
-    /// does not hold them all in memory at once (T-32).
+    /// One image is read and decoded at a time, so that a drop or a choice
+    /// of many large files does not hold them all in memory at once (T-32).
     decoding: Arc<Semaphore>,
-}
-
-impl Default for Shelf {
-    fn default() -> Self {
-        Self {
-            entries: Mutex::new(Entries::default()),
-            decoding: Arc::new(Semaphore::new(1)),
-        }
-    }
+    /// The system's file dialog, bound to this start of the plugin.
+    dialog: Arc<dyn FileDialogApi>,
 }
 
 fn new_id() -> String {
@@ -74,23 +74,45 @@ fn new_id() -> String {
 }
 
 impl Shelf {
+    /// An empty shelf, whose chosen files come from `dialog`.
+    pub(crate) fn new(dialog: Arc<dyn FileDialogApi>) -> Self {
+        Self {
+            entries: Mutex::new(Entries::default()),
+            decoding: Arc::new(Semaphore::new(1)),
+            dialog,
+        }
+    }
+
     fn entries(&self) -> MutexGuard<'_, Entries> {
         // Every critical section only adds, takes or removes entries.
         self.entries.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Shows the system's file dialog with `filter`, and returns the files
+    /// that the owner chose, none when the owner closed it.
+    pub(crate) async fn choose(&self, filter: FileFilter) -> Result<Vec<ChosenFile>, ImagesError> {
+        self.dialog
+            .choose_files(filter)
+            .await
+            .map_err(|error| dialog_refusal(&error))
+    }
+
     /// Keeps the files that the owner chose, and returns their IDs and names.
-    pub(crate) fn pick(&self, paths: Vec<PathBuf>) -> Vec<PickedImage> {
+    pub(crate) fn pick(&self, files: Vec<ChosenFile>) -> Vec<PickedImage> {
         let mut entries = self.entries();
-        let mut picked = Vec::with_capacity(paths.len());
-        for path in paths {
-            let name = clean_image_name(&path.file_name().unwrap_or_default().to_string_lossy());
+        let mut picked = Vec::with_capacity(files.len());
+        for chosen in files {
+            let name = clean_image_name(&chosen.name);
             let id = new_id();
             picked.push(PickedImage {
                 picked_id: id.clone(),
                 name: name.clone(),
             });
-            entries.picked.push_back(Picked { id, path, name });
+            entries.picked.push_back(Picked {
+                id,
+                file: chosen.file,
+                name,
+            });
             while entries.picked.len() > MAX_PICKED {
                 entries.picked.pop_front();
             }
@@ -113,12 +135,17 @@ impl Shelf {
                 .ok_or(ImagesError::NotFound)?;
             entries.picked.remove(index).ok_or(ImagesError::NotFound)?
         };
-        let Picked { path, name, .. } = picked;
-        self.decode_and_keep(move || {
-            let bytes = read_file(&path)?;
-            prepare(&name, &bytes)
-        })
-        .await
+        let Picked { file, name, .. } = picked;
+        // The permit comes before the read, so one chosen file is in memory
+        // at a time (T-32).
+        let permit = self.permit().await?;
+        let bytes = self
+            .dialog
+            .read(file, max_file_bytes())
+            .await
+            .map_err(|error| dialog_refusal(&error))?;
+        self.decode_and_keep(permit, move || prepare(&name, &bytes))
+            .await
     }
 
     /// Prepares the bytes of a pasted or dropped file.
@@ -127,19 +154,33 @@ impl Shelf {
         name: String,
         bytes: Vec<u8>,
     ) -> Result<(String, SourcedImage), ImagesError> {
-        self.decode_and_keep(move || prepare(&name, &bytes)).await
+        let permit = self.permit().await?;
+        self.decode_and_keep(permit, move || prepare(&name, &bytes))
+            .await
     }
 
-    /// Runs one decode at a time on a blocking thread, and keeps what it
-    /// prepared under a new key.
-    async fn decode_and_keep<F>(&self, work: F) -> Result<(String, SourcedImage), ImagesError>
+    /// The turn to read and decode one image.
+    async fn permit(&self) -> Result<OwnedSemaphorePermit, ImagesError> {
+        // The semaphore is never closed, so this refusal stays theoretical.
+        Arc::clone(&self.decoding)
+            .acquire_owned()
+            .await
+            .map_err(|_closed| {
+                tracing::error!("the turn to decode an image could not be taken");
+                ImagesError::Unreadable
+            })
+    }
+
+    /// Decodes on a blocking thread, under the turn that `permit` holds, and
+    /// keeps what it prepared under a new key.
+    async fn decode_and_keep<F>(
+        &self,
+        permit: OwnedSemaphorePermit,
+        work: F,
+    ) -> Result<(String, SourcedImage), ImagesError>
     where
         F: FnOnce() -> Result<SourcedImage, ImagesError> + Send + 'static,
     {
-        let permit = Arc::clone(&self.decoding)
-            .acquire_owned()
-            .await
-            .map_err(|_closed| ImagesError::PluginOff)?;
         let image = tokio::task::spawn_blocking(move || {
             let prepared = work();
             drop(permit);
@@ -200,45 +241,85 @@ impl Shelf {
     }
 }
 
-/// Reads a chosen file, refusing one larger than the plugin reads before
-/// reading it.
-fn read_file(path: &std::path::Path) -> Result<Vec<u8>, ImagesError> {
-    let unreadable = |error: std::io::Error| {
-        tracing::info!(kind = %error.kind(), "a chosen image file could not be read");
-        ImagesError::FileUnreadable
-    };
-    let size = std::fs::metadata(path).map_err(unreadable)?.len();
-    if size > u64::try_from(MAX_FILE_BYTES).unwrap_or(u64::MAX) {
-        return Err(ImagesError::file_too_large());
+/// The most bytes of a chosen file that the plugin reads.
+fn max_file_bytes() -> u64 {
+    u64::try_from(MAX_FILE_BYTES).unwrap_or(u64::MAX)
+}
+
+/// The plugin's error for a failure of the file dialog or of a read. The
+/// service refuses a file larger than the plugin reads before reading it.
+fn dialog_refusal(error: &DialogError) -> ImagesError {
+    match error {
+        DialogError::Failed | DialogError::InvalidFilter => {
+            tracing::warn!(
+                error.code = error.code(),
+                "the file dialog could not choose images"
+            );
+            ImagesError::DialogFailed
+        }
+        DialogError::TooLarge { .. } => ImagesError::file_too_large(),
+        DialogError::UnknownFile => ImagesError::NotFound,
+        DialogError::Unreadable => ImagesError::FileUnreadable,
+        // A reason of a later SDK is a file that cannot be read.
+        _other => ImagesError::FileUnreadable,
     }
-    std::fs::read(path).map_err(unreadable)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
     use std::sync::Arc;
+    use std::time::Duration;
 
-    use mannie_runtime::SourcedImage;
-    use mannie_types::images::{ImageBytes, ImageFormat};
+    use image::{DynamicImage, ImageBuffer, ImageFormat as Format, Rgb};
+    use mannie_plugin_sdk::contracts::{ImageBytes, ImageFormat};
+    use mannie_plugin_sdk::points::images::SourcedImage;
+    use mannie_plugin_sdk::services::file_dialog::FileFilter;
+    use mannie_plugin_sdk::testing::{FakeFile, FakeFileDialog};
 
     use super::{MAX_PICKED, MAX_PREPARED, MAX_PREPARED_BYTES, Shelf};
-    use crate::commands::ImagesError;
+    use crate::commands::{ImagesError, MAX_FILE_BYTES};
+
+    fn shelf(fake: &FakeFileDialog) -> Arc<Shelf> {
+        Arc::new(Shelf::new(fake.api()))
+    }
+
+    fn images() -> FileFilter {
+        FileFilter::new("Images", ["png"])
+    }
+
+    /// A PNG of 4 by 4 pixels.
+    fn png() -> Vec<u8> {
+        let image = ImageBuffer::from_fn(4, 4, |_x, _y| Rgb([9_u8, 9, 9]));
+        let mut png = Cursor::new(Vec::new());
+        DynamicImage::ImageRgb8(image)
+            .write_to(&mut png, Format::Png)
+            .unwrap();
+        png.into_inner()
+    }
 
     fn image(bytes: usize) -> SourcedImage {
-        SourcedImage {
-            name: "a.png".to_owned(),
-            format: ImageFormat::Png,
-            width: 1,
-            height: 1,
-            data: ImageBytes::from(vec![0; bytes]),
-            thumbnail_format: ImageFormat::Png,
-            thumbnail: ImageBytes::from(Vec::new()),
-        }
+        let name = "a.png".to_owned();
+        let format = ImageFormat::Png;
+        let width = 1;
+        let height = 1;
+        let data = ImageBytes::from(vec![0; bytes]);
+        let thumbnail_format = ImageFormat::Png;
+        let thumbnail = ImageBytes::from(Vec::new());
+        SourcedImage::new(
+            name,
+            format,
+            width,
+            height,
+            data,
+            thumbnail_format,
+            thumbnail,
+        )
     }
 
     #[test]
     fn the_oldest_images_go_first_beyond_the_count_or_the_bytes() {
-        let shelf = Shelf::default();
+        let shelf = Shelf::new(FakeFileDialog::new().api());
         for number in 0..=MAX_PREPARED {
             shelf.keep(number.to_string(), image(1));
         }
@@ -254,7 +335,7 @@ mod tests {
 
     #[test]
     fn discarded_images_leave_and_unknown_keys_change_nothing() {
-        let shelf = Shelf::default();
+        let shelf = Shelf::new(FakeFileDialog::new().api());
         shelf.keep("a".to_owned(), image(1));
         shelf.keep("b".to_owned(), image(1));
 
@@ -264,42 +345,115 @@ mod tests {
         assert!(shelf.get("b").is_some());
     }
 
-    #[test]
-    fn chosen_files_keep_their_names_and_the_oldest_go_first() {
-        let shelf = Shelf::default();
-        let paths = (0..=MAX_PICKED)
-            .map(|number| std::path::PathBuf::from(format!("/photos/{number}.jpg")))
+    #[tokio::test]
+    async fn chosen_files_keep_their_names_and_the_oldest_go_first() {
+        let fake = FakeFileDialog::new();
+        let shelf = shelf(&fake);
+        let mut files: Vec<FakeFile> = (0..MAX_PICKED)
+            .map(|number| FakeFile::new(format!("{number}.jpg"), Vec::new()))
             .collect();
+        files.insert(1, FakeFile::new("", Vec::new()));
+        fake.answer(files);
 
-        let picked = shelf.pick(paths);
+        let chosen = shelf.choose(images()).await.unwrap();
+        let picked = shelf.pick(chosen);
 
         assert_eq!(picked.len(), MAX_PICKED + 1);
-        assert_eq!(picked[1].name, "1.jpg");
+        assert_eq!(picked[0].name, "0.jpg");
+        assert_eq!(picked[1].name, "image", "a blank name gets the default");
+        assert_eq!(picked[2].name, "1.jpg");
         assert_eq!(shelf.counts().0, MAX_PICKED);
+        assert_eq!(fake.filters(), [images()]);
     }
 
     #[tokio::test]
     async fn a_chosen_file_is_read_once_and_a_large_one_never() {
-        let folder = tempfile::tempdir().unwrap();
-        let text = folder.path().join("notes.png");
-        std::fs::write(&text, "not an image").unwrap();
-        let large = folder.path().join("large.png");
-        std::fs::File::create(&large)
-            .unwrap()
-            .set_len(21 * 1024 * 1024)
-            .unwrap();
-        let shelf = Arc::new(Shelf::default());
-        let picked = shelf.pick(vec![text, large, folder.path().join("gone.png")]);
+        let fake = FakeFileDialog::new();
+        let shelf = shelf(&fake);
+        fake.answer(vec![
+            FakeFile::new("notes.png", b"not an image".to_vec()),
+            FakeFile::new("large.png", vec![0; MAX_FILE_BYTES + 1]),
+            FakeFile::unreadable("gone.png"),
+        ]);
+        let chosen = shelf.choose(images()).await.unwrap();
+        let picked = shelf.pick(chosen);
 
         let not_image = shelf.prepare_picked(&picked[0].picked_id).await;
         let again = shelf.prepare_picked(&picked[0].picked_id).await;
         let too_large = shelf.prepare_picked(&picked[1].picked_id).await;
         let gone = shelf.prepare_picked(&picked[2].picked_id).await;
+        let limit = u64::try_from(MAX_FILE_BYTES).unwrap();
 
         assert_eq!(not_image.unwrap_err(), ImagesError::UnsupportedFormat);
         assert_eq!(again.unwrap_err(), ImagesError::NotFound);
         assert_eq!(too_large.unwrap_err(), ImagesError::file_too_large());
         assert_eq!(gone.unwrap_err(), ImagesError::FileUnreadable);
+        assert_eq!(
+            fake.reads(),
+            [
+                ("notes.png".to_owned(), limit),
+                ("large.png".to_owned(), limit),
+                ("gone.png".to_owned(), limit)
+            ],
+            "the first file was read once"
+        );
         assert_eq!(shelf.counts(), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn a_failed_dialog_is_dialog_failed_and_a_closed_one_keeps_nothing() {
+        let fake = FakeFileDialog::new();
+        let shelf = shelf(&fake);
+        fake.fail_next();
+
+        let failed = shelf.choose(images()).await;
+        let closed = shelf.choose(images()).await.unwrap();
+        let picked = shelf.pick(closed);
+
+        assert_eq!(failed.unwrap_err(), ImagesError::DialogFailed);
+        assert_eq!(picked, Vec::new());
+        assert_eq!(shelf.counts(), (0, 0));
+        assert_eq!(fake.opened(), 2);
+    }
+
+    #[tokio::test]
+    async fn one_chosen_file_is_read_and_decoded_at_a_time() {
+        let fake = FakeFileDialog::new();
+        let shelf = shelf(&fake);
+        fake.answer(vec![
+            FakeFile::new("a.png", png()),
+            FakeFile::new("b.png", png()),
+        ]);
+        let chosen = shelf.choose(images()).await.unwrap();
+        let picked = shelf.pick(chosen);
+        let gate = fake.hold();
+
+        let first = tokio::spawn({
+            let shelf = Arc::clone(&shelf);
+            let id = picked[0].picked_id.clone();
+            async move { shelf.prepare_picked(&id).await }
+        });
+        let second = tokio::spawn({
+            let shelf = Arc::clone(&shelf);
+            let id = picked[1].picked_id.clone();
+            async move { shelf.prepare_picked(&id).await }
+        });
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while fake.reads().is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        // The second read waits for the first file's turn to end.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let reads_while_held = fake.reads().len();
+        gate.open();
+        let prepared = [first.await.unwrap(), second.await.unwrap()];
+
+        assert_eq!(reads_while_held, 1);
+        assert!(prepared.iter().all(Result::is_ok), "{prepared:?}");
+        assert_eq!(fake.reads().len(), 2);
+        assert_eq!(shelf.counts(), (0, 2));
     }
 }

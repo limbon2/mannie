@@ -734,13 +734,10 @@ async fn run_task(subject: &Subject, task: &Task) -> TaskReport {
     fs::create_dir_all(&workspace).expect("the workspace");
     let (runtime, store, root, project) = start(subject, task, data.path(), &workspace).await;
     let started_conversation = runtime
-        .start_conversation(StartConversation {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            text: task.prompt.clone(),
-            profile_id: None,
-            project_id: (!task.general).then_some(project),
-        })
+        .start_conversation(
+            StartConversation::new(task.prompt.clone())
+                .with_project((!task.general).then_some(project)),
+        )
         .await
         .expect("the conversation starts");
     let conversation = started_conversation.conversation_id;

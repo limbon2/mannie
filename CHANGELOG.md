@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Mannie are recorded in this file. The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/). Each change adds one line under Unreleased, and a release turns that section into its notes.
+All notable changes to Mannie are recorded in this file. The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), and the project uses [Semantic Versioning](https://semver.org/). Each change adds one line under Unreleased, and a release turns that section into its notes. A change to a plugin goes into the plugin's own changelog, `plugins/<id>/CHANGELOG.md`, which a release moves into its section here under the plugin's name.
 
 ## Unreleased
 
@@ -10,12 +10,28 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - The Plugins settings list the plugins built into Mannie, each with a switch that takes effect at once, without a restart; a plugin that starts, stops or failed says so, a failed one offers "Try again", and turning off a plugin with work in progress asks first.
 - While a plugin is off, its parts of the interface are gone, the address of one of its pages says that it is off and leads to the Plugins settings, and what it added to conversations stays readable.
 - The Images plugin adds images to a message with a button that opens the file dialog, by pasting them or by dropping them on the message box. Mannie turns each image upright, shrinks it to at most 2048 pixels and drops its metadata before the model reads it, and the transcript shows thumbnails that open at full size.
+- The Plugins settings list what each plugin may use: the services and credential entries that its manifest declares, its commands and channels, the programs that ship with it, the libraries that only it may use and its system access outside Mannie's services.
 
 ### Changed
 
 - Workers are the first plugin: turning Workers off closes every link and lets running worker tasks go, which keep running on their workers and are followed again when Workers is back on. After the update from 0.2.0, Workers is on when a worker is paired; a new installation starts with it off.
 - A failure while Workers starts, such as a list of paired workers that cannot be read, leaves Workers failed on the Plugins page and no longer keeps Mannie from starting.
 - The worker service, the link and its contracts moved into `plugins/workers/` with their names unchanged, so workers of 0.2.0 keep working.
+- `plugin_work` returns a plugin's work in progress as items, each a code of the plugin's and a count, so that every plugin can report kinds of work of its own.
+- Plugins build on a plugin SDK: a plugin's commands go through the plugin host, which refuses them while the plugin is off and ends the plugin's channels when it stops, and a plugin's database statements and migrations reach only its own tables.
+- Each plugin is a Cargo workspace with its own `Cargo.lock`, and `task gen` writes the desktop app's launcher and its lock from the plugins' manifests and the committed locks. `task setup` also fetches the crates and runs `task gen`, the worker builds with `cargo build --manifest-path plugins/workers/Cargo.toml -p mannie-worker`, and `task plugins:lock` and `task deps:align` keep the plugins' locks.
+- `task gen` refuses a plugin whose dependencies cross the boundaries between the core and the plugins, a plugin's manifest names the crates that only it may use, and the desktop app no longer builds when the plugins changed since `task gen` ran, with a message that says to run it.
+- `task plugins:new ID=<id>` makes a new plugin in `plugins/<id>/` from the fixture plugin, which validation builds bundle, and `task gen` bundles the new plugin with no change outside its folder.
+- Each plugin keeps its messages in its own catalogs, which `task gen` checks and compiles with the core's into one catalog, and the pseudo-locale of the end-to-end tests covers them too.
+- The fixture plugin, which validation builds bundle, has a UI that adds notes, so the core's end-to-end tests of the Plugins page use it in place of the plugins that ship, and `task plugins:new` starts a plugin with a UI and its tests.
+- The Workers plugin builds on the plugin SDK alone: the worker's side of the link moved into `mannie-link-worker`, the worker and that crate reach the core through the host kit, `mannie-host-kit`, the plugin's test tools moved into `mannie-workers-testing`, and the boundary check has no exceptions left.
+- The documents describe the plugin SDK: how a plugin builds on it alone, where a plugin's documents and changes live, the threats it guards against and how to add a plugin with `task plugins:new`.
+- The documents of Workers and Images, the guide to setting up a worker included, moved into their plugins' folders, `plugins/workers/docs/` and `plugins/images/docs/`.
+- Each plugin keeps its changes in its own `plugins/<id>/CHANGELOG.md`, which `task release:prepare` moves into Mannie's changelog under the plugin's name, and `task docs:check` reads the plugins' documents and their own ADRs in `plugins/<id>/docs/`.
+- A plugin's manifest may grant its library crates direct file writes, processes or sockets under `[native]`, each with its reason, `task lint:rust` refuses every other such call in the library crates that the plugin's entry crate ships, and `task plugins:grants` lists what each plugin may use. Workers grants the link its sockets.
+- Plugins' tests reach the core through the plugin harness, `mannie-plugin-harness`, which hosts one plugin through the real plugin host and checks that a plugin keeps the SDK's rules; Images' tests and the fixture plugin's use it.
+- Each plugin's UI and its tests live in the plugin's folder. The UI imports only the TypeScript plugin SDK, `@mannie/plugin-sdk`, and its own files, `task gen` writes the plugin lists that the app imports and each plugin's barrel of its own messages, and ESLint and the app's build refuse an import across the boundaries between the core and the plugins.
+- The programs of the plugins, such as the worker, come from their manifests: `task build`, `task e2e`, CI's smoke tests and cross builds, the nightly FreeBSD run and the release build, check, sign and describe every program that a manifest declares, and the worker's smoke tests moved into `plugins/workers/ci/`.
 
 - The architecture decisions that were Proposed are Accepted, and a failed or missing CI run no longer holds back a change, a milestone or a release.
 - `task test` runs every Rust test binary even when one fails, so a run reports every failing test.

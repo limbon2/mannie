@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use mannie_link::worker::KEY_FILE;
+use mannie_link_worker::KEY_FILE;
 
 use super::{DATABASE_FILE, Worker, WorkerOptions};
 use crate::config;

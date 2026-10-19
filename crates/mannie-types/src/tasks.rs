@@ -10,6 +10,7 @@
 mod assignment;
 mod document;
 mod settings;
+mod texts;
 mod view;
 
 pub use assignment::{ProfileSnapshot, TaskAssignment};
@@ -21,4 +22,5 @@ pub use document::{
 pub use settings::{
     ChildAgentsError, ChildAgentsSettings, ParallelChildren, UpdateChildAgentsSettings,
 };
+pub use texts::{TASK_TITLE_ARGUMENT, task_still_running};
 pub use view::{ChildApprovalView, TaskCallView, TaskConversation, TaskView};

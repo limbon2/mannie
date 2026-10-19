@@ -1,4 +1,4 @@
-//! Images (ADR-0033; docs/features/images.md): what the owner attaches to a
+//! Images (ADR-0033; plugins/images/docs/README.md): what the owner attaches to a
 //! message besides its text and mentions. This module holds the references
 //! that a message carries, the formats and limits of a stored image, the view
 //! of an image part and the argument and result of `read_image`. The images

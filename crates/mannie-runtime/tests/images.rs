@@ -1,4 +1,4 @@
-//! Images in the runtime (ADR-0033; docs/features/images.md): the sources of
+//! Images in the runtime (ADR-0033; plugins/images/docs/README.md): the sources of
 //! plugins, the checks of a message's references and of what a source
 //! returns, what the model reads of an image, and the bytes that the
 //! transcript reads back, also after the plugin stops.
@@ -9,10 +9,14 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use futures_util::FutureExt;
-use futures_util::future::BoxFuture;
+use mannie_plugin_sdk::BoxFuture;
+use mannie_plugin_sdk::contributions::Contributions;
+use mannie_plugin_sdk::host::{ID_NOT_OWNED, ID_TAKEN};
+use mannie_plugin_sdk::points::images::{ImageSource, ImageSources, SourcedImage};
 use mannie_provider::{Content, ImageInput, ModelRequest, ProviderError, Role};
-use mannie_runtime::testing::{Harness, HarnessOptions, SeenPart, failure, reply};
-use mannie_runtime::{ContributionError, ImageSource, PluginContributions, SourcedImage};
+use mannie_runtime::testing::{
+    Harness, HarnessOptions, SeenPart, add_plugin, failure, remove_plugin, reply,
+};
 use mannie_types::chat::{ChatError, SendMessage, StartConversation, StartedConversation};
 use mannie_types::images::{
     ImageBytes, ImageData, ImageFormat, ImageRef, ImageSize, ImageView, ReadImage,
@@ -73,15 +77,22 @@ impl ImageSource for Shelf {
 
 /// A PNG as a source gives it, whose bytes end with `marker`.
 fn png(name: &str, marker: u8) -> SourcedImage {
-    SourcedImage {
-        name: name.to_owned(),
-        format: ImageFormat::Png,
-        width: 800,
-        height: 600,
-        data: ImageBytes::from([b"\x89PNG\r\n\x1a\n".as_slice(), &[marker]].concat()),
-        thumbnail_format: ImageFormat::Jpeg,
-        thumbnail: ImageBytes::from([b"\xff\xd8\xff".as_slice(), &[marker]].concat()),
-    }
+    let name = name.to_owned();
+    let format = ImageFormat::Png;
+    let width = 800;
+    let height = 600;
+    let data = ImageBytes::from([b"\x89PNG\r\n\x1a\n".as_slice(), &[marker]].concat());
+    let thumbnail_format = ImageFormat::Jpeg;
+    let thumbnail = ImageBytes::from([b"\xff\xd8\xff".as_slice(), &[marker]].concat());
+    SourcedImage::new(
+        name,
+        format,
+        width,
+        height,
+        data,
+        thumbnail_format,
+        thumbnail,
+    )
 }
 
 fn image(key: &str) -> ImageRef {
@@ -100,16 +111,12 @@ async fn setup() -> (Harness, Arc<Mutex<Vec<String>>>) {
         .add("two", png("C:\\Shots\\two.png", 2))
         .add("three", png("three.png", 3));
     let released = Arc::clone(&shelf.released);
-    harness
-        .runtime
-        .add_plugin(
-            "images",
-            PluginContributions {
-                images: vec![Arc::new(shelf)],
-                ..PluginContributions::default()
-            },
-        )
-        .unwrap();
+    add_plugin(
+        &harness.runtime,
+        "images",
+        Contributions::new().add::<ImageSources>(Arc::new(shelf)),
+    )
+    .unwrap();
     (harness, released)
 }
 
@@ -120,13 +127,7 @@ async fn start(
 ) -> Result<StartedConversation, ChatError> {
     harness
         .runtime
-        .start_conversation(StartConversation {
-            text: text.to_owned(),
-            profile_id: None,
-            project_id: None,
-            mentions: Vec::new(),
-            images,
-        })
+        .start_conversation(StartConversation::new(text).with_images(images))
         .await
 }
 
@@ -216,23 +217,15 @@ async fn a_message_may_have_only_images_and_takes_its_title_from_the_first() {
 #[tokio::test]
 async fn refused_images_store_nothing_and_release_nothing() {
     let (harness, released_keys) = setup().await;
-    let bad = Shelf::new("broken").add(
-        "bad",
-        SourcedImage {
-            data: ImageBytes::from(b"GIF89a".to_vec()),
-            ..png("bad.gif", 9)
-        },
-    );
-    harness
-        .runtime
-        .add_plugin(
-            "broken",
-            PluginContributions {
-                images: vec![Arc::new(bad)],
-                ..PluginContributions::default()
-            },
-        )
-        .unwrap();
+    let mut not_a_png = png("bad.gif", 9);
+    not_a_png.data = ImageBytes::from(b"GIF89a".to_vec());
+    let bad = Shelf::new("broken").add("bad", not_a_png);
+    add_plugin(
+        &harness.runtime,
+        "broken",
+        Contributions::new().add::<ImageSources>(Arc::new(bad)),
+    )
+    .unwrap();
     let eleven: Vec<ImageRef> = (0..11).map(|n| image(&n.to_string())).collect();
 
     let too_many = start(&harness, "Many", eleven).await;
@@ -331,24 +324,20 @@ async fn stored_images_reach_the_model_and_read_back_after_the_plugin_stops() {
     let part = transcript.parts(0)[1].id.clone();
     let other = start(&harness, "Elsewhere", Vec::new()).await.unwrap();
 
-    assert!(harness.runtime.remove_plugin("images"));
+    assert!(remove_plugin(&harness.runtime, "images"));
     let refused = harness
         .runtime
-        .send_message(SendMessage {
-            conversation_id: started.conversation_id.clone(),
-            text: "Another".to_owned(),
-            mentions: Vec::new(),
-            images: vec![image("two")],
-        })
+        .send_message(
+            SendMessage::new(started.conversation_id.clone(), "Another")
+                .with_images(vec![image("two")]),
+        )
         .await;
     let sent = harness
         .runtime
-        .send_message(SendMessage {
-            conversation_id: started.conversation_id.clone(),
-            text: "And now?".to_owned(),
-            mentions: Vec::new(),
-            images: Vec::new(),
-        })
+        .send_message(SendMessage::new(
+            started.conversation_id.clone(),
+            "And now?",
+        ))
         .await
         .unwrap();
     harness
@@ -406,38 +395,23 @@ async fn stored_images_reach_the_model_and_read_back_after_the_plugin_stops() {
 async fn a_plugin_s_sources_need_ids_of_their_own() {
     let harness = Harness::with_options(HarnessOptions::default()).await;
     let contributions = |ids: &[&'static str]| {
-        let mut images: Vec<Arc<dyn ImageSource>> = Vec::new();
-        for id in ids {
-            images.push(Arc::new(Shelf::new(id)));
-        }
-        PluginContributions {
-            images,
-            ..PluginContributions::default()
-        }
+        ids.iter().fold(Contributions::new(), |contributions, id| {
+            let source: Arc<dyn ImageSource> = Arc::new(Shelf::new(id));
+            contributions.add::<ImageSources>(source)
+        })
+    };
+    // The point and the code of a refusal.
+    let refused = |plugin: &str, ids: &[&'static str]| {
+        add_plugin(&harness.runtime, plugin, contributions(ids))
+            .err()
+            .map(|refusal| (refusal.point, refusal.code))
     };
 
-    let foreign = harness
-        .runtime
-        .add_plugin("images", contributions(&["imagesx"]));
-    let twice = harness
-        .runtime
-        .add_plugin("images", contributions(&["images", "images"]));
-    let own = harness
-        .runtime
-        .add_plugin("images", contributions(&["images", "images.screens"]));
+    let foreign = refused("images", &["imagesx"]);
+    let twice = refused("images", &["images", "images"]);
+    let own = refused("images", &["images", "images.screens"]);
 
-    assert_eq!(
-        foreign.unwrap_err(),
-        ContributionError::ImageSourceId {
-            plugin: "images".to_owned(),
-            id: "imagesx".to_owned()
-        }
-    );
-    assert_eq!(
-        twice.unwrap_err(),
-        ContributionError::DuplicateImageSource {
-            id: "images".to_owned()
-        }
-    );
-    assert_eq!(own, Ok(()));
+    assert_eq!(foreign, Some(("image-sources", ID_NOT_OWNED)));
+    assert_eq!(twice, Some(("image-sources", ID_TAKEN)));
+    assert_eq!(own, None);
 }

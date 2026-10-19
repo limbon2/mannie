@@ -9,10 +9,13 @@
 //!   copies it; a database in which a module has a newer schema than the
 //!   binary knows is refused and left untouched.
 //! - The core's other crates use the repositories in this crate and never see
-//!   SQLite. A plugin's code reaches its own tables through a [`ModuleStore`].
+//!   SQLite. A plugin's code reaches its own tables through the SDK's service
+//!   `store`, as statements that its module lists (ADR-0034, decision 7),
+//!   which [`service_providers`] binds to the plugin.
 
 mod error;
-mod module_store;
+mod legacy;
+mod plugin_store;
 mod provider;
 mod readers;
 mod runtime;
@@ -24,25 +27,19 @@ mod tools;
 pub mod validation;
 mod writer;
 
-/// SQLite's types, for the code of the modules that a composition root adds
-/// for its plugins (ADR-0030, decision 9).
-pub use rusqlite as sql;
-
-pub use error::{DatabaseError, StoreError};
-pub use module_store::ModuleStore;
+pub use error::{DatabaseError, ModuleProblem, StoreError};
+pub use plugin_store::{PluginModule, service_providers};
 pub use provider::{ProfileFields, ProfileStoreError, StoredProfile};
 pub use runtime::{
-    AddedProject, Applied, Change, ConversationList, EventsAfter, KeptRun, ModelImage, ModelPart,
-    ModelTurn, NewArchive, NewCheckpoint, NewConversation, NewExecutorTask, NewImage, NewMention,
-    NewPart, NewRun, NewTask, OutboxEntry, ProjectDeletion, ProviderItem, Recovered,
-    RuntimeStoreError, StoredArchive, StoredCheckpoint, StoredChild, StoredImage, StoredTask,
-    TaskEnding, TaskExecution, TaskOrigin, UncertainCall,
+    AddedProject, Applied, Change, ConversationList, EventsAfter, ExecutorTaskProfile, KeptRun,
+    ModelImage, ModelPart, ModelTurn, NewArchive, NewCheckpoint, NewConversation, NewExecutorTask,
+    NewImage, NewMention, NewPart, NewRun, NewTask, OutboxEntry, ProjectDeletion, ProviderItem,
+    Recovered, RuntimeStoreError, StoredArchive, StoredCheckpoint, StoredChild, StoredImage,
+    StoredTask, TaskEnding, TaskExecution, TaskOrigin, UncertainCall,
 };
-pub use schema::{Migration, StoreModule};
 pub use settings::SettingsStoreError;
 pub use store::{Store, StoreOptions};
 pub use tools::ToolsStoreError;
-pub use writer::TransactError;
 
 /// How durable a write is once its future resolves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

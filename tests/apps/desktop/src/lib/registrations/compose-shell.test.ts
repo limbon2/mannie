@@ -1,13 +1,17 @@
 // The UI's composition root (docs/architecture/extension-points.md): a feature
 // adds its entries through its registration alone, next to the shell's own,
-// and a plugin's entries show only while the core reports the plugin as on
-// (ADR-0030, decision 11).
+// a plugin's entries show only while the core reports the plugin as on, and
+// a plugin follows its own state through its context (ADR-0030, decision 11;
+// ADR-0034, decision 11). The real plugins' entries are their own tests'.
 import { describe, expect, it, vi } from 'vitest';
 
-import { composeShell } from '../../../../../../apps/desktop/src/lib/registrations/compose-shell.js';
-import { pluginCatalog } from '../../../../../../apps/desktop/src/lib/state/plugin-catalog.js';
+import {
+  composeShell,
+  type PluginFollowing,
+} from '../../../../../../apps/desktop/src/lib/registrations/compose-shell.js';
+import { findPlugin, pluginCatalog } from '../../../../../../apps/desktop/src/lib/state/plugin-catalog.js';
 import type { ShellSlots } from '../../../../../../apps/desktop/src/lib/state/shell-slots.svelte.js';
-import type { PluginRegistration } from '../../../../../../apps/desktop/src/lib/types/plugins.js';
+import type { PluginEntry } from '../../../../../../apps/desktop/src/lib/types/plugins.js';
 
 // The shell's commands navigate and change the theme; neither runs here.
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
@@ -47,21 +51,36 @@ function registerExampleFeature(slots: ShellSlots): void {
 }
 
 /** A plugin as a later milestone adds one: a sidebar panel and a command. */
-const EXAMPLE_PLUGIN: PluginRegistration = {
+const EXAMPLE_PLUGIN: PluginEntry = {
+  definition: {
+    register({ slots }) {
+      slots.sidebarPanels.register({ component: () => ({}), id: 'example.panel', order: 0 });
+      slots.commands.register({
+        group: () => 'Example',
+        id: 'example.run',
+        label: () => 'Run',
+        order: 0,
+        run: vi.fn(),
+      });
+    },
+  },
   description: () => 'Adds an example.',
-  failure: () => null,
   id: 'example',
   name: () => 'Example',
-  offQuestion: () => null,
-  register(slots) {
-    slots.sidebarPanels.register({ component: () => ({}), id: 'example.panel', order: 0 });
-    slots.commands.register({ group: () => 'Example', id: 'example.run', label: () => 'Run', order: 0, run: vi.fn() });
-  },
 };
+
+/** Plugin states in which `isOn` tells which plugins are on, and that nothing follows. */
+function following(isOn: (plugin: string) => boolean): PluginFollowing {
+  return { isOn, whileOn: () => () => undefined };
+}
 
 describe('composeShell', () => {
   it('registers the shell’s own settings section and commands', () => {
-    const slots = composeShell([], []);
+    const slots = composeShell(
+      [],
+      [],
+      following(() => true),
+    );
 
     expect(slots.settingsSections.entries.map((section) => section.id)).toEqual(['shell.interface']);
     expect(slots.commands.entries.map((command) => command.id)).toEqual([
@@ -81,19 +100,18 @@ describe('composeShell', () => {
     expect(slots.imageSources.entries).toEqual([]);
   });
 
-  it('composes the app’s features and plugins beside the shell, with chat first and every plugin on', async () => {
+  it('composes the app’s features beside the shell, with chat first', async () => {
     const { features } = await import('../../../../../../apps/desktop/src/lib/registrations/features.js');
-    const { plugins } = await import('../../../../../../apps/desktop/src/lib/registrations/plugin-list.js');
 
-    const slots = composeShell(features, plugins, () => true);
+    const slots = composeShell(
+      features,
+      [],
+      following(() => true),
+    );
 
-    expect(pluginCatalog().map((plugin) => plugin.id)).toEqual(['workers', 'images']);
+    expect(pluginCatalog()).toEqual([]);
     expect(slots.views.entries.map((view) => view.id)).toEqual(['chat']);
-    expect(slots.sidebarPanels.entries.map((panel) => panel.id)).toEqual([
-      'chat.projects',
-      'chat.conversations',
-      'workers.panel',
-    ]);
+    expect(slots.sidebarPanels.entries.map((panel) => panel.id)).toEqual(['chat.projects', 'chat.conversations']);
     expect(slots.sidePanels.entries.map((kind) => kind.id)).toEqual(['chat.conversation']);
     expect(slots.conversationControls.entries.map((control) => control.id)).toEqual([
       'tools.full-access',
@@ -104,7 +122,6 @@ describe('composeShell', () => {
       'chat.dialogs',
       'window.requests',
       'tools.dialogs',
-      'workers.dialogs',
     ]);
     expect(slots.partRenderers.entries.map((renderer) => renderer.id)).toEqual([
       'user_text',
@@ -117,7 +134,7 @@ describe('composeShell', () => {
       'task',
     ]);
     expect(slots.mentionKinds.entries.map((kind) => kind.id)).toEqual(['files']);
-    expect(slots.imageSources.entries.map((source) => source.id)).toEqual(['images']);
+    expect(slots.imageSources.entries).toEqual([]);
     expect(slots.settingsSections.entries.map((section) => section.id)).toEqual([
       'shell.interface',
       'chat.providers',
@@ -126,23 +143,21 @@ describe('composeShell', () => {
       'tools.settings',
       'child-agents.settings',
       'plugins.settings',
-      'workers.settings',
     ]);
-    expect(slots.taskKinds.entries.map((kind) => kind.id)).toEqual(['workers']);
+    expect(slots.taskKinds.entries).toEqual([]);
     expect(slots.commands.entries.map((command) => command.id)).toEqual(
-      expect.arrayContaining([
-        'chat.add-project',
-        'chat.add-project-from-path',
-        'tools.show-permissions',
-        'workers.pair',
-      ]),
+      expect.arrayContaining(['chat.add-project', 'chat.add-project-from-path', 'tools.show-permissions']),
     );
   });
 
   it('shows a plugin’s entries only while the core reports the plugin as on, without composing again', () => {
     const on = new Set<string>();
 
-    const slots = composeShell([], [EXAMPLE_PLUGIN], (plugin) => on.has(plugin));
+    const slots = composeShell(
+      [],
+      [EXAMPLE_PLUGIN],
+      following((plugin) => on.has(plugin)),
+    );
     const whileOff = [slots.sidebarPanels.find('example.panel'), slots.commands.find('example.run')];
     on.add('example');
 
@@ -152,8 +167,50 @@ describe('composeShell', () => {
     expect(pluginCatalog().map((plugin) => plugin.id)).toEqual(['example']);
   });
 
+  it('lets a plugin follow its own state through its context', () => {
+    const whileOn = vi.fn(() => () => undefined);
+    const on = vi.fn();
+    const off = vi.fn();
+    const followingPlugin: PluginEntry = {
+      ...EXAMPLE_PLUGIN,
+      definition: {
+        register(context) {
+          context.whileOn(on, off);
+        },
+      },
+    };
+
+    composeShell([], [followingPlugin], { isOn: () => false, whileOn });
+
+    expect(whileOn).toHaveBeenCalledWith('example', on, off);
+  });
+
+  it('names a plugin without UI on the Plugins page, without codes of its own', () => {
+    const quiet: PluginEntry = {
+      definition: null,
+      description: () => 'Adds a service.',
+      id: 'quiet',
+      name: () => 'Quiet',
+    };
+
+    composeShell(
+      [],
+      [quiet],
+      following(() => true),
+    );
+    const described = findPlugin('quiet');
+
+    expect(described?.name()).toBe('Quiet');
+    expect(described?.failure('storage_failed')).toBeNull();
+    expect(described?.offQuestion([{ code: 'active_tasks', count: 1 }])).toBeNull();
+  });
+
   it('adds a feature’s entries beside the shell’s', () => {
-    const slots = composeShell([registerExampleFeature], []);
+    const slots = composeShell(
+      [registerExampleFeature],
+      [],
+      following(() => true),
+    );
 
     expect(slots.views.find('example')).toBeDefined();
     expect(slots.navigation.find('example')?.view).toBe('example');
@@ -182,6 +239,12 @@ describe('composeShell', () => {
       });
     };
 
-    expect(() => composeShell([clashing], [])).toThrow('already has an entry with the ID shell.interface');
+    expect(() =>
+      composeShell(
+        [clashing],
+        [],
+        following(() => true),
+      ),
+    ).toThrow('already has an entry with the ID shell.interface');
   });
 });

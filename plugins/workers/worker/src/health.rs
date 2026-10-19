@@ -1,4 +1,4 @@
-//! The health marker (docs/features/workers/compatibility-and-updates.md,
+//! The health marker (plugins/workers/docs/compatibility-and-updates.md,
 //! updating a worker): the running program writes `<data>/health` once it
 //! opened its store and listens, and removes it when it stops. `update`
 //! waits for the marker of the new version before it keeps that version.

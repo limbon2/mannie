@@ -3,10 +3,12 @@
 |              |                                                                                                                                                                                                                                                                                                                               |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                                                                                                                                                                              |
-| Last updated | 2026-10-16                                                                                                                                                                                                                                                                                                                    |
+| Last updated | 2026-10-19                                                                                                                                                                                                                                                                                                                    |
 | Related      | [ADR-0003](../adr/0003-build-the-desktop-app-on-tauri-2.md), [ADR-0004](../adr/0004-keep-system-access-in-the-rust-core.md), [ADR-0005](../adr/0005-build-the-ui-with-sveltekit-as-a-static-spa.md), [ADR-0006](../adr/0006-use-shadcn-svelte-through-its-cli.md), [ADR-0007](../adr/0007-generate-ipc-bindings-from-rust.md) |
 
 The desktop app is the master. It is a Tauri 2 application with a Rust core and a SvelteKit UI in the operating system's webview.
+
+Its Rust code is two crates ([ADR-0035](../adr/0035-find-plugins-at-build-time-in-folders-of-their-own.md), decision 4). `mannie-desktop-core`, in `apps/desktop/core/`, is a library of the root workspace with the composition root, the IPC commands, the window and tray and the forwarders of the plugins' calls, and it names no plugin. `mannie-desktop`, in `apps/desktop/src-tauri/`, is the binary: Tauri's configuration, its build script, the capabilities and the icons, and a `main` that runs the core with the plugins that `task gen` listed. The binary belongs to the launcher workspace that `task gen` writes into `.generated/desktop/`, so it builds only after `task gen`.
 
 ## 1. Trust model
 
@@ -20,7 +22,7 @@ The Rust core is trusted, and the webview is not ([ADR-0004](../adr/0004-keep-sy
 | Channels  | Ordered streams from the core: a conversation's events, the conversation list, the core's questions about closing the window | `tauri::ipc::Channel<T>`, created per subscription, a conversation's with a cursor               |
 | Events    | Not used                                                                                                                     | The core's questions to the window travel over a channel, so the webview has no event permission |
 
-- The types come from `mannie-types`, and the bindings are generated into `apps/desktop/src/lib/generated/` ([ADR-0007](../adr/0007-generate-ipc-bindings-from-rust.md)). The frontend calls only the generated functions.
+- The types come from `mannie-types`, and the bindings are generated into `apps/desktop/src/lib/generated/` ([ADR-0007](../adr/0007-generate-ipc-bindings-from-rust.md)). The frontend calls only the generated functions. A plugin's bindings are generated into its folder's `ui/generated/`, and their calls go through the generated transport to the plugin's inlined Tauri plugin and the host's dispatch ([ADR-0034](../adr/0034-build-plugins-on-a-plugin-sdk.md), decisions 8 and 9).
 - Errors are a typed enum with a stable code and its arguments. The UI shows the message for that code from its catalog and never parses error text. The English description in an error is for logs only ([ADR-0019](../adr/0019-keep-visible-text-in-message-catalogs.md)).
 - Every command needs a capability grant through `AppManifest::commands`, and only the main window receives grants.
 
@@ -34,7 +36,7 @@ The Rust core is trusted, and the webview is not ([ADR-0004](../adr/0004-keep-sy
 
 ## 4. Security configuration
 
-- Plugins: single-instance only. The opener crate's Rust function opens a link that the owner confirmed; its plugin is not registered, so the webview cannot call it. The fs, shell and http plugins are not used, and any new plugin needs an ADR.
+- Plugins: single-instance, and one inlined plugin for each of Mannie's plugins, which the build generates and whose calls go to the plugin host ([ADR-0034](../adr/0034-build-plugins-on-a-plugin-sdk.md), decision 8). The opener crate's Rust function opens a link that the owner confirmed; its plugin is not registered, so the webview cannot call it. The fs, shell and http plugins are not used, and any other plugin needs an ADR.
 - `withGlobalTauri` is false, navigation is limited to the app's origin, and the webview cannot open new windows.
 - Tauri's own handling of dropped files is off for the main window (`dragDropEnabled: false`), so the page receives a drop: the message box takes image files for an image source, and the shell refuses files dropped anywhere else ([ADR-0033](../adr/0033-let-plugins-attach-images-to-the-owners-messages.md)).
 - Content Security Policy: `default-src 'self'`; `script-src 'self'`; `style-src 'self'`; `img-src 'self' data: blob:`; `connect-src` limited to Tauri's IPC endpoints (`ipc:` and `https://ipc.localhost`); `object-src`, `frame-src` and `base-uri` set to `'none'`. Tauri adds the hashes of the inline bootstrap script that SvelteKit writes. V1 validates the policy with the full component stack; its [results](../roadmap/m0-validation.md) record what the policy blocks and how the app lives with it:
@@ -75,24 +77,25 @@ apps/desktop/
 │       │       ├── tools/       # tool calls and their approvals, permissions, rules and the tools settings
 │       │       ├── child-agents/  # the cards of tasks and the child agents settings
 │       │       ├── plugins/     # the Plugins settings and the way to them
-│       │       ├── workers/     # the Workers plugin: the workers in the sidebar, pairing, removal and the workers settings
 │       │       └── window-and-tray/  # the questions about closing, and the window settings
 │       ├── state/               # state modules: the shell's slots, settings, conversations, profiles, the window's questions
 │       ├── utils/               # helpers: messages for error codes, the transcript's reducer, Markdown, calls, ordering
 │       ├── types/               # shared types: the slot entries, command outcomes, the settings failures
-│       ├── registrations/       # what fills the slots: the shell's entries, chat.ts, window-and-tray.ts, the list of plugins, composeShell()
+│       ├── registrations/       # what fills the slots: the shell's entries, chat.ts, window-and-tray.ts, composeShell()
+│       ├── sdk/                 # the TypeScript plugin SDK, @mannie/plugin-sdk and its parts (ADR-0034, decision 11)
 │       ├── validation/          # the validation harness, which only validation builds load
-│       ├── generated/           # IPC bindings, generated and never committed
+│       ├── generated/           # IPC bindings, the plugins' envelopes and transport, and the plugin lists, generated and never committed
 │       └── paraglide/           # message functions compiled from messages/, never committed
-└── src-tauri/                   # the mannie-desktop crate; its IPC commands are in src/commands/
+├── core/                        # mannie-desktop-core: the composition root, the IPC commands in src/commands/, the window and tray
+└── src-tauri/                   # mannie-desktop: Tauri's configuration, build script, capabilities and icons, and main.rs
 ```
 
 - An area's files carry its name inside each kind folder. The shell's components are in `components/app/shell/`, its slots in `state/shell-slots.svelte.ts`, and its entries in `registrations/shell.ts`. A feature adds its components in `components/app/<feature>/`, its state in `state/`, its helpers in `utils/`, and its registration in `registrations/<feature>.ts`, which it lists in `registrations/features.ts`.
-- A plugin's UI files follow the same rule under the plugin's ID, such as `components/app/workers/`, `state/workers.svelte.ts` and `registrations/workers.ts` ([ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md), decision 10). Its registration is listed in `registrations/plugin-list.ts`, the one core file that imports a plugin's UI, and the lint rule `mannie/plugin-boundaries` refuses any other import of a plugin's files from the core or from another plugin.
+- A plugin's UI lives in its folder's `ui/`, sorted by kind the same way, such as `plugins/workers/ui/components/` and `ui/state/workers.svelte.ts`. Its `index.ts` exports `definePlugin(...)`, and `ui/generated/` holds its bindings, its constants and the barrel of its own messages, which `task gen` writes. It imports only the SDK, `@mannie/plugin-sdk` and its parts such as `/slots`, `/ipc`, `/components/<name>` and `/icons/<name>`, Svelte and its own files ([ADR-0034](../adr/0034-build-plugins-on-a-plugin-sdk.md), decision 11). The composition root imports the plugin list that `task gen` generates, `#plugin-list`, which names every plugin and carries the definitions, with the fixture plugins in validation builds ([ADR-0035](../adr/0035-find-plugins-at-build-time-in-folders-of-their-own.md), decision 7). The lint rule `mannie/plugin-boundaries` and a Vite plugin refuse any other import across these boundaries, and the lint rule also refuses a plugin's message key in the core's files (decision 6).
 - Components that are not CLI output live in `components/app/` ([ADR-0006](../adr/0006-use-shadcn-svelte-through-its-cli.md)): shared compositions directly in it, and each area's components in a folder of their own.
 - The app imports its own modules through the `#lib/*` subpath import, which SvelteKit 3 uses in place of `$lib`.
 - The root layout's load function asks the core whether it started and loads the interface settings with their locale before anything renders.
-- `composeShell()` creates the shell's slots, registers the shell's own entries (the interface settings and the commands for the settings and the theme), then calls each feature's registration, then each plugin's with the plugin's own view of the slots. The shell renders whatever the slots hold and never imports a feature. A slot shows a plugin's entries only while the core reports the plugin as on, which the shell follows through the channel of plugin states from its start ([extension points](extension-points.md#37-ui-shell-slots)).
+- `composeShell()` creates the shell's slots, registers the shell's own entries (the interface settings and the commands for the settings and the theme), then calls each feature's registration, then each plugin's `register` with the plugin's context: its own view of the slots, whether it is on, and `whileOn`, through which its state follows the plugin. The shell renders whatever the slots hold and never imports a feature. A slot shows a plugin's entries only while the core reports the plugin as on, which the shell follows through the channel of plugin states from its start ([extension points](extension-points.md#37-ui-shell-slots)).
 - The settings are a page of their own (`/settings`). The shell then shows the settings sidebar in place of the main one: a link back to the main view as the owner left it, and a page per settings section, which the `section` search parameter selects.
 - Side panels open beside the main view, in a resizable split that keeps its size in the webview's storage, or over the view when the main area is narrower than 720 pixels ([ADR-0025](../adr/0025-add-side-panels-to-the-shell.md)). The main view's address holds the open panels, one `panel` search parameter each, and the visible one in `shown-panel`, so a view that opens other content leaves them behind, the settings lead back to them and a reload shows them again. `state/side-panels.svelte.ts` opens, shows and closes them and moves the focus.
 - State lives in `.svelte.ts` modules in `state/` that use runes. Each open conversation has a state object that its channel subscription feeds.
@@ -131,7 +134,7 @@ The app meets WCAG 2.1 AA. Every action works from the keyboard, focus is always
 
 The interface is in English, and it is built so that a language can be added without changing code ([ADR-0019](../adr/0019-keep-visible-text-in-message-catalogs.md)):
 
-- Every piece of visible text comes from the message catalogs in `apps/desktop/messages/`, compiled by Paraglide JS into typed message functions. Components contain no literal text, and each feature owns the messages under its key prefix.
+- Every piece of visible text comes from the message catalogs in `apps/desktop/messages/` and in each plugin's `messages/`, whose keys all start with the plugin's prefix. `task gen` writes an inlang project in `apps/desktop/.generated/` that lists the core's catalog and then each plugin's, and Paraglide JS compiles them into one catalog of typed message functions for each locale ([ADR-0035](../adr/0035-find-plugins-at-build-time-in-folders-of-their-own.md), decision 8). Components contain no literal text, and each feature owns the messages under its key prefix.
 - The core sends codes and arguments, never display text. Content (model output, file contents, command output, the owner's own text) is shown as it is.
 - Dates, times, numbers and durations are formatted with `Intl` in the current locale.
 - The locale is a setting in the core, defaulting to the operating system's language when a catalog exists for it and to English otherwise. A custom Paraglide strategy reads it at startup. Changing it reloads the webview, which does not affect runs.

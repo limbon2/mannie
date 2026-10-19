@@ -2,7 +2,22 @@
 //! definitions): what each kind of agent is, whom it answers to, its
 //! instructions, its tools and its budgets. A feature that needs a new kind of
 //! agent registers a definition; it does not change the loop.
+//!
+//! Plugins contribute agents through the SDK's `points::agents` (ADR-0034,
+//! decision 6), whose consumer is the runtime's registry: this module checks
+//! their names, finds them in a snapshot of the registry, and keeps which
+//! plugin each one came from.
 
+use std::collections::HashMap;
+use std::sync::{PoisonError, RwLock};
+
+use mannie_plugin_sdk::contributions::{Contributions, ExtensionPoint};
+use mannie_plugin_sdk::host::{ContributionRefusal, ID_TAKEN};
+use mannie_plugin_sdk::ids::PluginId;
+use mannie_plugin_sdk::points::agents::{AgentSpec, Agents, Requester as SdkRequester};
+
+use crate::Runtime;
+use crate::plugins::Snapshot;
 use crate::tasks::TASK_TOOLS;
 use crate::texts;
 
@@ -23,6 +38,24 @@ pub enum Requester {
     Owner,
     /// Another agent, which gave it a task: a child agent.
     Agent,
+}
+
+impl From<SdkRequester> for Requester {
+    fn from(requester: SdkRequester) -> Self {
+        match requester {
+            SdkRequester::Owner => Self::Owner,
+            SdkRequester::Agent => Self::Agent,
+        }
+    }
+}
+
+impl From<Requester> for SdkRequester {
+    fn from(requester: Requester) -> Self {
+        match requester {
+            Requester::Owner => Self::Owner,
+            Requester::Agent => Self::Agent,
+        }
+    }
 }
 
 /// A kind of agent.
@@ -47,6 +80,22 @@ pub struct AgentDefinition {
     pub max_tool_calls: u32,
     /// The most tasks that one reply may start or follow up.
     pub max_tasks: u32,
+}
+
+/// A plugin's kind of agent, as the runtime runs it (ADR-0034, decision 6).
+impl From<&AgentSpec> for AgentDefinition {
+    fn from(spec: &AgentSpec) -> Self {
+        Self {
+            name: spec.name,
+            requester: spec.requester.into(),
+            instructions: spec.instructions,
+            tools: spec.tools,
+            max_continuation_notes: spec.budgets.continuation_notes,
+            max_tool_rounds: spec.budgets.tool_rounds,
+            max_tool_calls: spec.budgets.tool_calls,
+            max_tasks: spec.budgets.tasks,
+        }
+    }
 }
 
 /// The system tools (docs/features/system-tools/tools-and-results.md).
@@ -219,8 +268,97 @@ impl AgentRegistry {
     }
 }
 
+/// The plugin of each agent that a plugin registered since Mannie started,
+/// kept after the plugin stops, so a call that names the agent of a plugin
+/// that is off says which plugin it was.
+#[derive(Debug, Default)]
+pub(crate) struct AgentPlugins {
+    plugins: RwLock<HashMap<&'static str, String>>,
+}
+
+impl AgentPlugins {
+    /// Notes the plugin of each of its agents.
+    pub(crate) fn record(&self, plugin: &PluginId, agents: &[AgentSpec]) {
+        let mut plugins = self.plugins.write().unwrap_or_else(PoisonError::into_inner);
+        for agent in agents {
+            plugins.insert(agent.name, plugin.as_str().to_owned());
+        }
+    }
+
+    /// The plugin that registered an agent, also while it is off.
+    fn plugin_of(&self, agent: &str) -> Option<String> {
+        self.plugins
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(agent)
+            .cloned()
+    }
+}
+
+impl Runtime {
+    /// Refuses a plugin's agents whose names the core or another plugin has
+    /// (the rule `Global`).
+    pub(crate) fn check_agents(
+        &self,
+        snapshot: &Snapshot,
+        contributions: &Contributions,
+    ) -> Result<(), ContributionRefusal> {
+        for agent in contributions.entries::<Agents>() {
+            let taken = self.inner.agents.get(agent.name).is_some()
+                || snapshot.find::<Agents>(agent.name).is_some();
+            if taken {
+                return Err(ContributionRefusal::new(
+                    Agents::NAME,
+                    ID_TAKEN,
+                    format!("an agent named {} is registered already", agent.name),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// The definition of an agent: the core's or that of a plugin that is on.
+    pub(crate) fn agent(&self, name: &str) -> Option<AgentDefinition> {
+        self.agent_in(&self.contributions(), name)
+    }
+
+    /// The definition of an agent: the core's or that of a plugin in the
+    /// snapshot.
+    pub(crate) fn agent_in(&self, snapshot: &Snapshot, name: &str) -> Option<AgentDefinition> {
+        if let Some(definition) = self.inner.agents.get(name) {
+            return Some(definition.clone());
+        }
+        snapshot
+            .find::<Agents>(name)
+            .map(|registered| AgentDefinition::from(&registered.entry))
+    }
+
+    /// The kinds of child agents that `start_task` can start: the core's
+    /// and those of the plugins in the snapshot.
+    pub(crate) fn child_agent_names(&self, snapshot: &Snapshot) -> Vec<&'static str> {
+        let plugin_children = snapshot
+            .items::<Agents>()
+            .iter()
+            .filter(|registered| registered.entry.requester == SdkRequester::Agent)
+            .map(|registered| registered.entry.name);
+        self.inner
+            .agents
+            .child_agents()
+            .map(|definition| definition.name)
+            .chain(plugin_children)
+            .collect()
+    }
+
+    /// The plugin that registered an agent since Mannie started, also while
+    /// it is off; `None` for the core's agents and unknown names.
+    pub(crate) fn agent_plugin(&self, agent: &str) -> Option<String> {
+        self.inner.agent_plugins.plugin_of(agent)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use mannie_plugin_sdk::points::agents::{AgentBudgets, AgentSpec, Requester as SdkRequester};
     use mannie_tools::{PermissionClass, ToolRegistry};
 
     use super::{
@@ -228,6 +366,15 @@ mod tests {
         GENERAL, Requester,
     };
     use crate::tasks::TASK_TOOLS;
+
+    /// A plugin's agent whose budgets all differ, so a swapped budget shows.
+    const HELPER: AgentSpec = AgentSpec::new(
+        "helper",
+        SdkRequester::Agent,
+        "Help with it.",
+        &["read_file"],
+        AgentBudgets::new(1, 2, 3, 4),
+    );
 
     #[test]
     fn a_registered_definition_is_found_and_names_are_unique() {
@@ -259,6 +406,32 @@ mod tests {
             .map(|definition| definition.name)
             .collect();
         assert_eq!(children, ["explore", "general", "fake"]);
+    }
+
+    #[test]
+    fn a_plugin_s_agent_spec_becomes_a_definition_with_each_field_in_its_place() {
+        let definition = AgentDefinition::from(&HELPER);
+
+        assert_eq!(
+            definition,
+            AgentDefinition {
+                name: "helper",
+                requester: Requester::Agent,
+                instructions: "Help with it.",
+                tools: &["read_file"],
+                max_continuation_notes: 1,
+                max_tool_rounds: 2,
+                max_tool_calls: 3,
+                max_tasks: 4,
+            }
+        );
+        for (sdk, core) in [
+            (SdkRequester::Owner, Requester::Owner),
+            (SdkRequester::Agent, Requester::Agent),
+        ] {
+            assert_eq!(Requester::from(sdk), core);
+            assert_eq!(SdkRequester::from(core), sdk);
+        }
     }
 
     #[test]

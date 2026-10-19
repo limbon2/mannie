@@ -1,5 +1,5 @@
 // The session of a link between the master and a worker
-// (docs/features/workers/pairing-and-link.md, the services; ADR-0016).
+// (plugins/workers/docs/pairing-and-link.md, the services; ADR-0016).
 //
 // Every connection starts with Hello: the master and the worker say which
 // version of Mannie they run and which feature level of each package they

@@ -1,4 +1,4 @@
-//! The worker as a service of the operating system (docs/features/workers/
+//! The worker as a service of the operating system (plugins/workers/docs/
 //! service.md): a Windows service, a systemd unit or an rc.d service.
 //! `install` copies the program into its folder, writes a configuration and
 //! host instructions when there are none, registers the worker to start
@@ -26,7 +26,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use mannie_types::clock::{Clock, SystemClock};
+use mannie_host_kit::types::SystemClock;
+use mannie_plugin_sdk::contracts::Clock;
 
 use crate::cli::InstallArguments;
 use crate::config;
@@ -209,7 +210,7 @@ fn create_system_folder(folder: &Path) -> anyhow::Result<()> {
 fn prepare_configuration(config_file: &Path, folders: &Folders) -> anyhow::Result<()> {
     let folder = config_file.parent().unwrap_or(&folders.config);
     create_system_folder(folder)?;
-    let name = mannie_tools::hostname();
+    let name = crate::host::hostname();
     if write_new(config_file, &config::initial_file(&name, folders))? {
         report(&format!(
             "Wrote the configuration {}. Edit it as root or administrator, then restart the service.",

@@ -1,490 +1,391 @@
-//! What plugins contribute to the runtime while they are on (ADR-0030,
-//! decision 5): tools, agent definitions, instruction sections, task
-//! executors, mention providers (ADR-0032) and image sources (ADR-0033), each
-//! kept with the ID of the plugin that made it.
+//! The registry of what plugins contribute while they are on (ADR-0034,
+//! decision 6; ADR-0030, decision 5): one registry keyed by extension point,
+//! which holds each entry as the SDK defines it, with the plugin that made it
+//! and the generation of the plugin's start.
 //!
-//! The runtime takes a plugin's contributions when the plugin starts and
-//! drops them when it stops. A run reads them once, when it starts, so the
-//! tools and the prompt that the model sees never change within a reply
-//! (decision 8); a call into a plugin that stopped since does not run, and
-//! its result says that the plugin is off.
+//! The runtime consumes all six points of SDK 1 through one consumer,
+//! [`RuntimeContributions`]. Each point's checks live in the module that owns
+//! the point: `plugin_tools.rs`, `agents.rs`, `instructions.rs`,
+//! `executors.rs`, `mentions.rs` and `images.rs`. The consumer checks again
+//! and adds under one write lock, and swaps one copy of the whole registry,
+//! so a [`Snapshot`] holds all of a plugin's contributions or none.
+//!
+//! A run reads one snapshot when it starts, so the tools and the prompt that
+//! the model sees never change within a reply (ADR-0030, decision 8). A call
+//! of a plugin's tool runs only while the plugin's start that offered it is
+//! on: a plugin turned off, or turned off and on again, since the run
+//! started gives the run's call `plugin_off`.
 
+use std::any::{Any, TypeId};
 use std::collections::HashMap;
+use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 
-use mannie_tools::Tool;
+use mannie_plugin_sdk::contributions::{Contributions, ExtensionPoint, PointInfo};
+use mannie_plugin_sdk::host::{ContributionConsumer, ContributionRefusal, PLUGIN_REGISTERED};
+use mannie_plugin_sdk::ids::PluginId;
+use mannie_plugin_sdk::points::agents::Agents;
+use mannie_plugin_sdk::points::executors::Executors;
+use mannie_plugin_sdk::points::images::ImageSources;
+use mannie_plugin_sdk::points::mentions::Mentions;
+use mannie_plugin_sdk::points::sections::Sections;
+use mannie_plugin_sdk::points::tools::Tools;
 
 use crate::Runtime;
-use crate::agents::AgentDefinition;
-use crate::executors::TaskExecutor;
-use crate::images::ImageSource;
-use crate::instructions::InstructionSection;
-use crate::mentions::MentionProvider;
+use crate::executors::check_executors;
+use crate::images::check_image_sources;
+use crate::instructions::check_sections;
 
-/// A tool of a plugin, with the agents that are offered it.
-#[derive(Debug, Clone)]
-pub struct PluginTool {
-    /// The tool.
-    pub tool: Arc<dyn Tool>,
-    /// The names of the agents whose runs are offered the tool, when their
-    /// profiles use tools.
-    pub agents: Vec<&'static str>,
+/// An entry of a point, with the plugin that contributed it and the
+/// generation of the plugin's start.
+pub(crate) struct Registered<P: ExtensionPoint> {
+    /// The plugin.
+    pub(crate) plugin: PluginId,
+    /// The generation of the plugin's start, which a later start of the same
+    /// plugin does not share.
+    pub(crate) generation: u64,
+    /// The entry, as the SDK defines it.
+    pub(crate) entry: P::Entry,
 }
 
-/// What a plugin contributes while it is on.
-#[derive(Debug, Default)]
-pub struct PluginContributions {
-    /// Tools, each with the agents that are offered it.
-    pub tools: Vec<PluginTool>,
-    /// Agent definitions, such as child agents that `start_task` starts.
-    pub agents: Vec<AgentDefinition>,
-    /// Instruction sections for every run.
-    pub sections: Vec<InstructionSection>,
-    /// Task executors, whose kind is the plugin's ID (ADR-0031, decision 4).
-    pub executors: Vec<Arc<dyn TaskExecutor>>,
-    /// Mention providers, whose IDs are the plugin's ID or start with it and a
-    /// dot (ADR-0032, decision 3).
-    pub mentions: Vec<Arc<dyn MentionProvider>>,
-    /// Image sources, whose IDs follow the rule of mention providers
-    /// (ADR-0033, decision 2).
-    pub images: Vec<Arc<dyn ImageSource>>,
-}
-
-/// Why the runtime did not take a plugin's contributions. It took none of
-/// them.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ContributionError {
-    /// The plugin's contributions are registered already.
-    #[error("the plugin {plugin} is registered already")]
-    PluginRegistered {
-        /// The plugin.
-        plugin: String,
-    },
-    /// The core or another plugin has a tool of this name.
-    #[error("a tool named {name} is registered already")]
-    DuplicateTool {
-        /// The tool's name.
-        name: String,
-    },
-    /// The core or another plugin has an agent of this name.
-    #[error("an agent named {name} is registered already")]
-    DuplicateAgent {
-        /// The agent's name.
-        name: String,
-    },
-    /// The core or another plugin has a section with this ID.
-    #[error("a section with the ID {id} is registered already")]
-    DuplicateSection {
-        /// The section's ID.
-        id: String,
-    },
-    /// An executor's kind is not the plugin's ID, or another executor of the
-    /// kind is registered.
-    #[error("the plugin {plugin} cannot register an executor of the kind {kind}")]
-    ExecutorKind {
-        /// The plugin.
-        plugin: String,
-        /// The executor's kind.
-        kind: String,
-    },
-    /// The core or another plugin has a mention provider with this ID.
-    #[error("a mention provider with the ID {id} is registered already")]
-    DuplicateMentionProvider {
-        /// The provider's ID.
-        id: String,
-    },
-    /// A mention provider's ID is neither the plugin's ID nor starts with
-    /// it and a dot.
-    #[error("the plugin {plugin} cannot register the mention provider {id}")]
-    MentionProviderId {
-        /// The plugin.
-        plugin: String,
-        /// The provider's ID.
-        id: String,
-    },
-    /// Another plugin has an image source with this ID.
-    #[error("an image source with the ID {id} is registered already")]
-    DuplicateImageSource {
-        /// The source's ID.
-        id: String,
-    },
-    /// An image source's ID is neither the plugin's ID nor starts with it and
-    /// a dot.
-    #[error("the plugin {plugin} cannot register the image source {id}")]
-    ImageSourceId {
-        /// The plugin.
-        plugin: String,
-        /// The source's ID.
-        id: String,
-    },
-}
-
-/// Refuses image sources whose IDs are not the plugin's, or that another
-/// plugin or the contributions themselves already use (ADR-0033, decision 2).
-fn check_image_sources(
-    plugin: &str,
-    registered: &[Registered],
-    images: &[Arc<dyn ImageSource>],
-) -> Result<(), ContributionError> {
-    let mut source_ids: Vec<&str> = Vec::new();
-    for source in images {
-        let id = source.id();
-        if !owned_by(plugin, id) {
-            return Err(ContributionError::ImageSourceId {
-                plugin: plugin.to_owned(),
-                id: id.to_owned(),
-            });
+impl<P: ExtensionPoint> Clone for Registered<P> {
+    fn clone(&self) -> Self {
+        Self {
+            plugin: self.plugin.clone(),
+            generation: self.generation,
+            entry: self.entry.clone(),
         }
-        let taken = source_ids.contains(&id)
-            || registered
-                .iter()
-                .flat_map(|entry| &entry.images)
-                .any(|other| other.id() == id);
-        if taken {
-            return Err(ContributionError::DuplicateImageSource { id: id.to_owned() });
-        }
-        source_ids.push(id);
     }
-    Ok(())
 }
 
-/// Whether an ID of a mention provider or an image source belongs to the
-/// plugin: the plugin's ID, or one that starts with it and a dot.
-fn owned_by(plugin: &str, id: &str) -> bool {
-    id == plugin
-        || id
-            .strip_prefix(plugin)
-            .is_some_and(|rest| rest.len() > 1 && rest.starts_with('.'))
+/// The entries of one point, behind a type that the registry copies, filters
+/// and prints without knowing the point.
+trait PointEntries: Any + Send + Sync {
+    /// The entries without those of `plugin`.
+    fn without(&self, plugin: &PluginId) -> Arc<dyn PointEntries>;
+
+    /// The point's name, and the plugin and ID of each entry.
+    fn describe(&self) -> (&'static str, Vec<(&str, &str)>);
 }
 
-/// The contributions of one plugin that is on, without its executors, which
-/// the registry of executors keeps.
-#[derive(Debug)]
-struct Registered {
-    plugin: String,
-    tools: Vec<PluginTool>,
-    agents: Vec<AgentDefinition>,
-    sections: Vec<InstructionSection>,
-    mentions: Vec<Arc<dyn MentionProvider>>,
-    images: Vec<Arc<dyn ImageSource>>,
+/// The entries of the point `P`, in the order in which their plugins
+/// started.
+struct PointList<P: ExtensionPoint>(Vec<Registered<P>>);
+
+impl<P: ExtensionPoint> PointEntries for PointList<P> {
+    fn without(&self, plugin: &PluginId) -> Arc<dyn PointEntries> {
+        let kept = self
+            .0
+            .iter()
+            .filter(|registered| registered.plugin != *plugin)
+            .cloned()
+            .collect();
+        Arc::new(Self(kept))
+    }
+
+    fn describe(&self) -> (&'static str, Vec<(&str, &str)>) {
+        let entries = self
+            .0
+            .iter()
+            .map(|registered| (registered.plugin.as_str(), P::id(&registered.entry)))
+            .collect();
+        (P::NAME, entries)
+    }
 }
 
-/// The contributions of the plugins that are on.
+/// The registry's contents at one moment. A change copies them, which costs
+/// one reference count for each point, and replaces them whole.
+#[derive(Clone, Default)]
+struct Contents {
+    /// The entries of each point, by the point's marker type.
+    points: HashMap<TypeId, Arc<dyn PointEntries>>,
+    /// The plugins whose contributions are registered, with the generation
+    /// of their start, in the order in which they started.
+    plugins: Vec<(PluginId, u64)>,
+}
+
+impl Contents {
+    /// The entries of the point `P`, in the order in which their plugins
+    /// started. A point without entries gives an empty slice.
+    fn items<P: ExtensionPoint>(&self) -> &[Registered<P>] {
+        // Each value is stored under its point's marker by `push`, so the
+        // downcast of a present point succeeds; one that did not would read
+        // as no entries rather than panic.
+        self.points
+            .get(&TypeId::of::<P>())
+            .and_then(|entries| {
+                let entries: &dyn Any = entries.as_ref();
+                entries.downcast_ref::<PointList<P>>()
+            })
+            .map_or(&[], |list| list.0.as_slice())
+    }
+
+    /// Adds a plugin's entries of the point `P` after those of the plugins
+    /// that started before.
+    fn push<P: ExtensionPoint>(
+        &mut self,
+        plugin: &PluginId,
+        generation: u64,
+        entries: Vec<P::Entry>,
+    ) {
+        if entries.is_empty() {
+            return;
+        }
+        let mut list = self.items::<P>().to_vec();
+        list.extend(entries.into_iter().map(|entry| Registered {
+            plugin: plugin.clone(),
+            generation,
+            entry,
+        }));
+        self.points
+            .insert(TypeId::of::<P>(), Arc::new(PointList::<P>(list)));
+    }
+
+    /// The contents without a plugin.
+    fn without(&self, plugin: &PluginId) -> Self {
+        Self {
+            points: self
+                .points
+                .iter()
+                .map(|(point, entries)| (*point, entries.without(plugin)))
+                .collect(),
+            plugins: self
+                .plugins
+                .iter()
+                .filter(|(registered, _generation)| registered != plugin)
+                .cloned()
+                .collect(),
+        }
+    }
+
+    fn generation_of(&self, plugin: &str) -> Option<u64> {
+        self.plugins
+            .iter()
+            .find(|(registered, _generation)| registered.as_str() == plugin)
+            .map(|(_plugin, generation)| *generation)
+    }
+}
+
+impl fmt::Debug for Contents {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // The entries' own types need not implement Debug, so each shows as
+        // its plugin and its ID, by point.
+        let mut points: Vec<(&'static str, Vec<(&str, &str)>)> = self
+            .points
+            .values()
+            .map(|entries| entries.describe())
+            .filter(|(_name, entries)| !entries.is_empty())
+            .collect();
+        points.sort_by_key(|(name, _entries)| *name);
+        formatter
+            .debug_struct("Contents")
+            .field("plugins", &self.plugins)
+            .field("points", &points)
+            .finish()
+    }
+}
+
+/// What plugins contribute while they are on. Copy on write: a snapshot is
+/// one reference count, and a change replaces the contents whole.
 #[derive(Debug, Default)]
-pub(crate) struct Plugins {
-    registered: RwLock<Vec<Registered>>,
-    /// The plugin of each agent that a plugin registered since Mannie
-    /// started, kept after the plugin stops, so a call that names the agent
-    /// of a plugin that is off says which plugin it was.
-    agent_plugins: RwLock<HashMap<&'static str, String>>,
+pub(crate) struct Registry {
+    current: RwLock<Arc<Contents>>,
+    /// The last generation that a plugin's start got.
+    generations: AtomicU64,
 }
 
-/// A plugin's tool as a run is offered it.
+impl Registry {
+    fn snapshot(&self) -> Snapshot {
+        let current = self.current.read().unwrap_or_else(PoisonError::into_inner);
+        Snapshot(Arc::clone(&current))
+    }
+}
+
+/// The contributions of the plugins that were on at one moment.
 #[derive(Debug, Clone)]
-pub(crate) struct OfferedTool {
-    pub(crate) plugin: String,
-    pub(crate) tool: Arc<dyn Tool>,
+pub(crate) struct Snapshot(Arc<Contents>);
+
+impl Snapshot {
+    /// The entries of the point `P`, in the order in which their plugins
+    /// started.
+    pub(crate) fn items<P: ExtensionPoint>(&self) -> &[Registered<P>] {
+        self.0.items::<P>()
+    }
+
+    /// The entry of the point `P` with this ID.
+    pub(crate) fn find<P: ExtensionPoint>(&self, id: &str) -> Option<&Registered<P>> {
+        self.items::<P>()
+            .iter()
+            .find(|registered| P::id(&registered.entry) == id)
+    }
+
+    /// The generation of a plugin's start, while its contributions are
+    /// registered.
+    pub(crate) fn generation_of(&self, plugin: &str) -> Option<u64> {
+        self.0.generation_of(plugin)
+    }
 }
 
-impl Runtime {
-    /// Takes a plugin's contributions, as the plugin starts (ADR-0030,
-    /// decision 6): runs that start from now on are offered its tools,
-    /// agents, sections and executors. Takes all of them or none.
-    pub fn add_plugin(
+/// The runtime's consumer of the six points of SDK 1.
+#[derive(Debug)]
+struct RuntimeContributions {
+    runtime: Runtime,
+}
+
+/// The points that the runtime consumes.
+const RUNTIME_POINTS: [PointInfo; 6] = [
+    PointInfo::of::<Tools>(),
+    PointInfo::of::<Agents>(),
+    PointInfo::of::<Sections>(),
+    PointInfo::of::<Executors>(),
+    PointInfo::of::<Mentions>(),
+    PointInfo::of::<ImageSources>(),
+];
+
+impl ContributionConsumer for RuntimeContributions {
+    fn points(&self) -> Vec<PointInfo> {
+        RUNTIME_POINTS.to_vec()
+    }
+
+    fn check(
         &self,
-        plugin: &str,
-        contributions: PluginContributions,
-    ) -> Result<(), ContributionError> {
-        let mut registered = self
-            .inner
-            .plugins
-            .registered
+        plugin: &PluginId,
+        contributions: &Contributions,
+    ) -> Result<(), ContributionRefusal> {
+        self.runtime
+            .check_contributions(&self.runtime.contributions(), plugin, contributions)
+    }
+
+    fn add(
+        &self,
+        plugin: &PluginId,
+        mut contributions: Contributions,
+    ) -> Result<(), ContributionRefusal> {
+        // A plugin without entries of the runtime's points has nothing to
+        // run, so the registry does not hold it.
+        if contributions.is_empty() {
+            return Ok(());
+        }
+        let registry = &self.runtime.inner.contributions;
+        let mut current = registry
+            .current
             .write()
             .unwrap_or_else(PoisonError::into_inner);
-        if registered.iter().any(|entry| entry.plugin == plugin) {
-            return Err(ContributionError::PluginRegistered {
-                plugin: plugin.to_owned(),
-            });
-        }
-        self.check_contributions(plugin, &registered, &contributions)?;
-        let PluginContributions {
-            tools,
-            agents,
-            sections,
-            executors,
-            mentions,
-            images,
-        } = contributions;
-        for executor in executors {
-            // Checked above: the kind is the plugin's and free.
-            if let Err(error) = self.add_executor(executor) {
-                return Err(ContributionError::ExecutorKind {
-                    plugin: plugin.to_owned(),
-                    kind: error.kind.to_owned(),
-                });
-            }
-        }
-        {
-            let mut agent_plugins = self
-                .inner
-                .plugins
-                .agent_plugins
-                .write()
-                .unwrap_or_else(PoisonError::into_inner);
-            for agent in &agents {
-                agent_plugins.insert(agent.name, plugin.to_owned());
-            }
-        }
+        // Checked again under the lock, so two plugins that start at once
+        // never both take one ID, and the contents that the check read are
+        // the ones that change.
+        let before = Snapshot(Arc::clone(&current));
+        self.runtime
+            .check_contributions(&before, plugin, &contributions)?;
+        let generation = registry.generations.fetch_add(1, Ordering::Relaxed) + 1;
+        let tools = contributions.take::<Tools>();
+        let agents = contributions.take::<Agents>();
+        let sections = contributions.take::<Sections>();
+        let executors = contributions.take::<Executors>();
+        let mentions = contributions.take::<Mentions>();
+        let images = contributions.take::<ImageSources>();
         tracing::info!(
-            plugin,
+            plugin = %plugin,
+            generation,
             tools = tools.len(),
             agents = agents.len(),
             sections = sections.len(),
+            executors = executors.len(),
             mentions = mentions.len(),
             images = images.len(),
             "a plugin's contributions were registered"
         );
-        registered.push(Registered {
-            plugin: plugin.to_owned(),
-            tools,
-            agents,
-            sections,
-            mentions,
-            images,
-        });
+        self.runtime.inner.agent_plugins.record(plugin, &agents);
+        let mut next = Contents::clone(&current);
+        next.push::<Tools>(plugin, generation, tools);
+        next.push::<Agents>(plugin, generation, agents);
+        next.push::<Sections>(plugin, generation, sections);
+        next.push::<Executors>(plugin, generation, executors);
+        next.push::<Mentions>(plugin, generation, mentions);
+        next.push::<ImageSources>(plugin, generation, images);
+        next.plugins.push((plugin.clone(), generation));
+        *current = Arc::new(next);
         Ok(())
     }
 
-    /// Refuses contributions with a name that the core, another plugin or
-    /// the contributions themselves already use, and an executor of another
-    /// kind than the plugin's ID, before any of them is registered.
+    fn remove(&self, plugin: &PluginId) {
+        self.runtime.drop_contributions(plugin);
+    }
+}
+
+impl Runtime {
+    /// The consumers of the extension points that the runtime owns, which
+    /// the plugin host hands each plugin's contributions to (ADR-0034,
+    /// decision 6).
+    pub fn contribution_consumers(&self) -> Vec<Arc<dyn ContributionConsumer>> {
+        vec![Arc::new(RuntimeContributions {
+            runtime: self.clone(),
+        })]
+    }
+
+    /// The contributions of the plugins that are on now.
+    pub(crate) fn contributions(&self) -> Snapshot {
+        self.inner.contributions.snapshot()
+    }
+
+    /// Refuses a plugin's contributions with an ID that the core or another
+    /// plugin has, or that a point's own checks do not accept, before any of
+    /// them is registered. The coordinator of the SDK checked the rules that
+    /// need only the plugin's own entries already.
     fn check_contributions(
         &self,
-        plugin: &str,
-        registered: &[Registered],
-        contributions: &PluginContributions,
-    ) -> Result<(), ContributionError> {
-        let PluginContributions {
-            tools,
-            agents,
-            sections,
-            executors,
-            mentions,
-            images,
-        } = contributions;
-        let mut names: Vec<&str> = Vec::new();
-        for offered in tools {
-            let name = offered.tool.name();
-            let taken = self.inner.tools.registry.get(name).is_some()
-                || names.contains(&name)
-                || registered
-                    .iter()
-                    .flat_map(|entry| &entry.tools)
-                    .any(|other| other.tool.name() == name);
-            if taken {
-                return Err(ContributionError::DuplicateTool {
-                    name: name.to_owned(),
-                });
-            }
-            names.push(name);
+        snapshot: &Snapshot,
+        plugin: &PluginId,
+        contributions: &Contributions,
+    ) -> Result<(), ContributionRefusal> {
+        let Some((point, _id)) = contributions.ids().next() else {
+            return Ok(());
+        };
+        if snapshot.generation_of(plugin.as_str()).is_some() {
+            return Err(ContributionRefusal::new(
+                point.name,
+                PLUGIN_REGISTERED,
+                format!("the plugin {plugin} is registered already"),
+            ));
         }
-        let mut agent_names: Vec<&str> = Vec::new();
-        for agent in agents {
-            let taken = self.inner.agents.get(agent.name).is_some()
-                || agent_names.contains(&agent.name)
-                || registered
-                    .iter()
-                    .flat_map(|entry| &entry.agents)
-                    .any(|other| other.name == agent.name);
-            if taken {
-                return Err(ContributionError::DuplicateAgent {
-                    name: agent.name.to_owned(),
-                });
-            }
-            agent_names.push(agent.name);
-        }
-        let mut ids: Vec<&str> = Vec::new();
-        for section in sections {
-            let taken = self.inner.instructions.contains(section.id)
-                || ids.contains(&section.id)
-                || registered
-                    .iter()
-                    .flat_map(|entry| &entry.sections)
-                    .any(|other| other.id == section.id);
-            if taken {
-                return Err(ContributionError::DuplicateSection {
-                    id: section.id.to_owned(),
-                });
-            }
-            ids.push(section.id);
-        }
-        // A plugin has at most one executor, whose kind is the plugin's ID.
-        let kind_refused = executors.iter().enumerate().find(|(index, executor)| {
-            *index > 0 || executor.kind() != plugin || self.executor(executor.kind()).is_some()
-        });
-        if let Some((_index, executor)) = kind_refused {
-            return Err(ContributionError::ExecutorKind {
-                plugin: plugin.to_owned(),
-                kind: executor.kind().to_owned(),
-            });
-        }
-        let mut provider_ids: Vec<&str> = Vec::new();
-        for provider in mentions {
-            let id = provider.id();
-            if !owned_by(plugin, id) {
-                return Err(ContributionError::MentionProviderId {
-                    plugin: plugin.to_owned(),
-                    id: id.to_owned(),
-                });
-            }
-            let taken = self.inner.mentions.contains(id)
-                || provider_ids.contains(&id)
-                || registered
-                    .iter()
-                    .flat_map(|entry| &entry.mentions)
-                    .any(|other| other.id() == id);
-            if taken {
-                return Err(ContributionError::DuplicateMentionProvider { id: id.to_owned() });
-            }
-            provider_ids.push(id);
-        }
-        check_image_sources(plugin, registered, images)
+        self.check_tools(snapshot, contributions)?;
+        self.check_agents(snapshot, contributions)?;
+        check_sections(&self.inner.instructions, snapshot, contributions)?;
+        check_executors(snapshot, contributions)?;
+        self.check_mention_providers(snapshot, contributions)?;
+        check_image_sources(snapshot, contributions)
     }
 
     /// Drops a plugin's contributions, as the plugin stops (ADR-0030,
     /// decision 6). Runs that started while they were registered keep them,
-    /// and their calls into the plugin are refused; each run lets the tasks
-    /// of the plugin's executor go. Returns whether the plugin was
-    /// registered.
-    pub fn remove_plugin(&self, plugin: &str) -> bool {
-        let removed = {
-            let mut registered = self
+    /// and their calls into the plugin are refused; each run that follows a
+    /// task of the plugin's executor lets the task go.
+    fn drop_contributions(&self, plugin: &PluginId) {
+        let dropped = {
+            let mut current = self
                 .inner
-                .plugins
-                .registered
+                .contributions
+                .current
                 .write()
                 .unwrap_or_else(PoisonError::into_inner);
-            let before = registered.len();
-            registered.retain(|entry| entry.plugin != plugin);
-            before != registered.len()
+            let registered = current.generation_of(plugin.as_str()).is_some();
+            if registered {
+                *current = Arc::new(current.without(plugin));
+            }
+            registered
         };
-        let executor = self.remove_executor(plugin).is_some();
-        if removed || executor {
-            tracing::info!(plugin, "a plugin's contributions were dropped");
+        if !dropped {
+            return;
         }
-        removed || executor
-    }
-
-    /// The definition of an agent: the core's or a plugin's that is on.
-    pub(crate) fn agent(&self, name: &str) -> Option<AgentDefinition> {
-        if let Some(definition) = self.inner.agents.get(name) {
-            return Some(definition.clone());
-        }
-        self.plugin_agents()
-            .into_iter()
-            .find(|(_plugin, definition)| definition.name == name)
-            .map(|(_plugin, definition)| definition)
-    }
-
-    /// The plugin that registered an agent since Mannie started, also while
-    /// it is off; `None` for the core's agents and unknown names.
-    pub(crate) fn agent_plugin(&self, agent: &str) -> Option<String> {
-        self.inner
-            .plugins
-            .agent_plugins
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(agent)
-            .cloned()
-    }
-
-    /// The agent definitions of the plugins that are on, with each plugin's
-    /// ID, in the order the plugins started.
-    pub(crate) fn plugin_agents(&self) -> Vec<(String, AgentDefinition)> {
-        self.inner
-            .plugins
-            .registered
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .iter()
-            .flat_map(|entry| {
-                entry
-                    .agents
-                    .iter()
-                    .map(|definition| (entry.plugin.clone(), definition.clone()))
-            })
-            .collect()
-    }
-
-    /// The mention providers of the plugins that are on, in the order in
-    /// which the plugins started.
-    pub(crate) fn plugin_mention_providers(&self) -> Vec<Arc<dyn MentionProvider>> {
-        self.inner
-            .plugins
-            .registered
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .iter()
-            .flat_map(|entry| entry.mentions.iter().map(Arc::clone))
-            .collect()
-    }
-
-    /// The image sources of the plugins that are on, in the order in which
-    /// the plugins started.
-    pub(crate) fn image_sources(&self) -> Vec<Arc<dyn ImageSource>> {
-        self.inner
-            .plugins
-            .registered
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .iter()
-            .flat_map(|entry| entry.images.iter().map(Arc::clone))
-            .collect()
-    }
-
-    /// The plugins' tools that runs of `agent` are offered now.
-    pub(crate) fn plugin_tools_for(&self, agent: &str) -> Vec<OfferedTool> {
-        self.inner
-            .plugins
-            .registered
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .iter()
-            .flat_map(|entry| {
-                entry
-                    .tools
-                    .iter()
-                    .filter(|offered| offered.agents.contains(&agent))
-                    .map(|offered| OfferedTool {
-                        plugin: entry.plugin.clone(),
-                        tool: Arc::clone(&offered.tool),
-                    })
-            })
-            .collect()
-    }
-
-    /// The plugins' instruction sections now.
-    pub(crate) fn plugin_sections(&self) -> Vec<InstructionSection> {
-        self.inner
-            .plugins
-            .registered
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .iter()
-            .flat_map(|entry| entry.sections.iter().cloned())
-            .collect()
-    }
-
-    /// Whether a plugin is on with a tool of this name.
-    pub(crate) fn plugin_has_tool(&self, plugin: &str, tool: &str) -> bool {
-        self.inner
-            .plugins
-            .registered
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .iter()
-            .filter(|entry| entry.plugin == plugin)
-            .flat_map(|entry| &entry.tools)
-            .any(|offered| offered.tool.name() == tool)
+        // After the swap, so a run that starts following a task from now on
+        // finds the executor gone and lets the task go itself. An executor's
+        // kind is its plugin's ID (the rule PluginKind).
+        let let_go = self.inner.executors.let_go_of(plugin.as_str());
+        tracing::info!(
+            plugin = %plugin,
+            tasks_let_go = let_go,
+            "a plugin's contributions were dropped"
+        );
     }
 }

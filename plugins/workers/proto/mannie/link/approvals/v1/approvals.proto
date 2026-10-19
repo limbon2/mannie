@@ -1,5 +1,5 @@
 // The owner's decisions about the calls of a worker's tasks
-// (docs/features/workers/host-and-ceiling.md, approvals).
+// (plugins/workers/docs/host-and-ceiling.md, approvals).
 //
 // A worker's request offers only Allow once and Deny; the worker refuses any
 // other choice, whatever the master sends.

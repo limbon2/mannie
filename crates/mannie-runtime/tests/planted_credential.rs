@@ -173,13 +173,7 @@ async fn a_planted_credential_reaches_only_the_authorization_header() {
     let runtime = start_with_adapters(store.clone(), server.base_url().as_str()).await;
 
     let started = runtime
-        .start_conversation(StartConversation {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            text: "Hello".to_owned(),
-            profile_id: None,
-            project_id: None,
-        })
+        .start_conversation(StartConversation::new("Hello"))
         .await
         .unwrap();
     let failed = wait_for_end(&store, &started.conversation_id, &started.run_id).await;

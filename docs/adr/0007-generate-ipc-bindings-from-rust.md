@@ -7,6 +7,8 @@
 | Deciders | Owner                                                                                                                                              |
 | Related  | [ADR-0004](0004-keep-system-access-in-the-rust-core.md), [Desktop app](../architecture/desktop-app.md), [Repository](../engineering/repository.md) |
 
+Later changes: [ADR-0034](0034-build-plugins-on-a-plugin-sdk.md) refines decisions 1 and 6 and supersedes decision 2 in part: each plugin's bindings are a file of their own in `plugins/<id>/ui/generated/`, which specta-typescript writes.
+
 ## Context
 
 Verified 2026-10-13:

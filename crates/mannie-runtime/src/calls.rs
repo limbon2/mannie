@@ -7,6 +7,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures_util::StreamExt;
+use mannie_plugin_sdk::points::executors::{Executors, TaskExecutor};
+use mannie_plugin_sdk::points::tools::ToolSpec;
 use mannie_provider::{
     ModelRequest, Provider, ProviderError, ProviderEvent, Target, ToolChoice, ToolDefinition,
     check_base_url, quirks_for,
@@ -32,10 +34,11 @@ use crate::assigned::{AssignedRun, lease_reference};
 use crate::budget::{Ledger, estimate_request, usage};
 use crate::compaction::{self, ContextSize, Trigger};
 use crate::context::{RequestShape, build_request};
-use crate::executors::TaskExecutor;
 use crate::instructions::{
-    InstructionContext, InstructionSection, MachineContext, ToolEnvironment,
+    InstructionContext, InstructionSection, MachineContext, ToolEnvironment, plugin_sections,
 };
+use crate::plugin_tools::{OfferedPluginTool, offered_tools};
+use crate::plugins::Snapshot;
 use crate::profiles::{VaultError, in_vault};
 use crate::retry::RetryDecision;
 use crate::{Runtime, lock, tasks, texts};
@@ -104,10 +107,11 @@ pub(crate) struct Setup {
     /// The executors whose tools the run is offered, as they were when the
     /// run started (ADR-0031, decision 4).
     pub(crate) executors: Vec<OfferedExecutor>,
-    /// The plugins' tools that the run is offered, by name, with each
-    /// plugin's ID, so a call of one whose plugin stopped does not run
-    /// (ADR-0030, decision 8).
-    pub(crate) plugin_tools: Vec<(String, String)>,
+    /// The plugins' tools that the run is offered, each with its plugin and
+    /// the generation of the plugin's start, so a call of one whose plugin
+    /// stopped since, or stopped and started again, does not run (ADR-0030,
+    /// decision 8).
+    pub(crate) plugin_tools: Vec<OfferedPluginTool>,
     /// The plugins' instruction sections and those of the executors whose
     /// tools the run is offered, as they were when the run started, so the
     /// prompt stays the same while the run lasts.
@@ -129,6 +133,18 @@ struct ExecutorOffer {
     executors: Vec<OfferedExecutor>,
     definitions: Vec<ToolDefinition>,
     sections: Vec<InstructionSection>,
+}
+
+/// The definition that the model gets of an executor's tool. The runtime
+/// adds the activity argument here, as it does for every other tool, so an
+/// executor's spec leaves it out (docs/features/system-tools/tool-calls.md,
+/// the activity of a call).
+fn executor_definition(spec: ToolSpec) -> ToolDefinition {
+    ToolDefinition {
+        parameters: with_activity(&spec.parameters),
+        name: spec.name,
+        description: spec.description,
+    }
 }
 
 /// What a run of an assigned task reads of its machine once, when it starts.
@@ -161,12 +177,11 @@ impl Setup {
         self.agent.requester
     }
 
-    /// The plugin of a tool of the run that a plugin contributed.
-    pub(crate) fn plugin_of_tool(&self, tool: &str) -> Option<&str> {
+    /// A tool of the run that a plugin contributed, with its plugin's start.
+    pub(crate) fn plugin_tool(&self, tool: &str) -> Option<&OfferedPluginTool> {
         self.plugin_tools
             .iter()
-            .find(|(name, _plugin)| name == tool)
-            .map(|(_name, plugin)| plugin.as_str())
+            .find(|offered| offered.name == tool)
     }
 
     /// The executor whose tool has this name, among those the run is
@@ -253,13 +268,18 @@ impl Runtime {
 
     /// The setup of calls with a profile. Reads the credential, which may
     /// wait for the owner to unlock the credential store.
+    ///
+    /// Everything that plugins contribute comes from one snapshot of the
+    /// registry, so a run gets all of a plugin's contributions or none, even
+    /// while the plugin starts or stops (ADR-0034, decision 6).
     pub(crate) async fn setup_for(
         &self,
         profile: &StoredProfile,
         agent: &str,
         task: bool,
     ) -> Result<Setup, RunFailure> {
-        let Some(agent) = self.agent(agent) else {
+        let snapshot = self.contributions();
+        let Some(agent) = self.agent_in(&snapshot, agent) else {
             tracing::error!(agent, "a run names an agent that is not registered");
             return Err(RunFailure::Internal);
         };
@@ -275,27 +295,24 @@ impl Runtime {
             RunFailure::Internal
         })?;
         // The plugins' tools join the core's that the agent names, each for
-        // the agents that its plugin offers it to (ADR-0030, decision 5).
-        let offered = if profile.use_tools {
-            self.plugin_tools_for(agent.name)
-        } else {
-            Vec::new()
-        };
-        let plugin_tools: Vec<(String, String)> = offered
-            .iter()
-            .map(|offered| (offered.tool.name().to_owned(), offered.plugin.clone()))
-            .collect();
+        // the agents that its selector offers it to (ADR-0034, decision 6).
+        let (plugin_tools, adapters): (Vec<OfferedPluginTool>, Vec<Arc<dyn Tool>>) =
+            if profile.use_tools {
+                offered_tools(&snapshot, &agent).into_iter().unzip()
+            } else {
+                (Vec::new(), Vec::new())
+            };
         let tools: Vec<Arc<dyn Tool>> = if profile.use_tools {
             agent
                 .tools
                 .iter()
                 .filter_map(|name| self.inner.tools.registry.get(name))
-                .chain(offered.into_iter().map(|offered| offered.tool))
+                .chain(adapters)
                 .collect()
         } else {
             Vec::new()
         };
-        let definitions = tools
+        let definitions: Vec<ToolDefinition> = tools
             .iter()
             .map(|tool| ToolDefinition {
                 name: tool.name().to_owned(),
@@ -305,7 +322,7 @@ impl Runtime {
                 parameters: with_activity(tool.parameters()),
             })
             .collect();
-        let child_agents = self.child_agent_names();
+        let child_agents = self.child_agent_names(&snapshot);
         // A child never gives tasks of its own (T-22), and an agent without a
         // task budget or anyone to give tasks to is not offered the tools.
         let offers_tasks =
@@ -319,9 +336,14 @@ impl Runtime {
             Vec::new()
         };
         let mut executors = Vec::new();
-        let mut plugin_sections = self.plugin_sections();
+        let mut plugin_sections = plugin_sections(&snapshot);
         if offers_tasks {
-            let offer = self.executor_offer();
+            let offered_names: Vec<String> = definitions
+                .iter()
+                .chain(&task_definitions)
+                .map(|definition| definition.name.clone())
+                .collect();
+            let offer = Self::executor_offer(&snapshot, offered_names);
             executors = offer.executors;
             task_definitions.extend(offer.definitions);
             plugin_sections.extend(offer.sections);
@@ -352,37 +374,37 @@ impl Runtime {
         })
     }
 
-    /// The kinds of child agents that `start_task` can start: the core's
-    /// and those of the plugins that are on.
-    fn child_agent_names(&self) -> Vec<&'static str> {
-        let plugin_children: Vec<&'static str> = self
-            .plugin_agents()
-            .into_iter()
-            .filter(|(_plugin, definition)| definition.requester == Requester::Agent)
-            .map(|(_plugin, definition)| definition.name)
-            .collect();
-        self.inner
-            .agents
-            .child_agents()
-            .map(|definition| definition.name)
-            .chain(plugin_children)
-            .collect()
-    }
-
     /// The tools of the plugins' executors that join the task tools of a run
     /// that is offered them, each while its executor offers it, with their
     /// sections, so Mannie without plugins offers what it offered before
-    /// (ADR-0031).
-    fn executor_offer(&self) -> ExecutorOffer {
+    /// (ADR-0031). `snapshot` holds the executors as the run reads them when
+    /// it starts, and `taken` the names of the run's other tools.
+    fn executor_offer(snapshot: &Snapshot, mut taken: Vec<String>) -> ExecutorOffer {
         let mut offer = ExecutorOffer {
             executors: Vec::new(),
             definitions: Vec::new(),
             sections: Vec::new(),
         };
-        for executor in self.executors_now() {
-            let Some(definition) = executor.tool() else {
+        for registered in snapshot.items::<Executors>() {
+            let executor = Arc::clone(&registered.entry);
+            let Some(spec) = executor.tool() else {
                 continue;
             };
+            // An executor names its tool anew for each run, so the tool that
+            // it offers now may have the name of a plugin's tool that was
+            // checked while the executor offered none, or of another
+            // executor's tool. The run offers each name once, so the model
+            // never gets two definitions of one name, and leaves the
+            // executor's section out with its tool.
+            if taken.contains(&spec.name) {
+                tracing::warn!(
+                    kind = executor.kind(),
+                    tool = spec.name,
+                    "a run leaves out an executor's tool that has the name of another of its tools"
+                );
+                continue;
+            }
+            taken.push(spec.name.clone());
             if let Some(section) = executor.section() {
                 let text = section.text;
                 offer.sections.push(InstructionSection::new(
@@ -392,10 +414,10 @@ impl Runtime {
                 ));
             }
             offer.executors.push(OfferedExecutor {
-                tool: definition.name.clone(),
+                tool: spec.name.clone(),
                 executor,
             });
-            offer.definitions.push(definition);
+            offer.definitions.push(executor_definition(spec));
         }
         offer
     }

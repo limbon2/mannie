@@ -1,4 +1,4 @@
-//! Pairing from the host (docs/features/workers/pairing-and-link.md,
+//! Pairing from the host (plugins/workers/docs/pairing-and-link.md,
 //! pairing): `pair` writes a one-time code into the data folder, which the
 //! running worker checks, and prints it with the worker's address; `pair
 //! --reset` forgets the paired master. Both run as root or with
@@ -9,10 +9,11 @@ use std::net::SocketAddr;
 use std::path::Path;
 
 use anyhow::{Context, bail};
+use mannie_host_kit::types::SystemClock;
 use mannie_link::keys::KeyPin;
 use mannie_link::pairing::CODE_LIFETIME;
-use mannie_link::worker::{CODE_FILE, PIN_FILE};
-use mannie_types::clock::{Clock, SystemClock};
+use mannie_link_worker::{CODE_FILE, PIN_FILE};
+use mannie_plugin_sdk::contracts::Clock;
 
 use crate::cli::PairArguments;
 use crate::config::Config;
@@ -33,7 +34,7 @@ pub(crate) fn paired_pin(data: &Path) -> io::Result<Option<KeyPin>> {
 /// the port when it listens on every address.
 pub(crate) fn reachable_address(listen: SocketAddr) -> String {
     if listen.ip().is_unspecified() {
-        let host = mannie_tools::hostname();
+        let host = crate::host::hostname();
         format!("{host}:{}", listen.port())
     } else {
         listen.to_string()
@@ -66,7 +67,7 @@ pub(crate) fn pair(arguments: &PairArguments, service: &dyn ServiceControl) -> a
             pin.short()
         );
     }
-    let code = mannie_link::worker::write_code(data, SystemClock.now()).with_context(|| {
+    let code = mannie_link_worker::write_code(data, SystemClock.now()).with_context(|| {
         format!(
             "could not write the pairing code into {}. Run the command as root or administrator",
             data.display()

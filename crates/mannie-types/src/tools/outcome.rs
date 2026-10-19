@@ -271,7 +271,8 @@ impl ToolFailure {
 }
 
 /// What a finished tool call did, for the UI's summary of the call. Every
-/// tool has its variant; a call that failed has [`ToolOutcome::Failed`].
+/// system tool has its variant, a plugin's tool has [`ToolOutcome::Plugin`],
+/// and a call that failed has [`ToolOutcome::Failed`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(
     tag = "kind",
@@ -406,6 +407,12 @@ pub enum ToolOutcome {
         /// Its folder, the conversation's workspace from now on.
         folder: String,
     },
+    /// A plugin's tool ran (ADR-0034, decision 6). A plugin's tool reports
+    /// only its output for the model, so the UI names the call by its tool.
+    Plugin {
+        /// The ID of the plugin whose tool it is.
+        plugin: String,
+    },
     /// The tool failed.
     Failed {
         /// Why.
@@ -484,5 +491,11 @@ mod tests {
             .unwrap(),
             serde_json::json!({ "kind": "edited", "path": "notes.md", "replacements": 2 })
         );
+        let plugin = ToolOutcome::Plugin {
+            plugin: "notes".to_owned(),
+        };
+        let json = serde_json::json!({ "kind": "plugin", "plugin": "notes" });
+        assert_eq!(serde_json::to_value(&plugin).unwrap(), json);
+        assert_eq!(serde_json::from_value::<ToolOutcome>(json).unwrap(), plugin);
     }
 }

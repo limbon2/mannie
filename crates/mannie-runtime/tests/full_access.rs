@@ -76,13 +76,9 @@ impl Setup {
         let started = self
             .harness
             .runtime
-            .start_conversation(StartConversation {
-                mentions: Vec::new(),
-                images: Vec::new(),
-                text: text.to_owned(),
-                profile_id: None,
-                project_id: Some(self.project.clone()),
-            })
+            .start_conversation(
+                StartConversation::new(text).with_project(Some(self.project.clone())),
+            )
             .await
             .unwrap();
         (started.conversation_id, started.run_id)
@@ -91,12 +87,7 @@ impl Setup {
     async fn send(&self, conversation: &ConversationId, text: &str) -> RunId {
         self.harness
             .runtime
-            .send_message(SendMessage {
-                mentions: Vec::new(),
-                images: Vec::new(),
-                conversation_id: conversation.clone(),
-                text: text.to_owned(),
-            })
+            .send_message(SendMessage::new(conversation.clone(), text))
             .await
             .unwrap()
             .run_id

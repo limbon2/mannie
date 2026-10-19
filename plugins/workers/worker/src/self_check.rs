@@ -1,4 +1,4 @@
-//! `self-check --json` (docs/features/workers/compatibility-and-updates.md):
+//! `self-check --json` (plugins/workers/docs/compatibility-and-updates.md):
 //! the program's version, system and release key. `update` reads a new
 //! program's check before it installs it, and the release workflow compares
 //! the key with the release key, so the output keeps its shape in every

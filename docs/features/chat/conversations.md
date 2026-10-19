@@ -80,8 +80,8 @@ A failed reply shows the cause from the run failure codes: `invalid_credential`,
 
 ### Contracts
 
-- Commands (`apps/desktop/src-tauri/src/commands/chat.rs`): `subscribe_conversations`, `subscribe_conversation`, `unsubscribe`, `load_earlier_turns`, `start_conversation` (with the first message, and the project of a conversation that starts in one), `send_message`, `stop_reply`, `retry_reply`, `rename_conversation`, `delete_conversation`, `set_conversation_profile`, `compact_conversation`, `get_checkpoint`, `get_chat_settings`, `update_chat_settings` and `read_image` ([images](../images.md)).
-- `start_conversation` and `send_message` take the message's `mentions` ([mentions](mentions.md)) and `images` ([images](../images.md)). A message with images may have no text, and a new conversation whose first message has none takes the name of its first image as its title.
+- Commands (`apps/desktop/core/src/commands/chat.rs`): `subscribe_conversations`, `subscribe_conversation`, `unsubscribe`, `load_earlier_turns`, `start_conversation` (with the first message, and the project of a conversation that starts in one), `send_message`, `stop_reply`, `retry_reply`, `rename_conversation`, `delete_conversation`, `set_conversation_profile`, `compact_conversation`, `get_checkpoint`, `get_chat_settings`, `update_chat_settings` and `read_image` ([images](../../../plugins/images/docs/README.md)).
+- `start_conversation` and `send_message` take the message's `mentions` ([mentions](mentions.md)) and `images` ([images](../../../plugins/images/docs/README.md)). A message with images may have no text, and a new conversation whose first message has none takes the name of its first image as its title.
 - Channels carry `ChannelBatch<ConversationUpdate>` and `ChannelBatch<ConversationListUpdate>`. The batch's own counter detects lost batches; each conversation event carries the conversation's sequence number, which is the cursor.
 - Limits: a message is at most 256 KiB, a title at most 200 characters, and instructions at most 32,768 characters.
 - Numbers that cross IPC are 32-bit integers, and times are milliseconds since the Unix epoch as JSON numbers.

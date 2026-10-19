@@ -1,4 +1,4 @@
-//! The master's side of the link (ADR-0016, ADR-0027; docs/features/workers/
+//! The master's side of the link (ADR-0016, ADR-0027; plugins/workers/docs/
 //! pairing-and-link.md): the hub that keeps a connection to each paired
 //! worker and shows its status, pairing, naming and removing a worker, and
 //! the executor's `Delegation` port over the connections.
@@ -18,8 +18,8 @@ use std::time::Duration;
 
 use mannie_link::keys::{KeyPin, LinkKey};
 use mannie_link::tls;
-use mannie_types::clock::Clock;
-use mannie_types::ids::WorkerId;
+use mannie_plugin_sdk::BoxFuture;
+use mannie_plugin_sdk::contracts::{Clock, WorkerId};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
@@ -44,13 +44,28 @@ pub enum KeyStoreError {
 }
 
 /// Where the master keeps its key: the operating system's credential store,
-/// under `link/master-key`. The calls may block; the hub makes them on
-/// blocking threads.
+/// under `link/master-key`. The store does its blocking calls on a thread of
+/// its own, so the hub awaits them.
 pub trait MasterKeyStore: Send + Sync + fmt::Debug + 'static {
     /// The master's key, or `None` before the first pairing.
-    fn load(&self) -> Result<Option<LinkKey>, KeyStoreError>;
+    fn load(&self) -> BoxFuture<'static, Result<Option<LinkKey>, KeyStoreError>>;
     /// Keeps the master's key.
-    fn save(&self, key: &LinkKey) -> Result<(), KeyStoreError>;
+    fn save(&self, key: &LinkKey) -> BoxFuture<'static, Result<(), KeyStoreError>>;
+}
+
+/// The master's key from `keys`, or a new one that `keys` then keeps, before
+/// the first pairing.
+async fn load_or_make_key(keys: &dyn MasterKeyStore) -> Result<LinkKey, KeyStoreError> {
+    if let Some(stored) = keys.load().await? {
+        return Ok(stored);
+    }
+    let made = LinkKey::generate().map_err(|_random| KeyStoreError::Unavailable)?;
+    keys.save(&made).await?;
+    tracing::info!(
+        pin = made.pin().short(),
+        "made the master's key of the link"
+    );
+    Ok(made)
 }
 
 /// How the hub works.
@@ -73,13 +88,15 @@ impl HubConfig {
     }
 }
 
-/// A channel to a worker over the link's TLS, for the test tools.
+/// A channel to a worker over the link's TLS with the worker's pin, or none
+/// when it could not open, for the plugin's test tools
+/// (mannie-workers-testing), which turn on the feature `testing`.
 #[cfg(feature = "testing")]
-pub(crate) async fn test_channel(
+pub async fn test_channel(
     address: &str,
     config: Arc<rustls::ClientConfig>,
-) -> Result<(tonic::transport::Channel, KeyPin), ()> {
-    channel(address, config).await.map_err(drop)
+) -> Option<(tonic::transport::Channel, KeyPin)> {
+    channel(address, config).await.ok()
 }
 
 /// A paired worker as the hub keeps it: its record and its view.
@@ -217,25 +234,12 @@ impl Hub {
         if let Some(key) = key.as_ref() {
             return Ok(Arc::clone(key));
         }
-        let keys = Arc::clone(&self.inner.keys);
-        let loaded = tokio::task::spawn_blocking(move || -> Result<LinkKey, KeyStoreError> {
-            if let Some(stored) = keys.load()? {
-                return Ok(stored);
-            }
-            let made = LinkKey::generate().map_err(|_random| KeyStoreError::Unavailable)?;
-            keys.save(&made)?;
-            tracing::info!(
-                pin = made.pin().short(),
-                "made the master's key of the link"
-            );
-            Ok(made)
-        })
-        .await
-        .map_err(|_join| WorkersError::CredentialStoreUnavailable)?
-        .map_err(|error| {
-            tracing::warn!(%error, "could not read or keep the master's key");
-            WorkersError::CredentialStoreUnavailable
-        })?;
+        let loaded = load_or_make_key(self.inner.keys.as_ref())
+            .await
+            .map_err(|error| {
+                tracing::warn!(%error, "could not read or keep the master's key");
+                WorkersError::CredentialStoreUnavailable
+            })?;
         let loaded = Arc::new(loaded);
         *key = Some(Arc::clone(&loaded));
         Ok(loaded)

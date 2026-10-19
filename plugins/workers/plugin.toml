@@ -1,0 +1,58 @@
+#:schema ../../crates/mannie-plugin-sdk/plugin.schema.json
+# The Workers plugin (ADR-0031): the workers that the master pairs with, and
+# the tasks that it gives them.
+
+id = "workers"
+sdk = 1
+# Workers starts first, and the Plugins page lists it first.
+order = 10
+
+[rust]
+entry = "mannie-workers"
+
+[services]
+# Lends a worker the credential of the profile that its task's run uses.
+credentials = 1
+# The rows, states, documents and outbox of the tasks of the kind workers.
+executor-host = 1
+# The master's key of the link, in the credential store.
+secrets = 1
+# The tables of the paired workers.
+store = 1
+
+[secrets]
+# The master's key of the link, under the name that 0.2.0 gave it.
+legacy = ["link/master-key"]
+
+[crates]
+# Only the link speaks gRPC and compiles the protobuf files of its contracts
+# (ADR-0016): no crate outside this folder may depend on these.
+exclusive = ["protox", "tonic", "tonic-prost", "tonic-prost-build"]
+
+# The direct native calls of the plugin's library crates (ADR-0035, decision
+# 6). The SDK has no service for the link's connections.
+[native]
+sockets = "The link speaks gRPC over TLS on sockets of its own: the master's hub connects to its workers, and the link's server listens for the master in the worker."
+
+# The worker service (plugins/workers/docs/service.md), which the release
+# ships for Windows, for Linux as a static binary and for FreeBSD.
+[[programs]]
+package = "mannie-worker"
+# The worker's side of the link, which only the worker uses.
+crates = ["mannie-link-worker"]
+# A service without a window (V5).
+headless = true
+targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-freebsd", "x86_64-unknown-linux-musl"]
+# Signed, so that `mannie-worker update` takes a release (D20).
+signed = true
+self-check = ["self-check", "--json"]
+# The end-to-end tests pair the app with a real worker.
+e2e = true
+
+# Installs the worker as a service, pairs it with a test master that
+# delegates a command, and removes it.
+[programs.smoke]
+unix = "ci/worker-service-unix.sh"
+windows = "ci/worker-service-windows.ps1"
+# The test master.
+helpers = ["-p", "mannie-workers-testing", "--example", "smoke-master"]

@@ -97,7 +97,7 @@ fn run_in_foreground(arguments: &RunArguments) -> anyhow::Result<()> {
 
 /// Prints the facts about this host that the worker reports to the master.
 fn print_facts() {
-    let facts = host::host_facts(&mannie_tools::SystemFacts::detect());
+    let facts = host::host_facts(&mannie_host_kit::tools::SystemFacts::detect());
     let listed = |names: &[String]| {
         if names.is_empty() {
             "none".to_owned()

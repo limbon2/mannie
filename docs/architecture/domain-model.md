@@ -1,10 +1,10 @@
 # Domain model
 
-|              |                                                                                                                                                                                                                                                                            |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status       | Draft for review                                                                                                                                                                                                                                                           |
-| Last updated | 2026-10-16                                                                                                                                                                                                                                                                 |
-| Related      | [Glossary](../glossary.md), [Agent runtime](agent-runtime.md), [Tools](tools.md), [Orchestration](orchestration.md), [Overview](overview.md), [ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md), [Workers architecture](../features/workers/architecture.md) |
+|              |                                                                                                                                                                                                                                                                                   |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status       | Draft for review                                                                                                                                                                                                                                                                  |
+| Last updated | 2026-10-16                                                                                                                                                                                                                                                                        |
+| Related      | [Glossary](../glossary.md), [Agent runtime](agent-runtime.md), [Tools](tools.md), [Orchestration](orchestration.md), [Overview](overview.md), [ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md), [Workers architecture](../../plugins/workers/docs/architecture.md) |
 
 This document defines the core concepts, their lifecycles and the invariants every contract follows. The [glossary](../glossary.md) gives short definitions; this document shows how the concepts relate.
 
@@ -48,7 +48,7 @@ classDiagram
 
 - A machine is a computer Mannie acts on. There is one master, the desktop app, and, with the Workers plugin on, any number of workers. Each worker runs on its own host.
 - The master holds the owner's conversations, the provider profiles, the owner's choices of plugins and the owner's approvals, and each plugin's data in the plugin's own tables, such as the worker registry.
-- A worker holds its host facts, its host instructions, its policy ceiling and the conversations of the tasks it runs. It is paired with exactly one master, which records its name, address, pinned key and last known host facts ([workers architecture](../features/workers/architecture.md)).
+- A worker holds its host facts, its host instructions, its policy ceiling and the conversations of the tasks it runs. It is paired with exactly one master, which records its name, address, pinned key and last known host facts ([workers architecture](../../plugins/workers/docs/architecture.md)).
 
 ## 3. Conversations, turns, steps and parts
 
@@ -154,7 +154,7 @@ stateDiagram-v2
 - The owner's choice for each plugin is a setting of the core. At startup, after the core's recovery, the host starts each plugin that the owner turned on. A plugin without a choice follows its default once, and that outcome becomes the choice.
 - While a plugin is on, its contributions are in the registries and its entries in the UI. Turning it off drops them first and then stops the plugin, which ends its background work as quitting does.
 - A plugin's data stays while it is off, and the plugin continues with it when it starts again. What it added to conversations stays readable from what the core stored.
-- The workers of the Workers plugin have a lifecycle of their own, from pairing to removal ([workers architecture](../features/workers/architecture.md#the-link)).
+- The workers of the Workers plugin have a lifecycle of their own, from pairing to removal ([workers architecture](../../plugins/workers/docs/architecture.md#the-link)).
 
 ## 8. Identifiers and time
 

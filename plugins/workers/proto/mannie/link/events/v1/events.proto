@@ -1,4 +1,4 @@
-// Reading the conversation of a task on its worker (docs/features/workers/
+// Reading the conversation of a task on its worker (plugins/workers/docs/
 // delegation.md, worker task conversations; ADR-0027, decision 4).
 //
 // The master shows a worker task's conversation by forwarding the owner's

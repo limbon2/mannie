@@ -1,5 +1,5 @@
 //! The documents that cross the link as JSON inside protobuf messages, and
-//! how errors cross it as gRPC statuses (docs/features/workers/
+//! how errors cross it as gRPC statuses (plugins/workers/docs/
 //! pairing-and-link.md, the services).
 //!
 //! A worker's refusals travel as `FAILED_PRECONDITION` with the error's
@@ -10,6 +10,11 @@
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tonic::{Code, Status};
+
+/// The most bytes of a message, which both sides of the link take. A
+/// snapshot of a task conversation holds at most 50 turns and 400 parts,
+/// which stays far below it unless many parts are long.
+pub const MAX_MESSAGE_BYTES: usize = 32 * 1024 * 1024;
 
 /// The JSON of a document, for a message.
 pub fn to_json<T: Serialize>(value: &T) -> Result<String, Status> {
@@ -29,13 +34,13 @@ pub fn from_json<T: DeserializeOwned>(text: &str, what: &str) -> Result<T, Statu
 }
 
 /// A worker's refusal with its error's stable code.
-pub(crate) fn refused(code: &str) -> Status {
+pub fn refused(code: &str) -> Status {
     Status::failed_precondition(code)
 }
 
 /// A worker's refusal with its error as JSON, for the errors of chat and
 /// tools.
-pub(crate) fn refused_with<T: Serialize>(error: &T) -> Status {
+pub fn refused_with<T: Serialize>(error: &T) -> Status {
     match serde_json::to_string(error) {
         Ok(json) => Status::failed_precondition(json),
         Err(_unwritable) => Status::internal("an error could not be written"),

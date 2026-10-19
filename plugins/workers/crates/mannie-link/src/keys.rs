@@ -1,4 +1,4 @@
-//! The link's long-term keys (docs/features/workers/pairing-and-link.md, keys
+//! The link's long-term keys (plugins/workers/docs/pairing-and-link.md, keys
 //! and pins): an Ed25519 key pair for each side, its `SubjectPublicKeyInfo`,
 //! which TLS presents as a raw public key (RFC 7250), and its pin, the
 //! SHA-256 of that `SubjectPublicKeyInfo`.

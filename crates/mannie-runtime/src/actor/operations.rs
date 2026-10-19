@@ -142,15 +142,19 @@ impl RunActor {
     /// prepared: the run was not offered the tool, or the tool's plugin
     /// stopped since the run started. A run keeps the tools it started with,
     /// and a call into a stopped plugin does not run (ADR-0030, decision 8).
+    /// The run holds the tool of the plugin's start that offered it, so a
+    /// plugin that was turned off and on again since is off for the call too:
+    /// its new start has a generation of its own.
     fn tool_to_run(&self, setup: &Setup, name: &str) -> Result<Arc<dyn Tool>, NotRunReason> {
         let Some(tool) = setup.tool(name).map(Arc::clone) else {
             return Err(missing_tool_reason(setup, name));
         };
-        if let Some(plugin) = setup.plugin_of_tool(name)
-            && !self.runtime.plugin_has_tool(plugin, name)
+        if let Some(offered) = setup.plugin_tool(name)
+            && self.runtime.contributions().generation_of(&offered.plugin)
+                != Some(offered.generation)
         {
             return Err(NotRunReason::PluginOff {
-                plugin: plugin.to_owned(),
+                plugin: offered.plugin.clone(),
             });
         }
         Ok(tool)

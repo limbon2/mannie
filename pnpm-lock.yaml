@@ -104,6 +104,9 @@ importers:
       remark-validate-links:
         specifier: 13.1.0
         version: 13.1.0
+      smol-toml:
+        specifier: 1.9.1
+        version: 1.9.1
       svelte:
         specifier: 5.57.2
         version: 5.57.2(@typescript-eslint/types@8.71.1)

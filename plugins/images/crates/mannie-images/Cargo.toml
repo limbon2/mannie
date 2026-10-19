@@ -14,10 +14,9 @@ base64 = { workspace = true }
 futures-util = { workspace = true }
 # Decoding, turning, shrinking and encoding images (ADR-0033, decision 10).
 image = { workspace = true }
-mannie-plugins = { workspace = true }
-mannie-runtime = { workspace = true }
-mannie-store = { workspace = true }
-mannie-types = { workspace = true }
+# The plugin's definition, the image point and the image contracts that the
+# plugin's source implements (ADR-0034, decisions 2 and 4).
+mannie-plugin-sdk = { workspace = true }
 serde = { workspace = true }
 # The plugin's IPC types, from which the desktop app generates bindings
 # (ADR-0007).
@@ -30,11 +29,14 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-mannie-provider = { workspace = true }
-mannie-runtime = { workspace = true, features = ["testing"] }
+# The plugin through the real host on the core's test runtime, and the
+# conformance check (ADR-0034, decision 1).
+mannie-plugin-harness = { workspace = true }
+# The exported manifest, which the plugin's tests parse, and the file
+# dialog in memory.
+mannie-plugin-sdk = { workspace = true, features = ["manifest", "testing"] }
 serde_json = { workspace = true }
-tempfile = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
 
 [lints]
 workspace = true

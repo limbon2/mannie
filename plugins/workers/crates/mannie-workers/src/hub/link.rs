@@ -6,6 +6,7 @@
 use futures_util::StreamExt;
 use futures_util::future::{BoxFuture, FutureExt};
 use futures_util::stream::BoxStream;
+use mannie_link::codec::MAX_MESSAGE_BYTES;
 use mannie_link::codec::{Answer, answer, from_json, to_json};
 use mannie_link::proto::approvals::DecideRequest;
 use mannie_link::proto::approvals::approvals_service_client::ApprovalsServiceClient;
@@ -21,13 +22,11 @@ use mannie_link::proto::tasks::tasks_service_client::TasksServiceClient;
 use mannie_link::proto::tasks::{
     CancelRequest, DeleteConversationsRequest, GetRequest, SubmitRequest,
 };
-use mannie_link::worker::MAX_MESSAGE_BYTES;
-use mannie_types::chat::{ChatError, CheckpointRef, EarlierTurns, LoadEarlierTurns};
-use mannie_types::ids::{ConversationId, TaskId, WorkerId};
-use mannie_types::secret::Secret;
-use mannie_types::tasks::{AssignedTaskState, TaskAssignment};
-use mannie_types::tools::{DecideApproval, ReadToolOutput, ToolOutputPage, ToolsError};
-use mannie_types::transcript::{Checkpoint, ConversationUpdate};
+use mannie_plugin_sdk::contracts::{
+    AssignedTaskState, ChatError, Checkpoint, CheckpointRef, ConversationId, ConversationUpdate,
+    DecideApproval, EarlierTurns, LoadEarlierTurns, ReadToolOutput, Secret, TaskAssignment, TaskId,
+    ToolOutputPage, ToolsError, WorkerId,
+};
 use tokio::sync::watch;
 use tonic::Status;
 use tonic::transport::Channel;

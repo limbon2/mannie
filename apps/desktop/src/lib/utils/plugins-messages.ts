@@ -55,8 +55,59 @@ export function pluginStartFailureMessage(id: string, code: string): string {
     case 'grant_missing': {
       return m.plugins_failure_grant_missing();
     }
+    case 'sdk_incompatible': {
+      return m.plugins_failure_sdk_incompatible();
+    }
+    case 'service_unavailable': {
+      return m.plugins_failure_service_unavailable();
+    }
     default: {
       return m.plugins_failure_other({ code });
+    }
+  }
+}
+
+/** What a service of Mannie gives a plugin that uses it, in the owner's words. */
+export function pluginServiceLabel(name: string): string {
+  switch (name) {
+    case 'credentials': {
+      return m.plugins_use_service_credentials();
+    }
+    case 'executor-host': {
+      return m.plugins_use_service_executor_host();
+    }
+    case 'file-dialog': {
+      return m.plugins_use_service_file_dialog();
+    }
+    case 'secrets': {
+      return m.plugins_use_service_secrets();
+    }
+    case 'store': {
+      return m.plugins_use_service_store();
+    }
+    default: {
+      return m.plugins_use_service_other({ name });
+    }
+  }
+}
+
+/**
+ * What a kind of direct native call that a plugin's manifest grants its
+ * library crates does, in the owner's words (ADR-0035, decision 6).
+ */
+export function pluginNativeLabel(category: string): string {
+  switch (category) {
+    case 'file-writes': {
+      return m.plugins_use_native_file_writes();
+    }
+    case 'processes': {
+      return m.plugins_use_native_processes();
+    }
+    case 'sockets': {
+      return m.plugins_use_native_sockets();
+    }
+    default: {
+      return m.plugins_use_native_other({ name: category });
     }
   }
 }

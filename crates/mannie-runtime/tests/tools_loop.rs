@@ -86,13 +86,7 @@ impl Setup {
         let started = self
             .harness
             .runtime
-            .start_conversation(StartConversation {
-                mentions: Vec::new(),
-                images: Vec::new(),
-                text: text.to_owned(),
-                profile_id: None,
-                project_id: project.cloned(),
-            })
+            .start_conversation(StartConversation::new(text).with_project(project.cloned()))
             .await
             .unwrap();
         (started.conversation_id, started.run_id)

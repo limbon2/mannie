@@ -38,7 +38,7 @@ pub use images::StoredImage;
 pub use projects::{AddedProject, ConversationList, ProjectDeletion};
 pub use reads::{EventsAfter, KeptRun, ModelImage, ModelPart, ModelTurn, StoredCheckpoint};
 pub use recovery::{Recovered, UncertainCall};
-pub use tasks::{NewExecutorTask, OutboxEntry};
+pub use tasks::{ExecutorTaskProfile, NewExecutorTask, OutboxEntry};
 
 /// The version of the JSON documents this module writes.
 const DOCUMENT_VERSION: u32 = 1;

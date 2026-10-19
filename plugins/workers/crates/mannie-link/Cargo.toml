@@ -3,7 +3,7 @@ name = "mannie-link"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "The link between the master and its workers in the Workers plugin: the protobuf contracts, the documents that cross the link, mutual TLS with pinned keys, pairing, and the worker's side of the link (ADR-0016, ADR-0028, ADR-0031)."
+description = "The link between the master and its workers in the Workers plugin: the protobuf contracts, the documents that cross the link, mutual TLS with pinned keys and pairing (ADR-0016, ADR-0031)."
 license.workspace = true
 publish.workspace = true
 
@@ -13,9 +13,9 @@ name = "compatibility"
 
 [dependencies]
 futures-util = { workspace = true }
-mannie-logging = { workspace = true }
-mannie-runtime = { workspace = true }
-mannie-types = { workspace = true }
+# The contracts that cross the link, such as a host's ceiling (ADR-0034,
+# decision 2).
+mannie-plugin-sdk = { workspace = true }
 prost = { workspace = true }
 # Ed25519 keys, their signatures in the handshake, the HMAC of pairing and
 # the randomness of codes and nonces.
@@ -35,18 +35,14 @@ tracing = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
-mannie-runtime = { workspace = true, features = ["testing"] }
+# The refusal codes of a worker's runtime, whose fixtures the compatibility
+# test reads (V6; ADR-0034, decision 1).
+mannie-plugin-harness = { workspace = true }
 tokio = { workspace = true, features = ["fs", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
 
 [build-dependencies]
 protox = { workspace = true }
 tonic-prost-build = { workspace = true }
-
-[features]
-# The link's test tools for the plugin's tests: a worker served on loopback,
-# relays and a key in the middle. Never enabled in the desktop app or the
-# worker.
-testing = ["mannie-runtime/testing"]
 
 [lints]
 workspace = true

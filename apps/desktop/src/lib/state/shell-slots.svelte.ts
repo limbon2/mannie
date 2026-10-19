@@ -5,9 +5,12 @@
 // A plugin registers through `forPlugin`, which gives each of its entries
 // the plugin's ID, and a slot lists such an entry only while the core
 // reports the plugin as on (ADR-0030, decision 11). The shell changes when a
-// plugin turns on or off, without a reload.
+// plugin turns on or off, without a reload. Both classes hold the slots of
+// the SDK's slot catalog, which the type checks compare (ADR-0034,
+// decision 11).
 import { createContext } from 'svelte';
 
+import type { PluginSlots as SdkPluginSlots, SlotCatalog } from '#lib/sdk/slots.js';
 import type {
   ConversationControl,
   ImageSourceKind,
@@ -126,8 +129,11 @@ function checkSidePanelKind(kind: SidePanelKind): string | null {
   return kind.id.includes(':') ? `The side panel kind ${kind.id} has a colon, which its address uses.` : null;
 }
 
+/** Every slot of the slot catalog, as the shell holds it. */
+type CatalogSlots = { readonly [Name in keyof SlotCatalog]: Slot<SlotCatalog[Name]> };
+
 /** Every slot of the shell. */
-export class ShellSlots {
+export class ShellSlots implements CatalogSlots {
   readonly commands: Slot<ShellCommand>;
   readonly conversationControls: Slot<ConversationControl>;
   readonly imageSources: Slot<ImageSourceKind>;
@@ -164,7 +170,7 @@ export class ShellSlots {
 }
 
 /** Every slot of the shell as one plugin registers in it (ADR-0030, decision 11). */
-export class PluginSlots {
+export class PluginSlots implements SdkPluginSlots {
   readonly commands: PluginSlot<ShellCommand>;
   readonly conversationControls: PluginSlot<ConversationControl>;
   readonly imageSources: PluginSlot<ImageSourceKind>;

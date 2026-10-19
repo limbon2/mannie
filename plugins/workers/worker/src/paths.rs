@@ -1,4 +1,4 @@
-//! The worker's folders on each system (docs/features/workers/service.md,
+//! The worker's folders on each system (plugins/workers/docs/service.md,
 //! folders): the program, the configuration with the host instructions, and
 //! the data.
 

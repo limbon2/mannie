@@ -1,5 +1,5 @@
 //! Delegating tasks to workers through the Workers plugin's executor
-//! (ADR-0027, ADR-0031; docs/features/workers/delegation.md): a foreground
+//! (ADR-0027, ADR-0031; plugins/workers/docs/delegation.md): a foreground
 //! delegation returns the worker's report and a background one its number, a
 //! task's lease is delivered once and revoked at its end, numbers are shared
 //! with child agents, a follow-up continues on the same worker, the owner
@@ -9,8 +9,9 @@
 //! restart, a worker that does not know a task ends it, a removed worker's
 //! tasks end, the task's conversation is read through the worker, deleting
 //! the parent deletes it there, `delegate_task` is offered only while
-//! workers are paired, and turning Workers off and on loses and repeats
-//! nothing (docs/features/workers/plugin.md).
+//! workers are paired, Workers reports its running tasks as its work, and
+//! turning Workers off and on loses and repeats nothing
+//! (plugins/workers/docs/plugin.md).
 //!
 //! The master and the worker run in one process, joined by an in-process
 //! link. Each has a fake model whose scripts play in order.
@@ -21,25 +22,32 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use mannie_provider::testing::Step;
-use mannie_provider::{Content, ModelRequest, Role};
-use mannie_runtime::testing::{
+use mannie_plugin_harness::provider::Step;
+use mannie_plugin_harness::provider::{Content, ModelRequest, Role};
+use mannie_plugin_harness::runtime::{
     Harness, HarnessOptions, Transcript, WorkerOptions, fast_config, reply, tool_calls,
 };
-use mannie_runtime::{RuntimeConfig, texts};
-use mannie_store::StoredTask;
-use mannie_types::ceiling::CeilingMode;
-use mannie_types::chat::{
-    ChatError, SendMessage, StartConversation, StopOutcome, SubscribeConversation,
+use mannie_plugin_harness::runtime::{RuntimeConfig, texts};
+use mannie_plugin_harness::store::StoredTask;
+use mannie_plugin_harness::types::PartContent;
+use mannie_plugin_harness::types::RunId;
+use mannie_plugin_harness::types::RunState;
+use mannie_plugin_harness::types::{Decision, UpdateToolsSettings};
+use mannie_plugin_harness::types::{
+    SendMessage, StartConversation, StopOutcome, SubscribeConversation,
 };
-use mannie_types::ids::{ConversationId, RunId};
-use mannie_types::run::RunState;
-use mannie_types::tasks::{TaskExecutorRef, TaskRefusal, TaskState, TaskView};
-use mannie_types::tools::{ApprovalChoice, DecideApproval, Decision, UpdateToolsSettings};
-use mannie_types::transcript::{ConversationUpdate, PartContent};
-use mannie_workers::testing::{DelegationHarness, LOCAL_WORKER_ID, LOCAL_WORKER_NAME};
+use mannie_plugin_harness::types::{TaskRefusal, TaskView};
+use mannie_plugin_sdk::contracts::CeilingMode;
+use mannie_plugin_sdk::contracts::ChatError;
+use mannie_plugin_sdk::contracts::ConversationId;
+use mannie_plugin_sdk::contracts::ConversationUpdate;
+use mannie_plugin_sdk::contracts::WorkItem;
+use mannie_plugin_sdk::contracts::{ApprovalChoice, DecideApproval};
+use mannie_plugin_sdk::contracts::{TaskExecutorRef, TaskState};
+use mannie_workers::plugin::ACTIVE_TASKS;
 use mannie_workers::texts as worker_texts;
 use mannie_workers::{WORKER_AGENT, WORKERS_KIND};
+use mannie_workers_testing::master::{DelegationHarness, LOCAL_WORKER_ID, LOCAL_WORKER_NAME};
 use serde_json::json;
 
 /// A step of the model that never ends, so a run stays busy until it stops.
@@ -126,13 +134,7 @@ async fn start(setup: &DelegationHarness, text: &str) -> (ConversationId, RunId)
     let started = setup
         .master
         .runtime
-        .start_conversation(StartConversation {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            text: text.to_owned(),
-            profile_id: None,
-            project_id: None,
-        })
+        .start_conversation(StartConversation::new(text))
         .await
         .unwrap();
     (started.conversation_id, started.run_id)
@@ -492,7 +494,7 @@ async fn the_owner_answers_a_workers_approval_in_the_parents_card() {
     assert_eq!(request.host.as_deref(), Some("build-01"));
     assert_eq!(
         forged,
-        Err(mannie_types::tools::ToolsError::GrantNotPossible)
+        Err(mannie_plugin_sdk::contracts::ToolsError::GrantNotPossible)
     );
     assert_eq!(transcript.tasks(0)[0].state, TaskState::Reported);
     assert_eq!(fs::read_to_string(&target).unwrap(), "built\n");
@@ -661,6 +663,45 @@ async fn stop_cancels_the_replys_worker_tasks() {
 }
 
 #[tokio::test]
+async fn workers_reports_its_running_tasks_as_work_until_they_end() {
+    let setup = DelegationHarness::with_options(
+        HarnessOptions {
+            use_tools: true,
+            config: quick_cancels(),
+            ..HarnessOptions::default()
+        },
+        WorkerOptions::default(),
+        "127.0.0.1:7445",
+    )
+    .await;
+    let executor = setup.executor.clone().unwrap();
+    setup.master.model.push_reply(tool_calls(&[(
+        "call_1",
+        "delegate_task",
+        &delegate("Build forever.", false),
+    )]));
+    setup.worker.model.push_reply(hang());
+
+    let idle = executor.work().await;
+    let (conversation, run) = start(&setup, "Build").await;
+    tasks_when(&setup, &conversation, 0, |tasks| {
+        tasks
+            .first()
+            .is_some_and(|task| task.state == TaskState::Running)
+    })
+    .await;
+    until_worker_called(&setup, 1).await;
+    let busy = executor.work().await;
+    setup.master.runtime.stop_reply(&conversation).await;
+    setup.master.wait_for_run(&conversation, &run).await;
+    let ended = executor.work().await;
+
+    assert_eq!(idle, Vec::new());
+    assert_eq!(busy, vec![WorkItem::new(ACTIVE_TASKS, 1)]);
+    assert_eq!(ended, Vec::new());
+}
+
+#[tokio::test]
 async fn stop_lets_go_of_a_task_whose_worker_is_offline_and_the_cancel_waits_for_it() {
     let setup = DelegationHarness::with_options(
         HarnessOptions {
@@ -732,11 +773,11 @@ async fn quitting_leaves_a_worker_task_running_and_a_wait_takes_it_up_after_a_re
     )]));
     setup.worker.model.push_reply(vec![
         Step::Delay(Duration::from_millis(400)),
-        Step::Event(mannie_provider::ProviderEvent::TextDelta(
+        Step::Event(mannie_plugin_harness::provider::ProviderEvent::TextDelta(
             "Built.".to_owned(),
         )),
-        Step::Event(mannie_provider::ProviderEvent::Finished(
-            mannie_types::run::FinishReason::Stop,
+        Step::Event(mannie_plugin_harness::provider::ProviderEvent::Finished(
+            mannie_plugin_harness::types::FinishReason::Stop,
         )),
     ]);
     setup
@@ -762,12 +803,7 @@ async fn quitting_leaves_a_worker_task_running_and_a_wait_takes_it_up_after_a_re
     let reply_started = setup
         .master
         .runtime
-        .send_message(SendMessage {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            conversation_id: conversation.clone(),
-            text: "Is it done?".to_owned(),
-        })
+        .send_message(SendMessage::new(conversation.clone(), "Is it done?"))
         .await
         .unwrap();
     let transcript = setup
@@ -1071,7 +1107,7 @@ async fn deleting_the_parent_deletes_the_tasks_conversation_on_the_worker() {
 /// Waits until a worker task's row on the master shows `state`.
 async fn until_master_row(
     setup: &DelegationHarness,
-    task: &mannie_types::ids::TaskId,
+    task: &mannie_plugin_sdk::contracts::TaskId,
     state: TaskState,
 ) {
     let reached = async {
@@ -1093,12 +1129,7 @@ async fn send(setup: &DelegationHarness, conversation: &ConversationId, text: &s
     let started = setup
         .master
         .runtime
-        .send_message(SendMessage {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            conversation_id: conversation.clone(),
-            text: text.to_owned(),
-        })
+        .send_message(SendMessage::new(conversation.clone(), text))
         .await
         .unwrap();
     setup
@@ -1118,11 +1149,11 @@ async fn turning_workers_off_lets_a_running_task_go_and_turning_it_on_reads_its_
     setup.master.model.push_reply(reply("Workers went off."));
     setup.worker.model.push_reply(vec![
         Step::Delay(Duration::from_millis(500)),
-        Step::Event(mannie_provider::ProviderEvent::TextDelta(
+        Step::Event(mannie_plugin_harness::provider::ProviderEvent::TextDelta(
             "Built.".to_owned(),
         )),
-        Step::Event(mannie_provider::ProviderEvent::Finished(
-            mannie_types::run::FinishReason::Stop,
+        Step::Event(mannie_plugin_harness::provider::ProviderEvent::Finished(
+            mannie_plugin_harness::types::FinishReason::Stop,
         )),
     ]);
     setup
@@ -1258,13 +1289,7 @@ async fn delegate_task_is_offered_only_while_workers_are_paired_as_its_reviewed_
     without.model.push_reply(reply("Hello."));
     let started = without
         .runtime
-        .start_conversation(StartConversation {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            text: "Hi".to_owned(),
-            profile_id: None,
-            project_id: None,
-        })
+        .start_conversation(StartConversation::new("Hi"))
         .await
         .unwrap();
     without

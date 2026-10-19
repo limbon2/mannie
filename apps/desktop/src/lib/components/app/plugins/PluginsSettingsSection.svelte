@@ -17,9 +17,11 @@
   import { pluginsActions } from '#lib/state/plugins-actions.svelte.js';
   import { pluginsFailureMessage, pluginStateMessage } from '#lib/utils/plugins-messages.js';
 
+  import PluginUses from './PluginUses.svelte';
+
   // The Plugins section of the settings (docs/features/plugins.md): every
-  // plugin of this version of Mannie with its name, what it adds and a switch,
-  // which takes effect at once. A plugin that is starting or stopping says
+  // plugin of this version of Mannie with its name, what it adds, what its
+  // manifest lets it use and a switch, which takes effect at once. A plugin that is starting or stopping says
   // so, a failed one says what failed and offers "Try again", and turning off
   // a plugin with work in progress asks first.
   const plugins = $derived(
@@ -78,6 +80,9 @@
             <label for={switchId(descriptor.id)}>{descriptor.name()}</label>
           </Item.Title>
           <Item.Description class="line-clamp-none">{descriptor.description()}</Item.Description>
+          {#if view !== undefined}
+            <PluginUses uses={view.uses} />
+          {/if}
           {#if stateLine !== null}
             <p
               id={stateId(descriptor.id)}

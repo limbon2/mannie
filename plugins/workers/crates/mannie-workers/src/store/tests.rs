@@ -1,21 +1,36 @@
 use std::sync::Arc;
 
 use mannie_link::host::{CeilingView, HostFacts, WorkerDetails};
-use mannie_store::{Store, StoreOptions};
-use mannie_types::ceiling::CeilingMode;
-use mannie_types::clock::{Clock, ManualClock, UtcMillis};
-use mannie_types::ids::WorkerId;
+use mannie_plugin_harness::store::{PluginModule, Store, StoreOptions};
+use mannie_plugin_harness::types::ManualClock;
+use mannie_plugin_sdk::contracts::CeilingMode;
+use mannie_plugin_sdk::contracts::WorkerId;
+use mannie_plugin_sdk::contracts::{Clock, UtcMillis};
+use mannie_plugin_sdk::ids::PluginId;
+use mannie_plugin_sdk::services::store::StoreError;
 use tempfile::TempDir;
 
-use super::{NewPairedWorker, STATEMENTS, WORKERS_MODULE, WorkersStore, WorkersStoreError};
+use super::{NewPairedWorker, WORKERS_MODULE, WorkersStore, WorkersStoreError, has_paired_workers};
+use crate::executor::WORKERS_KIND;
 
-fn open() -> (TempDir, WorkersStore) {
+fn workers_id() -> PluginId {
+    PluginId::parse(WORKERS_KIND).unwrap()
+}
+
+/// The store with the plugin's module, as the desktop app opens it.
+fn open_store() -> (TempDir, Store) {
     let folder = tempfile::tempdir().unwrap();
     let clock: Arc<dyn Clock> = Arc::new(ManualClock::new(UtcMillis::from_millis(1_000)));
-    let options =
-        StoreOptions::new(folder.path().join("backups"), clock).with_modules([WORKERS_MODULE]);
+    let options = StoreOptions::new(folder.path().join("backups"), clock)
+        .with_plugin_modules([PluginModule::new(&workers_id(), WORKERS_MODULE)]);
     let store = Store::open(&folder.path().join("mannie.sqlite"), &options).unwrap();
-    let workers = WorkersStore::new(store.module(&WORKERS_MODULE).unwrap());
+    (folder, store)
+}
+
+fn open() -> (TempDir, WorkersStore) {
+    let (folder, store) = open_store();
+    let clock: Arc<dyn Clock> = Arc::new(ManualClock::new(UtcMillis::from_millis(1_000)));
+    let workers = WorkersStore::new(store.plugin_store(&workers_id()).unwrap(), clock);
     (folder, workers)
 }
 
@@ -160,25 +175,75 @@ async fn the_owners_name_for_a_worker_is_set_and_cleared() {
     ));
 }
 
+/// The store prepares every statement that the module lists when it
+/// registers the module, and refuses the module's store when one does not
+/// prepare.
 #[tokio::test]
-async fn every_statement_prepares_against_the_migrated_schema() {
-    let (_folder, store) = open();
+async fn every_listed_statement_prepares_when_the_module_registers() {
+    let (_folder, store) = open_store();
 
-    let failures = store.store.unpreparable(STATEMENTS).await.unwrap();
+    let module = store.plugin_store(&workers_id());
 
-    assert_eq!(failures, Vec::<String>::new());
+    assert!(
+        module.as_ref().err().is_none(),
+        "the module's store: {:?}",
+        module.err()
+    );
+    assert_eq!(WORKERS_MODULE.statements.len(), 6);
 }
 
 #[tokio::test]
 async fn whether_any_worker_is_paired() {
-    let (_folder, store) = open();
-    let before = store.has_paired_workers().await.unwrap();
+    let (_folder, store) = open_store();
+    let module = store.plugin_store(&workers_id()).unwrap();
+    let workers = WorkersStore::new(
+        Arc::clone(&module),
+        Arc::new(ManualClock::new(UtcMillis::from_millis(1_000))),
+    );
+    let before = has_paired_workers(module.as_ref()).await.unwrap();
 
-    store
+    workers
         .add_paired_worker(new_worker(1, &"9".repeat(64)))
         .await
         .unwrap();
 
     assert!(!before);
-    assert!(store.has_paired_workers().await.unwrap());
+    assert!(has_paired_workers(module.as_ref()).await.unwrap());
+}
+
+/// Only the pin's constraint is a taken key: the same ID again is a failure
+/// of the store, which the hub logs, since the master never makes an ID twice.
+#[tokio::test]
+async fn a_duplicate_id_is_a_store_failure_and_not_a_taken_key() {
+    let (_folder, store) = open();
+    store
+        .add_paired_worker(new_worker(1, &"7".repeat(64)))
+        .await
+        .unwrap();
+
+    let same_id = store
+        .add_paired_worker(new_worker(1, &"8".repeat(64)))
+        .await;
+
+    assert!(
+        matches!(same_id, Err(WorkersStoreError::Store(StoreError::Failed))),
+        "{same_id:?}"
+    );
+    assert_eq!(store.paired_workers().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn removing_a_worker_reports_whether_it_was_paired() {
+    let (_folder, store) = open();
+    store
+        .add_paired_worker(new_worker(1, &"6".repeat(64)))
+        .await
+        .unwrap();
+
+    let removed = store.remove_paired_worker(&worker_id(1)).await.unwrap();
+    let again = store.remove_paired_worker(&worker_id(1)).await.unwrap();
+
+    assert!(removed);
+    assert!(!again);
+    assert_eq!(store.paired_workers().await.unwrap(), Vec::new());
 }

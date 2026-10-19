@@ -11,8 +11,10 @@ on:
       - crates/mannie-runtime/**
       - crates/mannie-tools/src/supervisor/**
       - crates/mannie-tools/src/supervisor.rs
-      - plugins/workers/**
-      - scripts/ci/worker-service-unix.sh
+      # Static and generic, so that a plugin changes no workflow (ADR-0035,
+      # decision 10).
+      - plugins/**
+      - scripts/plugins/**
       - .github/workflows/freebsd.yml
       - .github/workflows/nightly.yml
 

@@ -169,6 +169,19 @@ describe('callSummary', () => {
     expect(callSummary(failed)).toContain('missing.txt');
     expect(callSummary(unknown)).toContain('notes.md');
   });
+
+  it("names a finished call of a plugin's tool by its tool, which reports no outcome of its own", () => {
+    const finished = call(
+      'notes_find',
+      { query: 'groceries' },
+      { result: result({ kind: 'plugin', plugin: 'notes' }), status: 'completed' },
+    );
+    const running = call('notes_find', { query: 'groceries' }, { status: 'running' });
+
+    expect(callSummary(finished)).toBe(callSummary(running));
+    expect(callSummary(finished)).toContain('notes_find');
+    expect(callStatus(finished, 0).tone).toBe('done');
+  });
 });
 
 describe('callStatus', () => {

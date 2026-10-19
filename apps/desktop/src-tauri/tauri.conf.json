@@ -6,7 +6,8 @@
     "frontendDist": "../build",
     "devUrl": "http://127.0.0.1:5173",
     "beforeDevCommand": "pnpm dev",
-    "beforeBuildCommand": "pnpm build"
+    "beforeBuildCommand": "pnpm build",
+    "additionalWatchFolders": ["../core", "../../../crates", "../../../plugins"]
   },
   "app": {
     "withGlobalTauri": false,

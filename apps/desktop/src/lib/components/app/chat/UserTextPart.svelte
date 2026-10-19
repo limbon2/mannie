@@ -3,7 +3,7 @@
 
   // The owner's message, as the owner wrote it: plain text with its line
   // breaks. A message with only images has no text, and shows only them
-  // (docs/features/images.md, the transcript).
+  // (plugins/images/docs/README.md, the transcript).
   let { part }: PartRendererProps = $props();
 
   const text = $derived(part.content.kind === 'user_text' ? part.content.text : '');

@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use mannie_host_kit::runtime::{InstructionContext, MachineContext, ToolEnvironment, texts};
 use mannie_link::host::HostFacts;
-use mannie_runtime::{InstructionContext, MachineContext, ToolEnvironment, texts};
-use mannie_types::ceiling::CeilingMode;
+use mannie_plugin_sdk::contracts::CeilingMode;
 
 use super::{
     HOST_INSTRUCTIONS_HEADING, Host, WORKER, WORKER_ASK_GUIDANCE, WORKER_READ_ONLY_GUIDANCE,
@@ -85,8 +85,12 @@ fn the_worker_registers_only_the_worker_agent() {
     let registry = agents();
 
     assert_eq!(registry.get(super::WORKER_AGENT), Some(&WORKER));
-    assert!(registry.get(mannie_runtime::CONVERSATION_AGENT).is_none());
-    assert_eq!(WORKER.tools, mannie_runtime::GENERAL.tools);
+    assert!(
+        registry
+            .get(mannie_host_kit::runtime::CONVERSATION_AGENT)
+            .is_none()
+    );
+    assert_eq!(WORKER.tools, mannie_host_kit::runtime::GENERAL.tools);
     assert_eq!(WORKER.max_tasks, 0);
     assert!(!WORKER.tools.contains(&"move_to_project"));
 }

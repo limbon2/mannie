@@ -27,7 +27,7 @@
       }
     },
     {
-      "files": "apps/desktop/**",
+      "files": ["apps/desktop/**", "plugins/*/ui/**", "tests/fixtures/plugins/*/ui/**"],
       "options": {
         "tailwindStylesheet": "./apps/desktop/src/app.css"
       }

@@ -1,8 +1,10 @@
-# Cargo workspace of the Rust core, the desktop app and the plugins
-# (docs/engineering/repository.md). The core's library crates live in crates/
-# and the desktop app in apps/; each plugin's crates and binaries live in
-# plugins/<id>/ (ADR-0030). A crate is added when the first milestone that
-# needs it starts, so no member is a placeholder.
+# The root Cargo workspace: the core's library crates in crates/ and the
+# desktop app's library, mannie-desktop-core, in apps/desktop/core/
+# (docs/engineering/repository.md). Each plugin is a workspace of its own in
+# plugins/<id>/, with its own Cargo.lock, and the desktop binary in
+# apps/desktop/src-tauri/ is a member of the launcher that `task gen` writes
+# into .generated/desktop/ (ADR-0035, decision 4). A crate is added when the
+# first milestone that needs it starts, so no member is a placeholder.
 #
 # Every member inherits the package settings and the lint policy with:
 #
@@ -18,21 +20,11 @@
 
 [workspace]
 resolver = "3"
-members = [
-  "apps/desktop/src-tauri",
-  "crates/mannie-logging",
-  "crates/mannie-plugins",
-  "crates/mannie-provider",
-  "crates/mannie-runtime",
-  "crates/mannie-secrets",
-  "crates/mannie-store",
-  "crates/mannie-tools",
-  "crates/mannie-types",
-  "plugins/images/crates/mannie-images",
-  "plugins/workers/crates/mannie-link",
-  "plugins/workers/crates/mannie-workers",
-  "plugins/workers/worker",
-]
+members = ["apps/desktop/core", "crates/*"]
+# Each plugin is a workspace of its own, and the desktop binary belongs to the
+# generated launcher, so the root loads on a fresh clone and its lock pins the
+# core and Tauri alone (ADR-0035, decision 4).
+exclude = [".generated", "apps/desktop/src-tauri", "plugins", "tests/fixtures/plugins"]
 
 # One version for the desktop app and the worker (ADR-0018). `task
 # release:prepare` changes it.
@@ -43,40 +35,35 @@ rust-version = "1.99"
 license = "Apache-2.0"
 publish = false
 
-# Every dependency is declared once, here, and members refer to it with
-# `workspace = true`. Cargo.lock pins the exact versions; specta and
+# Every dependency of the core is declared once, here, and members refer to it
+# with `workspace = true`. Cargo.lock pins the exact versions; specta and
 # tauri-specta are release candidates and are pinned here as well (ADR-0007).
-# cargo-deny (deny.toml) enforces which crate may depend on which.
+# A plugin's workspace declares the crates that only it uses, and the
+# generated launcher takes this table with its paths rebased. cargo-deny
+# (deny.toml) enforces which crate may depend on which.
 [workspace.dependencies]
 anyhow = "1.0.104"
 # The release key that the worker embeds, and the signatures that `mannie-worker
 # update` checks, which the release workflow writes in base64.
 base64 = "0.22.1"
 bytes = "1.12.1"
-clap = { version = "4.6.7", features = ["derive"] }
 fastrand = "2.5.0"
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 # Glob patterns of `find_files`, as the `ignore` crate matches them.
 globset = "0.4.20"
-# The HTTP/2 connections of the link's client, which brings its own TLS
-# stream (ADR-0016).
-hyper-util = { version = "0.1.21", default-features = false, features = ["tokio"] }
 # Walking folders the way `.gitignore` files say, for `find_files` and
 # `search_text`.
 ignore = "0.4.33"
-# Decoding, turning, shrinking and encoding the images that the owner attaches
-# to a message, with decoders written in Rust and only the formats that the
-# Images plugin takes (ADR-0033).
-image = { version = "0.25.10", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 keyring-core = "1.0.1"
 # The FreeBSD process supervisor's calls that rustix cannot make for it: a
 # process's start time from sysctl, which it has no binding for, and
 # procctl(PROC_REAP_KILL), whose binding panics on the kernel's answer
 # (ADR-0014).
 libc = "0.2.190"
-mannie-images = { path = "plugins/images/crates/mannie-images" }
-mannie-link = { path = "plugins/workers/crates/mannie-link" }
 mannie-logging = { path = "crates/mannie-logging" }
+# The plugin SDK. The core depends on it and adapts to it, and a plugin's
+# library crates reach the core through it (ADR-0034).
+mannie-plugin-sdk = { path = "crates/mannie-plugin-sdk" }
 mannie-plugins = { path = "crates/mannie-plugins" }
 mannie-provider = { path = "crates/mannie-provider" }
 mannie-runtime = { path = "crates/mannie-runtime" }
@@ -84,12 +71,7 @@ mannie-secrets = { path = "crates/mannie-secrets" }
 mannie-store = { path = "crates/mannie-store" }
 mannie-tools = { path = "crates/mannie-tools" }
 mannie-types = { path = "crates/mannie-types" }
-mannie-workers = { path = "plugins/workers/crates/mannie-workers" }
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
-# The link's messages (ADR-0016).
-prost = "0.14.4"
-# Compiles the link's protobuf files in the build without a system protoc.
-protox = "0.10.0"
 regex = "1.13.1"
 # Without the default TLS feature, which brings the aws-lc crypto provider that
 # deny.toml bans: rustls with ring only (ADR-0008, ADR-0011).
@@ -98,9 +80,6 @@ reqwest = { version = "0.13.5", default-features = false }
 # project (ADR-0023). On Linux it goes through the XDG desktop portal: the GTK
 # backend would run GTK on a thread of its own, beside Tauri's.
 rfd = { version = "0.17.2", default-features = false, features = ["wayland", "xdg-portal"] }
-# Ed25519 keys and the HMAC of pairing, from the crypto provider that rustls
-# uses (ADR-0008, ADR-0016).
-ring = "0.17.14"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 # Safe calls of Unix file and process functions: `openat` without following
 # links, child subreapers and process file descriptors (ADR-0014).
@@ -114,6 +93,9 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.10.9"
 specta = { version = "=2.0.0-rc.25", features = ["derive"] }
+# Applies serde's attributes to the types before the plugins' bindings are
+# written; tauri-specta already depends on it (ADR-0034, decision 9).
+specta-serde = "=0.0.12"
 specta-typescript = "=0.0.12"
 tauri = "2.12.3"
 tauri-build = "2.7.2"
@@ -124,20 +106,10 @@ tempfile = "3.27.0"
 thiserror = "2.0.21"
 time = { version = "0.3.55", features = ["formatting", "macros"] }
 tokio = "1.53.2"
-# The link's TLS streams with ring, without the default aws-lc that deny.toml
-# bans (ADR-0008, ADR-0016).
-tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring"] }
 # Cancellation tokens for running tools (engineering standards, async).
 tokio-util = "0.7.20"
-# The worker's configuration file (docs/features/workers/service.md).
+# The worker's configuration file (plugins/workers/docs/service.md).
 toml = { version = "1.1.8", default-features = false, features = ["parse", "serde", "std"] }
-# gRPC for the link (ADR-0016), without TLS: the link brings its own, with
-# pinned keys.
-tonic = { version = "0.14.6", default-features = false, features = ["codegen", "router", "transport"] }
-tonic-prost = "0.14.6"
-tonic-prost-build = { version = "0.14.6", default-features = false }
-# The connector of the link's client.
-tower = { version = "0.5.3", default-features = false, features = ["util"] }
 tracing = "0.1.44"
 tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
@@ -146,7 +118,6 @@ uuid = { version = "1.28.0", features = ["v7"] }
 # The identity of a file on Windows: its volume serial number and file index.
 winapi-util = "0.1.11"
 windows-native-keyring-store = "1.1.0"
-windows-service = "0.8.1"
 # Job Objects and the other Windows calls of the process supervisor
 # (ADR-0014).
 windows-sys = "0.61.2"

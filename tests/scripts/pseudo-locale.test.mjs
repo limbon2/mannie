@@ -61,29 +61,43 @@ describe('generatePseudoLocaleProject', () => {
   const app = mkdtempSync(join(tmpdir(), 'mannie-pseudo-'));
   after(() => rmSync(app, { force: true, recursive: true }));
 
-  it('writes a project with the pseudo-locale added', () => {
+  it('writes a project with the pseudo-locale added for every source', () => {
     mkdirSync(join(app, 'project.inlang'));
     mkdirSync(join(app, 'messages'));
+    mkdirSync(join(app, 'plugin-messages'));
     writeFileSync(
       join(app, 'project.inlang', 'settings.json'),
       JSON.stringify({
         baseLocale: 'en',
         locales: ['en', 'de'],
         modules: ['./node_modules/@inlang/plugin-message-format/dist/index.js'],
+        'plugin.inlang.messageFormat': { pathPattern: './messages/{locale}.json' },
       }),
     );
     writeFileSync(join(app, 'project.inlang', 'paraglide.config.js'), 'export default {};\n');
     writeFileSync(join(app, 'messages', 'en.json'), JSON.stringify({ greeting: 'Hello' }));
     writeFileSync(join(app, 'messages', 'de.json'), JSON.stringify({ greeting: 'Hallo' }));
+    writeFileSync(join(app, 'plugin-messages', 'en.json'), JSON.stringify({ notes_plugin_name: 'Notes' }));
 
-    generatePseudoLocaleProject(app);
+    generatePseudoLocaleProject(app, [
+      { folder: join(app, 'messages'), name: 'core' },
+      { folder: join(app, 'plugin-messages'), name: 'notes' },
+    ]);
 
     const output = join(app, '.pseudo-locale');
     const settings = JSON.parse(readFileSync(join(output, 'project.inlang', 'settings.json'), 'utf8'));
     assert.deepEqual(settings.locales, ['en', 'de', PSEUDO_LOCALE]);
     assert.deepEqual(settings.modules, ['../node_modules/@inlang/plugin-message-format/dist/index.js']);
-    assert.deepEqual(JSON.parse(readFileSync(join(output, 'messages', 'de.json'), 'utf8')), { greeting: 'Hallo' });
-    const pseudo = JSON.parse(readFileSync(join(output, 'messages', `${PSEUDO_LOCALE}.json`), 'utf8'));
+    assert.deepEqual(settings['plugin.inlang.messageFormat'].pathPattern, [
+      './messages/core/{locale}.json',
+      './messages/notes/{locale}.json',
+    ]);
+    assert.deepEqual(JSON.parse(readFileSync(join(output, 'messages', 'core', 'de.json'), 'utf8')), {
+      greeting: 'Hallo',
+    });
+    const pseudo = JSON.parse(readFileSync(join(output, 'messages', 'core', `${PSEUDO_LOCALE}.json`), 'utf8'));
     assert.match(pseudo.greeting, /^⟦Ĥéļļö·+⟧$/);
+    const plugin = JSON.parse(readFileSync(join(output, 'messages', 'notes', `${PSEUDO_LOCALE}.json`), 'utf8'));
+    assert.match(plugin.notes_plugin_name, /^⟦Ñöţéš·+⟧$/);
   });
 });

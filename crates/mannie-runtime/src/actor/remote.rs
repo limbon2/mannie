@@ -8,6 +8,9 @@
 
 use std::sync::Arc;
 
+use mannie_plugin_sdk::points::executors::{
+    ExecutorRefusal, PlanCall, PlanError, SubmitError, TaskExecutor, TaskSubmission,
+};
 use mannie_store::{
     Change, Durability, NewConversation, NewExecutorTask, RuntimeStoreError, StoredChild,
     StoredTask, TaskEnding, TaskOrigin,
@@ -23,9 +26,7 @@ use mannie_types::transcript::PartState;
 use super::tasks::{LaneTask, let_go_text};
 use super::{Ending, MAX_DETAIL_CHARS, RunActor, StepCall};
 use crate::calls::Setup;
-use crate::executors::{
-    ExecutorRefusal, PlanCall, PlanError, RemoteFollow, SubmitError, TaskExecutor, TaskSubmission,
-};
+use crate::executors::RemoteFollow;
 use crate::texts;
 
 /// The start of an instruction, which the parent's part keeps for the owner.
@@ -61,20 +62,13 @@ impl RunActor {
         // one of a plugin that started again goes to its new executor.
         let kind = offered.kind();
         let Some(executor) = self.runtime.executor(kind) else {
-            let refusal = ExecutorRefusal {
-                code: "plugin_off".to_owned(),
-                target: None,
-                text: texts::tool_plugin_off(kind),
-            };
+            let refusal = ExecutorRefusal::new("plugin_off", None, texts::tool_plugin_off(kind));
             self.refuse_by_executor(call, kind, refusal);
             return Ok(());
         };
         let profile = self.profile_snapshot().await?;
         let arguments = call.arguments.clone().unwrap_or_default();
-        let planned = executor.plan(PlanCall {
-            arguments: &arguments,
-            profile: &profile,
-        });
+        let planned = executor.plan(PlanCall::new(&arguments, &profile));
         let plan = match planned {
             Err(PlanError::InvalidArguments { detail }) => {
                 let detail = detail.chars().take(MAX_DETAIL_CHARS).collect();
@@ -164,11 +158,11 @@ impl RunActor {
             return Ok(());
         }
         let Some(executor) = self.runtime.executor(&earlier.kind) else {
-            let refusal = ExecutorRefusal {
-                code: "plugin_off".to_owned(),
-                target: Some(earlier.target_name.clone()),
-                text: texts::task_plugin_off(number, &earlier.kind),
-            };
+            let refusal = ExecutorRefusal::new(
+                "plugin_off",
+                Some(earlier.target_name.clone()),
+                texts::task_plugin_off(number, &earlier.kind),
+            );
             self.refuse_by_executor(call, &earlier.kind, refusal);
             return Ok(());
         };
@@ -233,18 +227,18 @@ impl RunActor {
         let Some(target) = document.executor.clone() else {
             return Err(Ending::Failed(RunFailure::Internal));
         };
-        let submission = TaskSubmission {
-            task_id: document.task_id.clone(),
-            conversation_id: document.conversation_id.clone(),
-            parent_id: self.conversation.clone(),
-            number: document.number,
-            follow_up: document.follow_up,
-            title: document.title.clone(),
-            instruction,
+        let submission = TaskSubmission::new(
+            document.task_id.clone(),
+            document.conversation_id.clone(),
+            self.conversation.clone(),
+            document.number,
             target,
-            options,
             profile,
-        };
+        )
+        .with_title(document.title.clone())
+        .with_instruction(instruction)
+        .with_options(options)
+        .with_follow_up(document.follow_up);
         self.tasks.assigned += 1;
         self.record_in_part(&mut call, &document).await?;
         let Some(row) = self

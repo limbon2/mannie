@@ -8,10 +8,15 @@ import type { PluginsError } from '../../../../../../apps/desktop/src/lib/genera
 import { setPluginCatalog } from '../../../../../../apps/desktop/src/lib/state/plugin-catalog.js';
 import {
   failedForPluginOff,
+  pluginNativeLabel,
+  pluginServiceLabel,
   pluginsFailureMessage,
   pluginStartFailureMessage,
   pluginStateMessage,
 } from '../../../../../../apps/desktop/src/lib/utils/plugins-messages.js';
+
+/** What a plugin uses that declares nothing. */
+const NO_USES = { channels: [], commands: [], crates: [], native: [], programs: [], secrets: [], services: [] };
 
 afterEach(() => {
   setPluginCatalog([]);
@@ -57,12 +62,14 @@ describe('pluginStartFailureMessage', () => {
     const own = pluginStartFailureMessage('workers', 'storage_failed');
     const host = [
       pluginStartFailureMessage('workers', 'grant_missing'),
+      pluginStartFailureMessage('workers', 'service_unavailable'),
+      pluginStartFailureMessage('workers', 'sdk_incompatible'),
       pluginStartFailureMessage('workers', 'contributions_refused'),
     ];
     const other = pluginStartFailureMessage('workers', 'disk_on_fire');
 
     expect(own).toBe('The workers could not be read.');
-    expect(new Set([own, ...host, other]).size).toBe(4);
+    expect(new Set([own, ...host, other]).size).toBe(6);
     expect(other).toContain('disk_on_fire');
   });
 });
@@ -70,17 +77,42 @@ describe('pluginStartFailureMessage', () => {
 describe('pluginStateMessage', () => {
   it('says nothing for a plugin that is on or off, and says when one starts, stops or failed', () => {
     const quiet = [
-      pluginStateMessage({ enabled: true, failure: null, id: 'workers', state: 'on' }),
-      pluginStateMessage({ enabled: false, failure: null, id: 'workers', state: 'off' }),
+      pluginStateMessage({ enabled: true, failure: null, id: 'workers', state: 'on', uses: NO_USES }),
+      pluginStateMessage({ enabled: false, failure: null, id: 'workers', state: 'off', uses: NO_USES }),
     ];
     const lines = [
-      pluginStateMessage({ enabled: true, failure: null, id: 'workers', state: 'starting' }),
-      pluginStateMessage({ enabled: false, failure: null, id: 'workers', state: 'stopping' }),
-      pluginStateMessage({ enabled: true, failure: 'grant_missing', id: 'workers', state: 'failed' }),
+      pluginStateMessage({ enabled: true, failure: null, id: 'workers', state: 'starting', uses: NO_USES }),
+      pluginStateMessage({ enabled: false, failure: null, id: 'workers', state: 'stopping', uses: NO_USES }),
+      pluginStateMessage({ enabled: true, failure: 'grant_missing', id: 'workers', state: 'failed', uses: NO_USES }),
     ];
 
     expect(quiet).toEqual([null, null]);
     expect(new Set(lines).size).toBe(3);
     expect(lines[2]).toContain(pluginStartFailureMessage('workers', 'grant_missing'));
+  });
+});
+
+describe('pluginServiceLabel', () => {
+  it('words each service of SDK 1 in a sentence of its own and names any other service', () => {
+    const services = ['credentials', 'executor-host', 'file-dialog', 'secrets', 'store'];
+
+    const labels = services.map((name) => pluginServiceLabel(name));
+    const other = pluginServiceLabel('teleport');
+
+    expect(new Set([...labels, other]).size).toBe(services.length + 1);
+    expect(other).toContain('teleport');
+  });
+});
+
+describe('pluginNativeLabel', () => {
+  it('words each kind of direct native call in a sentence of its own and names any other kind', () => {
+    const categories = ['file-writes', 'processes', 'sockets'];
+
+    const labels = categories.map((category) => pluginNativeLabel(category));
+    const other = pluginNativeLabel('threads');
+
+    expect(new Set([...labels, other]).size).toBe(categories.length + 1);
+    expect(pluginNativeLabel('sockets')).toBe('Opens network connections itself');
+    expect(other).toContain('threads');
   });
 });

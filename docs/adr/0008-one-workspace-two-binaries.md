@@ -7,6 +7,8 @@
 | Deciders | Owner                                                                                                                                                       |
 | Related  | [ADR-0003](0003-build-the-desktop-app-on-tauri-2.md), [ADR-0015](0015-run-an-agent-runtime-on-every-machine.md), [Repository](../engineering/repository.md) |
 
+Later changes: [ADR-0035](0035-find-plugins-at-build-time-in-folders-of-their-own.md) supersedes decision 1 in part, with the root's workspace, a workspace for each plugin and the generated launcher, and refines decisions 2, 3 and 6.
+
 ## Context
 
 Verified 2026-10-13:

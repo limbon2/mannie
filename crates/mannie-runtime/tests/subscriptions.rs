@@ -172,13 +172,7 @@ async fn drive(
     }
     let started = harness
         .runtime
-        .start_conversation(StartConversation {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            text: "Turn 0".to_owned(),
-            profile_id: None,
-            project_id: None,
-        })
+        .start_conversation(StartConversation::new("Turn 0"))
         .await
         .unwrap();
     let conversation = started.conversation_id.clone();
@@ -190,12 +184,10 @@ async fn drive(
         for (index, plan) in turns.iter().enumerate() {
             if index > 0 {
                 run = runtime
-                    .send_message(SendMessage {
-                        mentions: Vec::new(),
-                        images: Vec::new(),
-                        conversation_id: background_conversation.clone(),
-                        text: format!("Turn {index}"),
-                    })
+                    .send_message(SendMessage::new(
+                        background_conversation.clone(),
+                        format!("Turn {index}"),
+                    ))
                     .await
                     .unwrap()
                     .run_id;

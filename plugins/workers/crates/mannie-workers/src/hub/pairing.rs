@@ -1,4 +1,4 @@
-//! Pairing from the master (docs/features/workers/pairing-and-link.md,
+//! Pairing from the master (plugins/workers/docs/pairing-and-link.md,
 //! pairing): the owner types the host's address, the code that
 //! `mannie-worker pair` printed and, if they like, a name for the worker.
 //! The master connects with its key and records the worker's key from the
@@ -14,7 +14,7 @@ use mannie_link::proto::pairing::{
     BeginRequest, FinishRequest, RefusalReason, begin_response, finish_response,
 };
 use mannie_link::tls;
-use mannie_types::ids::WorkerId;
+use mannie_plugin_sdk::contracts::WorkerId;
 use tonic::Code as StatusCode;
 use tonic::transport::Channel;
 
@@ -150,9 +150,6 @@ impl Hub {
     /// Pairs with the worker at the input's address with its code, stores
     /// it with the owner's name for it, if any, and starts connecting to it.
     pub async fn pair(&self, input: PairWorker) -> Result<WorkerView, WorkersError> {
-        if *self.inner.shutdown.borrow() {
-            return Err(WorkersError::ShuttingDown);
-        }
         let address = normalize_address(&input.address)?;
         let code = Code::parse(&input.code).ok_or(WorkersError::CodeRefused)?;
         // The name is checked before the worker is contacted, so a refused

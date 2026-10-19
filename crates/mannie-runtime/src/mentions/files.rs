@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
+use mannie_plugin_sdk::points::mentions::{MentionContent, ProviderSuggestions, RenderedMention};
 use mannie_tools::{
     FileMention, FolderMention, IndexMatch, MentionIndex, MentionPathError, MentionReadFailure,
     PageShows, Verdict, may_hold_secrets, resolve_mention,
@@ -17,9 +18,7 @@ use mannie_tools::{
 use mannie_types::mentions::{MentionEntry, MentionSummary};
 use tokio::time::Instant;
 
-use super::{
-    MentionContent, MentionContext, MentionProvider, ProviderSuggestions, RenderedMention,
-};
+use super::{MentionContext, MentionProvider};
 use crate::texts;
 
 /// The ID of the core's provider of files and folders.
@@ -125,10 +124,10 @@ impl MentionProvider for FileMentions {
             };
             let index = self.index(root).await?;
             let found = index.suggest(query, limit);
-            Ok(ProviderSuggestions {
-                entries: found.matches.iter().map(entry).collect(),
-                incomplete: found.incomplete,
-            })
+            Ok(ProviderSuggestions::new(
+                found.matches.iter().map(entry).collect(),
+                found.incomplete,
+            ))
         }
         .boxed()
     }
@@ -298,12 +297,7 @@ impl MentionContent for FileContent {
                 note_summary(*note),
             ),
         };
-        RenderedMention {
-            text,
-            label,
-            variant: variant(self.folder).to_owned(),
-            summary,
-        }
+        RenderedMention::new(text, label, variant(self.folder).to_owned(), summary)
     }
 }
 

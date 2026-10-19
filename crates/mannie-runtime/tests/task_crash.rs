@@ -201,13 +201,7 @@ async fn start_conversation(directory: &Path, parent_ends: bool) -> (Runtime, Co
         .await
         .unwrap();
     let started = runtime
-        .start_conversation(StartConversation {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            text: "OWNER: mark it".to_owned(),
-            profile_id: None,
-            project_id: Some(project.id),
-        })
+        .start_conversation(StartConversation::new("OWNER: mark it").with_project(Some(project.id)))
         .await
         .unwrap();
     (runtime, started.conversation_id)
@@ -492,12 +486,7 @@ async fn follow_up_reads_the_result(
     model.push_reply_for(CHILD, reply("It ran."));
     model.push_reply_for(CHILD, reply("Report: the command ran."));
     let sent = runtime
-        .send_message(SendMessage {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            conversation_id: conversation.clone(),
-            text: "Did it run?".to_owned(),
-        })
+        .send_message(SendMessage::new(conversation.clone(), "Did it run?"))
         .await
         .unwrap();
     let state = wait_for_run(store, conversation, &sent.run_id).await;

@@ -1,18 +1,26 @@
-//! The commands of the workers feature (docs/features/workers/
+//! The commands of the workers feature (plugins/workers/docs/
 //! pairing-and-link.md, contracts): pairing a worker, naming one, removing
-//! one, and their errors.
+//! one, following the paired workers, and their errors. Each command and the
+//! channel are specs of the plugin SDK (ADR-0034, decision 8), so the host
+//! checks their input before the plugin's handler runs, answers
+//! `plugin_off` while Workers is off and ends the channel when it stops.
 
-use mannie_types::ids::WorkerId;
+use mannie_plugin_sdk::contracts::WorkerId;
+use mannie_plugin_sdk::ipc::{
+    ChannelSpec, CommandSpec, InputRefusal, Interface, PluginError, Validate,
+};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+use crate::view::{WorkerListUpdate, WorkerView};
+
 /// The most characters of a worker's name, as a worker's configuration
-/// allows them (docs/features/workers/service.md).
+/// allows them (plugins/workers/docs/service.md).
 pub const MAX_WORKER_NAME_CHARACTERS: usize = 64;
 
 /// The argument of `pair_worker`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PairWorker {
     /// The host's name or address, with the port when it is not 7445.
     pub address: String,
@@ -24,9 +32,17 @@ pub struct PairWorker {
     pub name: Option<String>,
 }
 
+impl Validate for PairWorker {
+    /// The hub checks the address, the code and the name, and answers with
+    /// codes of its own that say what the owner can correct.
+    fn validate(&self) -> Result<(), InputRefusal> {
+        Ok(())
+    }
+}
+
 /// The argument of `rename_worker`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RenameWorker {
     /// The worker.
     pub worker_id: WorkerId,
@@ -35,12 +51,27 @@ pub struct RenameWorker {
     pub name: String,
 }
 
+impl Validate for RenameWorker {
+    /// The hub checks the name, and answers `name_invalid` with its limit.
+    fn validate(&self) -> Result<(), InputRefusal> {
+        Ok(())
+    }
+}
+
 /// The argument of `remove_worker`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkerRef {
     /// The worker.
     pub worker_id: WorkerId,
+}
+
+impl Validate for WorkerRef {
+    /// A worker ID decodes only in its form; an unknown one is
+    /// `worker_not_found`.
+    fn validate(&self) -> Result<(), InputRefusal> {
+        Ok(())
+    }
 }
 
 /// Checks a name that the owner gives a worker and returns it without
@@ -70,7 +101,8 @@ pub fn check_worker_name(name: &str) -> Result<Option<String>, WorkersError> {
     Ok(Some(trimmed.to_owned()))
 }
 
-/// Why a command about workers failed.
+/// Why a command about workers failed. The host's refusals, such as
+/// `plugin_off`, come beside these (ADR-0034, decision 9).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type, thiserror::Error)]
 #[serde(
     tag = "code",
@@ -127,20 +159,11 @@ pub enum WorkersError {
     /// The store failed. The log has the cause.
     #[error("the worker could not be saved")]
     StorageFailed,
-    /// The core started without its database.
-    #[error("the database is not open")]
-    StoreUnavailable,
-    /// Mannie is quitting.
-    #[error("Mannie is quitting")]
-    ShuttingDown,
-    /// The owner turned the Workers plugin off (ADR-0030, decision 5).
-    #[error("the Workers plugin is off")]
-    PluginOff,
 }
 
-impl WorkersError {
+impl PluginError for WorkersError {
     /// The stable code of the error, for logs.
-    pub fn code(&self) -> &'static str {
+    fn code(&self) -> &'static str {
         match self {
             Self::AddressInvalid => "workers.address_invalid",
             Self::Unreachable => "workers.unreachable",
@@ -156,15 +179,77 @@ impl WorkersError {
             Self::NameTaken => "workers.name_taken",
             Self::CredentialStoreUnavailable => "workers.credential_store_unavailable",
             Self::StorageFailed => "workers.storage_failed",
-            Self::StoreUnavailable => "workers.store_unavailable",
-            Self::ShuttingDown => "workers.shutting_down",
-            Self::PluginOff => "workers.plugin_off",
         }
     }
 }
 
+/// `pair_worker`: pairs with a worker.
+#[derive(Debug)]
+pub enum PairWorkerCommand {}
+
+impl CommandSpec for PairWorkerCommand {
+    const NAME: &'static str = "pair_worker";
+    const DOCS: &'static str = "Pairs with the worker at the input's address with the code that `mannie-worker pair` printed on its host.";
+    type Input = PairWorker;
+    type Output = WorkerView;
+    type Error = WorkersError;
+}
+
+/// `rename_worker`: names a worker.
+#[derive(Debug)]
+pub enum RenameWorkerCommand {}
+
+impl CommandSpec for RenameWorkerCommand {
+    const NAME: &'static str = "rename_worker";
+    const DOCS: &'static str = "Gives a worker the name that the owner chose in Mannie, or with a blank name goes back to the name in the worker's configuration.";
+    type Input = RenameWorker;
+    type Output = WorkerView;
+    type Error = WorkersError;
+}
+
+/// `remove_worker`: removes a worker.
+#[derive(Debug)]
+pub enum RemoveWorkerCommand {}
+
+impl CommandSpec for RemoveWorkerCommand {
+    const NAME: &'static str = "remove_worker";
+    const DOCS: &'static str =
+        "Removes a worker: it is unpaired when it can be reached, and the master forgets it.";
+    type Input = WorkerRef;
+    type Output = ();
+    type Error = WorkersError;
+}
+
+/// `subscribe_workers`: follows the paired workers.
+#[derive(Debug)]
+pub enum SubscribeWorkersChannel {}
+
+impl ChannelSpec for SubscribeWorkersChannel {
+    const NAME: &'static str = "subscribe_workers";
+    const DOCS: &'static str = "Follows the paired workers: the list first, then the list after each change of a worker or its status, until Workers stops.";
+    type Input = ();
+    type Item = WorkerListUpdate;
+    type Error = WorkersError;
+}
+
+/// The plugin's commands and channel, and the limit that the UI shows.
+pub fn interface() -> Interface {
+    Interface::new()
+        .command::<PairWorkerCommand>()
+        .command::<RenameWorkerCommand>()
+        .command::<RemoveWorkerCommand>()
+        .channel::<SubscribeWorkersChannel>()
+        .constant(
+            "MAX_WORKER_NAME_CHARACTERS",
+            "The most characters of a worker's name.",
+            u32::try_from(MAX_WORKER_NAME_CHARACTERS).unwrap_or(u32::MAX),
+        )
+}
+
 #[cfg(test)]
 mod tests {
+    use mannie_plugin_sdk::ipc::PluginError;
+
     use super::{MAX_WORKER_NAME_CHARACTERS, PairWorker, WorkersError, check_worker_name};
 
     #[test]
@@ -195,11 +280,16 @@ mod tests {
     }
 
     #[test]
-    fn pairing_without_a_name_reads_as_before() {
+    fn pairing_without_a_name_reads_as_before_and_an_unknown_field_is_refused() {
         let input: PairWorker =
             serde_json::from_value(serde_json::json!({ "address": "build-01.lan", "code": "X" }))
                 .unwrap();
+        let unknown = serde_json::from_value::<PairWorker>(
+            serde_json::json!({ "address": "build-01.lan", "code": "X", "port": 7445 }),
+        );
+
         assert_eq!(input.name, None);
+        assert!(unknown.is_err(), "{unknown:?}");
     }
 
     #[test]

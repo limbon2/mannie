@@ -1,5 +1,5 @@
 //! The master ends during a delegation, and no case starts a second task
-//! (docs/features/workers/delegation.md, submitting a task; ADR-0027,
+//! (plugins/workers/docs/delegation.md, submitting a task; ADR-0027,
 //! decision 7).
 //!
 //! Each test writes the master's store as a crash at one point leaves it:
@@ -12,22 +12,25 @@
 
 use std::time::Duration;
 
-use mannie_runtime::testing::reply;
-use mannie_store::{
+use mannie_plugin_harness::runtime::reply;
+use mannie_plugin_harness::store::{
     Change, Durability, NewConversation, NewExecutorTask, NewPart, NewRun, Store, TaskOrigin,
 };
-use mannie_types::ids::{ConversationId, PartId, ProfileId, RunId, TaskId, TurnId};
-use mannie_types::tasks::{
-    ProfileSnapshot, TaskAssignment, TaskDocument, TaskExecutorRef, TaskPartDocument, TaskRefusal,
-    TaskState, TaskView,
+use mannie_plugin_harness::types::PartKind;
+use mannie_plugin_harness::types::{
+    ApiInterface, CreateProviderProfile, ProfileDraft, ProviderProfile, ReasoningEffort,
 };
-use mannie_types::tools::{ToolCallDocument, ToolCallStatus};
-use mannie_types::transcript::PartKind;
-use mannie_workers::testing::{DelegationHarness, LOCAL_WORKER_ID, LOCAL_WORKER_NAME};
+use mannie_plugin_harness::types::{PartId, RunId, TurnId};
+use mannie_plugin_harness::types::{TaskDocument, TaskPartDocument, TaskRefusal, TaskView};
+use mannie_plugin_harness::types::{ToolCallDocument, ToolCallStatus};
+use mannie_plugin_sdk::contracts::Secret;
+use mannie_plugin_sdk::contracts::{ConversationId, ProfileId, TaskId};
+use mannie_plugin_sdk::contracts::{ProfileSnapshot, TaskAssignment, TaskExecutorRef, TaskState};
 use mannie_workers::texts::THE_WORKER;
 use mannie_workers::{WORKER_AGENT, WORKERS_KIND};
+use mannie_workers_testing::master::{DelegationHarness, LOCAL_WORKER_ID, LOCAL_WORKER_NAME};
 
-fn new_id<T>(parse: fn(&str) -> Result<T, mannie_types::ids::InvalidId>) -> T {
+fn new_id<T>(parse: fn(&str) -> Result<T, mannie_plugin_harness::types::InvalidId>) -> T {
     parse(&uuid::Uuid::now_v7().to_string()).unwrap()
 }
 
@@ -159,10 +162,20 @@ async fn crash_after_the_part(store: &Store, profile: &ProfileId) -> (Crashed, P
 /// Writes the task's rows after its part, with the executor's document, as
 /// the run stores them before the executor submits the task.
 async fn crash_after_the_rows(store: &Store, profile: &ProfileId) -> Crashed {
+    crash_after_the_rows_naming(store, profile, profile).await
+}
+
+/// Writes the task's rows as [`crash_after_the_rows`] does, for a run of
+/// `profile`, with an executor's document that names `document_profile`.
+async fn crash_after_the_rows_naming(
+    store: &Store,
+    profile: &ProfileId,
+    document_profile: &ProfileId,
+) -> Crashed {
     let (crashed, part) = crash_after_the_part(store, profile).await;
     let document = serde_json::json!({
         "version": 1,
-        "profileId": profile,
+        "profileId": document_profile,
         "submission": "pending",
         "cancelRequestedAt": null,
     });
@@ -222,6 +235,23 @@ async fn part_after(
     let transcript = setup.master.snapshot(parent).await;
     let call = transcript.task_calls(0).into_iter().next().unwrap();
     (call.task, call.refusal)
+}
+
+/// The snapshot of a profile that a worker stores with an assigned task.
+fn snapshot_of(profile: &ProviderProfile) -> ProfileSnapshot {
+    ProfileSnapshot {
+        id: profile.id.clone(),
+        config_revision: 1,
+        interface: ApiInterface::ChatCompletions,
+        base_url: "http://127.0.0.1:9/v1".to_owned(),
+        model: "test-model".to_owned(),
+        context_window: 128_000,
+        output_limit: 16_384,
+        reasoning_effort: ReasoningEffort::ServerDefault,
+        server: None,
+        use_tools: true,
+        has_credential: true,
+    }
 }
 
 #[tokio::test]
@@ -302,12 +332,12 @@ async fn a_crash_after_a_lost_answer_follows_the_task_the_worker_stored_and_runs
             profile: ProfileSnapshot {
                 id: profile.clone(),
                 config_revision: 1,
-                interface: mannie_types::provider::ApiInterface::ChatCompletions,
+                interface: ApiInterface::ChatCompletions,
                 base_url: "http://127.0.0.1:9/v1".to_owned(),
                 model: "test-model".to_owned(),
                 context_window: 128_000,
                 output_limit: 16_384,
-                reasoning_effort: mannie_types::provider::ReasoningEffort::ServerDefault,
+                reasoning_effort: ReasoningEffort::ServerDefault,
                 server: None,
                 use_tools: true,
                 has_credential: true,
@@ -345,4 +375,96 @@ async fn a_crash_after_a_lost_answer_follows_the_task_the_worker_stored_and_runs
         Some("sk-test-credential"),
         "the follower delivered the lease that the task waited for"
     );
+}
+
+#[tokio::test]
+async fn a_lease_for_a_profile_that_the_task_does_not_use_is_refused_and_never_reaches_the_worker()
+{
+    let setup = DelegationHarness::start().await;
+    let profile = setup.master.profile.id.clone();
+    let second = setup
+        .master
+        .runtime
+        .create_profile(CreateProviderProfile {
+            draft: ProfileDraft {
+                name: "Second".to_owned(),
+                interface: ApiInterface::ChatCompletions,
+                base_url: "http://127.0.0.1:9/v1".to_owned(),
+                model: "test-model".to_owned(),
+                context_window: 128_000,
+                output_limit: 16_384,
+                reasoning_effort: ReasoningEffort::ServerDefault,
+                use_tools: true,
+            },
+            credential: Some(Secret::new("sk-second-credential".to_owned())),
+        })
+        .await
+        .unwrap();
+    setup.worker.model.push_reply(reply("Built."));
+    setup.master.runtime.shutdown().await;
+    // The run used the master's profile, but Workers' own document of the
+    // task names the second one, whose credential would then reach the
+    // worker. The core lends by what the store recorded of the run.
+    let crashed = crash_after_the_rows_naming(&setup.master.store, &profile, &second.id).await;
+    setup
+        .worker
+        .runtime
+        .assign_task(TaskAssignment {
+            task_id: crashed.task.clone(),
+            conversation_id: crashed.task_conversation.clone(),
+            follow_up: false,
+            title: "Build the backend".to_owned(),
+            instruction: "Build the backend.".to_owned(),
+            read_only: false,
+            profile: snapshot_of(&second),
+        })
+        .await
+        .unwrap();
+
+    let setup = setup.restart_master().await;
+    // The follower took the worker's state, which waits for the lease, once
+    // the document shows the submission as accepted; the lease would be
+    // delivered right after that.
+    let accepted = async {
+        loop {
+            let row = setup
+                .master
+                .store
+                .task(&crashed.task)
+                .await
+                .unwrap()
+                .unwrap();
+            let document = row
+                .executor
+                .and_then(|execution| execution.document)
+                .unwrap_or_default();
+            if document.contains(r#""submission":"accepted""#) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(20), accepted)
+        .await
+        .expect("the follower takes the worker's state");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    assert_eq!(
+        setup.worker.model.credentials(),
+        Vec::<Option<String>>::new(),
+        "no credential reached the worker"
+    );
+    assert_eq!(
+        setup.worker.model.reply_requests().len(),
+        0,
+        "the task still waits for its lease"
+    );
+    let row = setup
+        .master
+        .store
+        .task(&crashed.task)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(row.state.is_active(), "{row:?}");
 }

@@ -104,7 +104,7 @@ pub enum TaskRefusal {
     /// Mannie ended after the call was stored and before its task was.
     NotStarted,
     /// The worker that a delegation named is not connected
-    /// (docs/features/workers/delegation.md).
+    /// (plugins/workers/docs/delegation.md).
     WorkerOffline {
         /// The worker's name.
         worker: String,
@@ -156,7 +156,7 @@ pub struct TaskExecutorRef {
     pub noun: String,
 }
 
-/// The worker that a task runs on (docs/features/workers/delegation.md).
+/// The worker that a task runs on (plugins/workers/docs/delegation.md).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskWorker {
@@ -203,7 +203,7 @@ impl ChildApproval {
 }
 
 /// The state of a task that the master assigned to a worker, as the worker
-/// publishes it and the master follows it (docs/features/workers/
+/// publishes it and the master follows it (plugins/workers/docs/
 /// delegation.md, following tasks). Every change of a worker's tasks has a
 /// higher version than the one before, so the master follows them from the
 /// version it stored last.

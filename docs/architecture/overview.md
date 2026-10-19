@@ -1,26 +1,26 @@
 # Architecture overview
 
-|              |                                                                                                                                                                                                                                                                                                   |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status       | Draft for review                                                                                                                                                                                                                                                                                  |
-| Last updated | 2026-10-17                                                                                                                                                                                                                                                                                        |
-| Related      | [Domain model](domain-model.md), [Extension points](extension-points.md), [Orchestration](orchestration.md), [Security](security.md), [ADR index](../adr/README.md), [ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md), [Workers architecture](../features/workers/architecture.md) |
+|              |                                                                                                                                                                                                                                                                                                          |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status       | Draft for review                                                                                                                                                                                                                                                                                         |
+| Last updated | 2026-10-17                                                                                                                                                                                                                                                                                               |
+| Related      | [Domain model](domain-model.md), [Extension points](extension-points.md), [Orchestration](orchestration.md), [Security](security.md), [ADR index](../adr/README.md), [ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md), [Workers architecture](../../plugins/workers/docs/architecture.md) |
 
 ## 1. Reading guide
 
 This document shows how Mannie's parts fit together: the core, which every owner gets, and the plugins that the owner turns on and off ([ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md)). Each topic has its own document:
 
-| Topic                                                       | Document                                                    |
-| ----------------------------------------------------------- | ----------------------------------------------------------- |
-| Concepts, lifecycles and invariants                         | [Domain model](domain-model.md)                             |
-| How features and plugins plug in                            | [Extension points](extension-points.md)                     |
-| The desktop app's processes, IPC and webview rules          | [Desktop app](desktop-app.md)                               |
-| Runs, the agent loop, providers and context                 | [Agent runtime](agent-runtime.md)                           |
-| Tools, operations and approvals                             | [Tools](tools.md)                                           |
-| Child agents, task executors and tasks from another machine | [Orchestration](orchestration.md)                           |
-| Threats and controls                                        | [Security](security.md)                                     |
-| Third-party components and their versions                   | [Technology stack](technology-stack.md)                     |
-| Workers, delegation, pairing and the link, as a plugin      | [Workers architecture](../features/workers/architecture.md) |
+| Topic                                                       | Document                                                           |
+| ----------------------------------------------------------- | ------------------------------------------------------------------ |
+| Concepts, lifecycles and invariants                         | [Domain model](domain-model.md)                                    |
+| How features and plugins plug in                            | [Extension points](extension-points.md)                            |
+| The desktop app's processes, IPC and webview rules          | [Desktop app](desktop-app.md)                                      |
+| Runs, the agent loop, providers and context                 | [Agent runtime](agent-runtime.md)                                  |
+| Tools, operations and approvals                             | [Tools](tools.md)                                                  |
+| Child agents, task executors and tasks from another machine | [Orchestration](orchestration.md)                                  |
+| Threats and controls                                        | [Security](security.md)                                            |
+| Third-party components and their versions                   | [Technology stack](technology-stack.md)                            |
+| Workers, delegation, pairing and the link, as a plugin      | [Workers architecture](../../plugins/workers/docs/architecture.md) |
 
 ## 2. System context
 
@@ -53,20 +53,24 @@ The owner works only with the desktop app. Its core calls model providers and ru
 | Worker                  | Each host, with the Workers plugin      | Agent runtime, tools for its host, store, link server, host facts, policy ceiling, service integration.                                                                                      |
 | Model providers         | External                                | The OpenAI Responses API and OpenAI-compatible Chat Completions servers.                                                                                                                     |
 
-The Rust code is split into crates with enforced dependency rules ([ADR-0008](../adr/0008-one-workspace-two-binaries.md), [repository](../engineering/repository.md)). The core's crates are in `crates/`, and each plugin's crates are in `plugins/<id>/`. No core crate depends on a plugin's crate, and no plugin depends on another plugin.
+The Rust code is split into crates with enforced dependency rules ([ADR-0008](../adr/0008-one-workspace-two-binaries.md), [repository](../engineering/repository.md)). The core's crates are in `crates/` and the desktop app's library in `apps/desktop/core/`, in the root's Cargo workspace. Each plugin's crates are in `plugins/<id>/`, a Cargo workspace of its own, and the desktop binary builds in the launcher that `task gen` writes with the list of plugins ([ADR-0035](../adr/0035-find-plugins-at-build-time-in-folders-of-their-own.md)). No core crate depends on a plugin's crate, and no plugin depends on another plugin.
 
-| Crate             | Contents                                                                                                                                                       |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mannie-types`    | Shared domain, IPC and settings types, and the redacting secret type. No I/O.                                                                                  |
-| `mannie-store`    | SQLite access, the migrations of each module and the core's repositories.                                                                                      |
-| `mannie-provider` | Provider adapters and quirk profiles.                                                                                                                          |
-| `mannie-tools`    | The tool registry, built-in tools, operations and the process supervisor.                                                                                      |
-| `mannie-runtime`  | Runs, the agent loop, context management, agent definitions, tasks, child agents, task executors, mention providers, image sources and plugins' contributions. |
-| `mannie-plugins`  | What plugins build on: the plugin definition, the start context and its grants, and the host that starts and stops plugins.                                    |
-| `mannie-secrets`  | Access to the operating system credential store. Used by the master only.                                                                                      |
-| `mannie-desktop`  | The Tauri application: composition root, IPC commands and capabilities.                                                                                        |
+| Crate                   | Contents                                                                                                                                                       |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mannie-types`          | Shared domain, IPC and settings types, and the redacting secret type. No I/O.                                                                                  |
+| `mannie-store`          | SQLite access, the migrations of each module and the core's repositories.                                                                                      |
+| `mannie-provider`       | Provider adapters and quirk profiles.                                                                                                                          |
+| `mannie-tools`          | The tool registry, built-in tools, operations and the process supervisor.                                                                                      |
+| `mannie-runtime`        | Runs, the agent loop, context management, agent definitions, tasks, child agents, task executors, mention providers, image sources and plugins' contributions. |
+| `mannie-plugin-sdk`     | What plugins build on: the plugin definition, the manifest, the start context, the services, the extension points and the specs of plugin commands.            |
+| `mannie-plugins`        | The plugin host, which starts and stops plugins, binds their services and dispatches their commands.                                                           |
+| `mannie-plugin-harness` | What plugins' tests use of the core: one plugin through the real host, and the check that a plugin keeps the SDK's rules.                                      |
+| `mannie-host-kit`       | What a plugin's programs, such as the worker, use of the core.                                                                                                 |
+| `mannie-secrets`        | Access to the operating system credential store. Used by the master only.                                                                                      |
+| `mannie-desktop-core`   | The desktop app's library: composition root, IPC commands and the forwarders of the plugins' calls.                                                            |
+| `mannie-desktop`        | The Tauri binary: its configuration, build script, capabilities and icons, built with the plugins that `task gen` lists.                                       |
 
-The Workers plugin, in `plugins/workers/`, adds `mannie-link` with the link's contracts, client, server and pairing; `mannie-workers` with the master's side of workers and the plugin's definition; and the worker service `mannie-worker` with its composition root and service integration ([workers architecture](../features/workers/architecture.md)). The Images plugin, in `plugins/images/`, adds `mannie-images`, which prepares the owner's images and gives them to the runtime ([images](../features/images.md)).
+The Workers plugin, in `plugins/workers/`, adds `mannie-link` with the link's contracts, TLS and pairing; `mannie-link-worker` with the worker's side of the link; `mannie-workers` with the master's side of workers and the plugin's definition; and the worker service `mannie-worker` with its composition root and service integration, which reaches the core through the host kit, `mannie-host-kit` ([workers architecture](../../plugins/workers/docs/architecture.md)). The Images plugin, in `plugins/images/`, adds `mannie-images`, which prepares the owner's images and gives them to the runtime ([images](../../plugins/images/docs/README.md)).
 
 ## 4. Process model
 
@@ -144,7 +148,7 @@ sequenceDiagram
   Run-->>Run: the report as the result of the call
 ```
 
-The executor runs the task on its target, and the core keeps the task's place in the conversation, its state and its report ([orchestration](orchestration.md#4-task-executors)). For the Workers plugin, the target is a worker and the executor talks to it over the link ([workers architecture](../features/workers/architecture.md#delegation)).
+The executor runs the task on its target, and the core keeps the task's place in the conversation, its state and its report ([orchestration](orchestration.md#4-task-executors)). For the Workers plugin, the target is a worker and the executor talks to it over the link ([workers architecture](../../plugins/workers/docs/architecture.md#delegation)).
 
 ### 5.5 Reconnecting
 
@@ -152,7 +156,7 @@ A reloaded UI subscribes again with its last cursor and receives every event it 
 
 ### 5.6 Turning a plugin on or off
 
-The owner switches a plugin on the Plugins page. The host stores the choice, then starts the plugin, which receives the services of its grant and returns its contributions, or drops the plugin's contributions and then stops it. The runtime offers the change to the runs that start from then on, and a run keeps what it started with. The UI follows a channel of plugin states, and its slots show a plugin's entries only while the plugin is on, so the window changes without a reload ([plugins](../features/plugins.md)).
+The owner switches a plugin on the Plugins page. The host stores the choice, then starts the plugin, which receives the services that its manifest declares and returns its contributions, or drops the plugin's contributions and then stops it. The runtime offers the change to the runs that start from then on, and a run keeps what it started with. The UI follows a channel of plugin states, and its slots show a plugin's entries only while the plugin is on, so the window changes without a reload ([plugins](../features/plugins.md)).
 
 ## 6. Data placement
 
@@ -173,15 +177,15 @@ The owner switches a plugin on the Plugins page. The host stores the choice, the
 
 ## 7. Failure behavior
 
-| Failure                                | Behavior                                                                                                                                                                                                                                                                  |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The webview reloads or crashes         | Runs continue. The UI subscribes again from its cursor.                                                                                                                                                                                                                   |
-| The desktop app crashes or loses power | Committed data survives. Active runs become interrupted and can be retried, and executing operations become uncertain.                                                                                                                                                    |
-| A provider returns an error            | Transient errors are retried with backoff, honoring `Retry-After`. A permanent error ends the step and shows its cause.                                                                                                                                                   |
-| A plugin cannot start                  | The Plugins page shows it as failed, with what failed and "Try again". The rest of Mannie keeps working.                                                                                                                                                                  |
-| The owner turns off a plugin           | Its contributions leave new runs and the UI at once. Its executor's tasks are let go, as when Mannie quits, and calls of its tools get a result that says it is off.                                                                                                      |
-| An executor's target cannot be reached | The task keeps its last known state, and reads of its conversation fail with an error that names the target. The [workers architecture](../features/workers/architecture.md#failure-behavior) describes links that drop, a master that is offline and workers that crash. |
-| The disk is full                       | Writes fail with a typed error, and runs stop and show the cause. Nothing partly written counts as committed.                                                                                                                                                             |
+| Failure                                | Behavior                                                                                                                                                                                                                                                                         |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The webview reloads or crashes         | Runs continue. The UI subscribes again from its cursor.                                                                                                                                                                                                                          |
+| The desktop app crashes or loses power | Committed data survives. Active runs become interrupted and can be retried, and executing operations become uncertain.                                                                                                                                                           |
+| A provider returns an error            | Transient errors are retried with backoff, honoring `Retry-After`. A permanent error ends the step and shows its cause.                                                                                                                                                          |
+| A plugin cannot start                  | The Plugins page shows it as failed, with what failed and "Try again". The rest of Mannie keeps working.                                                                                                                                                                         |
+| The owner turns off a plugin           | Its contributions leave new runs and the UI at once. Its executor's tasks are let go, as when Mannie quits, and calls of its tools get a result that says it is off.                                                                                                             |
+| An executor's target cannot be reached | The task keeps its last known state, and reads of its conversation fail with an error that names the target. The [workers architecture](../../plugins/workers/docs/architecture.md#failure-behavior) describes links that drop, a master that is offline and workers that crash. |
+| The disk is full                       | Writes fail with a typed error, and runs stop and show the cause. Nothing partly written counts as committed.                                                                                                                                                                    |
 
 ## 8. Observability
 

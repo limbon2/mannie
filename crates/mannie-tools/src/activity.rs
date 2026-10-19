@@ -8,6 +8,9 @@
 //! model's claim about its call: the UI shows it as content, and nothing that
 //! authorizes a call reads it.
 
+// The cleaning of an activity, which tasks' titles share (mannie_types::labels).
+pub use mannie_types::labels::clean_label;
+
 use serde_json::{Map, Value, json};
 
 use crate::texts;
@@ -86,52 +89,6 @@ pub fn split_activity(arguments: &str) -> SplitArguments {
 /// [`MAX_ACTIVITY_CHARS`]).
 fn clean(text: &str) -> Option<String> {
     clean_label(text, MAX_ACTIVITY_CHARS)
-}
-
-/// A short text that a model wrote for the owner, such as an activity or a
-/// task's title, as the owner reads it: without control characters and
-/// invisible characters, with its white space collapsed to single spaces,
-/// and at most `max_chars` characters, the last of them "…" when it was
-/// longer. `None` when nothing is left.
-pub fn clean_label(text: &str, max_chars: usize) -> Option<String> {
-    let shown: String = text
-        .chars()
-        .filter(|character| !is_invisible(*character))
-        .map(|character| {
-            if character.is_control() {
-                ' '
-            } else {
-                character
-            }
-        })
-        .collect();
-    let joined = shown.split_whitespace().collect::<Vec<_>>().join(" ");
-    if joined.is_empty() {
-        return None;
-    }
-    if joined.chars().count() <= max_chars {
-        return Some(joined);
-    }
-    let kept: String = joined.chars().take(max_chars.saturating_sub(1)).collect();
-    Some(format!("{}…", kept.trim_end()))
-}
-
-/// Characters that change how the text around them shows without showing
-/// themselves: the controls of bidirectional text, which could make an
-/// activity read in another order than it was written, and zero-width spaces.
-/// The zero-width joiners stay, because some scripts and emoji need them.
-fn is_invisible(character: char) -> bool {
-    matches!(
-        character,
-        '\u{061C}'
-            | '\u{200B}'
-            | '\u{200E}'
-            | '\u{200F}'
-            | '\u{202A}'..='\u{202E}'
-            | '\u{2060}'
-            | '\u{2066}'..='\u{2069}'
-            | '\u{FEFF}'
-    )
 }
 
 #[cfg(test)]

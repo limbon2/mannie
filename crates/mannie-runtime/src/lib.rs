@@ -30,6 +30,7 @@ mod ids;
 mod images;
 mod instructions;
 mod mentions;
+mod plugin_tools;
 mod plugins;
 mod policy;
 mod profiles;
@@ -49,6 +50,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
+use mannie_plugin_sdk::host::ServiceProvider;
 use mannie_provider::{HttpClient, ProviderRegistry};
 use mannie_store::{RuntimeStoreError, Store};
 use mannie_tools::{Ceiling, MutationLock, SystemFacts, ToolRegistry};
@@ -62,33 +64,26 @@ pub use agents::{
     EXPLORE_AGENT, GENERAL, GENERAL_AGENT, Requester, SYSTEM_TOOLS,
 };
 pub use assigned::{AssignError, AssignedTaskWatch, LeaseError};
-pub use executors::{
-    CredentialLender, DuplicateExecutor, ExecutorRefusal, ExecutorSection, ExecutorServices,
-    FollowUpPlan, LendError, LentCredential, PlanCall, PlanError, SubmitError, TaskExecutor,
-    TaskPlan, TaskSubmission,
-};
 pub use hub::{ConversationSubscription, ListSubscription, SubscriptionLimits};
-pub use images::{ImageSource, SourcedImage};
 pub use instructions::{
     DuplicateSection, InstructionContext, InstructionRegistry, InstructionSection, MachineContext,
     SectionText, ToolEnvironment, builtin_sections, checkpoint_section,
 };
 pub use mentions::{
-    DuplicateMentionProvider, FILES, FileMentions, MentionContent, MentionContext, MentionProvider,
-    MentionRegistry, ProviderSuggestions, RenderedMention,
+    DuplicateMentionProvider, FILES, FileMentions, MentionContext, MentionProvider, MentionRegistry,
 };
-pub use plugins::{ContributionError, PluginContributions, PluginTool};
 pub use profiles::{CredentialVault, VaultError};
 pub use retry::RetryPolicy;
 pub use tasks::TASK_TOOLS;
 
 use crate::actor::Command;
+use crate::agents::AgentPlugins;
 use crate::approvals::Pending;
 use crate::assigned::AssignedTasks;
-use crate::executors::Executors;
+use crate::executors::{CredentialsProvider, ExecutorFollows, ExecutorHostProvider};
 use crate::hub::Hubs;
 use crate::ids::IdGenerator;
-use crate::plugins::Plugins;
+use crate::plugins::Registry;
 use crate::tasks::ChildSlots;
 
 /// What the system tools work with. The composition root builds it once.
@@ -218,11 +213,15 @@ struct Inner {
     tools: ToolsDeps,
     machine: MachineSettings,
     mentions: MentionRegistry,
-    /// The executors of plugins, and the runs that follow their tasks.
-    executors: Executors,
-    /// The other contributions of the plugins that are on (ADR-0030,
-    /// decision 5).
-    plugins: Plugins,
+    /// The runs that follow the tasks of plugins' executors, and the changes
+    /// of the executors' outbox.
+    executors: ExecutorFollows,
+    /// What the plugins that are on contribute, by extension point
+    /// (ADR-0034, decision 6).
+    contributions: Registry,
+    /// The plugin of each agent that a plugin contributed since Mannie
+    /// started.
+    agent_plugins: AgentPlugins,
     /// The tasks that another machine assigned, while they are active, and
     /// that machine's watches of them.
     assigned: Arc<AssignedTasks>,
@@ -344,8 +343,9 @@ impl Runtime {
             tools: deps.tools,
             machine: deps.machine,
             mentions: deps.mentions,
-            executors: Executors::default(),
-            plugins: Plugins::default(),
+            executors: ExecutorFollows::default(),
+            contributions: Registry::default(),
+            agent_plugins: AgentPlugins::default(),
             assigned: Arc::default(),
             assigning: tokio::sync::Mutex::new(()),
             approvals: Mutex::default(),
@@ -363,6 +363,17 @@ impl Runtime {
         Ok(Self {
             inner: Arc::new(inner),
         })
+    }
+
+    /// The providers of the services that the runtime owns, which the plugin
+    /// host binds to each plugin that declares them (ADR-0034, decision 5):
+    /// the executor host and credentials, each bound to the executor kind
+    /// that equals the plugin's ID.
+    pub fn service_providers(&self) -> Vec<Arc<dyn ServiceProvider>> {
+        vec![
+            Arc::new(ExecutorHostProvider::new(self)),
+            Arc::new(CredentialsProvider::new(self)),
+        ]
     }
 
     /// How many of the owner's replies are active. The runs of child agents

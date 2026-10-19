@@ -13,5 +13,5 @@
     "types": ["node", "mocha", "@wdio/globals/types", "@wdio/mocha-framework"],
     "verbatimModuleSyntax": true
   },
-  "include": ["**/*.ts"]
+  "include": ["**/*.ts", "../../plugins/*/tests/e2e/**/*.ts", "../fixtures/plugins/*/tests/e2e/**/*.ts"]
 }

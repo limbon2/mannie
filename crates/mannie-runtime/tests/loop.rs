@@ -32,13 +32,7 @@ use mannie_types::transcript::{ConversationEvent, PartContent, PartState};
 async fn start(harness: &Harness, text: &str) -> StartedConversation {
     harness
         .runtime
-        .start_conversation(StartConversation {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            text: text.to_owned(),
-            profile_id: None,
-            project_id: None,
-        })
+        .start_conversation(StartConversation::new(text))
         .await
         .unwrap()
 }
@@ -165,12 +159,7 @@ async fn reasoning_items_go_back_only_to_the_binding_that_wrote_them() {
         .await;
     let second = harness
         .runtime
-        .send_message(SendMessage {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            conversation_id: first.conversation_id.clone(),
-            text: "Again".to_owned(),
-        })
+        .send_message(SendMessage::new(first.conversation_id.clone(), "Again"))
         .await
         .unwrap();
     harness
@@ -185,12 +174,7 @@ async fn reasoning_items_go_back_only_to_the_binding_that_wrote_them() {
         .unwrap();
     let third = harness
         .runtime
-        .send_message(SendMessage {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            conversation_id: first.conversation_id.clone(),
-            text: "Once more".to_owned(),
-        })
+        .send_message(SendMessage::new(first.conversation_id.clone(), "Once more"))
         .await
         .unwrap();
     harness
@@ -250,12 +234,7 @@ async fn an_empty_step_gets_continuation_notes_up_to_the_limit() {
         .await;
     let second = harness
         .runtime
-        .send_message(SendMessage {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            conversation_id: first.conversation_id.clone(),
-            text: "And?".to_owned(),
-        })
+        .send_message(SendMessage::new(first.conversation_id.clone(), "And?"))
         .await
         .unwrap();
     let after_second = harness
@@ -519,12 +498,7 @@ async fn a_conversation_has_one_active_run() {
     let started = start(&harness, "Question").await;
     let second = harness
         .runtime
-        .send_message(SendMessage {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            conversation_id: started.conversation_id.clone(),
-            text: "Another".to_owned(),
-        })
+        .send_message(SendMessage::new(started.conversation_id.clone(), "Another"))
         .await;
     harness.runtime.stop_reply(&started.conversation_id).await;
 
@@ -555,12 +529,7 @@ async fn a_context_overflow_compacts_once_and_a_second_one_fails() {
     for text in ["Second", "Third", "Fourth"] {
         let sent = harness
             .runtime
-            .send_message(SendMessage {
-                mentions: Vec::new(),
-                images: Vec::new(),
-                conversation_id: started.conversation_id.clone(),
-                text: text.to_owned(),
-            })
+            .send_message(SendMessage::new(started.conversation_id.clone(), text))
             .await
             .unwrap();
         harness
@@ -633,12 +602,7 @@ async fn shutdown_interrupts_active_runs_and_refuses_new_ones() {
     harness.runtime.shutdown().await;
     let refused = harness
         .runtime
-        .send_message(SendMessage {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            conversation_id: started.conversation_id.clone(),
-            text: "More".to_owned(),
-        })
+        .send_message(SendMessage::new(started.conversation_id.clone(), "More"))
         .await;
     let transcript = harness.snapshot(&started.conversation_id).await;
 
@@ -735,12 +699,10 @@ async fn reported_usage_feeds_the_context_meter() {
         .await;
     let second = harness
         .runtime
-        .send_message(SendMessage {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            conversation_id: first.conversation_id.clone(),
-            text: "Hello again".to_owned(),
-        })
+        .send_message(SendMessage::new(
+            first.conversation_id.clone(),
+            "Hello again",
+        ))
         .await
         .unwrap();
     let estimated = harness
@@ -833,13 +795,7 @@ async fn a_run_that_panics_fails_as_internal_and_frees_the_conversation() {
         .unwrap();
 
     let started = runtime
-        .start_conversation(StartConversation {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            text: "Question".to_owned(),
-            profile_id: None,
-            project_id: None,
-        })
+        .start_conversation(StartConversation::new("Question"))
         .await
         .unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -876,22 +832,10 @@ async fn a_new_conversation_needs_a_profile() {
     .await;
 
     let refused = runtime
-        .start_conversation(StartConversation {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            text: "Question".to_owned(),
-            profile_id: None,
-            project_id: None,
-        })
+        .start_conversation(StartConversation::new("Question"))
         .await;
     let empty = runtime
-        .start_conversation(StartConversation {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            text: " \n".to_owned(),
-            profile_id: None,
-            project_id: None,
-        })
+        .start_conversation(StartConversation::new(" \n"))
         .await;
 
     assert_eq!(refused.unwrap_err(), ChatError::NoProfile);
@@ -923,12 +867,10 @@ async fn reported_cuts(harness: &Harness) -> (bool, bool) {
         .push_reply(reply_with_usage("Second answer", 2_000, 50));
     let second = harness
         .runtime
-        .send_message(SendMessage {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            conversation_id: first.conversation_id.clone(),
-            text: "A long message that the server cannot fit. ".repeat(100),
-        })
+        .send_message(SendMessage::new(
+            first.conversation_id.clone(),
+            "A long message that the server cannot fit. ".repeat(100),
+        ))
         .await
         .unwrap();
     let transcript = harness

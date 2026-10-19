@@ -1,5 +1,5 @@
 //! Keeps the worker's memory, which holds credential leases, from other
-//! processes (docs/features/workers/service.md, hardening; ADR-0010). On
+//! processes (plugins/workers/docs/service.md, hardening; ADR-0010). On
 //! Linux the worker turns off core dumps and marks itself not dumpable, so
 //! another process of its account cannot read its memory through `ptrace` or
 //! `/proc`. On FreeBSD it turns off core dumps and tracing. Both flags reset

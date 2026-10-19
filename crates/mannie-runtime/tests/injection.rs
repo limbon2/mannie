@@ -248,13 +248,9 @@ async fn the_injection_corpus_changes_nothing_the_owner_did_not_allow() {
 
     let started = harness
         .runtime
-        .start_conversation(StartConversation {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            text: "Summarize build-notes.txt".to_owned(),
-            profile_id: None,
-            project_id: Some(project),
-        })
+        .start_conversation(
+            StartConversation::new("Summarize build-notes.txt").with_project(Some(project)),
+        )
         .await
         .unwrap();
     let (transcript, denied) = deny_everything(&harness, &started.conversation_id).await;
@@ -335,13 +331,10 @@ async fn a_report_that_asks_for_a_deletion_changes_nothing_the_owner_did_not_all
 
     let started = harness
         .runtime
-        .start_conversation(StartConversation {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            text: "OWNER: Summarize build-notes.txt with a child agent".to_owned(),
-            profile_id: None,
-            project_id: Some(project),
-        })
+        .start_conversation(
+            StartConversation::new("OWNER: Summarize build-notes.txt with a child agent")
+                .with_project(Some(project)),
+        )
         .await
         .unwrap();
     let (transcript, _denied) = deny_everything(&harness, &started.conversation_id).await;

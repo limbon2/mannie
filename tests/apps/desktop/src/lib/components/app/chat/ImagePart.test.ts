@@ -1,4 +1,4 @@
-// An image of the owner's message in the transcript (docs/features/images.md,
+// An image of the owner's message in the transcript (plugins/images/docs/README.md,
 // the transcript), rendered on the server side: a placeholder in the image's
 // proportions while its thumbnail loads, and nothing for a part of another
 // kind. A server render runs no effect, so nothing loads here.

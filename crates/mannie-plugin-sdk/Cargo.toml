@@ -1,0 +1,81 @@
+[package]
+name = "mannie-plugin-sdk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The plugin SDK: the Rust surface that Mannie's plugins build on and their bridge to the core, with the SDK's major version, the rules of plugin IDs, the manifest, the services, the extension points and the contract types that plugins use (ADR-0034)."
+license.workspace = true
+publish.workspace = true
+
+# The manifest's checks and its committed JSON Schema (ADR-0035, decision 1),
+# which need the parser behind the feature `manifest`.
+[[test]]
+name = "manifest"
+required-features = ["manifest"]
+
+# The protocol rules of ADR-0034 (decision 3): the SDK's values cross JSON
+# unchanged, and the shapes that break the rules are listed with their reasons.
+[[test]]
+name = "protocol"
+
+[dependencies]
+# The futures and streams that the SDK's methods return, which own their data
+# and are cancelled by dropping them (ADR-0034, decision 3).
+futures-util = { workspace = true }
+# The contract types that the SDK re-exports one by one, from a crate that
+# does no I/O (ADR-0034, decision 1).
+mannie-types = { workspace = true }
+# The JSON Schema of a plugin's manifest, which the SDK commits as
+# plugin.schema.json for Tombi and editors (ADR-0034, decision 1; ADR-0035,
+# decision 1).
+schemars = { workspace = true }
+serde = { workspace = true }
+# The JSON Schema of a plugin tool's arguments, which the model receives, and
+# the inputs and outputs of plugin commands, which the host dispatches as JSON
+# (ADR-0034, decisions 1, 6 and 8).
+serde_json = { workspace = true }
+# The types of plugin commands and channels, which the bindings exporter
+# writes as TypeScript, at the exact pin of the workspace (ADR-0034, decisions
+# 1 and 9).
+specta = { workspace = true }
+# The bindings exporter applies serde's attributes to the types and writes
+# them as TypeScript (feature `bindings`; ADR-0034, decision 9).
+specta-serde = { workspace = true, optional = true }
+specta-typescript = { workspace = true, optional = true }
+thiserror = { workspace = true }
+# The watch of the outbox that the executor host hands a plugin, a handle
+# that changes with each deletion (ADR-0034, decisions 1 and 3).
+tokio = { workspace = true, features = ["sync"] }
+# Parses a plugin's manifest, for the host and the build only (feature
+# `manifest`; ADR-0034, decision 1).
+toml = { workspace = true, optional = true }
+# Logs what the SDK leaves out, such as an item of a channel that does not
+# serialize, without its content.
+tracing = { workspace = true }
+
+[dev-dependencies]
+# The exporter's tests write the bindings into a temporary folder.
+tempfile = { workspace = true }
+
+[features]
+# Writes a plugin's TypeScript bindings and the envelopes and the transport
+# that every plugin's bindings use (ADR-0034, decision 9). The bindings
+# programs turn it on, and a plugin's library crates never ask for it.
+bindings = ["dep:specta-serde", "dep:specta-typescript"]
+# What only the core uses: the constructors that only the core calls, such
+# as the context that a mention provider gets (ADR-0034, decision 3), the
+# consumers of the extension points with the coordinator that hands them a
+# plugin's contributions (decision 6), and the providers that bind services to
+# a plugin (decision 5). The runtime and the host turn it on, and a plugin's
+# library crates never ask for it.
+host = []
+# Parses and checks a plugin's manifest (ADR-0034, decisions 3 and 5). The
+# host turns it on, and a plugin's library crates never ask for it.
+manifest = ["dep:toml"]
+# Stand-ins for the core's providers, such as the credential store in memory,
+# for the tests of plugins and of the host. Never enabled in the desktop app
+# or the worker.
+testing = ["host"]
+
+[lints]
+workspace = true

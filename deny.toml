@@ -1,7 +1,8 @@
 # cargo-deny: advisories, licenses, bans and sources of the Rust dependencies
 # (ADR-0017 for licenses, ADR-0008 for the crate boundaries). `task lint` runs
-# `cargo deny check`, and a failure blocks the merge. Every exception below
-# names its reason.
+# `cargo deny check` in every Cargo workspace and in the launcher, whose graph
+# ships in the desktop app (ADR-0035, decision 5). Every exception below names
+# its reason.
 
 [graph]
 all-features = true
@@ -23,6 +24,15 @@ yanked = "deny"
 ignore = [
   { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained, with no known vulnerability. specta's macros use it at compile time only; look again when specta 2.0 is released" },
   { id = "RUSTSEC-2024-0370", reason = "proc-macro-error is unmaintained, with no known vulnerability. The GTK 0.18 bindings of Tauri on Linux use it at compile time only; look again when Tauri moves to newer gtk-rs" },
+  # zbus 6 took these crates in, with no known vulnerability. zbus 5 talks to
+  # D-Bus on Linux for the credential store and for the opener and
+  # single-instance plugins, and the latest secret-service,
+  # zbus-secret-service-keyring-store, tauri-plugin-opener and
+  # tauri-plugin-single-instance still require zbus 5 (checked on
+  # 2026-10-17). Look again when they move to zbus 6.
+  { id = "RUSTSEC-2026-0370", reason = "zvariant is unmaintained and merged into zbus 6, with no known vulnerability; it comes through zbus 5, which the credential store and Tauri's plugins still require" },
+  { id = "RUSTSEC-2026-0371", reason = "zbus_names is unmaintained and merged into zbus 6, with no known vulnerability; it comes through zbus 5, which the credential store and Tauri's plugins still require" },
+  { id = "RUSTSEC-2026-0372", reason = "zvariant_derive is unmaintained and merged into zbus 6, with no known vulnerability; it comes through zbus 5, which the credential store and Tauri's plugins still require" },
 ]
 
 [licenses]
@@ -66,10 +76,11 @@ deny = [
   # The crate boundaries of docs/engineering/repository.md.
   { crate = "tauri", wrappers = [
     "mannie-desktop",
+    "mannie-desktop-core",
     "tauri-plugin-opener",
     "tauri-plugin-single-instance",
     "tauri-specta",
-  ], reason = "only the desktop app depends on Tauri (ADR-0008)" },
+  ], reason = "only the desktop app's binary and library depend on Tauri (ADR-0008, ADR-0035)" },
   { crate = "rusqlite", wrappers = ["mannie-store"], reason = "only the store uses SQLite (ADR-0008, ADR-0009)" },
   { crate = "keyring-core", wrappers = [
     "mannie-secrets",
@@ -77,32 +88,15 @@ deny = [
     "zbus-secret-service-keyring-store",
   ], reason = "credentials go through mannie-secrets (ADR-0010)" },
   { crate = "mannie-secrets", wrappers = [
-    "mannie-desktop",
+    "mannie-desktop-core",
   ], reason = "provider credentials stay on the master; the worker never depends on the credential store (ADR-0010)" },
   { crate = "rfd", wrappers = [
-    "mannie-desktop",
-  ], reason = "only the desktop app opens the system's folder dialog; the worker has no window (ADR-0004)" },
-  { crate = "tonic", wrappers = [
-    "mannie-link",
-    "mannie-workers",
-    "tonic-prost",
-  ], reason = "only the Workers plugin's link speaks gRPC; the master and its workers reach each other through it (ADR-0016, ADR-0031)" },
-  # The plugin boundaries of ADR-0030 (decision 10): the core never depends on
-  # a plugin, a plugin never depends on another plugin, and only the desktop
-  # app's composition root lists the plugins.
-  { crate = "mannie-link", wrappers = [
-    "mannie-worker",
-    "mannie-workers",
-  ], reason = "the link belongs to the Workers plugin, whose crates alone use it (ADR-0030)" },
-  { crate = "mannie-workers", wrappers = [
-    "mannie-desktop",
-  ], reason = "a plugin's crates are used only by the desktop app's composition root (ADR-0030)" },
-  { crate = "mannie-images", wrappers = [
-    "mannie-desktop",
-  ], reason = "a plugin's crates are used only by the desktop app's composition root (ADR-0030)" },
-  { crate = "image", wrappers = [
-    "mannie-images",
-  ], reason = "only the Images plugin decodes images, which come from outside Mannie (ADR-0033, T-32)" },
+    "mannie-desktop-core",
+  ], reason = "only the desktop app opens the system's folder and file dialogs; the worker has no window (ADR-0004)" },
+  # A plugin's crates live in the plugin's own Cargo workspace, and the crates
+  # that only one plugin may use are listed in its plugin.toml, which
+  # scripts/plugins/check-boundaries.mjs checks, so this file names no
+  # plugin's crate (ADR-0035, decision 6).
 ]
 
 [sources]

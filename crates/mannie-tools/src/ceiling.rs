@@ -1,4 +1,4 @@
-//! A worker's policy ceiling (docs/features/workers/host-and-ceiling.md, the
+//! A worker's policy ceiling (plugins/workers/docs/host-and-ceiling.md, the
 //! ceiling; ADR-0028): the most that its tools may do, as the owner set it in
 //! the worker's configuration on its host, and the mode that a task narrowed
 //! it to.

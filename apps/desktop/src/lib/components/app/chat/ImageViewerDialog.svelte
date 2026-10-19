@@ -12,7 +12,7 @@
   import type { ChatFailure } from '#lib/types/chat.js';
   import { chatFailureMessage, formatCount } from '#lib/utils/chat-errors.js';
 
-  // An image of the owner's message at full size (docs/features/images.md,
+  // An image of the owner's message at full size (plugins/images/docs/README.md,
   // the transcript). It loads each time the dialog opens, and Escape or
   // "Close" closes it.
   interface Props {

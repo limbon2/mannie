@@ -2,24 +2,31 @@
 //! executor: a registered executor's tool and section, its plans and
 //! refusals, reports, background tasks and waits, follow-ups, Stop, the
 //! plugin stopping before a call, during a submission and while a task runs,
-//! waits while it is off, the reads of its task conversations and the
-//! outbox of deletions.
+//! waits while it is off, the reads of its task conversations, the outbox of
+//! deletions, and the states and ends of another executor's task, which
+//! change nothing.
 
 #![cfg(test)]
 
 use std::sync::Arc;
 use std::time::Duration;
 
+use mannie_plugin_sdk::contributions::Contributions;
+use mannie_plugin_sdk::points::executors::{
+    ExecutorRefusal, Executors, TaskExecutor, TaskSubmission,
+};
+use mannie_plugin_sdk::services::executor_host::OutboxItem;
 use mannie_provider::testing::Step;
 use mannie_provider::{Content, ModelRequest, Role};
 use mannie_runtime::testing::{
     FAKE_EXECUTOR_AGENT, FAKE_EXECUTOR_KIND, FAKE_EXECUTOR_NOUN, FAKE_EXECUTOR_SECTION,
-    FAKE_EXECUTOR_TOOL, FakeExecutor, Harness, HarnessOptions, fast_config, reply, tool_calls,
+    FAKE_EXECUTOR_TOOL, FakeExecutor, Harness, HarnessOptions, add_plugin, executor_host,
+    fast_config, remove_plugin, reply, tool_calls,
 };
-use mannie_runtime::{ExecutorRefusal, RuntimeConfig, TaskSubmission, texts};
-use mannie_store::OutboxEntry;
+use mannie_runtime::{RuntimeConfig, texts};
+use mannie_tools::{ACTIVITY_ARGUMENT, takes_activity, with_activity};
 use mannie_types::chat::{
-    ChatError, LoadEarlierTurns, StartConversation, StopOutcome, SubscribeConversation,
+    ChatError, LoadEarlierTurns, SendMessage, StartConversation, StopOutcome, SubscribeConversation,
 };
 use mannie_types::ids::{ConversationId, RunId};
 use mannie_types::run::RunState;
@@ -35,6 +42,17 @@ struct Setup {
     executor: Arc<FakeExecutor>,
 }
 
+/// Starts the fake plugin, whose contribution is `executor`.
+fn turn_on(harness: &Harness, executor: &Arc<FakeExecutor>) {
+    let executor: Arc<dyn TaskExecutor> = Arc::<FakeExecutor>::clone(executor);
+    add_plugin(
+        &harness.runtime,
+        FAKE_EXECUTOR_KIND,
+        Contributions::new().add::<Executors>(executor),
+    )
+    .unwrap();
+}
+
 impl Setup {
     async fn new() -> Self {
         Self::with_config(fast_config()).await
@@ -48,10 +66,7 @@ impl Setup {
         })
         .await;
         let executor = FakeExecutor::new();
-        harness
-            .runtime
-            .add_executor(Arc::<FakeExecutor>::clone(&executor))
-            .unwrap();
+        turn_on(&harness, &executor);
         Self { harness, executor }
     }
 
@@ -60,13 +75,7 @@ impl Setup {
         let started = self
             .harness
             .runtime
-            .start_conversation(StartConversation {
-                mentions: Vec::new(),
-                images: Vec::new(),
-                text: text.to_owned(),
-                profile_id: None,
-                project_id: None,
-            })
+            .start_conversation(StartConversation::new(text))
             .await
             .unwrap();
         (started.conversation_id, started.run_id)
@@ -95,10 +104,8 @@ impl Setup {
 
     /// Publishes a state of the executor's task, as its plugin does.
     async fn publish(&self, state: mannie_types::tasks::AssignedTaskState) {
-        self.harness
-            .runtime
-            .executor_services()
-            .publish_task_state(FAKE_EXECUTOR_KIND, state)
+        executor_host(&self.harness.runtime, FAKE_EXECUTOR_KIND)
+            .publish_task_state(state)
             .await
             .unwrap();
     }
@@ -217,6 +224,41 @@ async fn a_registered_executors_task_returns_its_report_as_the_result() {
 }
 
 #[tokio::test]
+async fn the_model_gets_an_executors_tool_with_the_activity_argument_that_the_runtime_adds() {
+    let setup = Setup::new().await;
+    setup.parent(reply("Nothing to give."));
+
+    let (conversation, run) = setup.start("OWNER: anything?").await;
+    setup.harness.wait_for_run(&conversation, &run).await;
+
+    // An executor's spec leaves the activity out, and the runtime adds it as
+    // it does for every other tool, so the model sees the same definition.
+    let spec = setup
+        .executor
+        .tool()
+        .expect("the fake executor offers its tool");
+    assert!(!takes_activity(&spec.parameters), "{spec:?}");
+    let request = &setup.harness.model.requests_for("OWNER:")[0];
+    let definition = request
+        .tools
+        .iter()
+        .find(|tool| tool.name == FAKE_EXECUTOR_TOOL)
+        .expect("the executor's tool is offered");
+    assert_eq!(definition.description, spec.description);
+    assert_eq!(definition.parameters, with_activity(&spec.parameters));
+    assert!(
+        definition.parameters["required"]
+            .as_array()
+            .is_some_and(|required| required.contains(&json!(ACTIVITY_ARGUMENT))),
+        "{definition:?}"
+    );
+    assert_eq!(
+        definition.parameters["properties"]["target"],
+        json!({ "type": "string" })
+    );
+}
+
+#[tokio::test]
 async fn mannie_without_executors_offers_their_tools_to_no_run() {
     let harness = Harness::with_options(HarnessOptions {
         use_tools: true,
@@ -227,13 +269,7 @@ async fn mannie_without_executors_offers_their_tools_to_no_run() {
 
     let started = harness
         .runtime
-        .start_conversation(StartConversation {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            text: "OWNER: anything?".to_owned(),
-            profile_id: None,
-            project_id: None,
-        })
+        .start_conversation(StartConversation::new("OWNER: anything?"))
         .await
         .unwrap();
     harness
@@ -250,11 +286,11 @@ async fn mannie_without_executors_offers_their_tools_to_no_run() {
 #[tokio::test]
 async fn a_refused_call_keeps_the_executors_text_for_the_model_and_its_code_for_the_owner() {
     let setup = Setup::new().await;
-    setup.executor.refuse_plans(ExecutorRefusal {
-        code: "offline".to_owned(),
-        target: Some("box-01".to_owned()),
-        text: "Not run: box-01 is offline.".to_owned(),
-    });
+    setup.executor.refuse_plans(ExecutorRefusal::new(
+        "offline",
+        Some("box-01".to_owned()),
+        "Not run: box-01 is offline.",
+    ));
     setup.parent(tool_calls(&[(
         "call_1",
         FAKE_EXECUTOR_TOOL,
@@ -394,12 +430,10 @@ async fn stopping_the_reply_cancels_the_task_and_lets_it_go_until_a_wait_takes_i
     let run = setup
         .harness
         .runtime
-        .send_message(mannie_types::chat::SendMessage {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            conversation_id: conversation.clone(),
-            text: "OWNER-2: did it finish?".to_owned(),
-        })
+        .send_message(SendMessage::new(
+            conversation.clone(),
+            "OWNER-2: did it finish?",
+        ))
         .await
         .unwrap()
         .run_id;
@@ -440,11 +474,8 @@ async fn a_call_of_a_stopped_plugins_tool_does_not_run() {
     .unwrap();
     // The run started with the tool, and the plugin stops before the call.
     assert!(
-        setup
-            .harness
-            .runtime
-            .remove_executor(FAKE_EXECUTOR_KIND)
-            .is_some()
+        remove_plugin(&setup.harness.runtime, FAKE_EXECUTOR_KIND),
+        "the plugin was on"
     );
     let transcript = setup.harness.wait_for_run(&conversation, &run).await;
 
@@ -504,7 +535,7 @@ async fn turning_the_plugin_off_lets_a_running_task_go_and_a_later_wait_takes_it
 
     let (conversation, run) = setup.start("OWNER: build it").await;
     let [submission] = setup.submissions(1).await.try_into().unwrap();
-    setup.harness.runtime.remove_executor(FAKE_EXECUTOR_KIND);
+    remove_plugin(&setup.harness.runtime, FAKE_EXECUTOR_KIND);
     let transcript = setup.harness.wait_for_run(&conversation, &run).await;
 
     assert_eq!(transcript.run_state(&run), Some(RunState::Completed));
@@ -526,19 +557,16 @@ async fn turning_the_plugin_off_lets_a_running_task_go_and_a_later_wait_takes_it
     assert!(stored.state.is_active(), "the task runs on");
 
     // The plugin starts again, and a wait of the next reply reads the report.
-    let executor: Arc<FakeExecutor> = Arc::clone(&setup.executor);
-    setup.harness.runtime.add_executor(executor).unwrap();
+    turn_on(&setup.harness, &setup.executor);
     setup.parent(tool_calls(&[("call_2", "wait_for_tasks", &wait(&[1]))]));
     setup.parent(reply("It reported."));
     let run = setup
         .harness
         .runtime
-        .send_message(mannie_types::chat::SendMessage {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            conversation_id: conversation.clone(),
-            text: "OWNER-2: did it finish?".to_owned(),
-        })
+        .send_message(SendMessage::new(
+            conversation.clone(),
+            "OWNER-2: did it finish?",
+        ))
         .await
         .unwrap()
         .run_id;
@@ -572,7 +600,7 @@ async fn a_background_task_that_was_let_go_is_named_by_the_wait_and_a_wait_while
 
     let (conversation, run) = setup.start("OWNER: in the background").await;
     setup.submissions(1).await;
-    setup.harness.runtime.remove_executor(FAKE_EXECUTOR_KIND);
+    remove_plugin(&setup.harness.runtime, FAKE_EXECUTOR_KIND);
     let transcript = setup.harness.wait_for_run(&conversation, &run).await;
 
     assert_eq!(transcript.run_state(&run), Some(RunState::Completed));
@@ -663,7 +691,7 @@ async fn the_conversation_of_an_executors_task_is_read_through_its_executor() {
     let read = runtime.earlier_turns(earlier()).await;
     setup.executor.set_unreachable(true);
     let unreachable = runtime.earlier_turns(earlier()).await;
-    runtime.remove_executor(FAKE_EXECUTOR_KIND);
+    remove_plugin(runtime, FAKE_EXECUTOR_KIND);
     let off = runtime.earlier_turns(earlier()).await;
     let subscribed = runtime
         .subscribe(SubscribeConversation {
@@ -701,7 +729,8 @@ async fn deleting_the_parent_leaves_the_deletion_in_the_outbox_for_the_executor(
         .publish(FakeExecutor::reported(&submission, 2, "Built."))
         .await;
     setup.harness.wait_for_run(&conversation, &run).await;
-    let mut changes = setup.harness.runtime.executor_services().outbox_changes();
+    let host = executor_host(&setup.harness.runtime, FAKE_EXECUTOR_KIND);
+    let mut changes = host.outbox_changes();
     changes.borrow_and_update();
 
     setup
@@ -713,17 +742,11 @@ async fn deleting_the_parent_leaves_the_deletion_in_the_outbox_for_the_executor(
 
     assert!(changes.has_changed().unwrap(), "the executors are told");
     assert_eq!(
-        setup
-            .harness
-            .runtime
-            .executor_services()
-            .executor_outbox(FAKE_EXECUTOR_KIND)
-            .await
-            .unwrap(),
-        [OutboxEntry {
-            target: FakeExecutor::target("box-01").target_id,
-            conversation_id: submission.conversation_id.clone(),
-        }]
+        host.outbox().await.unwrap(),
+        [OutboxItem::new(
+            FakeExecutor::target("box-01").target_id,
+            submission.conversation_id.clone(),
+        )]
     );
 }
 
@@ -741,27 +764,19 @@ async fn a_state_of_another_executor_or_an_older_one_changes_nothing() {
     setup
         .publish(FakeExecutor::state(&submission, 5, TaskState::Running))
         .await;
-    let services = setup.harness.runtime.executor_services();
+    let host = executor_host(&setup.harness.runtime, FAKE_EXECUTOR_KIND);
+    let other_host = executor_host(&setup.harness.runtime, "other");
 
-    let other_kind = services
-        .publish_task_state(
-            "other",
-            FakeExecutor::state(&submission, 6, TaskState::Running),
-        )
+    let other_kind = other_host
+        .publish_task_state(FakeExecutor::state(&submission, 6, TaskState::Running))
         .await
         .unwrap();
-    let older = services
-        .publish_task_state(
-            FAKE_EXECUTOR_KIND,
-            FakeExecutor::reported(&submission, 4, "Too late."),
-        )
+    let older = host
+        .publish_task_state(FakeExecutor::reported(&submission, 4, "Too late."))
         .await
         .unwrap();
-    let newer = services
-        .publish_task_state(
-            FAKE_EXECUTOR_KIND,
-            FakeExecutor::reported(&submission, 6, "Built."),
-        )
+    let newer = host
+        .publish_task_state(FakeExecutor::reported(&submission, 6, "Built."))
         .await
         .unwrap();
     setup.harness.wait_for_run(&conversation, &run).await;
@@ -781,4 +796,46 @@ async fn a_state_of_another_executor_or_an_older_one_changes_nothing() {
         stored.ending.and_then(|ending| ending.report).as_deref(),
         Some("Built.")
     );
+}
+
+#[tokio::test]
+async fn ending_another_executors_task_changes_neither_its_row_nor_its_board() {
+    let setup = Setup::new().await;
+    setup.parent(tool_calls(&[(
+        "call_1",
+        FAKE_EXECUTOR_TOOL,
+        &give("box-01", "Build it", "Build the backend.", false),
+    )]));
+    setup.parent(reply("Built."));
+    let (conversation, run) = setup.start("OWNER: build it").await;
+    let [submission] = setup.submissions(1).await.try_into().unwrap();
+    let refused = executor_host(&setup.harness.runtime, "other")
+        .end_task(submission.task_id.clone(), TaskState::Canceled)
+        .await;
+    let after = setup
+        .harness
+        .store
+        .task(&submission.task_id)
+        .await
+        .unwrap()
+        .unwrap();
+    setup
+        .publish(FakeExecutor::reported(&submission, 2, "Built."))
+        .await;
+    let transcript = setup.harness.wait_for_run(&conversation, &run).await;
+
+    assert_eq!(
+        refused.map_err(|failure| failure.code().to_owned()),
+        Err("not_permitted".to_owned())
+    );
+    assert!(after.state.is_active(), "{after:?}");
+    // The run that follows the task never saw the other kind's end: it got
+    // the executor's report.
+    let parent = setup.harness.model.requests_for("OWNER:");
+    assert_eq!(
+        result(&parent[1], "call_1"),
+        texts::task_reported(1, "Built.")
+    );
+    let [task] = transcript.tasks(0).try_into().unwrap();
+    assert_eq!(task.state, TaskState::Reported);
 }

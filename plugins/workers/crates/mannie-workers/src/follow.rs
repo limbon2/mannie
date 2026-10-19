@@ -10,15 +10,16 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
-use mannie_runtime::LendError;
-use mannie_store::StoredTask;
-use mannie_types::ids::{TaskId, WorkerId};
-use mannie_types::tasks::{AssignedTaskState, ChildApproval, TaskState};
-use mannie_types::tools::{ApprovalChoice, DecideApproval, ToolsError};
+use mannie_plugin_sdk::contracts::{
+    ApprovalChoice, AssignedTaskState, ChildApproval, DecideApproval, TaskId, TaskState,
+    ToolsError, WorkerId,
+};
+use mannie_plugin_sdk::services::credentials::LendError;
+use mannie_plugin_sdk::services::executor_host::ExecutorTask;
 use tokio::sync::watch;
 
 use crate::delegation::DelegationError;
-use crate::executor::{Shared, Submission, WORKERS_KIND, WorkerTaskDocument, WorkersExecutor};
+use crate::executor::{Shared, Submission, WorkerTaskDocument, WorkersExecutor};
 use crate::view::{WorkerStatus, WorkerView};
 
 /// How long a follower waits before it watches a connected worker again
@@ -33,21 +34,15 @@ fn status_of(workers: &[WorkerView], worker: &WorkerId) -> Option<WorkerStatus> 
         .map(|view| view.status)
 }
 
-/// The worker that runs a task, from the task's row.
-fn worker_of(task: &StoredTask) -> Option<&str> {
-    task.executor
-        .as_ref()
-        .filter(|execution| execution.kind == WORKERS_KIND)
-        .map(|execution| execution.target.as_str())
+/// The worker that runs a task. The executor host gives Workers only its
+/// own tasks, so the target is always a worker's ID.
+fn worker_of(task: &ExecutorTask) -> &str {
+    &task.target
 }
 
-/// The executor's document of a task's row.
-fn document_of(task: &StoredTask) -> WorkerTaskDocument {
-    let document = task
-        .executor
-        .as_ref()
-        .and_then(|execution| execution.document.as_deref());
-    WorkerTaskDocument::of(document, &task.id)
+/// The executor's document of a task.
+fn document_of(task: &ExecutorTask) -> WorkerTaskDocument {
+    WorkerTaskDocument::of(task.document.as_deref(), &task.id)
 }
 
 impl WorkersExecutor {
@@ -67,10 +62,13 @@ impl WorkersExecutor {
 /// Drops the deletions in the outbox for workers that are no longer paired,
 /// which a removal could not drop because Mannie ended first.
 async fn sweep_outbox(shared: &Shared) {
-    let entries = match shared.services.executor_outbox(WORKERS_KIND).await {
+    let entries = match shared.host.outbox().await {
         Ok(entries) => entries,
-        Err(error) => {
-            tracing::error!(%error, error.code = error.code(), "could not read the deletions that wait for workers");
+        Err(failure) => {
+            tracing::error!(
+                error.code = failure.code(),
+                "could not read the deletions that wait for workers"
+            );
             return;
         }
     };
@@ -86,12 +84,11 @@ async fn sweep_outbox(shared: &Shared) {
     if stale.is_empty() {
         return;
     }
-    if let Err(error) = shared
-        .services
-        .drop_executor_outbox(WORKERS_KIND, &stale)
-        .await
-    {
-        tracing::error!(%error, error.code = error.code(), "could not drop the deletions of removed workers");
+    if let Err(failure) = shared.host.drop_outbox(stale).await {
+        tracing::error!(
+            error.code = failure.code(),
+            "could not drop the deletions of removed workers"
+        );
     }
 }
 
@@ -182,7 +179,7 @@ async fn follow_connection(
 ) {
     tracing::info!(worker = %worker, "following the tasks of a worker");
     let mut queued = shared.queued.subscribe();
-    let mut outbox = shared.services.outbox_changes();
+    let mut outbox = shared.host.outbox_changes();
     if reconcile(shared, worker).await.is_err() {
         return;
     }
@@ -219,16 +216,19 @@ async fn follow_connection(
 /// nothing submits it again (ADR-0027, decision 7). Then sends what waits for
 /// the worker.
 async fn reconcile(shared: &Shared, worker: &WorkerId) -> Result<(), DelegationError> {
-    let active = match shared.services.active_executor_tasks(WORKERS_KIND).await {
+    let active = match shared.host.active_tasks().await {
         Ok(active) => active,
-        Err(error) => {
-            tracing::error!(%error, error.code = error.code(), "could not read the tasks of a worker");
+        Err(failure) => {
+            tracing::error!(
+                error.code = failure.code(),
+                "could not read the tasks of a worker"
+            );
             return Ok(());
         }
     };
     for task in active
         .iter()
-        .filter(|task| worker_of(task) == Some(worker.as_str()))
+        .filter(|task| worker_of(task) == worker.as_str())
     {
         if shared.is_submitting(&task.id) {
             continue;
@@ -245,21 +245,23 @@ async fn reconcile(shared: &Shared, worker: &WorkerId) -> Result<(), DelegationE
 
 /// Sends the cancels and the deletions that wait for a worker.
 async fn send_queued(shared: &Shared, worker: &WorkerId) -> Result<(), DelegationError> {
-    let services = &shared.services;
-    if let Ok(active) = services.active_executor_tasks(WORKERS_KIND).await {
+    let host = &shared.host;
+    if let Ok(active) = host.active_tasks().await {
         for task in active.iter().filter(|task| {
-            worker_of(task) == Some(worker.as_str())
-                && document_of(task).cancel_requested_at.is_some()
+            worker_of(task) == worker.as_str() && document_of(task).cancel_requested_at.is_some()
         }) {
             if let Some(state) = shared.delegation.cancel(worker, &task.id).await? {
                 receive_state(shared, worker, state).await;
             }
         }
     }
-    let entries = match services.executor_outbox(WORKERS_KIND).await {
+    let entries = match host.outbox().await {
         Ok(entries) => entries,
-        Err(error) => {
-            tracing::error!(%error, error.code = error.code(), "could not read the deletions that wait for a worker");
+        Err(failure) => {
+            tracing::error!(
+                error.code = failure.code(),
+                "could not read the deletions that wait for a worker"
+            );
             return Ok(());
         }
     };
@@ -278,13 +280,14 @@ async fn send_queued(shared: &Shared, worker: &WorkerId) -> Result<(), Delegatio
         .delegation
         .delete_conversations(worker, conversations)
         .await?;
-    if let Err(error) = services
-        .drop_executor_outbox(WORKERS_KIND, &deletions)
-        .await
-    {
-        tracing::warn!(%error, error.code = error.code(), "could not forget deletions that reached their worker");
+    let count = deletions.len();
+    if let Err(failure) = host.drop_outbox(deletions).await {
+        tracing::warn!(
+            error.code = failure.code(),
+            "could not forget deletions that reached their worker"
+        );
     }
-    tracing::info!(worker = %worker, conversations = deletions.len(), "a worker deleted conversations of its tasks");
+    tracing::info!(worker = %worker, conversations = count, "a worker deleted conversations of its tasks");
     Ok(())
 }
 
@@ -294,26 +297,27 @@ async fn send_queued(shared: &Shared, worker: &WorkerId) -> Result<(), Delegatio
 /// run waits for one. A worker's state of a task that is not its own changes
 /// nothing.
 async fn receive_state(shared: &Shared, worker: &WorkerId, state: AssignedTaskState) {
-    let services = &shared.services;
-    let row = match services.executor_task(&state.task_id).await {
+    let host = &shared.host;
+    let row = match host.task(state.task_id.clone()).await {
         Ok(Some(row)) => row,
         Ok(None) => return,
-        Err(error) => {
-            tracing::error!(%error, error.code = error.code(), "could not read a worker task");
+        Err(failure) => {
+            tracing::error!(error.code = failure.code(), "could not read a worker task");
             return;
         }
     };
-    if worker_of(&row) != Some(worker.as_str()) {
+    // One worker never publishes another worker's task.
+    if worker_of(&row) != worker.as_str() {
         tracing::warn!(task = %state.task_id, worker = %worker, "a worker sent the state of a task that is not its own");
         return;
     }
     let ended = !state.state.is_active();
     let waits_for_lease = state.waits_for_lease;
     let approval = state.approval.clone();
-    let taken = match services.publish_task_state(WORKERS_KIND, state).await {
+    let taken = match host.publish_task_state(state).await {
         Ok(taken) => taken,
-        Err(error) => {
-            tracing::error!(%error, error.code = error.code(), task = %row.id, "could not store a worker's task state");
+        Err(failure) => {
+            tracing::error!(error.code = failure.code(), task = %row.id, "could not store a worker's task state");
             return;
         }
     };
@@ -350,15 +354,15 @@ async fn receive_state(shared: &Shared, worker: &WorkerId, state: AssignedTaskSt
 async fn answer_by_full_access(
     shared: &Shared,
     worker: &WorkerId,
-    task: &StoredTask,
+    task: &ExecutorTask,
     approval: &ChildApproval,
 ) {
     let Some(request) = &approval.call.request else {
         return;
     };
     if !shared
-        .services
-        .parent_has_full_access(&task.conversation_id)
+        .host
+        .parent_has_full_access(task.conversation_id.clone())
         .await
     {
         return;
@@ -393,7 +397,7 @@ async fn answer_by_full_access(
 
 /// Revokes the lease of a task that ended. The worker drops a task's lease
 /// when the task ends, so this finds nothing to drop unless the worker missed
-/// that (docs/features/workers/credential-leases.md).
+/// that (plugins/workers/docs/credential-leases.md).
 async fn revoke_ended_lease(shared: &Shared, worker: &WorkerId, task: &TaskId) {
     if let Err(error) = shared.delegation.revoke_lease(worker, task).await {
         tracing::info!(%error, task = %task, worker = %worker, "could not revoke the lease of a task that ended");
@@ -401,10 +405,11 @@ async fn revoke_ended_lease(shared: &Shared, worker: &WorkerId, task: &TaskId) {
 }
 
 /// Delivers a task's lease once: the credential of the task's profile, which
-/// the runtime lends from the master's credential store (ADR-0010; ADR-0030,
-/// decision 13). A profile without a credential needs no lease. After a
-/// failed delivery, the next state that waits for the lease tries again.
-pub(crate) async fn lease_to(shared: &Shared, worker: &WorkerId, task: &StoredTask) {
+/// the core lends from the master's credential store, only for an active
+/// Workers task whose run uses the profile (ADR-0010; ADR-0034, decision 5).
+/// A profile without a credential needs no lease. After a failed delivery,
+/// the next state that waits for the lease tries again.
+pub(crate) async fn lease_to(shared: &Shared, worker: &WorkerId, task: &ExecutorTask) {
     if !shared.claim_lease(&task.id) {
         return;
     }
@@ -415,15 +420,22 @@ pub(crate) async fn lease_to(shared: &Shared, worker: &WorkerId, task: &StoredTa
 
 /// Sends a task's lease to its worker; false when the worker did not get a
 /// lease that the task needs.
-async fn send_lease(shared: &Shared, worker: &WorkerId, task: &StoredTask) -> bool {
+async fn send_lease(shared: &Shared, worker: &WorkerId, task: &ExecutorTask) -> bool {
     let Some(profile) = document_of(task).profile_id else {
         return true;
     };
-    let lent = match shared.lender.lend_credential(&profile).await {
+    let lent = match shared.credentials.lend(task.id.clone(), profile).await {
         Ok(Some(lent)) => lent,
         Ok(None) => return true,
         Err(LendError::ProfileMissing) => {
             tracing::warn!(task = %task.id, "the profile of a worker task was deleted; its lease cannot be delivered");
+            return false;
+        }
+        // The core lends only for an active Workers task whose run uses the
+        // profile. The document named another profile, or the task ended:
+        // the worker gets nothing.
+        Err(LendError::NotPermitted) => {
+            tracing::error!(task = %task.id, "the core refused the lease of a worker task; nothing reaches the worker");
             return false;
         }
         Err(error) => {
@@ -449,13 +461,9 @@ async fn send_lease(shared: &Shared, worker: &WorkerId, task: &StoredTask) -> bo
 
 /// Ends a worker task on the master, as when its worker does not know it or
 /// was removed, and tells the run that follows it.
-async fn end_remote_task(shared: &Shared, task: &StoredTask, state: TaskState) {
-    if let Err(error) = shared
-        .services
-        .end_executor_task(WORKERS_KIND, task, state)
-        .await
-    {
-        tracing::error!(%error, error.code = error.code(), task = %task.id, "could not end a worker task");
+async fn end_remote_task(shared: &Shared, task: &ExecutorTask, state: TaskState) {
+    if let Err(failure) = shared.host.end_task(task.id.clone(), state).await {
+        tracing::error!(error.code = failure.code(), task = %task.id, "could not end a worker task");
         return;
     }
     shared.forget_lease(&task.id);
@@ -465,20 +473,17 @@ async fn end_remote_task(shared: &Shared, task: &StoredTask, state: TaskState) {
 /// canceled them when it was unpaired or can no longer report them, and the
 /// deletions that waited for it are dropped (ADR-0031, decision 9).
 async fn forget_worker_tasks(shared: &Shared, worker: &WorkerId) {
-    let services = &shared.services;
-    if let Ok(active) = services.active_executor_tasks(WORKERS_KIND).await {
+    let host = &shared.host;
+    if let Ok(active) = host.active_tasks().await {
         for task in active
             .iter()
-            .filter(|task| worker_of(task) == Some(worker.as_str()))
+            .filter(|task| worker_of(task) == worker.as_str())
         {
             end_remote_task(shared, task, TaskState::Interrupted).await;
         }
     }
-    if let Err(error) = services
-        .drop_executor_target_outbox(WORKERS_KIND, worker.as_str())
-        .await
-    {
-        tracing::error!(%error, error.code = error.code(), worker = %worker, "could not drop the deletions that waited for a removed worker");
+    if let Err(failure) = host.drop_target_outbox(worker.as_str().to_owned()).await {
+        tracing::error!(error.code = failure.code(), worker = %worker, "could not drop the deletions that waited for a removed worker");
     }
     tracing::info!(worker = %worker, "stopped following a removed worker");
 }

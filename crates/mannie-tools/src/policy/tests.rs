@@ -639,7 +639,7 @@ fn saved_rules_keep_the_chosen_leading_words() {
     );
 }
 
-// The ceiling of a worker (docs/features/workers/host-and-ceiling.md, the
+// The ceiling of a worker (plugins/workers/docs/host-and-ceiling.md, the
 // ceiling): one test for each row of its table.
 
 #[test]

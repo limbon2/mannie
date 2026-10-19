@@ -50,7 +50,7 @@ New features and plugins are added one at a time through a [feature protocol](do
 - [Milestones](docs/roadmap/milestones.md)
 - [Architecture overview](docs/architecture/overview.md)
 - [Architecture decision records](docs/adr/README.md)
-- [Setting up a worker](docs/guides/worker-setup.md)
+- [Setting up a worker](plugins/workers/docs/guides/worker-setup.md)
 - [Contributing](CONTRIBUTING.md) and [agent rules](AGENTS.md)
 
 ## License

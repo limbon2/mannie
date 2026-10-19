@@ -3,7 +3,9 @@
 // `task docs:check` runs this script after Prettier, markdownlint, cspell and
 // link validation. The rules come from docs/README.md (conventions),
 // docs/adr/README.md (the ADR index) and docs/features/README.md (feature
-// documents). Errors fail the check; warnings are printed only.
+// documents). The plugins' documents in plugins/<id>/docs/ and their
+// changelogs are read too (ADR-0035, decision 11). Errors fail the check;
+// warnings are printed only.
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, posix, relative, sep } from 'node:path';
@@ -101,7 +103,19 @@ const rootDocuments = readdirSync(root)
   .filter((entry) => entry.endsWith('.md'))
   .sort();
 const docsDocuments = markdownFilesBelow('docs');
-const allDocs = [...rootDocuments, ...docsDocuments].map(readDoc);
+// Each plugin's documents and changelog, in its folder.
+const pluginIds = existsSync(join(root, 'plugins'))
+  ? readdirSync(join(root, 'plugins'), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort()
+  : [];
+const pluginDocuments = pluginIds.flatMap((id) => {
+  const changelog = `plugins/${id}/CHANGELOG.md`;
+  const changelogs = existsSync(join(root, changelog)) ? [changelog] : [];
+  return [...markdownFilesBelow(`plugins/${id}/docs`), ...changelogs];
+});
+const allDocs = [...rootDocuments, ...docsDocuments, ...pluginDocuments].map(readDoc);
 const docsByPath = new Map(allDocs.map((doc) => [doc.path, doc]));
 
 /**
@@ -278,12 +292,90 @@ const adrFilePattern = /^docs\/adr\/(\d{4})-[a-z0-9-]+\.md$/;
 const featureFolderReadmePattern = /^docs\/features\/[a-z0-9-]+\/README\.md$/;
 const featurePartPattern = /^docs\/features\/[a-z0-9-]+\/[a-z0-9-]+\.md$/;
 const singleFeaturePattern = /^docs\/features\/[a-z0-9-]+\.md$/;
+// A plugin's feature document, its README.md, and its parts, beside it.
+const pluginFeaturePattern = /^plugins\/([a-z0-9-]+)\/docs\/README\.md$/;
+const pluginPartPattern = /^plugins\/[a-z0-9-]+\/docs\/[a-z0-9-]+\.md$/;
+// A plugin's own ADRs, numbered on their own, beside the index of its
+// ADRs, docs/adr/README.md in its folder (ADR-0035, decision 11).
+const pluginAdrPattern = /^plugins\/([a-z0-9-]+)\/docs\/adr\/(\d{4})-[a-z0-9-]+\.md$/;
 const templates = new Set(['docs/adr/0000-template.md', 'docs/features/template.md']);
 
-/** @type {Map<string, { doc: Doc, table: Map<string, { value: string, line: number }> }>} */
+/** @typedef {Map<string, { doc: Doc, table: Map<string, { value: string, line: number }> }>} Adrs */
+
+/** @type {Adrs} */
 const adrs = new Map();
-/** @type {Map<string, { doc: Doc, table: Map<string, { value: string, line: number }>, kind: 'single' | 'folder' | 'part' }>} */
+/** @type {Map<string, Adrs>} Each plugin's own ADRs, by the plugin's ID. */
+const pluginAdrs = new Map();
+/** @type {Map<string, { doc: Doc, table: Map<string, { value: string, line: number }>, kind: 'single' | 'folder' | 'part', plugin: boolean }>} */
 const features = new Map();
+
+/**
+ * Checks an ADR's status table and title.
+ * @param {Doc} doc
+ * @param {Map<string, { value: string, line: number }>} table
+ * @param {string} number its four digits
+ */
+function checkAdr(doc, table, number) {
+  requireKeys(doc, table, ['Status', 'Date', 'Deciders', 'Related']);
+  checkDate(doc, table.get('Date'));
+  const title = doc.lines.find((line) => line.startsWith('# ')) ?? '';
+  if (!title.startsWith(`# ADR-${number}: `)) {
+    reportError(doc.path, 1, `the title must start with "# ADR-${number}: "`);
+  }
+  const status = table.get('Status')?.value ?? '';
+  if (!ADR_STATUS_PREFIXES.some((prefix) => status.startsWith(prefix))) {
+    reportError(doc.path, table.get('Status')?.line ?? 1, `unknown ADR status "${status}"`);
+  }
+}
+
+/**
+ * Checks the status table of a plugin's document: its feature document has
+ * a Plugin row that names the plugin's folder and may leave out Milestone,
+ * since a plugin needs no line in the roadmap, and each part names its
+ * feature document in Part of.
+ * @param {Doc} doc
+ * @param {Map<string, { value: string, line: number }>} table
+ */
+function checkPluginFeature(doc, table) {
+  const id = pluginFeaturePattern.exec(doc.path)?.[1];
+  const isPart = id === undefined;
+  requireKeys(
+    doc,
+    table,
+    isPart ? ['Status', 'Last updated', 'Related', 'Part of'] : ['Status', 'Plugin', 'Last updated', 'Related'],
+  );
+  checkDate(doc, table.get('Last updated'));
+  const status = table.get('Status');
+  if (status && !FEATURE_STATUSES.includes(status.value)) {
+    reportError(doc.path, status.line, `feature status must be one of ${FEATURE_STATUSES.join(', ')}`);
+  }
+  const plugin = table.get('Plugin');
+  const namesOtherPlugin = plugin?.value.replaceAll('`', '') !== id;
+  if (plugin && !isPart && namesOtherPlugin) {
+    reportError(doc.path, plugin.line, `Plugin must name the plugin's folder, ${id}`);
+  }
+  features.set(doc.path, { doc, table, kind: isPart ? 'part' : 'folder', plugin: true });
+}
+
+// A plugin's documents have status tables; its changelog, like the root's,
+// has none.
+for (const doc of allDocs.filter((candidate) => /^plugins\/[a-z0-9-]+\/docs\//u.test(candidate.path))) {
+  const table = statusTable(doc);
+  const isPluginFeature = pluginFeaturePattern.test(doc.path) || pluginPartPattern.test(doc.path);
+  const [, plugin, adrNumber] = pluginAdrPattern.exec(doc.path) ?? [];
+  const isPluginAdr = plugin !== undefined && adrNumber !== undefined;
+  if (table && isPluginFeature) {
+    checkPluginFeature(doc, table);
+  } else if (table && isPluginAdr) {
+    checkAdr(doc, table, adrNumber);
+    const own = pluginAdrs.get(plugin) ?? new Map();
+    own.set(adrNumber, { doc, table });
+    pluginAdrs.set(plugin, own);
+  } else if (table) {
+    requireKeys(doc, table, ['Status', 'Last updated', 'Related']);
+    checkDate(doc, table.get('Last updated'));
+  }
+}
 
 for (const doc of allDocs.filter((candidate) => candidate.path.startsWith('docs/'))) {
   const table = statusTable(doc);
@@ -294,16 +386,7 @@ for (const doc of allDocs.filter((candidate) => candidate.path.startsWith('docs/
   const isTemplateNumber = adrNumber === '0000';
   const isAdr = adrNumber !== undefined && !isTemplateNumber;
   if (isAdr) {
-    requireKeys(doc, table, ['Status', 'Date', 'Deciders', 'Related']);
-    checkDate(doc, table.get('Date'));
-    const title = doc.lines.find((line) => line.startsWith('# ')) ?? '';
-    if (!title.startsWith(`# ADR-${adrNumber}: `)) {
-      reportError(doc.path, 1, `the title must start with "# ADR-${adrNumber}: "`);
-    }
-    const status = table.get('Status')?.value ?? '';
-    if (!ADR_STATUS_PREFIXES.some((prefix) => status.startsWith(prefix))) {
-      reportError(doc.path, table.get('Status')?.line ?? 1, `unknown ADR status "${status}"`);
-    }
+    checkAdr(doc, table, adrNumber);
     adrs.set(adrNumber, { doc, table });
     continue;
   }
@@ -325,7 +408,7 @@ for (const doc of allDocs.filter((candidate) => candidate.path.startsWith('docs/
     } else if (isFolderFeature) {
       kind = 'folder';
     }
-    features.set(doc.path, { doc, table, kind });
+    features.set(doc.path, { doc, table, kind, plugin: false });
     continue;
   }
   requireKeys(doc, table, ['Status', 'Last updated', 'Related']);
@@ -370,9 +453,13 @@ milestonesDoc.lines.forEach((line, index) => {
 // References ---------------------------------------------------------------------
 
 for (const doc of allDocs) {
+  // A plugin's documents may also name the plugin's own ADRs.
+  const plugin = /^plugins\/([a-z0-9-]+)\//u.exec(doc.path)?.[1];
+  const own = plugin === undefined ? undefined : pluginAdrs.get(plugin);
   doc.lines.forEach((line, index) => {
     for (const match of line.matchAll(/\bADR-(\d{4})\b/g)) {
-      if (!adrs.has(match[1])) {
+      const exists = adrs.has(match[1]) || own?.has(match[1]) === true;
+      if (!exists) {
         reportError(doc.path, index + 1, `ADR-${match[1]} does not exist`);
       }
     }
@@ -393,56 +480,74 @@ for (const doc of allDocs) {
   });
 }
 
-// ADR index and validations --------------------------------------------------------
+// ADR indexes and validations ------------------------------------------------------
 
-const adrIndex = requireDoc(ADR_INDEX_DOCUMENT);
-/** @type {Map<string, { file: string, status: string, line: number }>} */
-const indexed = new Map();
-adrIndex.lines.forEach((line, index) => {
-  const match = /^\|\s*\[(\d{4})\]\(([^)]+)\)\s*\|/.exec(line);
-  if (!match) {
+/**
+ * Checks an index of ADRs against the ADRs beside it: each ADR is listed
+ * with its file and its status, each entry has a file, and each Proposed
+ * ADR names what settles it.
+ * @param {string} indexPath
+ * @param {Adrs} collection
+ */
+function checkAdrIndex(indexPath, collection) {
+  const adrIndex = docsByPath.get(indexPath);
+  if (!adrIndex) {
+    reportError(indexPath, 1, 'the index of the ADRs in its folder is missing');
     return;
   }
-  const cells = tableCells(line);
-  indexed.set(match[1], { file: match[2], status: cells[2] ?? '', line: index + 1 });
-});
-
-for (const [number, adr] of adrs) {
-  const entry = indexed.get(number);
-  const fileName = posix.basename(adr.doc.path);
-  const status = adr.table.get('Status')?.value ?? '';
-  if (!entry) {
-    reportError(ADR_INDEX_DOCUMENT, 1, `ADR-${number} is missing from the index`);
-  } else {
-    if (entry.file !== fileName) {
-      reportError(ADR_INDEX_DOCUMENT, entry.line, `ADR-${number} must link to ${fileName}`);
+  /** @type {Map<string, { file: string, status: string, line: number }>} */
+  const indexed = new Map();
+  adrIndex.lines.forEach((line, index) => {
+    const match = /^\|\s*\[(\d{4})\]\(([^)]+)\)\s*\|/.exec(line);
+    if (!match) {
+      return;
     }
-    if (entry.status !== status) {
-      reportError(
-        ADR_INDEX_DOCUMENT,
-        entry.line,
-        `ADR-${number} status "${entry.status}" differs from its file ("${status}")`,
-      );
+    const cells = tableCells(line);
+    indexed.set(match[1], { file: match[2], status: cells[2] ?? '', line: index + 1 });
+  });
+
+  for (const [number, adr] of collection) {
+    const entry = indexed.get(number);
+    const fileName = posix.basename(adr.doc.path);
+    const status = adr.table.get('Status')?.value ?? '';
+    if (!entry) {
+      reportError(indexPath, 1, `ADR-${number} is missing from the index`);
+    } else {
+      if (entry.file !== fileName) {
+        reportError(indexPath, entry.line, `ADR-${number} must link to ${fileName}`);
+      }
+      if (entry.status !== status) {
+        reportError(
+          indexPath,
+          entry.line,
+          `ADR-${number} status "${entry.status}" differs from its file ("${status}")`,
+        );
+      }
+    }
+    // The validation rule applies to every Proposed ADR, indexed or not.
+    const validation = section(adr.doc, 'Validation');
+    if (status.startsWith('Proposed')) {
+      if (!validation) {
+        reportError(adr.doc.path, 1, 'a Proposed ADR needs a "## Validation" section');
+      } else if (!/\b[VM]\d+\b/.test(validation.text)) {
+        reportError(
+          adr.doc.path,
+          validation.line,
+          'the Validation section must name the validation (V) or milestone (M) that settles it',
+        );
+      }
     }
   }
-  // The validation rule applies to every Proposed ADR, indexed or not.
-  const validation = section(adr.doc, 'Validation');
-  if (status.startsWith('Proposed')) {
-    if (!validation) {
-      reportError(adr.doc.path, 1, 'a Proposed ADR needs a "## Validation" section');
-    } else if (!/\b[VM]\d+\b/.test(validation.text)) {
-      reportError(
-        adr.doc.path,
-        validation.line,
-        'the Validation section must name the validation (V) or milestone (M) that settles it',
-      );
+  for (const [number, entry] of indexed) {
+    if (!collection.has(number)) {
+      reportError(indexPath, entry.line, `ADR-${number} is indexed but has no file`);
     }
   }
 }
-for (const [number, entry] of indexed) {
-  if (!adrs.has(number)) {
-    reportError(ADR_INDEX_DOCUMENT, entry.line, `ADR-${number} is indexed but has no file`);
-  }
+
+checkAdrIndex(ADR_INDEX_DOCUMENT, adrs);
+for (const [plugin, own] of pluginAdrs) {
+  checkAdrIndex(`plugins/${plugin}/docs/adr/README.md`, own);
 }
 
 for (const [id, row] of validationRows) {
@@ -486,7 +591,9 @@ for (const [path, feature] of features) {
     }
     continue;
   }
-  if (SCHEDULED_FEATURE_STATUSES.includes(status)) {
+  // A plugin's feature document needs no line in the roadmap (ADR-0035,
+  // decision 11).
+  if (SCHEDULED_FEATURE_STATUSES.includes(status) && !feature.plugin) {
     const folder = posix.dirname(path);
     const listed = roadmapTargets.has(path) || (feature.kind === 'folder' && roadmapTargets.has(folder));
     if (!listed) {

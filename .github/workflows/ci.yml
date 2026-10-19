@@ -2,10 +2,10 @@
 # standards, Definition of Done): `task ci` and the end-to-end tests on Windows
 # and Linux, with the performance figures they measure (NFR-PERF-01 to 04,
 # enforced only on the reference machine), the credential store with GNOME
-# Keyring, KWallet and no Secret Service (V7), the worker service on Windows
-# and Linux with a test master that pairs with it and delegates a command,
-# and the worker's FreeBSD and static Linux builds. The release workflow runs
-# it too. Every job runs on the owner's self-hosted runners, virtual machines
+# Keyring, KWallet and no Secret Service (V7), and the programs of the
+# plugins' manifests, such as the worker: their smoke tests on Windows and
+# Linux and their builds for FreeBSD and static Linux (ADR-0035, decision
+# 10). The release workflow runs it too. Every job runs on the owner's self-hosted runners, virtual machines
 # that are thrown away after one job, which is what the label `disposable`
 # promises. Their system labels start with `mannie-`, so that no job that asks
 # for a GitHub-hosted image, such as the release's signing job, can land on
@@ -125,12 +125,34 @@ jobs:
         if: matrix.secret-service == 'none'
         run: dbus-run-session --config-file=scripts/ci/session-without-services.conf -- cargo test --locked -p mannie-secrets -- --ignored --exact without_a_secret_service_no_credential_is_stored
 
-  worker-service:
-    name: Worker service (${{ matrix.os }})
+  # The programs of the plugins' manifests and what CI does with each, so
+  # that a plugin with a program changes no workflow (ADR-0035, decision 10).
+  plan:
+    name: Plan the programs' jobs
+    runs-on: [self-hosted, disposable, mannie-ubuntu-24.04]
+    outputs:
+      builds: ${{ steps.plan.outputs.builds }}
+      smoke: ${{ steps.plan.outputs.smoke }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      # The manifests' TOML parser is a development dependency of the root.
+      - run: pnpm install --frozen-lockfile --filter mannie
+      - id: plan
+        run: node scripts/plugins/programs.mjs matrix >> "$GITHUB_OUTPUT"
+
+  smoke:
+    name: Smoke test of ${{ matrix.package }} (${{ matrix.os }})
+    needs: plan
+    if: needs.plan.outputs.smoke != '[]'
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-11, ubuntu-24.04]
+        include: ${{ fromJSON(needs.plan.outputs.smoke) }}
     runs-on: [self-hosted, disposable, "mannie-${{ matrix.os }}"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -139,46 +161,78 @@ jobs:
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: worker-service
-      - run: cargo build --locked -p mannie-worker
-      # The test master that pairs with the installed worker and delegates a
-      # command to it.
-      - run: cargo build --locked -p mannie-workers --features testing --example smoke-master
-      - name: Install, pair, delegate to and remove the Windows service
+          key: smoke
+      # The program as it ships, then what the smoke test needs beside it,
+      # such as Workers' test master, in builds of their own, so that the
+      # helpers' features never reach the program.
+      - name: Build the program
+        run: cargo build --locked --manifest-path ${{ matrix.folder }}/Cargo.toml -p ${{ matrix.package }}
+      - name: Build the smoke test's helpers
+        if: matrix.helpers != ''
+        run: cargo build --locked --manifest-path ${{ matrix.folder }}/Cargo.toml ${{ matrix.helpers }}
+      - name: Run the smoke test on Windows
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./scripts/ci/worker-service-windows.ps1 -Worker target/debug/mannie-worker.exe -Master target/debug/examples/smoke-master.exe
-      - name: Install, pair, delegate to and remove the systemd unit
+        run: ./${{ matrix.script }} target/debug
+      - name: Run the smoke test as root
         if: runner.os == 'Linux'
-        run: sudo sh scripts/ci/worker-service-unix.sh target/debug/mannie-worker target/debug/examples/smoke-master
+        run: sudo sh ${{ matrix.script }} target/debug
 
-  worker-builds:
-    name: Worker builds for FreeBSD and static Linux
+  program-builds:
+    name: Build of ${{ matrix.package }} for ${{ matrix.target }}
+    needs: plan
+    if: needs.plan.outputs.builds != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.builds) }}
     runs-on: [self-hosted, disposable, mannie-ubuntu-24.04]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install the Rust toolchain and targets from rust-toolchain.toml
+      - name: Install the Rust toolchain from rust-toolchain.toml and the target
         run: |
           rustup toolchain install
-          rustup target add x86_64-unknown-linux-musl
+          rustup target add ${{ matrix.target }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: worker-builds
-      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
-        with:
-          tool: cross@0.2.5
-      - name: Build the static Linux worker
+          key: program-builds-${{ matrix.target }}
+      - name: Install musl-tools for a static Linux build
+        if: endsWith(matrix.target, '-musl')
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends musl-tools
-          cargo build --locked --release -p mannie-worker --target x86_64-unknown-linux-musl
-      # The worker's tests run on FreeBSD every night (nightly.yml), and for
-      # pull requests that change what the worker runs (freebsd.yml).
-      - name: Cross-build the FreeBSD worker
-        run: cross build --locked --release -p mannie-worker --target x86_64-unknown-freebsd
-      # The worker's crates build for FreeBSD without warnings. Clippy links
-      # nothing, so it needs FreeBSD's standard library but not cross.
-      - name: Lint the worker's crates for FreeBSD
+      - name: Build with cargo
+        if: matrix.tool == 'cargo'
+        run: cargo build --locked --release --manifest-path ${{ matrix.folder }}/Cargo.toml -p ${{ matrix.package }} --target ${{ matrix.target }}
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        if: matrix.tool == 'cross'
+        with:
+          tool: cross@0.2.5
+      # The FreeBSD tests run every night (nightly.yml), and for pull requests
+      # that change what the programs run (freebsd.yml).
+      - name: Cross-build
+        if: matrix.tool == 'cross'
+        run: cross build --locked --release --manifest-path ${{ matrix.folder }}/Cargo.toml -p ${{ matrix.package }} --target ${{ matrix.target }}
+      # The plugin's crates build for a cross target without warnings. Clippy
+      # links nothing, so it needs the target's standard library but not
+      # cross.
+      - name: Lint the plugin's crates for the target
+        if: matrix.tool == 'cross'
+        run: cargo clippy --locked --manifest-path ${{ matrix.folder }}/Cargo.toml --workspace --all-targets --all-features --target ${{ matrix.target }} -- -D warnings
+
+  # The core's crates that run inside a worker on FreeBSD, with the
+  # FreeBSD halves of the tools and the process supervisor (ADR-0014).
+  core-freebsd:
+    name: The core's crates for FreeBSD
+    runs-on: [self-hosted, disposable, mannie-ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install the Rust toolchain from rust-toolchain.toml and the target
         run: |
+          rustup toolchain install
           rustup target add x86_64-unknown-freebsd
-          cargo clippy --locked -p mannie-tools -p mannie-runtime -p mannie-link -p mannie-workers -p mannie-worker --all-targets --all-features --target x86_64-unknown-freebsd -- -D warnings
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: core-freebsd
+      - name: Lint the core's crates for FreeBSD
+        run: cargo clippy --locked -p mannie-tools -p mannie-runtime --all-targets --all-features --target x86_64-unknown-freebsd -- -D warnings

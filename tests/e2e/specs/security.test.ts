@@ -5,6 +5,7 @@ import { Key } from 'webdriverio';
 
 import { type ConnectionCounter, countConnections } from '../support/connections.ts';
 import {
+  callUndeclaredPluginCommand,
   callUngrantedCommand,
   type CspViolation,
   cspViolations,
@@ -71,6 +72,10 @@ describe('the webview security baseline (V1)', () => {
 
     expect(result).not.toBe('allowed');
     expect(result).toMatch(/not allowed/i);
+  });
+
+  it('refuses a plugin command that the plugin does not declare, which the transport reports as not_allowed', async () => {
+    expect(await callUndeclaredPluginCommand()).toBe('not_allowed');
   });
 
   it('refuses eval, the Function constructor, inline script and inline handlers', async () => {

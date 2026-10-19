@@ -54,7 +54,7 @@ export class PluginsActions {
       return;
     }
     const work = await pluginStates.work(id);
-    const question = work.ok ? (findPlugin(id)?.offQuestion(work.data) ?? null) : null;
+    const question = work.ok ? (findPlugin(id)?.offQuestion(work.data.items) ?? null) : null;
     if (question !== null) {
       this.offQuestion = { id, question };
       this.offOpen = true;

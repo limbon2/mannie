@@ -10,10 +10,13 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use mannie_store::{Durability, OutboxEntry, Store, StoreOptions};
-use mannie_types::clock::{Clock, ManualClock, UtcMillis};
-use mannie_types::ids::ConversationId;
-use mannie_workers::store::{WORKERS_MODULE, WorkersStore};
+use mannie_plugin_harness::store::{OutboxEntry, Store, StoreOptions};
+use mannie_plugin_harness::types::ManualClock;
+use mannie_plugin_sdk::contracts::ConversationId;
+use mannie_plugin_sdk::contracts::{Clock, UtcMillis};
+use mannie_plugin_sdk::services::store::Migration;
+use mannie_workers::store::{WORKERS_MODULE, WorkersStore, has_paired_workers};
+use mannie_workers_testing::master::{workers_id, workers_module, workers_store};
 
 struct Fixture {
     directory: tempfile::TempDir,
@@ -30,10 +33,13 @@ impl Fixture {
         self.directory.path().join("mannie.sqlite")
     }
 
+    fn clock() -> Arc<dyn Clock> {
+        Arc::new(ManualClock::new(UtcMillis::from_millis(5_000)))
+    }
+
     fn options(&self) -> StoreOptions {
-        let clock: Arc<dyn Clock> = Arc::new(ManualClock::new(UtcMillis::from_millis(5_000)));
-        StoreOptions::new(self.directory.path().join("backups"), clock)
-            .with_modules([WORKERS_MODULE])
+        StoreOptions::new(self.directory.path().join("backups"), Self::clock())
+            .with_plugin_modules([workers_module()])
     }
 
     /// Creates the database as a binary up to 0.2.0 left it at `version`,
@@ -45,7 +51,7 @@ impl Fixture {
     /// Opens the database as the desktop app does, with the plugin's module.
     fn open(&self) -> (Store, WorkersStore) {
         let store = Store::open(&self.database(), &self.options()).unwrap();
-        let workers = WorkersStore::new(store.module(&WORKERS_MODULE).unwrap());
+        let workers = workers_store(&store, Self::clock());
         (store, workers)
     }
 }
@@ -55,18 +61,19 @@ fn the_module_carries_the_workers_part_of_the_list_before_m5() {
     let legacy: Vec<u32> = WORKERS_MODULE
         .migrations
         .iter()
-        .filter_map(|migration| migration.legacy_version)
+        .filter_map(Migration::legacy_version)
         .collect();
     let versions: Vec<u32> = WORKERS_MODULE
         .migrations
         .iter()
-        .map(|migration| migration.version)
+        .map(Migration::version)
         .collect();
 
     assert_eq!(legacy, [19, 20, 22]);
     assert_eq!(versions, [1, 2, 3, 4]);
     assert_eq!(
-        WORKERS_MODULE.migrations[3].legacy_version, None,
+        WORKERS_MODULE.migrations[3].legacy_version(),
+        None,
         "M5's migration has no number of the old list"
     );
     let names: BTreeSet<&str> = [WORKERS_MODULE.name].into();
@@ -76,34 +83,30 @@ fn the_module_carries_the_workers_part_of_the_list_before_m5() {
 /// The schema before the owner could name workers (version 21) keeps a
 /// paired worker with the name in its configuration. Migration 22 adds the
 /// owner's name, which such a worker does not have yet, so it keeps showing
-/// its configured name (docs/features/workers/pairing-and-link.md, data).
+/// its configured name (plugins/workers/docs/pairing-and-link.md, data).
 #[tokio::test]
 async fn a_database_with_paired_workers_is_upgraded_for_the_owners_names() {
     let fixture = Fixture::new();
     let older = fixture.open_before_m5(21);
     older
-        .module(&WORKERS_MODULE)
-        .unwrap()
-        .write(Durability::Full, |transaction| {
-            transaction.execute(
-                "INSERT INTO workers_paired (id, name, address, key_pin, version, details, \
-                 paired_at, connected_at, updated_at) \
-                 VALUES ('0199e0f2-0000-7000-b000-000000000001', 'build-01', 'build-01.lan:7445', \
-                 ?1, 1, '{}', 1, NULL, 1)",
-                ["d".repeat(64)],
-            )
-        })
+        .execute_unlisted(
+            "INSERT INTO workers_paired (id, name, address, key_pin, version, details, \
+             paired_at, connected_at, updated_at) \
+             VALUES ('0199e0f2-0000-7000-b000-000000000001', 'build-01', 'build-01.lan:7445', \
+             'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd', 1, '{}', 1, NULL, 1)",
+        )
         .await
         .unwrap();
     drop(older);
 
-    let (_store, workers) = fixture.open();
+    let (store, workers) = fixture.open();
 
     let paired = workers.paired_workers().await.unwrap();
+    let module = store.plugin_store(&workers_id()).unwrap();
     assert_eq!(paired.len(), 1);
     assert_eq!(paired[0].name, "build-01");
     assert_eq!(paired[0].chosen_name, None);
-    assert!(workers.has_paired_workers().await.unwrap());
+    assert!(has_paired_workers(module.as_ref()).await.unwrap());
 }
 
 /// A deletion that waited for an offline worker in 0.2.0 moves into the
@@ -114,34 +117,26 @@ async fn the_deletions_that_waited_for_a_worker_move_into_the_cores_outbox() {
     let fixture = Fixture::new();
     let older = fixture.open_before_m5(22);
     older
-        .module(&WORKERS_MODULE)
-        .unwrap()
-        .write(Durability::Full, |transaction| {
-            transaction.execute_batch(
-                "INSERT INTO workers_paired (id, name, address, key_pin, version, details, \
-                 paired_at, connected_at, updated_at, chosen_name) \
-                 VALUES ('0199e0f2-0000-7000-b000-000000000001', 'build-01', 'build-01.lan:7445', \
-                 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', 1, '{}', 1, NULL, 1, NULL); \
-                 INSERT INTO workers_deletions (worker_id, conversation_id, created_at) \
-                 VALUES ('0199e0f2-0000-7000-b000-000000000001', '0199e0f2-7a1b-7c3d-8e4f-000000000011', 3), \
-                 ('0199e0f2-0000-7000-b000-000000000001', '0199e0f2-7a1b-7c3d-8e4f-000000000012', 4);",
-            )
-        })
+        .execute_unlisted(
+            "INSERT INTO workers_paired (id, name, address, key_pin, version, details, \
+             paired_at, connected_at, updated_at, chosen_name) \
+             VALUES ('0199e0f2-0000-7000-b000-000000000001', 'build-01', 'build-01.lan:7445', \
+             'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', 1, '{}', 1, NULL, 1, NULL); \
+             INSERT INTO workers_deletions (worker_id, conversation_id, created_at) \
+             VALUES ('0199e0f2-0000-7000-b000-000000000001', '0199e0f2-7a1b-7c3d-8e4f-000000000011', 3), \
+             ('0199e0f2-0000-7000-b000-000000000001', '0199e0f2-7a1b-7c3d-8e4f-000000000012', 4);",
+        )
         .await
         .unwrap();
     drop(older);
 
     let (store, _workers) = fixture.open();
     let outbox = store.executor_outbox("workers").await.unwrap();
-    let left: i64 = store
-        .module(&WORKERS_MODULE)
-        .unwrap()
-        .read(|connection| {
-            connection.query_row("SELECT count(*) FROM workers_deletions", [], |row| {
-                row.get(0)
-            })
-        })
+    let left = store
+        .query_unlisted("SELECT count(*) FROM workers_deletions")
         .await
+        .unwrap()[0]
+        .get::<i64>(0)
         .unwrap();
 
     let conversation =

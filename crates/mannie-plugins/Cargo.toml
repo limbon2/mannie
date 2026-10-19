@@ -3,28 +3,68 @@ name = "mannie-plugins"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "What Mannie's internal plugins build on: the definition of a plugin, the services that its start receives, and the host that starts and stops plugins and keeps the owner's choices (ADR-0030)."
+description = "The host of Mannie's plugins: the list of plugins with their manifests, the services that it binds to each plugin, the contributions that it hands to the core, and the owner's choices (ADR-0030, ADR-0034)."
 license.workspace = true
 publish.workspace = true
 
-# The host with fake plugins: starts at launch, defaults, failures, turning
-# plugins on and off while a run uses them, and quitting.
+# The dispatch of plugin calls without a webview: the host's refusals in
+# their order, the plugin's answers, channels and their ends, and turning a
+# plugin off during calls that never end.
+[[test]]
+name = "dispatch"
+
+# The log of the dispatch, which records no input. It has a binary of its
+# own, because tracing caches which callsites are enabled across the process.
+[[test]]
+name = "dispatch_log"
+
+# The host with fake plugins, providers and consumers: starts at launch,
+# defaults, the host's start codes, turning plugins on and off, work in
+# progress, quitting, and the lists and parts that the host refuses.
 [[test]]
 name = "host"
 
+# The host over the runtime's real consumers and providers: a plugin's tool
+# reaches the runs while the plugin is on, and the executor host is bound to
+# the plugin's kind.
+[[test]]
+name = "runtime"
+
 [dependencies]
+# The channels of plugins, whose items the dispatch ends with the host's end
+# (ADR-0034, decision 8).
 futures-util = { workspace = true }
-mannie-runtime = { workspace = true }
+# The plugin's definition and contexts, the manifest that the host parses,
+# the providers and consumers, the coordinator that hands a plugin's
+# contributions to the consumers all or none, and the handlers of its
+# commands and channels (ADR-0034, decisions 4 to 6 and 8).
+mannie-plugin-sdk = { workspace = true, features = ["host", "manifest"] }
+# The owner's choices and the plugins' modules.
 mannie-store = { workspace = true }
 mannie-types = { workspace = true }
+# The inputs and outputs of plugin calls, which cross IPC as JSON.
+serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { workspace = true, features = ["sync"] }
+# The calls in flight of each plugin run as tasks that turning the plugin off
+# waits for, up to its limit, and aborts (ADR-0034, decision 8).
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
+mannie-plugin-sdk = { workspace = true, features = ["host", "manifest", "testing"] }
 mannie-provider = { workspace = true, features = ["testing"] }
 mannie-runtime = { workspace = true, features = ["testing"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
+# Seeds a plugin's table that the plugin's default reads.
+mannie-store = { workspace = true, features = ["testing"] }
+# The dispatch's tests declare commands as a plugin does: inputs, outputs
+# and errors that serialize and describe their types.
+serde = { workspace = true }
+specta = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "test-util", "time"] }
+# Captures the dispatch's log in its test.
+tracing-subscriber = { workspace = true }
 
 [lints]
 workspace = true

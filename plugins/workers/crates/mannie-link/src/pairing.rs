@@ -1,4 +1,4 @@
-//! Pairing codes and proofs (docs/features/workers/pairing-and-link.md,
+//! Pairing codes and proofs (plugins/workers/docs/pairing-and-link.md,
 //! pairing).
 //!
 //! A code is 20 characters of Crockford base32, 100 bits: whoever captures

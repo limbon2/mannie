@@ -168,7 +168,7 @@ enum Hold {
 }
 
 /// What allows one access on a worker, why it asks, or why it is refused
-/// (docs/features/workers/host-and-ceiling.md, the ceiling). Reads inside the
+/// (plugins/workers/docs/host-and-ceiling.md, the ceiling). Reads inside the
 /// allowed folders run; read-only refuses every change and command; ask asks
 /// for them; autonomous runs changes inside the allowed folders and the
 /// commands that a host rule matches; everything else asks. The worker's own

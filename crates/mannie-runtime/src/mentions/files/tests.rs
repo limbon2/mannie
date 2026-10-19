@@ -2,10 +2,11 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use mannie_plugin_sdk::points::mentions::RenderedMention;
 use mannie_types::mentions::MentionEntry;
 
 use super::FileMentions;
-use crate::mentions::{MentionContext, MentionProvider, RenderedMention};
+use crate::mentions::{MentionContext, MentionProvider};
 use crate::policy::PolicyGrants;
 
 /// A workspace in canonical form, as projects store their folders.

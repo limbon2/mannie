@@ -1,6 +1,8 @@
 // The validation harness (V1, V2, V3, V11, and the tests of the M1 features).
 // Only validation builds load it (src/routes/+layout.ts); the end-to-end tests
 // drive it through `window.mannieValidation`. A release never contains it.
+// eslint-disable-next-line no-restricted-imports -- V1 calls a plugin command that no plugin declares, which only the transport can name
+import { pluginTransport } from '@mannie/plugin-sdk/transport';
 import { Channel } from '@tauri-apps/api/core';
 
 import { commands as appCommands, type CreateProviderProfile } from '#lib/generated/bindings.js';
@@ -59,6 +61,11 @@ export interface ChannelLoadReport {
 
 /** The harness's interface for the end-to-end tests. */
 export interface ValidationHarness {
+  /**
+   * Calls a command that the fixture plugin does not declare, and returns
+   * the code of the refusal that the transport reports, or `allowed`.
+   */
+  callUndeclaredPluginCommand(): Promise<string>;
   callUngrantedCommand(): Promise<string>;
   /** Closes the main window as its close button does. */
   closeMainWindow(): Promise<void>;
@@ -288,7 +295,14 @@ async function callUngrantedCommand(): Promise<string> {
   }
 }
 
+/** A plugin command that no plugin declares, so the build granted no permission for it (ADR-0034, decision 8). */
+async function callUndeclaredPluginCommand(): Promise<string> {
+  const result = await pluginTransport('example').call<null, { code: string }>('undeclared_command', null);
+  return result.status === 'ok' ? 'allowed' : result.error.code;
+}
+
 window.mannieValidation = {
+  callUndeclaredPluginCommand,
   callUngrantedCommand,
   closeMainWindow: async () => {
     unwrap(await commands.validationCloseMainWindow());

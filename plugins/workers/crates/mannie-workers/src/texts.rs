@@ -1,11 +1,10 @@
 //! The texts that the conversation agent reads about workers
-//! (docs/features/workers/delegation.md, `delegate_task`): the tool and its
+//! (plugins/workers/docs/delegation.md, `delegate_task`): the tool and its
 //! arguments, the list of workers and the refusals. They are the texts of
 //! 0.2.0, word for word, so the model sees the same tool and the same list
 //! (ADR-0031, decision 5).
 
-use mannie_tools::clean_label;
-use mannie_types::ceiling::CeilingMode;
+use mannie_plugin_sdk::contracts::{CeilingMode, clean_label};
 
 use crate::view::{WorkerStatus, WorkerView};
 

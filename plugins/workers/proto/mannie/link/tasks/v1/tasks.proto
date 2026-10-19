@@ -1,4 +1,4 @@
-// The tasks that the master delegates to a worker (docs/features/workers/
+// The tasks that the master delegates to a worker (plugins/workers/docs/
 // delegation.md; ADR-0027, ADR-0028).
 //
 // The master chooses the IDs of a task and of its conversation, so Submit

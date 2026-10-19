@@ -67,13 +67,9 @@ async fn child_runs_env() {
     harness.model.push_reply(reply("Done."));
     let started = harness
         .runtime
-        .start_conversation(StartConversation {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            text: "Show the environment".to_owned(),
-            profile_id: None,
-            project_id: Some(project.id),
-        })
+        .start_conversation(
+            StartConversation::new("Show the environment").with_project(Some(project.id)),
+        )
         .await
         .unwrap();
     let transcript = harness

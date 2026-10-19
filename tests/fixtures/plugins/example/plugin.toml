@@ -1,0 +1,17 @@
+#:schema ../../../../crates/mannie-plugin-sdk/plugin.schema.json
+# The fixture plugin (ADR-0035, decision 9): one command, one channel, one
+# instruction section, one table, and a UI with a settings section, a group
+# of the sidebar and a command. Validation builds bundle it, and the core's
+# tests use it in place of the plugins that ship.
+
+id = "example"
+sdk = 1
+# After the plugins that ship, on the Plugins page too.
+order = 90
+
+[rust]
+entry = "mannie-example"
+
+[services]
+# The table of the notes.
+store = 1

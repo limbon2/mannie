@@ -1,0 +1,9 @@
+{
+  "accepted": ["workers", "images", "log-viewer", "jira2", "a", "set", "runtimes", "sqlitex", "images-tools"],
+  "refused": {
+    "nests_core_prefix": ["settings-sync", "runtime-extra", "sqlite-stat1", "validation-notes", "tools-x"],
+    "reserved": ["window", "core", "image", "runtime", "settings", "con", "lpt9", "sdk", "plugins", "mannie"],
+    "syntax": ["", "Workers", "log_viewer", "-workers", "workers-", "log--viewer", "2fa", "a b", "wörkers"],
+    "tauri_prefix": ["tauri-plugin-notes", "tauri-plugin-x"]
+  }
+}

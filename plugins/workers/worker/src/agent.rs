@@ -1,4 +1,4 @@
-//! The worker agent (docs/features/workers/host-and-ceiling.md, the worker
+//! The worker agent (plugins/workers/docs/host-and-ceiling.md, the worker
 //! agent and the text the model sees): its definition and the instruction
 //! sections of the tasks that the master assigns (ADR-0028, decisions 2 and
 //! 3). The texts are a contract with the model and are reviewed like code.
@@ -10,12 +10,12 @@
 
 use std::sync::Arc;
 
-use mannie_link::host::HostFacts;
-use mannie_runtime::{
+use mannie_host_kit::runtime::{
     AgentDefinition, AgentRegistry, GENERAL, InstructionContext, InstructionRegistry,
     InstructionSection, MachineContext, Requester, ToolEnvironment, checkpoint_section, texts,
 };
-use mannie_types::ceiling::CeilingMode;
+use mannie_link::host::HostFacts;
+use mannie_plugin_sdk::contracts::CeilingMode;
 
 /// The name of the agent of the tasks that the master assigns.
 pub(crate) const WORKER_AGENT: &str = "worker";

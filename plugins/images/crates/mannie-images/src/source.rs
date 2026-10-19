@@ -5,8 +5,8 @@
 use std::sync::Arc;
 
 use futures_util::FutureExt;
-use futures_util::future::BoxFuture;
-use mannie_runtime::{ImageSource, SourcedImage};
+use mannie_plugin_sdk::BoxFuture;
+use mannie_plugin_sdk::points::images::{ImageSource, SourcedImage};
 
 use crate::plugin::IMAGES;
 use crate::shelf::Shelf;

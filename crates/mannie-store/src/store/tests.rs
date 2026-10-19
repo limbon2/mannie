@@ -5,14 +5,20 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 use mannie_types::clock::{Clock, UtcMillis};
-use mannie_types::ids::{ConversationId, PartId, TaskId, TurnId};
+use mannie_types::ids::{ConversationId, PartId, ProfileId, TaskId, TurnId};
 use mannie_types::interface::{InterfaceSettings, LocaleTag};
 use mannie_types::settings::SettingsSection;
 use mannie_types::tasks::TaskState;
 use rusqlite::Connection;
 
+use std::borrow::Cow;
+
+use mannie_plugin_sdk::ids::PluginId;
+use mannie_plugin_sdk::services::store as sdk;
+
+use crate::PluginModule;
 use crate::schema::{CORE_MODULES, MODULE_RECORDS, Migration, StoreModule};
-use crate::{Durability, SettingsStoreError, Store, StoreError, StoreOptions};
+use crate::{Durability, ExecutorTaskProfile, SettingsStoreError, Store, StoreError, StoreOptions};
 
 /// A clock that tests move by hand.
 #[derive(Debug)]
@@ -113,12 +119,12 @@ impl Fixture {
     }
 }
 
-/// The module `tests` with these migrations. A module's migrations live as
-/// long as the program, so a test leaks the few that it makes.
+/// The module `tests` with these migrations.
 fn tests_module(migrations: &[Migration]) -> StoreModule {
     StoreModule {
         name: "tests",
-        migrations: Box::leak(migrations.to_vec().into_boxed_slice()),
+        migrations: Cow::Owned(migrations.to_vec()),
+        confined: false,
     }
 }
 
@@ -383,12 +389,13 @@ async fn a_module_that_the_binary_does_not_know_keeps_its_record_and_tables() {
     let fixture = Fixture::new();
     let other = StoreModule {
         name: "other",
-        migrations: &[Migration {
+        migrations: Cow::Borrowed(&[Migration {
             version: 1,
             legacy_version: None,
             description: "create the other table",
             sql: "CREATE TABLE other_rows (id INTEGER PRIMARY KEY) STRICT;",
-        }],
+        }]),
+        confined: false,
     };
     let store = Store::open_with_modules(
         &fixture.database(),
@@ -427,38 +434,54 @@ async fn a_module_that_the_binary_does_not_know_keeps_its_record_and_tables() {
 /// migrations that the old list applied and runs only the newer ones.
 #[tokio::test]
 async fn a_module_registered_after_the_conversion_carries_over_its_migrations() {
-    let fixture = Fixture::new();
-    let legacy = |version: u32, legacy_version: u32, table: &str| Migration {
-        version,
-        legacy_version: Some(legacy_version),
-        description: "create a table of the old list",
-        sql: Box::leak(
-            format!("CREATE TABLE {table} (id INTEGER PRIMARY KEY) STRICT;").into_boxed_str(),
+    const BEFORE: &[sdk::Migration] = &[
+        sdk::Migration::legacy(
+            1,
+            19,
+            "create a table of the old list",
+            "CREATE TABLE workers_first (id INTEGER PRIMARY KEY) STRICT;",
         ),
-    };
-    let newer = Migration {
-        version: 3,
-        legacy_version: None,
-        description: "create a table after the old list",
-        sql: "CREATE TABLE tests_newer (id INTEGER PRIMARY KEY) STRICT;",
-    };
-    let before = [legacy(1, 19, "tests_first"), legacy(2, 20, "tests_second")];
-    let module = tests_module(&before);
-    let older_options = fixture.options().with_modules([module]);
+        sdk::Migration::legacy(
+            2,
+            20,
+            "create a second table of the old list",
+            "CREATE TABLE workers_second (id INTEGER PRIMARY KEY) STRICT;",
+        ),
+        sdk::Migration::legacy(
+            3,
+            22,
+            "create a third table of the old list",
+            "CREATE TABLE workers_third (id INTEGER PRIMARY KEY) STRICT;",
+        ),
+    ];
+    const LATER: &[sdk::Migration] = &[
+        BEFORE[0],
+        BEFORE[1],
+        BEFORE[2],
+        sdk::Migration::new(
+            4,
+            "create a table after the old list",
+            "CREATE TABLE workers_newer (id INTEGER PRIMARY KEY) STRICT;",
+        ),
+    ];
+    let workers = PluginId::parse("workers").unwrap();
+    let module =
+        |migrations| PluginModule::new(&workers, sdk::StoreModule::new("workers", migrations, &[]));
+    let fixture = Fixture::new();
+    let older_options = fixture.options().with_plugin_modules([module(BEFORE)]);
     drop(Store::open_as_before_m5(&fixture.database(), &older_options, 22).unwrap());
     drop(fixture.open_latest().unwrap());
     let converted = records(&fixture.database());
 
-    let later = tests_module(&[before[0], before[1], newer]);
     let store = Store::open(
         &fixture.database(),
-        &fixture.options().with_modules([later]),
+        &fixture.options().with_plugin_modules([module(LATER)]),
     )
     .unwrap();
     let tables: Vec<String> = store
         .read(|connection| {
             let mut select = connection.prepare(
-                "SELECT name FROM sqlite_schema WHERE type = 'table' AND name LIKE 'tests_%' \
+                "SELECT name FROM sqlite_schema WHERE type = 'table' AND name LIKE 'workers_%' \
                  ORDER BY name",
             )?;
             let rows = select.query_map([], |row| row.get(0))?;
@@ -469,12 +492,22 @@ async fn a_module_registered_after_the_conversion_carries_over_its_migrations() 
     drop(store);
 
     assert!(
-        converted.iter().all(|(module, _version)| module != "tests"),
+        converted
+            .iter()
+            .all(|(module, _version)| module != "workers"),
         "{converted:?}"
     );
-    assert_eq!(tables, ["tests_first", "tests_newer", "tests_second"]);
-    assert!(records(&fixture.database()).contains(&("tests".to_owned(), 3)));
-    assert_eq!(user_version(&fixture.database()), latest_user_version() + 3);
+    assert_eq!(
+        tables,
+        [
+            "workers_first",
+            "workers_newer",
+            "workers_second",
+            "workers_third"
+        ]
+    );
+    assert!(records(&fixture.database()).contains(&("workers".to_owned(), 4)));
+    assert_eq!(user_version(&fixture.database()), latest_user_version() + 4);
 }
 
 #[tokio::test]
@@ -524,55 +557,47 @@ async fn a_user_version_past_the_list_before_m5_without_records_is_refused() {
 
 #[tokio::test]
 async fn the_store_of_a_module_reaches_only_the_modules_that_it_opened_with() {
+    const MIGRATIONS: &[sdk::Migration] = &[sdk::Migration::new(
+        1,
+        "create the notes",
+        "CREATE TABLE notes_items (body TEXT NOT NULL) STRICT;",
+    )];
+    const INSERT: &str = "INSERT INTO notes_items (body) VALUES (?1)";
+    const SELECT: &str = "SELECT body FROM notes_items";
+    const NOTES: sdk::StoreModule = sdk::StoreModule::new("notes", MIGRATIONS, &[INSERT, SELECT]);
+    let notes = PluginId::parse("notes").unwrap();
     let fixture = Fixture::new();
-    let module = tests_module(&[FIRST]);
-    let store =
-        Store::open_with_modules(&fixture.database(), &fixture.options(), &[module]).unwrap();
-    let unknown = StoreModule {
-        name: "unknown",
-        migrations: &[],
-    };
+    let store = Store::open(
+        &fixture.database(),
+        &fixture
+            .options()
+            .with_plugin_modules([PluginModule::new(&notes, NOTES)]),
+    )
+    .unwrap();
 
-    let refused = store.module(&unknown).unwrap_err();
-    let tests = store.module(&module).unwrap();
-    tests
-        .write(Durability::Full, |transaction| {
-            transaction
-                .execute(
-                    "INSERT INTO tests_notes (body) VALUES ('through the module')",
-                    [],
-                )
-                .map(drop)
-        })
+    let refused = store
+        .plugin_store(&PluginId::parse("unknown").unwrap())
+        .err()
+        .unwrap();
+    let module = store.plugin_store(&notes).unwrap();
+    module
+        .write(
+            sdk::WriteBatch::new().push(
+                sdk::Statement::new(INSERT).bind("through the module"),
+                sdk::Expect::Changes(1),
+            ),
+            sdk::Durability::Full,
+        )
         .await
         .unwrap();
-    let bodies: Vec<String> = tests
-        .read(|connection| {
-            let mut select = connection.prepare("SELECT body FROM tests_notes")?;
-            let rows = select.query_map([], |row| row.get(0))?;
-            rows.collect()
-        })
-        .await
-        .unwrap();
-    let unpreparable = tests
-        .unpreparable(&[
-            "SELECT body FROM tests_notes",
-            "SELECT body FROM tests_missing",
-        ])
-        .await
-        .unwrap();
+    let bodies = module.query(sdk::Statement::new(SELECT)).await.unwrap();
 
     assert!(
-        matches!(
-            refused,
-            StoreError::ModuleNotRegistered { module: "unknown" }
-        ),
+        matches!(&refused, StoreError::ModuleNotRegistered { module } if module == "unknown"),
         "{refused:?}"
     );
-    assert_eq!(tests.name(), "tests");
-    assert_eq!(bodies, ["through the module"]);
-    assert_eq!(unpreparable.len(), 1, "{unpreparable:?}");
-    assert!(unpreparable[0].starts_with("SELECT body FROM tests_missing: "));
+    assert_eq!(bodies.len(), 1);
+    assert_eq!(bodies[0].get::<String>(0).unwrap(), "through the module");
 }
 
 #[tokio::test]
@@ -1005,7 +1030,7 @@ async fn a_database_from_the_tools_schema_is_upgraded_for_task_conversations() {
 /// The schema of child agents (version 16) keeps every task with its part
 /// and its turn. Migration 17 builds the tasks table again for worker tasks
 /// and 18 adds the worker of a task conversation; a stored child and its
-/// ended task read as before (docs/features/workers/delegation.md, data). No
+/// ended task read as before (plugins/workers/docs/delegation.md, data). No
 /// release writes this schema, since M2, M3 and M4 ship together in v0.2.0
 /// (docs/roadmap/milestones.md, D23), so the seed stays.
 #[tokio::test]
@@ -1263,6 +1288,52 @@ async fn a_database_of_0_2_0_keeps_its_workers_tasks_in_every_state() {
     active.sort_by(|left, right| left.as_str().cmp(right.as_str()));
 
     assert_eq!(active, expected_active);
+}
+
+/// Every task that 0.2.0 delegated to a worker names the part of the run
+/// that delegated it, so after M5's migrations each names that run's profile
+/// for the credentials that the Workers plugin borrows (ADR-0034, decision
+/// 5), and is active while it was accepted or running.
+#[tokio::test]
+async fn a_task_that_0_2_0_delegated_names_the_profile_of_its_run() {
+    let fixture = Fixture::new();
+    let older = fixture.open_before_m5(22);
+    seed_worker_task(&older).await;
+    seed_worker_tasks_in_every_state(&older).await;
+    drop(older);
+
+    let upgraded = fixture.open_latest().unwrap();
+
+    let profile = ProfileId::parse("0199e0f2-0000-7000-8000-000000000001").unwrap();
+    let running = TaskId::parse("0199e0f2-7a1b-7c3d-8e4f-000000000021").unwrap();
+    let mut tasks = vec![(running, TaskState::Running)];
+    tasks.extend(
+        WORKER_TASKS_IN_EVERY_STATE
+            .iter()
+            .map(|(number, state, _ending)| (worker_task_id(*number), *state)),
+    );
+    for (task, state) in tasks {
+        let named = upgraded
+            .executor_task_profile(&task, "workers")
+            .await
+            .unwrap();
+        assert_eq!(
+            named,
+            Some(ExecutorTaskProfile {
+                active: state.is_active(),
+                profile_id: Some(profile.clone()),
+            }),
+            "task {task}"
+        );
+        assert_eq!(
+            upgraded
+                .executor_task_profile(&task, "other")
+                .await
+                .unwrap(),
+            None,
+            "task {task}"
+        );
+    }
 }
 
 /// A parent whose run delegated six tasks to one worker, as 0.2.0 stored

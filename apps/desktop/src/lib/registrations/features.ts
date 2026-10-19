@@ -1,7 +1,8 @@
 // The UI's features (docs/architecture/extension-points.md, UI shell slots).
 // Each feature registers its entries in `registrations/<feature>.ts` and adds
 // one line to this list; the shell knows only the slots, never a feature.
-// Plugins are listed in `plugin-list.ts` (ADR-0030).
+// Plugins come from the generated plugin list, `#plugin-list` (ADR-0035,
+// decision 7).
 import type { ShellSlots } from '#lib/state/shell-slots.svelte.js';
 
 import { registerChat } from './chat.js';

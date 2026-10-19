@@ -21,15 +21,15 @@
 
 The conversation view renders each part through the part renderer registered for its kind, and unknown kinds through the shell's generic renderer.
 
-| Part              | Rendering                                                                                                      |
-| ----------------- | -------------------------------------------------------------------------------------------------------------- |
-| The owner's text  | Plain text that keeps the owner's line breaks                                                                  |
-| Reply text        | Markdown                                                                                                       |
-| Reasoning         | Collapsed above the reply, with a button that shows it. Markdown once opened.                                  |
-| Error             | The message for the failure code, with what the owner can do, and Retry when the reply can be retried          |
-| Checkpoint marker | A line between turns that says older turns are summarized for the model, with a button that opens the summary  |
-| Mention           | A chip below the owner's text with the kind's icon, the label and what the model got ([mentions](mentions.md)) |
-| Image             | A thumbnail below the owner's text and mentions, which opens the image at full size ([images](../images.md))   |
+| Part              | Rendering                                                                                                                              |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| The owner's text  | Plain text that keeps the owner's line breaks                                                                                          |
+| Reply text        | Markdown                                                                                                                               |
+| Reasoning         | Collapsed above the reply, with a button that shows it. Markdown once opened.                                                          |
+| Error             | The message for the failure code, with what the owner can do, and Retry when the reply can be retried                                  |
+| Checkpoint marker | A line between turns that says older turns are summarized for the model, with a button that opens the summary                          |
+| Mention           | A chip below the owner's text with the kind's icon, the label and what the model got ([mentions](mentions.md))                         |
+| Image             | A thumbnail below the owner's text and mentions, which opens the image at full size ([images](../../../plugins/images/docs/README.md)) |
 
 - Below the latest reply, a status line says what the run is doing: waiting for a free slot, preparing, compacting, writing, waiting for its child agents with their number, retrying with the cause and a countdown, stopped, interrupted, failed, or cut at the output limit. Durations and counts are formatted with `Intl`. Below the status of a stopped or interrupted reply, Retry is a button that shows its icon, with "Retry" as its label and tooltip.
 - When a reply finishes, stops or fails, a status region announces it to screen readers. The streamed text itself is not announced word by word.
@@ -58,7 +58,7 @@ The renderer follows [ADR-0021](../../adr/0021-render-model-output-as-markdown-w
 
 - Enter sends, Shift+Enter starts a new line, and Escape stops the reply while the box has the focus. While the "@" list is open, Up and Down move through it, Enter or Tab inserts the highlighted entry, and Escape closes it first ([mentions](mentions.md)). The send button shows its icon, with "Send" as its label and tooltip, and becomes "Stop" while a reply runs.
 - The box keeps its text when sending fails, and says why. When no provider profile exists, the view says so and offers to open the provider settings.
-- Image sources add a button before the text and take the files of a paste or a drop ([images](../images.md)). The box shows each image as a chip, sends a message with images and no text, and keeps the images when sending fails. A paste that carries text pastes the text.
+- Image sources add a button before the text and take the files of a paste or a drop ([images](../../../plugins/images/docs/README.md)). The box shows each image as a chip, sends a message with images and no text, and keeps the images when sending fails. A paste that carries text pastes the text.
 - The first message of a new conversation opens the conversation in a pane of its own, in place of the new conversation's pane. Once the conversation has loaded, the new pane's message box takes the focus, unless the owner moved the focus elsewhere meanwhile. Opening a conversation from the list or reloading the window does not put the focus there.
 
 ### Settings sections

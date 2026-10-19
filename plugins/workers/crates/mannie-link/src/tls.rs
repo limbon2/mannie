@@ -1,4 +1,4 @@
-//! TLS for the link (ADR-0016; docs/features/workers/pairing-and-link.md,
+//! TLS for the link (ADR-0016; plugins/workers/docs/pairing-and-link.md,
 //! TLS): TLS 1.3 with rustls and ring, ALPN `h2`, and raw public keys
 //! (RFC 7250) in both directions, so each side presents its public key and
 //! never a certificate.
@@ -195,7 +195,7 @@ impl ServerCertVerifier for WorkerKey {
 
 /// The worker's TLS configuration: its own key, and the masters' keys
 /// recorded from their handshakes.
-pub(crate) fn server_config(key: &LinkKey) -> Result<Arc<ServerConfig>, Error> {
+pub fn server_config(key: &LinkKey) -> Result<Arc<ServerConfig>, Error> {
     let mut config = ServerConfig::builder_with_provider(provider())
         .with_protocol_versions(&[&rustls::version::TLS13])?
         .with_client_cert_verifier(Arc::new(MasterKeys))
@@ -294,7 +294,7 @@ impl AsyncWrite for LinkStream {
 /// runs on its own task, with at most [`MAX_HANDSHAKES`] at once and
 /// [`HANDSHAKE_TIMEOUT`] each, and the connections whose handshakes finished
 /// come out of the stream.
-pub(crate) fn incoming(
+pub fn incoming(
     listener: TcpListener,
     config: Arc<ServerConfig>,
 ) -> BoxStream<'static, io::Result<LinkStream>> {

@@ -1,8 +1,10 @@
 # Builds a release from a version tag (docs/engineering/releasing.md,
-# ADR-0018): every check, the desktop installers and the worker archives, an
-# install check of each artifact on a clean runner, SHA-256 checksums, Ed25519
-# signatures of the worker archives, CycloneDX SBOMs and third-party notices,
-# and a draft GitHub release whose notes are the version's changelog section.
+# ADR-0018): every check, the desktop installers and the archives of the
+# programs that the plugins' manifests declare, such as the worker (ADR-0035,
+# decision 10), an install check of each artifact on a clean runner, SHA-256
+# checksums, Ed25519 signatures of the signed programs' archives, CycloneDX
+# SBOMs and third-party notices, and a draft GitHub release whose notes are
+# the version's changelog section.
 # Nothing is published: the owner checks the draft on clean machines and
 # publishes it (V10). The checks of ci.yml run on the owner's self-hosted
 # runners. The release's own jobs and the FreeBSD tests run on GitHub-hosted
@@ -50,9 +52,27 @@ jobs:
     name: FreeBSD tests
     uses: ./.github/workflows/nightly.yml
 
+  # The programs of the plugins' manifests and their builds.
+  plan:
+    name: Plan the programs
+    runs-on: ubuntu-24.04
+    outputs:
+      musl: ${{ steps.plan.outputs.musl }}
+      windows: ${{ steps.plan.outputs.windows }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter mannie
+      - id: plan
+        run: node scripts/plugins/programs.mjs matrix >> "$GITHUB_OUTPUT"
+
   windows:
-    name: Windows installer and worker
-    needs: version
+    name: Windows installer and programs
+    needs: [version, plan]
     runs-on: windows-2025
     env:
       VERSION: ${{ needs.version.outputs.version }}
@@ -62,16 +82,27 @@ jobs:
         with:
           cache-key: release
       - run: task gen
-      - run: pnpm --dir apps/desktop exec tauri build --bundles nsis
-      - run: cargo build --locked --release -p mannie-worker
-      - name: Collect the artifacts
+      - run: pnpm --dir apps/desktop exec tauri build --bundles nsis -- --locked
+      - name: Collect the installer
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist, staging | Out-Null
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
           $installer = Get-ChildItem -Path target/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
           Copy-Item -Path $installer.FullName -Destination "dist/mannie-$env:VERSION-windows-x86_64-setup.exe"
-          Copy-Item -Path target/release/mannie-worker.exe, LICENSE -Destination staging
-          Compress-Archive -Path staging/* -DestinationPath "dist/mannie-worker-$env:VERSION-windows-x86_64.zip"
+      # Each program with a Windows target, as `<package>-<version>-windows-x86_64.zip`.
+      - name: Build and pack the programs
+        shell: pwsh
+        env:
+          PROGRAMS: ${{ needs.plan.outputs.windows }}
+        run: |
+          foreach ($program in ($env:PROGRAMS | ConvertFrom-Json)) {
+            cargo build --locked --release --manifest-path "$($program.folder)/Cargo.toml" -p $program.package
+            if ($LASTEXITCODE -ne 0) { throw "cargo build failed for $($program.package)" }
+            $staging = "staging/$($program.package)"
+            New-Item -ItemType Directory -Force -Path $staging | Out-Null
+            Copy-Item -Path "target/release/$($program.package).exe", LICENSE -Destination $staging
+            Compress-Archive -Path "$staging/*" -DestinationPath "dist/$($program.package)-$env:VERSION-windows-x86_64.zip"
+          }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows
@@ -91,7 +122,7 @@ jobs:
         with:
           cache-key: release
       - run: task gen
-      - run: pnpm --dir apps/desktop exec tauri build --bundles deb,rpm
+      - run: pnpm --dir apps/desktop exec tauri build --bundles deb,rpm -- --locked
       - name: Collect the artifacts
         run: |
           mkdir -p dist
@@ -103,9 +134,13 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-  linux-worker:
-    name: Static Linux worker
-    needs: version
+  linux-programs:
+    name: Static Linux build of ${{ matrix.package }}
+    needs: [version, plan]
+    if: needs.plan.outputs.musl != '[]'
+    strategy:
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.musl) }}
     runs-on: ubuntu-24.04
     env:
       VERSION: ${{ needs.version.outputs.version }}
@@ -114,23 +149,23 @@ jobs:
       - name: Install the Rust toolchain and the musl target
         run: |
           rustup toolchain install
-          rustup target add x86_64-unknown-linux-musl
+          rustup target add ${{ matrix.target }}
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends musl-tools
-      - run: cargo build --locked --release -p mannie-worker --target x86_64-unknown-linux-musl
+      - run: cargo build --locked --release --manifest-path ${{ matrix.folder }}/Cargo.toml -p ${{ matrix.package }} --target ${{ matrix.target }}
       - name: Collect the artifacts
         run: |
           mkdir -p dist staging
-          cp target/x86_64-unknown-linux-musl/release/mannie-worker LICENSE staging/
-          tar -czf "dist/mannie-worker-$VERSION-linux-x86_64.tar.gz" -C staging .
+          cp target/${{ matrix.target }}/release/${{ matrix.package }} LICENSE staging/
+          tar -czf "dist/${{ matrix.package }}-$VERSION-linux-x86_64.tar.gz" -C staging .
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: linux-worker
+          name: linux-${{ matrix.package }}
           path: dist/
           if-no-files-found: error
 
-  freebsd-worker:
-    name: FreeBSD worker
+  freebsd-programs:
+    name: FreeBSD programs
     needs: version
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -138,6 +173,19 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      # The builds become plain cargo and tar commands, so the virtual machine
+      # needs no Node (ADR-0035, decision 10). The packages go before the
+      # machine copies the repository.
+      - name: Write the commands of the programs
+        run: |
+          pnpm install --frozen-lockfile --filter mannie
+          node scripts/plugins/programs.mjs freebsd-release > freebsd-release.sh
+          rm -rf node_modules
       - uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
         with:
           # Built on the oldest supported 14.x release (ADR-0008).
@@ -151,15 +199,12 @@ jobs:
             set -eu
             . "$HOME/.cargo/env"
             rustup toolchain install
-            cargo build --locked --release -p mannie-worker
-            mkdir -p dist staging
-            cp target/release/mannie-worker LICENSE staging/
-            tar -czf "dist/mannie-worker-$VERSION-freebsd-x86_64.tar.gz" -C staging .
+            sh freebsd-release.sh
             # Only dist/ needs to come back to the runner.
             rm -rf target staging
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: freebsd-worker
+          name: freebsd-programs
           path: dist/
           if-no-files-found: error
 
@@ -187,17 +232,25 @@ jobs:
           Stop-Process -Id $process.Id
           $uninstaller = Join-Path $app.DirectoryName 'uninstall.exe'
           Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait
-      - name: Unpack the worker and run it
+      # Every program answers `--version` with its package's name and the
+      # release's version.
+      - name: Unpack the programs and run them
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          Expand-Archive -Path "dist/mannie-worker-$env:VERSION-windows-x86_64.zip" -DestinationPath worker
-          $reported = & worker/mannie-worker.exe --version
-          if ($reported -ne "mannie-worker $env:VERSION") { throw "the worker reports $reported" }
+          $suffix = "-$env:VERSION-windows-x86_64.zip"
+          foreach ($archive in Get-ChildItem -Path dist -Filter "*$suffix") {
+            $name = $archive.Name.Substring(0, $archive.Name.Length - $suffix.Length)
+            Expand-Archive -Path $archive.FullName -DestinationPath "programs/$name"
+            $reported = & "programs/$name/$name.exe" --version
+            if ($reported -ne "$name $env:VERSION") { throw "$name reports $reported" }
+          }
 
   install-linux:
     name: Install check on ${{ matrix.distribution }}
-    needs: [version, linux-desktop, linux-worker]
+    needs: [version, linux-desktop, linux-programs]
+    # The static Linux builds are skipped when no program has one.
+    if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -212,7 +265,7 @@ jobs:
           pattern: linux-*
           path: dist
           merge-multiple: true
-      - name: Install the package in a clean container, start the app, and run the worker
+      - name: Install the package in a clean container, start the app, and run the programs
         run: |
           if [ "${{ matrix.distribution }}" = ubuntu ]; then
             image=ubuntu:24.04
@@ -229,14 +282,14 @@ jobs:
 
   install-freebsd:
     name: Install check on FreeBSD
-    needs: [version, freebsd-worker]
+    needs: [version, freebsd-programs]
     runs-on: ubuntu-24.04
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: freebsd-worker
+          name: freebsd-programs
           path: dist
       - uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
         with:
@@ -246,10 +299,15 @@ jobs:
           envs: VERSION
           run: |
             set -eu
-            mkdir worker
-            tar -xzf "dist/mannie-worker-$VERSION-freebsd-x86_64.tar.gz" -C worker
-            reported="$(worker/mannie-worker --version)"
-            [ "$reported" = "mannie-worker $VERSION" ] || { echo "the worker reports $reported" >&2; exit 1; }
+            # Every program answers `--version` with its package's name and
+            # the release's version.
+            for archive in dist/*-"$VERSION"-freebsd-x86_64.tar.gz; do
+              name=$(basename "$archive" "-$VERSION-freebsd-x86_64.tar.gz")
+              mkdir -p "programs/$name"
+              tar -xzf "$archive" -C "programs/$name"
+              reported="$("programs/$name/$name" --version)"
+              [ "$reported" = "$name $VERSION" ] || { echo "$name reports $reported" >&2; exit 1; }
+            done
 
   publish:
     name: Draft the release
@@ -271,39 +329,41 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Sign the worker archives
+      # The launcher and its lock, from which the desktop app's SBOM and
+      # notices come (ADR-0035, decision 5).
+      - run: node scripts/plugins/generate.mjs
+      - name: Sign the signed programs' archives
         env:
           MANNIE_RELEASE_SIGNING_KEY: ${{ secrets.MANNIE_RELEASE_SIGNING_KEY }}
         run: |
-          node scripts/release.mjs sign dist/mannie-worker-*
-          node scripts/release.mjs verify release/mannie-release.pub dist/mannie-worker-*.zip dist/mannie-worker-*.tar.gz
-      # The released worker checks every signed archive with the key built
-      # into it, which proves that the key is the release key, and reports
-      # that key's fingerprint (docs/engineering/releasing.md, signing).
-      - name: Check the archives with the released worker
-        run: |
-          mkdir worker
-          tar -xzf "dist/mannie-worker-$VERSION-linux-x86_64.tar.gz" -C worker
-          expected="$(node scripts/release.mjs fingerprint release/mannie-release.pub)"
-          reported="$(worker/mannie-worker self-check --json | node -e "process.stdout.write(JSON.parse(require('node:fs').readFileSync(0, 'utf8')).releaseKeySha256)")"
-          if [ "$reported" != "$expected" ]; then
-            echo "the released worker checks updates with the key $reported, not the release key $expected" >&2
-            exit 1
+          archives="$(node scripts/plugins/programs.mjs archives dist "$VERSION" --signed)"
+          if [ -n "$archives" ]; then
+            # One archive on each line, and no archive name has a space.
+            node scripts/release.mjs sign $archives
+            node scripts/release.mjs verify release/mannie-release.pub $archives
           fi
-          for archive in dist/mannie-worker-*.zip dist/mannie-worker-*.tar.gz; do
-            worker/mannie-worker update --check "$archive"
-          done
-          rm -rf worker
+      # Each signed program's static Linux build checks every archive of the
+      # program with the key built into it, which proves that the key is the
+      # release key, and reports that key's fingerprint
+      # (docs/engineering/releasing.md, signing).
+      - name: Check the archives with the released programs
+        run: node scripts/plugins/programs.mjs check-signed dist "$VERSION" release/mannie-release.pub
+      # The desktop app's SBOM resolves through the launcher, and the
+      # launcher's lock goes beside it, so the shipped graph can be rebuilt.
       - name: Write the SBOMs
         run: |
           cargo cyclonedx --manifest-path apps/desktop/src-tauri/Cargo.toml --format json --spec-version 1.5 --target all
-          cargo cyclonedx --manifest-path plugins/workers/worker/Cargo.toml --format json --spec-version 1.5 --target all
           mv apps/desktop/src-tauri/mannie-desktop.cdx.json "dist/mannie-desktop-$VERSION-rust.cdx.json"
-          mv plugins/workers/worker/mannie-worker.cdx.json "dist/mannie-worker-$VERSION.cdx.json"
+          cp .generated/desktop/Cargo.lock "dist/mannie-desktop-$VERSION.Cargo.lock"
+          node scripts/plugins/programs.mjs sboms dist "$VERSION"
           pnpm sbom --sbom-format cyclonedx --filter mannie-desktop > "dist/mannie-desktop-$VERSION-npm.cdx.json"
+      # One notices file for each shipped graph: the desktop app's, through
+      # the launcher, and each program's, from its plugin's workspace
+      # (ADR-0017, ADR-0035).
       - name: Write the third-party notices
         run: |
-          cargo about generate --locked -o "dist/THIRD-PARTY-NOTICES-$VERSION-rust.md" about.hbs
+          cargo about generate --locked --config about.toml --manifest-path apps/desktop/src-tauri/Cargo.toml -o "dist/THIRD-PARTY-NOTICES-$VERSION-rust.md" about.hbs
+          node scripts/plugins/programs.mjs notices dist "$VERSION"
           pnpm licenses list --json --long --filter mannie-desktop | node scripts/third-party-notices.mjs > "dist/THIRD-PARTY-NOTICES-$VERSION-npm.md"
       - name: Write the checksums
         run: node scripts/release.mjs checksums dist

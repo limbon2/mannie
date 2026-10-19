@@ -7,6 +7,8 @@
 | Deciders | Owner                                                                                                                                          |
 | Related  | [Feature protocol](../features/README.md), [Extension points](../architecture/extension-points.md), [Repository](../engineering/repository.md) |
 
+Later changes: [ADR-0034](0034-build-plugins-on-a-plugin-sdk.md) refines decisions 3, 4 and 6: plugins register through the plugin SDK's extension points, a missing point is an SDK change with an ADR, and four IPC shapes of plugins change once in v0.3.0. [ADR-0035](0035-find-plugins-at-build-time-in-folders-of-their-own.md) refines the refinement of M5: a plugin registers as a reviewed `plugin.toml` that the build finds.
+
 ## Context
 
 - The owner will ask for features as the need appears, often in rough terms ([decision D14](../roadmap/milestones.md#5-decisions)). There is no feature inventory up front.

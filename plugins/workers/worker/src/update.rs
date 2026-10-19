@@ -1,4 +1,4 @@
-//! `mannie-worker update` (docs/features/workers/compatibility-and-updates.md,
+//! `mannie-worker update` (plugins/workers/docs/compatibility-and-updates.md,
 //! updating a worker; decision D20): the owner installs a signed release on
 //! the host. The archive is read once into a private copy and checked
 //! against the release key built into this program; the new program must be

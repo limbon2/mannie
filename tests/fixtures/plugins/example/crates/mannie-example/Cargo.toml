@@ -1,0 +1,34 @@
+[package]
+name = "mannie-example"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The fixture plugin: one command, one channel, one instruction section and one table, which validation builds bundle and the core's tests use (ADR-0035)."
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The stream of the channel follow_notes.
+futures-util = { workspace = true }
+mannie-plugin-sdk = { workspace = true }
+serde = { workspace = true }
+specta = { workspace = true }
+thiserror = { workspace = true }
+# The notes that a start hands to the channels that follow them.
+tokio = { workspace = true, features = ["sync"] }
+tracing = { workspace = true }
+# The IDs of the notes.
+uuid = { workspace = true }
+
+[dev-dependencies]
+# The plugin through the real host on the core's test runtime, and the
+# conformance check (ADR-0034, decision 1).
+mannie-plugin-harness = { workspace = true }
+# The tests parse the plugin's manifest as the host does.
+mannie-plugin-sdk = { workspace = true, features = ["manifest"] }
+# The inputs and outputs of the plugin's calls, as JSON.
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+[lints]
+workspace = true

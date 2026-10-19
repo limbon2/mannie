@@ -6,7 +6,7 @@
 | Last updated | 2026-10-16                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | Related      | [ADR-0024](../adr/0024-run-child-agent-tasks-in-the-parent-run.md), [ADR-0028](../adr/0028-run-assigned-tasks-under-the-host-ceiling.md), [ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md), [ADR-0031](../adr/0031-move-workers-into-the-first-plugin.md), [ADR-0010](../adr/0010-keep-provider-credentials-on-the-master.md), [Child agents](../features/child-agents/README.md), [Extension points](extension-points.md) |
 
-This document describes how agents divide work: child agents on the same machine, and tasks that a plugin's executor runs elsewhere. The Workers plugin is such an executor, and its own documents describe workers, delegation, pairing and the link ([workers architecture](../features/workers/architecture.md)).
+This document describes how agents divide work: child agents on the same machine, and tasks that a plugin's executor runs elsewhere. The Workers plugin is such an executor, and its own documents describe workers, delegation, pairing and the link ([workers architecture](../../plugins/workers/docs/architecture.md)).
 
 ## 1. The model
 

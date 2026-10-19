@@ -92,13 +92,9 @@ impl Setup {
         let started = self
             .harness
             .runtime
-            .start_conversation(StartConversation {
-                mentions: Vec::new(),
-                images: Vec::new(),
-                text: text.to_owned(),
-                profile_id: None,
-                project_id: Some(self.project.clone()),
-            })
+            .start_conversation(
+                StartConversation::new(text).with_project(Some(self.project.clone())),
+            )
             .await
             .unwrap();
         (started.conversation_id, started.run_id)
@@ -466,13 +462,7 @@ async fn a_profile_without_tools_is_offered_no_task_tools() {
 
     let started = harness
         .runtime
-        .start_conversation(StartConversation {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            text: "Hi".to_owned(),
-            profile_id: None,
-            project_id: None,
-        })
+        .start_conversation(StartConversation::new("Hi"))
         .await
         .unwrap();
     harness
@@ -1135,12 +1125,7 @@ async fn the_owners_commands_refuse_a_task_conversation_and_deleting_the_parent_
     let runtime = &setup.harness.runtime;
 
     let sent = runtime
-        .send_message(SendMessage {
-            mentions: Vec::new(),
-            images: Vec::new(),
-            conversation_id: child.clone(),
-            text: "Hello, child.".to_owned(),
-        })
+        .send_message(SendMessage::new(child.clone(), "Hello, child."))
         .await;
     assert_eq!(sent.unwrap_err(), ChatError::TaskConversation);
     assert_eq!(

@@ -5,7 +5,7 @@
 // Prettier owns the layout, the Tailwind class order (prettier-plugin-tailwindcss)
 // and CSS declaration order; ESLint owns correctness and the order of imports,
 // exports, type members and Svelte attributes.
-import { readdirSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import comments from '@eslint-community/eslint-plugin-eslint-comments/configs';
@@ -24,10 +24,35 @@ import mannie from './scripts/eslint/plugin.mjs';
 
 const desktopApp = join(import.meta.dirname, 'apps/desktop');
 
-// Each internal plugin has a folder in plugins/ named by its ID (ADR-0030).
-const pluginIds = readdirSync(join(import.meta.dirname, 'plugins'), { withFileTypes: true })
-  .filter((entry) => entry.isDirectory())
-  .map((entry) => entry.name);
+// Each plugin has a folder of its own, plugins/<id>/, and each fixture plugin
+// tests/fixtures/plugins/<id>/, with its manifest (ADR-0035, decision 1).
+// The folder's name is the plugin's ID, and its message keys start with the
+// ID in snake case (ADR-0035, decision 8).
+const pluginParents = [
+  { fixture: false, parent: join(import.meta.dirname, 'plugins') },
+  { fixture: true, parent: join(import.meta.dirname, 'tests', 'fixtures', 'plugins') },
+];
+const plugins = pluginParents.flatMap(({ fixture, parent }) =>
+  readdirSync(parent, { withFileTypes: true })
+    .filter((entry) => existsSync(join(parent, entry.name, 'plugin.toml')))
+    .map((entry) => ({
+      fixture,
+      folder: join(parent, entry.name),
+      id: entry.name,
+      prefix: entry.name.replaceAll('-', '_'),
+    })),
+);
+
+// The desktop app's UI and the plugins' UI, which the same rules cover
+// (ADR-0035, decision 6).
+const uiFiles = [
+  'apps/desktop/src/**/*.svelte',
+  'apps/desktop/src/**/*.ts',
+  'plugins/*/ui/**/*.svelte',
+  'plugins/*/ui/**/*.ts',
+  'tests/fixtures/plugins/*/ui/**/*.svelte',
+  'tests/fixtures/plugins/*/ui/**/*.ts',
+];
 
 // SvelteKit 3 keeps the Svelte options in vite.config. Loading them gives the
 // Svelte rules the forced runes mode and the compiler's warning filter. Before
@@ -190,8 +215,12 @@ export default defineConfig(
 
       // A compound condition combines named parts (scripts/eslint/named-conditions.mjs).
       'mannie/named-conditions': 'error',
-      // Tests live under tests/, never beside the code they test.
-      'mannie/test-file-location': ['error', { testsFolder: join(import.meta.dirname, 'tests') }],
+      // Tests live under tests/, or a plugin's under its folder's tests/,
+      // never beside the code they test.
+      'mannie/test-file-location': [
+        'error',
+        { pluginsFolder: join(import.meta.dirname, 'plugins'), testsFolder: join(import.meta.dirname, 'tests') },
+      ],
 
       eqeqeq: ['error', 'always', { null: 'ignore' }],
       'no-alert': 'error',
@@ -322,8 +351,18 @@ export default defineConfig(
     },
   },
   {
+    name: 'mannie/plugin-boundaries',
+    files: ['apps/desktop/src/**', 'plugins/**', 'tests/**'],
+    ignores: javaScriptFiles,
+    rules: {
+      // The core's files and the plugins' files stay apart, by folder
+      // (scripts/eslint/plugin-boundaries.mjs; ADR-0035, decision 6).
+      'mannie/plugin-boundaries': ['error', { plugins, testsFolder: join(import.meta.dirname, 'tests') }],
+    },
+  },
+  {
     name: 'mannie/desktop-app',
-    files: ['apps/desktop/src/**/*.svelte', 'apps/desktop/src/**/*.ts'],
+    files: uiFiles,
     plugins: { 'better-tailwindcss': tailwind },
     settings: {
       'better-tailwindcss': { entryPoint: join(desktopApp, 'src/app.css') },
@@ -349,6 +388,10 @@ export default defineConfig(
               name: '@tauri-apps/api/core',
             },
             {
+              message: "Only a plugin's generated bindings use the transport: call the plugin's commands through them.",
+              name: '@mannie/plugin-sdk/transport',
+            },
+            {
               importNames: ['derived', 'readable', 'writable'],
               message: 'Keep state in runes ($state, $derived) in .svelte.ts modules.',
               name: 'svelte/store',
@@ -356,12 +399,9 @@ export default defineConfig(
           ],
         },
       ],
-      // The core's UI and other plugins never import a plugin's UI files
-      // (ADR-0030, decision 10).
-      'mannie/plugin-boundaries': ['error', { libFolder: join(desktopApp, 'src/lib'), plugins: pluginIds }],
-      // Visible text comes from the Paraglide message catalog (ADR-0019).
       'no-restricted-syntax': [
         'error',
+        // Visible text comes from the Paraglide message catalog (ADR-0019).
         {
           message: 'Visible text comes from the message catalog (ADR-0019): call a message function.',
           selector: 'SvelteText[value=/[A-Za-z]/]:not(SvelteStyleElement > SvelteText)',
@@ -369,6 +409,12 @@ export default defineConfig(
         {
           message: 'Visible text comes from the message catalog (ADR-0019): call a message function.',
           selector: `SvelteAttribute[key.name=/^(?:${textAttributes.join('|')})$/] > SvelteLiteral[value=/[A-Za-z]/]`,
+        },
+        // Calls reach the core only through the generated bindings, whose
+        // transport is the SDK's (ADR-0034, decision 9).
+        {
+          message: "Tauri's internals are the transport's: call commands through the generated bindings.",
+          selector: "Identifier[name='__TAURI_INTERNALS__']",
         },
       ],
 
@@ -427,7 +473,7 @@ export default defineConfig(
   },
   {
     name: 'mannie/e2e',
-    files: ['tests/e2e/**'],
+    files: ['tests/e2e/**', 'plugins/*/tests/e2e/**', 'tests/fixtures/plugins/*/tests/e2e/**'],
     rules: {
       // The end-to-end tests print the measurements that the validation records cite.
       'no-console': 'off',

@@ -402,6 +402,32 @@ mod tests {
     }
 
     #[test]
+    fn a_plugin_tool_s_result_reads_back_and_one_without_its_plugin_reads_as_unknown() {
+        let stored = |outcome: serde_json::Value| -> ToolCallDocument {
+            serde_json::from_value(serde_json::json!({
+                "callId": "call_1",
+                "tool": "notes_find",
+                "status": "completed",
+                "result": { "outcome": outcome, "output": "2 notes." },
+            }))
+            .unwrap()
+        };
+
+        let complete = stored(serde_json::json!({ "kind": "plugin", "plugin": "notes" }));
+        let without_plugin = stored(serde_json::json!({ "kind": "plugin" }));
+
+        assert_eq!(
+            complete.result.unwrap().outcome,
+            ToolOutcome::Plugin {
+                plugin: "notes".to_owned()
+            }
+        );
+        let result = without_plugin.result.unwrap();
+        assert_eq!(result.outcome, ToolOutcome::Unknown);
+        assert_eq!(result.output, "2 notes.");
+    }
+
+    #[test]
     fn a_result_round_trips_through_the_document() {
         let mut document = ToolCallDocument::receiving("call_1".to_owned(), "edit_file".to_owned());
         document.activity = Some("Fixing the typo".to_owned());

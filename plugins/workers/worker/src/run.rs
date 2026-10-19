@@ -1,4 +1,4 @@
-//! The configuration that the commands work with (docs/features/workers/
+//! The configuration that the commands work with (plugins/workers/docs/
 //! service.md): `run` and `service run` refuse a configuration that the
 //! worker's own account can change, and the commands for root or the
 //! administrators read the installed one.
@@ -7,7 +7,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
-use mannie_types::clock::{Clock, SystemClock};
+use mannie_host_kit::types::SystemClock;
+use mannie_plugin_sdk::contracts::Clock;
 
 use crate::access;
 use crate::cli::{ConfigArgument, RunArguments};
@@ -30,7 +31,7 @@ pub(crate) fn configuration(arguments: &RunArguments, folders: &Folders) -> anyh
     let data_dir = arguments.data_dir.as_deref().map(absolute).transpose()?;
     let missing = matches!(file.try_exists(), Ok(false));
     if let (true, None, Some(data_dir)) = (missing, &arguments.config.config, &data_dir) {
-        let name = mannie_tools::hostname();
+        let name = crate::host::hostname();
         return Ok(config::without_file(&name, data_dir.clone(), folders));
     }
     let mut config = config::load(&file, folders, SystemClock.now())?;

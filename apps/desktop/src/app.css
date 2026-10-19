@@ -2,6 +2,10 @@
 @import "tw-animate-css";
 @import "shadcn-svelte/tailwind.css";
 
+/* The plugins' UI lives in their folders, outside the app's (ADR-0035, decision 7). */
+@source "../../../plugins/*/ui";
+@source "../../../tests/fixtures/plugins/*/ui";
+
 @custom-variant dark (&:is(.dark *));
 
 :root {

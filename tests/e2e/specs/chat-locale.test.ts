@@ -26,13 +26,12 @@ import {
   axeViolations,
   openSettings,
   setPluginEnabled,
+  switchToPseudoLocale,
   uncataloguedText,
   waitForAnimations,
   waitForApp,
 } from '../support/page.ts';
 import { MODELS, type ProviderServer, startProviderServer } from '../support/provider-server.ts';
-
-const PSEUDO_LOCALE = 'en-XA';
 
 async function documentLanguage(): Promise<string> {
   return browser.execute(() => document.documentElement.lang);
@@ -80,11 +79,7 @@ describe('the chat and window views in the pseudo-locale', () => {
     await waitForApp();
     await addProfile(provider.baseUrl, { model: MODELS.reasoning, name: 'Profile', interface: 'responses' });
     await addProfile(provider.baseUrl, { model: MODELS.tools, name: 'Tools', useTools: true });
-    await openInterfaceSettings();
-    await $('#interface-language').click();
-    await $(`[data-slot="select-item"][data-value="${PSEUDO_LOCALE}"]`).click();
-    await browser.waitUntil(async () => (await documentLanguage()) === PSEUDO_LOCALE, { timeout: 15_000 });
-    await waitForApp();
+    await switchToPseudoLocale();
   });
 
   after(async () => {
@@ -240,8 +235,9 @@ describe('the chat and window views in the pseudo-locale', () => {
   });
 
   it('shows only catalog text on every page of the settings', async () => {
-    // The Workers settings show while the Workers plugin is on.
-    await setPluginEnabled('workers', true);
+    // A plugin's settings show while the plugin is on; the fixture plugin
+    // stands for the plugins, whose own specs check their pages.
+    await setPluginEnabled('example', true);
     for (const section of [
       'shell.interface',
       'chat.providers',
@@ -250,7 +246,7 @@ describe('the chat and window views in the pseudo-locale', () => {
       'tools.settings',
       'child-agents.settings',
       'plugins.settings',
-      'workers.settings',
+      'example.settings',
     ]) {
       await openSettings(section);
 

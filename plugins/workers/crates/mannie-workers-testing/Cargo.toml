@@ -1,0 +1,42 @@
+[package]
+name = "mannie-workers-testing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The Workers plugin's test tools: a worker served over the link on loopback with relays that break the link, the delegation harness, and a master with a hub on loopback. Only tests and the smoke test's master use it (ADR-0035, decision 6)."
+license.workspace = true
+publish.workspace = true
+
+# The master of the worker service's smoke tests in CI, which plugin.toml
+# builds as a helper of the worker.
+[[example]]
+name = "smoke-master"
+
+[dependencies]
+futures-util = { workspace = true }
+hyper-util = { workspace = true }
+# The worker's runtime and the redaction of its leases, as the worker sets
+# them up.
+mannie-host-kit = { workspace = true }
+mannie-link = { workspace = true }
+mannie-link-worker = { workspace = true }
+# The core's test runtime and the parts of the core that tests use
+# (ADR-0034, decision 1).
+mannie-plugin-harness = { workspace = true }
+mannie-plugin-sdk = { workspace = true, features = ["manifest", "testing"] }
+# The master's library with its hook for a channel to a test worker.
+mannie-workers = { workspace = true, features = ["testing"] }
+rustls = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
+# The key in the middle, which accepts TLS with a key of its own.
+tokio-rustls = { workspace = true }
+tonic = { workspace = true }
+tower = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

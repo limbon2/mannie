@@ -1,8 +1,8 @@
 # The toolchains every job needs, as `task setup` installs them on a
 # workstation: the Rust toolchain from rust-toolchain.toml, Node.js, pnpm from
-# packageManager, Task, cargo-deny and tauri-driver, the pnpm packages and, on
-# Linux, the system libraries of the desktop app. Actions are pinned by commit
-# SHA.
+# packageManager, Task, cargo-deny and tauri-driver, the pnpm packages, the
+# crates that every Cargo workspace's lock pins and, on Linux, the system
+# libraries of the desktop app. Actions are pinned by commit SHA.
 name: Set up the toolchains
 description: Installs the pinned toolchains, the Rust tools and the pnpm packages.
 
@@ -60,3 +60,9 @@ runs:
     - name: Install the pnpm packages
       shell: bash
       run: pnpm install --frozen-lockfile
+
+    # `task gen` resolves the launcher offline, from the crates that the
+    # committed locks pin (ADR-0035, decision 5).
+    - name: Fetch the crates of every Cargo workspace
+      shell: bash
+      run: node scripts/plugins/each.mjs -- cargo fetch --locked --manifest-path {manifest}

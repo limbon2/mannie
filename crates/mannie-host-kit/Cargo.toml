@@ -1,0 +1,19 @@
+[package]
+name = "mannie-host-kit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The host kit: what a program that a plugin ships, such as the worker, uses of the core. It re-exports by name what such a composition root needs from the runtime, the tools, the store, logging and the provider (ADR-0034, decision 12)."
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+mannie-logging = { workspace = true }
+mannie-provider = { workspace = true }
+mannie-runtime = { workspace = true }
+mannie-store = { workspace = true }
+mannie-tools = { workspace = true }
+mannie-types = { workspace = true }
+
+[lints]
+workspace = true

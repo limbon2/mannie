@@ -1,6 +1,7 @@
 // @ts-check
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
   cargoVersion,
@@ -9,10 +10,12 @@ import {
   isValidSignature,
   keyFingerprint,
   newKeyPair,
+  pluginChangelogs,
   releaseNotes,
   signature,
   withCargoVersion,
   withPackageVersion,
+  withPluginChanges,
   withReleasedChangelog,
 } from '../../scripts/release.mjs';
 
@@ -94,6 +97,109 @@ describe('withReleasedChangelog', () => {
 
   it('refuses a version that already has a section', () => {
     assert.throws(() => withReleasedChangelog(CHANGELOG, '0.1.0', '2026-12-01'), /already has a section/);
+  });
+});
+
+/**
+ * A plugin's changelog with the given Unreleased section.
+ * @param {string} unreleased
+ */
+function pluginChangelog(unreleased) {
+  return `# Changelog of the plugin\n\nIntro.\n\n## Unreleased\n${unreleased}`;
+}
+
+describe('withPluginChanges', () => {
+  it("moves each plugin's changes under their kinds and the plugin's name, and empties the plugins' sections", () => {
+    const workers = pluginChangelog('\n### Fixed\n\n- A worker reconnects.\n\n### Added\n\n- Worker groups.\n');
+    const images = pluginChangelog('\n### Added\n\n- Images from the clipboard.\n');
+
+    const folded = withPluginChanges(CHANGELOG, [
+      { name: 'Workers', path: 'plugins/workers/CHANGELOG.md', text: workers },
+      { name: 'Images', path: 'plugins/images/CHANGELOG.md', text: images },
+    ]);
+
+    assert.equal(
+      folded.changelog,
+      [
+        '# Changelog',
+        '',
+        'Intro.',
+        '',
+        '## Unreleased',
+        '',
+        '### Added',
+        '',
+        '- The worker service.',
+        '',
+        '#### Workers',
+        '',
+        '- Worker groups.',
+        '',
+        '#### Images',
+        '',
+        '- Images from the clipboard.',
+        '',
+        '### Fixed',
+        '',
+        '#### Workers',
+        '',
+        '- A worker reconnects.',
+        '',
+        '## 0.1.0 - 2026-11-01',
+        '',
+        '### Added',
+        '',
+        '- Chat.',
+        '',
+      ].join('\n'),
+    );
+    assert.deepEqual(folded.plugins, [pluginChangelog(''), pluginChangelog('')]);
+    assert.match(
+      withReleasedChangelog(folded.changelog, '0.2.0', '2026-12-01'),
+      /## 0\.2\.0 - 2026-12-01\n\n### Added/u,
+    );
+  });
+
+  it('changes nothing when no plugin has changes', () => {
+    const plugins = [{ name: 'Workers', path: 'plugins/workers/CHANGELOG.md', text: pluginChangelog('\n') }];
+
+    assert.deepEqual(withPluginChanges(CHANGELOG, plugins), { changelog: CHANGELOG, plugins: [plugins[0]?.text] });
+  });
+
+  it('refuses a plugin changelog without Unreleased, with an unknown kind or with a change outside a kind', () => {
+    const plugin = (/** @type {string} */ text) => [{ name: 'Workers', path: 'plugins/workers/CHANGELOG.md', text }];
+
+    assert.throws(
+      () => withPluginChanges(CHANGELOG, plugin('# Changelog\n')),
+      /plugins\/workers\/CHANGELOG\.md has no "## Unreleased"/u,
+    );
+    assert.throws(
+      () => withPluginChanges(CHANGELOG, plugin(pluginChangelog('\n### Notes\n\n- A note.\n'))),
+      /"Notes", which is not one of/u,
+    );
+    assert.throws(
+      () => withPluginChanges(CHANGELOG, plugin(pluginChangelog('\n- A loose change.\n'))),
+      /outside a kind of change/u,
+    );
+  });
+});
+
+describe('pluginChangelogs', () => {
+  it("reads the changelogs of the plugins that ship, with their names from their catalogs, and not the fixture's", () => {
+    const repository = fileURLToPath(new URL('../../', import.meta.url));
+
+    const changelogs = pluginChangelogs(repository);
+
+    assert.deepEqual(
+      changelogs.map(({ name, path }) => ({ name, path })),
+      [
+        { name: 'Workers', path: 'plugins/workers/CHANGELOG.md' },
+        { name: 'Images', path: 'plugins/images/CHANGELOG.md' },
+      ],
+    );
+    for (const changelog of changelogs) {
+      assert.match(changelog.text, /^## Unreleased$/mu);
+    }
   });
 });
 

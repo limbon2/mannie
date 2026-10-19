@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                        |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                                       |
-| Last updated | 2026-10-16                                                                                                                                                                             |
+| Last updated | 2026-10-19                                                                                                                                                                             |
 | Related      | [Repository](repository.md), [Releasing](releasing.md), [Security](../architecture/security.md), [Extension points](../architecture/extension-points.md), [AGENTS.md](../../AGENTS.md) |
 
 ## 1. Definition of Done
@@ -19,7 +19,7 @@ Production quality from the first commit (D2) means that every merged change mee
 | Data          | Migrations are forward-only and tested from the previous release's fixture database.                                                                                                                                                |
 | UI            | Components added through the shadcn-svelte CLI. All visible text comes from the message catalog. Keyboard operable, WCAG 2.1 AA, with loading, empty and error states. Checked on WebView2 and WebKitGTK, and in the pseudo-locale. |
 | Observability | New paths have tracing spans and structured fields, and errors carry stable codes.                                                                                                                                                  |
-| Documentation | The feature document is current, an ADR exists for every architectural change, and the changelog has a line.                                                                                                                        |
+| Documentation | The feature document is current, an ADR exists for every architectural change, and the changelog, or the plugin's changelog, has a line.                                                                                            |
 | Formatting    | `task fmt:check` and `task lint` pass without new suppressions. A justified suppression is narrow and explained in a comment.                                                                                                       |
 | Dependencies  | A new dependency passes the license gate, and the change says why it is needed.                                                                                                                                                     |
 | Performance   | No benchmark gets more than 10% worse without a recorded reason.                                                                                                                                                                    |
@@ -36,6 +36,7 @@ Nothing reaches `main` as a placeholder: no stubbed security checks, no TODO in 
 - Serialization: serde with explicit field naming. Enums that cross versions accept unknown variants.
 - Time and IDs: UTC everywhere, UUIDv7 for IDs, and an injected clock in code that depends on time.
 - Secrets: the redacting secret type from `mannie-types`, never a plain `String`.
+- Plugins: a plugin's crates depend only on `mannie-plugin-sdk`, crates of their own plugin and third-party crates, their tests also on `mannie-plugin-harness`, and the plugin's programs and the crates that only they use also on `mannie-host-kit` ([ADR-0034](../adr/0034-build-plugins-on-a-plugin-sdk.md), decision 2). The library crates that a plugin's entry crate ships write files, run processes and open sockets only through the SDK's services or under a grant of the manifest's `[native]`, and never suppress that rule ([ADR-0035](../adr/0035-find-plugins-at-build-time-in-folders-of-their-own.md), decision 6).
 
 ## 3. TypeScript and Svelte
 
@@ -43,7 +44,7 @@ Nothing reaches `main` as a placeholder: no stubbed security checks, no TODO in 
 - Svelte 5 runes only, forced for project files. `$app/state` instead of `$app/stores`. State lives in `.svelte.ts` modules.
 - The structure of `apps/desktop/src/lib/` is described in the [desktop app](../architecture/desktop-app.md#6-frontend-structure) document. Code is sorted by kind: components, state, helpers, types and slot registrations each have a folder, and an area's files carry its name. Feature UI reaches the shell only through its slots.
 - IPC goes only through the generated bindings. There is no `invoke` with a string command name, and no `fetch`.
-- Visible text comes only from the message functions that Paraglide JS generates from `apps/desktop/messages/` ([ADR-0019](../adr/0019-keep-visible-text-in-message-catalogs.md)). Components contain no literal UI text, and dates, numbers and durations go through `Intl`.
+- Visible text comes only from the message functions that Paraglide JS generates from `apps/desktop/messages/` and the plugins' catalogs ([ADR-0019](../adr/0019-keep-visible-text-in-message-catalogs.md)). Components contain no literal UI text, and dates, numbers and durations go through `Intl`.
 - UI components follow [ADR-0006](../adr/0006-use-shadcn-svelte-through-its-cli.md): CLI-added shadcn-svelte components in `components/ui/`, composition in `components/app/`.
 - Styling uses Tailwind CSS utilities and the theme tokens. There are no hard-coded colors and no per-feature global stylesheets.
 - Tools: ESLint with typescript-eslint and eslint-plugin-svelte; Prettier with prettier-plugin-svelte and prettier-plugin-tailwindcss; `svelte-check` with zero warnings.
@@ -117,11 +118,11 @@ A flaky test is quarantined within a day and fixed within a week.
 - One SemVer version covers the desktop app and the worker ([ADR-0018](../adr/0018-release-from-tagged-builds.md)).
 - Development is trunk-based on `main`, with short-lived branches and squash merges.
 - Commit messages follow Conventional Commits with a scope: `type(scope): summary` in lowercase imperative. The types are `feat`, `fix`, `perf`, `refactor`, `test`, `docs`, `build`, `ci` and `chore`.
-- `CHANGELOG.md` follows Keep a Changelog 1.1.0. Each change adds one line, written for the owner, under Unreleased. A release turns that section into the version's notes.
+- `CHANGELOG.md` follows Keep a Changelog 1.1.0. Each change adds one line, written for the owner, under Unreleased. A release turns that section into the version's notes. A change to a plugin goes into the plugin's `plugins/<id>/CHANGELOG.md`, which a release moves into Mannie's changelog under the plugin's name.
 
 ## 11. Documentation
 
-- Documents live in `docs/` as Markdown, with Mermaid diagrams.
+- Documents live in `docs/` as Markdown, with Mermaid diagrams, and a plugin's in its folder's `docs/`.
 - Every document opens with a status table. Product, roadmap, architecture and engineering documents number their second-level headings.
 - Facts about third-party components carry the date they were verified.
 - Documents link to each other instead of repeating each other.

@@ -266,7 +266,7 @@ function commandSummary(outcome: Extract<ToolOutcome, { kind: 'command_ran' }>):
   }
 }
 
-/** What a finished call did, or `null` when the intent says more: it failed, or this version cannot read its outcome. */
+/** What a finished call did, or `null` when the intent says more: it failed, it is a plugin's tool, or this version cannot read its outcome. */
 function outcomeSummary(outcome: ToolOutcome): string | null {
   switch (outcome.kind) {
     case 'command_ran': {
@@ -305,6 +305,10 @@ function outcomeSummary(outcome: ToolOutcome): string | null {
     }
     case 'output_read': {
       return m.tools_done_output_read({ first: outcome.firstLine, last: outcome.lastLine });
+    }
+    case 'plugin': {
+      // SDK 1's plugin tools report no outcome of their own, so the call is named by its tool.
+      return null;
     }
     case 'read': {
       return outcome.totalLines === 0

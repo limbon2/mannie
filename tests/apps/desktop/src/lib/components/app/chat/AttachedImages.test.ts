@@ -1,5 +1,5 @@
 // The images of the message that the owner writes, below the message box
-// (docs/features/images.md, adding images), rendered on the server side: a
+// (plugins/images/docs/README.md, adding images), rendered on the server side: a
 // spinner while an image is prepared, its thumbnail once it is ready, a
 // button that removes it, and why an image was not added.
 import { render } from 'svelte/server';

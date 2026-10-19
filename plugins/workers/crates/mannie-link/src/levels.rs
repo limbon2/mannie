@@ -1,4 +1,4 @@
-//! Versions and feature levels (docs/features/workers/
+//! Versions and feature levels (plugins/workers/docs/
 //! compatibility-and-updates.md): the master works with a worker of its own
 //! minor version or the one before it, and each package of the link has a
 //! feature level, of which both sides use the lower.

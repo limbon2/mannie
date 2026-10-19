@@ -32,7 +32,7 @@ pub trait CredentialVault: Send + Sync + fmt::Debug + 'static {
     fn delete(&self, reference: &str) -> Result<(), VaultError>;
     /// A wait that ends once a credential is saved under `reference`, for a
     /// vault whose credentials arrive while runs wait for them: a worker's
-    /// leases (docs/features/workers/credential-leases.md). `None`, the
+    /// leases (plugins/workers/docs/credential-leases.md). `None`, the
     /// default, for a vault whose credentials never arrive by themselves.
     fn arrival(&self, _reference: &str) -> Option<BoxFuture<'static, ()>> {
         None

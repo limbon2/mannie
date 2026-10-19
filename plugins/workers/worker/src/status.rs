@@ -1,4 +1,4 @@
-//! `status` (docs/features/workers/service.md): whether the configuration
+//! `status` (plugins/workers/docs/service.md): whether the configuration
 //! is valid, whether the service runs, whether the worker is paired and
 //! with which key, and where it listens. It never opens the database.
 

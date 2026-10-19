@@ -1,5 +1,5 @@
 // @ts-check
-// The link's contracts only grow (ADR-0002, ADR-0016; docs/features/workers/
+// The link's contracts only grow (ADR-0002, ADR-0016; plugins/workers/docs/
 // compatibility-and-updates.md). `buf breaking` compares the protobuf files
 // with two baselines: the merge base with the base branch, which catches a
 // breaking change in a branch or in uncommitted work, and the newest release

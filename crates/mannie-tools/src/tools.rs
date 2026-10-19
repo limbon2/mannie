@@ -140,9 +140,10 @@ pub(crate) fn page_bounds(
     (offset, usize::try_from(limit).unwrap_or(usize::MAX))
 }
 
-/// The failure of work that the owner stopped. The runtime records the call
-/// as canceled, so the model never reads it.
-pub(crate) fn stopped() -> ToolFailure {
+/// The failure of a tool's work that the owner stopped, which the system
+/// tools and the runtime's adapter of plugins' tools both give. The runtime
+/// records the call as canceled, so the model never reads it.
+pub fn stopped() -> ToolFailure {
     ToolFailure::IoError {
         kind: "the work was stopped".to_owned(),
     }

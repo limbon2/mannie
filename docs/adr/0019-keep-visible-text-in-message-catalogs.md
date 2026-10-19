@@ -7,6 +7,8 @@
 | Deciders | Owner                                                                                                                                                                                                                                                          |
 | Related  | [ADR-0005](0005-build-the-ui-with-sveltekit-as-a-static-spa.md), [ADR-0007](0007-generate-ipc-bindings-from-rust.md), [Desktop app](../architecture/desktop-app.md#10-languages), [Extension points](../architecture/extension-points.md#311-message-catalogs) |
 
+Later changes: [ADR-0035](0035-find-plugins-at-build-time-in-folders-of-their-own.md) refines decisions 1, 6 and 8: the core and each plugin keep catalogs that compile into one catalog for each locale.
+
 ## Context
 
 Verified 2026-10-13:

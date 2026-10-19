@@ -7,6 +7,8 @@
 | Deciders | Owner                                                                                                                                                  |
 | Related  | [ADR-0004](0004-keep-system-access-in-the-rust-core.md), [ADR-0008](0008-one-workspace-two-binaries.md), [Desktop app](../architecture/desktop-app.md) |
 
+Later changes: [ADR-0034](0034-build-plugins-on-a-plugin-sdk.md) supersedes decision 3 in part: the build generates an inlined Tauri plugin for each of Mannie's plugins. [ADR-0035](0035-find-plugins-at-build-time-in-folders-of-their-own.md) supersedes decision 2 in part: `mannie-desktop-core` and `mannie-desktop` both use Tauri.
+
 ## Context
 
 Verified 2026-10-13:

@@ -130,6 +130,34 @@ export async function leaveSettings(): Promise<void> {
 }
 
 /**
+ * Opens what a plugin may use on the Plugins page, from the keyboard. The
+ * plugin is found by its ID, so this works in the pseudo-locale.
+ */
+export async function openPluginUses(id: string): Promise<void> {
+  await browser.execute((selector: string) => {
+    document.querySelector<HTMLElement>(selector)?.focus();
+  }, `[data-plugin="${id}"] [data-plugin-uses-trigger]`);
+  await browser.keys(Key.Enter);
+  await $(`[data-plugin="${id}"] [data-plugin-uses]`).waitForDisplayed();
+}
+
+/** The pseudo-locale of the validation builds (scripts/pseudo-locale.mjs). */
+export const PSEUDO_LOCALE = 'en-XA';
+
+/** Shows the interface in the pseudo-locale, from the interface settings, and waits until the window does. */
+export async function switchToPseudoLocale(): Promise<void> {
+  await openSettings('shell.interface');
+  await $('#interface-language').waitForDisplayed();
+  await $('#interface-language').click();
+  await $(`[data-slot="select-item"][data-value="${PSEUDO_LOCALE}"]`).click();
+  await browser.waitUntil(async () => (await browser.execute(() => document.documentElement.lang)) === PSEUDO_LOCALE, {
+    timeout: 15_000,
+    timeoutMsg: 'the window did not show the pseudo-locale',
+  });
+  await waitForApp();
+}
+
+/**
  * Turns a plugin on or off with its switch on the Plugins page, and waits
  * until the core reports the state that the switch asked for. The switch is
  * found by the plugin's ID, so this works in the pseudo-locale. A plugin with

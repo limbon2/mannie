@@ -28,7 +28,7 @@ pub enum ApprovalReason {
     /// (docs/features/chat/projects.md, moving a conversation into a project).
     MoveToProject,
     /// On a worker: a path lies outside the folders that the worker's ceiling
-    /// allows (docs/features/workers/host-and-ceiling.md, the ceiling).
+    /// allows (plugins/workers/docs/host-and-ceiling.md, the ceiling).
     OutsideAllowedFolders,
     /// On a worker: the ceiling's mode asks for this change, which lies
     /// inside the allowed folders.

@@ -7,7 +7,7 @@
   import type { MessageImages } from '#lib/state/message-images.svelte.js';
 
   // The images of the message that the owner writes, below the message box
-  // (docs/features/images.md, adding images): a chip for each, with its
+  // (plugins/images/docs/README.md, adding images): a chip for each, with its
   // thumbnail once its source prepared it, and why an image was not added.
   let { images }: { images: MessageImages } = $props();
 </script>

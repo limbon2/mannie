@@ -1,0 +1,216 @@
+{
+  "$defs": {
+    "CratesSection": {
+      "additionalProperties": false,
+      "description": "The `[crates]` table of a manifest: the crates from a registry that only\nthis plugin may use. The build's boundary check refuses every direct\ndependency on one of them from outside the plugin's folder, except from\nanother crate of the same list, and two plugins that list one crate\n(ADR-0035, decision 6). The host only shows the names on the Plugins\npage.",
+      "properties": {
+        "exclusive": {
+          "default": [],
+          "description": "The crates' names, such as `tonic`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "NativeSection": {
+      "additionalProperties": false,
+      "description": "The `[native]` table of a manifest: the categories of direct native calls\nthat the plugin's library crates make past the SDK's services, each with\nits reason, such as the sockets of Workers' link. Clippy refuses the\ncalls of every other category in the library crates that the plugin's\nentry crate ships, and `task plugins:grants` lists the grants (ADR-0035,\ndecision 6). The host only shows the categories on the Plugins page.",
+      "properties": {
+        "file-writes": {
+          "default": null,
+          "description": "Why the library crates write files themselves.",
+          "type": ["string", "null"]
+        },
+        "processes": {
+          "default": null,
+          "description": "Why the library crates start or end processes themselves.",
+          "type": ["string", "null"]
+        },
+        "sockets": {
+          "default": null,
+          "description": "Why the library crates open sockets themselves.",
+          "type": ["string", "null"]
+        }
+      },
+      "type": "object"
+    },
+    "ProgramSection": {
+      "additionalProperties": false,
+      "description": "A `[[programs]]` table of a manifest: a program of the plugin's workspace\nthat ships beside the desktop app, such as Workers' worker service. The\nbuild, the end-to-end tests, CI and the release iterate over these\n(ADR-0035, decision 10). The host only shows the package on the Plugins\npage.",
+      "properties": {
+        "crates": {
+          "default": [],
+          "description": "The library crates of the plugin that only the program uses, such as\nthe worker's side of Workers' link. They and the program may depend\non the host kit, which the plugin's entry crate never reaches\n(ADR-0034, decision 2).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "e2e": {
+          "default": false,
+          "description": "Whether `task e2e` builds the program for the end-to-end tests.",
+          "type": "boolean"
+        },
+        "headless": {
+          "default": false,
+          "description": "Whether the program runs without a window, so that no crate of\nTauri, GTK or WebKitGTK may reach it on any target (V5).",
+          "type": "boolean"
+        },
+        "package": {
+          "description": "The program's package in the plugin's workspace, whose binary has the\nsame name, such as `mannie-worker`.",
+          "type": "string"
+        },
+        "self-check": {
+          "default": [],
+          "description": "The arguments with which the release runs the built program to\ncheck it, such as `[\"self-check\", \"--json\"]`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "signed": {
+          "default": false,
+          "description": "Whether the release signs the program's archives. A signed program\nembeds the release key: its `self-check` reports the key's SHA-256\nas `releaseKeySha256`, and `update --check <archive>` checks an\narchive's signature with it.",
+          "type": "boolean"
+        },
+        "smoke": {
+          "$ref": "#/$defs/SmokeSection",
+          "description": "The program's smoke tests in CI."
+        },
+        "targets": {
+          "default": [],
+          "description": "The targets that a release builds the program for, such as\n`x86_64-unknown-freebsd`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": ["package"],
+      "type": "object"
+    },
+    "RustSection": {
+      "additionalProperties": false,
+      "description": "The `[rust]` table of a manifest: the plugin's Rust code.",
+      "properties": {
+        "entry": {
+          "description": "The package in the plugin's folder that calls `export_plugin!`, such\nas `mannie-workers`.",
+          "type": "string"
+        }
+      },
+      "required": ["entry"],
+      "type": "object"
+    },
+    "SecretsSection": {
+      "additionalProperties": false,
+      "description": "The `[secrets]` table of a manifest: the names of the plugin's entries in\nthe credential store. A name is words of ASCII letters, digits, `.`, `_`\nand `-`, joined by single slashes. A name may appear twice in one list,\nbecause the store keys an entry by its name and both name the same\nentry, but it may not appear in both lists.",
+      "properties": {
+        "entries": {
+          "default": [],
+          "description": "Entries that the store keeps as `<id>/<entry>`, so a plugin reaches\nonly its own (ADR-0034, decision 10).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "legacy": {
+          "default": [],
+          "description": "Names from before plugins had their own entries, which the store\nkeeps as they are. The core's credential provider accepts only the\nnames of its frozen list, which holds Workers' `link/master-key`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "SmokeSection": {
+      "additionalProperties": false,
+      "description": "The `smoke` table of a program: scripts in the plugin's folder that CI\nruns as root or elevated on a disposable machine. CI first builds the\nprogram in the debug profile, then runs `cargo build` in the plugin's\nworkspace with `helpers` as its arguments, and passes the debug target\nfolder to the script as its one argument.",
+      "properties": {
+        "helpers": {
+          "default": [],
+          "description": "The arguments of the `cargo build` that builds what the scripts need\nbesides the program, such as a test master; none for nothing more.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "unix": {
+          "default": null,
+          "description": "The `sh` script for Linux and FreeBSD.",
+          "type": ["string", "null"]
+        },
+        "windows": {
+          "default": null,
+          "description": "The PowerShell script for Windows.",
+          "type": ["string", "null"]
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A plugin's manifest, as `plugin.toml` holds it.\n\nA plugin's code never sees it: the plugin's entry crate embeds the text,\nand the host parses and checks it before it starts the plugin.",
+  "properties": {
+    "crates": {
+      "$ref": "#/$defs/CratesSection",
+      "description": "The third-party crates that only this plugin may use."
+    },
+    "id": {
+      "description": "The plugin's ID, which equals the name of its folder, `plugins/<id>/`.",
+      "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$",
+      "type": "string"
+    },
+    "native": {
+      "$ref": "#/$defs/NativeSection",
+      "description": "The direct native calls that the plugin's library crates make past\nthe SDK's services."
+    },
+    "order": {
+      "description": "Where the plugin starts and where the Plugins page lists it: the\nlowest first, and plugins with the same order by their IDs.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "programs": {
+      "description": "The programs that ship beside the desktop app, built from the\nplugin's workspace, as `[[programs]]` tables.",
+      "items": {
+        "$ref": "#/$defs/ProgramSection"
+      },
+      "type": "array"
+    },
+    "rust": {
+      "$ref": "#/$defs/RustSection",
+      "description": "The plugin's Rust code."
+    },
+    "sdk": {
+      "description": "The major version of the plugin SDK that the plugin builds on. The\nhost refuses a plugin for another major with the code\n`sdk_incompatible`.",
+      "format": "uint16",
+      "maximum": 65535,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "secrets": {
+      "$ref": "#/$defs/SecretsSection",
+      "description": "The plugin's entries in the credential store, which the service\n`secrets` reaches."
+    },
+    "services": {
+      "additionalProperties": {
+        "format": "uint16",
+        "maximum": 65535,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "default": {},
+      "description": "The services that the plugin uses, each with the major version that\nit builds on, such as `executor-host = 1`. The host binds these and\nno other.",
+      "type": "object"
+    }
+  },
+  "required": ["id", "sdk", "order", "rust"],
+  "title": "Manifest",
+  "type": "object"
+}

@@ -1,4 +1,4 @@
-//! Calls whose answers are lost (V6; docs/features/workers/delegation.md,
+//! Calls whose answers are lost (V6; plugins/workers/docs/delegation.md,
 //! acceptance): the link goes down after a call reached the worker and
 //! before its answer reached the master. The relay loses what the worker
 //! sends until the call took effect on the worker, then drops the link. The
@@ -10,15 +10,15 @@
 
 use std::time::Duration;
 
-use mannie_link::testing::{LinkedWorker, Relay};
-use mannie_provider::ProviderEvent;
-use mannie_provider::testing::Step;
-use mannie_runtime::testing::{reply, tool_calls};
-use mannie_types::ids::TaskId;
-use mannie_types::run::FinishReason;
-use mannie_types::tasks::{AssignedTaskState, TaskState};
-use mannie_workers::testing::{LinkedMaster, delegation};
+use mannie_plugin_harness::provider::ProviderEvent;
+use mannie_plugin_harness::provider::Step;
+use mannie_plugin_harness::runtime::{reply, tool_calls};
+use mannie_plugin_harness::types::FinishReason;
+use mannie_plugin_sdk::contracts::TaskId;
+use mannie_plugin_sdk::contracts::{AssignedTaskState, TaskState};
 use mannie_workers::view::WorkerStatus;
+use mannie_workers_testing::master::{LinkedMaster, delegation};
+use mannie_workers_testing::worker::{LinkedWorker, Relay};
 use serde_json::json;
 
 /// A worker, a relay in front of it, and a master paired through the relay.
@@ -135,11 +135,11 @@ async fn a_decision_whose_answer_was_lost_runs_its_call_once() {
         async move {
             let approval = master_task.approval.unwrap();
             runtime
-                .decide_approval(mannie_types::tools::DecideApproval {
+                .decide_approval(mannie_plugin_sdk::contracts::DecideApproval {
                     conversation_id: master_task.conversation_id,
                     part_id: approval.part_id,
                     digest: approval.call.request.unwrap().digest,
-                    choice: mannie_types::tools::ApprovalChoice::AllowOnce,
+                    choice: mannie_plugin_sdk::contracts::ApprovalChoice::AllowOnce,
                 })
                 .await
         }
@@ -166,7 +166,7 @@ async fn a_decision_whose_answer_was_lost_runs_its_call_once() {
 
     assert_eq!(
         decided.unwrap_err(),
-        mannie_types::tools::ToolsError::TaskTargetUnreachable {
+        mannie_plugin_sdk::contracts::ToolsError::TaskTargetUnreachable {
             kind: mannie_workers::WORKERS_KIND.to_owned(),
             target: "build-01".to_owned(),
         },

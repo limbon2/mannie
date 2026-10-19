@@ -16,7 +16,7 @@
 //! part, and every change of its state takes the machine's next state
 //! version, which the assigning side follows.
 
-use mannie_types::ids::{ConversationId, PartId, TaskId, TurnId};
+use mannie_types::ids::{ConversationId, PartId, ProfileId, TaskId, TurnId};
 use mannie_types::tasks::{TaskExecutorRef, TaskState};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
@@ -115,6 +115,12 @@ const SELECT_ACTIVE_EXECUTOR_TASKS: &str = concat!(
     " FROM runtime_tasks WHERE executor_kind = ?1 AND state IN ('accepted', 'running') \
      ORDER BY created_at, id"
 );
+// The run that gave an executor's task wrote the part that assigned it, so
+// the run's profile is the profile that the task runs with. The joins are
+// outer, so a part that names no run still finds the task.
+const SELECT_EXECUTOR_TASK_PROFILE: &str = "SELECT t.state, r.profile_id FROM runtime_tasks t \
+     LEFT JOIN runtime_parts p ON p.id = t.part_id LEFT JOIN runtime_runs r ON r.id = p.run_id \
+     WHERE t.id = ?1 AND t.executor_kind = ?2";
 // The task conversations of a parent that an executor serves. The WHERE
 // clause also keeps SQLite from reading the upsert's ON as a join.
 const QUEUE_OUTBOX_OF_CHILDREN: &str = "INSERT INTO runtime_executor_outbox \
@@ -150,6 +156,7 @@ pub(crate) const STATEMENTS: &[&str] = &[
     UPDATE_EXECUTOR_STATE,
     END_EXECUTOR_TASK,
     SELECT_ACTIVE_EXECUTOR_TASKS,
+    SELECT_EXECUTOR_TASK_PROFILE,
     QUEUE_OUTBOX_OF_CHILDREN,
     SELECT_OUTBOX,
     DELETE_OUTBOX_ENTRY,
@@ -180,6 +187,18 @@ pub struct NewExecutorTask {
     pub follow_up: bool,
     /// Whether the parent continues while the target works.
     pub background: bool,
+}
+
+/// Whether a task of an executor is active, and the profile of the run that
+/// gave it, which bind the credentials that the executor may borrow for the
+/// task (ADR-0034, decision 5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutorTaskProfile {
+    /// Whether the task has not ended.
+    pub active: bool,
+    /// The profile of the run that wrote the part that assigned the task, or
+    /// `None` when that part names no run.
+    pub profile_id: Option<ProfileId>,
 }
 
 /// A deletion of a task conversation that waits for its executor.
@@ -684,6 +703,41 @@ impl Store {
             ))
         })
         .await?
+    }
+
+    /// Whether a task of the executor of `kind` is active, and the profile
+    /// of the run that gave it. A follow-up has a row and a part of its own,
+    /// so it names the profile of the run that gave the follow-up, whichever
+    /// profile the earlier task ran with. `None` for an unknown task, and
+    /// for a task of another executor or of none.
+    pub async fn executor_task_profile(
+        &self,
+        task_id: &TaskId,
+        kind: &str,
+    ) -> Result<Option<ExecutorTaskProfile>, RuntimeStoreError> {
+        let task = task_id.as_str().to_owned();
+        let kind = kind.to_owned();
+        let row: Option<(String, Option<String>)> = self
+            .read(move |connection| {
+                connection
+                    .prepare_cached(SELECT_EXECUTOR_TASK_PROFILE)?
+                    .query_row(params![task, kind], |row| Ok((row.get(0)?, row.get(1)?)))
+                    .optional()
+            })
+            .await?;
+        let Some((state, profile_id)) = row else {
+            return Ok(None);
+        };
+        let state = TaskState::parse(&state)
+            .ok_or_else(|| RuntimeStoreError::invalid(format!("unknown task state {state:?}")))?;
+        let profile_id = profile_id
+            .as_deref()
+            .map(|id| parse_id(id, ProfileId::parse))
+            .transpose()?;
+        Ok(Some(ExecutorTaskProfile {
+            active: state.is_active(),
+            profile_id,
+        }))
     }
 
     /// The deletions that wait for an executor, the oldest first.

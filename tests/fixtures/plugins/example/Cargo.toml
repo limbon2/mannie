@@ -1,0 +1,130 @@
+# The fixture plugin's Cargo workspace (ADR-0035, decision 9), with a lock of
+# its own.
+[workspace]
+resolver = "3"
+members = ["crates/mannie-example"]
+
+# The root's package settings, which scripts/check-workspace-lints.mjs keeps
+# equal (ADR-0035, decision 4).
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.99"
+license = "Apache-2.0"
+publish = false
+
+# Every dependency of the plugin's crates is declared once, here. The plugin
+# SDK and the plugin harness are the only path dependencies outside this
+# folder: the plugin's crates reach the core through the SDK, and their tests
+# through the harness (ADR-0034, decisions 1 and 2).
+[workspace.dependencies]
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+mannie-example = { path = "crates/mannie-example" }
+# What the plugin's tests use of the core (ADR-0034, decision 1).
+mannie-plugin-harness = { path = "../../../../crates/mannie-plugin-harness" }
+# The plugin SDK, which the plugin builds on (ADR-0034).
+mannie-plugin-sdk = { path = "../../../../crates/mannie-plugin-sdk" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+specta = { version = "=2.0.0-rc.25", features = ["derive"] }
+thiserror = "2.0.21"
+tokio = "1.53.2"
+tracing = "0.1.44"
+uuid = { version = "1.28.0", features = ["v7"] }
+
+# The root's lint policy, which scripts/check-workspace-lints.mjs keeps equal.
+[workspace.lints.clippy]
+# Suppressions use #[expect], which fails once the lint no longer fires.
+allow_attributes = "warn"
+# Every suppression says why.
+allow_attributes_without_reason = "warn"
+# assert!(result.is_ok()) hides the error that a failing test should show.
+assertions_on_result_states = "warn"
+# Arc::clone(&value) shows that only a reference count is copied.
+clone_on_ref_ptr = "warn"
+dbg_macro = "warn"
+debug_assert_with_mut_call = "warn"
+empty_drop = "warn"
+empty_enum_variants_with_brackets = "warn"
+empty_structs_with_brackets = "warn"
+# Only main decides when the process ends.
+exit = "warn"
+# A From implementation that can panic should be TryFrom.
+fallible_impl_from = "warn"
+filetype_is_file = "warn"
+float_cmp_const = "warn"
+# Generic hasher parameters on every map argument add noise to an application.
+implicit_hasher = "allow"
+infinite_loop = "warn"
+# Ignoring a Result needs a handled error or a stated reason.
+let_underscore_must_use = "warn"
+lossy_float_literal = "warn"
+# Errors keep their source.
+map_err_ignore = "warn"
+mem_forget = "warn"
+# Error enums document their variants and stable codes.
+missing_errors_doc = "allow"
+mixed_read_write_in_expression = "warn"
+# One module layout: foo.rs beside foo/, never foo/mod.rs.
+mod_module_files = "warn"
+multiple_unsafe_ops_per_block = "warn"
+# #[must_use] goes where ignoring a value is a bug, not on every pure function.
+must_use_candidate = "allow"
+mutex_atomic = "warn"
+needless_raw_strings = "warn"
+negative_feature_names = "warn"
+# A panic is a bug (engineering standards); tests may panic.
+panic = "warn"
+path_buf_push_overwrite = "warn"
+pedantic = { level = "warn", priority = -1 }
+# Output goes through tracing; a command-line subcommand that prints says why.
+print_stderr = "warn"
+print_stdout = "warn"
+rc_mutex = "warn"
+redundant_clone = "warn"
+redundant_feature_names = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+same_name_method = "warn"
+# A lock guard kept alive by a match scrutinee is a deadlock waiting to happen.
+significant_drop_in_scrutinee = "warn"
+string_lit_chars_any = "warn"
+suspicious_xor_used_as_pow = "warn"
+todo = "warn"
+try_err = "warn"
+# unsafe is limited to the platform modules of the process supervisor, and
+# every block there explains why it is sound (engineering standards).
+undocumented_unsafe_blocks = "warn"
+unimplemented = "warn"
+unnecessary_safety_comment = "warn"
+unnecessary_safety_doc = "warn"
+unnecessary_self_imports = "warn"
+unused_result_ok = "warn"
+# unwrap appears only in tests; expect states the invariant that makes it safe.
+unwrap_used = "warn"
+use_self = "warn"
+verbose_file_reads = "warn"
+wildcard_dependencies = "warn"
+
+[workspace.lints.rust]
+let_underscore_drop = "warn"
+meta_variable_misuse = "warn"
+# Public types implement Debug, so tracing can record them.
+missing_debug_implementations = "warn"
+# Every crate and every public item has a doc comment.
+missing_docs = "warn"
+non_ascii_idents = "warn"
+redundant_lifetimes = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unit_bindings = "warn"
+# Items that other crates cannot reach are pub(crate), so each crate's API stays small.
+unreachable_pub = "warn"
+# Platform modules of the process supervisor opt in with
+# #![expect(unsafe_code, reason = "...")].
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+unused_import_braces = "warn"
+unused_lifetimes = "warn"
+unused_macro_rules = "warn"
+unused_qualifications = "warn"

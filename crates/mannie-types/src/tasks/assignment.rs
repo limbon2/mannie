@@ -9,7 +9,7 @@ use crate::ids::{ConversationId, ProfileId, TaskId};
 use crate::provider::{ApiInterface, ReasoningEffort, ServerKind};
 
 /// The provider profile of the reply that delegated a task, without its
-/// credential (docs/features/workers/credential-leases.md, the profile of a
+/// credential (plugins/workers/docs/credential-leases.md, the profile of a
 /// task). The credential follows as a lease.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

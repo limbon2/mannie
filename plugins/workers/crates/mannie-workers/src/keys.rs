@@ -7,8 +7,9 @@ use std::sync::Arc;
 
 use base64::Engine as _;
 use mannie_link::keys::LinkKey;
-use mannie_plugins::{PluginSecrets, SecretsError};
-use mannie_types::secret::Secret;
+use mannie_plugin_sdk::BoxFuture;
+use mannie_plugin_sdk::contracts::Secret;
+use mannie_plugin_sdk::services::secrets::{SecretsApi, SecretsError};
 
 use crate::hub::{KeyStoreError, MasterKeyStore};
 
@@ -19,12 +20,12 @@ pub const MASTER_KEY_ENTRY: &str = "link/master-key";
 /// reads it on first use and makes it before the first pairing.
 #[derive(Debug)]
 pub struct SecretsKeyStore {
-    secrets: Arc<dyn PluginSecrets>,
+    secrets: Arc<dyn SecretsApi>,
 }
 
 impl SecretsKeyStore {
-    /// A key store in `secrets`.
-    pub fn new(secrets: Arc<dyn PluginSecrets>) -> Self {
+    /// A key store in `secrets`, the plugin's service `secrets`.
+    pub fn new(secrets: Arc<dyn SecretsApi>) -> Self {
         Self { secrets }
     }
 }
@@ -34,29 +35,36 @@ fn unavailable(error: SecretsError) -> KeyStoreError {
     KeyStoreError::Unavailable
 }
 
-impl MasterKeyStore for SecretsKeyStore {
-    fn load(&self) -> Result<Option<LinkKey>, KeyStoreError> {
-        let Some(text) = self.secrets.load(MASTER_KEY_ENTRY).map_err(unavailable)? else {
-            return Ok(None);
-        };
-        let pkcs8 = base64::engine::general_purpose::STANDARD
-            .decode(text.expose())
-            .map_err(|_invalid| {
-                tracing::error!("the master's key in the credential store is not base64");
-                KeyStoreError::Invalid
-            })?;
-        LinkKey::from_pkcs8(pkcs8).map(Some).map_err(|_invalid| {
-            tracing::error!("the master's key in the credential store is not a valid key");
+/// The master's key from the base64 of its PKCS#8 document.
+fn decode(text: &Secret) -> Result<LinkKey, KeyStoreError> {
+    let pkcs8 = base64::engine::general_purpose::STANDARD
+        .decode(text.expose())
+        .map_err(|_invalid| {
+            tracing::error!("the master's key in the credential store is not base64");
             KeyStoreError::Invalid
+        })?;
+    LinkKey::from_pkcs8(pkcs8).map_err(|_invalid| {
+        tracing::error!("the master's key in the credential store is not a valid key");
+        KeyStoreError::Invalid
+    })
+}
+
+impl MasterKeyStore for SecretsKeyStore {
+    fn load(&self) -> BoxFuture<'static, Result<Option<LinkKey>, KeyStoreError>> {
+        let loading = self.secrets.load(MASTER_KEY_ENTRY);
+        Box::pin(async move {
+            match loading.await.map_err(unavailable)? {
+                Some(text) => decode(&text).map(Some),
+                None => Ok(None),
+            }
         })
     }
 
-    fn save(&self, key: &LinkKey) -> Result<(), KeyStoreError> {
+    fn save(&self, key: &LinkKey) -> BoxFuture<'static, Result<(), KeyStoreError>> {
         // The text moves into the secret, which clears it when it drops.
         let text = Secret::new(base64::engine::general_purpose::STANDARD.encode(key.pkcs8()));
-        self.secrets
-            .save(MASTER_KEY_ENTRY, &text)
-            .map_err(unavailable)
+        let saving = self.secrets.save(MASTER_KEY_ENTRY, text);
+        Box::pin(async move { saving.await.map_err(unavailable) })
     }
 }
 
@@ -66,58 +74,104 @@ mod tests {
     use std::sync::{Arc, Mutex, PoisonError};
 
     use mannie_link::keys::LinkKey;
-    use mannie_plugins::{PluginSecrets, SecretsError};
-    use mannie_types::secret::Secret;
+    use mannie_plugin_sdk::BoxFuture;
+    use mannie_plugin_sdk::contracts::Secret;
+    use mannie_plugin_sdk::services::secrets::{SecretsApi, SecretsError};
 
     use super::{MASTER_KEY_ENTRY, SecretsKeyStore};
     use crate::hub::{KeyStoreError, MasterKeyStore};
 
     /// Secrets in memory, limited to the master's key as the desktop app
-    /// limits the plugin's entries.
+    /// limits the plugin's entries, whose store can be made unavailable.
     #[derive(Debug, Default)]
-    struct Entries(Mutex<BTreeMap<String, String>>);
+    struct Entries {
+        entries: Mutex<BTreeMap<String, String>>,
+        unavailable: Mutex<bool>,
+    }
 
-    impl PluginSecrets for Entries {
-        fn load(&self, entry: &str) -> Result<Option<Secret>, SecretsError> {
-            if entry != MASTER_KEY_ENTRY {
-                return Err(SecretsError::NotPermitted);
-            }
-            let entries = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-            Ok(entries.get(entry).cloned().map(Secret::new))
+    impl Entries {
+        fn set_unavailable(&self) {
+            *self
+                .unavailable
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = true;
         }
 
-        fn save(&self, entry: &str, secret: &Secret) -> Result<(), SecretsError> {
-            if entry != MASTER_KEY_ENTRY {
-                return Err(SecretsError::NotPermitted);
+        fn check(&self, entry: &str) -> Result<(), SecretsError> {
+            if *self
+                .unavailable
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+            {
+                return Err(SecretsError::Unavailable);
             }
-            let mut entries = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-            entries.insert(entry.to_owned(), secret.expose().to_owned());
-            Ok(())
+            if entry == MASTER_KEY_ENTRY {
+                Ok(())
+            } else {
+                Err(SecretsError::NotPermitted)
+            }
         }
     }
 
-    #[test]
-    fn the_master_key_is_kept_and_read_back_under_its_entry() {
+    impl SecretsApi for Entries {
+        fn load(&self, entry: &str) -> BoxFuture<'static, Result<Option<Secret>, SecretsError>> {
+            let loaded = self.check(entry).map(|()| {
+                let entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
+                entries.get(entry).cloned().map(Secret::new)
+            });
+            Box::pin(std::future::ready(loaded))
+        }
+
+        fn save(
+            &self,
+            entry: &str,
+            secret: Secret,
+        ) -> BoxFuture<'static, Result<(), SecretsError>> {
+            let saved = self.check(entry).map(|()| {
+                let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
+                entries.insert(entry.to_owned(), secret.expose().to_owned());
+            });
+            Box::pin(std::future::ready(saved))
+        }
+    }
+
+    #[tokio::test]
+    async fn the_master_key_is_kept_and_read_back_under_its_entry() {
         let entries = Arc::new(Entries::default());
         let store = SecretsKeyStore::new(Arc::<Entries>::clone(&entries));
         let key = LinkKey::generate().unwrap();
 
-        let before = store.load().unwrap();
-        store.save(&key).unwrap();
-        let after = store.load().unwrap().unwrap();
+        let before = store.load().await.unwrap();
+        store.save(&key).await.unwrap();
+        let after = store.load().await.unwrap().unwrap();
 
         assert!(before.is_none());
         assert!(after.pin() == key.pin(), "the same key comes back");
     }
 
-    #[test]
-    fn a_stored_key_that_is_not_a_key_is_refused() {
+    #[tokio::test]
+    async fn a_stored_key_that_is_not_a_key_is_refused() {
         let entries = Arc::new(Entries::default());
         entries
-            .save(MASTER_KEY_ENTRY, &Secret::new("not base64!".to_owned()))
+            .save(MASTER_KEY_ENTRY, Secret::new("not base64!".to_owned()))
+            .await
             .unwrap();
         let store = SecretsKeyStore::new(entries);
 
-        assert_eq!(store.load().unwrap_err(), KeyStoreError::Invalid);
+        assert_eq!(store.load().await.unwrap_err(), KeyStoreError::Invalid);
+    }
+
+    #[tokio::test]
+    async fn an_unavailable_credential_store_reports_the_key_store_unavailable() {
+        let entries = Arc::new(Entries::default());
+        entries.set_unavailable();
+        let store = SecretsKeyStore::new(entries);
+        let key = LinkKey::generate().unwrap();
+
+        assert_eq!(store.load().await.unwrap_err(), KeyStoreError::Unavailable);
+        assert_eq!(
+            store.save(&key).await.unwrap_err(),
+            KeyStoreError::Unavailable
+        );
     }
 }

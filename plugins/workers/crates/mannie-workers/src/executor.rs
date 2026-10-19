@@ -10,29 +10,28 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use futures_util::FutureExt;
-use futures_util::future::BoxFuture;
-use futures_util::stream::BoxStream;
-use mannie_provider::ToolDefinition;
-use mannie_runtime::{
-    CredentialLender, ExecutorRefusal, ExecutorSection, ExecutorServices, FollowUpPlan, PlanCall,
-    PlanError, SubmitError, TaskExecutor, TaskPlan, TaskSubmission,
+use mannie_plugin_sdk::contracts::{
+    AssignedTaskState, ChatError, Checkpoint, CheckpointRef, Clock, ConversationId,
+    ConversationUpdate, DecideApproval, EarlierTurns, LoadEarlierTurns, MAX_INSTRUCTION_BYTES,
+    MAX_TITLE_CHARS, ProfileId, ProfileSnapshot, ReadToolOutput, TASK_TITLE_ARGUMENT,
+    TaskAssignment, TaskExecutorRef, TaskId, ToolOutputPage, ToolsError, UtcMillis, WorkItem,
+    WorkerId, clean_label, task_still_running,
 };
-use mannie_tools::{clean_label, with_activity};
-use mannie_types::chat::{ChatError, CheckpointRef, EarlierTurns, LoadEarlierTurns};
-use mannie_types::clock::{Clock, UtcMillis};
-use mannie_types::ids::{ConversationId, ProfileId, TaskId, WorkerId};
-use mannie_types::tasks::{
-    AssignedTaskState, MAX_INSTRUCTION_BYTES, MAX_TITLE_CHARS, ProfileSnapshot, TaskAssignment,
-    TaskExecutorRef,
+use mannie_plugin_sdk::points::executors::{
+    ExecutorRefusal, ExecutorSection, FollowUpPlan, PlanCall, PlanError, SubmitError, TaskExecutor,
+    TaskPlan, TaskSubmission,
 };
-use mannie_types::tools::{DecideApproval, ReadToolOutput, ToolOutputPage, ToolsError};
-use mannie_types::transcript::{Checkpoint, ConversationUpdate};
+use mannie_plugin_sdk::points::tools::ToolSpec;
+use mannie_plugin_sdk::services::credentials::CredentialsApi;
+use mannie_plugin_sdk::services::executor_host::ExecutorHostApi;
+use mannie_plugin_sdk::{BoxFuture, BoxStream};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::watch;
 use tokio::time::Instant;
 
 use crate::delegation::{Delegation, DelegationError};
+use crate::plugin::ACTIVE_TASKS;
 use crate::texts::{self, THE_WORKER, worker_label};
 use crate::view::{WorkerStatus, WorkerView};
 
@@ -144,8 +143,12 @@ pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 /// The executor's state, which its followers share.
 #[derive(Debug)]
 pub(crate) struct Shared {
-    pub(crate) services: ExecutorServices,
-    pub(crate) lender: CredentialLender,
+    /// The rows, states, documents and outbox of Workers' tasks, bound to
+    /// the kind `workers`.
+    pub(crate) host: Arc<dyn ExecutorHostApi>,
+    /// Lends the credential of a task's profile for its lease, bound to the
+    /// active tasks of the kind `workers`.
+    pub(crate) credentials: Arc<dyn CredentialsApi>,
     pub(crate) delegation: Arc<dyn Delegation>,
     pub(crate) clock: Arc<dyn Clock>,
     /// The tasks whose submission a run is making now, which a follower's
@@ -201,29 +204,28 @@ impl Shared {
         change: impl FnOnce(&mut WorkerTaskDocument),
     ) -> Option<WorkerTaskDocument> {
         let _changing = self.documents.lock().await;
-        let row = match self.services.executor_task(task).await {
+        // The executor host answers only for Workers' own tasks, so a task of
+        // another kind reads as no task.
+        let row = match self.host.task(task.clone()).await {
             Ok(Some(row)) => row,
             Ok(None) => return None,
-            Err(error) => {
-                tracing::error!(%error, error.code = error.code(), task = %task, "could not read a worker task");
+            Err(failure) => {
+                tracing::error!(error.code = failure.code(), task = %task, "could not read a worker task");
                 return None;
             }
         };
-        let execution = row
-            .executor
-            .filter(|execution| execution.kind == WORKERS_KIND)?;
-        let mut document = WorkerTaskDocument::of(execution.document.as_deref(), task);
+        let mut document = WorkerTaskDocument::of(row.document.as_deref(), task);
         change(&mut document);
         document.version = DOCUMENT_VERSION;
         match self
-            .services
-            .set_executor_document(WORKERS_KIND, task, document.to_json())
+            .host
+            .set_document(task.clone(), document.to_json())
             .await
         {
             Ok(true) => Some(document),
             Ok(false) => None,
-            Err(error) => {
-                tracing::error!(%error, error.code = error.code(), task = %task, "could not store the document of a worker task");
+            Err(failure) => {
+                tracing::error!(error.code = failure.code(), task = %task, "could not store the document of a worker task");
                 None
             }
         }
@@ -234,7 +236,7 @@ impl Shared {
 /// everything.
 ///
 /// The runtime holds the executor while the plugin is on, and the executor
-/// holds the runtime's services for it; [`WorkersExecutor::stop`] and the
+/// holds the core's services that its plugin was granted; [`WorkersExecutor::stop`] and the
 /// runtime's removal of the plugin end that cycle when the plugin stops.
 #[derive(Debug, Clone)]
 pub struct WorkersExecutor {
@@ -260,11 +262,11 @@ fn address_host(address: &str) -> &str {
 
 /// Whether a profile whose base URL names this computer's loopback cannot be
 /// reached from a worker: it names the worker's own host there, and the
-/// credential must not go to it (docs/features/workers/credential-leases.md).
+/// credential must not go to it (plugins/workers/docs/credential-leases.md).
 /// A worker whose own address is a loopback address runs on this computer,
 /// as in tests.
 fn unreachable_profile(profile: &ProfileSnapshot, view: &WorkerView) -> bool {
-    let profile_loopback = mannie_provider::Url::parse(&profile.base_url)
+    let profile_loopback = url::Url::parse(&profile.base_url)
         .ok()
         .and_then(|url| url.host_str().map(is_loopback_host))
         .unwrap_or(false);
@@ -272,11 +274,7 @@ fn unreachable_profile(profile: &ProfileSnapshot, view: &WorkerView) -> bool {
 }
 
 fn refusal(code: &str, worker: &str, text: String) -> ExecutorRefusal {
-    ExecutorRefusal {
-        code: code.to_owned(),
-        target: Some(worker.to_owned()),
-        text,
-    }
+    ExecutorRefusal::new(code, Some(worker.to_owned()), text)
 }
 
 /// Why a worker cannot take a task now, if it cannot.
@@ -362,7 +360,7 @@ fn delegate_parameters(workers: &[String]) -> Value {
                 "type": "boolean",
             },
             "title": {
-                "description": mannie_runtime::texts::TASK_TITLE_ARGUMENT,
+                "description": TASK_TITLE_ARGUMENT,
                 "type": "string",
             },
             "worker": {
@@ -381,15 +379,15 @@ impl WorkersExecutor {
     /// its tool at once; [`WorkersExecutor::start`] starts following the
     /// workers' tasks.
     pub fn new(
-        services: ExecutorServices,
-        lender: CredentialLender,
+        host: Arc<dyn ExecutorHostApi>,
+        credentials: Arc<dyn CredentialsApi>,
         delegation: Arc<dyn Delegation>,
         clock: Arc<dyn Clock>,
     ) -> Self {
         Self {
             shared: Arc::new(Shared {
-                services,
-                lender,
+                host,
+                credentials,
                 delegation,
                 clock,
                 submitting: Mutex::default(),
@@ -406,6 +404,31 @@ impl WorkersExecutor {
     /// is cancelled.
     pub fn stop(&self) {
         self.shared.stopping.send_replace(true);
+    }
+
+    /// Workers' work in progress, which turning it off lets go: its tasks
+    /// that have not ended, as one item with the code `active_tasks`, or no
+    /// item when there are none (ADR-0034, decision 4). Tasks that cannot be
+    /// read are logged and count as none, so the switch still turns Workers
+    /// off.
+    pub fn work(&self) -> BoxFuture<'static, Vec<WorkItem>> {
+        let host = Arc::clone(&self.shared.host);
+        Box::pin(async move {
+            match host.active_tasks().await {
+                Ok(tasks) if tasks.is_empty() => Vec::new(),
+                Ok(tasks) => {
+                    let count = u32::try_from(tasks.len()).unwrap_or(u32::MAX);
+                    vec![WorkItem::new(ACTIVE_TASKS, count)]
+                }
+                Err(failure) => {
+                    tracing::error!(
+                        error.code = failure.code(),
+                        "could not read the tasks of Workers"
+                    );
+                    Vec::new()
+                }
+            }
+        })
     }
 
     /// The paired worker that a call names by its name, with the refusal of
@@ -487,25 +510,24 @@ impl TaskExecutor for WorkersExecutor {
     }
 
     /// `delegate_task`, offered while a worker is paired, so Mannie without
-    /// workers offers what it offered before (ADR-0027, decision 2).
-    fn tool(&self) -> Option<ToolDefinition> {
+    /// workers offers what it offered before (ADR-0027, decision 2). The
+    /// core adds the activity argument to the parameters.
+    fn tool(&self) -> Option<ToolSpec> {
         let names: Vec<String> = self.shared.workers_now().iter().map(worker_label).collect();
         if names.is_empty() {
             return None;
         }
-        Some(ToolDefinition {
-            name: DELEGATE_TASK.to_owned(),
-            description: texts::DELEGATE_TASK.to_owned(),
-            parameters: with_activity(&delegate_parameters(&names)),
-        })
+        Some(ToolSpec::new(
+            DELEGATE_TASK,
+            texts::DELEGATE_TASK,
+            delegate_parameters(&names),
+        ))
     }
 
     fn section(&self) -> Option<ExecutorSection> {
         let workers = self.shared.workers_now();
-        (!workers.is_empty()).then(|| ExecutorSection {
-            position: WORKERS_SECTION_POSITION,
-            text: texts::workers(&workers),
-        })
+        (!workers.is_empty())
+            .then(|| ExecutorSection::new(WORKERS_SECTION_POSITION, texts::workers(&workers)))
     }
 
     fn outlives_reply(&self) -> bool {
@@ -528,13 +550,13 @@ impl TaskExecutor for WorkersExecutor {
         let options = SubmitOptions {
             read_only: arguments.read_only,
         };
-        Ok(TaskPlan {
-            target: target_of(&view, label),
+        Ok(TaskPlan::new(
+            target_of(&view, label),
             title,
-            instruction: arguments.instruction,
-            background: arguments.background,
-            options: serde_json::to_value(options).unwrap_or(Value::Null),
-        })
+            arguments.instruction,
+            arguments.background,
+            serde_json::to_value(options).unwrap_or(Value::Null),
+        ))
     }
 
     fn plan_follow_up(
@@ -568,10 +590,10 @@ impl TaskExecutor for WorkersExecutor {
         // A follow-up keeps what the worker may do as the instruction asks
         // anew; it reads only when the model narrows it again.
         let options = SubmitOptions { read_only: false };
-        Ok(FollowUpPlan {
-            target: target_of(&view, label),
-            options: serde_json::to_value(options).unwrap_or(Value::Null),
-        })
+        Ok(FollowUpPlan::new(
+            target_of(&view, label),
+            serde_json::to_value(options).unwrap_or(Value::Null),
+        ))
     }
 
     fn document(&self, submission: &TaskSubmission) -> Option<String> {
@@ -584,7 +606,7 @@ impl TaskExecutor for WorkersExecutor {
         .to_json()
     }
 
-    /// Submits a task to its worker (docs/features/workers/delegation.md,
+    /// Submits a task to its worker (plugins/workers/docs/delegation.md,
     /// submitting a task), and delivers its lease once the worker took it:
     /// the worker's run asks for the lease once it starts, and sending it
     /// now saves that round trip.
@@ -623,7 +645,7 @@ impl TaskExecutor for WorkersExecutor {
                     return Err(SubmitError::Refused(refusal(
                         codes::STILL_RUNNING,
                         &label,
-                        mannie_runtime::texts::task_still_running(submission.number),
+                        task_still_running(submission.number),
                     )));
                 }
                 Err(error) => {
@@ -641,7 +663,7 @@ impl TaskExecutor for WorkersExecutor {
                 })
                 .await;
             if state.state.is_active()
-                && let Ok(Some(row)) = shared.services.executor_task(&task).await
+                && let Ok(Some(row)) = shared.host.task(task.clone()).await
             {
                 crate::follow::lease_to(&shared, &worker, &row).await;
             }
@@ -783,7 +805,27 @@ fn tools_error(error: ToolsError, worker: &str) -> ToolsError {
 
 #[cfg(test)]
 mod tests {
-    use super::{address_host, is_loopback_host, parse_arguments};
+    use super::{address_host, delegate_parameters, is_loopback_host, parse_arguments};
+
+    #[test]
+    fn the_parameters_of_delegate_task_leave_the_activity_to_the_core() {
+        let parameters = delegate_parameters(&["build-01".to_owned(), "build-02".to_owned()]);
+
+        // The core adds the activity argument to an executor's tool, as to
+        // every other tool.
+        assert!(
+            !mannie_plugin_harness::tools::takes_activity(&parameters),
+            "{parameters}"
+        );
+        assert_eq!(
+            parameters["properties"]["worker"]["enum"],
+            serde_json::json!(["build-01", "build-02"])
+        );
+        assert_eq!(
+            parameters["required"],
+            serde_json::json!(["background", "instruction", "read_only", "title", "worker"])
+        );
+    }
 
     #[test]
     fn loopback_hosts_are_recognized_in_urls_and_addresses() {

@@ -1,7 +1,21 @@
 {
   "extends": "$app/tsconfig",
   "compilerOptions": {
+    "paths": {
+      "@mannie/plugin-sdk": ["./src/lib/sdk/index.ts"],
+      "@mannie/plugin-sdk/components/*": ["./src/lib/components/ui/*/index.ts"],
+      "@mannie/plugin-sdk/icons/*": ["./node_modules/@lucide/svelte/dist/icons/*.svelte.d.ts"],
+      "@mannie/plugin-sdk/*": ["./src/lib/sdk/*.ts"]
+    },
     "strict": true
   },
-  "include": ["src", "vite.config.ts", "../../tests/apps/desktop"]
+  "include": [
+    "src",
+    "vite.config.ts",
+    "../../tests/apps/desktop",
+    "../../plugins/*/ui",
+    "../../plugins/*/tests/ui",
+    "../../tests/fixtures/plugins/*/ui",
+    "../../tests/fixtures/plugins/*/tests/ui"
+  ]
 }

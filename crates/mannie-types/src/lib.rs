@@ -14,6 +14,7 @@ pub mod ids;
 pub mod images;
 pub mod interface;
 pub mod ipc;
+pub mod labels;
 pub mod links;
 pub mod mentions;
 pub mod plugins;

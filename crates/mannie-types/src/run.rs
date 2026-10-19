@@ -120,7 +120,7 @@ pub enum RunActivity {
         kinds: Vec<TaskKindCount>,
     },
     /// On a worker: waiting for the credential that the master leases to the
-    /// task, without a model slot (docs/features/workers/
+    /// task, without a model slot (plugins/workers/docs/
     /// credential-leases.md).
     WaitingForLease,
 }
@@ -271,7 +271,7 @@ pub enum RunFailure {
     #[error("the server does not support tools for this model")]
     ToolsUnsupported,
     /// On a worker: the master revoked the credential that it leased to the
-    /// task, which ends the task's run (docs/features/workers/
+    /// task, which ends the task's run (plugins/workers/docs/
     /// credential-leases.md).
     #[error("the master revoked the task's credential lease")]
     LeaseRevoked,

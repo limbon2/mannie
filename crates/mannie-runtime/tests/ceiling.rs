@@ -1,4 +1,4 @@
-//! A worker's ceiling through the loop (docs/features/workers/
+//! A worker's ceiling through the loop (plugins/workers/docs/
 //! host-and-ceiling.md, the ceiling; decision D21): a read-only task refuses a
 //! write and a command, an ask task asks for both, an autonomous task writes
 //! inside an allowed folder without asking and asks outside it, a host rule

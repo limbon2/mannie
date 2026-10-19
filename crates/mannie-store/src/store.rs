@@ -11,6 +11,7 @@ use rusqlite::{Connection, OpenFlags, Transaction};
 
 use crate::Durability;
 use crate::error::{DatabaseError, StoreError};
+use crate::plugin_store::{self, PluginModule, RegisteredModule};
 use crate::readers::Readers;
 use crate::schema::{self, CORE_MODULES, Schema, StoreModule};
 use crate::writer::{TransactError, Writer};
@@ -32,8 +33,8 @@ pub struct StoreOptions {
     /// The clock for timestamps and backup names.
     pub clock: Arc<dyn Clock>,
     /// The modules of the composition root's plugins, which follow the core's
-    /// modules (ADR-0030, decision 5).
-    pub modules: Vec<StoreModule>,
+    /// modules (ADR-0030, decision 5; ADR-0034, decision 7).
+    pub plugin_modules: Vec<PluginModule>,
 }
 
 impl StoreOptions {
@@ -44,15 +45,15 @@ impl StoreOptions {
             backup_directory,
             readers: DEFAULT_READERS,
             clock,
-            modules: Vec::new(),
+            plugin_modules: Vec::new(),
         }
     }
 
     /// Adds the modules of plugins, in the order that a new database applies
     /// them.
     #[must_use]
-    pub fn with_modules(mut self, modules: impl IntoIterator<Item = StoreModule>) -> Self {
-        self.modules.extend(modules);
+    pub fn with_plugin_modules(mut self, modules: impl IntoIterator<Item = PluginModule>) -> Self {
+        self.plugin_modules.extend(modules);
         self
     }
 }
@@ -73,6 +74,8 @@ struct Inner {
     clock: Arc<dyn Clock>,
     /// The names of the modules that the store opened with.
     modules: Vec<&'static str>,
+    /// The plugins' modules with their listed statements.
+    plugin_modules: Vec<RegisteredModule>,
 }
 
 impl Store {
@@ -86,21 +89,32 @@ impl Store {
     ///
     /// This blocks on file I/O: call it at startup or from a blocking task.
     pub fn open(path: &Path, options: &StoreOptions) -> Result<Self, StoreError> {
-        let modules: Vec<StoreModule> = CORE_MODULES
-            .iter()
-            .copied()
-            .chain(options.modules.iter().copied())
-            .collect();
-        Self::open_with_modules(path, options, &modules)
+        let mut modules: Vec<StoreModule> = CORE_MODULES.to_vec();
+        for plugin in &options.plugin_modules {
+            modules.push(plugin_store::schema_module(plugin)?);
+        }
+        Self::open_registering(path, options, &modules, &options.plugin_modules)
     }
 
     /// Opens the store with the given modules, in the order that a new
     /// database applies them. Tests use it to stand in for older and newer
     /// binaries.
+    #[cfg(test)]
     pub(crate) fn open_with_modules(
         path: &Path,
         options: &StoreOptions,
         modules: &[StoreModule],
+    ) -> Result<Self, StoreError> {
+        Self::open_registering(path, options, modules, &[])
+    }
+
+    /// Opens the store with `modules`, then prepares the listed statements of
+    /// each of `plugins`, whose modules are among `modules`.
+    fn open_registering(
+        path: &Path,
+        options: &StoreOptions,
+        modules: &[StoreModule],
+        plugins: &[PluginModule],
     ) -> Result<Self, StoreError> {
         let _span = tracing::info_span!("open_store", path = %path.display()).entered();
         let mut names: Vec<&'static str> = Vec::with_capacity(modules.len());
@@ -160,6 +174,12 @@ impl Store {
             tracing::info!(from = schema.user_version, "migrated the database");
         }
 
+        // The listed statements prepare against the migrated schema, on the
+        // read-write connection, before the store serves anything.
+        let plugin_modules = plugins
+            .iter()
+            .map(|plugin| plugin_store::register(&connection, plugin))
+            .collect();
         let readers = Arc::new(Readers::open(path, options.readers.max(1))?);
         let writer = Writer::start(connection, path)?;
         Ok(Self {
@@ -169,6 +189,7 @@ impl Store {
                 readers,
                 clock: Arc::clone(&options.clock),
                 modules: names,
+                plugin_modules,
             }),
         })
     }
@@ -192,11 +213,10 @@ impl Store {
             path: path.to_path_buf(),
             source: DatabaseError(source),
         };
-        let modules: Vec<StoreModule> = CORE_MODULES
-            .iter()
-            .chain(&options.modules)
-            .copied()
-            .collect();
+        let mut modules: Vec<StoreModule> = CORE_MODULES.to_vec();
+        for plugin in &options.plugin_modules {
+            modules.push(plugin_store::schema_module(plugin)?);
+        }
         let mut connection = Connection::open(path).map_err(open_failed)?;
         configure_connection(&connection).map_err(open_failed)?;
         enable_wal(&connection).map_err(open_failed)?;
@@ -210,6 +230,9 @@ impl Store {
                 readers,
                 clock: Arc::clone(&options.clock),
                 modules: modules.iter().map(|module| module.name).collect(),
+                // A database as 0.2.0 left it serves no plugin: tests seed it
+                // with SQL that no module lists.
+                plugin_modules: Vec::new(),
             }),
         })
     }
@@ -222,6 +245,11 @@ impl Store {
     /// The names of the modules that the store opened with.
     pub fn modules(&self) -> &[&'static str] {
         &self.inner.modules
+    }
+
+    /// The plugins' modules with their listed statements.
+    pub(crate) fn plugin_modules(&self) -> &[RegisteredModule] {
+        &self.inner.plugin_modules
     }
 
     pub(crate) fn clock(&self) -> &dyn Clock {

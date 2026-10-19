@@ -1,0 +1,21 @@
+{
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "example_plugin_name": "Example",
+  "example_plugin_description": "Notes for the core's tests, which validation builds bundle.",
+  "example_settings_title": "Example",
+  "example_settings_description": "The notes that the example plugin keeps.",
+  "example_note_label": "Note",
+  "example_add_note": "Add note",
+  "example_adding": "Adding the note…",
+  "example_add_failed_title": "The note was not added",
+  "example_error_storage_failed": "The example plugin could not store the note. Try again.",
+  "example_loading": "Loading the notes…",
+  "example_notes_label": "Notes",
+  "example_notes_empty_title": "No notes yet",
+  "example_notes_empty_description": "The notes that you add while the plugin is on show here.",
+  "example_notes_failed_title": "The notes could not be followed",
+  "example_try_again": "Try again",
+  "example_panel_title": "Example notes",
+  "example_command_group": "Example",
+  "example_command_add_note": "Add an example note…"
+}

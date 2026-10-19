@@ -68,6 +68,49 @@ pub struct PluginView {
     /// Why the plugin's last start failed, as the plugin's stable code, while
     /// its state is `failed`.
     pub failure: Option<String>,
+    /// What the plugin's manifest lets it use.
+    pub uses: PluginUses,
+}
+
+/// What a plugin's manifest lets it use, as the Plugins page lists it
+/// (ADR-0034, decision 13). The names are the manifest's and the core's, so
+/// the page shows them as code beside its own words.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginUses {
+    /// The core's services that the manifest declares, by name.
+    pub services: Vec<ServiceUse>,
+    /// The plugin's entries in the credential store, as the store names
+    /// them, such as `link/master-key`.
+    pub secrets: Vec<String>,
+    /// The commands that the plugin's UI may call, by name, as its
+    /// interface declares them (ADR-0034, decision 8).
+    pub commands: Vec<String>,
+    /// The channels that the plugin's UI may follow, by name.
+    pub channels: Vec<String>,
+    /// The programs that ship beside Mannie for the plugin, by their
+    /// packages, such as `mannie-worker`.
+    pub programs: Vec<String>,
+    /// The third-party crates that only the plugin may use, such as
+    /// `tonic`.
+    pub crates: Vec<String>,
+    /// The kinds of direct native calls that the manifest grants the
+    /// plugin's library crates past the SDK's services, as `[native]` names
+    /// them, such as `sockets` (ADR-0035, decision 6).
+    pub native: Vec<String>,
+}
+
+/// A service of the core that a plugin's manifest declares.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceUse {
+    /// The service's name, such as `executor-host`.
+    pub name: String,
+    /// The major version of the service that the plugin builds on.
+    pub major: u16,
+    /// Whether the service reaches sensitive data, such as provider
+    /// credentials.
+    pub sensitive: bool,
 }
 
 /// A message of the plugins channel: the plugins, first as they are and then
@@ -109,13 +152,42 @@ pub struct PluginRef {
     pub plugin_id: String,
 }
 
-/// The work that a plugin has in progress, which turning it off leaves as
-/// its feature document says.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+/// One kind of work that a plugin has in progress, which turning the plugin
+/// off lets go as its feature document says (ADR-0034, decision 4). The
+/// plugin's UI words it by its code.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+// Plugins build it with `new`, so a new field does not change every plugin
+// (ADR-0034, decision 1). A plain comment keeps this out of the TypeScript
+// bindings.
+#[non_exhaustive]
+pub struct WorkItem {
+    /// The plugin's code for the work, such as `active_tasks`.
+    pub code: String,
+    /// How much of the work is in progress, at least 1.
+    pub count: u32,
+}
+
+impl WorkItem {
+    /// A kind of work in progress, by the plugin's code and how much of it
+    /// there is.
+    pub fn new(code: impl Into<String>, count: u32) -> Self {
+        Self {
+            code: code.into(),
+            count,
+        }
+    }
+}
+
+/// The work that a plugin has in progress, which the switch asks about
+/// before it turns the plugin off. It is a list of items (ADR-0034, decision
+/// 15), so each plugin reports its own kinds of work.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginWork {
-    /// The tasks of the plugin's executor that have not ended.
-    pub active_tasks: u32,
+    /// Each kind of work in progress, in the plugin's order. Empty when
+    /// nothing is in progress.
+    pub items: Vec<WorkItem>,
 }
 
 /// Why a plugins command failed.
@@ -154,7 +226,10 @@ impl PluginsError {
 
 #[cfg(test)]
 mod tests {
-    use super::{PluginState, PluginView, PluginsError, PluginsSettings};
+    use super::{
+        PluginState, PluginUses, PluginView, PluginWork, PluginsError, PluginsSettings, ServiceUse,
+        WorkItem,
+    };
 
     #[test]
     fn views_and_errors_serialize_for_the_ui() {
@@ -163,6 +238,19 @@ mod tests {
             state: PluginState::Failed,
             enabled: true,
             failure: Some("storage_failed".to_owned()),
+            uses: PluginUses {
+                services: vec![ServiceUse {
+                    name: "credentials".to_owned(),
+                    major: 1,
+                    sensitive: true,
+                }],
+                secrets: vec!["link/master-key".to_owned()],
+                commands: vec!["pair_worker".to_owned()],
+                channels: vec!["subscribe_workers".to_owned()],
+                programs: vec!["mannie-worker".to_owned()],
+                crates: vec!["tonic".to_owned()],
+                native: vec!["sockets".to_owned()],
+            },
         };
         assert_eq!(
             serde_json::to_value(&view).unwrap(),
@@ -171,11 +259,54 @@ mod tests {
                 "state": "failed",
                 "enabled": true,
                 "failure": "storage_failed",
+                "uses": {
+                    "services": [{ "name": "credentials", "major": 1, "sensitive": true }],
+                    "secrets": ["link/master-key"],
+                    "commands": ["pair_worker"],
+                    "channels": ["subscribe_workers"],
+                    "programs": ["mannie-worker"],
+                    "crates": ["tonic"],
+                    "native": ["sockets"],
+                },
             })
         );
         assert_eq!(
             serde_json::to_value(PluginsError::UnknownPlugin).unwrap(),
             serde_json::json!({ "code": "unknown_plugin" })
+        );
+    }
+
+    #[test]
+    fn work_serializes_as_items_with_a_code_and_a_count() {
+        let busy = PluginWork {
+            items: vec![WorkItem::new("active_tasks", 2)],
+        };
+
+        assert_eq!(
+            serde_json::to_value(&busy).unwrap(),
+            serde_json::json!({ "items": [{ "code": "active_tasks", "count": 2 }] })
+        );
+        assert_eq!(
+            serde_json::to_value(PluginWork::default()).unwrap(),
+            serde_json::json!({ "items": [] })
+        );
+        assert_eq!(
+            serde_json::from_value::<PluginWork>(
+                serde_json::json!({ "items": [{ "code": "active_tasks", "count": 2 }] })
+            )
+            .unwrap(),
+            busy
+        );
+    }
+
+    #[test]
+    fn work_without_its_items_is_refused() {
+        let error = serde_json::from_value::<PluginWork>(serde_json::json!({ "activeTasks": 2 }))
+            .unwrap_err();
+
+        assert!(
+            error.to_string().contains("missing field `items`"),
+            "{error}"
         );
     }
 

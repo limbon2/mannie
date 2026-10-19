@@ -3,7 +3,8 @@
 // (docs/engineering/releasing.md):
 //
 //   node scripts/release.mjs version                   print the workspace version
-//   node scripts/release.mjs prepare <version>         set the version and date the changelog section
+//   node scripts/release.mjs prepare <version>         set the version in every workspace, move the plugins' changes into
+//                                                      the changelog and date its section
 //   node scripts/release.mjs notes <version>           print the changelog section of a version
 //   node scripts/release.mjs checksums <folder>        write SHA256SUMS for the files in a folder
 //   node scripts/release.mjs keygen <folder>           write a new Ed25519 signing key pair
@@ -18,9 +19,12 @@
 // worker's `self-check --json` reports for the key built into it.
 
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify } from 'node:crypto';
-import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { committedWorkspaces, manifestOf } from './plugins/lib/cargo.mjs';
+import { findPlugins, prefixOf, readRules } from './plugins/lib/manifests.mjs';
 
 /** A SemVer version without build metadata, such as 0.1.0 or 0.2.0-rc.1. */
 const VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/;
@@ -121,6 +125,96 @@ function sectionBody(lines, heading) {
   return next === -1 ? rest : rest.slice(0, next);
 }
 
+/** The kinds of change of a changelog section, in Keep a Changelog's order. */
+const CHANGE_KINDS = ['Added', 'Changed', 'Deprecated', 'Removed', 'Fixed', 'Security'];
+
+/**
+ * A plugin's changelog, `plugins/<id>/CHANGELOG.md`, whose unreleased
+ * changes a release moves into the root's changelog.
+ * @typedef {object} PluginChangelog
+ * @property {string} name the plugin's name, under which its changes appear
+ * @property {string} path for messages
+ * @property {string} text
+ */
+
+/**
+ * The Unreleased section of a changelog: where it starts and ends among the
+ * lines, and its changes by their kinds, without blank lines.
+ * @param {string[]} lines
+ * @param {string} path for messages
+ * @returns {{ changes: Map<string, string[]>, end: number, start: number }}
+ */
+function unreleasedSection(lines, path) {
+  const start = lines.indexOf(UNRELEASED_HEADING);
+  if (start === -1) {
+    throw new Error(`${path} has no "${UNRELEASED_HEADING}" section`);
+  }
+  const body = sectionBody(lines, start);
+  /** @type {Map<string, string[]>} */
+  const changes = new Map();
+  /** @type {string[] | null} */
+  let current = null;
+  for (const line of body.filter((candidate) => candidate.trim() !== '')) {
+    const kind = /^### (.+)$/u.exec(line)?.[1];
+    if (kind === undefined) {
+      if (current === null) {
+        throw new Error(`${path} lists ${JSON.stringify(line)} outside a kind of change such as "### Added"`);
+      }
+      current.push(line);
+    } else if (CHANGE_KINDS.includes(kind)) {
+      current = changes.get(kind) ?? [];
+      changes.set(kind, current);
+    } else {
+      throw new Error(
+        `${path} has the kind of change ${JSON.stringify(kind)}, which is not one of ${CHANGE_KINDS.join(', ')}`,
+      );
+    }
+  }
+  return { changes, end: start + 1 + body.length, start };
+}
+
+/**
+ * The root's changelog with each plugin's unreleased changes in its
+ * Unreleased section, under their kinds of change and the plugin's name, and
+ * the plugins' changelogs with their Unreleased sections emptied (ADR-0035,
+ * decision 11). Without a plugin's change, nothing changes.
+ * @param {string} changelog the root's
+ * @param {PluginChangelog[]} plugins in the order of the plugins
+ * @returns {{ changelog: string, plugins: string[] }}
+ */
+export function withPluginChanges(changelog, plugins) {
+  const unreleased = plugins.map((plugin) => {
+    const lines = plugin.text.split('\n');
+    return { lines, plugin, section: unreleasedSection(lines, plugin.path) };
+  });
+  const hasPluginChanges = unreleased.some(({ section }) => section.changes.size > 0);
+  if (!hasPluginChanges) {
+    return { changelog, plugins: plugins.map((plugin) => plugin.text) };
+  }
+  const lines = changelog.split('\n');
+  const root = unreleasedSection(lines, 'CHANGELOG.md');
+  /** @type {string[]} */
+  const merged = [UNRELEASED_HEADING, ''];
+  for (const kind of CHANGE_KINDS) {
+    const own = root.changes.get(kind) ?? [];
+    const fromPlugins = unreleased.flatMap(({ plugin, section }) => {
+      const changes = section.changes.get(kind) ?? [];
+      return changes.length > 0 ? [[`#### ${plugin.name}`, '', ...changes]] : [];
+    });
+    const parts = own.length > 0 ? [own, ...fromPlugins] : fromPlugins;
+    if (parts.length > 0) {
+      merged.push(`### ${kind}`, '', ...parts.flatMap((part) => [...part, '']));
+    }
+  }
+  const emptied = unreleased.map(({ lines: pluginLines, section }) =>
+    [...pluginLines.slice(0, section.start + 1), '', ...pluginLines.slice(section.end)].join('\n'),
+  );
+  return {
+    changelog: [...lines.slice(0, root.start), ...merged, ...lines.slice(root.end)].join('\n'),
+    plugins: emptied,
+  };
+}
+
 /**
  * The notes of a release: its changelog section without the heading.
  * @param {string} changelog
@@ -195,6 +289,38 @@ function readText(path) {
 }
 
 /**
+ * The changelogs of the plugins that releases ship, in the plugins' order,
+ * each with the plugin's name from its English catalog. A plugin without a
+ * changelog has no changes to move.
+ * @param {string} repository
+ * @returns {PluginChangelog[]}
+ */
+export function pluginChangelogs(repository) {
+  const found = findPlugins(repository, readRules(repository));
+  if (found.problems.length > 0) {
+    throw new Error(found.problems.join('\n'));
+  }
+  return found.plugins
+    .filter((plugin) => !plugin.validation)
+    .flatMap((plugin) => {
+      const path = `${plugin.folder}/CHANGELOG.md`;
+      if (!existsSync(join(repository, path))) {
+        return [];
+      }
+      /** @type {Record<string, unknown>} */
+      const catalog = JSON.parse(readText(join(repository, plugin.folder, 'messages', 'en.json')));
+      const key = `${prefixOf(plugin.id)}_plugin_name`;
+      const name = catalog[key];
+      if (typeof name !== 'string') {
+        throw new Error(
+          `${plugin.folder}/messages/en.json has no ${key}, the plugin's name in its changelog's changes`,
+        );
+      }
+      return [{ name, path, text: readText(join(repository, path)) }];
+    });
+}
+
+/**
  * Runs one command of the script.
  * @param {string[]} argumentList
  * @param {string} repository
@@ -209,12 +335,25 @@ function run(argumentList, repository) {
     case 'prepare': {
       const version = checkedVersion(rest[0]);
       const date = new Date().toISOString().slice(0, 10);
-      const cargo = join(repository, 'Cargo.toml');
-      writeFileSync(cargo, withCargoVersion(readText(cargo), version));
+      // The changelogs first, so that a release without changes stops before
+      // it writes anything. Each plugin's unreleased changes move into the
+      // root's section under the plugin's name (ADR-0035, decision 11).
+      const changelog = join(repository, 'CHANGELOG.md');
+      const plugins = pluginChangelogs(repository);
+      const folded = withPluginChanges(readText(changelog), plugins);
+      const released = withReleasedChangelog(folded.changelog, version, date);
+      // One version for every artifact (ADR-0018): the root's workspace and
+      // each plugin's carry it (ADR-0035, decision 5).
+      for (const workspace of committedWorkspaces(repository)) {
+        const cargo = join(repository, manifestOf(workspace));
+        writeFileSync(cargo, withCargoVersion(readText(cargo), version));
+      }
       const desktop = join(repository, 'apps', 'desktop', 'package.json');
       writeFileSync(desktop, withPackageVersion(readText(desktop), version));
-      const changelog = join(repository, 'CHANGELOG.md');
-      writeFileSync(changelog, withReleasedChangelog(readText(changelog), version, date));
+      writeFileSync(changelog, released);
+      for (const [index, plugin] of plugins.entries()) {
+        writeFileSync(join(repository, plugin.path), folded.plugins[index] ?? plugin.text);
+      }
       console.log(`release: set the version to ${version} and dated its changelog section ${date}`);
       return;
     }

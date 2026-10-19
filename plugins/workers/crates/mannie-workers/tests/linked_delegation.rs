@@ -1,4 +1,4 @@
-//! Delegation over the link (V6; docs/features/workers/delegation.md,
+//! Delegation over the link (V6; plugins/workers/docs/delegation.md,
 //! credential-leases.md): a task delegated through the master's runtime runs
 //! on the worker and reports; its lease never reaches the worker's files and
 //! the redactor forgets it; the owner answers the worker's approval through
@@ -13,20 +13,22 @@
 
 use std::time::Duration;
 
-use mannie_link::testing::{LinkedWorker, LinkedWorkerOptions, Relay};
-use mannie_provider::testing::Step;
-use mannie_provider::{ProviderEvent, Role};
-use mannie_runtime::testing::{WorkerOptions, fast_config, reply, tool_calls};
-use mannie_runtime::texts;
-use mannie_types::ceiling::CeilingMode;
-use mannie_types::chat::SubscribeConversation;
-use mannie_types::run::FinishReason;
-use mannie_types::tasks::{TaskRefusal, TaskState};
-use mannie_types::tools::{ApprovalChoice, Decision, ToolsError, UpdateToolsSettings};
-use mannie_types::transcript::ConversationUpdate;
-use mannie_workers::testing::{
+use mannie_plugin_harness::provider::Step;
+use mannie_plugin_harness::provider::{ProviderEvent, Role};
+use mannie_plugin_harness::runtime::texts;
+use mannie_plugin_harness::runtime::{WorkerOptions, fast_config, reply, tool_calls};
+use mannie_plugin_harness::types::FinishReason;
+use mannie_plugin_harness::types::SubscribeConversation;
+use mannie_plugin_harness::types::TaskRefusal;
+use mannie_plugin_harness::types::{Decision, UpdateToolsSettings};
+use mannie_plugin_sdk::contracts::CeilingMode;
+use mannie_plugin_sdk::contracts::ConversationUpdate;
+use mannie_plugin_sdk::contracts::TaskState;
+use mannie_plugin_sdk::contracts::{ApprovalChoice, ToolsError};
+use mannie_workers_testing::master::{
     LinkedMaster, PLANTED_CREDENTIAL, delegation, files_contain, paired,
 };
+use mannie_workers_testing::worker::{LinkedWorker, LinkedWorkerOptions, Relay};
 
 use mannie_workers::view::WorkerStatus;
 use serde_json::json;
@@ -39,7 +41,9 @@ fn last_tool_result(master: &LinkedMaster) -> String {
         .filter(|message| message.role == Role::Tool)
         .flat_map(|message| &message.content)
         .find_map(|content| match content {
-            mannie_provider::Content::ToolResult { output, .. } => Some(output.clone()),
+            mannie_plugin_harness::provider::Content::ToolResult { output, .. } => {
+                Some(output.clone())
+            }
             _ => None,
         })
         .unwrap()
@@ -364,7 +368,9 @@ async fn a_worker_one_minor_version_behind_works_and_an_older_one_does_not() {
                 .parts
                 .iter()
                 .find_map(|part| match &part.content {
-                    mannie_types::transcript::PartContent::Task { call } => call.refusal.clone(),
+                    mannie_plugin_harness::types::PartContent::Task { call } => {
+                        call.refusal.clone()
+                    }
                     _ => None,
                 });
             assert_eq!(
@@ -427,7 +433,9 @@ async fn a_read_only_host_refuses_a_write_of_a_delegated_task() {
         .filter(|message| message.role == Role::Tool)
         .flat_map(|message| &message.content)
         .find_map(|content| match content {
-            mannie_provider::Content::ToolResult { output, .. } => Some(output.clone()),
+            mannie_plugin_harness::provider::Content::ToolResult { output, .. } => {
+                Some(output.clone())
+            }
             _ => None,
         })
         .unwrap();

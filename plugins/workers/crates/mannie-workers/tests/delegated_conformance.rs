@@ -1,4 +1,4 @@
-//! The system tools through a delegated task (docs/features/workers/
+//! The system tools through a delegated task (plugins/workers/docs/
 //! delegation.md, acceptance; milestone M4's exit): a task that the master
 //! delegates over the link uses every tool of the worker agent in the
 //! allowed folder of an autonomous host, and the results land on the
@@ -16,13 +16,15 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
-use mannie_link::testing::{LinkedWorker, LinkedWorkerOptions};
-use mannie_runtime::testing::{WorkerOptions, reply, tool_calls};
-use mannie_types::ceiling::CeilingMode;
-use mannie_types::ids::RuleId;
-use mannie_types::tasks::{TaskState, TaskView};
-use mannie_types::tools::{CommandRule, Decision, ReadToolOutput, ToolCallStatus, ToolOutcome};
-use mannie_workers::testing::{LinkedMaster, paired};
+use mannie_plugin_harness::runtime::{WorkerOptions, reply, tool_calls};
+use mannie_plugin_harness::types::RuleId;
+use mannie_plugin_harness::types::TaskView;
+use mannie_plugin_harness::types::{CommandRule, Decision, ToolCallStatus, ToolOutcome};
+use mannie_plugin_sdk::contracts::CeilingMode;
+use mannie_plugin_sdk::contracts::ReadToolOutput;
+use mannie_plugin_sdk::contracts::TaskState;
+use mannie_workers_testing::master::{LinkedMaster, paired};
+use mannie_workers_testing::worker::{LinkedWorker, LinkedWorkerOptions};
 use serde_json::{Value, json};
 
 /// How many lines the long command prints: more than a tool result holds,
@@ -156,7 +158,7 @@ async fn autonomous_worker_and_master() -> (LinkedWorker, LinkedMaster) {
                 id: RuleId::parse("0199e0f2-0000-7000-8000-000000000071").unwrap(),
                 words: vec!["echo".to_owned()],
                 folder: None,
-                created_at: mannie_types::clock::UtcMillis::EPOCH,
+                created_at: mannie_plugin_sdk::contracts::UtcMillis::EPOCH,
             }],
             ..WorkerOptions::default()
         },

@@ -1,0 +1,33 @@
+[package]
+name = "mannie-link-worker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The worker's side of the Workers plugin's link: the server, whose connections reach only pairing until their key is the pinned master's, the services over the runtime's assigned tasks, the lease vault and the master's pin (ADR-0016, ADR-0028, ADR-0034)."
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+futures-util = { workspace = true }
+# The worker's runtime, its vault of lent credentials and the redaction of
+# the leases, which only a program of the plugin may use (ADR-0034,
+# decision 12).
+mannie-host-kit = { workspace = true }
+# The link's contracts, TLS and pairing.
+mannie-link = { workspace = true }
+# The contracts that the services carry (ADR-0034, decision 2).
+mannie-plugin-sdk = { workspace = true }
+rustls = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["fs", "macros", "net", "rt", "sync", "time"] }
+tonic = { workspace = true }
+tracing = { workspace = true }
+zeroize = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["fs", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
+
+[lints]
+workspace = true

@@ -1,4 +1,4 @@
-//! The master's connection to one worker (docs/features/workers/
+//! The master's connection to one worker (plugins/workers/docs/
 //! pairing-and-link.md, the connection): TLS with the worker's pinned key,
 //! HTTP/2 with keepalive, `Hello` with the versions and feature levels, and
 //! a watch of the worker's tasks whose end shows that the link dropped. A
@@ -13,6 +13,7 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
 use hyper_util::rt::TokioIo;
+use mannie_link::codec::MAX_MESSAGE_BYTES;
 use mannie_link::codec::from_json;
 use mannie_link::host::WorkerDetails;
 use mannie_link::keys::KeyPin;
@@ -22,9 +23,7 @@ use mannie_link::proto::session::session_service_client::SessionServiceClient;
 use mannie_link::proto::tasks::WatchRequest;
 use mannie_link::proto::tasks::tasks_service_client::TasksServiceClient;
 use mannie_link::tls::{self, HANDSHAKE_TIMEOUT};
-use mannie_link::worker::MAX_MESSAGE_BYTES;
-use mannie_types::ids::TaskId;
-use mannie_types::tasks::AssignedTaskState;
+use mannie_plugin_sdk::contracts::{AssignedTaskState, TaskId};
 use rustls::ClientConfig;
 use tokio::sync::broadcast;
 use tonic::Code;

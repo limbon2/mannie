@@ -1,5 +1,5 @@
 // The images of the message that the owner writes (ADR-0033, decision 7;
-// docs/features/images.md, adding images): a chip while a source prepares an
+// plugins/images/docs/README.md, adding images): a chip while a source prepares an
 // image, the references of the ready ones in order, at most ten, a removed
 // image that its source drops, and sentences that go once the owner adds
 // other images.

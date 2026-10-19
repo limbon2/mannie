@@ -1,4 +1,4 @@
-//! The documents of the link (V6; docs/features/workers/
+//! The documents of the link (V6; plugins/workers/docs/
 //! compatibility-and-updates.md, documents). The link carries documents of
 //! `mannie-types` as JSON inside its protobuf messages, where `buf breaking`
 //! does not see them, so fixtures guard them: `tests/fixtures/documents/`
@@ -18,11 +18,11 @@ use std::fs;
 use std::path::PathBuf;
 
 use mannie_link::host::WorkerDetails;
-use mannie_runtime::{AssignError, LeaseError};
-use mannie_types::chat::{ChatError, CheckpointRef, EarlierTurns, LoadEarlierTurns};
-use mannie_types::tasks::{AssignedTaskState, TaskAssignment};
-use mannie_types::tools::{DecideApproval, ReadToolOutput, ToolOutputPage, ToolsError};
-use mannie_types::transcript::{Checkpoint, ConversationUpdate};
+use mannie_plugin_harness::runtime::{AssignError, LeaseError};
+use mannie_plugin_sdk::contracts::{AssignedTaskState, TaskAssignment};
+use mannie_plugin_sdk::contracts::{ChatError, CheckpointRef, EarlierTurns, LoadEarlierTurns};
+use mannie_plugin_sdk::contracts::{Checkpoint, ConversationUpdate};
+use mannie_plugin_sdk::contracts::{DecideApproval, ReadToolOutput, ToolOutputPage, ToolsError};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};

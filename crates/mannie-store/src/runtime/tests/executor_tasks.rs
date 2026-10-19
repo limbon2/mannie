@@ -4,7 +4,7 @@
 //! the deletions that wait for an executor, and an assigned task's row, whose
 //! states take growing versions.
 
-use mannie_types::ids::{ConversationId, PartId, RunId, TaskId};
+use mannie_types::ids::{ConversationId, PartId, ProfileId, RunId, TaskId};
 use mannie_types::run::{RunOutcome, RunState};
 use mannie_types::tasks::{
     TaskCallView, TaskDocument, TaskExecutorRef, TaskPartDocument, TaskState,
@@ -14,8 +14,8 @@ use mannie_types::transcript::{PartContent, PartKind};
 
 use super::Fixture;
 use crate::runtime::{
-    Change, NewConversation, NewExecutorTask, NewPart, NewRun, NewTask, OutboxEntry,
-    RuntimeStoreError, TaskEnding, TaskOrigin,
+    Change, ExecutorTaskProfile, NewConversation, NewExecutorTask, NewPart, NewRun, NewTask,
+    OutboxEntry, RuntimeStoreError, TaskEnding, TaskOrigin,
 };
 
 /// The kind of the fake executor of these tests.
@@ -525,6 +525,162 @@ async fn a_follow_up_waits_until_the_previous_task_ended() {
         .unwrap()
         .unwrap();
     assert_eq!(child.latest.map(|task| task.id), Some(stored.id));
+}
+
+#[tokio::test]
+async fn an_executors_task_names_whether_it_is_active_and_the_profile_of_its_run() {
+    let fixture = Fixture::new();
+    let executor = target(1);
+    let given = given(&fixture, &executor).await;
+    let (_, _, assigned_task) = assigned(&fixture).await;
+    let store = &fixture.store;
+
+    let active = store
+        .executor_task_profile(&given.task, KIND)
+        .await
+        .unwrap();
+    let other_kind = store
+        .executor_task_profile(&given.task, "other")
+        .await
+        .unwrap();
+    let unknown = store
+        .executor_task_profile(&task_id(&fixture), KIND)
+        .await
+        .unwrap();
+    let without_executor = store
+        .executor_task_profile(&assigned_task, KIND)
+        .await
+        .unwrap();
+    store
+        .apply_executor_task_state(
+            &given.task,
+            KIND,
+            2,
+            TaskState::Reported,
+            Some(ended(TaskState::Reported, Some("Built."))),
+        )
+        .await
+        .unwrap();
+    let after_the_end = store
+        .executor_task_profile(&given.task, KIND)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        active,
+        Some(ExecutorTaskProfile {
+            active: true,
+            profile_id: Some(Fixture::profile_id()),
+        })
+    );
+    assert_eq!(other_kind, None, "another executor's task is not named");
+    assert_eq!(unknown, None);
+    assert_eq!(without_executor, None, "a task that no executor runs");
+    assert_eq!(
+        after_the_end,
+        Some(ExecutorTaskProfile {
+            active: false,
+            profile_id: Some(Fixture::profile_id()),
+        })
+    );
+}
+
+#[tokio::test]
+async fn a_follow_up_names_the_profile_of_the_run_that_gave_it() {
+    let fixture = Fixture::new();
+    let executor = target(1);
+    let first = given(&fixture, &executor).await;
+    let store = &fixture.store;
+    store
+        .apply_executor_task_state(
+            &first.task,
+            KIND,
+            2,
+            TaskState::Reported,
+            Some(ended(TaskState::Reported, Some("Built."))),
+        )
+        .await
+        .unwrap();
+    end_parent_run(&fixture, &first, RunState::Completed).await;
+    // The parent's next reply runs with another profile, and its run gives
+    // the follow-up.
+    let second_profile = ProfileId::parse("0199e0f2-0000-7000-8000-000000000002").unwrap();
+    let turn = fixture.turn_id();
+    let run = NewRun {
+        id: fixture.run_id(),
+        agent: "conversation".to_owned(),
+        binding: format!("{second_profile}:1"),
+        profile_id: second_profile.clone(),
+    };
+    let run_id = run.id.clone();
+    let part = fixture.part_id();
+    fixture
+        .apply(
+            &first.parent,
+            vec![
+                Change::StartTurn {
+                    turn_id: turn.clone(),
+                    user_part_id: fixture.part_id(),
+                    mentions: Vec::new(),
+                    images: Vec::new(),
+                    text: "Now run the tests".to_owned(),
+                    run,
+                    task: None,
+                },
+                Change::StartRun {
+                    run_id: run_id.clone(),
+                },
+                Change::StartPart {
+                    part: NewPart {
+                        id: part.clone(),
+                        turn_id: turn,
+                        run_id,
+                        attempt: 1,
+                        kind: PartKind::Task,
+                        failure: None,
+                        tool_call: Some(ToolCallDocument::receiving(
+                            "call_2".to_owned(),
+                            "follow_up_task".to_owned(),
+                        )),
+                    },
+                },
+            ],
+        )
+        .await;
+    let follow_up = task_id(&fixture);
+    store
+        .record_executor_task(NewExecutorTask {
+            id: follow_up.clone(),
+            conversation_id: first.conversation.clone(),
+            conversation: None,
+            part_id: part,
+            kind: KIND.to_owned(),
+            target: executor.target_id.clone(),
+            document: None,
+            follow_up: true,
+            background: false,
+        })
+        .await
+        .unwrap();
+
+    let named = store.executor_task_profile(&follow_up, KIND).await.unwrap();
+    let earlier = store
+        .executor_task_profile(&first.task, KIND)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        named,
+        Some(ExecutorTaskProfile {
+            active: true,
+            profile_id: Some(second_profile),
+        })
+    );
+    assert_eq!(
+        earlier.and_then(|earlier| earlier.profile_id),
+        Some(Fixture::profile_id()),
+        "the earlier task keeps the profile of its own run"
+    );
 }
 
 #[tokio::test]

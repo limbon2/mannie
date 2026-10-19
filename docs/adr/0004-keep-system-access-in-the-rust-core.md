@@ -7,6 +7,8 @@
 | Deciders | Owner                                                                                                                                                                                             |
 | Related  | [ADR-0003](0003-build-the-desktop-app-on-tauri-2.md), [ADR-0007](0007-generate-ipc-bindings-from-rust.md), [Desktop app](../architecture/desktop-app.md), [Security](../architecture/security.md) |
 
+Later changes: [ADR-0034](0034-build-plugins-on-a-plugin-sdk.md) refines decision 3: a plugin's command gets its permission at build time through its inlined plugin, and only the main window receives grants.
+
 ## Context
 
 Verified 2026-10-13:

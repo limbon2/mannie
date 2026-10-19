@@ -1,4 +1,4 @@
-//! The command line (docs/features/workers/service.md, the command line). Its
+//! The command line (plugins/workers/docs/service.md, the command line). Its
 //! output stays in English ([ADR-0019]).
 //!
 //! [ADR-0019]: ../../../docs/adr/0019-keep-visible-text-in-message-catalogs.md

@@ -1,78 +1,67 @@
 // @ts-check
-// mannie/plugin-boundaries: the core's UI files and other plugins' UI files
-// never import a plugin's UI files (ADR-0030, decision 10).
+// mannie/plugin-boundaries: the boundaries between the core's files and the
+// plugins' files, by folder (ADR-0035, decision 6; ADR-0034, decision 11).
 //
-// A plugin's UI files stay in the desktop app's folders for each kind, under
-// the plugin's ID: `components/app/<id>/`, and the files named `<id>` or
-// `<id>-...` in the other folders of `src/lib/`, such as
-// `registrations/workers.ts`, `state/workers-actions.svelte.ts` and
-// `utils/workers-messages.ts`. The composition root's list of plugins,
-// `registrations/plugin-list.ts`, is the one core file that imports a
-// plugin's UI, and only its registration. A plugin's UI may import the
-// core's. The `libFolder` option is the absolute path of the app's
-// `src/lib/`, and `plugins` lists the plugins' IDs, which are the names of
-// their folders in plugins/.
+// A plugin's files live in its folder, `plugins/<id>/`, or for a fixture
+// plugin `tests/fixtures/plugins/<id>/`. Its UI, in `ui/`, imports only the
+// SDK, `@mannie/plugin-sdk` and its parts, Svelte, and its own files, its
+// generated files included: never Tauri, `#lib`, `$app`, a package or
+// another plugin. Its tests, in `tests/`, import packages and the shared
+// end-to-end support, `#e2e/<module>.ts`, but no file of the core or of
+// another plugin. The core's files never import a plugin's file, so the
+// core's UI reaches the plugins only through the generated plugin list,
+// except that the core's tests use the fixture plugins. Nor do they name a
+// plugin's message keys, `m.<prefix>_...`, since a plugin words its own
+// text (ADR-0035, decision 8).
+//
+// The `plugins` option lists every plugin with its folder, as an absolute
+// path, its ID, its prefix and whether it is a fixture plugin.
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
-/** The subpath import and the alias that name `src/lib/`. */
-const LIB_PREFIXES = ['#lib/', '$lib/'];
+/**
+ * A plugin as the rule knows it.
+ * @typedef {object} BoundaryPlugin
+ * @property {boolean} fixture whether it is a fixture plugin, which the core's tests may use
+ * @property {string} folder absolute
+ * @property {string} id
+ * @property {string} prefix the prefix of its message keys, without the `_`
+ */
 
-/** The composition root's list of plugins, relative to `src/lib/`. */
-const PLUGIN_LIST = join('registrations', 'plugin-list.ts');
+/** The SDK's name and the start of its parts. */
+const SDK = '@mannie/plugin-sdk';
+
+/** The aliases of the core's `src/lib/` and SvelteKit's modules, which a plugin never imports. */
+const CORE_PREFIXES = ['#lib/', '$lib/', '$app/'];
 
 /**
- * Whether a file or folder name belongs to a plugin: the plugin's ID alone,
- * or followed by `-` or `.`.
- *
- * @param {string} name
- * @param {string} plugin
- * @returns {boolean}
+ * Whether `path` is inside `folder`.
+ * @param {string} folder
+ * @param {string} path absolute
  */
-function belongsTo(name, plugin) {
-  const isId = name === plugin;
-  const startsWithId = name.startsWith(`${plugin}-`) || name.startsWith(`${plugin}.`);
-  return isId || startsWithId;
+function isWithin(folder, path) {
+  const within = relative(folder, path);
+  const leaves = within === '' || within === '..' || within.startsWith(`..${sep}`);
+  return !leaves && !isAbsolute(within);
 }
 
 /**
- * The plugin that owns a file of `src/lib/`, or `null` for a file of the core.
- *
- * @param {string} libFolder
- * @param {string} path An absolute path.
- * @param {readonly string[]} plugins
- * @returns {string | null}
- */
-function ownerOf(libFolder, path, plugins) {
-  const inLib = relative(libFolder, path);
-  const isOutside = inLib === '..' || inLib.startsWith(`..${sep}`) || isAbsolute(inLib);
-  if (isOutside) {
-    return null;
-  }
-  const segments = inLib.split(sep);
-  const isAppComponent = segments[0] === 'components' && segments[1] === 'app';
-  // The plugin's folder of components, or its file in another kind's folder.
-  const named = isAppComponent ? segments[2] : segments[1];
-  if (named === undefined) {
-    return null;
-  }
-  return plugins.find((plugin) => belongsTo(named, plugin)) ?? null;
-}
-
-/**
- * The absolute path that an import names, or `null` for a package.
- *
- * @param {string} libFolder
- * @param {string} filename The importing file.
+ * The absolute path that a relative import names, or `null` for a package or an alias.
+ * @param {string} filename the importing file
  * @param {string} source
- * @returns {string | null}
  */
-function importedPath(libFolder, filename, source) {
-  const prefix = LIB_PREFIXES.find((candidate) => source.startsWith(candidate));
-  if (prefix !== undefined) {
-    return resolve(libFolder, source.slice(prefix.length));
-  }
+function relativeTarget(filename, source) {
   const isRelative = source.startsWith('./') || source.startsWith('../');
   return isRelative ? resolve(dirname(filename), source) : null;
+}
+
+/**
+ * Whether a plugin's UI may import a package or an alias by its name.
+ * @param {string} source
+ */
+function isAllowedName(source) {
+  const isSdk = source === SDK || source.startsWith(`${SDK}/`);
+  const isSvelte = source === 'svelte' || source.startsWith('svelte/');
+  return isSdk || isSvelte;
 }
 
 /** @type {import('eslint').Rule.RuleModule} */
@@ -80,29 +69,105 @@ export const pluginBoundaries = {
   meta: {
     type: 'problem',
     docs: {
-      description: "Keep a plugin's UI files out of the core's UI and other plugins' UI",
+      description: "Keep the core's files and the plugins' files apart, by folder",
     },
     messages: {
-      core: "The core's UI reaches the {{plugin}} plugin's UI only through its registration in registrations/plugin-list.ts (ADR-0030, decision 10).",
+      core: "The core's files never import the {{plugin}} plugin's files: the core's UI reaches the plugins only through the generated plugin list, #plugin-list (ADR-0035, decision 7).",
+      messageKey:
+        'The core never names a message of the {{plugin}} plugin, here {{key}}: the plugin words its own text (ADR-0035, decision 8).',
       otherPlugin:
-        "A plugin's UI never imports another plugin's UI, here the {{plugin}} plugin's (ADR-0030, decision 10).",
+        "A plugin's files never import another plugin's files, here the {{plugin}} plugin's (ADR-0030, decision 10).",
+      pluginTestImport:
+        "A plugin's tests import packages, #e2e/<module>.ts and the plugin's own files, never the core's files: {{source}} (ADR-0035, decision 9).",
+      pluginUiImport:
+        "A plugin's UI imports only the SDK (@mannie/plugin-sdk), svelte and its own files, its generated files included: {{source}} is none of these (ADR-0034, decision 11).",
     },
     schema: [
       {
         additionalProperties: false,
         properties: {
-          libFolder: { type: 'string' },
-          plugins: { items: { type: 'string' }, type: 'array' },
+          plugins: {
+            items: {
+              additionalProperties: false,
+              properties: {
+                fixture: { type: 'boolean' },
+                folder: { type: 'string' },
+                id: { type: 'string' },
+                prefix: { type: 'string' },
+              },
+              required: ['fixture', 'folder', 'id', 'prefix'],
+              type: 'object',
+            },
+            type: 'array',
+          },
+          testsFolder: { type: 'string' },
         },
-        required: ['libFolder', 'plugins'],
+        required: ['plugins', 'testsFolder'],
         type: 'object',
       },
     ],
   },
   create(context) {
-    const [{ libFolder, plugins }] = /** @type {[{ libFolder: string; plugins: string[] }]} */ (context.options);
-    const importer = ownerOf(libFolder, context.filename, plugins);
-    const isPluginList = relative(libFolder, context.filename) === PLUGIN_LIST;
+    const [{ plugins, testsFolder }] = /** @type {[{ plugins: BoundaryPlugin[]; testsFolder: string }]} */ (
+      context.options
+    );
+    const filename = resolve(context.filename);
+    const owner = plugins.find((plugin) => isWithin(plugin.folder, filename));
+    const isCoreFile = owner === undefined;
+    const isPluginTest = owner !== undefined && isWithin(join(owner.folder, 'tests'), filename);
+    const isCoreTest = isCoreFile && isWithin(testsFolder, filename);
+
+    /**
+     * @param {import('estree').Node} node
+     * @param {string} source
+     */
+    function checkPluginImport(node, source) {
+      if (owner === undefined) {
+        return;
+      }
+      const target = relativeTarget(filename, source);
+      if (target !== null) {
+        if (isWithin(owner.folder, target)) {
+          return;
+        }
+        const other = plugins.find((plugin) => isWithin(plugin.folder, target));
+        if (other !== undefined) {
+          context.report({ data: { plugin: other.id }, messageId: 'otherPlugin', node });
+          return;
+        }
+        context.report({ data: { source }, messageId: isPluginTest ? 'pluginTestImport' : 'pluginUiImport', node });
+        return;
+      }
+      if (isPluginTest) {
+        const namesCore = CORE_PREFIXES.some((prefix) => source.startsWith(prefix));
+        if (namesCore) {
+          context.report({ data: { source }, messageId: 'pluginTestImport', node });
+        }
+        return;
+      }
+      if (!isAllowedName(source)) {
+        context.report({ data: { source }, messageId: 'pluginUiImport', node });
+      }
+    }
+
+    /**
+     * @param {import('estree').Node} node
+     * @param {string} source
+     */
+    function checkCoreImport(node, source) {
+      const target = relativeTarget(filename, source);
+      if (target === null) {
+        return;
+      }
+      const reached = plugins.find((plugin) => isWithin(plugin.folder, target));
+      if (reached === undefined) {
+        return;
+      }
+      const isFixtureForTest = reached.fixture && isCoreTest;
+      if (!isFixtureForTest) {
+        context.report({ data: { plugin: reached.id }, messageId: 'core', node });
+      }
+    }
 
     /**
      * @param {import('estree').Node} node
@@ -112,24 +177,11 @@ export const pluginBoundaries = {
       if (typeof source !== 'string') {
         return;
       }
-      const target = importedPath(libFolder, context.filename, source);
-      if (target === null) {
-        return;
+      if (owner === undefined) {
+        checkCoreImport(node, source);
+      } else {
+        checkPluginImport(node, source);
       }
-      const owner = ownerOf(libFolder, target, plugins);
-      const isCore = owner === null;
-      const isOwn = owner === importer;
-      if (isCore || isOwn) {
-        return;
-      }
-      // TypeScript imports name the registration's `.ts` file as `.js`.
-      const namesRegistration = [`${owner}.js`, `${owner}.ts`].some(
-        (name) => target === join(libFolder, 'registrations', name),
-      );
-      if (isPluginList && namesRegistration) {
-        return;
-      }
-      context.report({ data: { plugin: owner }, messageId: importer === null ? 'core' : 'otherPlugin', node });
     }
 
     return {
@@ -147,6 +199,18 @@ export const pluginBoundaries = {
       ImportExpression(node) {
         if (node.source.type === 'Literal') {
           check(node.source, node.source.value);
+        }
+      },
+      MemberExpression(node) {
+        const isCatalog = node.object.type === 'Identifier' && node.object.name === 'm';
+        const isNamed = node.property.type === 'Identifier' && !node.computed;
+        if (!isCoreFile || !isCatalog || !isNamed) {
+          return;
+        }
+        const key = /** @type {import('estree').Identifier} */ (node.property).name;
+        const plugin = plugins.find((candidate) => key.startsWith(`${candidate.prefix}_`));
+        if (plugin !== undefined) {
+          context.report({ data: { key, plugin: plugin.id }, messageId: 'messageKey', node });
         }
       },
     };

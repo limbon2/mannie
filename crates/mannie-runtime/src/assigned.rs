@@ -1,5 +1,5 @@
 //! Tasks that the master assigns to this worker (ADR-0028, decision 1;
-//! docs/features/workers/delegation.md): assigning one by the IDs that the
+//! plugins/workers/docs/delegation.md): assigning one by the IDs that the
 //! master chose, its state as the master follows it, cancelling it, its
 //! credential lease, deleting its conversation, and letting every task go
 //! when the worker is unpaired.
@@ -50,7 +50,7 @@ pub(crate) struct AssignedRun {
 }
 
 /// The reference under which a task's credential lease is kept in the vault
-/// (docs/features/workers/credential-leases.md, the lease).
+/// (plugins/workers/docs/credential-leases.md, the lease).
 pub(crate) fn lease_reference(task: &TaskId) -> String {
     format!("lease/{task}")
 }
@@ -624,7 +624,7 @@ impl Runtime {
     }
 
     /// Deletes conversations of assigned tasks that the master deleted with
-    /// their parent (docs/features/workers/delegation.md, deleting). A
+    /// their parent (plugins/workers/docs/delegation.md, deleting). A
     /// running task stops first; a conversation that the worker does not
     /// have is skipped.
     pub async fn delete_assigned_conversations(
@@ -655,7 +655,7 @@ impl Runtime {
     }
 
     /// Keeps the credential that the master leases to an active task, in the
-    /// vault, for the task's runs (docs/features/workers/credential-
+    /// vault, for the task's runs (plugins/workers/docs/credential-
     /// leases.md). A lease whose binding is not the task's profile's is
     /// refused.
     pub async fn deliver_lease(

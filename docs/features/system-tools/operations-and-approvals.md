@@ -70,7 +70,7 @@ Full access is the owner's standing decision that a conversation's operations ru
 - The policy reads the switch for every call, so turning it off applies from the next call. A call that already waits for the owner keeps waiting.
 - An operation that runs under it is journaled with the decision `full_access`, and its recovery after a crash stays the same.
 - The guidance on tools tells the model that nobody checks its operations in the conversation.
-- When a worker task of a conversation in full access asks the owner, the master answers it at once with Allow once, marked as automatic, unless the worker's configuration refuses that ([host and ceiling](../workers/host-and-ceiling.md#approvals)).
+- When a worker task of a conversation in full access asks the owner, the master answers it at once with Allow once, marked as automatic, unless the worker's configuration refuses that ([host and ceiling](../../../plugins/workers/docs/host-and-ceiling.md#approvals)).
 
 ### The workspace
 
@@ -115,7 +115,7 @@ The statuses are stored before the runs end as interrupted, so a crash during th
 
 ### Contracts
 
-- Commands (`apps/desktop/src-tauri/src/commands/tools.rs`): `decide_approval`, `set_full_access`, `get_tools_settings`, `update_tools_settings`, `list_command_rules`, `delete_command_rule`, `list_conversation_grants`, `revoke_conversation_grant`, `list_shared_grants`, `revoke_shared_grant` and `read_tool_output`. `list_conversation_grants` returns the grants of one conversation, and `list_shared_grants` the grants for a project, which name it, and those for every conversation.
+- Commands (`apps/desktop/core/src/commands/tools.rs`): `decide_approval`, `set_full_access`, `get_tools_settings`, `update_tools_settings`, `list_command_rules`, `delete_command_rule`, `list_conversation_grants`, `revoke_conversation_grant`, `list_shared_grants`, `revoke_shared_grant` and `read_tool_output`. `list_conversation_grants` returns the grants of one conversation, and `list_shared_grants` the grants for a project, which name it, and those for every conversation.
 - Errors use `ToolsError`: `conversation_not_found`, `approval_not_pending`, `approval_changed`, `rule_not_possible`, `rule_prefix_invalid`, `not_in_a_project`, `grant_not_possible`, `rule_not_found`, `grant_not_found`, `output_not_found`, `environment_name_invalid`, `environment_name_secret`, `too_many_environment_names`, `written_by_newer_version`, `storage_failed`, `store_unavailable`, `shutting_down`, `full_access_follows_parent` and `full_access_refused`.
 - The conversation summary carries the workspace, the project, whether the conversation is in full access and whether it waits for an approval. The conversation list receives a new summary when a reply starts or stops waiting, so the list marks it at once.
 

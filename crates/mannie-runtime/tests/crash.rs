@@ -94,13 +94,7 @@ fn child_reply() {
             .await
             .unwrap();
         let started = runtime
-            .start_conversation(StartConversation {
-                mentions: Vec::new(),
-                images: Vec::new(),
-                text: "Question".to_owned(),
-                profile_id: None,
-                project_id: None,
-            })
+            .start_conversation(StartConversation::new("Question"))
             .await
             .unwrap();
         let mut subscription = runtime

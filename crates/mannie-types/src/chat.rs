@@ -161,8 +161,12 @@ fn limit(value: usize) -> u32 {
 
 /// The argument of `start_conversation`: the first message of a new
 /// conversation.
-#[derive(Debug, Clone, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
+// Other crates build it with `new` and the `with_` methods, so a new field
+// does not change every caller (ADR-0034, decision 16). A plain comment keeps
+// this out of the TypeScript bindings.
+#[non_exhaustive]
 pub struct StartConversation {
     /// The message.
     pub text: String,
@@ -178,6 +182,42 @@ pub struct StartConversation {
     /// (ADR-0033).
     #[serde(default)]
     pub images: Vec<ImageRef>,
+}
+
+impl StartConversation {
+    /// The first message of a general conversation with the default profile,
+    /// with no mentions and no images.
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            profile_id: None,
+            project_id: None,
+            mentions: Vec::new(),
+            images: Vec::new(),
+        }
+    }
+
+    /// Sets the project the conversation starts in, or `None` for a general
+    /// conversation.
+    #[must_use]
+    pub fn with_project(mut self, project_id: Option<ProjectId>) -> Self {
+        self.project_id = project_id;
+        self
+    }
+
+    /// Sets what the message mentions, in the order of its text.
+    #[must_use]
+    pub fn with_mentions(mut self, mentions: Vec<MentionRef>) -> Self {
+        self.mentions = mentions;
+        self
+    }
+
+    /// Sets the images of the message, in the order the owner added them.
+    #[must_use]
+    pub fn with_images(mut self, images: Vec<ImageRef>) -> Self {
+        self.images = images;
+        self
+    }
 }
 
 /// The result of `start_conversation`.
@@ -197,8 +237,11 @@ pub struct StartedConversation {
 }
 
 /// The argument of `send_message`.
-#[derive(Debug, Clone, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
+// Other crates build it with `new` and the `with_` methods, so a new field
+// does not change every caller (ADR-0034, decision 16).
+#[non_exhaustive]
 pub struct SendMessage {
     /// The conversation.
     pub conversation_id: ConversationId,
@@ -211,6 +254,32 @@ pub struct SendMessage {
     /// (ADR-0033).
     #[serde(default)]
     pub images: Vec<ImageRef>,
+}
+
+impl SendMessage {
+    /// A message in a conversation, with no mentions and no images.
+    pub fn new(conversation_id: ConversationId, text: impl Into<String>) -> Self {
+        Self {
+            conversation_id,
+            text: text.into(),
+            mentions: Vec::new(),
+            images: Vec::new(),
+        }
+    }
+
+    /// Sets what the message mentions, in the order of its text.
+    #[must_use]
+    pub fn with_mentions(mut self, mentions: Vec<MentionRef>) -> Self {
+        self.mentions = mentions;
+        self
+    }
+
+    /// Sets the images of the message, in the order the owner added them.
+    #[must_use]
+    pub fn with_images(mut self, images: Vec<ImageRef>) -> Self {
+        self.images = images;
+        self
+    }
 }
 
 /// The result of `send_message` and `retry_reply`.
@@ -433,7 +502,7 @@ pub enum ChatError {
     #[error("the conversation belongs to a child agent")]
     TaskConversation,
     /// The conversation belongs to a task on a worker that cannot be reached
-    /// now (docs/features/workers/delegation.md).
+    /// now (plugins/workers/docs/delegation.md).
     #[error("the worker of this conversation cannot be reached")]
     WorkerUnreachable,
     /// The conversation belongs to a task whose target, such as a worker,
@@ -565,9 +634,154 @@ impl ChatError {
 #[cfg(test)]
 mod tests {
     use super::{
-        ChatError, ChatSettings, MAX_INSTRUCTIONS_CHARACTERS, MAX_MESSAGE_BYTES,
-        UpdateChatSettings, check_message, check_title, title_from_message,
+        ChatError, ChatSettings, MAX_INSTRUCTIONS_CHARACTERS, MAX_MESSAGE_BYTES, SendMessage,
+        StartConversation, UpdateChatSettings, check_message, check_title, title_from_message,
     };
+    use crate::ids::{ConversationId, ProjectId};
+    use crate::images::ImageRef;
+    use crate::mentions::MentionRef;
+
+    const CONVERSATION: &str = "0199e0f2-0000-7000-a000-000000000001";
+    const PROJECT: &str = "0199e0f2-0000-7000-a000-000000000002";
+
+    fn conversation() -> ConversationId {
+        ConversationId::parse(CONVERSATION).unwrap()
+    }
+
+    fn project() -> ProjectId {
+        ProjectId::parse(PROJECT).unwrap()
+    }
+
+    fn file_mention(key: &str) -> MentionRef {
+        MentionRef {
+            provider: "files".to_owned(),
+            key: key.to_owned(),
+        }
+    }
+
+    fn shelf_image(key: &str) -> ImageRef {
+        ImageRef {
+            source: "images".to_owned(),
+            key: key.to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_first_message_starts_a_general_conversation_with_nothing_attached() {
+        assert_eq!(
+            StartConversation::new("Hi"),
+            StartConversation {
+                text: "Hi".to_owned(),
+                profile_id: None,
+                project_id: None,
+                mentions: Vec::new(),
+                images: Vec::new(),
+            }
+        );
+        assert_eq!(
+            SendMessage::new(conversation(), String::from("Again")),
+            SendMessage {
+                conversation_id: conversation(),
+                text: "Again".to_owned(),
+                mentions: Vec::new(),
+                images: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn the_with_methods_set_the_project_mentions_and_images() {
+        let start = StartConversation::new("Look at @notes.txt")
+            .with_project(Some(project()))
+            .with_mentions(vec![file_mention("notes.txt")])
+            .with_images(vec![shelf_image("one"), shelf_image("two")]);
+        assert_eq!(start.project_id, Some(project()));
+        assert_eq!(start.mentions, vec![file_mention("notes.txt")]);
+        assert_eq!(start.images, vec![shelf_image("one"), shelf_image("two")]);
+        assert_eq!(start.profile_id, None);
+
+        // A later call replaces what an earlier one set, so `None` makes the
+        // conversation general again.
+        let general = start.with_project(None).with_images(Vec::new());
+        assert_eq!(
+            general,
+            StartConversation::new("Look at @notes.txt")
+                .with_mentions(vec![file_mention("notes.txt")])
+        );
+
+        let message = SendMessage::new(conversation(), "And @plan.md")
+            .with_mentions(vec![file_mention("plan.md")])
+            .with_images(vec![shelf_image("three")]);
+        assert_eq!(message.mentions, vec![file_mention("plan.md")]);
+        assert_eq!(message.images, vec![shelf_image("three")]);
+    }
+
+    #[test]
+    fn the_inputs_keep_their_ipc_shape() {
+        let start: StartConversation = serde_json::from_value(serde_json::json!({
+            "text": "Hi",
+            "profileId": null,
+            "projectId": null
+        }))
+        .unwrap();
+        assert_eq!(start, StartConversation::new("Hi"));
+
+        let attached: StartConversation = serde_json::from_value(serde_json::json!({
+            "text": "Look at @notes.txt",
+            "profileId": null,
+            "projectId": PROJECT,
+            "mentions": [{ "provider": "files", "key": "notes.txt" }],
+            "images": [{ "source": "images", "key": "one" }]
+        }))
+        .unwrap();
+        assert_eq!(
+            attached,
+            StartConversation::new("Look at @notes.txt")
+                .with_project(Some(project()))
+                .with_mentions(vec![file_mention("notes.txt")])
+                .with_images(vec![shelf_image("one")])
+        );
+
+        let message: SendMessage = serde_json::from_value(serde_json::json!({
+            "conversationId": CONVERSATION,
+            "text": "Hi"
+        }))
+        .unwrap();
+        assert_eq!(message, SendMessage::new(conversation(), "Hi"));
+
+        let message_with_images: SendMessage = serde_json::from_value(serde_json::json!({
+            "conversationId": CONVERSATION,
+            "text": "",
+            "mentions": [],
+            "images": [{ "source": "images", "key": "two" }]
+        }))
+        .unwrap();
+        assert_eq!(
+            message_with_images,
+            SendMessage::new(conversation(), "").with_images(vec![shelf_image("two")])
+        );
+    }
+
+    #[test]
+    fn inputs_without_their_text_or_with_an_invalid_id_are_refused() {
+        serde_json::from_value::<StartConversation>(serde_json::json!({
+            "profileId": null,
+            "projectId": null
+        }))
+        .unwrap_err();
+        serde_json::from_value::<StartConversation>(serde_json::json!({
+            "text": "Hi",
+            "profileId": null,
+            "projectId": "not-a-project"
+        }))
+        .unwrap_err();
+        serde_json::from_value::<SendMessage>(serde_json::json!({ "text": "Hi" })).unwrap_err();
+        serde_json::from_value::<SendMessage>(serde_json::json!({
+            "conversationId": "not-a-conversation",
+            "text": "Hi"
+        }))
+        .unwrap_err();
+    }
 
     #[test]
     fn messages_must_have_text_within_the_limit() {

@@ -1,11 +1,9 @@
-//! A paired worker as the master knows it (docs/features/workers/
+//! A paired worker as the master knows it (plugins/workers/docs/
 //! pairing-and-link.md, the connection; worker-activity.md): its status and
 //! what it said about itself, for the runtime's delegations and the UI.
 
 use mannie_link::host::WorkerDetails;
-use mannie_types::clock::UtcMillis;
-use mannie_types::ids::WorkerId;
-use mannie_types::transcript::SubscriptionEnd;
+use mannie_plugin_sdk::contracts::{UtcMillis, WorkerId};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
@@ -74,7 +72,7 @@ pub struct WorkerView {
 
 /// A message of the workers channel: the paired workers, first as they are
 /// and then after every change. The list stays short, so each change sends
-/// all of it.
+/// all of it. The host ends the channel (ADR-0034, decision 8).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(
     tag = "type",
@@ -86,10 +84,5 @@ pub enum WorkerListUpdate {
     Workers {
         /// The workers.
         workers: Vec<WorkerView>,
-    },
-    /// The channel ended.
-    Ended {
-        /// Why.
-        reason: SubscriptionEnd,
     },
 }

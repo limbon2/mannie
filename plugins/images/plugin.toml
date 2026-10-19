@@ -1,0 +1,20 @@
+#:schema ../../crates/mannie-plugin-sdk/plugin.schema.json
+# The Images plugin (ADR-0033): the images that the owner attaches to a
+# message.
+
+id = "images"
+sdk = 1
+# Images starts after Workers, and the Plugins page lists it after Workers.
+order = 20
+
+[rust]
+entry = "mannie-images"
+
+[services]
+# The system's file dialog, whose chosen files Images reads by handles.
+file-dialog = 1
+
+[crates]
+# Only Images decodes images, which come from outside Mannie (ADR-0033,
+# T-32): no crate outside this folder may depend on the decoder.
+exclusive = ["image"]

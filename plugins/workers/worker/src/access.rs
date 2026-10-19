@@ -1,4 +1,4 @@
-//! What accounts can do with the worker's files (docs/features/workers/
+//! What accounts can do with the worker's files (plugins/workers/docs/
 //! service.md): the worker refuses to start when its own account could
 //! change its configuration, since such an account could widen its own
 //! ceiling; and a file that root writes into the data folder, such as a

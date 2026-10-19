@@ -6,12 +6,11 @@ use std::fmt;
 
 use futures_util::future::BoxFuture;
 use futures_util::stream::BoxStream;
-use mannie_types::chat::{ChatError, CheckpointRef, EarlierTurns, LoadEarlierTurns};
-use mannie_types::ids::{ConversationId, TaskId, WorkerId};
-use mannie_types::secret::Secret;
-use mannie_types::tasks::{AssignedTaskState, TaskAssignment};
-use mannie_types::tools::{DecideApproval, ReadToolOutput, ToolOutputPage, ToolsError};
-use mannie_types::transcript::{Checkpoint, ConversationUpdate};
+use mannie_plugin_sdk::contracts::{
+    AssignedTaskState, ChatError, Checkpoint, CheckpointRef, ConversationId, ConversationUpdate,
+    DecideApproval, EarlierTurns, LoadEarlierTurns, ReadToolOutput, Secret, TaskAssignment, TaskId,
+    ToolOutputPage, ToolsError, WorkerId,
+};
 use tokio::sync::watch;
 
 use crate::view::WorkerView;

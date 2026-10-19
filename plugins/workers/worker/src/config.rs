@@ -1,4 +1,4 @@
-//! The worker's configuration (docs/features/workers/service.md, the
+//! The worker's configuration (plugins/workers/docs/service.md, the
 //! configuration): one versioned TOML file that root or the administrators
 //! own. Every error names the key and what is wrong with it, and a newer
 //! version or an unknown key is refused, so a worker never misreads a file.
@@ -8,11 +8,11 @@ use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
-use mannie_tools::Ceiling;
-use mannie_types::ceiling::CeilingMode;
-use mannie_types::clock::UtcMillis;
-use mannie_types::ids::RuleId;
-use mannie_types::tools::CommandRule;
+use mannie_host_kit::tools::Ceiling;
+use mannie_host_kit::types::CommandRule;
+use mannie_host_kit::types::RuleId;
+use mannie_plugin_sdk::contracts::CeilingMode;
+use mannie_plugin_sdk::contracts::UtcMillis;
 use serde::Deserialize;
 
 use crate::paths::{Folders, HOST_INSTRUCTIONS_FILE};
@@ -290,7 +290,7 @@ fn absolute(path: PathBuf) -> Result<PathBuf, String> {
 /// compares.
 fn existing_folder(path: PathBuf) -> Result<String, String> {
     let path = absolute(path)?;
-    mannie_tools::canonical_folder(&path).map_err(|_missing| {
+    mannie_host_kit::tools::canonical_folder(&path).map_err(|_missing| {
         format!(
             "names {}, which is not a folder that exists on this host",
             path.display()
@@ -307,7 +307,7 @@ fn checked_ceiling(ceiling: CeilingFile, now: UtcMillis) -> Result<Ceiling, (Str
     }
     let mut rules = Vec::new();
     for (index, rule) in ceiling.rules.into_iter().enumerate() {
-        let words = mannie_tools::command_words(&rule.command).ok_or_else(|| {
+        let words = mannie_host_kit::tools::command_words(&rule.command).ok_or_else(|| {
             (
                 format!("ceiling.rules[{index}].command"),
                 format!(

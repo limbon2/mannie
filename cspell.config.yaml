@@ -16,6 +16,7 @@ words:
   - APIKEY
   - appindicator
   - Authenticode
+  - AUTOINCREMENT
   - autolinks
   - bsdtar
   - bufbuild
@@ -59,6 +60,7 @@ words:
   - libxdo
   - lifecycles
   - limbon
+  - linkme
   - LOCALAPPDATA
   - lockfiles
   - LOGNAME
@@ -99,11 +101,13 @@ words:
   - rustls
   - RustSec
   - rustup
+  - savepoints
   - schemars
   - serde
   - setsid
   - SIGSTOP
   - Slint
+  - smol
   - specta
   - sqlx
   - strikethrough
@@ -112,6 +116,7 @@ words:
   - Taskfile
   - Tauri
   - Tauri's
+  - taurignore
   - thiserror
   - Tombi
   - Tombi's

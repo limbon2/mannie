@@ -1,4 +1,4 @@
-//! Pairing (V6; docs/features/workers/pairing-and-link.md, pairing): a good
+//! Pairing (V6; plugins/workers/docs/pairing-and-link.md, pairing): a good
 //! code pairs and both sides pin each other's keys; a wrong, expired or used
 //! code is refused; the code's attempts run out; a key in the middle never
 //! pairs; a paired worker refuses another master; a key that is not the
@@ -11,12 +11,12 @@
 use std::fs;
 
 use mannie_link::keys::{KeyPin, LinkKey};
-use mannie_link::testing::{KeyInTheMiddle, LinkedWorker, Relay};
-use mannie_link::worker::{CODE_FILE, PIN_FILE};
-use mannie_types::ids::WorkerId;
+use mannie_link_worker::{CODE_FILE, PIN_FILE};
+use mannie_plugin_sdk::contracts::WorkerId;
 use mannie_workers::commands::WorkersError;
-use mannie_workers::testing::{LinkedMaster, get_with_key};
 use mannie_workers::view::WorkerStatus;
+use mannie_workers_testing::master::{LinkedMaster, get_with_key};
+use mannie_workers_testing::worker::{KeyInTheMiddle, LinkedWorker, Relay};
 
 /// The pin that the worker keeps of its master, if any.
 fn master_pin_of(worker: &LinkedWorker) -> Option<String> {

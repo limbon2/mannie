@@ -2,6 +2,10 @@
 //! model sees). It is a contract with the model and is reviewed like code:
 //! changing it changes how every model behaves in Mannie.
 
+// The texts of the tools that start tasks, which an executor's own tools
+// share with `start_task` (ADR-0031, decision 4).
+pub use mannie_types::tasks::{TASK_TITLE_ARGUMENT, task_still_running};
+
 use crate::agents::Requester;
 use crate::instructions::ToolEnvironment;
 
@@ -209,7 +213,7 @@ pub fn compaction_tool_call(tool: &str, arguments: &str, result: &str) -> String
 }
 
 /// An image of the owner's message, in the transcript of a compaction request
-/// (docs/features/images.md, the text the model sees).
+/// (plugins/images/docs/README.md, the text the model sees).
 pub fn compaction_image(width: u32, height: u32) -> String {
     format!("Owner's image: {width}×{height} pixels.")
 }
@@ -276,6 +280,18 @@ pub fn mention_not_found(path: &str) -> String {
 pub const COMPACTION_OMITTED: &str =
     "[Part of this turn was left out here because it was too long to summarize.]";
 
+// The text of plugins' tools (ADR-0034, decision 6). The core runs a
+// plugin's tool through its own tool loop and keeps the tool's output within
+// the run's result limit.
+
+/// Ends the output of a plugin's tool that was longer than a tool result may
+/// be, after the part that fits; `bytes` is the size of the whole output.
+pub fn plugin_output_cut(bytes: usize) -> String {
+    format!(
+        "[The output was cut here: the tool gave {bytes} bytes, more than a tool result may hold.]"
+    )
+}
+
 // The text of child agents and their tasks (docs/features/child-agents/
 // tasks.md, the text the model sees).
 
@@ -323,10 +339,6 @@ learned. background works as in start_task.";
 pub const WAIT_FOR_TASKS: &str = "Waits until tasks of this conversation have ended and returns \
 their reports. A report you already read is returned again. An empty list waits for every task of \
 this reply whose report you have not read.";
-
-/// The argument `title` of `start_task`.
-pub const TASK_TITLE_ARGUMENT: &str =
-    "A few words for the owner that name the task, such as \"Find the callers of parse_config\".";
 
 /// The argument `agent` of `start_task`.
 pub const TASK_AGENT_ARGUMENT: &str =
@@ -434,14 +446,6 @@ pub fn task_interrupted(number: u32, doer: &str) -> String {
     format!(
         "Mannie stopped while task {number} was running, so it did not finish. Its conversation \
 keeps what {doer} did; call follow_up_task to let it continue, or continue without it."
-    )
-}
-
-/// The result of a follow-up of a task that still runs.
-pub fn task_still_running(number: u32) -> String {
-    format!(
-        "Task {number} is still running. Call wait_for_tasks for its report before you send a \
-follow-up."
     )
 }
 

@@ -1,9 +1,10 @@
 //! Test tools: a credential vault in memory, a fake model that plays scripted
 //! replies and writes summaries on its own, a runtime on a temporary store, a
 //! worker's runtime with its host and ceiling, a port that joins a master and
-//! a worker in one process with faults to inject, and a transcript that a
-//! subscriber builds from updates (docs/architecture/agent-runtime.md,
-//! testing).
+//! a worker in one process with faults to inject, plugins that start and
+//! stop as the plugin host makes them, the services that the runtime binds
+//! to a plugin, a fake executor, and a transcript that a subscriber builds
+//! from updates (docs/architecture/agent-runtime.md, testing).
 //!
 //! Only the `testing` feature compiles this module. The desktop app and the
 //! worker never enable it.
@@ -16,12 +17,22 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 use futures_util::stream::BoxStream;
 use futures_util::{FutureExt, StreamExt};
+use mannie_plugin_sdk::contributions::Contributions;
+use mannie_plugin_sdk::host::{ContributionRefusal, add_contributions, remove_contributions};
+use mannie_plugin_sdk::ids::PluginId;
+use mannie_plugin_sdk::points::executors::{
+    ExecutorRefusal, ExecutorSection, FollowUpPlan, PlanCall, PlanError, SubmitError, TaskExecutor,
+    TaskPlan, TaskSubmission,
+};
+use mannie_plugin_sdk::points::tools::ToolSpec;
+use mannie_plugin_sdk::services::credentials::CredentialsApi;
+use mannie_plugin_sdk::services::executor_host::ExecutorHostApi;
 use mannie_provider::testing::Step;
 use mannie_provider::{
     Content, EventStream, HttpClient, ModelRequest, Provider, ProviderError, ProviderEvent,
-    ProviderRegistry, Target, ToolDefinition,
+    ProviderRegistry, Target,
 };
-use mannie_store::{Store, StoreModule, StoreOptions};
+use mannie_store::{PluginModule, Store, StoreOptions};
 use mannie_tools::{Ceiling, MutationLock, SystemFacts, ToolRegistry};
 use mannie_types::ceiling::CeilingMode;
 use mannie_types::chat::{
@@ -49,11 +60,9 @@ use mannie_types::transcript::{
 use tokio::sync::watch;
 
 use crate::{
-    AgentDefinition, AgentRegistry, CredentialVault, ExecutorRefusal, ExecutorSection,
-    FileMentions, FollowUpPlan, GENERAL, InstructionRegistry, InstructionSection, MachineSettings,
-    MentionRegistry, PlanCall, PlanError, Requester, RetryPolicy, Runtime, RuntimeConfig,
-    RuntimeDeps, SubmitError, TaskExecutor, TaskPlan, TaskSubmission, ToolsDeps, VaultError,
-    checkpoint_section, texts,
+    AgentDefinition, AgentRegistry, CredentialVault, FileMentions, GENERAL, InstructionRegistry,
+    InstructionSection, MachineSettings, MentionRegistry, Requester, RetryPolicy, Runtime,
+    RuntimeConfig, RuntimeDeps, ToolsDeps, VaultError, checkpoint_section, texts,
 };
 
 /// How long a helper waits for a state before it fails the test. Shared CI
@@ -504,9 +513,10 @@ pub struct HarnessOptions {
     pub agents: AgentRegistry,
     /// The runtime's configuration.
     pub config: RuntimeConfig,
-    /// The store's modules besides the core's, such as a plugin's, which the
-    /// store migrates as the composition root's do (ADR-0030, decision 5).
-    pub store_modules: Vec<StoreModule>,
+    /// The plugins' modules of the store, which the store checks, migrates
+    /// and registers as the composition root's (ADR-0030, decision 5;
+    /// ADR-0034, decision 7).
+    pub store_modules: Vec<PluginModule>,
 }
 
 impl Default for HarnessOptions {
@@ -568,16 +578,16 @@ pub fn open_store(database: &Path) -> Store {
     open_store_with(database, Vec::new())
 }
 
-/// Opens the store of a harness directory with these modules besides the
-/// core's.
+/// Opens the store of a harness directory with these plugins' modules
+/// besides the core's.
 ///
 /// # Panics
 ///
 /// When the store cannot be opened, which fails the test.
-pub fn open_store_with(database: &Path, modules: Vec<StoreModule>) -> Store {
+pub fn open_store_with(database: &Path, modules: Vec<PluginModule>) -> Store {
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let options =
-        StoreOptions::new(database.with_file_name("backups"), clock).with_modules(modules);
+        StoreOptions::new(database.with_file_name("backups"), clock).with_plugin_modules(modules);
     Store::open(database, &options).expect("the test store opens")
 }
 
@@ -1296,6 +1306,62 @@ async fn start_worker_runtime(
         .expect("the worker's runtime starts")
 }
 
+/// Takes a plugin's contributions as the plugin host does when the plugin
+/// starts: through the SDK's coordinator and the runtime's consumers, all or
+/// none (ADR-0034, decision 6).
+///
+/// # Panics
+///
+/// When `plugin` is not a plugin ID, which fails the test.
+pub fn add_plugin(
+    runtime: &Runtime,
+    plugin: &str,
+    contributions: Contributions,
+) -> Result<(), ContributionRefusal> {
+    let plugin = PluginId::parse(plugin).expect("the test names a plugin ID");
+    add_contributions(&runtime.contribution_consumers(), &plugin, contributions)
+}
+
+/// Drops a plugin's contributions as the plugin host does when the plugin
+/// stops. Returns whether the runtime held them.
+///
+/// # Panics
+///
+/// When `plugin` is not a plugin ID, which fails the test.
+pub fn remove_plugin(runtime: &Runtime, plugin: &str) -> bool {
+    let plugin = PluginId::parse(plugin).expect("the test names a plugin ID");
+    let registered = runtime
+        .contributions()
+        .generation_of(plugin.as_str())
+        .is_some();
+    remove_contributions(&runtime.contribution_consumers(), &plugin);
+    registered
+}
+
+/// The executor host that the runtime binds to a plugin, as its provider
+/// binds the service `executor-host` when the plugin host starts a plugin
+/// that declares it (ADR-0034, decision 5), without a manifest.
+///
+/// # Panics
+///
+/// When `plugin` is not a plugin ID, which fails the test.
+pub fn executor_host(runtime: &Runtime, plugin: &str) -> Arc<dyn ExecutorHostApi> {
+    let plugin = PluginId::parse(plugin).expect("the test names a plugin ID");
+    runtime.bound_executor_host(plugin.as_str())
+}
+
+/// The credentials that the runtime binds to a plugin, as its provider binds
+/// the service `credentials` when the plugin host starts a plugin that
+/// declares it (ADR-0034, decision 5), without a manifest.
+///
+/// # Panics
+///
+/// When `plugin` is not a plugin ID, which fails the test.
+pub fn credentials(runtime: &Runtime, plugin: &str) -> Arc<dyn CredentialsApi> {
+    let plugin = PluginId::parse(plugin).expect("the test names a plugin ID");
+    runtime.bound_credentials(plugin.as_str())
+}
+
 /// The kind of the [`FakeExecutor`].
 pub const FAKE_EXECUTOR_KIND: &str = "fake";
 
@@ -1451,11 +1517,12 @@ impl TaskExecutor for FakeExecutor {
         FAKE_EXECUTOR_AGENT
     }
 
-    fn tool(&self) -> Option<ToolDefinition> {
-        Some(ToolDefinition {
-            name: FAKE_EXECUTOR_TOOL.to_owned(),
-            description: "Gives a task to a box.".to_owned(),
-            parameters: mannie_tools::with_activity(&serde_json::json!({
+    /// The spec leaves out the activity argument, which the runtime adds.
+    fn tool(&self) -> Option<ToolSpec> {
+        Some(ToolSpec::new(
+            FAKE_EXECUTOR_TOOL,
+            "Gives a task to a box.",
+            serde_json::json!({
                 "additionalProperties": false,
                 "properties": {
                     "background": { "type": "boolean" },
@@ -1465,15 +1532,12 @@ impl TaskExecutor for FakeExecutor {
                 },
                 "required": ["background", "instruction", "target", "title"],
                 "type": "object",
-            })),
-        })
+            }),
+        ))
     }
 
     fn section(&self) -> Option<ExecutorSection> {
-        Some(ExecutorSection {
-            position: 310,
-            text: FAKE_EXECUTOR_SECTION.to_owned(),
-        })
+        Some(ExecutorSection::new(310, FAKE_EXECUTOR_SECTION))
     }
 
     fn outlives_reply(&self) -> bool {
@@ -1489,13 +1553,13 @@ impl TaskExecutor for FakeExecutor {
         if let Some(refusal) = refusal {
             return Err(PlanError::Refused(refusal));
         }
-        Ok(TaskPlan {
-            target: Self::target(&arguments.target),
-            title: arguments.title,
-            instruction: arguments.instruction,
-            background: arguments.background,
-            options: serde_json::json!({}),
-        })
+        Ok(TaskPlan::new(
+            Self::target(&arguments.target),
+            arguments.title,
+            arguments.instruction,
+            arguments.background,
+            serde_json::json!({}),
+        ))
     }
 
     fn plan_follow_up(
@@ -1508,10 +1572,7 @@ impl TaskExecutor for FakeExecutor {
             return Err(refusal);
         }
         state.follow_ups.push(earlier.clone());
-        Ok(FollowUpPlan {
-            target: earlier.clone(),
-            options: serde_json::json!({}),
-        })
+        Ok(FollowUpPlan::new(earlier.clone(), serde_json::json!({})))
     }
 
     fn document(&self, _submission: &TaskSubmission) -> Option<String> {

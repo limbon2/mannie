@@ -1,0 +1,18 @@
+{
+  "follows": ["workers", "log-viewer", "jira2", "a-b-c", "a", "runtime", "tauri-plugin-notes", "settings-sync"],
+  "breaks": [
+    "",
+    "-",
+    "Workers",
+    "log_viewer",
+    "-workers",
+    "workers-",
+    "log--viewer",
+    "2fa",
+    "a b",
+    "fake.notes",
+    "wörkers",
+    "workers\n",
+    "\nworkers"
+  ]
+}

@@ -7,6 +7,8 @@
 | Deciders | Owner                                                                                                                          |
 | Related  | [ADR-0018](0018-release-from-tagged-builds.md), [Engineering standards](../engineering/standards.md), [LICENSE](../../LICENSE) |
 
+Later changes: [ADR-0035](0035-find-plugins-at-build-time-in-folders-of-their-own.md) refines decisions 5 and 6: every workspace and the launcher's graph fall under the policy, with notices for each shipped graph.
+
 ## Context
 
 Verified 2026-10-13:

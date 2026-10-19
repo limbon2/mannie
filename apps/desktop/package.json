@@ -10,7 +10,11 @@
     "build:validation": "vite build --mode validation"
   },
   "imports": {
-    "#lib/*": "./src/lib/*"
+    "#lib/*": "./src/lib/*",
+    "#plugin-list": {
+      "validation": "./src/lib/generated/plugin-list.validation.ts",
+      "default": "./src/lib/generated/plugin-list.ts"
+    }
   },
   "devDependencies": {
     "@inlang/cli": "3.4.2",

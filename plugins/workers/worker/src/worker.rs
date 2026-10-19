@@ -10,17 +10,18 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use mannie_link::host::{CeilingView, WorkerDetails};
-use mannie_link::worker::{LeaseVault, WorkerLink, WorkerLinkError};
-use mannie_logging::{ErrorChain, LogConfig, LoggingError, LoggingGuard, Redactor};
-use mannie_provider::{HttpClient, ProviderRegistry};
-use mannie_runtime::{
+use mannie_host_kit::logging::{ErrorChain, LogConfig, LoggingError, LoggingGuard, Redactor};
+use mannie_host_kit::provider::{HttpClient, ProviderRegistry};
+use mannie_host_kit::runtime::{
     CredentialVault, MachineSettings, MentionRegistry, Runtime, RuntimeConfig, RuntimeDeps,
     ToolsDeps,
 };
-use mannie_store::{Store, StoreError, StoreOptions};
-use mannie_tools::{MutationLock, SystemFacts, ToolRegistry};
-use mannie_types::clock::{Clock, SystemClock};
+use mannie_host_kit::store::{Store, StoreError, StoreOptions};
+use mannie_host_kit::tools::{MutationLock, SystemFacts, ToolRegistry};
+use mannie_host_kit::types::SystemClock;
+use mannie_link::host::{CeilingView, WorkerDetails};
+use mannie_link_worker::{LeaseVault, WorkerLink, WorkerLinkError};
+use mannie_plugin_sdk::contracts::Clock;
 
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
@@ -74,10 +75,10 @@ pub(crate) enum StartError {
     Store(#[from] StoreError),
     /// The HTTP client of the provider adapters could not be set up.
     #[error("could not set up the HTTP client for model providers")]
-    HttpClient(#[source] mannie_provider::TransportError),
+    HttpClient(#[source] mannie_host_kit::provider::TransportError),
     /// The runtime could not recover the tasks of the last run.
     #[error("could not recover the tasks of the last run")]
-    Runtime(#[source] mannie_store::RuntimeStoreError),
+    Runtime(#[source] mannie_host_kit::store::RuntimeStoreError),
     /// The worker's key could not be read or made.
     #[error("could not read or make the worker's key")]
     Key(#[source] WorkerLinkError),
@@ -128,7 +129,7 @@ fn ceiling_view(config: &Config) -> CeilingView {
 /// A folder of the worker's own, in the canonical form that the policy
 /// compares, or as it is named when it does not exist.
 fn protected_folder(folder: &Path) -> PathBuf {
-    match mannie_tools::canonical_folder(folder) {
+    match mannie_host_kit::tools::canonical_folder(folder) {
         Ok(canonical) => PathBuf::from(canonical),
         Err(_missing) => folder.to_path_buf(),
     }
@@ -151,7 +152,7 @@ impl Worker {
             LOG_FILE_PREFIX,
             options.console_logging,
         );
-        let logging = mannie_logging::init(&log_config, &redactor, Arc::clone(&clock))?;
+        let logging = mannie_host_kit::logging::init(&log_config, &redactor, Arc::clone(&clock))?;
         crate::hardening::apply();
         tracing::info!(
             version = VERSION,
@@ -170,7 +171,7 @@ impl Worker {
         let runtime =
             start_runtime(options, store.clone(), &leases, system, Arc::clone(&clock)).await?;
         let key =
-            mannie_link::worker::load_or_create_key(data_directory).map_err(StartError::Key)?;
+            mannie_link_worker::load_or_create_key(data_directory).map_err(StartError::Key)?;
         let listener =
             TcpListener::bind(config.listen)
                 .await
@@ -195,7 +196,7 @@ impl Worker {
             clock,
         };
         let (stop_link, stopped) = oneshot::channel::<()>();
-        let link = tokio::spawn(mannie_link::worker::serve(link, listener, async {
+        let link = tokio::spawn(mannie_link_worker::serve(link, listener, async {
             let _stopped = stopped.await;
         }));
         if let Err(error) = health::write(data_directory) {

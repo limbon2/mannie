@@ -4,7 +4,7 @@ use image::{
     DynamicImage, GenericImageView, ImageBuffer, ImageFormat as Format, Rgb, RgbImage, Rgba,
     RgbaImage,
 };
-use mannie_types::images::{ImageFormat, MAX_IMAGE_BYTES};
+use mannie_plugin_sdk::contracts::{ImageFormat, MAX_IMAGE_BYTES};
 
 use super::prepare;
 use crate::commands::{ImagesError, MAX_DECODED_MEGAPIXELS, MAX_DECODED_SIDE, MAX_FILE_BYTES};

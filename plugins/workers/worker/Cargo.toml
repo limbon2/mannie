@@ -13,13 +13,15 @@ anyhow = { workspace = true }
 # base64.
 base64 = { workspace = true }
 clap = { workspace = true }
+# What the worker, a composition root of its own, uses of the core: the
+# runtime, the tools, the store, logging and the provider (ADR-0034,
+# decision 12).
+mannie-host-kit = { workspace = true }
 mannie-link = { workspace = true }
-mannie-logging = { workspace = true }
-mannie-provider = { workspace = true }
-mannie-runtime = { workspace = true }
-mannie-store = { workspace = true }
-mannie-tools = { workspace = true }
-mannie-types = { workspace = true }
+# The worker's side of the link.
+mannie-link-worker = { workspace = true }
+# The contracts that the worker shares with the plugin.
+mannie-plugin-sdk = { workspace = true }
 # The Ed25519 check of a release archive's signature.
 ring = { workspace = true }
 serde = { workspace = true }
@@ -42,14 +44,15 @@ base64 = { workspace = true }
 libc = { workspace = true }
 
 [target."cfg(unix)".dependencies]
-# Core dumps and tracing turned off, and whether the worker's account can
-# write its configuration.
-rustix = { workspace = true, features = ["fs", "process"] }
+# Core dumps and tracing turned off, whether the worker's account can write
+# its configuration, and the host's name.
+rustix = { workspace = true, features = ["fs", "process", "system"] }
 
 [target."cfg(windows)".dependencies]
 windows-service = { workspace = true }
-# Whether the worker's account can write its configuration's folder.
-windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem"] }
+# Whether the worker's account can write its configuration's folder, and the
+# host's name.
+windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem", "Win32_System_SystemInformation"] }
 
 [lints]
 workspace = true

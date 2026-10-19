@@ -189,7 +189,7 @@ pub enum ToolsError {
     #[error("Mannie is quitting")]
     ShuttingDown,
     /// The request belongs to a task on a worker that cannot be reached now,
-    /// so the decision did not reach it (docs/features/workers/
+    /// so the decision did not reach it (plugins/workers/docs/
     /// delegation.md).
     #[error("the worker of this request cannot be reached")]
     WorkerUnreachable,

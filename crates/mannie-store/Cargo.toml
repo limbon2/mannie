@@ -22,23 +22,34 @@ name = "snapshot"
 required-features = ["validation"]
 
 [dependencies]
+# The SDK's service `store`, which the store provides to plugins, and the
+# plugins' IDs and modules (ADR-0034, decision 7).
+mannie-plugin-sdk = { workspace = true, features = ["host"] }
 mannie-types = { workspace = true }
-rusqlite = { workspace = true }
+# The authorizer that confines plugins' statements and migrations to their
+# tables needs the feature hooks, which adds no crate (ADR-0034, decision 7).
+rusqlite = { workspace = true, features = ["hooks"] }
 # The versioned JSON documents of the runtime's and the profiles' tables.
 serde = { workspace = true }
 serde_json = { workspace = true }
+# The hash of the frozen migration that may leave its plugin's prefix
+# (ADR-0034, decision 7).
+sha2 = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
+# The tests of the store's provider bind it to a plugin of a manifest.
+mannie-plugin-sdk = { workspace = true, features = ["host", "manifest"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 
 [features]
 # Lets the tests of plugins create a database as 0.2.0 left it, with their
-# modules (ADR-0030). Never enabled in the desktop app or the worker.
+# modules (ADR-0030), and seed and check their tables with SQL that no module
+# lists. Never enabled in the desktop app or the worker.
 testing = []
 # Exposes the synthetic event table that the validations (V3) write to. Never
 # enabled in the desktop app or the worker.

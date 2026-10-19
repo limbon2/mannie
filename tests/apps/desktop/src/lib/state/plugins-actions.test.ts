@@ -18,7 +18,13 @@ const core = vi.hoisted(() => ({
 vi.mock('../../../../../../apps/desktop/src/lib/generated/bindings.js', () => ({ commands: core }));
 
 function view(enabled: boolean): PluginView {
-  return { enabled, failure: null, id: 'workers', state: enabled ? 'on' : 'off' };
+  return {
+    enabled,
+    failure: null,
+    id: 'workers',
+    state: enabled ? 'on' : 'off',
+    uses: { channels: [], commands: [], crates: [], native: [], programs: [], secrets: [], services: [] },
+  };
 }
 
 beforeEach(() => {
@@ -34,7 +40,10 @@ beforeEach(() => {
       failure: () => null,
       id: 'workers',
       name: () => 'Workers',
-      offQuestion: (work) => (work.activeTasks === 0 ? null : `${String(work.activeTasks)} tasks keep running.`),
+      offQuestion: (items) => {
+        const count = items.find((item) => item.code === 'active_tasks')?.count ?? 0;
+        return count === 0 ? null : `${String(count)} tasks keep running.`;
+      },
     },
   ]);
 });
@@ -58,7 +67,7 @@ describe('the Plugins page', () => {
   });
 
   it('asks before turning off a plugin with work in progress, and turns it off once the owner confirms', async () => {
-    core.pluginWork.mockResolvedValue({ data: { activeTasks: 2 }, status: 'ok' });
+    core.pluginWork.mockResolvedValue({ data: { items: [{ code: 'active_tasks', count: 2 }] }, status: 'ok' });
     const actions = new PluginsActions();
 
     await actions.toggle('workers', false);
@@ -75,7 +84,7 @@ describe('the Plugins page', () => {
 
   it('turns off a plugin without work at once, and one whose work cannot be read', async () => {
     core.pluginWork
-      .mockResolvedValueOnce({ data: { activeTasks: 0 }, status: 'ok' })
+      .mockResolvedValueOnce({ data: { items: [] }, status: 'ok' })
       .mockResolvedValueOnce({ error: { code: 'store_unavailable' }, status: 'error' });
     const actions = new PluginsActions();
 

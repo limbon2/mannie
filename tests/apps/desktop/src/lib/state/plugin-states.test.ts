@@ -33,7 +33,13 @@ vi.mock('../../../../../../apps/desktop/src/lib/utils/calls.js', async (importOr
 }));
 
 function plugin(state: PluginState, id = 'workers'): PluginView {
-  return { enabled: state !== 'off', failure: state === 'failed' ? 'storage_failed' : null, id, state };
+  return {
+    enabled: state !== 'off',
+    failure: state === 'failed' ? 'storage_failed' : null,
+    id,
+    state,
+    uses: { channels: [], commands: [], crates: [], native: [], programs: [], secrets: [], services: [] },
+  };
 }
 
 /** Delivers the whole list with the plugins in these states. */
@@ -120,13 +126,13 @@ describe('the list of plugins', () => {
   });
 
   it('reads the work that a plugin has in progress', async () => {
-    core.pluginWork.mockResolvedValue({ data: { activeTasks: 2 }, status: 'ok' });
+    core.pluginWork.mockResolvedValue({ data: { items: [{ code: 'active_tasks', count: 2 }] }, status: 'ok' });
     const states = new PluginStates();
 
     const work = await states.work('workers');
 
     expect(core.pluginWork).toHaveBeenCalledWith({ pluginId: 'workers' });
-    expect(work).toEqual({ data: { activeTasks: 2 }, ok: true });
+    expect(work).toEqual({ data: { items: [{ code: 'active_tasks', count: 2 }] }, ok: true });
   });
 });
 

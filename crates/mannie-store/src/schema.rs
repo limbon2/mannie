@@ -19,6 +19,7 @@
 //! `user_version` is [`MODULE_RECORDS`] plus the sum of the recorded
 //! versions, which binaries up to 0.2.0 refuse as newer than theirs.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -29,21 +30,27 @@ use time::OffsetDateTime;
 use time::macros::format_description;
 
 use crate::error::{DatabaseError, StoreError};
+use crate::plugin_store::run_plugin_migration;
 
 /// A module of the database: the owner of the tables that its name
-/// prefixes, with its migrations in order.
-#[derive(Debug, Clone, Copy)]
-pub struct StoreModule {
+/// prefixes, with its migrations in order. The core's modules are built in;
+/// a plugin's module comes from the SDK's declaration, whose migrations the
+/// module owns (`plugin_store`).
+#[derive(Debug, Clone)]
+pub(crate) struct StoreModule {
     /// The module's name, which prefixes its tables, such as `runtime`.
-    pub name: &'static str,
+    pub(crate) name: &'static str,
     /// The module's migrations in order. A new migration is appended, and an
     /// applied migration is never edited or removed.
-    pub migrations: &'static [Migration],
+    pub(crate) migrations: Cow<'static, [Migration]>,
+    /// Whether the module is a plugin's, whose migrations run under the
+    /// authorizer and the schema check (ADR-0034, decision 7).
+    pub(crate) confined: bool,
 }
 
 impl StoreModule {
     /// The version that the module's migrations lead to.
-    pub fn version(&self) -> u32 {
+    pub(crate) fn version(&self) -> u32 {
         // No module has more migrations than u32 counts.
         u32::try_from(self.migrations.len()).unwrap_or(u32::MAX)
     }
@@ -51,18 +58,18 @@ impl StoreModule {
 
 /// One schema change of a module.
 #[derive(Debug, Clone, Copy)]
-pub struct Migration {
+pub(crate) struct Migration {
     /// The module's version after this migration: its position in the
     /// module's list, counting from 1.
-    pub version: u32,
+    pub(crate) version: u32,
     /// Its number in the single list of migrations before M5, which carries
     /// over the `user_version` of an older database. Later migrations have
     /// none.
-    pub legacy_version: Option<u32>,
+    pub(crate) legacy_version: Option<u32>,
     /// What it does, for logs and errors.
-    pub description: &'static str,
+    pub(crate) description: &'static str,
     /// The statements, run in one transaction.
-    pub sql: &'static str,
+    pub(crate) sql: &'static str,
 }
 
 /// The last version of the single list of migrations before M5.
@@ -74,17 +81,18 @@ pub(crate) const MODULE_RECORDS: u32 = 1000;
 
 const SETTINGS: StoreModule = StoreModule {
     name: "settings",
-    migrations: &[Migration {
+    migrations: Cow::Borrowed(&[Migration {
         version: 1,
         legacy_version: Some(1),
         description: "create the settings sections table",
         sql: include_str!("settings/migrations/0001_create_sections.sql"),
-    }],
+    }]),
+    confined: false,
 };
 
 const RUNTIME: StoreModule = StoreModule {
     name: "runtime",
-    migrations: &[
+    migrations: Cow::Borrowed(&[
         Migration {
             version: 1,
             legacy_version: Some(2),
@@ -205,22 +213,24 @@ const RUNTIME: StoreModule = StoreModule {
             description: "create the table of the images that the owner's messages hold",
             sql: include_str!("runtime/migrations/0029_create_images.sql"),
         },
-    ],
+    ]),
+    confined: false,
 };
 
 const PROVIDER: StoreModule = StoreModule {
     name: "provider",
-    migrations: &[Migration {
+    migrations: Cow::Borrowed(&[Migration {
         version: 1,
         legacy_version: Some(6),
         description: "create the provider profiles table",
         sql: include_str!("provider/migrations/0006_create_profiles.sql"),
-    }],
+    }]),
+    confined: false,
 };
 
 const TOOLS: StoreModule = StoreModule {
     name: "tools",
-    migrations: &[
+    migrations: Cow::Borrowed(&[
         Migration {
             version: 1,
             legacy_version: Some(10),
@@ -239,7 +249,8 @@ const TOOLS: StoreModule = StoreModule {
             description: "create the shared grants table",
             sql: include_str!("tools/migrations/0014_create_shared_grants.sql"),
         },
-    ],
+    ]),
+    confined: false,
 };
 
 /// The built-in modules, in the order that a new database applies them: the
@@ -567,7 +578,12 @@ pub(crate) fn migrate(
             let transaction = connection
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(failed)?;
-            transaction.execute_batch(migration.sql).map_err(failed)?;
+            if module.confined {
+                run_plugin_migration(&transaction, module.name, migration.version, migration.sql)
+                    .map_err(failed)?;
+            } else {
+                transaction.execute_batch(migration.sql).map_err(failed)?;
+            }
             transaction
                 .execute(
                     UPSERT_RECORD,
@@ -597,7 +613,7 @@ pub(crate) fn migrate_as_before_m5(
 ) -> rusqlite::Result<()> {
     let mut migrations: Vec<(u32, &Migration)> = modules
         .iter()
-        .flat_map(|module| module.migrations)
+        .flat_map(|module| module.migrations.iter())
         .filter_map(|migration| {
             migration
                 .legacy_version
@@ -673,9 +689,12 @@ mod tests {
                 );
             }
         }
-        // The Workers plugin's module holds the rest of the list, and its
-        // tests check them (ADR-0031, decision 8).
-        let plugins: BTreeSet<u32> = [19, 20, 22].into();
+        // The plugins' modules hold the rest of the list, as the store's
+        // frozen record of their numbers says (ADR-0031, decision 8).
+        let plugins: BTreeSet<u32> = crate::legacy::LEGACY_VERSIONS
+            .iter()
+            .map(|recorded| recorded.legacy_version)
+            .collect();
         let list: BTreeSet<u32> = (1..=LAST_LEGACY_VERSION).collect();
         assert_eq!(seen, &list - &plugins);
     }

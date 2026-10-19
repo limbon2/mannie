@@ -7,6 +7,8 @@
 | Deciders | Owner                                                                                                                                                |
 | Related  | [Releasing](../engineering/releasing.md), [ADR-0017](0017-license-and-dependency-policy.md), [ADR-0016](0016-link-machines-over-pinned-mtls-grpc.md) |
 
+Later changes: [ADR-0035](0035-find-plugins-at-build-time-in-folders-of-their-own.md) refines decisions 1, 3 and 4: the programs come from the manifests, the launcher's lock is archived with the SBOMs, and every workspace carries the one version.
+
 ## Context
 
 - Every milestone from M1 on ends with a 0.x release ([decision D15](../roadmap/milestones.md#5-decisions)).

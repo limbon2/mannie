@@ -61,6 +61,7 @@ export interface WindowState {
 }
 
 interface Harness {
+  callUndeclaredPluginCommand(): Promise<string>;
   callUngrantedCommand(): Promise<string>;
   closeMainWindow(): Promise<void>;
   createProviderProfile(input: ProfileInput): Promise<string>;
@@ -113,6 +114,20 @@ export async function cspViolations(): Promise<CspViolation[]> {
 }
 
 /** Calls the command that no capability grants. Returns `allowed`, or Tauri's refusal. */
+/**
+ * Calls a command that the fixture plugin does not declare, through the
+ * plugin transport, and returns the code of the refusal, or `allowed`.
+ */
+export async function callUndeclaredPluginCommand(): Promise<string> {
+  return browser.execute(async () => {
+    const harness = window.mannieValidation;
+    if (harness === undefined) {
+      throw new Error('the validation harness is missing: run the validation build');
+    }
+    return harness.callUndeclaredPluginCommand();
+  });
+}
+
 export async function callUngrantedCommand(): Promise<string> {
   return browser.execute(async () => {
     const harness = window.mannieValidation;

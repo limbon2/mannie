@@ -3,14 +3,14 @@
 |              |                                                                                                                                                          |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                         |
-| Last updated | 2026-10-16                                                                                                                                               |
+| Last updated | 2026-10-19                                                                                                                                               |
 | Related      | [ADR index](../adr/README.md), [Overview](overview.md), [Engineering standards](../engineering/standards.md), [Repository](../engineering/repository.md) |
 
 For each building block, this document says what Mannie uses, how, and what it leaves out. The decisions themselves are in the ADRs.
 
 ## 1. Version baseline
 
-Verified 2026-10-13; the rustls row, the rows for the tools M0 added, from mode-watcher on, and the rows that system tools added in M2, from ignore on, were verified 2026-10-14, the PaneForge row on 2026-10-15, and the link's rows, from tonic on, on 2026-10-16. The lockfiles (`Cargo.lock`, `pnpm-lock.yaml`) and `rust-toolchain.toml` hold the exact pins. This table mirrors them and changes with every upgrade.
+Verified 2026-10-13; the rustls row, the rows for the tools M0 added, from mode-watcher on, and the rows that system tools added in M2, from ignore on, were verified 2026-10-14, the PaneForge row on 2026-10-15, the link's rows, from tonic on, on 2026-10-16, and the plugin SDK's rows, from specta-typescript on, on 2026-10-19. The lockfiles (`Cargo.lock`, `pnpm-lock.yaml`) and `rust-toolchain.toml` hold the exact pins. This table mirrors them and changes with every upgrade.
 
 | Component                                                               | Baseline                                                                           | License                                                | Notes                                                                                                                                                                                                     |
 | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -71,12 +71,15 @@ Verified 2026-10-13; the rustls row, the rows for the tools M0 added, from mode-
 | windows-sys, winapi-util, windows-version                               | 0.61.2, 0.1.11, 0.1.7                                                              | MIT or Apache-2.0; Unlicense or MIT; MIT or Apache-2.0 | Job Objects and file flags, file identities, and the Windows version that `system_info` reports                                                                                                           |
 | image                                                                   | 0.25.10                                                                            | MIT or Apache-2.0                                      | Decodes, turns, shrinks and encodes the owner's images in the Images plugin, with the PNG, JPEG, GIF and WebP features only ([ADR-0033](../adr/0033-let-plugins-attach-images-to-the-owners-messages.md)) |
 | rfd                                                                     | 0.17.2                                                                             | MIT                                                    | The folder dialog that adds projects, in the desktop crate only; on Linux through the XDG desktop portal with `libdbus` loaded at run time, and `zenity` as its fallback                                  |
+| specta-typescript, specta-serde                                         | 0.0.12, 0.0.12                                                                     | MIT                                                    | The plugin SDK's bindings exporter, which writes each plugin's TypeScript bindings into `plugins/<id>/ui/generated/`                                                                                      |
+| toml                                                                    | 1.1.8                                                                              | MIT or Apache-2.0                                      | Plugins' manifests in the plugin SDK, and the worker's configuration file                                                                                                                                 |
+| smol-toml                                                               | 1.9.1                                                                              | BSD-3-Clause                                           | The repository scripts read the plugins' manifests and the Clippy configuration; never shipped                                                                                                            |
 
 ## 2. Tauri 2
 
 - Used: commands and channels for IPC, capabilities with `AppManifest::commands`, the single-instance plugin, the opener crate's Rust function for confirmed links (the plugin itself is not registered, so the webview cannot call it), the system tray through Tauri's `tray-icon` feature, and the bundler for NSIS on Windows and deb and rpm on Linux. On Linux the tray needs the distribution's AppIndicator library.
 - Not used: the fs, shell and http plugins, the global `__TAURI__` object, the isolation pattern, AppImage, and remote URLs in capabilities ([ADR-0004](../adr/0004-keep-system-access-in-the-rust-core.md)).
-- Tauri APIs appear only in `mannie-desktop` ([ADR-0003](../adr/0003-build-the-desktop-app-on-tauri-2.md)).
+- Tauri APIs appear only in the desktop app's two crates, the library `mannie-desktop-core` and the binary `mannie-desktop` ([ADR-0003](../adr/0003-build-the-desktop-app-on-tauri-2.md), [ADR-0035](../adr/0035-find-plugins-at-build-time-in-folders-of-their-own.md)).
 
 ## 3. SvelteKit and Svelte 5
 
@@ -96,7 +99,7 @@ Verified 2026-10-13; the rustls row, the rows for the tools M0 added, from mode-
 
 ## 5. IPC bindings
 
-- specta and tauri-specta generate typed TypeScript functions for commands, events and channels from the Rust types in `mannie-types` ([ADR-0007](../adr/0007-generate-ipc-bindings-from-rust.md)).
+- specta and tauri-specta generate typed TypeScript functions for commands, events and channels from the Rust types in `mannie-types` ([ADR-0007](../adr/0007-generate-ipc-bindings-from-rust.md)). The plugin SDK's bindings exporter writes each plugin's bindings into its folder with specta-typescript and specta-serde ([ADR-0034](../adr/0034-build-plugins-on-a-plugin-sdk.md), decision 9).
 - The bindings are generated into a git-ignored folder before the frontend builds.
 
 ## 6. Async runtime and HTTP
@@ -117,7 +120,7 @@ Verified 2026-10-13; the rustls row, the rows for the tools M0 added, from mode-
 ## 9. The link
 
 - tonic and prost for gRPC, and protox with tonic-prost-build to compile the protobuf files when `mannie-link` builds, without a system `protoc` ([ADR-0016](../adr/0016-link-machines-over-pinned-mtls-grpc.md)).
-- Mutual TLS 1.3 through tokio-rustls with ring: both sides present raw Ed25519 public keys (RFC 7250) and custom verifiers accept only the pinned key, or record the peer's key while pairing. tonic's own TLS features are off, so the link's TLS is configured in one place ([pairing and link](../features/workers/pairing-and-link.md)).
+- Mutual TLS 1.3 through tokio-rustls with ring: both sides present raw Ed25519 public keys (RFC 7250) and custom verifiers accept only the pinned key, or record the peer's key while pairing. tonic's own TLS features are off, so the link's TLS is configured in one place ([pairing and link](../../plugins/workers/docs/pairing-and-link.md)).
 - The buf CLI, from its npm package, lints and formats the contracts, and `scripts/check-link-contracts.mjs` runs `buf breaking` against the merge base and the newest release that has the contracts (`task lint:proto`).
 - Not used: certificates and their parsing, and a system `protoc`.
 

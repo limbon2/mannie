@@ -51,3 +51,5 @@ Each ADR has exactly one of these statuses:
 | [0031](0031-move-workers-into-the-first-plugin.md)                     | Move the worker system into the first plugin, behind extension points of the core             | Accepted (D28)         | M5         |
 | [0032](0032-let-features-and-plugins-add-kinds-of-mentions.md)         | Let features and plugins add kinds of mentions to the message box                             | Accepted (D30)         | M6         |
 | [0033](0033-let-plugins-attach-images-to-the-owners-messages.md)       | Let plugins attach images to the owner's messages                                             | Accepted (D31)         | M7         |
+| [0034](0034-build-plugins-on-a-plugin-sdk.md)                          | Build plugins on a plugin SDK that bridges them to the core                                   | Accepted (D33)         | M5         |
+| [0035](0035-find-plugins-at-build-time-in-folders-of-their-own.md)     | Find plugins at build time, each in a folder and a Cargo workspace of its own                 | Accepted (D33)         | M5         |

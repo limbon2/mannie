@@ -7,7 +7,7 @@
 | Last updated | YYYY-MM-DD                                              |
 | Related      | ADRs, architecture documents, other features            |
 
-A part document of a folder feature adds one more row to the table: "Part of", linking the feature's `README.md`.
+A part document of a folder feature adds one more row to the table: "Part of", linking the feature's `README.md`. A plugin's feature document, `plugins/<id>/docs/README.md`, adds a "Plugin" row with the plugin's ID, such as `` `workers` ``, and may leave out the milestone.
 
 ## Intent
 

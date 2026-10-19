@@ -68,7 +68,13 @@ export const config: WebdriverIO.Config = {
   port: DRIVER_PORT,
   reporters: ['spec'],
   runner: 'local',
-  specs: ['./specs/**/*.test.ts'],
+  // The core's specs, and each plugin's in its folder's tests/e2e (ADR-0035,
+  // decision 9), which import this folder's support as `#e2e/<module>.ts`.
+  specs: [
+    './specs/**/*.test.ts',
+    '../../plugins/*/tests/e2e/**/*.test.ts',
+    '../fixtures/plugins/*/tests/e2e/**/*.test.ts',
+  ],
   waitforTimeout: 10_000,
 
   beforeSession: async (_config, _capabilities, specs) => {

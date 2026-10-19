@@ -12,6 +12,7 @@
 
 use std::sync::Arc;
 
+use mannie_plugin_sdk::points::executors::ExecutorRefusal;
 use mannie_store::{
     Change, Durability, NewArchive, NewConversation, NewRun, NewTask, RuntimeStoreError,
     TaskEnding, TaskOrigin,
@@ -29,7 +30,7 @@ use tokio::sync::mpsc;
 
 use super::{ChildLink, Command, Ending, MAX_DETAIL_CHARS, RunActor, StepCall, halt};
 use crate::calls::Setup;
-use crate::executors::{ExecutorRefusal, RemoteFollow};
+use crate::executors::RemoteFollow;
 use crate::ids::IdGenerator;
 use crate::tasks::{
     ChildEnd, ChildGuard, ChildState, TaskBoard, TaskCall, TaskSink, doer_of, parse_call,
@@ -1200,11 +1201,11 @@ impl RunActor {
             _ => None,
         });
         if let Some((number, kind, target)) = plugin_off {
-            let refusal = ExecutorRefusal {
-                code: "plugin_off".to_owned(),
-                target: Some(target),
-                text: texts::task_plugin_off(number, &kind),
-            };
+            let refusal = ExecutorRefusal::new(
+                "plugin_off",
+                Some(target),
+                texts::task_plugin_off(number, &kind),
+            );
             self.refuse_by_executor(call, &kind, refusal);
             return Ok(());
         }

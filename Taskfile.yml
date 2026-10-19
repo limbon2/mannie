@@ -16,22 +16,42 @@ tasks:
       - task --list
 
   setup:
-    desc: Install the pinned tooling (run once after cloning) - the pnpm packages, cargo-deny and tauri-driver
+    desc: Install the pinned tooling and fetch the crates of every Cargo workspace (run once after cloning) - the pnpm packages, cargo-deny, tauri-driver and the crates that the committed locks pin - then generate
     cmds:
       - pnpm install --frozen-lockfile
       - cargo install --locked cargo-deny@0.20.2
       - cargo install --locked tauri-driver@2.1.0
+      # The crates of the root, of each plugin and of each fixture plugin, the
+      # one step that needs the network for them: `task gen` resolves offline
+      # after it (ADR-0035, decisions 5 and 13).
+      - node scripts/plugins/each.mjs -- cargo fetch --locked --manifest-path {manifest}
+      - task: gen
 
   # Generated code (docs/engineering/repository.md, generated artifacts)
 
   gen:
-    desc: Generate the IPC bindings, compile the message catalogs and write SvelteKit's types
+    desc: Generate the launcher and its lock, the IPC bindings of the core and of each plugin, the message catalogs and SvelteKit's types
     cmds:
-      # The generator also writes the bindings of the validation commands, so
-      # it needs the validation feature (apps/desktop/src-tauri/Cargo.toml).
-      - cargo run --locked --quiet -p mannie-desktop --features validation --bin mannie-desktop-bindings -- apps/desktop/src/lib/generated
-      - pnpm --dir apps/desktop exec paraglide-js compile --project ./project.inlang
+      # The plugins' manifests, the launcher in .generated/desktop/ with its
+      # lock, and the editor workspace (ADR-0035, decisions 3 to 5 and 12).
+      - node scripts/plugins/generate.mjs
+      # The core's bindings. The program also writes the bindings of the
+      # validation commands, so it needs the validation feature
+      # (apps/desktop/core/Cargo.toml).
+      - cargo run --locked --quiet -p mannie-desktop-core --features validation --bin mannie-desktop-bindings -- apps/desktop/src/lib/generated
+      # Each plugin's bindings, and the interfaces whose commands and channels
+      # the desktop binary's build script grants (ADR-0034, decisions 8 and 9).
+      - cargo run --locked --quiet --manifest-path .generated/desktop/Cargo.toml -p mannie-plugin-bindings
+      # The core's catalogs and each plugin's compile into one catalog for each
+      # locale, from the inlang project that the generator wrote (ADR-0035,
+      # decision 8), once their keys keep to their prefixes.
+      - node scripts/plugins/check-messages.mjs
+      - pnpm --dir apps/desktop exec paraglide-js compile --project ./.generated/project.inlang
       - pnpm --dir apps/desktop exec svelte-kit sync
+      # Last: the boundaries between the core and the plugins, then the
+      # fingerprint without which the desktop binary does not build
+      # (ADR-0035, decisions 3 and 6).
+      - node scripts/plugins/generate.mjs --seal
 
   gen:pseudo-locale:
     desc: Generate the pseudo-locale catalog that the end-to-end tests use (ADR-0019)
@@ -47,11 +67,13 @@ tasks:
       - pnpm --dir apps/desktop exec tauri dev
 
   build:
-    desc: Build the desktop app's installers and the worker in release mode
+    desc: Build the desktop app's installers and the plugins' programs, such as the worker, in release mode
     cmds:
       - task: gen
-      - pnpm --dir apps/desktop exec tauri build
-      - cargo build --locked --release -p mannie-worker
+      - pnpm --dir apps/desktop exec tauri build -- --locked
+      # Every program of the plugins' manifests, from its plugin's workspace
+      # (ADR-0035, decision 10).
+      - node scripts/plugins/programs.mjs build --release
 
   # Formatting and sorting
 
@@ -68,9 +90,12 @@ tasks:
       - task: fmt:rust
 
   fmt:rust:
-    desc: Format the Rust code with rustfmt
+    desc: Format the Rust code of every Cargo workspace and of the launcher with rustfmt
     cmds:
-      - cargo fmt --all
+      # `--all` also formats the path dependencies, which a plugin's workspace
+      # and the launcher share with the root's; without it, cargo fmt finds no
+      # target in a virtual manifest.
+      - node scripts/plugins/each.mjs --launcher -- cargo fmt --all --manifest-path {manifest}
 
   fmt:check:
     desc: Check that all code and documentation is formatted and sorted
@@ -81,9 +106,9 @@ tasks:
       - task: fmt:check:rust
 
   fmt:check:rust:
-    desc: Check the formatting of the Rust code
+    desc: Check the formatting of the Rust code of every Cargo workspace and of the launcher
     cmds:
-      - cargo fmt --all --check
+      - node scripts/plugins/each.mjs --launcher -- cargo fmt --all --manifest-path {manifest} --check
 
   # Linting
 
@@ -96,6 +121,7 @@ tasks:
       - task: lint:proto
       - task: lint:rust
       - task: lint:deps
+      - task: lint:plugins
       - task: lint:messages
 
   lint:ts:
@@ -121,22 +147,43 @@ tasks:
       - node scripts/check-link-contracts.mjs
 
   lint:rust:
-    desc: Check that every crate inherits the workspace lints, then run Clippy with warnings denied
+    desc: Check that every crate inherits its workspace's lints and that every workspace repeats the root's settings, then run Clippy with warnings denied in every workspace and the launcher, and on the library crates that each plugin ships with the core's rule against direct native calls
     cmds:
-      - cargo metadata --format-version 1 --no-deps | node scripts/check-workspace-lints.mjs
-      - cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - node scripts/check-workspace-lints.mjs
+      - node scripts/plugins/each.mjs --launcher -- cargo clippy --manifest-path {manifest} --workspace --all-targets --all-features --locked -- -D warnings
+      # The library crates that each plugin's entry crate ships make only the
+      # direct file-write, process and socket calls that the plugin's manifest
+      # grants under [native] (ADR-0035, decision 6).
+      - node scripts/plugins/check-native.mjs
 
   lint:deps:
-    desc: Check the dependencies' advisories, licenses, bans and sources (cargo-deny), the worker's graph (V5) and the desktop app's npm licenses
+    desc: Check the dependencies' advisories, licenses, bans and sources in every Cargo workspace and the launcher (cargo-deny), the worker's graph (V5), the boundaries between the core and the plugins, and the desktop app's npm licenses
     cmds:
-      - cargo deny --locked check
-      - cargo metadata --format-version 1 --locked | node scripts/check-worker-dependencies.mjs
+      # Every run reads the root's deny.toml, in the folder where it runs. Each
+      # workspace holds a part of the shipped graph and its own tests'
+      # crates, so a ban's wrapper or an ignored advisory outside its part is
+      # expected there.
+      - node scripts/plugins/each.mjs -- cargo deny --manifest-path {manifest} --locked check --allow unused-wrapper --allow advisory-not-detected
+      # The launcher's graph is the one that ships in the desktop app.
+      - cargo deny --manifest-path .generated/desktop/Cargo.toml --locked check
+      # No crate of the desktop stack reaches a headless program, such as the
+      # worker, on any target (V5).
+      - node scripts/plugins/programs.mjs check
+      - node scripts/plugins/check-boundaries.mjs
       - pnpm licenses list --json --filter mannie-desktop | node scripts/check-licenses.mjs
 
-  lint:messages:
-    desc: Check the message catalogs for missing, empty and inconsistent messages
+  lint:plugins:
+    desc: Check that the launcher, its lock, the plugin list, the inlang projects and the fingerprint are what `task gen` writes from the plugins as they are, and that the plugins' messages keep to their prefixes
     cmds:
-      - pnpm --dir apps/desktop exec inlang check --project ./project.inlang
+      - node scripts/plugins/generate.mjs --check
+      - node scripts/plugins/check-messages.mjs
+
+  lint:messages:
+    desc: Check the message catalogs of the core and of each plugin for keys outside their prefixes and for missing, empty, inconsistent and unused messages
+    cmds:
+      - node scripts/plugins/check-messages.mjs
+      # The plugins' UI uses their messages, so their folders are searched too.
+      - pnpm --dir apps/desktop exec inlang check --project ./.generated/project.inlang --source ./src ../../plugins ../../tests/fixtures/plugins
 
   # Tests
 
@@ -148,16 +195,13 @@ tasks:
       - task: test:scripts
 
   test:rust:
-    desc: Run the Rust tests
+    desc: Run the Rust tests of every Cargo workspace and of the desktop binary
     cmds:
-      # tauri-build leaves a stub msvcrt.lib in the desktop crate's build
-      # output for the static C runtime, and Cargo hands that folder to the
-      # doctests of every crate built in the same run, which then fail to link
-      # on Windows. The desktop crate's tests therefore run on their own.
       # Every test binary runs even after one fails, so a single run, which
       # takes long in CI, reports every failure.
-      - cargo test --workspace --all-features --locked --no-fail-fast --exclude mannie-desktop
-      - cargo test -p mannie-desktop --all-features --locked --no-fail-fast
+      - node scripts/plugins/each.mjs -- cargo test --manifest-path {manifest} --workspace --all-features --locked --no-fail-fast
+      # The desktop binary belongs to the launcher, which `task gen` writes.
+      - cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml -p mannie-desktop --all-features --locked --no-fail-fast
 
   test:desktop:
     desc: Run the desktop app's unit tests with Vitest
@@ -194,18 +238,24 @@ tasks:
       - node --test "tests/scripts/**/*.test.mjs"
 
   test:linux:
-    desc: Run Clippy and the Rust tests on Linux in Docker, without the desktop crate, with the repository mounted read-only and the build output in a volume
+    desc: Run Clippy and the Rust tests of every Cargo workspace on Linux in Docker, without the desktop app's crates, with the repository mounted read-only and the build output in a volume
     # The owner's workstation runs Windows; the Linux halves of the tools and
     # the process supervisor need Linux (owner decision of 2026-10-14). The
-    # desktop crate needs WebKitGTK, which CI provides.
+    # desktop app's crates need WebKitGTK, which CI provides.
     vars:
       LINUX_RUN: docker run --rm -v "{{.ROOT_DIR}}:/src:ro" -v mannie-linux-target:/target -v mannie-linux-cargo:/usr/local/cargo/registry -e CARGO_TARGET_DIR=/target -w /src rust:1.99
+      PLUGIN_MANIFESTS:
+        sh: node scripts/plugins/each.mjs --plugins --list
     cmds:
-      - "{{.LINUX_RUN}} cargo clippy --workspace --all-targets --all-features --locked --exclude mannie-desktop -- -D warnings"
-      - "{{.LINUX_RUN}} cargo test --workspace --all-features --locked --exclude mannie-desktop"
+      - "{{.LINUX_RUN}} cargo clippy --workspace --all-targets --all-features --locked --exclude mannie-desktop-core -- -D warnings"
+      - "{{.LINUX_RUN}} cargo test --workspace --all-features --locked --exclude mannie-desktop-core"
+      - for: { var: PLUGIN_MANIFESTS }
+        cmd: "{{.LINUX_RUN}} cargo clippy --manifest-path {{.ITEM}} --workspace --all-targets --all-features --locked -- -D warnings"
+      - for: { var: PLUGIN_MANIFESTS }
+        cmd: "{{.LINUX_RUN}} cargo test --manifest-path {{.ITEM}} --workspace --all-features --locked"
 
   e2e:
-    desc: Build the validation app and the worker, and run the end-to-end tests (V1, V2, V3, V11) through tauri-driver
+    desc: Build the validation app and the programs that the tests use, such as the worker, and run the end-to-end tests (V1, V2, V3, V11) through tauri-driver
     cmds:
       - task: e2e:build
       - pnpm exec wdio run tests/e2e/wdio.conf.ts
@@ -226,20 +276,56 @@ tasks:
       # version on Windows, and WebKitWebDriver from the distribution on Linux.
       - cmd: node scripts/edgedriver.mjs
         platforms: [windows]
-      - pnpm --dir apps/desktop exec tauri build --debug --no-bundle --features validation --config src-tauri/tauri.validation.conf.json
-      # The workers' tests pair the app with a real worker (tests/e2e/support/worker.ts).
-      - cargo build --locked -p mannie-worker
+      - pnpm --dir apps/desktop exec tauri build --debug --no-bundle --features validation --config src-tauri/tauri.validation.conf.json -- --locked
+      # The programs that the end-to-end tests use, such as the worker that
+      # the workers' tests pair the app with (tests/e2e/support/worker.ts).
+      - node scripts/plugins/programs.mjs build --e2e
 
   # Releases (docs/engineering/releasing.md)
 
   release:prepare:
-    desc: Set the version and turn the changelog's Unreleased section into the release's section (VERSION=0.1.0)
+    desc: Set the version in every Cargo workspace and turn the changelog's Unreleased section into the release's section (VERSION=0.1.0)
     requires:
       vars: [VERSION]
     cmds:
       - node scripts/release.mjs prepare {{.VERSION}}
-      # Records the new version of the workspace's own crates in Cargo.lock.
-      - cargo update --workspace
+      # Records the new version of each workspace's own crates in its lock.
+      - node scripts/plugins/each.mjs -- cargo update --workspace --offline --manifest-path {manifest}
+
+  # Cargo locks (ADR-0035, decision 5). No other task writes a committed lock.
+
+  deps:update:
+    desc: Update the root's crates to their newest compatible versions, then bring the plugins' locks to the root's versions
+    cmds:
+      - cargo update
+      - task: deps:align
+
+  deps:align:
+    desc: Bring every crate that a plugin's lock pins at another version than the root's, or than another plugin's, to one version
+    cmds:
+      - node scripts/plugins/align-locks.mjs
+
+  plugins:lock:
+    desc: Record a plugin's changed Cargo.toml in its Cargo.lock (ID=workers), with the network only for a crate that Cargo's cache lacks
+    requires:
+      vars: [ID]
+    cmds:
+      - node scripts/plugins/lock.mjs {{.ID}}
+
+  plugins:new:
+    desc: Make a new plugin in plugins/<id>/ from the fixture plugin (ID=notes), with a lock seeded from the root's
+    requires:
+      vars: [ID]
+    cmds:
+      - node scripts/plugins/new.mjs {{.ID}}
+
+  plugins:grants:
+    desc: List what each plugin may use, for the review of a plugin's change - its services, secret entries, commands, channels, programs, the crates that only it may use and its direct native calls
+    cmds:
+      # The commands and channels come from the interfaces that `task gen`
+      # writes (ADR-0034, decision 13).
+      - task: gen
+      - node scripts/plugins/grants.mjs
 
   # Documentation
 

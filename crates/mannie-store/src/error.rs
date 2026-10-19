@@ -74,8 +74,25 @@ pub enum StoreError {
     /// with, which is a fault of the composition root.
     #[error("the store did not open with the module {module}")]
     ModuleNotRegistered {
+        /// The module, by the plugin's prefix.
+        module: String,
+    },
+    /// The store refused a plugin's module before it touched the database,
+    /// which is a fault of the plugin.
+    #[error("the store refused the module {module}: {problem}")]
+    ModuleRefused {
         /// The module.
-        module: &'static str,
+        module: String,
+        /// What is wrong with it.
+        problem: ModuleProblem,
+    },
+    /// A statement that a plugin's module lists does not prepare against the
+    /// migrated schema. The module stays migrated, and its plugin cannot
+    /// reach it.
+    #[error("a statement that the module {module} lists does not prepare")]
+    StatementsRefused {
+        /// The module.
+        module: String,
     },
     /// A folder or file of the store could not be created or changed.
     #[error("could not prepare {path}")]
@@ -159,6 +176,8 @@ impl StoreError {
             Self::SchemaTooNew { .. } | Self::ModuleTooNew { .. } => "store.schema_too_new",
             Self::DuplicateModule { .. } => "store.duplicate_module",
             Self::ModuleNotRegistered { .. } => "store.module_not_registered",
+            Self::ModuleRefused { .. } => "store.module_refused",
+            Self::StatementsRefused { .. } => "store.statements_refused",
             Self::Records { .. } => "store.records",
             Self::Io { .. } => "store.io",
             Self::Open { .. } => "store.open",
@@ -176,4 +195,47 @@ impl StoreError {
             source: DatabaseError(error),
         }
     }
+}
+
+/// What is wrong with a plugin's module of the store.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ModuleProblem {
+    /// The module's name is not the plugin's prefix.
+    #[error("its name is not the plugin's prefix {prefix}")]
+    NotThePrefix {
+        /// The plugin's prefix.
+        prefix: String,
+    },
+    /// The migrations do not count their versions from 1 without gaps.
+    #[error("migration {position} has the version {version}")]
+    VersionOutOfOrder {
+        /// The migration's position, counting from 1.
+        position: u32,
+        /// The version that it has.
+        version: u32,
+    },
+    /// A migration has no SQL.
+    #[error("migration {version} has no SQL")]
+    EmptyMigration {
+        /// The migration's version.
+        version: u32,
+    },
+    /// A migration claims a number of the list before M5 that the store's
+    /// frozen record does not give it.
+    #[error("migration {version} claims the number {legacy_version} of the list before M5")]
+    LegacyVersionNotRecorded {
+        /// The migration's version.
+        version: u32,
+        /// The number that it claims.
+        legacy_version: u32,
+    },
+    /// The module lacks a migration that the store's frozen record gives a
+    /// number of the list before M5.
+    #[error("migration {version} does not carry the number {legacy_version} of the list before M5")]
+    LegacyVersionMissing {
+        /// The migration's version.
+        version: u32,
+        /// The number that the record gives it.
+        legacy_version: u32,
+    },
 }

@@ -1,4 +1,4 @@
-//! Preparing an image for the model (docs/features/images.md, what Mannie does
+//! Preparing an image for the model (plugins/images/docs/README.md, what Mannie does
 //! with an image): check its size and its dimensions before decoding, decode
 //! it within limits, turn it upright, shrink it, and encode it again, which
 //! drops its metadata (T-32, T-33).
@@ -13,10 +13,10 @@ use image::metadata::Orientation;
 use image::{
     ColorType, DynamicImage, ImageDecoder, ImageError, ImageReader, Limits, Rgb, RgbImage,
 };
-use mannie_runtime::SourcedImage;
-use mannie_types::images::{
+use mannie_plugin_sdk::contracts::{
     ImageBytes, ImageFormat, MAX_IMAGE_BYTES, MAX_IMAGE_SIDE, MAX_THUMBNAIL_SIDE, clean_image_name,
 };
+use mannie_plugin_sdk::points::images::SourcedImage;
 
 use crate::commands::{ImagesError, MAX_DECODED_MEGAPIXELS, MAX_DECODED_SIDE, MAX_FILE_BYTES};
 
@@ -57,15 +57,18 @@ pub(crate) fn prepare(name: &str, bytes: &[u8]) -> Result<SourcedImage, ImagesEr
         ImageFormat::Jpeg
     };
     let thumbnail = encode_as(&thumbnail_image, thumbnail_format)?;
-    Ok(SourcedImage {
-        name: clean_image_name(name),
+    let clean_name = clean_image_name(name);
+    let width = image.width();
+    let height = image.height();
+    Ok(SourcedImage::new(
+        clean_name,
         format,
-        width: image.width(),
-        height: image.height(),
-        data: ImageBytes::from(data),
+        width,
+        height,
+        ImageBytes::from(data),
         thumbnail_format,
-        thumbnail: ImageBytes::from(thumbnail),
-    })
+        ImageBytes::from(thumbnail),
+    ))
 }
 
 /// Decodes an image whose header is within the limits, turned upright by its

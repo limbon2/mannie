@@ -1,7 +1,8 @@
 // @ts-check
 // Generates the pseudo-locale for the desktop app (ADR-0019): an inlang
-// project in apps/desktop/.pseudo-locale/ with every catalog of
-// apps/desktop/messages/ plus `en-XA`, a copy of the English catalog in which
+// project in apps/desktop/.pseudo-locale/ with every catalog of every source
+// of messages, the core's, each plugin's and each fixture plugin's (ADR-0035,
+// decision 8), plus `en-XA` for each, a copy of its English catalog in which
 // every message is marked and lengthened. Validation builds compile it
 // (`vite build --mode validation`), so the end-to-end tests can find visible
 // text that bypasses the catalog and layouts that break under longer text.
@@ -9,9 +10,12 @@
 // Run it with `task gen:pseudo-locale`. The folder is generated and ignored by
 // Git.
 
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { findPlugins, readRules } from './plugins/lib/manifests.mjs';
+import { messageSources } from './plugins/lib/messages.mjs';
 
 /** The pseudo-locale's tag: English, in a private-use region. */
 export const PSEUDO_LOCALE = 'en-XA';
@@ -154,16 +158,17 @@ export function pseudoLocalizeCatalog(catalog) {
 }
 
 /**
- * Writes the pseudo-locale project for an app folder.
- * @param {string} app The app folder, which holds project.inlang/ and messages/.
+ * Writes the pseudo-locale project for an app folder: one folder of
+ * catalogs for each source, with each of its locales and the pseudo-locale,
+ * and the committed project's settings with every source's path pattern.
+ * @param {string} app The app folder, which holds project.inlang/.
+ * @param {{ folder: string, name: string }[]} sources each source's name and its catalogs' folder, absolute
  */
-export function generatePseudoLocaleProject(app) {
+export function generatePseudoLocaleProject(app, sources) {
   const output = join(app, '.pseudo-locale');
   const project = join(output, 'project.inlang');
-  const messages = join(output, 'messages');
   rmSync(output, { force: true, recursive: true });
   mkdirSync(project, { recursive: true });
-  mkdirSync(messages, { recursive: true });
 
   const settings = JSON.parse(readFileSync(join(app, 'project.inlang', 'settings.json'), 'utf8'));
   const locales = /** @type {string[]} */ (settings.locales);
@@ -172,22 +177,40 @@ export function generatePseudoLocaleProject(app) {
   settings.modules = /** @type {string[]} */ (settings.modules).map((module) =>
     module.startsWith('./') ? `../${module.slice(2)}` : module,
   );
+  settings['plugin.inlang.messageFormat'] = {
+    ...settings['plugin.inlang.messageFormat'],
+    pathPattern: sources.map((source) => `./messages/${source.name}/{locale}.json`),
+  };
   writeFileSync(join(project, 'settings.json'), `${JSON.stringify(settings, undefined, 2)}\n`);
   copyFileSync(join(app, 'project.inlang', 'paraglide.config.js'), join(project, 'paraglide.config.js'));
 
-  for (const file of readdirSync(join(app, 'messages'))) {
-    copyFileSync(join(app, 'messages', file), join(messages, file));
+  for (const source of sources) {
+    const messages = join(output, 'messages', source.name);
+    mkdirSync(messages, { recursive: true });
+    const files = existsSync(source.folder) ? readdirSync(source.folder) : [];
+    for (const file of files) {
+      copyFileSync(join(source.folder, file), join(messages, file));
+    }
+    const basePath = join(source.folder, `${settings.baseLocale}.json`);
+    const base = existsSync(basePath) ? JSON.parse(readFileSync(basePath, 'utf8')) : {};
+    writeFileSync(
+      join(messages, `${PSEUDO_LOCALE}.json`),
+      `${JSON.stringify(pseudoLocalizeCatalog(base), undefined, 2)}\n`,
+    );
   }
-  const base = JSON.parse(readFileSync(join(app, 'messages', `${settings.baseLocale}.json`), 'utf8'));
-  writeFileSync(
-    join(messages, `${PSEUDO_LOCALE}.json`),
-    `${JSON.stringify(pseudoLocalizeCatalog(base), undefined, 2)}\n`,
-  );
 }
 
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
-  const app = join(dirname(fileURLToPath(import.meta.url)), '..', 'apps', 'desktop');
-  generatePseudoLocaleProject(app);
-  console.log(`pseudo-locale: wrote ${join(app, '.pseudo-locale')}`);
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const app = join(root, 'apps', 'desktop');
+  // The validation builds that compile the pseudo-locale bundle the fixture
+  // plugins too, so their catalogs are sources as well.
+  const { plugins, problems } = findPlugins(root, readRules(root));
+  if (problems.length > 0) {
+    throw new Error(`the plugins' manifests have problems; run \`task gen\`:\n${problems.join('\n')}`);
+  }
+  const sources = messageSources(plugins).map((source) => ({ folder: join(root, source.folder), name: source.name }));
+  generatePseudoLocaleProject(app, sources);
+  console.log(`pseudo-locale: wrote ${join(app, '.pseudo-locale')} from ${String(sources.length)} sources`);
 }

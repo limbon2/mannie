@@ -1,0 +1,6 @@
+# One target folder for the root workspace, every plugin workspace and the
+# generated launcher, so they share build output and the paths that the
+# tasks, the end-to-end tests and the workflows name stay target/... (ADR-0035,
+# decision 4).
+[build]
+target-dir = "target"

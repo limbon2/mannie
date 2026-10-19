@@ -1,11 +1,11 @@
 # ADR-0015: Run an agent runtime on every machine: the master orchestrates, workers own their hosts
 
-|          |                                                                                                                                                                                                                   |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status   | Accepted (D5)                                                                                                                                                                                                     |
-| Date     | 2026-10-13                                                                                                                                                                                                        |
-| Deciders | Owner                                                                                                                                                                                                             |
-| Related  | [Orchestration](../architecture/orchestration.md), [ADR-0010](0010-keep-provider-credentials-on-the-master.md), [ADR-0016](0016-link-machines-over-pinned-mtls-grpc.md), [Workers](../features/workers/README.md) |
+|          |                                                                                                                                                                                                                          |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Status   | Accepted (D5)                                                                                                                                                                                                            |
+| Date     | 2026-10-13                                                                                                                                                                                                               |
+| Deciders | Owner                                                                                                                                                                                                                    |
+| Related  | [Orchestration](../architecture/orchestration.md), [ADR-0010](0010-keep-provider-credentials-on-the-master.md), [ADR-0016](0016-link-machines-over-pinned-mtls-grpc.md), [Workers](../../plugins/workers/docs/README.md) |
 
 ## Context
 
@@ -38,4 +38,4 @@
 
 ## Validation
 
-None needed: the owner decided this (D5). The [workers feature](../features/workers/README.md) validates the mechanisms in M4, including V6.
+None needed: the owner decided this (D5). The [workers feature](../../plugins/workers/docs/README.md) validates the mechanisms in M4, including V6.

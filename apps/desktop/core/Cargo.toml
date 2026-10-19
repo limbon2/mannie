@@ -1,0 +1,95 @@
+[package]
+name = "mannie-desktop-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The Mannie desktop app's library: the composition root of the master, its IPC commands, its window and tray, and the forwarders of the plugins' calls. The binary in apps/desktop/src-tauri runs it with the plugins that `task gen` lists (ADR-0035)."
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "mannie_desktop_core"
+path = "src/lib.rs"
+
+# Writes the core's TypeScript IPC bindings, the plugins' envelopes and their
+# transport (`task gen`, ADR-0007, ADR-0034). It needs the validation feature
+# because it also writes the bindings of the validation commands.
+[[bin]]
+name = "mannie-desktop-bindings"
+path = "src/bin/bindings.rs"
+required-features = ["validation"]
+
+[dependencies]
+anyhow = { workspace = true }
+# The messages of a plugin's channel, which the inlined Tauri plugins forward
+# to the webview (ADR-0034, decision 8).
+futures-util = { workspace = true }
+mannie-logging = { workspace = true }
+# The plugin SDK: the plugins' entries for the host, the provider of the
+# plugins' entries of the credential store, the host's refusals of plugin
+# calls, the plugins' manifests and the exporter of the envelopes and the
+# transport (ADR-0034, decisions 4, 5, 8 and 9).
+mannie-plugin-sdk = { workspace = true, features = ["bindings", "host", "manifest"] }
+# The plugin host, which the composition root runs with the list of plugins
+# and the core's providers and consumers (ADR-0030, ADR-0034).
+mannie-plugins = { workspace = true }
+mannie-provider = { workspace = true }
+mannie-runtime = { workspace = true }
+# Provider credentials in the operating system's credential store (ADR-0010).
+mannie-secrets = { workspace = true }
+mannie-store = { workspace = true }
+# The system tools, which the composition root registers and hands to the
+# runtime.
+mannie-tools = { workspace = true }
+mannie-types = { workspace = true }
+# The system's folder and file dialogs. The core opens them, so the webview
+# gets no access to the file system, and the file dialog's files reach a
+# plugin only as handles (ADR-0004, ADR-0034).
+rfd = { workspace = true }
+serde = { workspace = true }
+# The inputs, outputs and errors of plugin calls, which the inlined Tauri
+# plugins hand to the host's dispatch as JSON (ADR-0034, decision 8).
+serde_json = { workspace = true }
+specta = { workspace = true }
+specta-typescript = { workspace = true }
+# Without `dynamic-acl`: capabilities are fixed at build time and nothing adds
+# one at runtime (ADR-0004). `tray-icon` adds the tray (window and tray
+# feature); the other features are Tauri's defaults except
+# `common-controls-v6`, which the binary enables, so the core's test binaries
+# need no Windows application manifest (ADR-0035, decision 4).
+tauri = {
+  workspace = true,
+  default-features = false,
+  features = [
+    "compression",
+    "dbus",
+    "tray-icon",
+    "wry",
+    "x11",
+  ]
+}
+# Opens links in the system browser after the owner confirmed them (ADR-0003,
+# decision 3). Only its Rust function is used: the plugin is not registered,
+# so the webview has no opener command.
+tauri-plugin-opener = { workspace = true }
+tauri-plugin-single-instance = { workspace = true }
+tauri-specta = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+# The tests parse plugins' manifests and bind their services.
+mannie-plugin-sdk = { workspace = true, features = ["host", "manifest"] }
+# The file dialog's tests read real files from a temporary folder.
+tempfile = { workspace = true }
+# test-util lets the channel tests run on a paused clock.
+tokio = { workspace = true, features = ["macros", "rt", "sync", "test-util", "time"] }
+
+[features]
+# The commands that the end-to-end validations use (V1, V2, V3). Only
+# validation builds enable it; a release never does.
+validation = ["mannie-runtime/validation", "mannie-types/validation"]
+
+[lints]
+workspace = true

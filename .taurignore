@@ -1,0 +1,8 @@
+# Files that `tauri dev` does not watch for a rebuild of the desktop binary.
+# tauri.conf.json watches plugins/ for the plugins' Rust crates; a plugin's
+# UI, messages, documents and tests reach the app through Vite, which reloads
+# them without a rebuild (ADR-0035, decision 7).
+plugins/*/ui/
+plugins/*/messages/
+plugins/*/docs/
+plugins/*/tests/

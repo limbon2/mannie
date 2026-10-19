@@ -146,13 +146,7 @@ fn child_tool_call() {
             .await
             .unwrap();
         let started = runtime
-            .start_conversation(StartConversation {
-                mentions: Vec::new(),
-                images: Vec::new(),
-                text: "Mark it".to_owned(),
-                profile_id: None,
-                project_id: Some(project.id),
-            })
+            .start_conversation(StartConversation::new("Mark it").with_project(Some(project.id)))
             .await
             .unwrap();
         let mut subscription = runtime

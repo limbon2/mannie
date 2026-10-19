@@ -7,15 +7,25 @@
 //! A composition root can assemble the prompt from sections of its own, as
 //! the worker does for the tasks that the master assigns (ADR-0028, decision
 //! 3); its sections read what an assigned run works under from the context.
+//!
+//! A plugin's sections are the SDK's (ADR-0034, decision 6), whose consumer
+//! is the runtime's registry. This module checks their IDs and turns them
+//! into the runtime's own with [`instruction_section`]. A plugin's source
+//! renders from the plain data of [`section_context`], never from the
+//! runtime's context.
 
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use mannie_plugin_sdk::contributions::{Contributions, ExtensionPoint};
+use mannie_plugin_sdk::host::{ContributionRefusal, ID_TAKEN};
+use mannie_plugin_sdk::points::sections::{Section, SectionBody, SectionContext, Sections};
 use mannie_types::ceiling::CeilingMode;
 use mannie_types::projects::ProjectView;
 
 use crate::agents::AgentDefinition;
+use crate::plugins::Snapshot;
 use crate::texts;
 
 /// What the sections of one call can draw on.
@@ -106,6 +116,70 @@ impl fmt::Debug for InstructionSection {
             .field("position", &self.position)
             .finish_non_exhaustive()
     }
+}
+
+/// A plugin's section as the runtime assembles it: its fixed text in every
+/// call, or what its source renders for each call from [`section_context`].
+pub(crate) fn instruction_section(section: &Section) -> InstructionSection {
+    match &section.body {
+        SectionBody::Fixed(text) => {
+            let text = text.clone();
+            InstructionSection::new(section.id, section.position, move |_context| {
+                Some(text.clone())
+            })
+        }
+        SectionBody::Source(source) => {
+            let source = Arc::clone(source);
+            InstructionSection::new(section.id, section.position, move |context| {
+                source.render(&section_context(context))
+            })
+        }
+    }
+}
+
+/// The sections of the plugins in a snapshot, as the runtime assembles them,
+/// in the order in which their plugins started.
+pub(crate) fn plugin_sections(snapshot: &Snapshot) -> Vec<InstructionSection> {
+    snapshot
+        .items::<Sections>()
+        .iter()
+        .map(|registered| instruction_section(&registered.entry))
+        .collect()
+}
+
+/// Refuses a plugin's sections whose IDs the core's sections, as `core`
+/// holds them, or another plugin's have (the rule `Global`).
+pub(crate) fn check_sections(
+    core: &InstructionRegistry,
+    snapshot: &Snapshot,
+    contributions: &Contributions,
+) -> Result<(), ContributionRefusal> {
+    for section in contributions.entries::<Sections>() {
+        let taken = core.contains(section.id) || snapshot.find::<Sections>(section.id).is_some();
+        if taken {
+            return Err(ContributionRefusal::new(
+                Sections::NAME,
+                ID_TAKEN,
+                format!("a section with the ID {} is registered already", section.id),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// What a plugin's section source learns of the run that makes a call. It
+/// gets plain data, so the runtime's context, which borrows the owner's
+/// instructions, projects and machine, stays in the core (ADR-0034, decision
+/// 3).
+pub(crate) fn section_context(context: &InstructionContext<'_>) -> SectionContext {
+    let agent = context.agent.name.to_owned();
+    let requester = context.agent.requester.into();
+    let uses_tools = context.tools.is_some();
+    let offers_tasks = context.offers_tasks;
+    // Full access belongs to where the tools work: a run without tools has
+    // no operations for it to cover.
+    let full_access = context.tools.is_some_and(|tools| tools.full_access);
+    SectionContext::new(agent, requester, uses_tools, offers_tasks, full_access)
 }
 
 /// A section whose ID is already registered.
@@ -241,16 +315,48 @@ impl InstructionRegistry {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use mannie_plugin_sdk::points::agents::Requester as SdkRequester;
+    use mannie_plugin_sdk::points::sections::{
+        Section, SectionBody, SectionContext, SectionSource,
+    };
     use mannie_types::clock::UtcMillis;
     use mannie_types::ids::ProjectId;
     use mannie_types::projects::ProjectView;
 
     use super::{
         DuplicateSection, InstructionContext, InstructionRegistry, InstructionSection,
-        ToolEnvironment,
+        ToolEnvironment, instruction_section, section_context,
     };
     use crate::agents::{CONVERSATION, EXPLORE};
     use crate::texts;
+
+    /// A plugin's source that says what it learned of the run, and leaves the
+    /// section out of a run without tools.
+    #[derive(Debug)]
+    struct Describes;
+
+    impl SectionSource for Describes {
+        fn render(&self, context: &SectionContext) -> Option<String> {
+            context.uses_tools.then(|| {
+                format!(
+                    "PLUGIN for {}, tasks {}, full access {}",
+                    context.agent, context.offers_tasks, context.full_access
+                )
+            })
+        }
+    }
+
+    fn tools(full_access: bool) -> ToolEnvironment<'static> {
+        ToolEnvironment {
+            system: "Linux 6.8, x86_64",
+            shell: None,
+            project: None,
+            projects: &[],
+            full_access,
+        }
+    }
 
     fn project(number: u32, name: &str, folder: &str) -> ProjectView {
         ProjectView {
@@ -314,6 +420,105 @@ mod tests {
         let owner_at = assembled.find("Owner text.").unwrap();
         assert!(fake_at < owner_at, "{assembled}");
         assert_eq!(duplicate, Err(DuplicateSection { id: "fake" }));
+    }
+
+    #[test]
+    fn a_plugin_s_section_takes_its_position_with_its_fixed_text_or_what_its_source_renders() {
+        let registry = InstructionRegistry::with_builtin();
+        let fixed = instruction_section(&Section::new(
+            "plugin.fixed",
+            150,
+            SectionBody::Fixed("FIXED".to_owned()),
+        ));
+        let rendered = instruction_section(&Section::new(
+            "plugin.source",
+            900,
+            SectionBody::Source(Arc::new(Describes)),
+        ));
+        let with_tools = InstructionContext {
+            agent: &CONVERSATION,
+            owner_instructions: "Owner text.",
+            checkpoint: None,
+            tools: Some(tools(true)),
+            offers_tasks: true,
+            machine: None,
+        };
+        let without_tools = InstructionContext {
+            tools: None,
+            offers_tasks: false,
+            ..with_tools
+        };
+        let extra = [fixed, rendered];
+
+        let assembled = registry.assemble_with(&with_tools, &extra);
+        let plain = registry.assemble_with(&without_tools, &extra);
+
+        assert_eq!((extra[0].id, extra[0].position), ("plugin.fixed", 150));
+        assert_eq!((extra[1].id, extra[1].position), ("plugin.source", 900));
+        let fixed_at = assembled.find("FIXED").unwrap();
+        let owner_at = assembled.find("Owner text.").unwrap();
+        let rendered_at = assembled
+            .find("PLUGIN for conversation, tasks true, full access true")
+            .unwrap();
+        assert!(fixed_at < owner_at && owner_at < rendered_at, "{assembled}");
+        assert!(plain.contains("FIXED"), "{plain}");
+        assert!(!plain.contains("PLUGIN"), "{plain}");
+    }
+
+    #[test]
+    fn a_section_source_learns_the_agent_whether_the_run_uses_tools_and_gives_tasks_and_full_access()
+     {
+        let parent = InstructionContext {
+            agent: &CONVERSATION,
+            owner_instructions: "Owner text.",
+            checkpoint: Some("They talked about tea."),
+            tools: Some(tools(false)),
+            offers_tasks: true,
+            machine: None,
+        };
+        let child_in_full_access = InstructionContext {
+            agent: &EXPLORE,
+            tools: Some(tools(true)),
+            offers_tasks: false,
+            ..parent
+        };
+        let without_tools = InstructionContext {
+            tools: None,
+            offers_tasks: false,
+            ..parent
+        };
+
+        let contexts = [parent, child_in_full_access, without_tools].map(|context| {
+            let learned = section_context(&context);
+            (
+                learned.agent,
+                learned.requester,
+                learned.uses_tools,
+                learned.offers_tasks,
+                learned.full_access,
+            )
+        });
+
+        assert_eq!(
+            contexts,
+            [
+                (
+                    "conversation".to_owned(),
+                    SdkRequester::Owner,
+                    true,
+                    true,
+                    false
+                ),
+                ("explore".to_owned(), SdkRequester::Agent, true, false, true),
+                (
+                    "conversation".to_owned(),
+                    SdkRequester::Owner,
+                    false,
+                    false,
+                    false
+                ),
+            ]
+        );
     }
 
     #[test]

@@ -1,6 +1,9 @@
-//! Task executors (ADR-0031, decision 4): what a plugin registers to run the
-//! tasks of a reply somewhere else, such as on a worker, and the runtime's
-//! side of following those tasks.
+//! Task executors (ADR-0031, decision 4): the runtime's side of the
+//! executors that plugins contribute to run the tasks of a reply somewhere
+//! else, such as on a worker. The contract that a plugin implements is the
+//! SDK's `points::executors` (ADR-0034, decision 6), whose consumer is the
+//! runtime's registry; this module checks a new executor's kind, finds the
+//! executor of a kind, and follows the executors' tasks.
 //!
 //! Child agents are the runtime's own executor. An executor's task is a task
 //! of ADR-0024 all the same: a `task` part with a number among the
@@ -10,260 +13,41 @@
 //! and publishes each state through [`Runtime::publish_task_state`]; the
 //! runtime stores the state in the task's row and shows it on the board of
 //! the run that follows the task.
+//!
+//! The runtime provides two services of the SDK (ADR-0034, decision 5): the
+//! executor host, with the rows, states, documents and outbox of a plugin's
+//! tasks, and credentials, which lends a provider credential for one of its
+//! tasks. Each binds to the executor kind that equals the plugin's ID, so a
+//! plugin reaches no other kind's tasks, and a lend needs an active task of
+//! that kind whose run uses the profile, as the store records it.
 
 use std::collections::HashMap;
-use std::fmt;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
+use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
-use futures_util::stream::BoxStream;
-use mannie_provider::ToolDefinition;
+use mannie_plugin_sdk::contributions::{Contributions, ExtensionPoint};
+use mannie_plugin_sdk::host::{
+    BindRefusal, ContributionRefusal, ID_TAKEN, PluginBinding, ServiceProvider,
+};
+use mannie_plugin_sdk::points::executors::{Executors, TaskExecutor};
+use mannie_plugin_sdk::service::{BoundService, Service};
+use mannie_plugin_sdk::services::credentials::{self, Credentials, CredentialsApi};
+use mannie_plugin_sdk::services::executor_host::{
+    ExecutorHost, ExecutorHostApi, ExecutorTask, HostFailure, OutboxItem,
+};
 use mannie_store::{OutboxEntry, RuntimeStoreError, StoredTask, TaskEnding};
-use mannie_types::chat::{ChatError, CheckpointRef, EarlierTurns, LoadEarlierTurns};
+use mannie_types::chat::ChatError;
 use mannie_types::ids::{ConversationId, ProfileId, TaskId};
-use mannie_types::secret::Secret;
-use mannie_types::tasks::{AssignedTaskState, ProfileSnapshot, TaskExecutorRef, TaskState};
-use mannie_types::tools::{DecideApproval, ReadToolOutput, ToolOutputPage, ToolsError};
-use mannie_types::transcript::{Checkpoint, ConversationSummary, ConversationUpdate};
+use mannie_types::tasks::{AssignedTaskState, TaskConversation, TaskExecutorRef, TaskState};
+use mannie_types::tools::ToolsError;
+use mannie_types::transcript::ConversationSummary;
 use tokio::sync::watch;
 
 use crate::Runtime;
+use crate::plugins::Snapshot;
 use crate::profiles::{VaultError, in_vault};
 use crate::tasks::{ChildEnd, TaskBoard};
-
-/// A call of an executor's tool, as the executor plans it.
-#[derive(Debug, Clone, Copy)]
-pub struct PlanCall<'a> {
-    /// The call's arguments as the model wrote them, without the activity.
-    pub arguments: &'a str,
-    /// The provider profile of the reply that makes the call, without its
-    /// credential.
-    pub profile: &'a ProfileSnapshot,
-}
-
-/// A task that an executor takes on, as it planned a call of its tool.
-#[derive(Debug, Clone, PartialEq)]
-pub struct TaskPlan {
-    /// The target that runs the task, such as a worker.
-    pub target: TaskExecutorRef,
-    /// The task's title, cleaned for the owner.
-    pub title: String,
-    /// The instruction.
-    pub instruction: String,
-    /// Whether the reply continues while the target works.
-    pub background: bool,
-    /// What else the executor needs to submit the task, which the runtime
-    /// passes on as it is.
-    pub options: serde_json::Value,
-}
-
-/// The target of a follow-up, as an executor takes it on.
-#[derive(Debug, Clone, PartialEq)]
-pub struct FollowUpPlan {
-    /// The target that runs the earlier task, as it is named now.
-    pub target: TaskExecutorRef,
-    /// What else the executor needs to submit the task.
-    pub options: serde_json::Value,
-}
-
-/// Why an executor did not plan a call of its tool.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PlanError {
-    /// The arguments are not valid. The call does not run, as a call of any
-    /// tool with arguments that are not valid does.
-    InvalidArguments {
-        /// What is wrong, for the model.
-        detail: String,
-    },
-    /// The executor refused the task.
-    Refused(ExecutorRefusal),
-}
-
-/// Why a submission did not return a first state.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SubmitError {
-    /// The executor refused the task, which its target never stored.
-    Refused(ExecutorRefusal),
-    /// The executor's plugin stopped before the executor knew whether the
-    /// target stored the task. The run lets the task go, as quitting does,
-    /// and the executor learns what became of it when it starts again.
-    Stopped,
-}
-
-/// Why an executor did not take a task.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExecutorRefusal {
-    /// The executor's code for the refusal, which the UI shows a message of
-    /// the plugin's for.
-    pub code: String,
-    /// The name of the target that the call named, if it named one.
-    pub target: Option<String>,
-    /// The result that the model reads.
-    pub text: String,
-}
-
-/// A task that the runtime stored for an executor, which the executor
-/// submits to its target.
-#[derive(Debug, Clone)]
-pub struct TaskSubmission {
-    /// The task, which the runtime chose and stored first, so a submission
-    /// that is sent again finds the same task.
-    pub task_id: TaskId,
-    /// The task's conversation.
-    pub conversation_id: ConversationId,
-    /// The parent conversation.
-    pub parent_id: ConversationId,
-    /// The task's number among the parent's children.
-    pub number: u32,
-    /// Whether the task continues an earlier task of its conversation.
-    pub follow_up: bool,
-    /// The task's title.
-    pub title: String,
-    /// The instruction.
-    pub instruction: String,
-    /// The target.
-    pub target: TaskExecutorRef,
-    /// What the executor's plan added.
-    pub options: serde_json::Value,
-    /// The provider profile of the reply that gave the task, without its
-    /// credential.
-    pub profile: ProfileSnapshot,
-}
-
-/// The instruction section that an executor adds for the runs that are
-/// offered its tool, as it is when a run starts.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExecutorSection {
-    /// Where the section goes among the sections.
-    pub position: u32,
-    /// The section's text.
-    pub text: String,
-}
-
-/// What a plugin registers to run tasks somewhere else (ADR-0031,
-/// decision 4). Every call may fail with the target unreachable; the calls
-/// that read a task conversation answer with that conversation's errors.
-pub trait TaskExecutor: Send + Sync + fmt::Debug + 'static {
-    /// The executor's kind: the ID of the plugin that registered it.
-    fn kind(&self) -> &'static str;
-
-    /// The agent that the runtime records for the executor's tasks.
-    fn agent(&self) -> &'static str;
-
-    /// The executor's tool, as a run that starts now is offered it, or
-    /// `None` while the executor offers none. The runtime reads it once for
-    /// each run.
-    fn tool(&self) -> Option<ToolDefinition>;
-
-    /// The instruction section for the runs that are offered the tool, read
-    /// once for each run, or `None`.
-    fn section(&self) -> Option<ExecutorSection>;
-
-    /// Whether the executor's tasks outlive the reply that gave them, as a
-    /// worker's do (ADR-0027, decision 6): a stop cancels them without
-    /// waiting longer than the runtime's cancel timeout, and quitting leaves
-    /// them running.
-    fn outlives_reply(&self) -> bool;
-
-    /// Takes on a call of the executor's tool, or refuses it. The runtime
-    /// checks the reply's task budget between arguments that are not valid
-    /// and a refusal, as it does for `start_task`.
-    fn plan(&self, call: PlanCall<'_>) -> Result<TaskPlan, PlanError>;
-
-    /// Takes on a follow-up of an earlier task of the executor's, on the
-    /// target that ran it, or refuses it.
-    fn plan_follow_up(
-        &self,
-        earlier: &TaskExecutorRef,
-        profile: &ProfileSnapshot,
-    ) -> Result<FollowUpPlan, ExecutorRefusal>;
-
-    /// The executor's document of a new task, which the runtime stores with
-    /// the task before it submits it.
-    fn document(&self, submission: &TaskSubmission) -> Option<String>;
-
-    /// Submits a task that the runtime stored, which the target stores once
-    /// for its ID, and returns its first state. A target that cannot be
-    /// reached is tried again until the executor gives up; a stop of the run
-    /// drops the future.
-    fn submit(
-        &self,
-        submission: TaskSubmission,
-    ) -> BoxFuture<'static, Result<AssignedTaskState, SubmitError>>;
-
-    /// Asks the target to cancel a task. The executor keeps the cancel until
-    /// the target takes it or the task ends.
-    fn cancel(&self, task: &TaskId) -> BoxFuture<'static, ()>;
-
-    /// Follows a task conversation on its target, from a cursor or from a
-    /// snapshot. The stream ends when the target can no longer be reached.
-    fn subscribe(
-        &self,
-        target: &TaskExecutorRef,
-        conversation: &ConversationId,
-        after_seq: Option<u32>,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, ConversationUpdate>, ChatError>>;
-
-    /// Earlier turns of a task conversation on its target.
-    fn earlier_turns(
-        &self,
-        target: &TaskExecutorRef,
-        input: LoadEarlierTurns,
-    ) -> BoxFuture<'static, Result<EarlierTurns, ChatError>>;
-
-    /// A checkpoint of a task conversation on its target.
-    fn checkpoint(
-        &self,
-        target: &TaskExecutorRef,
-        input: CheckpointRef,
-    ) -> BoxFuture<'static, Result<Checkpoint, ChatError>>;
-
-    /// A page of an archived output of a task conversation on its target.
-    fn tool_output(
-        &self,
-        target: &TaskExecutorRef,
-        input: ReadToolOutput,
-    ) -> BoxFuture<'static, Result<ToolOutputPage, ToolsError>>;
-
-    /// The owner's decision about a call of a task on its target.
-    fn decide_approval(
-        &self,
-        target: &TaskExecutorRef,
-        input: DecideApproval,
-    ) -> BoxFuture<'static, Result<(), ToolsError>>;
-}
-
-/// An executor whose kind is registered already.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("an executor of the kind {kind} is already registered")]
-pub struct DuplicateExecutor {
-    /// The kind.
-    pub kind: &'static str,
-}
-
-/// A provider credential that the runtime lends an executor for one task,
-/// with the binding of the profile that it belongs to.
-#[derive(Debug)]
-pub struct LentCredential {
-    /// The profile and its configuration revision.
-    pub binding: String,
-    /// The credential.
-    pub credential: Secret,
-}
-
-/// Why the runtime could not lend a credential.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum LendError {
-    /// The profile no longer exists.
-    #[error("the profile no longer exists")]
-    ProfileMissing,
-    /// The credential could not be read.
-    #[error("the credential could not be read")]
-    CredentialUnavailable,
-    /// The store failed.
-    #[error("the store failed")]
-    StorageFailed,
-}
 
 /// The board of a run that follows an executor's task.
 #[derive(Debug)]
@@ -273,11 +57,11 @@ struct FollowingBoard {
     board: Arc<TaskBoard>,
 }
 
-/// The registered executors, and the boards of the runs that follow their
-/// tasks.
+/// The boards of the runs that follow the executors' tasks, and the changes
+/// of the outbox that the executors take deletions from. The executors
+/// themselves are in the runtime's registry of contributions.
 #[derive(Debug)]
-pub(crate) struct Executors {
-    registered: RwLock<Vec<Arc<dyn TaskExecutor>>>,
+pub(crate) struct ExecutorFollows {
     /// The boards of the runs that follow executors' tasks, by task.
     boards: Mutex<HashMap<TaskId, FollowingBoard>>,
     /// Counts the deletions that wait in the outbox, so each executor takes
@@ -285,10 +69,9 @@ pub(crate) struct Executors {
     outbox: watch::Sender<u64>,
 }
 
-impl Default for Executors {
+impl Default for ExecutorFollows {
     fn default() -> Self {
         Self {
-            registered: RwLock::default(),
             boards: Mutex::default(),
             outbox: watch::Sender::new(0),
         }
@@ -301,7 +84,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-impl Executors {
+impl ExecutorFollows {
     fn board(&self, task: &TaskId) -> Option<Arc<TaskBoard>> {
         lock(&self.boards)
             .get(task)
@@ -310,7 +93,7 @@ impl Executors {
 
     /// Tells each run that follows a task of `kind` to let the task go,
     /// because the executor's plugin stopped.
-    fn let_go_of(&self, kind: &str) -> usize {
+    pub(crate) fn let_go_of(&self, kind: &str) -> usize {
         let boards = lock(&self.boards);
         let mut count = 0;
         for (task, following) in boards
@@ -402,82 +185,39 @@ fn ending_of(state: &AssignedTaskState) -> Option<TaskEnding> {
     })
 }
 
-impl Runtime {
-    /// Registers an executor, whose tool the runs that start from now on are
-    /// offered (ADR-0030, decision 5). Kinds are unique.
-    pub fn add_executor(&self, executor: Arc<dyn TaskExecutor>) -> Result<(), DuplicateExecutor> {
-        let mut registered = self
-            .inner
-            .executors
-            .registered
-            .write()
-            .unwrap_or_else(PoisonError::into_inner);
-        if registered
-            .iter()
-            .any(|existing| existing.kind() == executor.kind())
-        {
-            return Err(DuplicateExecutor {
-                kind: executor.kind(),
-            });
+/// Refuses a plugin's executor whose kind another executor has. The rule
+/// `PluginKind`, which the SDK's coordinator checks, and the registry's
+/// refusal of a plugin that is registered already keep kinds apart; this
+/// module keeps the invariant itself, because runs find an executor by its
+/// kind.
+pub(crate) fn check_executors(
+    snapshot: &Snapshot,
+    contributions: &Contributions,
+) -> Result<(), ContributionRefusal> {
+    for executor in contributions.entries::<Executors>() {
+        if snapshot.find::<Executors>(executor.kind()).is_some() {
+            return Err(ContributionRefusal::new(
+                Executors::NAME,
+                ID_TAKEN,
+                format!(
+                    "an executor of the kind {} is registered already",
+                    executor.kind()
+                ),
+            ));
         }
-        tracing::info!(
-            kind = executor.kind(),
-            "an executor of tasks was registered"
-        );
-        registered.push(executor);
-        Ok(())
     }
+    Ok(())
+}
 
-    /// Removes the executor of a kind, as its plugin stops (ADR-0031,
-    /// decision 10). Runs that started while it was registered keep its
-    /// tool, and their calls of it are refused because its plugin is off.
-    /// Each run that follows one of its tasks lets the task go, as quitting
-    /// does: the task may still run on its target, and a wait takes it up
-    /// again once the plugin is back on.
-    pub fn remove_executor(&self, kind: &str) -> Option<Arc<dyn TaskExecutor>> {
-        let removed = {
-            let mut registered = self
-                .inner
-                .executors
-                .registered
-                .write()
-                .unwrap_or_else(PoisonError::into_inner);
-            let index = registered
-                .iter()
-                .position(|executor| executor.kind() == kind)?;
-            registered.remove(index)
-        };
-        // After the removal, so a run that starts following a task from now
-        // on finds the executor gone and lets the task go itself.
-        let let_go = self.inner.executors.let_go_of(kind);
-        tracing::info!(
-            kind,
-            tasks_let_go = let_go,
-            "an executor of tasks was removed"
-        );
-        Some(removed)
-    }
-
-    /// The executor of a kind, while it is registered.
+impl Runtime {
+    /// The executor of a kind, while its plugin is on. A run reads it anew
+    /// for each call of an executor's tool and for each task, so a call goes
+    /// to the executor of the plugin's latest start, and a task of a plugin
+    /// that stopped is let go (ADR-0031, decision 10).
     pub(crate) fn executor(&self, kind: &str) -> Option<Arc<dyn TaskExecutor>> {
-        self.inner
-            .executors
-            .registered
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .iter()
-            .find(|executor| executor.kind() == kind)
-            .map(Arc::clone)
-    }
-
-    /// The executors as they are registered now.
-    pub(crate) fn executors_now(&self) -> Vec<Arc<dyn TaskExecutor>> {
-        self.inner
-            .executors
-            .registered
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+        self.contributions()
+            .find::<Executors>(kind)
+            .map(|registered| Arc::clone(&registered.entry))
     }
 
     /// The executor's task conversation that `conversation` is, with this
@@ -562,7 +302,9 @@ impl Runtime {
     }
 
     /// Ends an executor's task that its target does not know or can no
-    /// longer report, and tells the run that follows it.
+    /// longer report, and tells the run that follows it. An end that changes
+    /// no row, such as one of another kind's task or of a task that ended
+    /// already, leaves the board as it is too.
     pub(crate) async fn end_executor_task(
         &self,
         kind: &str,
@@ -578,10 +320,17 @@ impl Runtime {
             .executor
             .as_ref()
             .map_or(0, |execution| execution.version);
-        self.inner
+        let changed = self
+            .inner
             .store
             .apply_executor_task_state(&task.id, kind, version, state, Some(ending.clone()))
             .await?;
+        // The board shows what the row holds: a run that follows a task of
+        // another kind must not see this end, and a run that follows a task
+        // that ended already saw its end when the row took it.
+        if !changed {
+            return Ok(());
+        }
         let ended = AssignedTaskState {
             task_id: task.id.clone(),
             conversation_id: task.conversation_id.clone(),
@@ -696,22 +445,22 @@ impl Runtime {
         self.inner.executors.outbox.subscribe()
     }
 
-    /// Whether the parent of a task conversation is in full access
-    /// (ADR-0029, decision 5).
-    pub(crate) async fn parent_has_full_access(&self, conversation: &ConversationId) -> bool {
-        let store = &self.inner.store;
-        let parent = match store.conversation_summary(conversation).await {
-            Ok(Some(summary)) => summary.task.map(|task| task.parent_id),
-            Ok(None) => None,
+    /// The parent, number and executor of a task conversation; `None` for
+    /// every other conversation, and when the store cannot read it.
+    async fn task_origin(&self, conversation: &ConversationId) -> Option<TaskConversation> {
+        match self.inner.store.conversation_summary(conversation).await {
+            Ok(summary) => summary.and_then(|summary| summary.task),
             Err(error) => {
                 tracing::error!(%error, error.code = error.code(), "could not read a task conversation");
                 None
             }
-        };
-        let Some(parent) = parent else {
-            return false;
-        };
-        match store.conversation_summary(&parent).await {
+        }
+    }
+
+    /// Whether a conversation is in full access; `false` when the store
+    /// cannot read it.
+    async fn in_full_access(&self, conversation: &ConversationId) -> bool {
+        match self.inner.store.conversation_summary(conversation).await {
             Ok(summary) => summary.is_some_and(|summary| summary.full_access),
             Err(error) => {
                 tracing::error!(%error, error.code = error.code(), "could not read whether a conversation is in full access");
@@ -722,16 +471,16 @@ impl Runtime {
 
     /// Lends the credential of a provider profile for a task, from the vault
     /// (ADR-0010). `None` for a profile without a credential.
-    pub(crate) async fn lend_credential(
+    async fn lend_credential(
         &self,
         profile_id: &ProfileId,
-    ) -> Result<Option<LentCredential>, LendError> {
+    ) -> Result<Option<credentials::LentCredential>, credentials::LendError> {
         let profile = match self.inner.store.profile(profile_id).await {
             Ok(Some(profile)) => profile,
-            Ok(None) => return Err(LendError::ProfileMissing),
+            Ok(None) => return Err(credentials::LendError::ProfileMissing),
             Err(error) => {
                 tracing::error!(%error, error.code = error.code(), "could not read the profile of a credential to lend");
-                return Err(LendError::StorageFailed);
+                return Err(credentials::LendError::StorageFailed);
             }
         };
         let Some(reference) = profile.credential_ref.clone() else {
@@ -741,150 +490,357 @@ impl Runtime {
             .await
             .map_err(|error| match error {
                 VaultError::Missing | VaultError::Unavailable(_) => {
-                    LendError::CredentialUnavailable
+                    credentials::LendError::CredentialUnavailable
                 }
             })?;
-        Ok(Some(LentCredential {
-            binding: profile.binding(),
+        Ok(Some(credentials::LentCredential::new(
+            profile.binding(),
             credential,
-        }))
+        )))
     }
 
-    /// The services of the runtime for a plugin's executor, which the
-    /// composition root grants to the plugins that register one (ADR-0030,
-    /// decision 13).
-    pub fn executor_services(&self) -> ExecutorServices {
-        ExecutorServices {
-            runtime: self.clone(),
+    /// Lends the plugin of `kind` the credential of `profile` for `task`
+    /// (ADR-0010; ADR-0034, decision 5), only while the task is an active
+    /// task of the plugin's executor and the run that gave it uses the
+    /// profile. The store's rows decide, which the plugin cannot change: its
+    /// own document of the task does not, and neither does a profile that
+    /// the parent conversation chose after the run.
+    async fn lend_for_task(
+        &self,
+        kind: &str,
+        task: &TaskId,
+        profile: &ProfileId,
+    ) -> Result<Option<credentials::LentCredential>, credentials::LendError> {
+        let recorded = match self.inner.store.executor_task_profile(task, kind).await {
+            Ok(recorded) => recorded,
+            Err(error) => {
+                tracing::error!(%error, error.code = error.code(), plugin = kind, task = %task, "could not read the task of a credential to lend");
+                return Err(credentials::LendError::StorageFailed);
+            }
+        };
+        let refusal = match recorded {
+            None => Some("not_the_plugins_task"),
+            Some(recorded) if !recorded.active => Some("task_ended"),
+            Some(recorded) if recorded.profile_id.as_ref() != Some(profile) => {
+                Some("another_profile")
+            }
+            Some(_recorded) => None,
+        };
+        if let Some(reason) = refusal {
+            tracing::warn!(plugin = kind, task = %task, profile = %profile, reason, "refused to lend a credential for a task");
+            return Err(credentials::LendError::NotPermitted);
         }
+        let Some(lent) = self.lend_credential(profile).await? else {
+            tracing::info!(plugin = kind, task = %task, profile = %profile, "the profile of a task has no credential to lend");
+            return Ok(None);
+        };
+        tracing::info!(plugin = kind, task = %task, profile = %profile, "lent a credential for a task");
+        Ok(Some(lent))
     }
 
-    /// Lends provider credentials for the tasks of a plugin's executor. The
-    /// composition root grants one only to the plugins that it trusts with
-    /// provider credentials (ADR-0010; ADR-0030, decision 13).
-    pub fn credential_lender(&self) -> CredentialLender {
-        CredentialLender {
+    /// The executor host bound to the executor of `kind`, as the service
+    /// `executor-host` binds it to the plugin with that ID (ADR-0034,
+    /// decision 5).
+    pub(crate) fn bound_executor_host(&self, kind: &str) -> Arc<dyn ExecutorHostApi> {
+        Arc::new(BoundExecutorHost {
             runtime: self.clone(),
-        }
+            kind: kind.to_owned(),
+        })
+    }
+
+    /// The credentials bound to the executor of `kind`, as the service
+    /// `credentials` binds them to the plugin with that ID (ADR-0034,
+    /// decision 5).
+    pub(crate) fn bound_credentials(&self, kind: &str) -> Arc<dyn CredentialsApi> {
+        Arc::new(BoundCredentials {
+            runtime: self.clone(),
+            kind: kind.to_owned(),
+        })
     }
 }
 
-/// What a plugin's executor uses of the runtime (ADR-0031, decision 4): the
-/// rows and states of its tasks, the outbox of deletions, and whether a
-/// task's parent conversation is in full access. A plugin receives these and
-/// never the runtime itself (ADR-0030, decision 13).
-#[derive(Debug, Clone)]
-pub struct ExecutorServices {
+/// The code of a call that the executor host refuses because the task is not
+/// a task of the plugin's executor.
+const NOT_PERMITTED: &str = "not_permitted";
+
+/// The runtime's provider of the service `executor-host` (ADR-0034,
+/// decision 5).
+#[derive(Debug)]
+pub(crate) struct ExecutorHostProvider {
     runtime: Runtime,
 }
 
-impl ExecutorServices {
-    /// Publishes a state of one of the executor's tasks: the runtime stores
-    /// it in the task's row and shows it on the board of the run that follows
-    /// the task. A state of a task that is another executor's or another
-    /// conversation's, of a task that ended, or older than the one stored
-    /// changes nothing.
-    ///
-    /// Returns the task's row as it was before the state, for a state that
-    /// the runtime took.
-    pub async fn publish_task_state(
+impl ExecutorHostProvider {
+    /// The provider of `runtime`'s executor host.
+    pub(crate) fn new(runtime: &Runtime) -> Self {
+        Self {
+            runtime: runtime.clone(),
+        }
+    }
+}
+
+impl ServiceProvider for ExecutorHostProvider {
+    fn name(&self) -> &'static str {
+        ExecutorHost::NAME
+    }
+
+    fn major(&self) -> u16 {
+        ExecutorHost::MAJOR
+    }
+
+    /// Binds the executor host to the executor kind that equals the plugin's
+    /// ID, which the SDK's rule `PluginKind` gives the plugin's executor.
+    fn bind(&self, binding: &PluginBinding<'_>) -> Result<BoundService, BindRefusal> {
+        Ok(BoundService::new::<ExecutorHost>(
+            self.runtime.bound_executor_host(binding.id.as_str()),
+        ))
+    }
+}
+
+/// The runtime's provider of the service `credentials` (ADR-0034,
+/// decision 5; ADR-0010).
+#[derive(Debug)]
+pub(crate) struct CredentialsProvider {
+    runtime: Runtime,
+}
+
+impl CredentialsProvider {
+    /// The provider of `runtime`'s credentials.
+    pub(crate) fn new(runtime: &Runtime) -> Self {
+        Self {
+            runtime: runtime.clone(),
+        }
+    }
+}
+
+impl ServiceProvider for CredentialsProvider {
+    fn name(&self) -> &'static str {
+        Credentials::NAME
+    }
+
+    fn major(&self) -> u16 {
+        Credentials::MAJOR
+    }
+
+    /// Binds the credentials to the executor kind that equals the plugin's
+    /// ID, so the plugin borrows only for its own executor's tasks.
+    fn bind(&self, binding: &PluginBinding<'_>) -> Result<BoundService, BindRefusal> {
+        Ok(BoundService::new::<Credentials>(
+            self.runtime.bound_credentials(binding.id.as_str()),
+        ))
+    }
+}
+
+/// The executor host of one executor kind: every call answers only for the
+/// tasks, the documents and the outbox of that kind.
+#[derive(Debug)]
+struct BoundExecutorHost {
+    runtime: Runtime,
+    kind: String,
+}
+
+/// A store failure of the executor host, as the code that the plugin logs.
+/// The runtime logs the failure itself, because the plugin never sees more
+/// than the code.
+fn host_failure(kind: &str, error: &RuntimeStoreError) -> HostFailure {
+    tracing::error!(%error, error.code = error.code(), plugin = kind, "the executor host could not reach the store");
+    HostFailure::new(error.code())
+}
+
+/// A task's row as the executor of `kind` sees it; `None` for a task of
+/// another kind or of no executor.
+fn executor_task_of(row: StoredTask, kind: &str) -> Option<ExecutorTask> {
+    let execution = row.executor?;
+    (execution.kind == kind).then(|| {
+        ExecutorTask::new(
+            row.id,
+            row.conversation_id,
+            row.state,
+            execution.target,
+            execution.document,
+        )
+    })
+}
+
+impl ExecutorHostApi for BoundExecutorHost {
+    fn publish_task_state(
         &self,
-        kind: &str,
         state: AssignedTaskState,
-    ) -> Result<Option<StoredTask>, RuntimeStoreError> {
-        self.runtime.publish_task_state(kind, state).await
+    ) -> BoxFuture<'static, Result<Option<ExecutorTask>, HostFailure>> {
+        let runtime = self.runtime.clone();
+        let kind = self.kind.clone();
+        async move {
+            let before = runtime
+                .publish_task_state(&kind, state)
+                .await
+                .map_err(|error| host_failure(&kind, &error))?;
+            Ok(before.and_then(|row| executor_task_of(row, &kind)))
+        }
+        .boxed()
     }
 
-    /// Ends a task that its target does not know or can no longer report,
-    /// and tells the run that follows it.
-    pub async fn end_executor_task(
+    fn end_task(
         &self,
-        kind: &str,
-        task: &StoredTask,
+        task: TaskId,
         state: TaskState,
-    ) -> Result<(), RuntimeStoreError> {
-        self.runtime.end_executor_task(kind, task, state).await
+    ) -> BoxFuture<'static, Result<(), HostFailure>> {
+        let runtime = self.runtime.clone();
+        let kind = self.kind.clone();
+        async move {
+            let row = runtime
+                .executor_task(&task)
+                .await
+                .map_err(|error| host_failure(&kind, &error))?;
+            let own = row.filter(|row| {
+                row.executor
+                    .as_ref()
+                    .is_some_and(|execution| execution.kind == kind)
+            });
+            let Some(row) = own else {
+                tracing::warn!(plugin = %kind, task = %task, "refused to end a task that is not a task of the plugin's executor");
+                return Err(HostFailure::new(NOT_PERMITTED));
+            };
+            runtime
+                .end_executor_task(&kind, &row, state)
+                .await
+                .map_err(|error| host_failure(&kind, &error))
+        }
+        .boxed()
     }
 
-    /// A task, by its ID.
-    pub async fn executor_task(
-        &self,
-        task: &TaskId,
-    ) -> Result<Option<StoredTask>, RuntimeStoreError> {
-        self.runtime.executor_task(task).await
+    fn task(&self, task: TaskId) -> BoxFuture<'static, Result<Option<ExecutorTask>, HostFailure>> {
+        let runtime = self.runtime.clone();
+        let kind = self.kind.clone();
+        async move {
+            let row = runtime
+                .executor_task(&task)
+                .await
+                .map_err(|error| host_failure(&kind, &error))?;
+            Ok(row.and_then(|row| executor_task_of(row, &kind)))
+        }
+        .boxed()
     }
 
-    /// The tasks of an executor that have not ended, the oldest first.
-    pub async fn active_executor_tasks(
-        &self,
-        kind: &str,
-    ) -> Result<Vec<StoredTask>, RuntimeStoreError> {
-        self.runtime.active_executor_tasks(kind).await
+    fn active_tasks(&self) -> BoxFuture<'static, Result<Vec<ExecutorTask>, HostFailure>> {
+        let runtime = self.runtime.clone();
+        let kind = self.kind.clone();
+        async move {
+            let rows = runtime
+                .active_executor_tasks(&kind)
+                .await
+                .map_err(|error| host_failure(&kind, &error))?;
+            Ok(rows
+                .into_iter()
+                .filter_map(|row| executor_task_of(row, &kind))
+                .collect())
+        }
+        .boxed()
     }
 
-    /// Replaces the executor's document of one of its tasks. Returns whether
-    /// the task is the executor's.
-    pub async fn set_executor_document(
+    fn set_document(
         &self,
-        kind: &str,
-        task: &TaskId,
+        task: TaskId,
         document: Option<String>,
-    ) -> Result<bool, RuntimeStoreError> {
-        self.runtime
-            .set_executor_document(kind, task, document)
-            .await
+    ) -> BoxFuture<'static, Result<bool, HostFailure>> {
+        let runtime = self.runtime.clone();
+        let kind = self.kind.clone();
+        async move {
+            runtime
+                .set_executor_document(&kind, &task, document)
+                .await
+                .map_err(|error| host_failure(&kind, &error))
+        }
+        .boxed()
     }
 
-    /// The deletions of task conversations that wait for an executor.
-    pub async fn executor_outbox(&self, kind: &str) -> Result<Vec<OutboxEntry>, RuntimeStoreError> {
-        self.runtime.executor_outbox(kind).await
+    fn outbox(&self) -> BoxFuture<'static, Result<Vec<OutboxItem>, HostFailure>> {
+        let runtime = self.runtime.clone();
+        let kind = self.kind.clone();
+        async move {
+            let entries = runtime
+                .executor_outbox(&kind)
+                .await
+                .map_err(|error| host_failure(&kind, &error))?;
+            Ok(entries
+                .into_iter()
+                .map(|entry| OutboxItem::new(entry.target, entry.conversation_id))
+                .collect())
+        }
+        .boxed()
     }
 
-    /// Forgets deletions that an executor took.
-    pub async fn drop_executor_outbox(
-        &self,
-        kind: &str,
-        entries: &[OutboxEntry],
-    ) -> Result<(), RuntimeStoreError> {
-        self.runtime.drop_executor_outbox(kind, entries).await
+    fn drop_outbox(&self, items: Vec<OutboxItem>) -> BoxFuture<'static, Result<(), HostFailure>> {
+        let runtime = self.runtime.clone();
+        let kind = self.kind.clone();
+        async move {
+            let entries: Vec<OutboxEntry> = items
+                .into_iter()
+                .map(|item| OutboxEntry {
+                    target: item.target,
+                    conversation_id: item.conversation_id,
+                })
+                .collect();
+            runtime
+                .drop_executor_outbox(&kind, &entries)
+                .await
+                .map_err(|error| host_failure(&kind, &error))
+        }
+        .boxed()
     }
 
-    /// Forgets the deletions that wait for one target of an executor, such
-    /// as a worker that the owner removed (ADR-0031, decision 9).
-    pub async fn drop_executor_target_outbox(
-        &self,
-        kind: &str,
-        target: &str,
-    ) -> Result<usize, RuntimeStoreError> {
-        self.runtime.drop_executor_target_outbox(kind, target).await
+    fn drop_target_outbox(&self, target: String) -> BoxFuture<'static, Result<u64, HostFailure>> {
+        let runtime = self.runtime.clone();
+        let kind = self.kind.clone();
+        async move {
+            let dropped = runtime
+                .drop_executor_target_outbox(&kind, &target)
+                .await
+                .map_err(|error| host_failure(&kind, &error))?;
+            Ok(u64::try_from(dropped).unwrap_or(u64::MAX))
+        }
+        .boxed()
     }
 
-    /// Changes whenever a deletion joins the outbox.
-    pub fn outbox_changes(&self) -> watch::Receiver<u64> {
+    fn outbox_changes(&self) -> watch::Receiver<u64> {
         self.runtime.outbox_changes()
     }
 
-    /// Whether the parent of a task conversation is in full access
-    /// (ADR-0029, decision 5).
-    pub async fn parent_has_full_access(&self, conversation: &ConversationId) -> bool {
-        self.runtime.parent_has_full_access(conversation).await
+    fn parent_has_full_access(&self, conversation: ConversationId) -> BoxFuture<'static, bool> {
+        let runtime = self.runtime.clone();
+        let kind = self.kind.clone();
+        async move {
+            let Some(origin) = runtime.task_origin(&conversation).await else {
+                return false;
+            };
+            // Only a task conversation that this kind's executor serves
+            // answers, so a plugin learns nothing of other conversations.
+            let served = origin
+                .executor
+                .as_ref()
+                .is_some_and(|executor| executor.kind == kind);
+            served && runtime.in_full_access(&origin.parent_id).await
+        }
+        .boxed()
     }
 }
 
-/// Lends a plugin's executor the credential of a provider profile for one of
-/// its tasks, as a worker's lease (ADR-0010; ADR-0030, decision 13).
-#[derive(Debug, Clone)]
-pub struct CredentialLender {
+/// The credentials of one executor kind: a lend only for an active task of
+/// that kind whose run uses the profile.
+#[derive(Debug)]
+struct BoundCredentials {
     runtime: Runtime,
+    kind: String,
 }
 
-impl CredentialLender {
-    /// The credential of a profile with its binding, or `None` for a
-    /// profile without a credential.
-    pub async fn lend_credential(
+impl CredentialsApi for BoundCredentials {
+    fn lend(
         &self,
-        profile_id: &ProfileId,
-    ) -> Result<Option<LentCredential>, LendError> {
-        self.runtime.lend_credential(profile_id).await
+        task: TaskId,
+        profile: ProfileId,
+    ) -> BoxFuture<'static, Result<Option<credentials::LentCredential>, credentials::LendError>>
+    {
+        let runtime = self.runtime.clone();
+        let kind = self.kind.clone();
+        async move { runtime.lend_for_task(&kind, &task, &profile).await }.boxed()
     }
 }

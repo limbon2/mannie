@@ -149,11 +149,12 @@ pub struct Execution {
 /// registry).
 pub trait Tool: Send + Sync + fmt::Debug {
     /// The tool's name: snake case, unique, and never reused for another
-    /// meaning.
-    fn name(&self) -> &'static str;
+    /// meaning. It borrows from the tool, so a plugin's tool can carry the
+    /// name that its plugin gave it (ADR-0034, decision 6).
+    fn name(&self) -> &str;
 
     /// What the tool does, for the model.
-    fn description(&self) -> &'static str;
+    fn description(&self) -> &str;
 
     /// The JSON Schema of the arguments.
     fn parameters(&self) -> &serde_json::Value;
@@ -260,11 +261,11 @@ fn parse_arguments<I: DeserializeOwned>(arguments: &str) -> Result<I, String> {
 }
 
 impl<T: TypedTool> Tool for Registered<T> {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         T::NAME
     }
 
-    fn description(&self) -> &'static str {
+    fn description(&self) -> &str {
         T::description()
     }
 
