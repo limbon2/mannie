@@ -1,0 +1,33 @@
+#:schema ../../crates/mannie-plugin-sdk/plugin.schema.json
+# The SSH plugin (ADR-0036; plugins/ssh/docs/README.md): computers without
+# Mannie that the owner registers by hand, and a tool that runs commands on
+# them under the master's policy.
+
+id = "ssh"
+sdk = 1
+# After Workers and Images, on the Plugins page too.
+order = 30
+
+[rust]
+entry = "mannie-ssh"
+
+[services]
+# The password of each host, in the credential store.
+secrets = 1
+# The table of the hosts.
+store = 1
+
+[secrets]
+# One password for each host, stored as `ssh/host/<host ID>` (ADR-0036,
+# decision 8).
+keyed = ["host"]
+
+[crates]
+# Only the SSH plugin speaks SSH: no crate outside this folder may depend on
+# russh (plugins/ssh/docs/adr/0001-speak-ssh-with-russh-and-pinned-host-keys.md).
+exclusive = ["russh"]
+
+# The direct native calls of the plugin's library crates (ADR-0035, decision
+# 6). The SDK has no network service (ADR-0036, decision 9).
+[native]
+sockets = "The client opens the TCP connection to each registered host itself and speaks SSH over it, when the owner checks a host's key or login and when an authorized call of run_ssh_command runs."

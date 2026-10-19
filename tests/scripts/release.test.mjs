@@ -195,6 +195,7 @@ describe('pluginChangelogs', () => {
       [
         { name: 'Workers', path: 'plugins/workers/CHANGELOG.md' },
         { name: 'Images', path: 'plugins/images/CHANGELOG.md' },
+        { name: 'SSH', path: 'plugins/ssh/CHANGELOG.md' },
       ],
     );
     for (const changelog of changelogs) {
