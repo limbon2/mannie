@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
+use mannie_types::ids::ArchiveId;
 use mannie_types::tools::{Access, CommandEnding, ToolFailure, ToolOutcome};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -171,8 +172,8 @@ fn spawn_failure(error: &std::io::Error, shell: &std::path::Path) -> ToolFailure
 }
 
 /// The result: how the command ended, how long it ran, and its output within
-/// the result limit. A stream that does not fit is archived whole, and the
-/// rendering shows its start and its end.
+/// the result limit. A stream that does not fit is archived as it was
+/// captured, and the rendering shows its start and its end.
 fn render(context: &ToolContext, command: &str, timeout_seconds: u32, finished: &Finished) -> Done {
     let ending = match (finished.ending, finished.exit_code) {
         (CommandEnding::Exited, Some(code)) => format!("Exit code: {code}\n"),
@@ -245,7 +246,7 @@ fn share(budget: usize, stdout: usize, stderr: usize) -> (usize, usize) {
 }
 
 /// One stream's part of the rendering: the whole stream when it fits, else
-/// its start and its end, with the whole stream archived.
+/// its start and its end, with the stream archived as it was captured.
 fn stream(
     context: &ToolContext,
     (name, title): (&str, &str),
@@ -261,71 +262,134 @@ fn stream(
         captured.text.clone()
     } else {
         let id = (context.archive_ids)();
-        let (head, tail, first_left_out, last_left_out) = head_and_tail(&captured.text, room);
+        let cut = Cut::of(&captured.text, room);
         archives.push(ArchivedOutput {
             id: id.clone(),
             name: name.to_owned(),
             content: captured.text.clone(),
         });
+        // A start that ends inside a line still puts the note on a line of
+        // its own.
+        let line_break = if cut.head.is_empty() || cut.head.ends_with('\n') {
+            ""
+        } else {
+            "\n"
+        };
         format!(
-            "{head}[lines {first_left_out} to {last_left_out} left out: the whole output is archived; read it with read_tool_output, output_id {id}, offset {first_left_out}]\n{tail}"
+            "{}{line_break}{}\n{}",
+            cut.head,
+            left_out_note(&cut, captured.left_out, &id),
+            cut.tail
         )
     };
     let line_break = if body.ends_with('\n') { "" } else { "\n" };
     format!("{header}{body}{line_break}")
 }
 
-/// The start and the end of a text within `room` bytes, cut at line breaks,
-/// with the numbers of the first and the last line left out, counting from 1.
-/// A first or last line that alone is too long is cut at a character.
-fn head_and_tail(text: &str, room: usize) -> (&str, &str, usize, usize) {
-    let head_room = room / HEAD_SHARE;
-    let tail_room = room - head_room;
-    let mut head_end = 0;
-    let mut head_lines = 0;
-    for line in text.split_inclusive('\n') {
-        if head_end + line.len() > head_room {
-            break;
-        }
-        head_end += line.len();
-        head_lines += 1;
-    }
-    let mut tail_start = text.len();
-    let mut tail_lines = 0;
-    for line in text[head_end..].split_inclusive('\n').rev() {
-        if text.len() - tail_start + line.len() > tail_room {
-            break;
-        }
-        tail_start -= line.len();
-        tail_lines += 1;
-    }
-    if tail_lines == 0 {
-        // The last line alone is too long: keep its end.
-        tail_start = floor_boundary(text, text.len().saturating_sub(tail_room).max(head_end));
-    }
-    let total_lines = text.split_inclusive('\n').count();
-    let first_left_out = head_lines + 1;
-    let last_left_out = total_lines.saturating_sub(tail_lines).max(first_left_out);
-    (
-        &text[..head_end],
-        &text[tail_start..],
-        first_left_out,
-        last_left_out,
+/// The note between the start and the end of a stream: what the rendering
+/// leaves out, and where the archive is. The archive lacks the middle of a
+/// stream that was longer than the capture keeps, and the note says so.
+fn left_out_note(cut: &Cut<'_>, not_captured: u64, id: &ArchiveId) -> String {
+    let archived = if not_captured == 0 {
+        "the whole output is archived".to_owned()
+    } else {
+        format!(
+            "the output is archived without the {not_captured} bytes in its middle that Mannie did not keep"
+        )
+    };
+    format!(
+        "[{}: {archived}; read it with read_tool_output, output_id {id}, offset {}]",
+        cut.left_out(),
+        cut.first
     )
 }
 
-/// The nearest character boundary at or after `index`.
-fn floor_boundary(text: &str, index: usize) -> usize {
-    let mut index = index.min(text.len());
-    while !text.is_char_boundary(index) {
-        index += 1;
+/// The start and the end of a text that does not fit its room, and what the
+/// rendering leaves out between them.
+#[derive(Debug)]
+struct Cut<'a> {
+    head: &'a str,
+    tail: &'a str,
+    /// The first line left out, in whole or in part, counting from 1.
+    first: usize,
+    /// The last line left out, in whole or in part.
+    last: usize,
+    /// The bytes between the start and the end.
+    bytes: usize,
+    /// Whether the start or the end stops inside a line, which then shows in
+    /// part.
+    splits_a_line: bool,
+}
+
+impl<'a> Cut<'a> {
+    /// The start and the end of `text`, which is longer than `room` bytes,
+    /// cut at line breaks. A first or a last line that alone is too long for
+    /// its share is cut at a character, so the start shows its beginning and
+    /// the end shows its end.
+    fn of(text: &'a str, room: usize) -> Self {
+        let head_room = room / HEAD_SHARE;
+        let tail_room = room - head_room;
+        let mut head_end = 0;
+        for line in text.split_inclusive('\n') {
+            if head_end + line.len() > head_room {
+                break;
+            }
+            head_end += line.len();
+        }
+        if head_end == 0 {
+            head_end = text.floor_char_boundary(head_room);
+        }
+        let mut tail_start = text.len();
+        for line in text[head_end..].split_inclusive('\n').rev() {
+            if text.len() - tail_start + line.len() > tail_room {
+                break;
+            }
+            tail_start -= line.len();
+        }
+        if tail_start == text.len() {
+            tail_start =
+                text.ceil_char_boundary(text.len().saturating_sub(tail_room).max(head_end));
+        }
+        let head = &text[..head_end];
+        let tail = &text[tail_start..];
+        let before_tail = &text[..tail_start];
+        let tail_starts_a_line = before_tail.ends_with('\n');
+        let head_splits = !head.is_empty() && !head.ends_with('\n');
+        let tail_splits = !tail.is_empty() && !tail_starts_a_line;
+        let first = head.matches('\n').count() + 1;
+        // The last line left out holds the byte just before the end: a line
+        // break there ends the line before the end's first line.
+        let last = before_tail.matches('\n').count() + usize::from(!tail_starts_a_line);
+        Self {
+            head,
+            tail,
+            first,
+            last: last.max(first),
+            bytes: tail_start.saturating_sub(head_end),
+            splits_a_line: head_splits || tail_splits,
+        }
     }
-    index
+
+    /// What the note says is left out: whole lines, or the bytes of the lines
+    /// that the start or the end cuts.
+    fn left_out(&self) -> String {
+        match (self.splits_a_line, self.first == self.last) {
+            (false, true) => format!("line {} left out", self.first),
+            (false, false) => format!("lines {} to {} left out", self.first, self.last),
+            (true, true) => format!("{} bytes of line {} left out", self.bytes, self.first),
+            (true, false) => format!(
+                "{} bytes left out, from line {} to line {}",
+                self.bytes, self.first, self.last
+            ),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{head_and_tail, share};
+    use mannie_types::ids::ArchiveId;
+
+    use super::{Cut, left_out_note, share};
 
     #[test]
     fn streams_share_the_room() {
@@ -340,25 +404,89 @@ mod tests {
         let lines: Vec<String> = (1..=100).map(|line| format!("line {line:03}")).collect();
         let text = format!("{}\n", lines.join("\n"));
 
-        let (head, tail, first, last) = head_and_tail(&text, 200);
+        let cut = Cut::of(&text, 200);
 
         // Each line has 9 bytes: 50 bytes hold 5 lines, 150 bytes 16.
-        assert_eq!(head, "line 001\nline 002\nline 003\nline 004\nline 005\n");
-        assert!(
-            tail.starts_with("line 085\n") && tail.ends_with("line 100\n"),
-            "{tail}"
+        assert_eq!(
+            cut.head,
+            "line 001\nline 002\nline 003\nline 004\nline 005\n"
         );
-        assert_eq!((first, last), (6, 84));
+        assert!(
+            cut.tail.starts_with("line 085\n") && cut.tail.ends_with("line 100\n"),
+            "{}",
+            cut.tail
+        );
+        assert_eq!((cut.first, cut.last), (6, 84));
+        assert_eq!(cut.left_out(), "lines 6 to 84 left out");
     }
 
     #[test]
-    fn a_single_long_line_keeps_its_end() {
+    fn a_single_long_line_keeps_its_beginning_and_its_end() {
         let text = "x".repeat(1000);
 
-        let (head, tail, first, last) = head_and_tail(&text, 100);
+        let cut = Cut::of(&text, 100);
 
-        assert_eq!(head, "");
-        assert_eq!(tail.len(), 75);
-        assert_eq!((first, last), (1, 1));
+        assert_eq!((cut.head.len(), cut.tail.len()), (25, 75));
+        assert_eq!((cut.first, cut.last, cut.bytes), (1, 1, 900));
+        assert_eq!(cut.left_out(), "900 bytes of line 1 left out");
+    }
+
+    #[test]
+    fn a_first_line_too_long_for_the_start_shows_its_beginning() {
+        let text = format!("{}\nshort\n", "a".repeat(500));
+
+        let cut = Cut::of(&text, 100);
+
+        assert_eq!(cut.head, "a".repeat(25));
+        assert_eq!(cut.tail, "short\n");
+        assert_eq!(cut.left_out(), "476 bytes of line 1 left out");
+    }
+
+    #[test]
+    fn a_cut_from_inside_one_line_into_another_names_both() {
+        let text = format!("{}\nmiddle\n{}", "a".repeat(200), "z".repeat(200));
+
+        let cut = Cut::of(&text, 100);
+
+        assert_eq!(cut.head, "a".repeat(25));
+        assert_eq!(cut.tail, "z".repeat(75));
+        assert_eq!(cut.left_out(), "308 bytes left out, from line 1 to line 3");
+    }
+
+    #[test]
+    fn a_cut_through_characters_keeps_them_whole() {
+        // Each character has 2 bytes, and 102 bytes of room give the start
+        // 25 and the end 77, so both cuts fall inside a character.
+        let text = "é".repeat(500);
+
+        let cut = Cut::of(&text, 102);
+
+        assert_eq!((cut.head.len(), cut.tail.len()), (24, 76));
+        assert!(cut.head.chars().all(|character| character == 'é'));
+        assert!(cut.tail.chars().all(|character| character == 'é'));
+    }
+
+    #[test]
+    fn the_note_calls_the_archive_whole_only_when_the_capture_kept_everything() {
+        let id = ArchiveId::parse("0199e0f2-0000-7000-a000-000000000001").unwrap();
+        let text = "x".repeat(1000);
+        let cut = Cut::of(&text, 100);
+
+        let kept = left_out_note(&cut, 0, &id);
+        let partial = left_out_note(&cut, 5_000, &id);
+
+        assert_eq!(
+            kept,
+            format!(
+                "[900 bytes of line 1 left out: the whole output is archived; read it with read_tool_output, output_id {id}, offset 1]"
+            )
+        );
+        assert!(
+            partial.contains(
+                "the output is archived without the 5000 bytes in its middle that Mannie did not keep"
+            ),
+            "{partial}"
+        );
+        assert!(!partial.contains("whole"), "{partial}");
     }
 }

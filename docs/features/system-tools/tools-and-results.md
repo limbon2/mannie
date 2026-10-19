@@ -4,7 +4,7 @@
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Building                                                                                                                                                                                                                                                   |
 | Milestone    | M2                                                                                                                                                                                                                                                         |
-| Last updated | 2026-10-15                                                                                                                                                                                                                                                 |
+| Last updated | 2026-10-20                                                                                                                                                                                                                                                 |
 | Part of      | [System tools](README.md)                                                                                                                                                                                                                                  |
 | Related      | [Tools](../../architecture/tools.md), [ADR-0013](../../adr/0013-journal-every-side-effect.md), [Operations and approvals](operations-and-approvals.md), [Commands](commands.md), [Agent runtime](../../architecture/agent-runtime.md#7-context-management) |
 
@@ -75,7 +75,7 @@ Arguments without a default are required. A path is absolute or relative to the 
 - A result is a typed value. The tool call's document stores it once, with the rendering that the model sees. The UI builds its summary from the result's codes and numbers.
 - A rendering fits in the result limit: 64 KiB, or a quarter of the context budget when that is smaller, but never less than 4 KiB. Tools that page end a page at the limit and say where the next page starts.
 - Command output keeps a head and a tail within the limit, and its whole captured output is archived ([commands](commands.md#output)).
-- An archived output is stored with its tool call and deleted with its conversation. The model reads it in pages of lines with `read_tool_output` and its reference, and the owner opens it from the tool call.
+- An archived output is stored with its tool call and deleted with its conversation. The model reads it in pages of lines with `read_tool_output` and its reference, and the owner opens it from the tool call. A line longer than a page shows its beginning, marked as cut like a long line of `read_file`, and the next page starts with the next line.
 
 ### The descriptions the model sees
 

@@ -1576,6 +1576,46 @@ async fn long_output_is_cut_and_archived() {
 
 #[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 #[tokio::test]
+async fn the_note_names_a_cut_line_and_the_middle_that_the_capture_did_not_keep() {
+    let harness = with_small_limit(Harness::new(), 8 * 1024);
+    // One line of 2,000,000 bytes, longer than the room of the result and
+    // than the 1 MiB that a capture keeps: the archive holds the line's first
+    // 256 KiB, a line that marks the cut, and its last 768 KiB.
+    let command = shell(
+        "[Console]::Out.Write('x' * 2000000)",
+        "head -c 2000000 /dev/zero | tr '\\0' x",
+    );
+
+    let done = harness
+        .done("run_command", json!({ "command": command }))
+        .await;
+
+    assert!(done.output.len() <= 8 * 1024, "{} bytes", done.output.len());
+    assert!(
+        done.output
+            .contains("Standard output (2000000 bytes):\nxxx"),
+        "{}",
+        done.output
+    );
+    assert!(
+        done.output.contains(
+            "bytes left out, from line 1 to line 3: the output is archived without the 951424 bytes in its middle that Mannie did not keep; read it with read_tool_output"
+        ),
+        "{}",
+        done.output
+    );
+    let [archive] = done.archives.as_slice() else {
+        panic!("one archive: {:?}", done.archives.len());
+    };
+    assert!(
+        archive.content.contains("\n[951424 bytes left out]\n"),
+        "{} bytes",
+        archive.content.len()
+    );
+}
+
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
+#[tokio::test]
 async fn a_command_past_its_timeout_is_ended() {
     let harness = Harness::new();
     let command = shell("Start-Sleep -Seconds 30", "sleep 30");

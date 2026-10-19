@@ -4,7 +4,7 @@
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Building                                                                                                                                                                                                          |
 | Milestone    | M2                                                                                                                                                                                                                |
-| Last updated | 2026-10-14                                                                                                                                                                                                        |
+| Last updated | 2026-10-20                                                                                                                                                                                                        |
 | Part of      | [System tools](README.md)                                                                                                                                                                                         |
 | Related      | [ADR-0014](../../adr/0014-contain-process-trees.md), [Tools](../../architecture/tools.md#6-running-commands), [Security](../../architecture/security.md), [Operations and approvals](operations-and-approvals.md) |
 
@@ -54,6 +54,7 @@ A command's environment holds only the variables of an allow list, plus the name
 
 - Mannie reads standard output and standard error separately. Each keeps its first 256 KiB and its last 768 KiB, and a cut is marked with the number of bytes left out.
 - The model gets a head and a tail of each stream within the result limit ([tools and results](tools-and-results.md#results-and-limits)). Everything captured is archived, and both the model and the owner can read it.
+- The head and the tail end at line breaks. A first or last line that alone is too long is cut at a character, so the head shows its beginning and the tail its end. The note between them names the lines, or the bytes of the lines, that it leaves out, and says when the archive lacks the middle that the capture did not keep.
 - Output is decoded as UTF-8. Bytes that are not valid UTF-8 are replaced, and the result says so. CRLF line endings become LF, so output reads the same on both platforms.
 - The result names the exit code, or that the command timed out, was stopped, or was interrupted when Mannie quit, with the time it ran.
 

@@ -64,13 +64,7 @@ impl TypedTool for ReadToolOutput {
             let first = usize::try_from(page_lines.first_line).unwrap_or(usize::MAX);
 
             let mut page = Page::new(context.result_limit, &[&archive.name]);
-            let mut last = first - 1;
-            for line in &page_lines.lines {
-                if !page.push(line) {
-                    break;
-                }
-                last += 1;
-            }
+            let last = first - 1 + fill(&mut page, &page_lines.lines);
             let mut output = format!(
                 "Output: {} ({})\n{}\n",
                 archive.name,
@@ -93,5 +87,57 @@ impl TypedTool for ReadToolOutput {
             })
         }
         .boxed()
+    }
+}
+
+/// Fills `page` with the lines that fit and returns how many it took. A first
+/// line that alone is longer than a page shows its beginning, marked as cut,
+/// so the next page starts after it.
+fn fill(page: &mut Page, lines: &[String]) -> usize {
+    let mut taken = 0;
+    for line in lines {
+        if page.push(line) {
+            taken += 1;
+            continue;
+        }
+        if page.push_start(line) {
+            taken += 1;
+        }
+        break;
+    }
+    taken
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fill;
+    use crate::results::Page;
+
+    fn lines(texts: &[&str]) -> Vec<String> {
+        texts.iter().map(|text| (*text).to_owned()).collect()
+    }
+
+    #[test]
+    fn a_page_takes_the_lines_that_fit_and_stops_before_a_longer_one() {
+        let long = "y".repeat(2_000);
+        let mut page = Page::new(1_024, &["stdout"]);
+
+        let taken = fill(&mut page, &lines(&["one", &long, "two"]));
+
+        assert_eq!(taken, 1);
+        assert_eq!(page.into_body(), "one\n");
+    }
+
+    #[test]
+    fn a_line_longer_than_a_page_shows_its_beginning_so_the_next_page_moves_on() {
+        let long = "y".repeat(2_000);
+        let mut page = Page::new(1_024, &["stdout"]);
+
+        let taken = fill(&mut page, &lines(&[&long, "two"]));
+
+        assert_eq!(taken, 1);
+        let body = page.into_body();
+        assert!(body.starts_with("yyy"), "{body}");
+        assert!(body.ends_with(" more characters]\n"), "{body}");
     }
 }

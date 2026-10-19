@@ -4,6 +4,11 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+### Fixed
+
+- The note in a command's cut output says how many bytes of a long line it leaves out, where it said the whole line was left out while showing part of it, and calls the archive whole only when Mannie kept all of the output.
+- `read_tool_output` shows the beginning of a line longer than a page, marked as cut, and the next page starts after it; it showed no line and could not get past it.
+
 ## 0.3.0 - 2026-10-19
 
 ### Added

@@ -6,6 +6,8 @@ use std::time::SystemTime;
 use time::OffsetDateTime;
 use time::macros::format_description;
 
+use crate::texts;
+
 /// The most bytes of a rendering that the model reads.
 pub const RESULT_LIMIT_BYTES: usize = 64 * 1024;
 
@@ -51,6 +53,26 @@ impl Page {
         }
         self.body.push_str(line);
         self.body.push('\n');
+        true
+    }
+
+    /// Adds the beginning of a line that alone does not fit an empty page,
+    /// cut at a character and marked as `read_file` marks a cut line, so a
+    /// reader that pages on by lines always moves on. A page that holds a
+    /// line takes nothing.
+    pub(crate) fn push_start(&mut self, line: &str) -> bool {
+        if !self.body.is_empty() {
+            return false;
+        }
+        // The mark for the whole line is at least as long as the mark for
+        // what is left out of it.
+        let mark_room = texts::line_cut(line.chars().count()).len() + 1;
+        let end = line.floor_char_boundary(self.budget.saturating_sub(mark_room));
+        self.body.push_str(&line[..end]);
+        self.body
+            .push_str(&texts::line_cut(line[end..].chars().count()));
+        self.body.push('\n');
+        self.full = true;
         true
     }
 
@@ -105,6 +127,27 @@ mod tests {
         assert!(!page.push(&"long".repeat(100)));
         assert!(!page.push("short"));
         assert_eq!(page.into_body(), "short\n");
+    }
+
+    #[test]
+    fn an_empty_page_takes_the_beginning_of_a_line_too_long_for_it() {
+        let long = "y".repeat(2_000);
+        let mut empty = Page::new(1_024, &["header"]);
+        let mut holding = Page::new(1_024, &["header"]);
+        assert!(holding.push("short"));
+
+        assert!(!empty.push(&long));
+        assert!(empty.push_start(&long));
+        assert!(!holding.push(&long));
+        assert!(!holding.push_start(&long));
+
+        // 1,024 bytes leave 506 for the body: 477 characters, the mark and
+        // the line break.
+        assert_eq!(
+            empty.into_body(),
+            format!("{} [cut: 1523 more characters]\n", "y".repeat(477))
+        );
+        assert_eq!(holding.into_body(), "short\n");
     }
 
     #[test]
