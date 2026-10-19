@@ -4,6 +4,8 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+## 0.3.0 - 2026-10-19
+
 ### Added
 
 - Typing "@" in the message box lists the files and folders of the conversation's project, hidden and ignored ones included, and a file that may hold secrets shows a warning. The model reads a bounded page of each mentioned file and a listing of each mentioned folder after the message, and the transcript shows what it got.
@@ -32,7 +34,6 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - Plugins' tests reach the core through the plugin harness, `mannie-plugin-harness`, which hosts one plugin through the real plugin host and checks that a plugin keeps the SDK's rules; Images' tests and the fixture plugin's use it.
 - Each plugin's UI and its tests live in the plugin's folder. The UI imports only the TypeScript plugin SDK, `@mannie/plugin-sdk`, and its own files, `task gen` writes the plugin lists that the app imports and each plugin's barrel of its own messages, and ESLint and the app's build refuse an import across the boundaries between the core and the plugins.
 - The programs of the plugins, such as the worker, come from their manifests: `task build`, `task e2e`, CI's smoke tests and cross builds, the nightly FreeBSD run and the release build, check, sign and describe every program that a manifest declares, and the worker's smoke tests moved into `plugins/workers/ci/`.
-
 - The architecture decisions that were Proposed are Accepted, and a failed or missing CI run no longer holds back a change, a milestone or a release.
 - `task test` runs every Rust test binary even when one fails, so a run reports every failing test.
 - CI, the live provider tests and the evaluations run on the owner's self-hosted runners, which GitHub does not bill; the FreeBSD tests and the release's own jobs stay on GitHub's runners.
