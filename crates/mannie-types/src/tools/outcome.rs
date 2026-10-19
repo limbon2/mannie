@@ -232,6 +232,14 @@ pub enum ToolFailure {
         /// What the operating system reported, in its words.
         kind: String,
     },
+    /// A plugin's tool answered against the plugin SDK's rules, such as a
+    /// tool with side effects that did not say what it touches, so nothing
+    /// ran (ADR-0036).
+    #[error("the plugin {plugin} answered against the plugin SDK's rules")]
+    PluginInvalid {
+        /// The plugin's ID.
+        plugin: String,
+    },
 }
 
 impl ToolFailure {
@@ -266,6 +274,7 @@ impl ToolFailure {
             Self::ShellMissing { .. } => "tool.shell_missing",
             Self::SpawnFailed { .. } => "tool.spawn_failed",
             Self::IoError { .. } => "tool.io_error",
+            Self::PluginInvalid { .. } => "tool.plugin_invalid",
         }
     }
 }

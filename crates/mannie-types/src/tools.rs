@@ -18,15 +18,16 @@ mod settings;
 pub use access::{Access, AccessMode, EntryCount};
 pub use approval::{
     ApprovalChoice, ApprovalReason, ApprovalRequest, DecideApproval, Decision, GrantScope,
-    RuleProposal,
+    RemoteTarget, RuleProposal,
 };
 pub use call::{
-    MAX_ARGUMENTS_BYTES, MAX_VIEW_ARGUMENTS_BYTES, NotRunReason, ProcessRecord, Refusal,
-    ToolCallDocument, ToolCallStatus, ToolCallView,
+    Interruption, MAX_ARGUMENTS_BYTES, MAX_VIEW_ARGUMENTS_BYTES, NotRunReason, ProcessRecord,
+    Refusal, ToolCallDocument, ToolCallStatus, ToolCallView,
 };
 pub use commands::{
-    CommandRule, ConversationGrant, GrantRef, MAX_OUTPUT_PAGE_LINES, ReadToolOutput, RuleRef,
-    SetFullAccess, SharedGrant, SharedGrantRef, ToolOutputPage, ToolsError,
+    CommandRule, ConversationGrant, GrantRef, MAX_OUTPUT_PAGE_LINES, ReadToolOutput,
+    RemoteCommandRule, RemoteRuleRef, RuleRef, SetFullAccess, SharedGrant, SharedGrantRef,
+    ToolOutputPage, ToolsError,
 };
 pub use outcome::{
     ArchiveRef, CommandEnding, EntryKind, PathRefusal, ToolFailure, ToolOutcome, ToolResult,

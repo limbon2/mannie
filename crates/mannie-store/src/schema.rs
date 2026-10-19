@@ -249,6 +249,12 @@ const TOOLS: StoreModule = StoreModule {
             description: "create the shared grants table",
             sql: include_str!("tools/migrations/0014_create_shared_grants.sql"),
         },
+        Migration {
+            version: 4,
+            legacy_version: None,
+            description: "create the rules for commands on remote hosts",
+            sql: include_str!("tools/migrations/0030_create_remote_rules.sql"),
+        },
     ]),
     confined: false,
 };

@@ -178,6 +178,22 @@ describe('checkManifest', () => {
     ]);
   });
 
+  it('accepts keyed families and refuses a bad family, a fixed name inside one and a family without the service', () => {
+    const secrets = (lists) => withMore(`[services]\nsecrets = 1\n\n[secrets]\n${lists}`);
+
+    assert.deepEqual(problemsOf(secrets('keyed = ["host"]\nentries = ["hostname"]')), []);
+    assert.match(problemsOf(secrets('keyed = ["host/"]'))[0], /is not a secret's name/u);
+    assert.deepEqual(problemsOf(secrets('keyed = ["host"]\nentries = ["host/main"]')), [
+      'the secret "host/main" is a keyed family, or an entry of one',
+    ]);
+    assert.deepEqual(problemsOf(secrets('keyed = ["host"]\nlegacy = ["host"]')), [
+      'the secret "host" is a keyed family, or an entry of one',
+    ]);
+    assert.deepEqual(problemsOf(withMore('[secrets]\nkeyed = ["host"]')), [
+      'the manifest lists secrets but does not declare the service secrets',
+    ]);
+  });
+
   it('accepts programs and refuses an unknown field of a program', () => {
     const programs = withMore(
       '[[programs]]\npackage = "mannie-notes-sync"\nheadless = true\nsmoke = { unix = "ci/smoke.sh" }',

@@ -16,15 +16,16 @@ use futures_util::future::BoxFuture;
 use mannie_store::{Change, Durability, NewArchive};
 use mannie_tools::{
     Ceiling, CommandEnvironment, Done, Execution, Grants, PermissionClass, PolicyInputs,
-    PrepareError, ProjectFacts, StopReason, StopSignal, Tool, ToolContext, Verdict, decide, digest,
-    result_limit, saved_rule,
+    PrepareError, ProjectFacts, SavedRule, StopReason, StopSignal, Tool, ToolContext, Verdict,
+    decide, digest, result_limit, saved_rule,
 };
 use mannie_types::ceiling::CeilingMode;
 use mannie_types::ids::ProjectId;
 use mannie_types::run::{RunActivity, RunFailure};
 use mannie_types::tools::{
     Access, ApprovalChoice, ApprovalRequest, ArchiveRef, CommandRule, Decision, GrantScope,
-    NotRunReason, ProcessRecord, Refusal, ToolCallStatus, ToolResult, ToolsSettings,
+    Interruption, NotRunReason, ProcessRecord, Refusal, RemoteCommandRule, ToolCallStatus,
+    ToolOutcome, ToolResult, ToolsSettings,
 };
 use tokio::sync::oneshot;
 
@@ -42,6 +43,29 @@ enum CallEnd {
     Ran,
     /// The owner denied it; the rest of the step does not run.
     Denied,
+}
+
+/// How the wait for a running tool ended.
+enum Watched {
+    /// The tool returned, by itself or after Stop or Shutdown told it to.
+    Ended {
+        /// What the tool returned, boxed because it is far larger than an
+        /// abort.
+        done: Box<Done>,
+        /// How the run ends, when a command halted it meanwhile.
+        halted: Option<Ending>,
+    },
+    /// Turning the tool's plugin off aborted the execution, which was dropped.
+    Aborted,
+}
+
+/// Waits until turning a plugin off aborts an execution of its tool, or
+/// forever for a call without such a signal.
+async fn aborted(abort: Option<&StopSignal>) {
+    match abort {
+        Some(abort) => abort.stopped().await,
+        None => std::future::pending().await,
+    }
 }
 
 /// What preparing a call found.
@@ -67,6 +91,8 @@ struct Surroundings {
     /// The grants for every conversation.
     always_grants: Vec<GrantScope>,
     rules: Vec<CommandRule>,
+    /// The rules for commands on remote hosts (ADR-0036).
+    remote_rules: Vec<RemoteCommandRule>,
     /// The conversation's project.
     project: Option<ProjectId>,
     /// On a worker, the ceiling of the task, narrowed as the task asks.
@@ -201,7 +227,7 @@ impl RunActor {
                     call.document.decided_at = Some(self.now());
                     break;
                 }
-                Verdict::Ask(request) => request,
+                Verdict::Ask(request) => *request,
                 Verdict::Refused(refusal) => {
                     tracing::info!(run = %self.run, part = %call.part_id, tool = %call.document.tool, refusal = ?refusal, "the worker's ceiling refused a tool call");
                     self.end_call(call, NotRunReason::Refused { refusal });
@@ -231,6 +257,13 @@ impl RunActor {
             if let Some(choice) = &choice {
                 self.remember(choice, &request).await;
             }
+            // The owner may have turned off the tool's plugin while the call
+            // waited, and a plugin that is off prepares nothing again
+            // (ADR-0030, decision 8).
+            if let Err(reason) = self.tool_to_run(setup, &call.document.tool) {
+                self.end_call(call, reason);
+                return Ok(CallEnd::Ran);
+            }
             // The approval covers the accesses that the owner saw. Anything
             // that changed since goes back to the policy, and an earlier
             // approval no longer counts.
@@ -257,7 +290,7 @@ impl RunActor {
                 }
             }
         }
-        self.execute(&tool, call, surroundings.context, arguments, accesses)
+        self.execute(setup, &tool, call, surroundings, arguments, accesses)
             .await
     }
 
@@ -280,6 +313,7 @@ impl RunActor {
                     always: &surroundings.always_grants,
                 },
                 rules: &surroundings.rules,
+                remote_rules: &surroundings.remote_rules,
                 project: surroundings.project.as_ref(),
                 owner_request,
                 ceiling: surroundings.ceiling.as_ref(),
@@ -289,16 +323,32 @@ impl RunActor {
         )
     }
 
-    /// Runs an authorized call and stores its result.
+    /// Runs an authorized call and stores its result. A call of a plugin's
+    /// tool runs only while the plugin's start that offered the tool to the
+    /// run is on, and turning the plugin off waits for it (ADR-0034,
+    /// decision 8).
     async fn execute(
         &mut self,
+        setup: &Setup,
         tool: &Arc<dyn Tool>,
         mut call: StepCall,
-        context: ToolContext,
+        surroundings: Surroundings,
         arguments: String,
         accesses: Vec<Access>,
     ) -> Result<CallEnd, Ending> {
         let side_effects = tool.class() == PermissionClass::SideEffects;
+        let offered = setup.plugin_tool(&call.document.tool);
+        let execution_guard = match offered {
+            None => None,
+            Some(offered) => {
+                let Some(guard) = self.runtime.begin_plugin_execution(offered) else {
+                    let plugin = offered.plugin.clone();
+                    self.end_call(call, NotRunReason::PluginOff { plugin });
+                    return Ok(CallEnd::Ran);
+                };
+                Some(guard)
+            }
+        };
         let started_at = self.now();
         call.document.accesses.clone_from(&accesses);
         call.document.started_at = Some(started_at);
@@ -323,13 +373,28 @@ impl RunActor {
         let stop = StopSignal::new();
         let (process_sender, process) = oneshot::channel();
         let execution = tool.execute(Execution {
-            context,
+            context: surroundings.context,
             arguments,
             accesses,
             stop: stop.clone(),
             process: Some(process_sender),
         });
-        let (done, halted) = self.watch(execution, &stop, process, &mut call).await?;
+        let abort = execution_guard.as_ref().map(|guard| guard.abort.clone());
+        let watched = self
+            .watch(execution, &stop, process, &mut call, abort.as_ref())
+            .await;
+        // After the plugin's work is done or dropped, so a plugin that turns
+        // off waits for it.
+        drop(execution_guard);
+        let (done, halted) = match watched? {
+            Watched::Ended { done, halted } => (*done, halted),
+            Watched::Aborted => {
+                let plugin = offered.map_or_else(String::new, |offered| offered.plugin.clone());
+                self.abandon_aborted(call, side_effects, plugin);
+                self.flush(Durability::Full).await?;
+                return Ok(CallEnd::Ran);
+            }
+        };
         match halted {
             None => {
                 self.complete_call(call, done);
@@ -337,9 +402,19 @@ impl RunActor {
                 Ok(CallEnd::Ran)
             }
             Some(ending) => {
-                // A change that ran keeps its result; a read that was stopped
-                // is canceled when the run ends.
-                if side_effects {
+                // The core let a plugin's work go without its result
+                // (ADR-0034, decision 3), so nobody knows how far it got: the
+                // call stays executing, which the end of the run makes
+                // uncertain, and says why.
+                let let_go = !matches!(done.outcome, ToolOutcome::Plugin { .. });
+                if side_effects && offered.is_some() && let_go {
+                    if !matches!(ending, Ending::Interrupted) {
+                        call.document.interruption = Some(Interruption::Stopped);
+                    }
+                    self.pending.push(call.update(Vec::new()));
+                } else if side_effects {
+                    // A change that ran keeps its result; a read that was
+                    // stopped is canceled when the run ends.
                     self.complete_call(call, done);
                 }
                 Err(ending)
@@ -347,23 +422,41 @@ impl RunActor {
         }
     }
 
+    /// Ends a call of a plugin's tool whose execution turning the plugin off
+    /// aborted, while the reply goes on: an operation may have taken effect,
+    /// so it is uncertain; a read did not finish, so it did not run.
+    fn abandon_aborted(&mut self, mut call: StepCall, side_effects: bool, plugin: String) {
+        tracing::info!(run = %self.run, part = %call.part_id, tool = %call.document.tool, "turning a plugin off aborted a tool call");
+        if !side_effects {
+            self.end_call(call, NotRunReason::PluginOff { plugin });
+            return;
+        }
+        call.document.status = ToolCallStatus::Uncertain;
+        call.document.interruption = Some(Interruption::PluginOff { plugin });
+        call.document.ended_at = Some(self.now());
+        self.finish_call(&call);
+    }
+
     /// Waits for a running tool. Stop and Shutdown tell it to stop, and the
     /// run ends once it has; a command reports its process for the journal
-    /// as soon as it runs. Meanwhile, the states that the run's children
-    /// publish are stored.
+    /// as soon as it runs. When turning its plugin off aborts a plugin's
+    /// tool, the execution is dropped. Meanwhile, the states that the run's
+    /// children publish are stored.
     async fn watch(
         &mut self,
         mut execution: BoxFuture<'static, Done>,
         stop: &StopSignal,
         mut process: oneshot::Receiver<ProcessRecord>,
         call: &mut StepCall,
-    ) -> Result<(Done, Option<Ending>), Ending> {
+        abort: Option<&StopSignal>,
+    ) -> Result<Watched, Ending> {
         let mut halted: Option<Ending> = None;
         let mut process_pending = true;
         let board = Arc::clone(self.tasks.board());
         loop {
             tokio::select! {
-                done = &mut execution => return Ok((done, halted)),
+                done = &mut execution => return Ok(Watched::Ended { done: Box::new(done), halted }),
+                () = aborted(abort), if halted.is_none() => return Ok(Watched::Aborted),
                 command = self.commands.recv(), if halted.is_none() => {
                     let ending = halt(command);
                     // A revoked lease ends the run on purpose, as a stop does.
@@ -479,9 +572,17 @@ impl RunActor {
                     .rule
                     .as_ref()
                     .map(|proposal| saved_rule(proposal, *prefix_words, *limit_to_folder));
-                if let Some(Ok((words, folder))) = rule
-                    && let Err(error) = store.add_rule(&ids.rule(), words, folder).await
-                {
+                let saved = match rule {
+                    Some(Ok(SavedRule::Local { words, folder })) => {
+                        store.add_rule(&ids.rule(), words, folder).await.map(drop)
+                    }
+                    Some(Ok(SavedRule::Remote { target, words })) => store
+                        .add_remote_rule(&ids.rule(), target, words)
+                        .await
+                        .map(drop),
+                    Some(Err(_)) | None => Ok(()),
+                };
+                if let Err(error) = saved {
                     tracing::warn!(%error, "could not save the rule of an approval");
                 }
             }
@@ -529,6 +630,7 @@ impl RunActor {
             project: project_grants,
             always: always_grants,
             rules,
+            remote_rules,
         } = self
             .runtime
             .policy_grants(Some(&self.authority), project.as_ref())
@@ -585,6 +687,7 @@ impl RunActor {
             project_grants,
             always_grants,
             rules,
+            remote_rules,
             project,
             ceiling,
             host,

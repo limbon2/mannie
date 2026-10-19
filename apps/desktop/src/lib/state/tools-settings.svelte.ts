@@ -6,6 +6,7 @@ import {
   type CommandRule,
   commands,
   type GrantId,
+  type RemoteCommandRule,
   type RuleId,
   type SharedGrant,
   type ToolsSettings,
@@ -79,7 +80,7 @@ export class ToolsSettingsState {
   }
 }
 
-/** The command rules and the outcome of the latest request. */
+/** The command rules, of this computer and of remote hosts, and the outcome of the latest request. */
 export class CommandRulesState {
   /** Why the latest deletion failed, if it failed. */
   deleteFailure: ToolsFailure | null = $state(null);
@@ -87,41 +88,75 @@ export class CommandRulesState {
   deleting: RuleId[] = $state([]);
   /** Why the rules could not be read, if they could not. */
   readFailure: ToolsFailure | null = $state(null);
-  /** The rules, the oldest first, once read. */
+  /** The rules for commands on remote hosts, each limited to its host, the oldest first, once read (ADR-0036). */
+  remoteRules: RemoteCommandRule[] = $state([]);
+  /** The rules for commands on this computer, the oldest first, once read. */
   rules: CommandRule[] = $state([]);
   status: 'error' | 'loading' | 'ready' = $state('loading');
 
-  /** Reads the rules from the core. */
+  /** Whether no rule of either kind is listed. */
+  get isEmpty(): boolean {
+    const hasNoLocalRules = this.rules.length === 0;
+    const hasNoRemoteRules = this.remoteRules.length === 0;
+    return hasNoLocalRules && hasNoRemoteRules;
+  }
+
+  /** Reads both kinds of rules from the core, and keeps the last lists when either cannot be read. */
   async load(): Promise<void> {
     this.readFailure = null;
-    if (this.rules.length === 0) {
+    if (this.isEmpty) {
       this.status = 'loading';
     }
-    const outcome = await call(() => commands.listCommandRules());
-    if (outcome.ok) {
-      this.rules = outcome.data;
-      this.status = 'ready';
-    } else {
-      this.readFailure = outcome.failure;
+    const [local, remote] = await Promise.all([
+      call(() => commands.listCommandRules()),
+      call(() => commands.listRemoteCommandRules()),
+    ]);
+    if (!local.ok) {
+      this.readFailure = local.failure;
       this.status = 'error';
+      return;
+    }
+    if (!remote.ok) {
+      this.readFailure = remote.failure;
+      this.status = 'error';
+      return;
+    }
+    this.rules = local.data;
+    this.remoteRules = remote.data;
+    this.status = 'ready';
+  }
+
+  /** Deletes a rule of this computer. A rule that no longer exists leaves the list as well. */
+  async remove(ruleId: RuleId): Promise<void> {
+    const deleted = await this.#delete(ruleId, () => commands.deleteCommandRule({ ruleId }));
+    if (deleted) {
+      this.rules = this.rules.filter((rule) => rule.id !== ruleId);
     }
   }
 
-  /** Deletes a rule. A rule that no longer exists leaves the list as well. */
-  async remove(ruleId: RuleId): Promise<void> {
+  /** Deletes a rule of a remote host. A rule that no longer exists leaves the list as well. */
+  async removeRemote(ruleId: RuleId): Promise<void> {
+    const deleted = await this.#delete(ruleId, () => commands.deleteRemoteCommandRule({ ruleId }));
+    if (deleted) {
+      this.remoteRules = this.remoteRules.filter((rule) => rule.id !== ruleId);
+    }
+  }
+
+  /** Runs a deletion once at a time for each rule, and says whether the rule is gone. */
+  async #delete(ruleId: RuleId, request: () => ReturnType<typeof commands.deleteCommandRule>): Promise<boolean> {
     if (this.deleting.includes(ruleId)) {
-      return;
+      return false;
     }
     this.deleting = [...this.deleting, ruleId];
     this.deleteFailure = null;
-    const outcome = await call(() => commands.deleteCommandRule({ ruleId }));
+    const outcome = await call(request);
     this.deleting = this.deleting.filter((deleting) => deleting !== ruleId);
     const isGone = !outcome.ok && outcome.failure.kind === 'core' && outcome.failure.error.code === 'rule_not_found';
     if (outcome.ok || isGone) {
-      this.rules = this.rules.filter((rule) => rule.id !== ruleId);
-      return;
+      return true;
     }
     this.deleteFailure = outcome.failure;
+    return false;
   }
 }
 

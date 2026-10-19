@@ -14,14 +14,17 @@
   // Allows a command and saves a rule from it (docs/features/system-tools/
   // tool-activity.md, approval requests): the owner chooses how many of the
   // command's leading words the rule keeps, and whether it applies only in
-  // the command's working directory. The core builds the rule from these two
-  // answers and the request it answers. `toolsActions.startSaveRule` opens it.
+  // the command's working directory. A rule from a command on a remote host
+  // always applies only on that host (ADR-0036), so the dialog names the
+  // host instead. The core builds the rule from these answers and the request
+  // it answers. `toolsActions.startSaveRule` opens it.
   interface PrefixChoice {
     readonly count: number;
     readonly text: string;
   }
 
   const request = $derived(toolsActions.rule);
+  const remote = $derived(request?.proposal.remote ?? null);
   const deciding = $derived(request !== null && toolsActions.deciding.includes(request.partId));
   const failure = $derived(request === null ? null : (toolsActions.decisionFailures[request.partId] ?? null));
   const choices: PrefixChoice[] = $derived(
@@ -55,7 +58,9 @@
       <form class="flex flex-col gap-4" onsubmit={save}>
         <Dialog.Header>
           <Dialog.Title>{m.tools_rule_title()}</Dialog.Title>
-          <Dialog.Description>{m.tools_rule_description()}</Dialog.Description>
+          <Dialog.Description>
+            {remote === null ? m.tools_rule_description() : m.tools_rule_remote_description()}
+          </Dialog.Description>
         </Dialog.Header>
         <Field.Set>
           <Field.Legend variant="label">{m.tools_rule_words_legend()}</Field.Legend>
@@ -74,15 +79,22 @@
             {/each}
           </RadioGroup.Root>
         </Field.Set>
-        <Field.Field orientation="horizontal">
-          <Field.Content>
-            <Field.Label for="tools-rule-folder">{m.tools_rule_limit_folder()}</Field.Label>
-            <Field.Description>
-              <span class="font-mono break-all" data-content>{request.proposal.folder}</span>
-            </Field.Description>
-          </Field.Content>
-          <Switch id="tools-rule-folder" bind:checked={request.limitToFolder} />
-        </Field.Field>
+        {#if remote === null}
+          <Field.Field orientation="horizontal">
+            <Field.Content>
+              <Field.Label for="tools-rule-folder">{m.tools_rule_limit_folder()}</Field.Label>
+              <Field.Description>
+                <span class="font-mono break-all" data-content>{request.proposal.folder}</span>
+              </Field.Description>
+            </Field.Content>
+            <Switch id="tools-rule-folder" bind:checked={request.limitToFolder} />
+          </Field.Field>
+        {:else}
+          <p class="text-sm" data-rule-host="">
+            {m.tools_rule_limit_host({ host: remote.label })}
+            <span class="block font-mono text-xs break-all text-muted-foreground" data-content>{remote.endpoint}</span>
+          </p>
+        {/if}
         {#if failure !== null}
           <Alert.Root variant="destructive">
             <CircleAlertIcon />

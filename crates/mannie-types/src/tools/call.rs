@@ -131,6 +131,31 @@ pub enum Refusal {
     ReadOnlyHost,
     /// A worker has no projects to move a conversation into.
     NoProjectsOnHost,
+    /// A worker runs no commands on remote hosts. Plugins do not run on a
+    /// worker, so its tools never ask; the refusal keeps the ceiling's
+    /// answer for every access (ADR-0036).
+    NoRemoteCommands,
+}
+
+/// Why an operation that was executing ended without its result while the
+/// reply went on or ended, which makes it uncertain. A call without one was
+/// interrupted because Mannie ended.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[serde(
+    tag = "reason",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum Interruption {
+    /// The owner stopped the reply while a plugin's operation ran, and the
+    /// core let it go (ADR-0034, decision 3).
+    Stopped,
+    /// The owner turned off the operation's plugin while it ran, and it did
+    /// not end in time (ADR-0034, decision 8).
+    PluginOff {
+        /// The plugin's ID.
+        plugin: String,
+    },
 }
 
 /// The process of a running command, so that the recovery after a crash can
@@ -192,6 +217,10 @@ pub struct ToolCallDocument {
     /// The process of a command, while it runs and after.
     #[serde(default)]
     pub process: Option<ProcessRecord>,
+    /// Why an operation that was executing ended without its result, when
+    /// the owner stopped it or turned off its plugin.
+    #[serde(default)]
+    pub interruption: Option<Interruption>,
 }
 
 /// Reads the result of a stored call. An outcome that this version cannot
@@ -255,6 +284,7 @@ impl ToolCallDocument {
             result: None,
             not_run: None,
             process: None,
+            interruption: None,
         }
     }
 
@@ -284,6 +314,7 @@ impl ToolCallDocument {
             ended_at: self.ended_at,
             result: self.result.clone(),
             not_run: self.not_run.clone(),
+            interruption: self.interruption.clone(),
         }
     }
 }
@@ -318,12 +349,38 @@ pub struct ToolCallView {
     pub result: Option<ToolResult>,
     /// Why a call never started.
     pub not_run: Option<NotRunReason>,
+    /// Why an operation that was executing ended without its result, when
+    /// the owner stopped it or turned off its plugin.
+    #[serde(default)]
+    pub interruption: Option<Interruption>,
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_VIEW_ARGUMENTS_BYTES, ToolCallDocument, ToolCallStatus};
+    use super::{Interruption, MAX_VIEW_ARGUMENTS_BYTES, ToolCallDocument, ToolCallStatus};
     use crate::tools::outcome::ToolOutcome;
+
+    #[test]
+    fn an_interruption_serializes_with_its_reason_and_older_documents_have_none() {
+        assert_eq!(
+            serde_json::to_value(Interruption::PluginOff {
+                plugin: "ssh".to_owned()
+            })
+            .unwrap(),
+            serde_json::json!({ "reason": "plugin_off", "plugin": "ssh" })
+        );
+        assert_eq!(
+            serde_json::to_value(Interruption::Stopped).unwrap(),
+            serde_json::json!({ "reason": "stopped" })
+        );
+        let older: ToolCallDocument = serde_json::from_value(serde_json::json!({
+            "callId": "call_1",
+            "tool": "run_command",
+            "status": "uncertain",
+        }))
+        .unwrap();
+        assert_eq!(older.interruption, None);
+    }
 
     #[test]
     fn an_interrupted_call_is_uncertain_only_when_it_was_executing() {

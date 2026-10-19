@@ -1001,7 +1001,7 @@ async fn the_views_list_what_each_manifest_lets_its_plugin_use() {
     let fixture = Fixture::new();
     let notes = Arc::new(fixture.plugin("notes").with_module(NOTES_MODULE));
     let journal = Arc::new(fixture.plugin("journal"));
-    let both = "\n[services]\nsecrets = 1\nstore = 1\n\n[secrets]\nentries = [\"token\"]\n\n[crates]\nexclusive = [\"tonic\"]\n\n[native]\nsockets = \"Syncs the notes.\"\n\n[[programs]]\npackage = \"mannie-notes-sync\"\n";
+    let both = "\n[services]\nsecrets = 1\nstore = 1\n\n[secrets]\nentries = [\"token\"]\nkeyed = [\"device\"]\n\n[crates]\nexclusive = [\"tonic\"]\n\n[native]\nsockets = \"Syncs the notes.\"\n\n[[programs]]\npackage = \"mannie-notes-sync\"\n";
     let (_store, host) = fixture.start(vec![entry(&notes, 10, both), entry(&journal, 20, "")]);
 
     let views = host.views();
@@ -1021,7 +1021,7 @@ async fn the_views_list_what_each_manifest_lets_its_plugin_use() {
                     sensitive: false,
                 },
             ],
-            secrets: vec!["notes/token".to_owned()],
+            secrets: vec!["notes/token".to_owned(), "notes/device/<key>".to_owned()],
             commands: Vec::new(),
             channels: Vec::new(),
             programs: vec!["mannie-notes-sync".to_owned()],

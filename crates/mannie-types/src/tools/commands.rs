@@ -7,7 +7,7 @@ use specta::Type;
 use crate::clock::UtcMillis;
 use crate::ids::{ArchiveId, ConversationId, GrantId, ProjectId, RuleId};
 
-use super::approval::GrantScope;
+use super::approval::{GrantScope, RemoteTarget};
 
 /// A command rule as the settings list it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -27,6 +27,30 @@ pub struct CommandRule {
 #[derive(Debug, Clone, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RuleRef {
+    /// The rule.
+    pub rule_id: RuleId,
+}
+
+/// A rule for commands on one remote host, as the settings list it
+/// (ADR-0036). It lives apart from the rules of this machine, so a rule of
+/// one never matches a command of the other.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteCommandRule {
+    /// The rule.
+    pub id: RuleId,
+    /// The host that the rule applies on.
+    pub target: RemoteTarget,
+    /// The words a command must start with.
+    pub words: Vec<String>,
+    /// When the owner saved it.
+    pub created_at: UtcMillis,
+}
+
+/// The argument of `delete_remote_command_rule`.
+#[derive(Debug, Clone, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteRuleRef {
     /// The rule.
     pub rule_id: RuleId,
 }

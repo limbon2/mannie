@@ -1,0 +1,54 @@
+{
+  "taskId": "0199e0f2-0000-7000-a000-000000000001",
+  "conversationId": "0199e0f2-0000-7000-a000-000000000002",
+  "version": 2,
+  "state": "running",
+  "startedAt": 1792000000017,
+  "activity": "Writing",
+  "toolCalls": 1,
+  "approval": {
+    "partId": "0199e0f2-0000-7000-a000-000000000006",
+    "turnId": "0199e0f2-0000-7000-a000-000000000003",
+    "runId": "0199e0f2-0000-7000-a000-000000000004",
+    "position": 1,
+    "createdAt": 1792000000020,
+    "call": {
+      "callId": "call_w",
+      "tool": "write_file",
+      "activity": "Writing",
+      "status": "awaiting_approval",
+      "accesses": [
+        {
+          "kind": "path",
+          "path": "/srv/build/marker.txt",
+          "mode": "create",
+          "folder": false,
+          "exists": false,
+          "identity": "803:1442",
+          "entries": null
+        }
+      ],
+      "request": {
+        "digest": "3ffac39be6e708d553fc2ccc3875dc46779e081396ccd44524bfc4662f063eab",
+        "reasons": ["host_asks"],
+        "grants": [],
+        "rule": null,
+        "project": null,
+        "host": "build-01"
+      },
+      "decision": null,
+      "decidedAt": null,
+      "startedAt": null,
+      "endedAt": null,
+      "result": null,
+      "notRun": null,
+      "process": null,
+      "interruption": null
+    },
+    "arguments": "{\"activity\":\"Writing\",\"content\":\"built\\n\",\"path\":\"/srv/build/marker.txt\"}"
+  },
+  "waitsForLease": false,
+  "report": null,
+  "failure": null,
+  "endedAt": null
+}

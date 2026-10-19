@@ -92,6 +92,7 @@ impl MentionContext {
                     always: &self.grants.always,
                 },
                 rules: &self.grants.rules,
+                remote_rules: &self.grants.remote_rules,
                 project: self.project.as_ref(),
                 // Content never counts as the owner's words, and a mention
                 // moves no conversation.

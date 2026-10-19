@@ -6,7 +6,8 @@
 
   // What an operation touches, exactly as the core prepared it: canonical
   // paths with their access modes, a command with its shell and working
-  // directory, or the project that the conversation moves into, with its
+  // directory, a command on a remote host with the host, its address and its
+  // key (ADR-0036), or the project that the conversation moves into, with its
   // folder (docs/features/system-tools/tool-activity.md). Paths, commands and
   // names are content, and render as text in their own elements (T-3).
   let { accesses }: { accesses: readonly Access[] } = $props();
@@ -40,12 +41,23 @@
           data-content
           role="group"
           tabindex="0">{access.command}</pre>
-        <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs">
-          <dt class="text-muted-foreground">{m.tools_access_shell()}</dt>
-          <dd class="font-mono break-all" data-content>{access.shell}</dd>
-          <dt class="text-muted-foreground">{m.tools_access_working_directory()}</dt>
-          <dd class="font-mono break-all" data-content>{access.workingDirectory}</dd>
-        </dl>
+        {#if access.kind === 'command'}
+          <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs">
+            <dt class="text-muted-foreground">{m.tools_access_shell()}</dt>
+            <dd class="font-mono break-all" data-content>{access.shell}</dd>
+            <dt class="text-muted-foreground">{m.tools_access_working_directory()}</dt>
+            <dd class="font-mono break-all" data-content>{access.workingDirectory}</dd>
+          </dl>
+        {:else}
+          <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs" data-remote-command="">
+            <dt class="text-muted-foreground">{m.tools_access_remote_host()}</dt>
+            <dd class="break-all" data-content dir="auto">{access.label}</dd>
+            <dt class="text-muted-foreground">{m.tools_access_remote_endpoint()}</dt>
+            <dd class="font-mono break-all" data-content>{access.endpoint}</dd>
+            <dt class="text-muted-foreground">{m.tools_access_remote_identity()}</dt>
+            <dd class="font-mono break-all" data-content>{access.identity}</dd>
+          </dl>
+        {/if}
       {/if}
     </li>
   {/each}

@@ -44,6 +44,7 @@ export function grantLines(plugin, pluginInterface, sensitiveServices) {
   const secrets = [
     ...(manifest.secrets?.entries ?? []).map((entry) => `${plugin.id}/${entry}`),
     ...(manifest.secrets?.legacy ?? []).map((name) => `${name} (a legacy name)`),
+    ...(manifest.secrets?.keyed ?? []).map((family) => `${plugin.id}/${family}/<key> (a keyed family)`),
   ];
   const programs = (manifest.programs ?? []).map((program) => {
     const crates = program.crates ?? [];

@@ -30,6 +30,7 @@ mod ids;
 mod images;
 mod instructions;
 mod mentions;
+mod plugin_executions;
 mod plugin_tools;
 mod plugins;
 mod policy;
@@ -83,6 +84,7 @@ use crate::assigned::AssignedTasks;
 use crate::executors::{CredentialsProvider, ExecutorFollows, ExecutorHostProvider};
 use crate::hub::Hubs;
 use crate::ids::IdGenerator;
+use crate::plugin_executions::PluginExecutions;
 use crate::plugins::Registry;
 use crate::tasks::ChildSlots;
 
@@ -222,6 +224,9 @@ struct Inner {
     /// The plugin of each agent that a plugin contributed since Mannie
     /// started.
     agent_plugins: AgentPlugins,
+    /// The executions of plugins' tools that run now, which turning a plugin
+    /// off waits for (ADR-0034, decision 8).
+    plugin_executions: Arc<PluginExecutions>,
     /// The tasks that another machine assigned, while they are active, and
     /// that machine's watches of them.
     assigned: Arc<AssignedTasks>,
@@ -346,6 +351,7 @@ impl Runtime {
             executors: ExecutorFollows::default(),
             contributions: Registry::default(),
             agent_plugins: AgentPlugins::default(),
+            plugin_executions: Arc::default(),
             assigned: Arc::default(),
             assigning: tokio::sync::Mutex::new(()),
             approvals: Mutex::default(),

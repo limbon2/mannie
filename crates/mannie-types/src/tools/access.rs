@@ -87,15 +87,35 @@ pub enum Access {
         /// Its folder.
         folder: String,
     },
+    /// A command on a remote host that a plugin reaches itself, such as a
+    /// host that the owner registered with the SSH plugin (ADR-0036). The
+    /// plugin names the host and the command, and the core adds the plugin,
+    /// so no plugin speaks for another.
+    RemoteCommand {
+        /// The plugin whose tool runs the command.
+        plugin: String,
+        /// The plugin's key for the host, which stays while the host exists.
+        target: String,
+        /// The host's name, as the owner gave it.
+        label: String,
+        /// Where the command runs, such as `deploy@build-box.lan:22`.
+        endpoint: String,
+        /// What identifies the host beyond its address, such as the
+        /// fingerprint of its pinned key. A changed identity changes the
+        /// digest, so an earlier approval no longer counts.
+        identity: String,
+        /// The command's text, as the host receives it.
+        command: String,
+    },
 }
 
 impl Access {
     /// Whether the access changes something: a change of the file system, a
-    /// command or a move into a project.
+    /// command on this machine or a remote host, or a move into a project.
     pub fn changes(&self) -> bool {
         match self {
             Self::Path { mode, .. } => mode.changes(),
-            Self::Command { .. } | Self::Project { .. } => true,
+            Self::Command { .. } | Self::Project { .. } | Self::RemoteCommand { .. } => true,
         }
     }
 }
@@ -122,7 +142,35 @@ mod tests {
 
         assert!(!read.changes());
         assert!(command.changes());
+        assert!(remote().changes());
         assert!(AccessMode::Delete.changes());
+    }
+
+    fn remote() -> Access {
+        Access::RemoteCommand {
+            plugin: "ssh".to_owned(),
+            target: "0199e0f2-0000-7000-8000-0000000000aa".to_owned(),
+            label: "build-box".to_owned(),
+            endpoint: "deploy@build-box.lan:22".to_owned(),
+            identity: "SHA256:vh3fjoyg7pBnxLhORIqZjyJQqYYN/gzBTuj+mPdeJlo".to_owned(),
+            command: "uname -a".to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_remote_command_serializes_with_its_kind_and_every_field() {
+        assert_eq!(
+            serde_json::to_value(remote()).unwrap(),
+            serde_json::json!({
+                "kind": "remote_command",
+                "plugin": "ssh",
+                "target": "0199e0f2-0000-7000-8000-0000000000aa",
+                "label": "build-box",
+                "endpoint": "deploy@build-box.lan:22",
+                "identity": "SHA256:vh3fjoyg7pBnxLhORIqZjyJQqYYN/gzBTuj+mPdeJlo",
+                "command": "uname -a",
+            })
+        );
     }
 
     #[test]

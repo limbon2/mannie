@@ -46,7 +46,7 @@ import { nativeGrants } from './native.mjs';
  * @property {{ exclusive?: string[] }} [crates]
  * @property {Partial<Record<import('./native.mjs').NativeCategory, string>>} [native]
  * @property {{ crates?: string[], package: string }[]} [programs]
- * @property {{ entries?: string[], legacy?: string[] }} [secrets]
+ * @property {{ entries?: string[], keyed?: string[], legacy?: string[] }} [secrets]
  * @property {Record<string, number>} [services]
  */
 
@@ -287,6 +287,17 @@ function isSecretName(name) {
 }
 
 /**
+ * Whether a secret's name is the keyed family `family` or a name below it.
+ * @param {string} name
+ * @param {string} family
+ */
+function isInFamily(name, family) {
+  const isFamily = name === family;
+  const isBelow = name.startsWith(`${family}/`);
+  return isFamily || isBelow;
+}
+
+/**
  * Parses and checks the text of a `plugin.toml` in the order of
  * `Manifest::parse`: another SDK major first, then the shape, the ID, the
  * secrets' names, the services and the service that secrets need.
@@ -328,7 +339,8 @@ export function checkManifest(text, rules) {
   const manifest = /** @type {Manifest} */ (/** @type {unknown} */ (table));
   const entries = manifest.secrets?.entries ?? [];
   const legacy = manifest.secrets?.legacy ?? [];
-  const badName = [...entries, ...legacy].find((name) => !isSecretName(name));
+  const keyed = manifest.secrets?.keyed ?? [];
+  const badName = [...entries, ...legacy, ...keyed].find((name) => !isSecretName(name));
   if (badName !== undefined) {
     return {
       manifest: null,
@@ -342,6 +354,15 @@ export function checkManifest(text, rules) {
     return {
       manifest: null,
       problems: [`the secret ${JSON.stringify(inBoth)} is listed both under entries and under legacy`],
+    };
+  }
+  // A fixed name inside a keyed family would name the same entry as a key of
+  // that family (ADR-0036, decision 8).
+  const inFamily = [...entries, ...legacy].find((name) => keyed.some((family) => isInFamily(name, family)));
+  if (inFamily !== undefined) {
+    return {
+      manifest: null,
+      problems: [`the secret ${JSON.stringify(inFamily)} is a keyed family, or an entry of one`],
     };
   }
   for (const [name, major] of Object.entries(manifest.services ?? {})) {
@@ -361,7 +382,7 @@ export function checkManifest(text, rules) {
       };
     }
   }
-  const listsSecrets = entries.length > 0 || legacy.length > 0;
+  const listsSecrets = entries.length > 0 || legacy.length > 0 || keyed.length > 0;
   const declaresSecrets = Object.hasOwn(manifest.services ?? {}, 'secrets');
   if (listsSecrets && !declaresSecrets) {
     return {

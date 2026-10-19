@@ -7,8 +7,10 @@ import type {
   ApprovalReason,
   Decision,
   GrantScope,
+  Interruption,
   NotRunReason,
   PathRefusal,
+  Refusal,
   ToolFailure,
   ToolsError,
 } from '../../../../../../apps/desktop/src/lib/generated/bindings.js';
@@ -21,8 +23,10 @@ import {
   grantScopeMessage,
   notRunMessage,
   pathRefusalMessage,
+  refusalMessage,
   toolFailureMessage,
   toolsFailureMessage,
+  uncertainMessage,
 } from '../../../../../../apps/desktop/src/lib/utils/tools-messages.js';
 
 const TOOLS_ERRORS: ToolsError[] = [
@@ -79,6 +83,7 @@ const TOOL_FAILURES: ToolFailure[] = [
   { code: 'shell_missing', path: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe' },
   { code: 'spawn_failed', reason: 'The system cannot find the file specified.' },
   { code: 'io_error', kind: 'disk full' },
+  { code: 'plugin_invalid', plugin: 'ssh' },
 ];
 
 const PATH_REFUSALS: PathRefusal[] = [
@@ -109,7 +114,19 @@ const GRANTS: GrantScope[] = [
   { folder: 'D:\\Projects\\app', kind: 'path', mode: 'create' },
   { folder: 'D:\\Projects\\app', kind: 'path', mode: 'delete' },
   { command: 'cargo test', kind: 'command', workingDirectory: 'D:\\Projects\\app' },
+  {
+    command: 'uptime',
+    endpoint: 'deploy@build-box.lan:22',
+    kind: 'remote_command',
+    label: 'build-box',
+    plugin: 'ssh',
+    target: '0199e0f2-0000-7000-8000-0000000000aa',
+  },
 ];
+
+const REFUSALS: Refusal[] = ['no_projects_on_host', 'no_remote_commands', 'read_only_host'];
+
+const INTERRUPTIONS: (Interruption | null)[] = [null, { reason: 'stopped' }, { plugin: 'ssh', reason: 'plugin_off' }];
 
 function expectDistinct(messages: string[]): void {
   for (const message of messages) {
@@ -155,6 +172,19 @@ describe('tools messages', () => {
     expect(toolFailureMessage({ code: 'path_refused', reason: 'too_long' })).toContain(pathRefusalMessage('too_long'));
   });
 
+  it('explain everything the ceiling of a computer that runs a task refuses', () => {
+    expectDistinct(REFUSALS.map((refusal) => refusalMessage(refusal)));
+    expect(notRunMessage({ reason: 'refused', refusal: 'no_remote_commands' })).toBe(
+      refusalMessage('no_remote_commands'),
+    );
+  });
+
+  it('say why a call that was executing may have taken effect, and name the plugin that went off', () => {
+    expectDistinct(INTERRUPTIONS.map((interruption) => uncertainMessage(interruption)));
+    expect(uncertainMessage({ plugin: 'ssh', reason: 'plugin_off' })).toContain('ssh');
+    expect(toolFailureMessage({ code: 'plugin_invalid', plugin: 'ssh' })).toContain('ssh');
+  });
+
   it('describe every reason to ask, decision, access mode and grant', () => {
     const reasons: ApprovalReason[] = [
       'outside_workspace',
@@ -163,6 +193,7 @@ describe('tools messages', () => {
       'command',
       'no_workspace',
       'move_to_project',
+      'remote_command',
     ];
     const decisions: Decision[] = [
       'workspace',
@@ -191,6 +222,22 @@ describe('tools messages', () => {
     expect(
       grantScopeMessage({ command: 'cargo test', kind: 'command', workingDirectory: 'D:\\Projects\\app' }),
     ).toContain('cargo test');
+  });
+
+  it('name the command, the host and its address of a grant on a remote host', () => {
+    const message = grantScopeMessage({
+      command: 'systemctl status nginx',
+      endpoint: 'deploy@build-box.lan:22',
+      kind: 'remote_command',
+      label: 'build-box',
+      plugin: 'ssh',
+      target: '0199e0f2-0000-7000-8000-0000000000aa',
+    });
+
+    expect(message).toContain('systemctl status nginx');
+    expect(message).toContain('build-box');
+    expect(message).toContain('deploy@build-box.lan:22');
+    expect(message).not.toContain('0199e0f2');
   });
 
   it('count what a recursive delete removes', () => {

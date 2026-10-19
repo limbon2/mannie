@@ -106,6 +106,12 @@ function accessCommand(accesses: readonly Access[]): string | null {
   return access?.kind === 'command' ? access.command : null;
 }
 
+/** The command on a remote host that a plugin's call runs, with the host's name (ADR-0036). */
+function accessRemoteCommand(accesses: readonly Access[]): { command: string; host: string } | null {
+  const access = accesses.find((candidate) => candidate.kind === 'remote_command');
+  return access?.kind === 'remote_command' ? { command: access.command, host: access.label } : null;
+}
+
 /** A folder's last name, such as `app` for `D:\Projects\app`, or the whole path for a root. */
 export function folderName(path: string): string {
   const trimmed = path.replace(/[\\/]+$/u, '');
@@ -239,7 +245,12 @@ function intentSummary(call: ToolCallView): string {
       return path === null ? toolLabel(call.tool) : m.tools_call_write_file({ path });
     }
     default: {
-      return toolLabel(call.tool);
+      // A plugin's tool that runs a command on a remote host is named by its
+      // access, once prepared, whatever the plugin calls the tool.
+      const remote = accessRemoteCommand(call.accesses);
+      return remote === null
+        ? toolLabel(call.tool)
+        : m.tools_call_remote_command({ command: firstLine(remote.command), host: remote.host });
     }
   }
 }

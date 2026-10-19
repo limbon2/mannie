@@ -18,14 +18,13 @@ const TYPOGRAPHIC_QUOTES: [char; 7] = [
     '\u{2018}', '\u{2019}', '\u{201a}', '\u{201b}', '\u{201c}', '\u{201d}', '\u{201e}',
 ];
 
-/// Whether a character keeps a command from being covered.
-fn is_refused(character: char) -> bool {
+/// Whether a character keeps a command from being covered, where a backslash
+/// is an escape when `backslash_escapes`.
+fn is_refused(character: char, backslash_escapes: bool) -> bool {
     if METACHARACTERS.contains(&character) || TYPOGRAPHIC_QUOTES.contains(&character) {
         return true;
     }
-    // `sh` escapes with a backslash, which Mannie does not interpret. On
-    // Windows a backslash separates the names of a path.
-    if cfg!(unix) && character == '\\' {
+    if backslash_escapes && character == '\\' {
         return true;
     }
     // Words are split only at spaces and tabs; any other white space or
@@ -38,7 +37,26 @@ fn is_refused(character: char) -> bool {
 /// it contains a metacharacter, an unusual space or an unbalanced quote, or
 /// it has no words. A worker reads its host rules with it too.
 pub fn command_words(command: &str) -> Option<Vec<String>> {
-    if command.chars().any(is_refused) {
+    // `sh` escapes with a backslash, which Mannie does not interpret. On
+    // Windows a backslash separates the names of a path.
+    split_words(command, cfg!(unix))
+}
+
+/// The words of a command on a remote host, as [`command_words`] splits them
+/// (ADR-0036). The remote shell may be `sh`, which escapes with a backslash,
+/// whatever this machine runs, so a backslash keeps the command from being
+/// covered on every platform. The `^` and `%` of Windows' `cmd.exe` are not
+/// refused: they escape and expand there, but start no second command.
+pub fn remote_command_words(command: &str) -> Option<Vec<String>> {
+    split_words(command, true)
+}
+
+/// The words of a command, or `None` when a rule or grant can never cover it.
+fn split_words(command: &str, backslash_escapes: bool) -> Option<Vec<String>> {
+    if command
+        .chars()
+        .any(|character| is_refused(character, backslash_escapes))
+    {
         return None;
     }
     let mut words = Vec::new();
@@ -85,7 +103,7 @@ pub(crate) fn starts_with_words(command: &[String], rule: &[String]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{command_words, starts_with_words};
+    use super::{command_words, remote_command_words, starts_with_words};
 
     fn words(command: &str) -> Option<Vec<String>> {
         command_words(command)
@@ -186,6 +204,21 @@ mod tests {
         assert_eq!(
             command_words(r".\build.ps1 -Release"),
             Some(list(&[r".\build.ps1", "-Release"]))
+        );
+    }
+
+    #[test]
+    fn a_remote_command_refuses_a_backslash_on_every_platform() {
+        assert_eq!(
+            remote_command_words("systemctl status nginx"),
+            Some(list(&["systemctl", "status", "nginx"]))
+        );
+        assert_eq!(remote_command_words(r"git\ status"), None);
+        assert_eq!(remote_command_words(r".\build.ps1 -Release"), None);
+        assert_eq!(remote_command_words("uptime; reboot"), None);
+        assert_eq!(
+            remote_command_words("echo %PATH%"),
+            Some(list(&["echo", "%PATH%"]))
         );
     }
 

@@ -7,9 +7,9 @@ use mannie_runtime::Runtime;
 use mannie_types::chat::ConversationRef;
 use mannie_types::ipc::CommandError;
 use mannie_types::tools::{
-    CommandRule, ConversationGrant, DecideApproval, GrantRef, ReadToolOutput, RuleRef,
-    SetFullAccess, SharedGrant, SharedGrantRef, ToolOutputPage, ToolsError, ToolsSettings,
-    UpdateToolsSettings,
+    CommandRule, ConversationGrant, DecideApproval, GrantRef, ReadToolOutput, RemoteCommandRule,
+    RemoteRuleRef, RuleRef, SetFullAccess, SharedGrant, SharedGrantRef, ToolOutputPage, ToolsError,
+    ToolsSettings, UpdateToolsSettings,
 };
 use tauri::State;
 
@@ -114,6 +114,34 @@ pub(crate) async fn delete_command_rule(
         .delete_command_rule(input)
         .await
         .map_err(refused("delete_command_rule"))
+}
+
+/// The rules for commands on remote hosts, each limited to its host
+/// (ADR-0036).
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn list_remote_command_rules(
+    core: State<'_, Core>,
+) -> Result<Vec<RemoteCommandRule>, CommandError<ToolsError>> {
+    runtime(&core)
+        .map_err(refused("list_remote_command_rules"))?
+        .remote_command_rules()
+        .await
+        .map_err(refused("list_remote_command_rules"))
+}
+
+/// Deletes a rule for commands on a remote host.
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn delete_remote_command_rule(
+    core: State<'_, Core>,
+    input: RemoteRuleRef,
+) -> Result<(), CommandError<ToolsError>> {
+    runtime(&core)
+        .map_err(refused("delete_remote_command_rule"))?
+        .delete_remote_command_rule(input)
+        .await
+        .map_err(refused("delete_remote_command_rule"))
 }
 
 /// The grants of a conversation.

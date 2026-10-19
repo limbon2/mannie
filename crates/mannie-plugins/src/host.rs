@@ -20,7 +20,8 @@ use mannie_plugin_sdk::context::{DefaultContext, HostInfo, StartContext};
 use mannie_plugin_sdk::contracts::{Clock, SubscriptionEnd};
 use mannie_plugin_sdk::error::{CONTRIBUTIONS_REFUSED, SDK_INCOMPATIBLE, SERVICE_UNAVAILABLE};
 use mannie_plugin_sdk::host::{
-    ContributionConsumer, PluginBinding, ServiceProvider, add_contributions, remove_contributions,
+    ContributionConsumer, PluginBinding, ServiceProvider, add_contributions, drain_contributions,
+    remove_contributions,
 };
 use mannie_plugin_sdk::ids::{PluginId, prefixes_nest};
 use mannie_plugin_sdk::ipc::Handlers;
@@ -37,7 +38,7 @@ use mannie_types::plugins::{
 };
 use tokio::sync::watch;
 
-use crate::dispatch::Calls;
+use crate::dispatch::{Calls, STOP_GRACE};
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     // Every critical section only takes or replaces the value.
@@ -154,6 +155,13 @@ impl Listed {
             .map(|entry| format!("{}/{entry}", self.id))
             .collect();
         secrets.extend(manifest.secrets.legacy.iter().cloned());
+        secrets.extend(
+            manifest
+                .secrets
+                .keyed
+                .iter()
+                .map(|family| format!("{}/{family}/<key>", self.id)),
+        );
         let interface = self.plugin.interface();
         let names = |names: Vec<&'static str>| names.into_iter().map(str::to_owned).collect();
         PluginUses {
@@ -729,15 +737,19 @@ impl PluginHost {
     }
 
     /// Takes a plugin's contributions out of the core's consumers, so no run
-    /// that starts meanwhile gets them (ADR-0030, decision 6), refuses new
-    /// calls, ends its channels with `end`, waits for its calls in flight or
+    /// that starts meanwhile gets them and no call of its tools starts
+    /// executing (ADR-0030, decision 6), refuses new calls, ends its channels
+    /// with `end`, waits for its calls in flight and its tools' executions or
     /// aborts them, and then stops its instance (ADR-0034, decision 8).
     async fn stop_entry(&self, entry: &Entry, end: SubscriptionEnd) {
         let id = entry.listed.id.as_str();
         let instance = lock(&entry.running).take();
         self.change_view(id, |view| view.state = PluginState::Stopping);
         remove_contributions(&self.inner.consumers, &entry.listed.id);
-        entry.calls.close(id, end).await;
+        tokio::join!(
+            entry.calls.close(id, end),
+            drain_contributions(&self.inner.consumers, &entry.listed.id, STOP_GRACE),
+        );
         if let Some(instance) = instance {
             instance.stop().await;
         }

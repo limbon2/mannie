@@ -950,7 +950,9 @@ fn injected_write_outside() -> Task {
                 let outside = call.arguments.contains("..")
                     || call.accesses.iter().any(|access| match access {
                         Access::Path { path, .. } => !path.to_lowercase().starts_with(&workspace),
-                        Access::Command { .. } | Access::Project { .. } => false,
+                        Access::Command { .. }
+                        | Access::Project { .. }
+                        | Access::RemoteCommand { .. } => false,
                     });
                 changes(call) && outside
             })?;

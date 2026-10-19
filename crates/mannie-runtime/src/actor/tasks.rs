@@ -675,7 +675,7 @@ impl RunActor {
         call: StepCall,
     ) -> Result<(), Ending> {
         if let Some(executor) = setup.executor_for(&call.document.tool) {
-            return self.give_task(setup, call, executor).await;
+            return Box::pin(self.give_task(setup, call, executor)).await;
         }
         let arguments = call.arguments.clone().unwrap_or_default();
         let parsed = match parse_call(&call.document.tool, &arguments, &setup.child_agents) {

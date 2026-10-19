@@ -136,6 +136,25 @@ pub const CANCELED: &str = "Not run: the reply stopped before the operation star
 pub const UNCERTAIN: &str = "Mannie stopped while this operation was running, so it may or may \
 not have taken effect. Check its effects before you repeat it.";
 
+/// The result of a plugin's operation that the owner stopped while it ran,
+/// which may have taken effect (ADR-0036).
+pub const UNCERTAIN_STOPPED: &str = "The owner stopped the reply while this operation was \
+running, so it may or may not have taken effect. Check its effects before you repeat it.";
+
+/// The result of an operation whose plugin the owner turned off while it ran,
+/// which may have taken effect (ADR-0034, decision 8).
+pub fn uncertain_plugin_off(plugin: &str) -> String {
+    format!(
+        "The owner turned off the plugin \"{plugin}\" while this operation was running, so it \
+may or may not have taken effect. Check its effects before you repeat it, and continue without \
+the plugin."
+    )
+}
+
+/// The result of a command on a remote host that a worker refused: a worker
+/// runs no plugin that reaches one (ADR-0036).
+pub const NO_REMOTE_COMMANDS: &str = "Not run: this host runs no commands on other hosts.";
+
 /// The result of a call beyond the reply's tool calls.
 pub const OVER_BUDGET: &str = "Not run: this reply has used all its tool calls.";
 

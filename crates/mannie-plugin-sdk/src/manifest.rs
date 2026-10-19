@@ -81,7 +81,8 @@ pub struct RustSection {
 /// the credential store. A name is words of ASCII letters, digits, `.`, `_`
 /// and `-`, joined by single slashes. A name may appear twice in one list,
 /// because the store keys an entry by its name and both name the same
-/// entry, but it may not appear in both lists.
+/// entry, but it may not appear in both lists, and no entry or legacy name
+/// may be a keyed family or an entry of one.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 #[non_exhaustive]
@@ -95,6 +96,46 @@ pub struct SecretsSection {
     /// names of its frozen list, which holds Workers' `link/master-key`.
     #[serde(default)]
     pub legacy: Vec<String>,
+    /// Families of entries that the plugin creates and deletes as it needs
+    /// them, such as a password for each host that the owner registers
+    /// (ADR-0036, decision 8). The plugin names an entry `<family>/<key>`,
+    /// whose key has 1 to 64 ASCII letters, digits and `-`, and the store
+    /// keeps it as `<id>/<family>/<key>`.
+    #[serde(default)]
+    pub keyed: Vec<String>,
+}
+
+/// The most characters of the key of an entry of a keyed family.
+pub const MAX_SECRET_KEY_CHARS: usize = 64;
+
+impl SecretsSection {
+    /// The name under which the credential store keeps the entry `entry` of
+    /// the plugin `plugin`, or `None` when this section does not give the
+    /// plugin that entry: an entry of `entries` is kept as `<id>/<entry>`, a
+    /// legacy name as it is, and `<family>/<key>` of a keyed family as
+    /// `<id>/<family>/<key>`.
+    pub fn stored_name(&self, plugin: &str, entry: &str) -> Option<String> {
+        if self.entries.iter().any(|listed| listed == entry) {
+            return Some(format!("{plugin}/{entry}"));
+        }
+        if self.legacy.iter().any(|listed| listed == entry) {
+            return Some(entry.to_owned());
+        }
+        let (family, key) = entry.rsplit_once('/')?;
+        let is_family = self.keyed.iter().any(|listed| listed == family);
+        (is_family && is_secret_key(key)).then(|| format!("{plugin}/{entry}"))
+    }
+}
+
+/// Whether `key` can name an entry of a keyed family: 1 to 64 ASCII letters,
+/// digits and `-`, which the credential store accepts in a name and which
+/// keep a key from adding a slash, such as the ID of a host.
+pub fn is_secret_key(key: &str) -> bool {
+    let has_valid_length = (1..=MAX_SECRET_KEY_CHARS).contains(&key.len());
+    has_valid_length
+        && key
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
 }
 
 /// The `[crates]` table of a manifest: the crates from a registry that only
@@ -242,7 +283,8 @@ mod parse {
         /// 2. the manifest's shape, with every field known and the ID
         ///    checked by [`PluginId::parse`](crate::ids::PluginId::parse);
         /// 3. the names of its secrets, then a name in both lists of
-        ///    `[secrets]`;
+        ///    `[secrets]`, then an entry or a legacy name that is a keyed
+        ///    family or an entry of one;
         /// 4. its services, each one the SDK has, at the SDK's major;
         /// 5. that a manifest with secrets declares the service `secrets`;
         /// 6. that each grant under `[native]` gives its reason, which the
@@ -262,8 +304,10 @@ mod parse {
                 toml::from_str(text).map_err(|error| ManifestError::from_toml(&error))?;
             manifest.check_secret_names()?;
             manifest.check_services()?;
-            let lists_secrets =
-                !manifest.secrets.entries.is_empty() || !manifest.secrets.legacy.is_empty();
+            let has_entries = !manifest.secrets.entries.is_empty();
+            let has_legacy = !manifest.secrets.legacy.is_empty();
+            let has_keyed = !manifest.secrets.keyed.is_empty();
+            let lists_secrets = has_entries || has_legacy || has_keyed;
             if lists_secrets && !manifest.declares(SECRETS_SERVICE) {
                 return Err(ManifestError::SecretsWithoutService);
             }
@@ -281,17 +325,32 @@ mod parse {
         }
 
         fn check_secret_names(&self) -> Result<(), ManifestError> {
-            let mut names = self.secrets.entries.iter().chain(&self.secrets.legacy);
+            let secrets = &self.secrets;
+            let mut names = secrets
+                .entries
+                .iter()
+                .chain(&secrets.legacy)
+                .chain(&secrets.keyed);
             if let Some(name) = names.find(|name| !is_secret_name(name)) {
                 return Err(ManifestError::SecretName { name: name.clone() });
             }
-            let in_both = self
-                .secrets
+            let in_both = secrets
                 .entries
                 .iter()
-                .find(|entry| self.secrets.legacy.contains(entry));
+                .find(|entry| secrets.legacy.contains(entry));
             if let Some(name) = in_both {
                 return Err(ManifestError::SecretInBothLists { name: name.clone() });
+            }
+            // A fixed name inside a family would name the same entry as a
+            // key of that family, under two readings of one name.
+            let in_family = secrets.entries.iter().chain(&secrets.legacy).find(|name| {
+                secrets
+                    .keyed
+                    .iter()
+                    .any(|family| is_in_family(name, family))
+            });
+            if let Some(name) = in_family {
+                return Err(ManifestError::SecretInFamily { name: name.clone() });
             }
             Ok(())
         }
@@ -333,6 +392,14 @@ mod parse {
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
         })
+    }
+
+    /// Whether `name` is the keyed family `family` or a name below it.
+    fn is_in_family(name: &str, family: &str) -> bool {
+        let below = name
+            .strip_prefix(family)
+            .is_some_and(|rest| rest.starts_with('/'));
+        name == family || below
     }
 
     /// Why a manifest was refused.
@@ -393,6 +460,14 @@ mod parse {
         /// under two names.
         #[error("the secret {name:?} is listed both under entries and under legacy")]
         SecretInBothLists {
+            /// The name.
+            name: String,
+        },
+        /// An entry or a legacy name is a keyed family, or a name below
+        /// one, so it would name an entry that a key of the family names
+        /// too.
+        #[error("the secret {name:?} is a keyed family, or an entry of one")]
+        SecretInFamily {
             /// The name.
             name: String,
         },

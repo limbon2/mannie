@@ -112,6 +112,8 @@ macro_rules! app_commands {
             tools::update_tools_settings,
             tools::list_command_rules,
             tools::delete_command_rule,
+            tools::list_remote_command_rules,
+            tools::delete_remote_command_rule,
             tools::list_conversation_grants,
             tools::revoke_conversation_grant,
             tools::list_shared_grants,

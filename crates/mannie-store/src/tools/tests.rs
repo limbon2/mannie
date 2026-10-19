@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use mannie_types::clock::{Clock, ManualClock, UtcMillis};
 use mannie_types::ids::{ConversationId, GrantId, ProjectId, RuleId};
-use mannie_types::tools::{AccessMode, GrantScope};
+use mannie_types::tools::{AccessMode, GrantScope, RemoteTarget};
 
 use super::ToolsStoreError;
 use crate::{Change, Durability, NewConversation, Store, StoreOptions};
@@ -181,6 +181,91 @@ async fn the_same_rule_is_saved_once_and_deleted() {
     assert!(fixture.store.delete_rule(&saved.id).await.unwrap());
     assert!(!fixture.store.delete_rule(&saved.id).await.unwrap());
     assert_eq!(fixture.store.rules().await.unwrap(), vec![anywhere]);
+}
+
+fn ssh_host(target: &str, endpoint: &str, label: &str) -> RemoteTarget {
+    RemoteTarget {
+        plugin: "ssh".to_owned(),
+        target: target.to_owned(),
+        label: label.to_owned(),
+        endpoint: endpoint.to_owned(),
+    }
+}
+
+#[tokio::test]
+async fn a_remote_rule_is_saved_once_for_its_host_and_endpoint_and_apart_from_local_rules() {
+    let fixture = Fixture::new();
+    let words = vec!["systemctl".to_owned(), "status".to_owned()];
+    let host = "0199e0f2-0000-7000-8000-0000000000aa";
+    let at = "deploy@build-box.lan:22";
+
+    let saved = fixture
+        .store
+        .add_remote_rule(&rule_id(1), ssh_host(host, at, "build-box"), words.clone())
+        .await
+        .unwrap();
+    // A renamed host is the same host, so the rule is not saved again.
+    let again = fixture
+        .store
+        .add_remote_rule(&rule_id(2), ssh_host(host, at, "builder"), words.clone())
+        .await
+        .unwrap();
+    let other_endpoint = fixture
+        .store
+        .add_remote_rule(
+            &rule_id(3),
+            ssh_host(host, "root@build-box.lan:22", "build-box"),
+            words.clone(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(again, saved);
+    assert_eq!(saved.target.label, "build-box");
+    assert_ne!(other_endpoint.id, saved.id);
+    assert_eq!(
+        fixture.store.remote_rules().await.unwrap(),
+        vec![saved.clone(), other_endpoint.clone()]
+    );
+    assert_eq!(fixture.store.rules().await.unwrap(), Vec::new());
+    assert!(fixture.store.delete_remote_rule(&saved.id).await.unwrap());
+    assert!(!fixture.store.delete_remote_rule(&saved.id).await.unwrap());
+    assert_eq!(
+        fixture.store.remote_rules().await.unwrap(),
+        vec![other_endpoint]
+    );
+}
+
+#[tokio::test]
+async fn a_remote_grant_is_kept_with_its_host_and_endpoint() {
+    let fixture = Fixture::new();
+    let conversation = fixture.conversation(1).await;
+    let scope = GrantScope::RemoteCommand {
+        plugin: "ssh".to_owned(),
+        target: "0199e0f2-0000-7000-8000-0000000000aa".to_owned(),
+        label: "build-box".to_owned(),
+        endpoint: "deploy@build-box.lan:22".to_owned(),
+        command: "uptime".to_owned(),
+    };
+
+    let added = fixture
+        .store
+        .add_grants(&conversation, vec![(grant_id(1), scope.clone())])
+        .await
+        .unwrap();
+
+    assert_eq!(added.len(), 1);
+    assert_eq!(
+        fixture
+            .store
+            .grants(&conversation)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|grant| grant.scope)
+            .collect::<Vec<_>>(),
+        vec![scope]
+    );
 }
 
 #[tokio::test]

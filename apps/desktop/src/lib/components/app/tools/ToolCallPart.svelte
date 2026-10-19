@@ -11,7 +11,12 @@
   import { toolsActions } from '#lib/state/tools-actions.svelte.js';
   import type { PartRendererProps } from '#lib/types/shell-slots.js';
   import { failedForPluginOff } from '#lib/utils/plugins-messages.js';
-  import { notRunMessage, toolFailureMessage, toolsFailureMessage } from '#lib/utils/tools-messages.js';
+  import {
+    notRunMessage,
+    toolFailureMessage,
+    toolsFailureMessage,
+    uncertainMessage,
+  } from '#lib/utils/tools-messages.js';
   import { callStatus, callSummary, RUN_COMMAND, toolIcon } from '#lib/utils/tools-summaries.js';
 
   import ToolApproval from './ToolApproval.svelte';
@@ -59,7 +64,7 @@
         return current.notRun === null ? null : notRunMessage(current.notRun);
       }
       case 'uncertain': {
-        return m.tools_uncertain_description();
+        return uncertainMessage(current.interruption ?? null);
       }
       case 'awaiting_approval':
       case 'executing':

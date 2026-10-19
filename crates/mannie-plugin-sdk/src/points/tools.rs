@@ -6,11 +6,15 @@
 //! The core runs a plugin's tool through its own tool loop (ADR-0013): it
 //! prepares the call, which checks the arguments and returns what the call
 //! touches, the policy decides on that, the call is journaled, and only then
-//! does the tool execute. SDK 1 has no access that a tool may declare
-//! ([`ToolAccess`]), so a plugin's tool reads only its own plugin's data and
-//! the owner is never asked about it. A tool that acts on files, processes or
-//! the network, or takes a path, a shell string or a URL, needs an SDK change
-//! with an ADR that maps it onto the core's accesses and policy.
+//! does the tool execute.
+//!
+//! A tool declares its effect ([`ToolEffect`]). A tool that reads only its
+//! own plugin's data returns no access, and the owner is never asked about
+//! it. A tool with side effects returns the accesses on which the policy
+//! decides, and each of its calls is an operation with a journal record: a
+//! command on a remote host is the first such access (ADR-0036). Any other
+//! access, to files, processes or the network, needs an SDK change with an
+//! ADR that maps it onto the core's accesses and policy.
 //!
 //! A tool's name follows the rule `Global`: it is unique among the core's
 //! tools, the task tools and every plugin's tools (decision 6).
@@ -21,7 +25,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::BoxFuture;
-use crate::contracts::ConversationId;
+use crate::contracts::{ArchiveId, ConversationId};
 use crate::contributions::{ExtensionPoint, IdRule};
 
 /// The point of plugins' tools, whose entries are [`PluginTool`]s named by
@@ -93,13 +97,78 @@ impl ToolSpec {
 /// What a call of a plugin's tool touches, on which the core's policy
 /// decides.
 ///
-/// SDK 1 has no access (decision 6), so a value of this type cannot exist.
-/// An access to files, processes or remote services comes with the SDK change
-/// that maps it onto the core's accesses. The enum stays exhaustive, because
-/// plugins produce its values and the core matches them.
+/// SDK 1 began without accesses (decision 6). ADR-0036 adds the first, a
+/// command on a remote host; an access to files, processes or other remote
+/// services comes with the SDK change that maps it onto the core's accesses.
+/// The enum stays exhaustive, because plugins produce its values and the core
+/// matches them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ToolAccess {
+    /// A command on a remote host that the plugin reaches itself, such as a
+    /// host that the owner registered with the SSH plugin (ADR-0036).
+    RemoteCommand(RemoteCommandAccess),
+}
+
+/// A command on a remote host, as a plugin's tool prepares it. The core adds
+/// the plugin, so a plugin never speaks for another, and decides on every
+/// field: an approval, a grant or a rule never covers another host, endpoint
+/// or command, and a changed identity sends the call back to the policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct RemoteCommandAccess {
+    /// The plugin's key for the host, which stays while the host exists and
+    /// is never reused for another.
+    pub target: String,
+    /// The host's name, as the owner gave it.
+    pub label: String,
+    /// Where the command runs, such as `deploy@build-box.lan:22`.
+    pub endpoint: String,
+    /// What identifies the host beyond its address, such as the fingerprint
+    /// of its pinned key.
+    pub identity: String,
+    /// The command's text, exactly as the host receives it.
+    pub command: String,
+}
+
+impl RemoteCommandAccess {
+    /// A command on a remote host. The five texts are easy to swap, so
+    /// callers pass named locals.
+    pub fn new(
+        target: String,
+        label: String,
+        endpoint: String,
+        identity: String,
+        command: String,
+    ) -> Self {
+        Self {
+            target,
+            label,
+            endpoint,
+            identity,
+            command,
+        }
+    }
+}
+
+/// What a plugin's tool does beyond reading its plugin's own data, which
+/// decides how the core runs its calls (ADR-0036). The enum stays
+/// exhaustive, because plugins choose its values and the core matches them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ToolAccess {}
+pub enum ToolEffect {
+    /// It reads only its own plugin's data. Its preparation returns no
+    /// access, the owner is never asked, and its calls are not journaled.
+    #[default]
+    ReadsOwnData,
+    /// It acts outside Mannie, such as on a remote host. Its preparation
+    /// returns at least one access, the policy decides on them, and each call
+    /// is an operation whose executing status is journaled before it starts
+    /// (ADR-0013). The core never offers such a tool to the explore agent,
+    /// which only reads.
+    SideEffects,
+}
 
 /// The agents whose runs are offered a plugin's tool, when their profiles
 /// use tools.
@@ -129,19 +198,30 @@ pub struct PluginTool {
     /// What the model is told of the tool, as the tool gave it when the
     /// plugin built this entry.
     pub spec: ToolSpec,
+    /// What the tool does beyond reading its plugin's own data.
+    pub effect: ToolEffect,
 }
 
 impl PluginTool {
-    /// A tool for the agents that `offered_to` names. Reads the tool's spec
-    /// once, so the model is told the same of the tool while the plugin is
-    /// on.
+    /// A tool for the agents that `offered_to` names, which reads only its
+    /// plugin's own data. Reads the tool's spec once, so the model is told
+    /// the same of the tool while the plugin is on.
     pub fn new(tool: Arc<dyn Tool>, offered_to: AgentSelector) -> Self {
         let spec = tool.spec();
         Self {
             tool,
             offered_to,
             spec,
+            effect: ToolEffect::ReadsOwnData,
         }
+    }
+
+    /// The same tool, with side effects: its calls are operations that the
+    /// policy decides on and the journal records (ADR-0036).
+    #[must_use]
+    pub fn with_side_effects(mut self) -> Self {
+        self.effect = ToolEffect::SideEffects;
+        self
     }
 }
 
@@ -169,6 +249,19 @@ impl ToolCall {
     }
 }
 
+/// The most archives that one result of a plugin's tool may carry.
+pub const MAX_TOOL_ARCHIVES: usize = 4;
+
+/// The most bytes of one archive of a plugin's tool.
+pub const MAX_TOOL_ARCHIVE_BYTES: usize = 2 * 1024 * 1024;
+
+/// The result limit of an execution that names none: the core's largest.
+const DEFAULT_RESULT_LIMIT: u32 = 64 * 1024;
+
+const fn default_result_limit() -> u32 {
+    DEFAULT_RESULT_LIMIT
+}
+
 /// A call of a plugin's tool that the core authorized and now executes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -179,16 +272,61 @@ pub struct ToolExecution {
     pub arguments: String,
     /// The conversation of the agent that made the call.
     pub conversation_id: ConversationId,
+    /// The accesses that the policy or the owner allowed, as the tool's
+    /// last preparation returned them. A tool with side effects acts on
+    /// exactly these and refuses to act when what they name has changed
+    /// since, such as a host whose address changed (ADR-0036).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub authorized: Vec<ToolAccess>,
+    /// The most bytes of output that the model reads of this call. The core
+    /// cuts a longer output, so a tool that shows the start and the end of
+    /// what it captured fits them in this room itself.
+    #[serde(default = "default_result_limit")]
+    pub result_limit: u32,
+    /// The IDs that the core reserved for this call's archives: a tool gives
+    /// an output that does not fit one of them, names it in its output, and
+    /// the model reads it with `read_tool_output`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub archive_ids: Vec<ArchiveId>,
 }
 
 impl ToolExecution {
-    /// An execution of a call with its arguments. Only the core builds one.
+    /// An execution of a call with its arguments, with nothing authorized,
+    /// the largest result limit and no archives. Only the core builds one.
     #[cfg(feature = "host")]
     pub fn new(arguments: String, conversation_id: ConversationId) -> Self {
         Self {
             arguments,
             conversation_id,
+            authorized: Vec::new(),
+            result_limit: DEFAULT_RESULT_LIMIT,
+            archive_ids: Vec::new(),
         }
+    }
+
+    /// The same execution, with the accesses that were authorized.
+    #[cfg(feature = "host")]
+    #[must_use]
+    pub fn with_authorized(mut self, authorized: Vec<ToolAccess>) -> Self {
+        self.authorized = authorized;
+        self
+    }
+
+    /// The same execution, with the run's result limit.
+    #[cfg(feature = "host")]
+    #[must_use]
+    pub fn with_result_limit(mut self, result_limit: u32) -> Self {
+        self.result_limit = result_limit;
+        self
+    }
+
+    /// The same execution, with the IDs that the core reserved for its
+    /// archives.
+    #[cfg(feature = "host")]
+    #[must_use]
+    pub fn with_archive_ids(mut self, archive_ids: Vec<ArchiveId>) -> Self {
+        self.archive_ids = archive_ids;
+        self
     }
 }
 
@@ -218,6 +356,11 @@ pub struct ToolResult {
     /// The result as the model reads it. The core cuts a longer output to the
     /// result limit of the run.
     pub output: String,
+    /// The outputs that did not fit, at most [`MAX_TOOL_ARCHIVES`], each
+    /// under one of the IDs that the execution reserved. The core stores them
+    /// with the call, and the model reads them with `read_tool_output`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub archives: Vec<ToolArchive>,
 }
 
 impl ToolResult {
@@ -225,6 +368,40 @@ impl ToolResult {
     pub fn new(output: impl Into<String>) -> Self {
         Self {
             output: output.into(),
+            archives: Vec::new(),
+        }
+    }
+
+    /// The same result, with the outputs that did not fit.
+    #[must_use]
+    pub fn with_archives(mut self, archives: Vec<ToolArchive>) -> Self {
+        self.archives = archives;
+        self
+    }
+}
+
+/// An output of a call that did not fit its result, kept whole for the model
+/// to read on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct ToolArchive {
+    /// One of the IDs that the execution reserved.
+    pub id: ArchiveId,
+    /// What it holds, such as `stdout` or `stderr`, which the transcript
+    /// shows.
+    pub name: String,
+    /// The output, at most [`MAX_TOOL_ARCHIVE_BYTES`].
+    pub content: String,
+}
+
+impl ToolArchive {
+    /// An archive under a reserved ID.
+    pub fn new(id: ArchiveId, name: impl Into<String>, content: String) -> Self {
+        Self {
+            id,
+            name: name.into(),
+            content,
         }
     }
 }
@@ -238,8 +415,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        AgentSelector, PluginTool, Tool, ToolAccess, ToolCall, ToolExecution, ToolRefusal,
-        ToolResult, ToolSpec,
+        AgentSelector, PluginTool, Tool, ToolAccess, ToolCall, ToolEffect, ToolExecution,
+        ToolRefusal, ToolResult, ToolSpec,
     };
     use crate::BoxFuture;
 
@@ -294,6 +471,20 @@ mod tests {
             entry.offered_to,
             AgentSelector::Agents(vec!["explore".to_owned()])
         );
+    }
+
+    #[test]
+    fn a_tool_reads_its_own_data_unless_it_says_it_has_side_effects() {
+        let reads = PluginTool::new(
+            Arc::new(CountedSpec::default()),
+            AgentSelector::Conversations,
+        );
+        let acts = reads.clone().with_side_effects();
+
+        assert_eq!(reads.effect, ToolEffect::ReadsOwnData);
+        assert_eq!(acts.effect, ToolEffect::SideEffects);
+        assert_eq!(acts.spec, reads.spec);
+        assert_eq!(acts.offered_to, reads.offered_to);
     }
 
     #[test]

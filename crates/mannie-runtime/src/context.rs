@@ -12,7 +12,7 @@ use mannie_store::{ModelPart, ModelTurn};
 use mannie_types::ids::{PartId, RunId};
 use mannie_types::provider::{ApiInterface, ReasoningEffort};
 use mannie_types::run::RunState;
-use mannie_types::tools::{NotRunReason, Refusal, ToolCallDocument, ToolCallStatus};
+use mannie_types::tools::{Interruption, NotRunReason, Refusal, ToolCallDocument, ToolCallStatus};
 use mannie_types::transcript::PartKind;
 
 use crate::agents::Requester;
@@ -316,7 +316,11 @@ pub(crate) fn call_result(
             None => texts::CANCELED.to_owned(),
         },
         ToolCallStatus::Denied => texts::denied(requester).to_owned(),
-        ToolCallStatus::Uncertain => texts::UNCERTAIN.to_owned(),
+        ToolCallStatus::Uncertain => match &call.interruption {
+            None => texts::UNCERTAIN.to_owned(),
+            Some(Interruption::Stopped) => texts::UNCERTAIN_STOPPED.to_owned(),
+            Some(Interruption::PluginOff { plugin }) => texts::uncertain_plugin_off(plugin),
+        },
         ToolCallStatus::NotRun | ToolCallStatus::Canceled => match &call.not_run {
             Some(reason) => not_run(reason, &call.tool),
             None => texts::CANCELED.to_owned(),
@@ -341,6 +345,7 @@ fn not_run(reason: &NotRunReason, tool: &str) -> String {
         NotRunReason::Refused { refusal } => match refusal {
             Refusal::ReadOnlyHost => texts::READ_ONLY_HOST.to_owned(),
             Refusal::NoProjectsOnHost => texts::NO_PROJECTS_ON_HOST.to_owned(),
+            Refusal::NoRemoteCommands => texts::NO_REMOTE_COMMANDS.to_owned(),
         },
         NotRunReason::PluginOff { plugin } => texts::tool_plugin_off(plugin),
     }

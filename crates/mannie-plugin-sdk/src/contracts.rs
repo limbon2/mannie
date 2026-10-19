@@ -15,9 +15,10 @@ pub use mannie_types::clock::{Clock, UtcMillis};
 // the UI as codes (decision 6).
 pub use mannie_types::chat::{ChatError, CheckpointRef, EarlierTurns, LoadEarlierTurns};
 // The IDs of the conversations, profiles, projects and tasks that a context,
-// a task or a lend names, and of the workers that a task's target names
-// (ADR-0031).
-pub use mannie_types::ids::{ConversationId, ProfileId, ProjectId, TaskId, WorkerId};
+// a task or a lend names, of the workers that a task's target names
+// (ADR-0031), and of the archives that a tool's execution reserves
+// (ADR-0036).
+pub use mannie_types::ids::{ArchiveId, ConversationId, ProfileId, ProjectId, TaskId, WorkerId};
 // The envelopes of IPC (ADR-0007): an error as a command returns it, and the
 // batches of a channel, which carry a plugin's channel messages (ADR-0034,
 // decisions 8 and 9).

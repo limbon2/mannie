@@ -3,14 +3,16 @@
 //! registered with the log redactor before anything else happens to it.
 //! Plugins reach it only through the entries that their manifests list
 //! (ADR-0030, decision 13; ADR-0034, decision 10), such as the Workers
-//! plugin's key of the link (ADR-0016).
+//! plugin's key of the link (ADR-0016), and the entries of their keyed
+//! families, such as a password for each host of the SSH plugin (ADR-0036,
+//! decision 8).
 
-use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use mannie_logging::{ErrorChain, Redactor};
 use mannie_plugin_sdk::BoxFuture;
 use mannie_plugin_sdk::host::{BindRefusal, PluginBinding, ServiceProvider};
+use mannie_plugin_sdk::manifest::{MAX_SECRET_KEY_CHARS, SecretsSection};
 use mannie_plugin_sdk::service::{BoundService, Service};
 use mannie_plugin_sdk::services::secrets::{Secrets, SecretsApi, SecretsError};
 use mannie_runtime::{CredentialVault, VaultError};
@@ -163,28 +165,27 @@ impl ServiceProvider for SecretsProvider {
 #[derive(Debug)]
 pub(crate) struct ScopedSecrets {
     vault: Arc<KeyringVault>,
-    /// The name under which the store keeps each entry that the plugin's
-    /// manifest lists, by the name that the plugin passes.
-    names: BTreeMap<String, String>,
+    /// The plugin's ID.
+    plugin: String,
+    /// The entries that the plugin's manifest gives it.
+    section: SecretsSection,
 }
 
 impl ScopedSecrets {
     /// The entries of the plugin that `binding` names: an entry of
-    /// `entries` is kept as `<id>/<entry>`, and a legacy name as itself when
-    /// the frozen list gives it to the plugin. A legacy name that the list
-    /// does not give the plugin, or a name that the credential store cannot
-    /// keep, refuses the binding.
+    /// `entries` is kept as `<id>/<entry>`, a legacy name as itself when the
+    /// frozen list gives it to the plugin, and an entry of a keyed family as
+    /// `<id>/<family>/<key>`. A legacy name that the list does not give the
+    /// plugin, or a name that the credential store cannot keep, refuses the
+    /// binding, and so does a keyed family whose entries with the longest
+    /// key the store cannot keep.
     pub(crate) fn for_plugin(
         vault: Arc<KeyringVault>,
         binding: &PluginBinding<'_>,
     ) -> Result<Self, BindRefusal> {
         let plugin = binding.id.as_str();
-        let listed = &binding.manifest.secrets;
-        let mut names = BTreeMap::new();
-        for entry in &listed.entries {
-            names.insert(entry.clone(), format!("{plugin}/{entry}"));
-        }
-        for legacy in &listed.legacy {
+        let section = &binding.manifest.secrets;
+        for legacy in &section.legacy {
             let frozen = LEGACY_SECRET_ENTRIES
                 .iter()
                 .any(|(owner, name)| *owner == plugin && name == legacy);
@@ -194,10 +195,19 @@ impl ScopedSecrets {
                     format!("the legacy name {legacy} is not one of the plugin {plugin}"),
                 ));
             }
-            names.insert(legacy.clone(), legacy.clone());
         }
-        if let Some(stored) = names
-            .values()
+        let fixed = section
+            .entries
+            .iter()
+            .chain(&section.legacy)
+            .filter_map(|entry| section.stored_name(plugin, entry));
+        let longest_key = "k".repeat(MAX_SECRET_KEY_CHARS);
+        let keyed = section
+            .keyed
+            .iter()
+            .map(|family| format!("{plugin}/{family}/{longest_key}"));
+        if let Some(stored) = fixed
+            .chain(keyed)
             .find(|stored| CredentialRef::parse(stored).is_err())
         {
             return Err(BindRefusal::new(
@@ -205,19 +215,25 @@ impl ScopedSecrets {
                 format!("the credential store cannot keep the name {stored}"),
             ));
         }
-        Ok(Self { vault, names })
+        Ok(Self {
+            vault,
+            plugin: plugin.to_owned(),
+            section: section.clone(),
+        })
     }
 
     /// The name under which the store keeps `entry`, or a refusal for a name
-    /// that the plugin's manifest does not list.
+    /// that the plugin's manifest does not give it.
     fn stored_name(&self, entry: &str) -> Result<String, SecretsError> {
-        self.names.get(entry).cloned().ok_or_else(|| {
-            tracing::error!(
-                entry,
-                "a plugin asked for an entry of the credential store that its manifest does not list"
-            );
-            SecretsError::NotPermitted
-        })
+        self.section
+            .stored_name(&self.plugin, entry)
+            .ok_or_else(|| {
+                tracing::error!(
+                    entry,
+                    "a plugin asked for an entry of the credential store that its manifest does not give it"
+                );
+                SecretsError::NotPermitted
+            })
     }
 }
 
@@ -245,6 +261,19 @@ impl SecretsApi for ScopedSecrets {
                 vault
                     .save(&entry, &secret)
                     .map_err(|_unavailable| SecretsError::Unavailable)
+            })
+            .await
+        })
+    }
+
+    fn delete(&self, entry: &str) -> BoxFuture<'static, Result<(), SecretsError>> {
+        let stored = self.stored_name(entry);
+        let vault = Arc::clone(&self.vault);
+        Box::pin(async move {
+            let entry = stored?;
+            on_blocking_thread(move || match vault.delete(&entry) {
+                Ok(()) | Err(VaultError::Missing) => Ok(()),
+                Err(VaultError::Unavailable(_problem)) => Err(SecretsError::Unavailable),
             })
             .await
         })
@@ -338,6 +367,60 @@ mod tests {
             secrets.stored_name("notes/token"),
             Err(SecretsError::NotPermitted)
         );
+        assert!(vault.store.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn an_entry_of_a_keyed_family_is_kept_under_the_plugins_id_and_no_other_key_reaches_the_store()
+     {
+        let vault = vault();
+        let ssh = manifest("ssh", "keyed = [\"host\"]");
+        let secrets = scoped(&vault, &ssh).unwrap();
+        let host = "0199e0f2-0000-7000-8000-0000000000aa";
+        let too_long = format!("host/{}", "k".repeat(65));
+
+        assert_eq!(
+            secrets.stored_name(&format!("host/{host}")),
+            Ok(format!("ssh/host/{host}"))
+        );
+        for refused in [
+            "host",
+            "host/",
+            "host/a_b",
+            "host/a.b",
+            "host/a/b",
+            "other/key",
+            too_long.as_str(),
+        ] {
+            assert_eq!(
+                secrets.stored_name(refused),
+                Err(SecretsError::NotPermitted),
+                "{refused}"
+            );
+        }
+        let deleted = secrets.delete("host/a_b").await;
+        let read = secrets.load("ssh/host/key").await;
+
+        assert_eq!(deleted.unwrap_err(), SecretsError::NotPermitted);
+        assert_eq!(read.unwrap_err(), SecretsError::NotPermitted);
+        assert!(vault.store.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn a_keyed_family_is_refused_when_the_store_cannot_keep_its_entries_with_the_longest_key() {
+        let vault = vault();
+        // `ssh/`, the family, `/` and a key of 64 characters: a family of 31
+        // characters makes names of 100, the longest that the store keeps.
+        let fits = manifest("ssh", &format!("keyed = [\"{}\"]", "f".repeat(31)));
+        let too_long = manifest("ssh", &format!("keyed = [\"{}\"]", "f".repeat(32)));
+
+        let longest = format!("{}/{}", "f".repeat(31), "k".repeat(64));
+        let kept = scoped(&vault, &fits).unwrap().stored_name(&longest);
+        let refusal = scoped(&vault, &too_long).unwrap_err();
+
+        assert_eq!(kept.map(|name| name.len()), Ok(100));
+
+        assert!(refusal.contains("cannot keep"), "{refusal}");
         assert!(vault.store.lock().unwrap().is_none());
     }
 

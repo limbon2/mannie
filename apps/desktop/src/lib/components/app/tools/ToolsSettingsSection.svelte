@@ -12,7 +12,7 @@
   import { Skeleton } from '#lib/components/ui/skeleton/index.js';
   import { Switch } from '#lib/components/ui/switch/index.js';
   import { Textarea } from '#lib/components/ui/textarea/index.js';
-  import type { CommandRule, SharedGrant } from '#lib/generated/bindings.js';
+  import type { CommandRule, RemoteCommandRule, SharedGrant } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
   import { conversationList } from '#lib/state/conversation-list.svelte.js';
   import { commandRules, sharedGrants, toolsSettings } from '#lib/state/tools-settings.svelte.js';
@@ -44,7 +44,7 @@
       .filter((line) => line !== '');
   }
 
-  function ruleWords(rule: CommandRule): string {
+  function ruleWords(rule: CommandRule | RemoteCommandRule): string {
     return rule.words.join(' ');
   }
 
@@ -162,7 +162,7 @@
             <Button size="sm" variant="outline" onclick={() => void commandRules.load()}>{m.tools_try_again()}</Button>
           </Alert.Action>
         </Alert.Root>
-      {:else if commandRules.rules.length === 0}
+      {:else if commandRules.isEmpty}
         <p class="text-sm text-muted-foreground">{m.tools_settings_rules_empty()}</p>
       {:else}
         <Item.Group>
@@ -185,6 +185,29 @@
                   size="sm"
                   variant="outline"
                   onclick={() => void commandRules.remove(rule.id)}
+                >
+                  {m.tools_settings_rule_delete()}
+                </Button>
+              </Item.Actions>
+            </Item.Root>
+          {/each}
+          {#each commandRules.remoteRules as rule (rule.id)}
+            <Item.Root data-remote-rule="" role="listitem" size="sm" variant="outline">
+              <Item.Content class="min-w-0">
+                <Item.Title class="line-clamp-none w-full">
+                  <span class="font-mono break-all" data-content>{ruleWords(rule)}</span>
+                </Item.Title>
+                <Item.Description class="line-clamp-none break-all">
+                  {m.tools_settings_rule_on_host({ endpoint: rule.target.endpoint, host: rule.target.label })}
+                </Item.Description>
+              </Item.Content>
+              <Item.Actions>
+                <Button
+                  aria-label={m.tools_settings_rule_delete_label({ words: ruleWords(rule) })}
+                  disabled={commandRules.deleting.includes(rule.id)}
+                  size="sm"
+                  variant="outline"
+                  onclick={() => void commandRules.removeRemote(rule.id)}
                 >
                   {m.tools_settings_rule_delete()}
                 </Button>

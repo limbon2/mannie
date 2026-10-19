@@ -355,6 +355,7 @@ fn secrets_without_the_service_secrets_are_refused() {
         "entries = [\"token\"]",
         "legacy = [\"link/master-key\"]",
         "entries = [\"token\"]\nlegacy = [\"link/master-key\"]",
+        "keyed = [\"host\"]",
     ] {
         for services in ["", "[services]\nexecutor-host = 1\ncredentials = 1"] {
             let text = with(&format!("{services}\n[secrets]\n{secrets}"));
@@ -366,8 +367,77 @@ fn secrets_without_the_service_secrets_are_refused() {
             );
         }
     }
-    let empty = Manifest::parse(&with("[secrets]\nentries = []\nlegacy = []")).unwrap();
+    let empty = Manifest::parse(&with("[secrets]\nentries = []\nlegacy = []\nkeyed = []")).unwrap();
     assert_eq!(empty.secrets, SecretsSection::default());
+}
+
+#[test]
+fn an_entry_or_a_legacy_name_that_is_a_keyed_family_or_inside_one_is_refused() {
+    for (list, name) in [
+        ("entries", "host"),
+        ("entries", "host/main"),
+        ("legacy", "host/main/key"),
+    ] {
+        let text = with(&format!(
+            "[services]\nsecrets = 1\n\n[secrets]\nkeyed = [\"host\"]\n{list} = [\"{name}\"]"
+        ));
+
+        assert_eq!(
+            Manifest::parse(&text),
+            Err(ManifestError::SecretInFamily {
+                name: name.to_owned()
+            }),
+            "{list}: {name}"
+        );
+    }
+    // A name that only starts with the family's letters is not inside it.
+    let beside =
+        with("[services]\nsecrets = 1\n\n[secrets]\nkeyed = [\"host\"]\nentries = [\"hostname\"]");
+    let entries = Manifest::parse(&beside).unwrap().secrets.entries;
+    assert_eq!(entries, ["hostname"]);
+}
+
+#[test]
+fn an_entry_of_a_keyed_family_is_kept_below_the_plugins_id_with_a_key_of_letters_digits_and_hyphens()
+ {
+    let text = with(
+        "[services]\nsecrets = 1\n\n[secrets]\nentries = [\"token\"]\nlegacy = [\"link/master-key\"]\nkeyed = [\"host\", \"sync/peer\"]",
+    );
+    let secrets = Manifest::parse(&text).unwrap().secrets;
+    let longest = "k".repeat(64);
+    let longest_entry = format!("host/{longest}");
+    let longest_stored = format!("notes/host/{longest}");
+
+    for (entry, stored) in [
+        ("token", "notes/token"),
+        ("link/master-key", "link/master-key"),
+        (
+            "host/0199e0f2-0000-7000-8000-0000000000aa",
+            "notes/host/0199e0f2-0000-7000-8000-0000000000aa",
+        ),
+        ("sync/peer/Office-2", "notes/sync/peer/Office-2"),
+        (longest_entry.as_str(), longest_stored.as_str()),
+    ] {
+        assert_eq!(
+            secrets.stored_name("notes", entry).as_deref(),
+            Some(stored),
+            "{entry}"
+        );
+    }
+    let too_long = format!("host/{longest}k");
+    for entry in [
+        "host",
+        "host/",
+        "host/a_b",
+        "host/a.b",
+        "host/a b",
+        "host/a/b",
+        "sync/x",
+        "notes/token",
+        too_long.as_str(),
+    ] {
+        assert_eq!(secrets.stored_name("notes", entry), None, "{entry}");
+    }
 }
 
 #[test]
@@ -382,7 +452,7 @@ fn a_secret_name_is_words_of_letters_digits_dots_underscores_and_hyphens_joined_
         "link|key",
         "key:1",
     ] {
-        for list in ["entries", "legacy"] {
+        for list in ["entries", "legacy", "keyed"] {
             let text = with(&format!("[secrets]\n{list} = [\"{name}\"]"));
 
             assert_eq!(
@@ -462,6 +532,12 @@ fn a_refusal_says_what_was_refused() {
                 name: "token".to_owned(),
             },
             "the secret \"token\" is listed both under entries and under legacy",
+        ),
+        (
+            ManifestError::SecretInFamily {
+                name: "host/main".to_owned(),
+            },
+            "the secret \"host/main\" is a keyed family, or an entry of one",
         ),
         (
             ManifestError::SecretsWithoutService,

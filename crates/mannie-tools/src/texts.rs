@@ -99,6 +99,7 @@ pub(crate) fn failure(failure: &ToolFailure) -> String {
         ToolFailure::ShellMissing { path } => format!("The shell {path} is missing, so no command can run."),
         ToolFailure::SpawnFailed { reason } => format!("The command could not be started: {reason}"),
         ToolFailure::IoError { kind } => format!("The operating system reported an error: {kind}"),
+        ToolFailure::PluginInvalid { plugin } => format!("The plugin \"{plugin}\" answered against the rules of Mannie's plugin SDK, so nothing ran. Continue without this tool, or tell the owner."),
     };
     format!("Error {code}: {explanation}")
 }

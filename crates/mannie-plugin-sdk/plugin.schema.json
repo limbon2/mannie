@@ -106,11 +106,19 @@
     },
     "SecretsSection": {
       "additionalProperties": false,
-      "description": "The `[secrets]` table of a manifest: the names of the plugin's entries in\nthe credential store. A name is words of ASCII letters, digits, `.`, `_`\nand `-`, joined by single slashes. A name may appear twice in one list,\nbecause the store keys an entry by its name and both name the same\nentry, but it may not appear in both lists.",
+      "description": "The `[secrets]` table of a manifest: the names of the plugin's entries in\nthe credential store. A name is words of ASCII letters, digits, `.`, `_`\nand `-`, joined by single slashes. A name may appear twice in one list,\nbecause the store keys an entry by its name and both name the same\nentry, but it may not appear in both lists, and no entry or legacy name\nmay be a keyed family or an entry of one.",
       "properties": {
         "entries": {
           "default": [],
           "description": "Entries that the store keeps as `<id>/<entry>`, so a plugin reaches\nonly its own (ADR-0034, decision 10).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "keyed": {
+          "default": [],
+          "description": "Families of entries that the plugin creates and deletes as it needs\nthem, such as a password for each host that the owner registers\n(ADR-0036, decision 8). The plugin names an entry `<family>/<key>`,\nwhose key has 1 to 64 ASCII letters, digits and `-`, and the store\nkeeps it as `<id>/<family>/<key>`.",
           "items": {
             "type": "string"
           },

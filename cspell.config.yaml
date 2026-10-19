@@ -38,6 +38,7 @@ words:
   - execve
   - exmarkdown
   - fastrand
+  - flate
   - fpid
   - globset
   - HMAC
@@ -55,6 +56,7 @@ words:
   - libdbus
   - libexec
   - libqca
+  - libssh
   - librsvg
   - libwebkit
   - libxdo
@@ -97,6 +99,7 @@ words:
   - reqwest
   - RLIMIT
   - rusqlite
+  - russh
   - rustix
   - rustls
   - RustSec

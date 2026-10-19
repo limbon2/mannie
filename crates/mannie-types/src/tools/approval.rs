@@ -33,6 +33,8 @@ pub enum ApprovalReason {
     /// On a worker: the ceiling's mode asks for this change, which lies
     /// inside the allowed folders.
     HostAsks,
+    /// A command on a remote host, which no rule or grant allows (ADR-0036).
+    RemoteCommand,
 }
 
 /// What a grant covers.
@@ -57,17 +59,55 @@ pub enum GrantScope {
         /// The canonical working directory.
         working_directory: String,
     },
+    /// The same command text on the same remote host, reached at the same
+    /// endpoint (ADR-0036). A host whose address, port or user changed is
+    /// another endpoint, which the grant does not cover.
+    RemoteCommand {
+        /// The plugin that reaches the host.
+        plugin: String,
+        /// The plugin's key for the host.
+        target: String,
+        /// The host's name when the owner allowed it, for display only.
+        label: String,
+        /// Where the command runs, such as `deploy@build-box.lan:22`.
+        endpoint: String,
+        /// The command's text.
+        command: String,
+    },
+}
+
+/// A remote host as a grant, a rule or a proposal names it: the plugin, its
+/// key for the host and the endpoint, which decide what is covered, and the
+/// host's name, which is for display only.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteTarget {
+    /// The plugin that reaches the host.
+    pub plugin: String,
+    /// The plugin's key for the host.
+    pub target: String,
+    /// The host's name when the owner saved the rule.
+    pub label: String,
+    /// Where commands run, such as `deploy@build-box.lan:22`.
+    pub endpoint: String,
 }
 
 /// The rule that "Save rule" can make from a command: its words, of which the
-/// owner keeps a leading part, and the folder the rule can be limited to.
+/// owner keeps a leading part, and the folder the rule can be limited to; or,
+/// for a command on a remote host, the host that the rule is always limited
+/// to.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RuleProposal {
     /// The command's words, as the rule would match them.
     pub words: Vec<String>,
     /// The canonical working directory, to which the owner can limit the rule.
+    /// Empty for a command on a remote host, which has none.
     pub folder: String,
+    /// The remote host of the command, or `None` for a command on this
+    /// machine. A rule from it applies only on that host (ADR-0036).
+    #[serde(default)]
+    pub remote: Option<RemoteTarget>,
 }
 
 /// A question to the owner about one operation. It shows exactly what will

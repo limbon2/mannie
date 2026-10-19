@@ -2,8 +2,9 @@
 //! contracts leave out, because no plugin's code uses them: the inputs of
 //! conversations, the clocks of tests, the IDs of runs, turns, parts and
 //! rules, images as the transcript keeps them, the plugins' views, provider
-//! profiles, runs, the documents of tasks and tool calls, and the transcript's
-//! parts.
+//! profiles, runs, the documents of tasks and tool calls, the owner's
+//! approvals with what they grant, the archives of tool calls, and the
+//! transcript's parts.
 
 pub use mannie_types::chat::{
     SendMessage, StartConversation, StartedConversation, StopOutcome, SubscribeConversation,
@@ -18,6 +19,8 @@ pub use mannie_types::provider::{
 pub use mannie_types::run::{FinishReason, RunState};
 pub use mannie_types::tasks::{TaskDocument, TaskPartDocument, TaskRefusal, TaskView};
 pub use mannie_types::tools::{
-    CommandRule, Decision, ToolCallDocument, ToolCallStatus, ToolOutcome, UpdateToolsSettings,
+    Access, ApprovalChoice, ApprovalReason, ApprovalRequest, CommandRule, DecideApproval, Decision,
+    GrantScope, Interruption, ReadToolOutput, RemoteCommandRule, RemoteTarget, ToolCallDocument,
+    ToolCallStatus, ToolCallView, ToolOutcome, UpdateToolsSettings,
 };
 pub use mannie_types::transcript::{PartContent, PartKind};

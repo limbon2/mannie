@@ -21,7 +21,9 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
+use std::time::Duration;
 
+use mannie_plugin_sdk::BoxFuture;
 use mannie_plugin_sdk::contributions::{Contributions, ExtensionPoint, PointInfo};
 use mannie_plugin_sdk::host::{ContributionConsumer, ContributionRefusal, PLUGIN_REGISTERED};
 use mannie_plugin_sdk::ids::PluginId;
@@ -36,6 +38,8 @@ use crate::Runtime;
 use crate::executors::check_executors;
 use crate::images::check_image_sources;
 use crate::instructions::check_sections;
+use crate::plugin_executions::ExecutionGuard;
+use crate::plugin_tools::OfferedPluginTool;
 
 /// An entry of a point, with the plugin that contributed it and the
 /// generation of the plugin's start.
@@ -200,6 +204,20 @@ impl Registry {
         let current = self.current.read().unwrap_or_else(PoisonError::into_inner);
         Snapshot(Arc::clone(&current))
     }
+
+    /// Runs `join` while the plugin's start of `generation` is registered,
+    /// under the read lock, so dropping the plugin's contributions, which
+    /// takes the write lock, waits for it. `None` when that start is not
+    /// registered any more.
+    fn while_registered<T>(
+        &self,
+        plugin: &str,
+        generation: u64,
+        join: impl FnOnce() -> T,
+    ) -> Option<T> {
+        let current = self.current.read().unwrap_or_else(PoisonError::into_inner);
+        (current.generation_of(plugin) == Some(generation)).then(join)
+    }
 }
 
 /// The contributions of the plugins that were on at one moment.
@@ -312,6 +330,15 @@ impl ContributionConsumer for RuntimeContributions {
     fn remove(&self, plugin: &PluginId) {
         self.runtime.drop_contributions(plugin);
     }
+
+    /// Waits for the executions of the plugin's tools, and aborts those that
+    /// do not end within `grace` (ADR-0034, decision 8). A run records an
+    /// aborted call with side effects as uncertain.
+    fn drain(&self, plugin: &PluginId, grace: Duration) -> BoxFuture<'static, ()> {
+        let executions = Arc::clone(&self.runtime.inner.plugin_executions);
+        let plugin = plugin.as_str().to_owned();
+        Box::pin(async move { executions.drain(&plugin, grace).await })
+    }
 }
 
 impl Runtime {
@@ -327,6 +354,21 @@ impl Runtime {
     /// The contributions of the plugins that are on now.
     pub(crate) fn contributions(&self) -> Snapshot {
         self.inner.contributions.snapshot()
+    }
+
+    /// Lets a call of a plugin's tool execute while the plugin's start that
+    /// offered the tool is on, so turning the plugin off waits for it, or
+    /// `None` when that start is off (ADR-0034, decision 8).
+    pub(crate) fn begin_plugin_execution(
+        &self,
+        offered: &OfferedPluginTool,
+    ) -> Option<ExecutionGuard> {
+        let executions = &self.inner.plugin_executions;
+        self.inner
+            .contributions
+            .while_registered(&offered.plugin, offered.generation, || {
+                executions.join(&offered.plugin)
+            })
     }
 
     /// Refuses a plugin's contributions with an ID that the core or another

@@ -52,11 +52,11 @@ pub use mentions::{
 };
 pub use output::output_page;
 pub use paths::{FolderError, canonical_folder, workspace_folder};
-pub use policy::{Grants, PolicyInputs, Verdict, decide, saved_rule};
+pub use policy::{Grants, PolicyInputs, SavedRule, Verdict, decide, saved_rule};
 pub use projects::{Availability, MoveFailure, ProjectFacts, ProjectMoves};
 pub use registry::{RegisterError, ToolRegistry, takes_activity};
 pub use results::{MIN_RESULT_LIMIT_BYTES, RESULT_LIMIT_BYTES, result_limit};
-pub use rules::command_words;
+pub use rules::{command_words, remote_command_words};
 pub use stop::{StopReason, StopSignal};
 pub use supervisor::end_leftover_command;
 pub use system::{ShellFacts, SystemFacts};

@@ -47,7 +47,9 @@ pub(crate) fn unchanged(
 pub(crate) fn path_of(access: &Access) -> Result<(PathBuf, &str), ToolFailure> {
     match access {
         Access::Path { path, identity, .. } => Ok((PathBuf::from(path), identity.as_str())),
-        Access::Command { .. } | Access::Project { .. } => Err(ToolFailure::PathChanged),
+        Access::Command { .. } | Access::Project { .. } | Access::RemoteCommand { .. } => {
+            Err(ToolFailure::PathChanged)
+        }
     }
 }
 

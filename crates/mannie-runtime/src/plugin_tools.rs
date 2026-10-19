@@ -5,7 +5,14 @@
 //! same lifecycle as the core's tools (ADR-0013): the call is prepared, the
 //! policy decides on its accesses, the call is journaled, and only then does
 //! it execute, until it ends or the owner stops the reply.
+//!
+//! A tool with side effects returns the accesses on which the policy
+//! decides, such as a command on a remote host (ADR-0036). The adapter turns
+//! them into the core's accesses with the plugin's ID, so a plugin never
+//! speaks for another, and refuses what breaks the SDK's rules before
+//! anything runs.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use futures_util::FutureExt;
@@ -14,16 +21,18 @@ use mannie_plugin_sdk::contributions::{Contributions, ExtensionPoint};
 use mannie_plugin_sdk::host::{ContributionRefusal, ID_TAKEN, INVALID_NAME, RESERVED_ARGUMENT};
 use mannie_plugin_sdk::points::executors::Executors;
 use mannie_plugin_sdk::points::tools::{
-    AgentSelector, PluginTool, Tool as SdkTool, ToolCall, ToolExecution, ToolSpec, Tools,
+    AgentSelector, MAX_TOOL_ARCHIVE_BYTES, MAX_TOOL_ARCHIVES, PluginTool, RemoteCommandAccess,
+    Tool as SdkTool, ToolAccess, ToolArchive, ToolCall, ToolEffect, ToolExecution, ToolSpec, Tools,
 };
 use mannie_tools::{
-    Done, Execution, PermissionClass, PrepareError, Prepared, Tool, ToolContext, ToolRegistry,
-    stopped, takes_activity,
+    ArchivedOutput, Done, Execution, PermissionClass, PrepareError, Prepared, Tool, ToolContext,
+    ToolRegistry, stopped, takes_activity,
 };
-use mannie_types::tools::ToolOutcome;
+use mannie_types::ids::ArchiveId;
+use mannie_types::tools::{Access, MAX_ARGUMENTS_BYTES, ToolFailure, ToolOutcome};
 
 use crate::Runtime;
-use crate::agents::{AgentDefinition, Requester};
+use crate::agents::{AgentDefinition, EXPLORE_AGENT, Requester};
 use crate::plugins::Snapshot;
 use crate::tasks::TASK_TOOLS;
 use crate::texts;
@@ -31,6 +40,17 @@ use crate::texts;
 /// The most characters of a tool's name. The providers' interfaces accept
 /// names of lower-case letters, digits and underscores up to this length.
 const MAX_TOOL_NAME_CHARS: usize = 64;
+
+/// The most accesses that one call of a plugin's tool may return.
+const MAX_ACCESSES: usize = 16;
+
+/// The most characters of a remote host's key, its name, its endpoint and
+/// its identity, and of an archive's name.
+const MAX_TARGET_CHARS: usize = 128;
+const MAX_LABEL_CHARS: usize = 128;
+const MAX_ENDPOINT_CHARS: usize = 512;
+const MAX_IDENTITY_CHARS: usize = 512;
+const MAX_ARCHIVE_NAME_CHARS: usize = 64;
 
 /// A plugin's tool that a run is offered, with the start of its plugin that
 /// offered it, so a call runs only while that start is on (ADR-0030,
@@ -55,7 +75,7 @@ pub(crate) fn offered_tools(
     snapshot
         .items::<Tools>()
         .iter()
-        .filter(|registered| offered_to(&registered.entry.offered_to, agent))
+        .filter(|registered| offers(&registered.entry, agent))
         .map(|registered| {
             let plugin = registered.plugin.as_str().to_owned();
             let offered = OfferedPluginTool {
@@ -67,10 +87,20 @@ pub(crate) fn offered_tools(
                 plugin,
                 tool: Arc::clone(&registered.entry.tool),
                 spec: registered.entry.spec.clone(),
+                effect: registered.entry.effect,
             });
             (offered, adapter)
         })
         .collect()
+}
+
+/// Whether a plugin's tool is offered to the runs of `agent`: its selector
+/// names the agent, and a tool with side effects never reaches the explore
+/// agent, which only reads, whatever the selector says.
+fn offers(entry: &PluginTool, agent: &AgentDefinition) -> bool {
+    let reads_only = agent.name == EXPLORE_AGENT;
+    let acts = entry.effect == ToolEffect::SideEffects;
+    offered_to(&entry.offered_to, agent) && !(reads_only && acts)
 }
 
 /// Whether a tool's selector offers it to the runs of `agent`.
@@ -203,12 +233,14 @@ fn within_limit(mut output: String, limit: usize) -> String {
 /// A plugin's tool as the core's tool loop runs it.
 #[derive(Debug)]
 struct PluginToolAdapter {
-    /// The plugin's ID, which the call's outcome names.
+    /// The plugin's ID, which the call's outcome and accesses name.
     plugin: String,
     /// The plugin's tool.
     tool: Arc<dyn SdkTool>,
     /// What the model is told of the tool, as the plugin's entry read it.
     spec: ToolSpec,
+    /// What the tool does beyond reading its plugin's own data.
+    effect: ToolEffect,
 }
 
 impl Tool for PluginToolAdapter {
@@ -224,10 +256,14 @@ impl Tool for PluginToolAdapter {
         &self.spec.parameters
     }
 
-    /// SDK 1's tools read only their plugin's own data (ADR-0034, decision
-    /// 6), so a call is never an operation with side effects.
+    /// A tool that reads only its plugin's own data never performs an
+    /// operation (ADR-0034, decision 6); a tool with side effects performs
+    /// one in every call, which the journal records (ADR-0036).
     fn class(&self) -> PermissionClass {
-        PermissionClass::ReadOnly
+        match self.effect {
+            ToolEffect::ReadsOwnData => PermissionClass::ReadOnly,
+            ToolEffect::SideEffects => PermissionClass::SideEffects,
+        }
     }
 
     fn prepare(
@@ -238,13 +274,13 @@ impl Tool for PluginToolAdapter {
         let preparing = self
             .tool
             .prepare(ToolCall::new(arguments, context.conversation_id));
+        let plugin = self.plugin.clone();
+        let effect = self.effect;
         async move {
             match preparing.await {
-                // SDK 1 has no access, so the policy decides on none and
-                // the owner is never asked about the call.
-                Ok(accesses) => Ok(Prepared {
-                    accesses: accesses.into_iter().map(|access| match access {}).collect(),
-                }),
+                Ok(accesses) => {
+                    core_accesses(&plugin, effect, accesses).map(|accesses| Prepared { accesses })
+                }
                 Err(refusal) => Err(PrepareError::InvalidArguments {
                     detail: refusal.detail,
                 }),
@@ -257,29 +293,160 @@ impl Tool for PluginToolAdapter {
         let Execution {
             context,
             arguments,
+            accesses,
             stop,
             ..
         } = execution;
         let limit = context.result_limit;
-        let running = self
-            .tool
-            .execute(ToolExecution::new(arguments, context.conversation_id));
+        let reserved: Vec<ArchiveId> = (0..MAX_TOOL_ARCHIVES)
+            .map(|_| (context.archive_ids)())
+            .collect();
+        let running = self.tool.execute(
+            ToolExecution::new(arguments, context.conversation_id)
+                .with_authorized(sdk_accesses(&accesses))
+                .with_result_limit(u32::try_from(limit).unwrap_or(u32::MAX))
+                .with_archive_ids(reserved.clone()),
+        );
         let plugin = self.plugin.clone();
         async move {
             tokio::select! {
-                result = running => Done {
-                    outcome: ToolOutcome::Plugin { plugin },
-                    output: within_limit(result.output, limit),
-                    archives: Vec::new(),
-                },
+                // A result that is ready wins over a stop that arrives at the
+                // same moment, so an operation that finished keeps its result.
+                biased;
+                result = running => {
+                    let archives = kept_archives(&plugin, &reserved, result.archives);
+                    Done {
+                        outcome: ToolOutcome::Plugin { plugin },
+                        output: within_limit(result.output, limit),
+                        archives,
+                    }
+                }
                 // The SDK cancels a call by dropping its future (ADR-0034,
                 // decision 3), so Stop and Shutdown end the plugin's work
-                // here, and the run waits for nothing that may never end.
+                // here, and the run waits for nothing that may never end. A
+                // run makes such a call with side effects uncertain.
                 () = stop.stopped() => Done::failed(stopped()),
             }
         }
         .boxed()
     }
+}
+
+/// The core's accesses of a call of a plugin's tool, or the failure of a
+/// plugin that broke the SDK's rules: a tool that reads its own data returns
+/// no access, a tool with side effects returns at least one, and every access
+/// keeps its limits (ADR-0036). Nothing runs after such a failure.
+fn core_accesses(
+    plugin: &str,
+    effect: ToolEffect,
+    accesses: Vec<ToolAccess>,
+) -> Result<Vec<Access>, PrepareError> {
+    let broken = || {
+        tracing::error!(
+            plugin,
+            "a plugin's tool returned accesses that break the SDK's rules"
+        );
+        PrepareError::Failed(ToolFailure::PluginInvalid {
+            plugin: plugin.to_owned(),
+        })
+    };
+    let fits = match effect {
+        ToolEffect::ReadsOwnData => accesses.is_empty(),
+        ToolEffect::SideEffects => !accesses.is_empty() && accesses.len() <= MAX_ACCESSES,
+    };
+    if !fits {
+        return Err(broken());
+    }
+    accesses
+        .into_iter()
+        .map(|access| match access {
+            ToolAccess::RemoteCommand(remote) => remote_access(plugin, remote).ok_or_else(broken),
+        })
+        .collect()
+}
+
+/// The core's access of a command on a remote host, with the plugin's ID,
+/// or `None` when a text is empty, too long or holds a control character.
+/// The command may span lines, which only keeps it from a grant or a rule.
+fn remote_access(plugin: &str, remote: RemoteCommandAccess) -> Option<Access> {
+    let fits = |text: &str, max_chars: usize| {
+        !text.is_empty() && text.chars().count() <= max_chars && !text.chars().any(char::is_control)
+    };
+    let command_fits = !remote.command.trim().is_empty()
+        && remote.command.len() <= MAX_ARGUMENTS_BYTES
+        && !remote.command.contains('\0');
+    let names_fit = fits(&remote.target, MAX_TARGET_CHARS)
+        && fits(&remote.label, MAX_LABEL_CHARS)
+        && fits(&remote.endpoint, MAX_ENDPOINT_CHARS)
+        && fits(&remote.identity, MAX_IDENTITY_CHARS);
+    (command_fits && names_fit).then(|| Access::RemoteCommand {
+        plugin: plugin.to_owned(),
+        target: remote.target,
+        label: remote.label,
+        endpoint: remote.endpoint,
+        identity: remote.identity,
+        command: remote.command,
+    })
+}
+
+/// The authorized accesses of a call as its plugin's tool knows them.
+fn sdk_accesses(accesses: &[Access]) -> Vec<ToolAccess> {
+    accesses
+        .iter()
+        .filter_map(|access| match access {
+            Access::RemoteCommand {
+                target,
+                label,
+                endpoint,
+                identity,
+                command,
+                ..
+            } => Some(ToolAccess::RemoteCommand(RemoteCommandAccess::new(
+                target.clone(),
+                label.clone(),
+                endpoint.clone(),
+                identity.clone(),
+                command.clone(),
+            ))),
+            Access::Path { .. } | Access::Command { .. } | Access::Project { .. } => None,
+        })
+        .collect()
+}
+
+/// The archives of a plugin's result that keep the SDK's rules: each under
+/// an ID that the execution reserved, once, with a name and within the size
+/// limit. The rest are left out, which the log records, so a broken archive
+/// never costs a call that ran its result.
+fn kept_archives(
+    plugin: &str,
+    reserved: &[ArchiveId],
+    archives: Vec<ToolArchive>,
+) -> Vec<ArchivedOutput> {
+    let mut used: HashSet<ArchiveId> = HashSet::new();
+    let mut kept = Vec::new();
+    for archive in archives {
+        let name_fits = !archive.name.is_empty()
+            && archive.name.chars().count() <= MAX_ARCHIVE_NAME_CHARS
+            && !archive.name.chars().any(char::is_control);
+        let fits = reserved.contains(&archive.id)
+            && !used.contains(&archive.id)
+            && name_fits
+            && archive.content.len() <= MAX_TOOL_ARCHIVE_BYTES;
+        if !fits {
+            tracing::error!(
+                plugin,
+                "left out an archive of a plugin's tool that breaks the SDK's rules"
+            );
+            continue;
+        }
+        used.insert(archive.id.clone());
+        kept.push(ArchivedOutput {
+            id: archive.id,
+            name: archive.name,
+            content: archive.content,
+        });
+    }
+    kept
 }
 
 #[cfg(test)]
@@ -289,19 +456,147 @@ mod tests {
     use futures_util::FutureExt;
     use mannie_plugin_sdk::BoxFuture;
     use mannie_plugin_sdk::points::tools::{
-        AgentSelector, PluginTool, Tool, ToolAccess, ToolCall, ToolExecution, ToolRefusal,
-        ToolResult, ToolSpec,
+        AgentSelector, MAX_TOOL_ARCHIVE_BYTES, PluginTool, RemoteCommandAccess, Tool, ToolAccess,
+        ToolArchive, ToolCall, ToolEffect, ToolExecution, ToolRefusal, ToolResult, ToolSpec,
     };
-    use mannie_tools::ToolRegistry;
+    use mannie_tools::{PrepareError, ToolRegistry};
+    use mannie_types::ids::ArchiveId;
+    use mannie_types::tools::{Access, ToolFailure};
     use serde_json::{Value, json};
 
     use mannie_plugin_sdk::host::{ID_TAKEN, INVALID_NAME, RESERVED_ARGUMENT};
 
     use super::{
-        MAX_TOOL_NAME_CHARS, check_plugin_tools, is_valid_tool_name, offered_to, within_limit,
+        MAX_TOOL_NAME_CHARS, check_plugin_tools, core_accesses, is_valid_tool_name, kept_archives,
+        offered_to, offers, within_limit,
     };
     use crate::agents::{AgentDefinition, CONVERSATION, EXPLORE, GENERAL};
     use crate::texts;
+
+    fn remote(target: &str, label: &str, command: &str) -> ToolAccess {
+        ToolAccess::RemoteCommand(RemoteCommandAccess::new(
+            target.to_owned(),
+            label.to_owned(),
+            "deploy@build-box.lan:22".to_owned(),
+            "SHA256:x".to_owned(),
+            command.to_owned(),
+        ))
+    }
+
+    fn invalid() -> PrepareError {
+        PrepareError::Failed(ToolFailure::PluginInvalid {
+            plugin: "shell".to_owned(),
+        })
+    }
+
+    #[test]
+    fn a_tool_with_side_effects_never_reaches_the_explore_agent() {
+        let reads = tool("notes_find");
+        let acts = tool("run_on_host").with_side_effects();
+        let offered = |entry: &PluginTool| -> Vec<&str> {
+            [CONVERSATION, EXPLORE, GENERAL]
+                .iter()
+                .filter(|agent| offers(entry, agent))
+                .map(|agent| agent.name)
+                .collect()
+        };
+
+        assert_eq!(offered(&reads), ["conversation", "explore", "general"]);
+        assert_eq!(offered(&acts), ["conversation", "general"]);
+    }
+
+    #[test]
+    fn a_remote_command_becomes_the_core_s_access_with_the_plugin_s_id() {
+        let accesses = core_accesses(
+            "shell",
+            ToolEffect::SideEffects,
+            vec![remote("key-1", "build-box", "uptime")],
+        )
+        .unwrap();
+
+        assert_eq!(
+            accesses,
+            vec![Access::RemoteCommand {
+                plugin: "shell".to_owned(),
+                target: "key-1".to_owned(),
+                label: "build-box".to_owned(),
+                endpoint: "deploy@build-box.lan:22".to_owned(),
+                identity: "SHA256:x".to_owned(),
+                command: "uptime".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn accesses_that_break_the_sdk_s_rules_are_refused() {
+        let cases = [
+            (
+                ToolEffect::ReadsOwnData,
+                vec![remote("key-1", "box", "uptime")],
+            ),
+            (ToolEffect::SideEffects, Vec::new()),
+            (ToolEffect::SideEffects, vec![remote("", "box", "uptime")]),
+            (ToolEffect::SideEffects, vec![remote("key-1", "", "uptime")]),
+            (
+                ToolEffect::SideEffects,
+                vec![remote("key-1", "box\u{7}", "uptime")],
+            ),
+            (ToolEffect::SideEffects, vec![remote("key-1", "box", "   ")]),
+            (
+                ToolEffect::SideEffects,
+                vec![remote("key-1", "box", "up\0time")],
+            ),
+            (
+                ToolEffect::SideEffects,
+                vec![remote(&"k".repeat(129), "box", "uptime")],
+            ),
+            (
+                ToolEffect::SideEffects,
+                (0..17).map(|_| remote("key-1", "box", "uptime")).collect(),
+            ),
+        ];
+        for (effect, accesses) in cases {
+            assert_eq!(
+                core_accesses("shell", effect, accesses.clone()),
+                Err(invalid()),
+                "{effect:?} {accesses:?}"
+            );
+        }
+        // A command may span lines; it then only offers "Allow once".
+        let multiline = core_accesses(
+            "shell",
+            ToolEffect::SideEffects,
+            vec![remote("key-1", "box", "cd /srv\nmake")],
+        );
+        assert_eq!(multiline.map(|accesses| accesses.len()), Ok(1));
+        assert_eq!(
+            core_accesses("shell", ToolEffect::ReadsOwnData, Vec::new()),
+            Ok(Vec::new())
+        );
+    }
+
+    #[test]
+    fn only_archives_under_reserved_ids_with_a_name_and_within_the_limit_are_kept() {
+        let id = |number: u32| {
+            ArchiveId::parse(&format!("0199e0f2-0000-7000-8000-{number:012}")).unwrap()
+        };
+        let reserved = [id(1), id(2)];
+        let archives = vec![
+            ToolArchive::new(id(1), "stdout", "out".to_owned()),
+            // The same ID twice, an ID that was not reserved, no name and too
+            // much content are left out.
+            ToolArchive::new(id(1), "stdout", "again".to_owned()),
+            ToolArchive::new(id(3), "stderr", "err".to_owned()),
+            ToolArchive::new(id(2), "", "err".to_owned()),
+            ToolArchive::new(id(2), "stderr", "x".repeat(MAX_TOOL_ARCHIVE_BYTES + 1)),
+        ];
+
+        let kept = kept_archives("shell", &reserved, archives);
+
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].id, id(1));
+        assert_eq!(kept[0].content, "out");
+    }
 
     /// A tool with a name and a schema, which the checks read and nothing
     /// runs.

@@ -81,7 +81,9 @@ pub struct PluginUses {
     /// The core's services that the manifest declares, by name.
     pub services: Vec<ServiceUse>,
     /// The plugin's entries in the credential store, as the store names
-    /// them, such as `link/master-key`.
+    /// them, such as `link/master-key`, and its keyed families with
+    /// `<key>` in place of each entry's key, such as `ssh/host/<key>`
+    /// (ADR-0036, decision 8).
     pub secrets: Vec<String>,
     /// The commands that the plugin's UI may call, by name, as its
     /// interface declares them (ADR-0034, decision 8).

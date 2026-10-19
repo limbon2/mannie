@@ -19,7 +19,9 @@
 
 use std::fmt;
 use std::sync::Arc;
+use std::time::Duration;
 
+use crate::BoxFuture;
 use crate::context::HostProfile;
 use crate::contributions::{Contributions, IdRule, PointInfo};
 use crate::ids::{PluginId, owned_by};
@@ -140,6 +142,15 @@ pub trait ContributionConsumer: Send + Sync + fmt::Debug + 'static {
 
     /// Drops a plugin's entries. A plugin without entries changes nothing.
     fn remove(&self, plugin: &PluginId);
+
+    /// Waits up to `grace` for the work that the plugin's entries started and
+    /// that still runs, such as executions of its tools, then aborts the rest
+    /// (ADR-0034, decision 8). The host calls it after
+    /// [`remove`](Self::remove), so no new work starts meanwhile. A consumer
+    /// whose entries start no such work has nothing to wait for.
+    fn drain(&self, _plugin: &PluginId, _grace: Duration) -> BoxFuture<'static, ()> {
+        Box::pin(std::future::ready(()))
+    }
 }
 
 /// Why the core refused a plugin's contributions. It took none of them, and
@@ -268,6 +279,22 @@ pub fn remove_contributions(consumers: &[Arc<dyn ContributionConsumer>], plugin:
     for consumer in consumers.iter().rev() {
         consumer.remove(plugin);
     }
+}
+
+/// Waits for every consumer to drain the plugin's work at the same time, each
+/// up to `grace` before it aborts the rest.
+pub fn drain_contributions(
+    consumers: &[Arc<dyn ContributionConsumer>],
+    plugin: &PluginId,
+    grace: Duration,
+) -> BoxFuture<'static, ()> {
+    let drains: Vec<_> = consumers
+        .iter()
+        .map(|consumer| consumer.drain(plugin, grace))
+        .collect();
+    Box::pin(async move {
+        futures_util::future::join_all(drains).await;
+    })
 }
 
 #[cfg(test)]

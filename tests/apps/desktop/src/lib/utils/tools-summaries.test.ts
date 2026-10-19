@@ -182,6 +182,33 @@ describe('callSummary', () => {
     expect(callSummary(finished)).toContain('notes_find');
     expect(callStatus(finished, 0).tone).toBe('done');
   });
+
+  it("names a plugin's command on a remote host by its command and host, once prepared", () => {
+    const command = 'journalctl -u nginx\n--since today';
+    const access = {
+      command,
+      endpoint: 'deploy@build-box.lan:22',
+      identity: 'SHA256:uX0dFmYbVKUH4bZmL1nOb4TaZ5WPMbgUpkOvR3EJPr0',
+      kind: 'remote_command' as const,
+      label: 'build-box',
+      plugin: 'ssh',
+      target: '0199e0f2-0000-7000-8000-0000000000aa',
+    };
+    const written = call('run_ssh_command', { command, host: 'build-box' });
+    const prepared = call('run_ssh_command', { command, host: 'build-box' }, { accesses: [access] });
+    const finished = call(
+      'run_ssh_command',
+      { command, host: 'build-box' },
+      { accesses: [access], result: result({ kind: 'plugin', plugin: 'ssh' }), status: 'completed' },
+    );
+
+    expect(callSummary(written)).toContain('run_ssh_command');
+    expect(callSummary(prepared)).toContain('journalctl -u nginx …');
+    expect(callSummary(prepared)).toContain('build-box');
+    expect(callSummary(prepared)).not.toContain('--since');
+    expect(callSummary(prepared)).not.toContain('run_ssh_command');
+    expect(callSummary(finished)).toBe(callSummary(prepared));
+  });
 });
 
 describe('callStatus', () => {

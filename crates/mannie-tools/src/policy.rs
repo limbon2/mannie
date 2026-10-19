@@ -10,14 +10,14 @@ use mannie_types::ceiling::CeilingMode;
 use mannie_types::ids::ProjectId;
 use mannie_types::tools::{
     Access, AccessMode, ApprovalReason, ApprovalRequest, CommandRule, Decision, GrantScope,
-    Refusal, RuleProposal, ToolsError,
+    Refusal, RemoteCommandRule, RemoteTarget, RuleProposal, ToolsError,
 };
 
 use crate::ceiling::Ceiling;
 use crate::digest::digest;
 use crate::paths::{is_inside, is_same_path};
 use crate::projects::names_project;
-use crate::rules::{command_words, starts_with_words};
+use crate::rules::{command_words, remote_command_words, starts_with_words};
 
 /// The grants that apply to a conversation, by how far they reach.
 #[derive(Debug, Clone, Copy, Default)]
@@ -45,6 +45,9 @@ pub struct PolicyInputs<'a> {
     pub grants: Grants<'a>,
     /// The command rules.
     pub rules: &'a [CommandRule],
+    /// The rules for commands on remote hosts, each limited to its host
+    /// (ADR-0036).
+    pub remote_rules: &'a [RemoteCommandRule],
     /// The conversation's project, which "Allow for this project" would
     /// cover.
     pub project: Option<&'a ProjectId>,
@@ -73,8 +76,9 @@ pub enum Verdict {
     /// The policy allows the operation. The decision names what allowed it:
     /// the workspace, a grant or a rule.
     Allowed(Decision),
-    /// The owner decides.
-    Ask(ApprovalRequest),
+    /// The owner decides. The request is boxed because it is far larger than
+    /// the other verdicts.
+    Ask(Box<ApprovalRequest>),
     /// A worker's ceiling forbids the operation; nobody can allow it.
     Refused(Refusal),
 }
@@ -88,13 +92,14 @@ pub enum Verdict {
 /// 3. a change inside the workspace is allowed when the settings say so;
 /// 4. a grant of the conversation, of its project or for every conversation
 ///    allows what it covers;
-/// 5. a rule allows a command it matches;
+/// 5. a rule allows a command it matches, and a rule of a remote host a
+///    command on that host;
 /// 6. a move into a project that the owner's request names is allowed;
 /// 7. everything else asks.
 ///
-/// Commands are never allowed by the workspace, a command with a
-/// metacharacter is never allowed by a grant or a rule, and a move is never
-/// granted.
+/// Commands, here or on a remote host, are never allowed by the workspace, a
+/// command with a metacharacter is never allowed by a grant or a rule, and a
+/// move is never granted.
 ///
 /// On a worker, its ceiling decides in place of the workspace and the rules
 /// ([`decide_under_ceiling`]): an access that the ceiling forbids refuses the
@@ -135,17 +140,17 @@ pub fn decide(accesses: &[Access], inputs: &PolicyInputs<'_>) -> Verdict {
     if inputs.ceiling.is_some() {
         // A worker grants nothing for longer than once and saves no rule, so
         // nothing that the master sends widens its ceiling (ADR-0028).
-        return Verdict::Ask(ApprovalRequest {
+        return Verdict::Ask(Box::new(ApprovalRequest {
             digest: digest(accesses),
             reasons,
             grants: Vec::new(),
             rule: None,
             project: None,
             host: inputs.host.map(str::to_owned),
-        });
+        }));
     }
     let protected = reasons.contains(&ApprovalReason::MannieFolder);
-    Verdict::Ask(ApprovalRequest {
+    Verdict::Ask(Box::new(ApprovalRequest {
         digest: digest(accesses),
         grants: if protected {
             Vec::new()
@@ -156,7 +161,7 @@ pub fn decide(accesses: &[Access], inputs: &PolicyInputs<'_>) -> Verdict {
         reasons,
         project: inputs.project.cloned(),
         host: None,
-    })
+    }))
 }
 
 /// Why an access does not run without the owner.
@@ -245,6 +250,9 @@ fn decide_under_ceiling(
             Err(Hold::Ask(ApprovalReason::Command))
         }
         Access::Project { .. } => Err(Hold::Refuse(Refusal::NoProjectsOnHost)),
+        // A worker runs no plugins, so no tool of its own reaches a remote
+        // host; the refusal keeps every access answered (ADR-0036).
+        Access::RemoteCommand { .. } => Err(Hold::Refuse(Refusal::NoRemoteCommands)),
     }
 }
 
@@ -308,6 +316,54 @@ fn decide_access(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decision,
                 Err(ApprovalReason::MoveToProject)
             }
         }
+        // The workspace and Mannie's own folders are this machine's, so
+        // neither applies on a remote host (ADR-0036).
+        Access::RemoteCommand {
+            plugin,
+            target,
+            endpoint,
+            command,
+            ..
+        } => {
+            let Some(words) = remote_command_words(command) else {
+                return Err(ApprovalReason::RemoteCommand);
+            };
+            let host = HostKey {
+                plugin,
+                target,
+                endpoint,
+            };
+            if let Some(decision) = granted(&inputs.grants, |grant| {
+                covers_remote_command(grant, &host, command)
+            }) {
+                return Ok(decision);
+            }
+            if inputs
+                .remote_rules
+                .iter()
+                .any(|rule| host.is(&rule.target) && starts_with_words(&words, &rule.words))
+            {
+                return Ok(Decision::Rule);
+            }
+            Err(ApprovalReason::RemoteCommand)
+        }
+    }
+}
+
+/// The parts of a remote host that decide what a grant or a rule covers: its
+/// plugin, the plugin's key for it and the endpoint, never its name.
+struct HostKey<'a> {
+    plugin: &'a str,
+    target: &'a str,
+    endpoint: &'a str,
+}
+
+impl HostKey<'_> {
+    /// Whether a rule's or a proposal's target is this host.
+    fn is(&self, target: &RemoteTarget) -> bool {
+        target.plugin == self.plugin
+            && target.target == self.target
+            && target.endpoint == self.endpoint
     }
 }
 
@@ -358,7 +414,7 @@ fn covers_path(grant: &GrantScope, path: &Path, mode: AccessMode) -> bool {
             mode: granted,
             folder,
         } => *granted == mode && is_inside(path, Path::new(folder)),
-        GrantScope::Command { .. } => false,
+        GrantScope::Command { .. } | GrantScope::RemoteCommand { .. } => false,
     }
 }
 
@@ -369,7 +425,27 @@ fn covers_command(grant: &GrantScope, command: &str, directory: &Path) -> bool {
             command: granted,
             working_directory,
         } => granted == command && is_same_path(directory, Path::new(working_directory)),
-        GrantScope::Path { .. } => false,
+        GrantScope::Path { .. } | GrantScope::RemoteCommand { .. } => false,
+    }
+}
+
+/// Whether a grant covers a command on a remote host: the same command text
+/// on the same host at the same endpoint.
+fn covers_remote_command(grant: &GrantScope, host: &HostKey<'_>, command: &str) -> bool {
+    match grant {
+        GrantScope::RemoteCommand {
+            plugin,
+            target,
+            endpoint,
+            command: granted,
+            ..
+        } => {
+            plugin == host.plugin
+                && target == host.target
+                && endpoint == host.endpoint
+                && granted == command
+        }
+        GrantScope::Path { .. } | GrantScope::Command { .. } => false,
     }
 }
 
@@ -400,8 +476,8 @@ fn grants_for(asking: &[&Access]) -> Vec<GrantScope> {
 }
 
 /// The grant that covers an access: its mode in the folder itself for a
-/// folder, in the folder of a file; or the same command in the same working
-/// directory.
+/// folder, in the folder of a file; the same command in the same working
+/// directory; or the same command on the same remote host.
 fn grant_scope(access: &Access) -> Option<GrantScope> {
     match access {
         Access::Path {
@@ -429,6 +505,23 @@ fn grant_scope(access: &Access) -> Option<GrantScope> {
             })
         }
         Access::Project { .. } => None,
+        Access::RemoteCommand {
+            plugin,
+            target,
+            label,
+            endpoint,
+            command,
+            ..
+        } => {
+            remote_command_words(command)?;
+            Some(GrantScope::RemoteCommand {
+                plugin: plugin.clone(),
+                target: target.clone(),
+                label: label.clone(),
+                endpoint: endpoint.clone(),
+                command: command.clone(),
+            })
+        }
     }
 }
 
@@ -455,45 +548,114 @@ fn scope_covers(wider: &GrantScope, narrower: &GrantScope) -> bool {
             command == narrower_command
                 && is_same_path(Path::new(narrower_directory), Path::new(working_directory))
         }
+        (
+            GrantScope::RemoteCommand {
+                plugin,
+                target,
+                endpoint,
+                command,
+                ..
+            },
+            GrantScope::RemoteCommand {
+                plugin: narrower_plugin,
+                target: narrower_target,
+                endpoint: narrower_endpoint,
+                command: narrower_command,
+                ..
+            },
+        ) => {
+            plugin == narrower_plugin
+                && target == narrower_target
+                && endpoint == narrower_endpoint
+                && command == narrower_command
+        }
         _ => false,
     }
 }
 
 /// The rule that "Save rule" can make: only for an operation that is one
-/// command that a rule can cover.
+/// command that a rule can cover, here or on a remote host.
 fn rule_for(accesses: &[Access]) -> Option<RuleProposal> {
-    let [
-        Access::Command {
-            command,
-            working_directory,
-            ..
-        },
-    ] = accesses
-    else {
-        return None;
-    };
-    Some(RuleProposal {
-        words: command_words(command)?,
-        folder: working_directory.clone(),
-    })
+    match accesses {
+        [
+            Access::Command {
+                command,
+                working_directory,
+                ..
+            },
+        ] => Some(RuleProposal {
+            words: command_words(command)?,
+            folder: working_directory.clone(),
+            remote: None,
+        }),
+        [
+            Access::RemoteCommand {
+                plugin,
+                target,
+                label,
+                endpoint,
+                command,
+                ..
+            },
+        ] => Some(RuleProposal {
+            words: remote_command_words(command)?,
+            folder: String::new(),
+            remote: Some(RemoteTarget {
+                plugin: plugin.clone(),
+                target: target.clone(),
+                label: label.clone(),
+                endpoint: endpoint.clone(),
+            }),
+        }),
+        _ => None,
+    }
 }
 
-/// The words and the folder of the rule that "Save rule" makes from a
-/// request's proposal, with the leading words and the folder limit the owner
-/// chose. The core builds the rule from the request it holds, so the UI
-/// cannot widen it.
+/// The rule that "Save rule" makes from a request's proposal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SavedRule {
+    /// A rule for commands on this machine.
+    Local {
+        /// The leading words a command must start with.
+        words: Vec<String>,
+        /// The folder the working directory must lie in, or `None` for
+        /// anywhere.
+        folder: Option<String>,
+    },
+    /// A rule for commands on one remote host (ADR-0036).
+    Remote {
+        /// The host, which the rule is always limited to.
+        target: RemoteTarget,
+        /// The leading words a command must start with.
+        words: Vec<String>,
+    },
+}
+
+/// The rule that "Save rule" makes from a request's proposal, with the
+/// leading words and the folder limit the owner chose. A rule for a remote
+/// host is always limited to that host, so the folder limit does not apply.
+/// The core builds the rule from the request it holds, so the UI cannot
+/// widen it.
 pub fn saved_rule(
     proposal: &RuleProposal,
     prefix_words: u32,
     limit_to_folder: bool,
-) -> Result<(Vec<String>, Option<String>), ToolsError> {
+) -> Result<SavedRule, ToolsError> {
     let count = usize::try_from(prefix_words).unwrap_or(usize::MAX);
     if count == 0 || count > proposal.words.len() {
         return Err(ToolsError::RulePrefixInvalid);
     }
     let words = proposal.words[..count].to_vec();
-    let folder = limit_to_folder.then(|| proposal.folder.clone());
-    Ok((words, folder))
+    Ok(match &proposal.remote {
+        Some(target) => SavedRule::Remote {
+            target: target.clone(),
+            words,
+        },
+        None => SavedRule::Local {
+            words,
+            folder: limit_to_folder.then(|| proposal.folder.clone()),
+        },
+    })
 }
 
 #[cfg(test)]

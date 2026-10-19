@@ -18,7 +18,7 @@ describe('grantLines', () => {
           programs: [{ crates: ['mannie-link-worker'], package: 'mannie-worker' }, { package: 'mannie-sync' }],
           rust: { entry: 'mannie-workers' },
           sdk: 1,
-          secrets: { entries: ['token'], legacy: ['link/master-key'] },
+          secrets: { entries: ['token'], keyed: ['host'], legacy: ['link/master-key'] },
           services: { 'executor-host': 1, secrets: 1 },
         },
         validation: false,
@@ -30,7 +30,7 @@ describe('grantLines', () => {
     assert.deepEqual(lines, [
       'workers (plugins/workers)',
       '  Services: executor-host 1, secrets 1 (sensitive)',
-      '  Secret entries: workers/token, link/master-key (a legacy name)',
+      '  Secret entries: workers/token, link/master-key (a legacy name), workers/host/<key> (a keyed family)',
       '  Commands: pair_worker, remove_worker',
       '  Channels: subscribe_workers',
       '  Programs: mannie-worker, with mannie-link-worker; mannie-sync',

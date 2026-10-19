@@ -9,8 +9,8 @@ use std::collections::BTreeSet;
 
 use mannie_plugin_sdk::context::{HostInfo, HostProfile};
 use mannie_plugin_sdk::contracts::{
-    CommandError, ImageFormat, MentionEntry, MentionSummary, ProfileSnapshot, SubscriptionEnd,
-    TaskExecutorRef, TaskState, WorkItem,
+    ArchiveId, CommandError, ImageFormat, MentionEntry, MentionSummary, ProfileSnapshot,
+    SubscriptionEnd, TaskExecutorRef, TaskState, WorkItem,
 };
 use mannie_plugin_sdk::error::StartFailure;
 use mannie_plugin_sdk::ids::PluginId;
@@ -23,7 +23,8 @@ use mannie_plugin_sdk::points::executors::{
 use mannie_plugin_sdk::points::mentions::{ProviderSuggestions, ReadVerdict, RenderedMention};
 use mannie_plugin_sdk::points::sections::SectionContext;
 use mannie_plugin_sdk::points::tools::{
-    AgentSelector, ToolAccess, ToolCall, ToolExecution, ToolRefusal, ToolResult, ToolSpec,
+    AgentSelector, RemoteCommandAccess, ToolAccess, ToolArchive, ToolCall, ToolExecution,
+    ToolRefusal, ToolResult, ToolSpec,
 };
 use mannie_plugin_sdk::services::credentials::LendError;
 use mannie_plugin_sdk::services::executor_host::{ExecutorTask, HostFailure, OutboxItem};
@@ -376,7 +377,14 @@ fn a_tool_call_and_its_execution_cross_json_with_their_conversation() {
     assert_eq!(serde_json::to_value(&call).unwrap(), json);
     assert_eq!(execution.arguments, call.arguments);
     assert_eq!(execution.conversation_id, call.conversation_id);
-    assert_eq!(serde_json::to_value(&execution).unwrap(), json);
+    // An execution without the fields of ADR-0036 authorized nothing,
+    // reserved no archive and has the largest result limit.
+    assert_eq!(execution.authorized, Vec::new());
+    assert_eq!(execution.archive_ids, Vec::new());
+    assert_eq!(execution.result_limit, 64 * 1024);
+    let mut with_limit = json;
+    with_limit["resultLimit"] = json!(64 * 1024);
+    assert_eq!(serde_json::to_value(&execution).unwrap(), with_limit);
     let error = serde_json::from_value::<ToolCall>(json!({
         "arguments": "{}",
         "conversationId": "conversation one"
@@ -406,15 +414,78 @@ fn a_tool_s_refusal_and_result_cross_json_unchanged() {
 }
 
 #[test]
-fn json_never_decodes_to_a_tool_access_in_sdk_1() {
+fn a_remote_command_crosses_json_with_its_kind_and_nothing_else_decodes_to_an_access() {
+    let access = ToolAccess::RemoteCommand(RemoteCommandAccess::new(
+        "0199e0f2-0000-7000-8000-0000000000aa".to_owned(),
+        "build-box".to_owned(),
+        "deploy@build-box.lan:22".to_owned(),
+        "SHA256:vh3fjoyg7pBnxLhORIqZjyJQqYYN/gzBTuj+mPdeJlo".to_owned(),
+        "uname -a".to_owned(),
+    ));
+    let json = json!({
+        "kind": "remote_command",
+        "target": "0199e0f2-0000-7000-8000-0000000000aa",
+        "label": "build-box",
+        "endpoint": "deploy@build-box.lan:22",
+        "identity": "SHA256:vh3fjoyg7pBnxLhORIqZjyJQqYYN/gzBTuj+mPdeJlo",
+        "command": "uname -a"
+    });
+
+    assert_eq!(serde_json::to_value(&access).unwrap(), json);
+    assert_eq!(serde_json::from_value::<ToolAccess>(json).unwrap(), access);
     for json in [
         json!("remote"),
         json!({ "remote": { "origin": "https://example.com" } }),
+        json!({ "kind": "path", "path": "/etc/hosts" }),
+        json!({ "kind": "remote_command", "target": "a" }),
         json!(null),
     ] {
         let error = serde_json::from_value::<ToolAccess>(json.clone()).unwrap_err();
         assert!(error.is_data(), "{json}: {error}");
     }
+}
+
+#[test]
+fn a_result_carries_its_archives_and_an_execution_its_authorized_accesses() {
+    let archive_id = ArchiveId::parse("0199e0f2-0000-7000-8000-0000000000cc").unwrap();
+    let result = ToolResult::new("Exit code: 0").with_archives(vec![ToolArchive::new(
+        archive_id.clone(),
+        "stdout",
+        "hello\n".to_owned(),
+    )]);
+
+    let json = serde_json::to_value(&result).unwrap();
+
+    assert_eq!(
+        json,
+        json!({
+            "output": "Exit code: 0",
+            "archives": [{
+                "id": "0199e0f2-0000-7000-8000-0000000000cc",
+                "name": "stdout",
+                "content": "hello\n"
+            }]
+        })
+    );
+    assert_eq!(serde_json::from_value::<ToolResult>(json).unwrap(), result);
+    let execution = serde_json::from_value::<ToolExecution>(json!({
+        "arguments": "{}",
+        "conversationId": "0199e0f2-0000-7000-8000-000000000001",
+        "authorized": [{
+            "kind": "remote_command",
+            "target": "t",
+            "label": "build-box",
+            "endpoint": "deploy@build-box.lan:22",
+            "identity": "SHA256:x",
+            "command": "uptime"
+        }],
+        "resultLimit": 4096,
+        "archiveIds": ["0199e0f2-0000-7000-8000-0000000000cc"]
+    }))
+    .unwrap();
+    assert_eq!(execution.authorized.len(), 1);
+    assert_eq!(execution.result_limit, 4096);
+    assert_eq!(execution.archive_ids, vec![archive_id]);
 }
 
 /// A worker as a task's target.

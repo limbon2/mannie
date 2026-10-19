@@ -1,0 +1,115 @@
+{
+  "turns": [
+    {
+      "id": "0199e0f2-0000-7000-a000-000000000003",
+      "position": 0,
+      "run": {
+        "id": "0199e0f2-0000-7000-a000-000000000004",
+        "turnId": "0199e0f2-0000-7000-a000-000000000003",
+        "profileId": "0199e0f2-0000-7000-a000-000000000005",
+        "state": "completed",
+        "activity": null,
+        "outcome": {
+          "failure": null,
+          "finish": "stop",
+          "usage": null,
+          "promptCut": false
+        },
+        "createdAt": 1792000000000,
+        "endedAt": 1792000000052
+      },
+      "parts": [
+        {
+          "id": "0199e0f2-0000-7000-a000-000000000007",
+          "turnId": "0199e0f2-0000-7000-a000-000000000003",
+          "runId": null,
+          "position": 0,
+          "state": "complete",
+          "content": {
+            "kind": "user_text",
+            "text": "Write the marker, then report."
+          },
+          "createdAt": 1792000000000
+        },
+        {
+          "id": "0199e0f2-0000-7000-a000-000000000006",
+          "turnId": "0199e0f2-0000-7000-a000-000000000003",
+          "runId": "0199e0f2-0000-7000-a000-000000000004",
+          "position": 1,
+          "state": "complete",
+          "content": {
+            "kind": "tool_call",
+            "call": {
+              "tool": "write_file",
+              "activity": "Writing",
+              "arguments": "{\"activity\":\"Writing\",\"content\":\"built\\n\",\"path\":\"/srv/build/marker.txt\"}",
+              "argumentsCut": false,
+              "status": "completed",
+              "accesses": [
+                {
+                  "kind": "path",
+                  "path": "/srv/build/marker.txt",
+                  "mode": "create",
+                  "folder": false,
+                  "exists": false,
+                  "identity": "803:1442",
+                  "entries": null
+                }
+              ],
+              "request": {
+                "digest": "3ffac39be6e708d553fc2ccc3875dc46779e081396ccd44524bfc4662f063eab",
+                "reasons": ["host_asks"],
+                "grants": [],
+                "rule": null,
+                "project": null,
+                "host": "build-01"
+              },
+              "decision": "allowed_once",
+              "startedAt": 1792000000033,
+              "endedAt": 1792000000041,
+              "result": {
+                "outcome": {
+                  "kind": "written",
+                  "path": "/srv/build/marker.txt",
+                  "created": true,
+                  "bytes": 6
+                },
+                "output": "Created /srv/build/marker.txt (6 bytes).\nRevision: sha256:56f6e6304d02d413bb7d5d463ac5cdc58551266dc7269b467fc385815f39b913\n",
+                "archives": []
+              },
+              "notRun": null,
+              "interruption": null
+            }
+          },
+          "createdAt": 1792000000020
+        },
+        {
+          "id": "0199e0f2-0000-7000-a000-000000000008",
+          "turnId": "0199e0f2-0000-7000-a000-000000000003",
+          "runId": "0199e0f2-0000-7000-a000-000000000004",
+          "position": 2,
+          "state": "complete",
+          "content": {
+            "kind": "text",
+            "text": "Written."
+          },
+          "createdAt": 1792000000048
+        },
+        {
+          "id": "0199e0f2-0000-7000-a000-000000000009",
+          "turnId": "0199e0f2-0000-7000-a000-000000000003",
+          "runId": "0199e0f2-0000-7000-a000-000000000004",
+          "position": 4,
+          "state": "complete",
+          "content": {
+            "kind": "text",
+            "text": "Report: the marker is written."
+          },
+          "createdAt": 1792000000052
+        }
+      ],
+      "createdAt": 1792000000000
+    }
+  ],
+  "hasEarlierTurns": false
+}

@@ -847,7 +847,7 @@ fn path_accesses(accesses: &[Access]) -> Vec<(String, AccessMode, bool)> {
             Access::Path {
                 path, mode, folder, ..
             } => (path.clone(), *mode, *folder),
-            Access::Command { .. } | Access::Project { .. } => {
+            Access::Command { .. } | Access::Project { .. } | Access::RemoteCommand { .. } => {
                 panic!("not a path access: {access:?}")
             }
         })

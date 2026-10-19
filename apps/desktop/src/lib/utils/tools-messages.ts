@@ -9,6 +9,7 @@ import type {
   Decision,
   EntryCount,
   GrantScope,
+  Interruption,
   NotRunReason,
   PathRefusal,
   Refusal,
@@ -213,6 +214,9 @@ export function toolFailureMessage(failure: ToolFailure): string {
     case 'permission_denied': {
       return m.tools_failure_permission_denied({ path: failure.path });
     }
+    case 'plugin_invalid': {
+      return m.tools_failure_plugin_invalid({ plugin: pluginName(failure.plugin) });
+    }
     case 'project_not_found': {
       return m.tools_failure_project_not_found({ project: failure.project });
     }
@@ -273,6 +277,9 @@ export function refusalMessage(refusal: Refusal): string {
     case 'no_projects_on_host': {
       return m.tools_refusal_no_projects_on_host();
     }
+    case 'no_remote_commands': {
+      return m.tools_refusal_no_remote_commands();
+    }
     case 'read_only_host': {
       return m.tools_refusal_read_only_host();
     }
@@ -305,6 +312,9 @@ export function approvalReasonMessage(reason: ApprovalReason): string {
     }
     case 'outside_workspace': {
       return m.tools_reason_outside_workspace();
+    }
+    case 'remote_command': {
+      return m.tools_reason_remote_command();
     }
   }
 }
@@ -387,10 +397,28 @@ export function entryCountMessage(entries: EntryCount): string {
   return new Intl.ListFormat(undefined, { type: 'conjunction' }).format(counts);
 }
 
+/** Why an operation that was executing may have taken effect: Mannie quit, the owner stopped it, or its plugin went off. */
+export function uncertainMessage(interruption: Interruption | null): string {
+  if (interruption === null) {
+    return m.tools_uncertain_description();
+  }
+  switch (interruption.reason) {
+    case 'plugin_off': {
+      return m.tools_uncertain_plugin_off_description({ plugin: pluginName(interruption.plugin) });
+    }
+    case 'stopped': {
+      return m.tools_uncertain_stopped_description();
+    }
+  }
+}
+
 /** What a grant allows, such as "Changing files in D:\Projects\app". */
 export function grantScopeMessage(scope: GrantScope): string {
   if (scope.kind === 'command') {
     return m.tools_grant_command({ command: scope.command, folder: scope.workingDirectory });
+  }
+  if (scope.kind === 'remote_command') {
+    return m.tools_grant_remote_command({ command: scope.command, endpoint: scope.endpoint, host: scope.label });
   }
   switch (scope.mode) {
     case 'create': {

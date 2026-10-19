@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   CommandRule,
+  RemoteCommandRule,
   SharedGrant,
   ToolsError,
   ToolsSettings,
@@ -18,8 +19,10 @@ import {
 
 const core = vi.hoisted(() => ({
   deleteCommandRule: vi.fn(),
+  deleteRemoteCommandRule: vi.fn(),
   getToolsSettings: vi.fn(),
   listCommandRules: vi.fn(),
+  listRemoteCommandRules: vi.fn(),
   listSharedGrants: vi.fn(),
   revokeSharedGrant: vi.fn(),
   updateToolsSettings: vi.fn(),
@@ -37,6 +40,18 @@ const RULE: CommandRule = {
   folder: null,
   id: '0199e0f2-0000-7000-8000-0000000000bb',
   words: ['cargo', 'test'],
+};
+
+const REMOTE_RULE: RemoteCommandRule = {
+  createdAt: 0,
+  id: '0199e0f2-0000-7000-8000-0000000000dd',
+  target: {
+    endpoint: 'deploy@build-box.lan:22',
+    label: 'build-box',
+    plugin: 'ssh',
+    target: '0199e0f2-0000-7000-8000-0000000000aa',
+  },
+  words: ['systemctl', 'status'],
 };
 
 function ok<T>(data: T): { data: T; status: 'ok' } {
@@ -107,6 +122,10 @@ describe('ToolsSettingsState', () => {
 });
 
 describe('CommandRulesState', () => {
+  beforeEach(() => {
+    core.listRemoteCommandRules.mockResolvedValue(ok([]));
+  });
+
   it('lists the rules and deletes one', async () => {
     const rules = new CommandRulesState();
     core.listCommandRules.mockResolvedValue(ok([RULE]));
@@ -118,6 +137,7 @@ describe('CommandRulesState', () => {
 
     expect(core.deleteCommandRule).toHaveBeenCalledWith({ ruleId: RULE.id });
     expect(rules.rules).toEqual([]);
+    expect(rules.isEmpty).toBe(true);
   });
 
   it('drops a rule that is already gone, and keeps one whose deletion failed', async () => {
@@ -142,6 +162,59 @@ describe('CommandRulesState', () => {
 
     expect(rules.status).toBe('error');
     expect(rules.readFailure?.kind).toBe('core');
+  });
+
+  it('lists the rules of remote hosts beside the local ones, and deletes one of them', async () => {
+    const rules = new CommandRulesState();
+    core.listCommandRules.mockResolvedValue(ok([RULE]));
+    core.listRemoteCommandRules.mockResolvedValue(ok([REMOTE_RULE]));
+    core.deleteRemoteCommandRule.mockResolvedValue(ok(null));
+
+    await rules.load();
+    expect(rules.status).toBe('ready');
+    expect(rules.remoteRules).toEqual([REMOTE_RULE]);
+    await rules.removeRemote(REMOTE_RULE.id);
+
+    expect(core.deleteRemoteCommandRule).toHaveBeenCalledWith({ ruleId: REMOTE_RULE.id });
+    expect(core.deleteCommandRule).not.toHaveBeenCalled();
+    expect(rules.remoteRules).toEqual([]);
+    expect(rules.rules).toEqual([RULE]);
+    expect(rules.isEmpty).toBe(false);
+  });
+
+  it('drops a remote rule that is already gone, and keeps one whose deletion failed', async () => {
+    const rules = new CommandRulesState();
+    core.listCommandRules.mockResolvedValue(ok([]));
+    core.listRemoteCommandRules.mockResolvedValue(ok([REMOTE_RULE, { ...REMOTE_RULE, id: 'kept' }]));
+    await rules.load();
+
+    core.deleteRemoteCommandRule.mockResolvedValueOnce(refused({ code: 'rule_not_found' }));
+    await rules.removeRemote(REMOTE_RULE.id);
+    core.deleteRemoteCommandRule.mockResolvedValueOnce(refused({ code: 'storage_failed' }));
+    await rules.removeRemote('kept');
+
+    expect(rules.remoteRules.map((rule) => rule.id)).toEqual(['kept']);
+    expect(rules.deleteFailure?.kind).toBe('core');
+    expect(rules.deleting).toEqual([]);
+  });
+
+  it('reports the rules as unreadable when the rules of remote hosts cannot be read, and keeps the last lists', async () => {
+    const rules = new CommandRulesState();
+    core.listCommandRules.mockResolvedValue(ok([RULE]));
+    core.listRemoteCommandRules.mockResolvedValue(ok([REMOTE_RULE]));
+    await rules.load();
+
+    core.listCommandRules.mockResolvedValue(ok([]));
+    core.listRemoteCommandRules.mockResolvedValue(refused({ code: 'store_unavailable' }));
+    await rules.load();
+
+    expect(rules.status).toBe('error');
+    expect(rules.readFailure).toEqual({
+      error: { code: 'store_unavailable', description: 'refused' },
+      kind: 'core',
+    });
+    expect(rules.rules).toEqual([RULE]);
+    expect(rules.remoteRules).toEqual([REMOTE_RULE]);
   });
 });
 

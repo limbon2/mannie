@@ -4,6 +4,15 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+### Added
+
+- A plugin's tool may run commands on remote hosts that the owner registered with the plugin (ADR-0036): each command is an operation that the policy decides and the journal records, its approval shows the host, its address and its key, grants and rules for it cover only that host, and the Tools settings list those rules with their host.
+- A plugin's tool may return archives with its result, which `read_tool_output` reads, and a plugin may keep a family of secrets with one entry for each thing it knows, such as a password for each host, which the Plugins page and `task plugins:grants` list.
+
+### Changed
+
+- Turning a plugin off waits up to 5 seconds for the calls of its tools that run, then lets them go: an operation becomes uncertain, and a read ends as not run. An operation of a plugin's tool that the owner stopped while it ran is uncertain too, and each says why.
+
 ### Fixed
 
 - The note in a command's cut output says how many bytes of a long line it leaves out, where it said the whole line was left out while showing part of it, and calls the archive whole only when Mannie kept all of the output.

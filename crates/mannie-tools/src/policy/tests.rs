@@ -5,10 +5,10 @@ use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{ProjectId, RuleId};
 use mannie_types::tools::{
     Access, AccessMode, ApprovalReason, ApprovalRequest, CommandRule, Decision, EntryCount,
-    GrantScope, Refusal, RuleProposal, ToolsError,
+    GrantScope, Refusal, RemoteCommandRule, RemoteTarget, RuleProposal, ToolsError,
 };
 
-use super::{Grants, PolicyInputs, Verdict, decide, saved_rule};
+use super::{Grants, PolicyInputs, SavedRule, Verdict, decide, saved_rule};
 use crate::ceiling::Ceiling;
 use crate::digest::digest;
 
@@ -80,6 +80,7 @@ struct Inputs {
     project_grants: Vec<GrantScope>,
     always_grants: Vec<GrantScope>,
     rules: Vec<CommandRule>,
+    remote_rules: Vec<RemoteCommandRule>,
     project: Option<ProjectId>,
     owner_request: Option<String>,
     ceiling: Option<Ceiling>,
@@ -98,6 +99,7 @@ impl Inputs {
             project_grants: Vec::new(),
             always_grants: Vec::new(),
             rules: Vec::new(),
+            remote_rules: Vec::new(),
             project: None,
             owner_request: None,
             ceiling: None,
@@ -135,6 +137,7 @@ impl Inputs {
                     always: &self.always_grants,
                 },
                 rules: &self.rules,
+                remote_rules: &self.remote_rules,
                 project: self.project.as_ref(),
                 owner_request: self.owner_request.as_deref(),
                 ceiling: self.ceiling.as_ref(),
@@ -151,27 +154,27 @@ fn ask(
     grants: Vec<GrantScope>,
     rule: Option<RuleProposal>,
 ) -> Verdict {
-    Verdict::Ask(ApprovalRequest {
+    Verdict::Ask(Box::new(ApprovalRequest {
         digest: digest(accesses),
         reasons: reasons.to_vec(),
         grants,
         rule,
         project: None,
         host: None,
-    })
+    }))
 }
 
 /// A worker's request: it names the host and offers nothing for longer than
 /// once.
 fn worker_ask(accesses: &[Access], reasons: &[ApprovalReason]) -> Verdict {
-    Verdict::Ask(ApprovalRequest {
+    Verdict::Ask(Box::new(ApprovalRequest {
         digest: digest(accesses),
         reasons: reasons.to_vec(),
         grants: Vec::new(),
         rule: None,
         project: None,
         host: Some("build-01".to_owned()),
-    })
+    }))
 }
 
 const MODES: [CeilingMode; 3] = [
@@ -323,6 +326,7 @@ fn commands_ask_and_offer_a_grant_and_a_rule() {
             Some(RuleProposal {
                 words: vec!["git".to_owned(), "status".to_owned(), "--short".to_owned()],
                 folder: at("/work"),
+                remote: None,
             })
         )
     );
@@ -619,15 +623,22 @@ fn saved_rules_keep_the_chosen_leading_words() {
     let proposal = RuleProposal {
         words: vec!["git".to_owned(), "status".to_owned(), "--short".to_owned()],
         folder: at("/work"),
+        remote: None,
     };
 
     assert_eq!(
         saved_rule(&proposal, 2, false),
-        Ok((vec!["git".to_owned(), "status".to_owned()], None))
+        Ok(SavedRule::Local {
+            words: vec!["git".to_owned(), "status".to_owned()],
+            folder: None
+        })
     );
     assert_eq!(
         saved_rule(&proposal, 3, true),
-        Ok((proposal.words.clone(), Some(at("/work"))))
+        Ok(SavedRule::Local {
+            words: proposal.words.clone(),
+            folder: Some(at("/work"))
+        })
     );
     assert_eq!(
         saved_rule(&proposal, 0, false),
@@ -906,5 +917,229 @@ fn a_read_only_task_narrows_a_host_in_full_access() {
     assert_eq!(
         inputs.decide(&[command("ls", "/srv/app")]),
         Verdict::Refused(Refusal::ReadOnlyHost)
+    );
+}
+
+// Commands on remote hosts (ADR-0036): the same choices as commands here,
+// with grants and rules that cover one host at one endpoint.
+
+const SSH_HOST: &str = "0199e0f2-0000-7000-8000-0000000000aa";
+const OTHER_HOST: &str = "0199e0f2-0000-7000-8000-0000000000bb";
+const ENDPOINT: &str = "deploy@build-box.lan:22";
+
+fn remote_on(target: &str, endpoint: &str, text: &str) -> Access {
+    Access::RemoteCommand {
+        plugin: "ssh".to_owned(),
+        target: target.to_owned(),
+        label: "build-box".to_owned(),
+        endpoint: endpoint.to_owned(),
+        identity: "SHA256:vh3fjoyg7pBnxLhORIqZjyJQqYYN/gzBTuj+mPdeJlo".to_owned(),
+        command: text.to_owned(),
+    }
+}
+
+fn remote(text: &str) -> Access {
+    remote_on(SSH_HOST, ENDPOINT, text)
+}
+
+fn host(target: &str, endpoint: &str) -> RemoteTarget {
+    RemoteTarget {
+        plugin: "ssh".to_owned(),
+        target: target.to_owned(),
+        label: "build-box".to_owned(),
+        endpoint: endpoint.to_owned(),
+    }
+}
+
+fn remote_grant(text: &str) -> GrantScope {
+    GrantScope::RemoteCommand {
+        plugin: "ssh".to_owned(),
+        target: SSH_HOST.to_owned(),
+        label: "build-box".to_owned(),
+        endpoint: ENDPOINT.to_owned(),
+        command: text.to_owned(),
+    }
+}
+
+fn remote_rule(target: &str, words: &[&str]) -> RemoteCommandRule {
+    RemoteCommandRule {
+        id: RuleId::parse("0199e0f2-0000-7000-9000-000000000002").unwrap(),
+        target: host(target, ENDPOINT),
+        words: words.iter().map(|word| (*word).to_owned()).collect(),
+        created_at: UtcMillis::EPOCH,
+    }
+}
+
+#[test]
+fn a_remote_command_asks_and_offers_a_grant_and_a_rule_for_its_host() {
+    let inputs = Inputs::new();
+    let accesses = [remote("systemctl status nginx")];
+
+    assert_eq!(
+        inputs.decide(&accesses),
+        ask(
+            &accesses,
+            &[ApprovalReason::RemoteCommand],
+            vec![remote_grant("systemctl status nginx")],
+            Some(RuleProposal {
+                words: vec![
+                    "systemctl".to_owned(),
+                    "status".to_owned(),
+                    "nginx".to_owned()
+                ],
+                folder: String::new(),
+                remote: Some(host(SSH_HOST, ENDPOINT)),
+            })
+        )
+    );
+}
+
+#[test]
+fn neither_the_workspace_nor_a_local_rule_or_grant_allows_a_remote_command() {
+    let mut inputs = Inputs::new();
+    inputs.allow_changes_in_workspace = true;
+    inputs.rules = vec![rule(&["uptime"], None)];
+    inputs.grants = vec![command_grant("uptime", "/work")];
+
+    assert!(matches!(
+        inputs.decide(&[remote("uptime")]),
+        Verdict::Ask(_)
+    ));
+}
+
+#[test]
+fn a_grant_covers_the_same_command_on_the_same_host_and_endpoint_only() {
+    let mut inputs = Inputs::new();
+    inputs.grants = vec![remote_grant("uptime")];
+
+    assert_eq!(
+        inputs.decide(&[remote("uptime")]),
+        Verdict::Allowed(Decision::Grant)
+    );
+    for accesses in [
+        [remote("uptime -p")],
+        [remote_on(OTHER_HOST, ENDPOINT, "uptime")],
+        [remote_on(SSH_HOST, "root@build-box.lan:22", "uptime")],
+        [remote_on(SSH_HOST, "deploy@build-box.lan:2222", "uptime")],
+    ] {
+        assert!(
+            matches!(inputs.decide(&accesses), Verdict::Ask(_)),
+            "{accesses:?}"
+        );
+    }
+
+    // The host's name is for display: a renamed host keeps its grants.
+    let mut renamed = remote("uptime");
+    if let Access::RemoteCommand { label, .. } = &mut renamed {
+        "build-box-2".clone_into(label);
+    }
+    assert_eq!(inputs.decide(&[renamed]), Verdict::Allowed(Decision::Grant));
+
+    let mut shared = Inputs::new();
+    shared.project_grants = vec![remote_grant("uptime")];
+    assert_eq!(
+        shared.decide(&[remote("uptime")]),
+        Verdict::Allowed(Decision::ProjectGrant)
+    );
+    shared.project_grants = Vec::new();
+    shared.always_grants = vec![remote_grant("uptime")];
+    assert_eq!(
+        shared.decide(&[remote("uptime")]),
+        Verdict::Allowed(Decision::AlwaysGrant)
+    );
+}
+
+#[test]
+fn a_remote_rule_allows_leading_words_on_its_host_only() {
+    let mut inputs = Inputs::new();
+    inputs.remote_rules = vec![remote_rule(SSH_HOST, &["systemctl", "status"])];
+    let elsewhere = [remote_on(OTHER_HOST, ENDPOINT, "systemctl status nginx")];
+
+    assert_eq!(
+        inputs.decide(&[remote("systemctl status nginx")]),
+        Verdict::Allowed(Decision::Rule)
+    );
+    assert!(matches!(inputs.decide(&elsewhere), Verdict::Ask(_)));
+    assert!(matches!(
+        inputs.decide(&[remote("systemctl restart nginx")]),
+        Verdict::Ask(_)
+    ));
+    // A rule of a remote host never matches a command here.
+    assert!(matches!(
+        inputs.decide(&[command("systemctl status nginx", "/work")]),
+        Verdict::Ask(_)
+    ));
+}
+
+#[test]
+fn a_remote_command_with_metacharacters_or_a_backslash_can_only_be_allowed_once() {
+    let mut inputs = Inputs::new();
+    inputs.remote_rules = vec![remote_rule(SSH_HOST, &["uptime"])];
+    for text in [
+        "uptime; reboot",
+        "uptime && reboot",
+        r"uptime\ -p",
+        "uptime $(reboot)",
+    ] {
+        let accesses = [remote(text)];
+        assert_eq!(
+            inputs.decide(&accesses),
+            ask(
+                &accesses,
+                &[ApprovalReason::RemoteCommand],
+                Vec::new(),
+                None
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn full_access_allows_a_remote_command() {
+    let mut inputs = Inputs::new();
+    inputs.full_access = true;
+
+    assert_eq!(
+        inputs.decide(&[remote("reboot; rm -rf /")]),
+        Verdict::Allowed(Decision::FullAccess)
+    );
+}
+
+#[test]
+fn a_worker_refuses_a_remote_command_in_every_mode() {
+    for mode in MODES.into_iter().chain([CeilingMode::FullAccess]) {
+        assert_eq!(
+            Inputs::worker(mode).decide(&[remote("uptime")]),
+            Verdict::Refused(Refusal::NoRemoteCommands),
+            "{mode:?}"
+        );
+    }
+}
+
+#[test]
+fn a_saved_remote_rule_is_always_limited_to_its_host() {
+    let proposal = RuleProposal {
+        words: vec![
+            "systemctl".to_owned(),
+            "status".to_owned(),
+            "nginx".to_owned(),
+        ],
+        folder: String::new(),
+        remote: Some(host(SSH_HOST, ENDPOINT)),
+    };
+
+    for limit_to_folder in [false, true] {
+        assert_eq!(
+            saved_rule(&proposal, 2, limit_to_folder),
+            Ok(SavedRule::Remote {
+                target: host(SSH_HOST, ENDPOINT),
+                words: vec!["systemctl".to_owned(), "status".to_owned()],
+            })
+        );
+    }
+    assert_eq!(
+        saved_rule(&proposal, 0, false),
+        Err(ToolsError::RulePrefixInvalid)
     );
 }

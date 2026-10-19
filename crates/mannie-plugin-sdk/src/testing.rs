@@ -11,6 +11,7 @@ use tokio::sync::watch;
 use crate::BoxFuture;
 use crate::contracts::Secret;
 use crate::host::{BindRefusal, PluginBinding, ServiceProvider};
+use crate::manifest::SecretsSection;
 use crate::service::{BoundService, Service};
 use crate::services::file_dialog::{
     ChosenFile, DialogError, FileDialog, FileDialogApi, FileFilter, FileHandle, MAX_CHOSEN_FILES,
@@ -25,10 +26,11 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 /// The credential store in memory, as the desktop app's provider of
 /// `secrets` binds it to each plugin: the plugin names an entry as its
 /// manifest lists it, an entry of `entries` is kept as `<id>/<entry>`, a
-/// legacy name is kept as it is, and any other name is refused with
-/// `NotPermitted` before the store is touched. The desktop app admits only
-/// the legacy names of its frozen list, and this store admits every one that
-/// a manifest lists.
+/// legacy name is kept as it is, an entry of a keyed family as
+/// `<id>/<family>/<key>`, and any other name is refused with `NotPermitted`
+/// before the store is touched. The desktop app admits only the legacy names
+/// of its frozen list, and this store admits every one that a manifest
+/// lists.
 ///
 /// Cloning is cheap; clones share the entries.
 #[derive(Debug, Clone, Default)]
@@ -77,17 +79,10 @@ impl ServiceProvider for FakeSecrets {
     }
 
     fn bind(&self, binding: &PluginBinding<'_>) -> Result<BoundService, BindRefusal> {
-        let listed = &binding.manifest.secrets;
-        let mut names = BTreeMap::new();
-        for entry in &listed.entries {
-            names.insert(entry.clone(), format!("{}/{entry}", binding.id));
-        }
-        for legacy in &listed.legacy {
-            names.insert(legacy.clone(), legacy.clone());
-        }
         let api: Arc<dyn SecretsApi> = Arc::new(BoundSecrets {
             store: self.clone(),
-            names,
+            plugin: binding.id.as_str().to_owned(),
+            section: binding.manifest.secrets.clone(),
         });
         Ok(BoundService::new::<Secrets>(api))
     }
@@ -97,16 +92,21 @@ impl ServiceProvider for FakeSecrets {
 #[derive(Debug)]
 struct BoundSecrets {
     store: FakeSecrets,
-    /// The name under which the store keeps each entry that the manifest
-    /// lists, by the name that the plugin passes.
-    names: BTreeMap<String, String>,
+    /// The plugin's ID.
+    plugin: String,
+    /// The entries that the plugin's manifest gives it.
+    section: SecretsSection,
 }
 
 impl BoundSecrets {
     /// The name under which the store keeps `entry`. A name that the
-    /// manifest does not list is refused before the store is touched.
-    fn stored_name(&self, entry: &str) -> Result<&str, SecretsError> {
-        let name = self.names.get(entry).ok_or(SecretsError::NotPermitted)?;
+    /// manifest does not give the plugin is refused before the store is
+    /// touched.
+    fn stored_name(&self, entry: &str) -> Result<String, SecretsError> {
+        let name = self
+            .section
+            .stored_name(&self.plugin, entry)
+            .ok_or(SecretsError::NotPermitted)?;
         if self.store.inner.unavailable.load(Ordering::SeqCst) {
             return Err(SecretsError::Unavailable);
         }
@@ -116,15 +116,22 @@ impl BoundSecrets {
 
 impl SecretsApi for BoundSecrets {
     fn load(&self, entry: &str) -> BoxFuture<'static, Result<Option<Secret>, SecretsError>> {
-        let loaded = self.stored_name(entry).map(|name| self.store.stored(name));
+        let loaded = self.stored_name(entry).map(|name| self.store.stored(&name));
         Box::pin(std::future::ready(loaded))
     }
 
     fn save(&self, entry: &str, secret: Secret) -> BoxFuture<'static, Result<(), SecretsError>> {
         let saved = self
             .stored_name(entry)
-            .map(|name| self.store.keep(name, secret));
+            .map(|name| self.store.keep(&name, secret));
         Box::pin(std::future::ready(saved))
+    }
+
+    fn delete(&self, entry: &str) -> BoxFuture<'static, Result<(), SecretsError>> {
+        let deleted = self.stored_name(entry).map(|name| {
+            lock(&self.store.inner.stored).remove(&name);
+        });
+        Box::pin(std::future::ready(deleted))
     }
 }
 
@@ -384,6 +391,7 @@ mod tests {
             secrets: SecretsSection {
                 entries: vec!["token".to_owned()],
                 legacy: vec!["link/master-key".to_owned()],
+                keyed: vec!["host".to_owned()],
             },
             crates: CratesSection::default(),
             programs: Vec::new(),
@@ -426,6 +434,27 @@ mod tests {
         assert_eq!(store.stored("notes/token").unwrap().expose(), "notes token");
         assert_eq!(store.stored("link/master-key").unwrap().expose(), "old key");
         assert!(store.stored("token").is_none());
+    }
+
+    #[test]
+    fn an_entry_of_a_keyed_family_is_kept_below_the_plugins_id_until_the_plugin_deletes_it() {
+        let store = FakeSecrets::new();
+        let notes = bound(&store, "notes");
+
+        notes
+            .save("host/box-1", secret("box password"))
+            .now_or_never()
+            .unwrap()
+            .unwrap();
+        let kept = store.stored("notes/host/box-1");
+        notes.delete("host/box-1").now_or_never().unwrap().unwrap();
+        // Deleting what the store does not hold succeeds.
+        notes.delete("host/box-1").now_or_never().unwrap().unwrap();
+        let refused = notes.delete("host/box_1").now_or_never().unwrap();
+
+        assert_eq!(kept.unwrap().expose(), "box password");
+        assert!(store.stored("notes/host/box-1").is_none());
+        assert_eq!(refused.unwrap_err(), SecretsError::NotPermitted);
     }
 
     #[test]

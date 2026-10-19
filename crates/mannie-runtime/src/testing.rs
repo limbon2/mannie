@@ -18,7 +18,9 @@ use futures_util::future::BoxFuture;
 use futures_util::stream::BoxStream;
 use futures_util::{FutureExt, StreamExt};
 use mannie_plugin_sdk::contributions::Contributions;
-use mannie_plugin_sdk::host::{ContributionRefusal, add_contributions, remove_contributions};
+use mannie_plugin_sdk::host::{
+    ContributionRefusal, add_contributions, drain_contributions, remove_contributions,
+};
 use mannie_plugin_sdk::ids::PluginId;
 use mannie_plugin_sdk::points::executors::{
     ExecutorRefusal, ExecutorSection, FollowUpPlan, PlanCall, PlanError, SubmitError, TaskExecutor,
@@ -1335,6 +1337,20 @@ pub fn remove_plugin(runtime: &Runtime, plugin: &str) -> bool {
         .generation_of(plugin.as_str())
         .is_some();
     remove_contributions(&runtime.contribution_consumers(), &plugin);
+    registered
+}
+
+/// Turns a plugin off as the plugin host does: drops its contributions, then
+/// waits up to `grace` for the executions of its tools and aborts the rest
+/// (ADR-0034, decision 8). Returns whether the runtime held them.
+///
+/// # Panics
+///
+/// When `plugin` is not a plugin ID, which fails the test.
+pub async fn turn_off_plugin(runtime: &Runtime, plugin: &str, grace: Duration) -> bool {
+    let id = PluginId::parse(plugin).expect("the test names a plugin ID");
+    let registered = remove_plugin(runtime, plugin);
+    drain_contributions(&runtime.contribution_consumers(), &id, grace).await;
     registered
 }
 

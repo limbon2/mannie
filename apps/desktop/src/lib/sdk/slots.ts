@@ -19,6 +19,8 @@ import type {
   TaskKind,
 } from '#lib/types/shell-slots.js';
 
+// What the model got of a sent mention, which a mention kind words.
+export type { MentionSummary } from '#lib/generated/bindings.js';
 export type {
   ConversationControl,
   ConversationControlProps,

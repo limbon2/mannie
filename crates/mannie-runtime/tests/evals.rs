@@ -263,7 +263,9 @@ pub(crate) fn mentions(call: &ToolCallView, needle: &str) -> bool {
     let in_arguments = split_activity(&call.arguments).arguments.contains(needle);
     let in_accesses = call.accesses.iter().any(|access| match access {
         Access::Path { path, .. } => path.contains(needle),
-        Access::Command { command, .. } => command.contains(needle),
+        Access::Command { command, .. } | Access::RemoteCommand { command, .. } => {
+            command.contains(needle)
+        }
         Access::Project { name, folder, .. } => name.contains(needle) || folder.contains(needle),
     });
     in_arguments || in_accesses
@@ -531,7 +533,7 @@ fn owner_choice(task: &Task, call: &ToolCallView) -> ApprovalChoice {
     let allowed = !call.accesses.is_empty()
         && call.accesses.iter().all(|access| match access {
             Access::Command { command, .. } => command_allowed(task.commands, command),
-            Access::Path { .. } | Access::Project { .. } => false,
+            Access::Path { .. } | Access::Project { .. } | Access::RemoteCommand { .. } => false,
         });
     if allowed {
         ApprovalChoice::AllowOnce

@@ -1,13 +1,15 @@
 //! The system tools repository: the grants of conversations, the grants for
-//! a project or for every conversation, and the command rules
-//! (docs/features/system-tools/operations-and-approvals.md). The
-//! journal of operations lives in the tool call parts of the runtime's
-//! tables, so the runtime stores each change of an operation together with
-//! its event.
+//! a project or for every conversation, the command rules and the rules for
+//! commands on remote hosts (docs/features/system-tools/
+//! operations-and-approvals.md; ADR-0036). The journal of operations lives in
+//! the tool call parts of the runtime's tables, so the runtime stores each
+//! change of an operation together with its event.
 
 use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{ConversationId, GrantId, ProjectId, RuleId};
-use mannie_types::tools::{CommandRule, ConversationGrant, GrantScope, SharedGrant};
+use mannie_types::tools::{
+    CommandRule, ConversationGrant, GrantScope, RemoteCommandRule, RemoteTarget, SharedGrant,
+};
 use rusqlite::{OptionalExtension, params};
 
 use crate::error::StoreError;
@@ -38,6 +40,15 @@ const SELECT_PROJECT_EXISTS: &str = "SELECT 1 FROM runtime_projects WHERE id = ?
 const INSERT_SHARED_GRANT: &str = "INSERT INTO tools_shared_grants \
      (id, project_id, version, scope, created_at) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT DO NOTHING";
 const DELETE_SHARED_GRANT: &str = "DELETE FROM tools_shared_grants WHERE id = ?1";
+const SELECT_REMOTE_RULES: &str = "SELECT id, plugin, target, endpoint, label, version, words, \
+     created_at FROM tools_remote_rules ORDER BY created_at, id";
+const SELECT_REMOTE_RULE: &str = "SELECT id, plugin, target, endpoint, label, version, words, \
+     created_at FROM tools_remote_rules \
+     WHERE plugin = ?1 AND target = ?2 AND endpoint = ?3 AND words = ?4";
+const INSERT_REMOTE_RULE: &str = "INSERT INTO tools_remote_rules \
+     (id, plugin, target, endpoint, label, version, words, created_at) \
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)";
+const DELETE_REMOTE_RULE: &str = "DELETE FROM tools_remote_rules WHERE id = ?1";
 
 /// Every statement of this module.
 #[cfg(test)]
@@ -54,6 +65,10 @@ pub(crate) const STATEMENTS: &[&str] = &[
     SELECT_PROJECT_EXISTS,
     INSERT_SHARED_GRANT,
     DELETE_SHARED_GRANT,
+    SELECT_REMOTE_RULES,
+    SELECT_REMOTE_RULE,
+    INSERT_REMOTE_RULE,
+    DELETE_REMOTE_RULE,
 ];
 
 /// Why grants or rules could not be read or saved.
@@ -200,6 +215,51 @@ impl RawRule {
                 .map_err(|error| ToolsStoreError::invalid(error.to_string()))?,
             words,
             folder: self.folder,
+            created_at: UtcMillis::from_millis(self.created_at),
+        })
+    }
+}
+
+struct RawRemoteRule {
+    id: String,
+    plugin: String,
+    target: String,
+    endpoint: String,
+    label: String,
+    version: i64,
+    words: String,
+    created_at: i64,
+}
+
+fn remote_rule_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawRemoteRule> {
+    Ok(RawRemoteRule {
+        id: row.get(0)?,
+        plugin: row.get(1)?,
+        target: row.get(2)?,
+        endpoint: row.get(3)?,
+        label: row.get(4)?,
+        version: row.get(5)?,
+        words: row.get(6)?,
+        created_at: row.get(7)?,
+    })
+}
+
+impl RawRemoteRule {
+    fn into_rule(self) -> Result<RemoteCommandRule, ToolsStoreError> {
+        check_version(self.version, "a remote rule")?;
+        let words: Vec<String> = serde_json::from_str(&self.words).map_err(|error| {
+            ToolsStoreError::invalid(format!("remote rule {}: {error}", self.id))
+        })?;
+        Ok(RemoteCommandRule {
+            id: RuleId::parse(&self.id)
+                .map_err(|error| ToolsStoreError::invalid(error.to_string()))?,
+            target: RemoteTarget {
+                plugin: self.plugin,
+                target: self.target,
+                label: self.label,
+                endpoint: self.endpoint,
+            },
+            words,
             created_at: UtcMillis::from_millis(self.created_at),
         })
     }
@@ -460,6 +520,83 @@ impl Store {
         let deleted = self
             .write(Durability::Full, move |transaction| {
                 transaction.prepare_cached(DELETE_RULE)?.execute([rule])
+            })
+            .await?;
+        Ok(deleted > 0)
+    }
+
+    /// Every rule for commands on remote hosts, the oldest first.
+    pub async fn remote_rules(&self) -> Result<Vec<RemoteCommandRule>, ToolsStoreError> {
+        let raw: Vec<RawRemoteRule> = self
+            .read(|connection| {
+                let mut select = connection.prepare_cached(SELECT_REMOTE_RULES)?;
+                let rows = select.query_map([], remote_rule_from_row)?;
+                rows.collect()
+            })
+            .await?;
+        raw.into_iter().map(RawRemoteRule::into_rule).collect()
+    }
+
+    /// Saves a rule for commands on one remote host with full durability.
+    /// When the same rule exists for the same host, returns it instead.
+    pub async fn add_remote_rule(
+        &self,
+        id: &RuleId,
+        target: RemoteTarget,
+        words: Vec<String>,
+    ) -> Result<RemoteCommandRule, ToolsStoreError> {
+        let id = id.as_str().to_owned();
+        let words = to_json(&words)?;
+        let now = self.clock().now().as_millis();
+        let raw = self
+            .transact(Durability::Full, move |transaction| {
+                let existing = transaction
+                    .prepare_cached(SELECT_REMOTE_RULE)?
+                    .query_row(
+                        params![target.plugin, target.target, target.endpoint, words],
+                        remote_rule_from_row,
+                    )
+                    .optional()?;
+                if let Some(existing) = existing {
+                    return Ok(existing);
+                }
+                transaction
+                    .prepare_cached(INSERT_REMOTE_RULE)?
+                    .execute(params![
+                        id,
+                        target.plugin,
+                        target.target,
+                        target.endpoint,
+                        target.label,
+                        DOCUMENT_VERSION,
+                        words,
+                        now
+                    ])?;
+                Ok(RawRemoteRule {
+                    id,
+                    plugin: target.plugin,
+                    target: target.target,
+                    endpoint: target.endpoint,
+                    label: target.label,
+                    version: i64::from(DOCUMENT_VERSION),
+                    words,
+                    created_at: now,
+                })
+            })
+            .await
+            .map_err(|error: TransactError<ToolsStoreError>| ToolsStoreError::from(error))?;
+        raw.into_rule()
+    }
+
+    /// Deletes a rule for commands on a remote host. Returns whether it
+    /// existed.
+    pub async fn delete_remote_rule(&self, rule_id: &RuleId) -> Result<bool, ToolsStoreError> {
+        let rule = rule_id.as_str().to_owned();
+        let deleted = self
+            .write(Durability::Full, move |transaction| {
+                transaction
+                    .prepare_cached(DELETE_REMOTE_RULE)?
+                    .execute([rule])
             })
             .await?;
         Ok(deleted > 0)
