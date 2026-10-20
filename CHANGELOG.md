@@ -10,6 +10,7 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ### Fixed
 
+- The child-agent shutdown test waits for its command to signal that it started before measuring the one-second stop requirement.
 - The context compaction test waits for the new turn before reading its reply, so an earlier reply cannot satisfy its completion check.
 - Regular Windows CI checks use the signed-in user's normal interactive token, where Windows Credential Manager can persist credentials and EdgeDriver can configure WebView2; the worker service smoke test keeps administrator rights.
 - The Windows runner image keeps the firewall enabled with incoming connections blocked and suppresses its interactive notifications, which can cover the desktop during UI tests.
