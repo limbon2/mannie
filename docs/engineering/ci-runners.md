@@ -49,7 +49,7 @@ The checkpoint holds no registration and no token: they reach the machine after 
 
 ### Windows 11
 
-- 4 virtual processors, 12 GB of memory and 64 GB of disk. GitHub's Windows runners for private repositories, which ran these jobs before, have 2 processors and 8 GB (verified on 2026-10-17), and Windows 11 keeps more memory for itself than their Windows Server.
+- 4 virtual processors, 8 GB of memory and 64 GB of disk. The owner chose 8 GB on 2026-10-20 to leave more memory for work on the host. Validate memory use in the first complete Windows job before increasing the allocation.
 - An administrator account that signs in automatically, and the runner started in that session with administrator rights, for example by a scheduled task at sign-in that runs with the highest privileges. The end-to-end tests open the app's window on that session's desktop, and the worker service job installs a Windows service. A runner installed as a Windows service runs without a desktop.
 - Git for Windows, whose bash runs the steps with `shell: bash` (verified on 2026-10-16).
 - PowerShell 7, which runs the steps without a `shell` and those with `shell: pwsh` (verified on 2026-10-16).
@@ -115,7 +115,7 @@ The machines start on demand and one at a time, as the owner decided on 2026-10-
   Add-LocalGroupMember -SID S-1-5-32-578 -Member "$env:USERDOMAIN\$env:USERNAME"
   ```
 
-- Each machine needs its memory free while it runs, 8 GB for Ubuntu and 12 GB for Windows 11, and room for its files: put them on a drive with at least 80 GB free for each machine.
+- Each machine needs its memory free while it runs, 8 GB for Ubuntu or Windows 11, and room for its files: put them on a drive with at least 80 GB free for each machine.
 - Install from the checked-out version of the scripts with `task ci:runners:install`. The controller and each cycle run the installed copies in `%ProgramData%\Mannie\ci-runners\host`; stop the controller after its current job finishes and install again when those scripts change.
 
 ### Network
