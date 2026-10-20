@@ -21,6 +21,8 @@ The workflows in `.github/workflows/` run most of their jobs on the owner's self
 
 GitHub bills the minutes of its hosted runners in a private repository, and most of those minutes went to the Windows jobs of `ci.yml`. It does not bill jobs on self-hosted runners (verified on 2026-10-16). The FreeBSD virtual machine needs KVM, which GitHub's Linux runners have. The release's own jobs build, install and sign the artifacts on clean machines that the self-hosted runners never touch, so the signing key never reaches the owner's machines.
 
+The performance jobs preserve their complete `target/perf/results.json` in the job log and summary through `scripts/ci/summarize-performance.mjs`. They use no artifact upload. GitHub excludes logs and job summaries from the artifact storage allowance ([Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions), verified on 2026-10-20), so an exhausted allowance cannot fail an otherwise successful performance job. A missing report is stated in the summary, and an invalid report fails its reporting step.
+
 ## 2. Labels
 
 A self-hosted job asks for three labels, and only a runner that has all three takes it:

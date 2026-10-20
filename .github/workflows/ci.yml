@@ -93,12 +93,9 @@ jobs:
         env:
           MANNIE_PERF_REPORT_ONLY: "1"
         run: dbus-run-session -- sh scripts/ci/with-secret-service.sh gnome-keyring xvfb-run --auto-servernum pnpm exec wdio run tests/e2e/wdio.perf.conf.ts
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - name: Record the performance measurements
         if: always()
-        with:
-          name: performance-${{ matrix.os }}
-          path: target/perf/results.json
-          if-no-files-found: ignore
+        run: node scripts/ci/summarize-performance.mjs
 
   credentials:
     name: Credential store (${{ matrix.secret-service }})
