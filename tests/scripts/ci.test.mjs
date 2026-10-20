@@ -305,6 +305,52 @@ describe('summary', () => {
 });
 
 describe('STEPS', () => {
+  it('finishes desktop tests before Rust tests in the actual graph, including a desktop failure', async () => {
+    for (const desktopCode of [0, 1]) {
+      const run = start(STEPS);
+      const finished = new Set();
+      await settle();
+      // Finish every prerequisite while holding the desktop suite open.
+      while (true) {
+        const pending = run.started.filter((entry) => {
+          const held = entry.task === 'test:desktop' || entry.task === 'test:rust';
+          return !held && !finished.has(entry.task);
+        });
+        if (pending.length === 0) {
+          break;
+        }
+        for (const entry of pending) {
+          run.finish(entry.task);
+          finished.add(entry.task);
+        }
+        await settle();
+      }
+      assert.ok(run.started.some((entry) => entry.task === 'test:desktop'));
+      assert.equal(
+        run.started.some((entry) => entry.task === 'test:rust'),
+        false,
+      );
+      run.finish('test:desktop', desktopCode);
+      finished.add('test:desktop');
+      await settle();
+      while (true) {
+        const pending = run.started.filter((entry) => !finished.has(entry.task));
+        if (pending.length === 0) {
+          break;
+        }
+        for (const entry of pending) {
+          run.finish(entry.task);
+          finished.add(entry.task);
+        }
+        await settle();
+      }
+      const outcomes = await run.outcomes;
+      assert.equal(outcomes.find((outcome) => outcome.task === 'test:rust')?.status, 'passed');
+      const overlap = run.overlaps.some((tasks) => tasks.includes('test:desktop') && tasks.includes('test:rust'));
+      assert.equal(overlap, false);
+    }
+  });
+
   it('names only steps of the list in needs and after', () => {
     const names = new Set(STEPS.map((step) => step.task));
     const unknown = STEPS.flatMap((step) => [...(step.needs ?? []), ...(step.after ?? [])]).filter(

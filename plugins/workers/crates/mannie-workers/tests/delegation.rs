@@ -622,7 +622,9 @@ async fn stop_cancels_the_replys_worker_tasks() {
     let setup = DelegationHarness::with_options(
         HarnessOptions {
             use_tools: true,
-            config: quick_cancels(),
+            // This online confirmation uses the normal cancellation grace;
+            // the offline tests exercise the short deadline and letting go.
+            config: fast_config(),
             ..HarnessOptions::default()
         },
         WorkerOptions::default(),

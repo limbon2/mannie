@@ -4,6 +4,10 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+### Changed
+
+- Run all CI on standard GitHub-hosted runners for the public repository, and build and install-check Windows, Linux and FreeBSD artifacts through the Release workflow, including manual branch builds.
+
 ## 0.4.0 - 2026-10-20
 
 ### Added

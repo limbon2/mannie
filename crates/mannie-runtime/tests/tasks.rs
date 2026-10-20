@@ -872,9 +872,9 @@ async fn stopping_the_parent_ends_every_child_within_a_second() {
     let setup = Setup::new().await;
     setup.set_limit(2).await;
     let command = if cfg!(windows) {
-        "Start-Sleep -Seconds 30"
+        "Set-Content -LiteralPath command-started -Value ready; Start-Sleep -Seconds 30"
     } else {
-        "sleep 30"
+        ": > command-started; sleep 30"
     };
     // Each start waits a moment in the parent's next model call, so the
     // children take their slots in order.
@@ -937,8 +937,15 @@ async fn stopping_the_parent_ends_every_child_within_a_second() {
         })
         .await;
     let asking = transcript.tasks(0)[1].clone();
-    // The command's process starts before the stop.
-    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    // The tool enters Executing before it launches the shell. Wait for the
+    // command itself so shell startup is outside the shutdown measurement.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !setup.path("command-started").exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the child's command did not start");
 
     let stopping = Instant::now();
     let outcome = setup.harness.runtime.stop_reply(&conversation).await;

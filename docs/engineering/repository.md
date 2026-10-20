@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                                                                                                                                                                                   |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                                                                                                                                                                                                  |
-| Last updated | 2026-10-19                                                                                                                                                                                                                                                                                                                                        |
+| Last updated | 2026-10-21                                                                                                                                                                                                                                                                                                                                        |
 | Related      | [ADR-0008](../adr/0008-one-workspace-two-binaries.md), [ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md), [ADR-0035](../adr/0035-find-plugins-at-build-time-in-folders-of-their-own.md), [Extension points](../architecture/extension-points.md), [Standards](standards.md), [Releasing](releasing.md), [CI runners](ci-runners.md) |
 
 ## 1. Principles
@@ -213,7 +213,7 @@ Task commands call real executables only, never Unix utilities, so every task ru
 
 - The owner's workstation runs Windows 11. Development happens natively on Windows and on Linux.
 - FreeBSD builds and tests of the worker run in CI, in a FreeBSD virtual machine.
-- CI runs on the owner's self-hosted runners, except the FreeBSD virtual machine and the release's own jobs, which run on GitHub's runners ([CI runners](ci-runners.md)).
+- Every CI job runs on standard GitHub-hosted runners, with native FreeBSD builds and tests in a virtual machine on a Linux runner ([CI runners](ci-runners.md)).
 - Tool caches stay in their default user locations, never in the repository: the Cargo registry, the pnpm store, and the Vite and Vitest caches. Build output (`target/`, `build/`, `.svelte-kit/`) and what `task gen` writes (`.generated/`) stay in their ignored folders.
 - No committed `Cargo.lock` changes in `task gen`, `task dev`, `task build`, `task e2e` or a release build, which all pass `--locked`. Only `task deps:update`, `task deps:align`, `task plugins:lock`, `task plugins:new` and `task release:prepare` write committed locks ([ADR-0035](../adr/0035-find-plugins-at-build-time-in-folders-of-their-own.md), decision 5).
 
