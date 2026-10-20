@@ -82,7 +82,7 @@ Replace the job's `runs-on` with a GitHub-hosted image: `windows-2025` in place 
 
 ## 6. Setup on Hyper-V
 
-<!-- cspell:words Autologon DPAPI fcopy jitconfig journalctl poweroff UEFI vhdx VMTPM -->
+<!-- cspell:words Autologon DPAPI fcopy jitconfig journalctl MSIX poweroff UEFI vhdx VMTPM -->
 
 The scripts in `scripts/ci/runners/` run the runner machines of [section 3](#3-runner-machines) on a Windows 11 host with Hyper-V, such as the owner's workstation:
 
