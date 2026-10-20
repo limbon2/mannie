@@ -47,7 +47,7 @@ jobs:
           usesh: true
           copyback: false
           prepare: |
-            pkg install -y curl
+            pkg install -y curl git
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
           run: |
             set -eu
