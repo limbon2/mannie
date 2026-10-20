@@ -7,7 +7,7 @@
 | Deciders | Owner                                                                            |
 | Related  | [ADR-0013](0013-journal-every-side-effect.md), [Tools](../architecture/tools.md) |
 
-Later changes: [ADR-0036](0036-let-plugins-run-commands-on-remote-hosts.md) refines decisions 1 and 8: a command on a remote host is outside the supervisor, and Stop and timeout ask the host to end it.
+Later changes: [ADR-0036](0036-let-plugins-run-commands-on-remote-hosts.md) refines decisions 1 and 8: a command on a remote host is outside the supervisor, and Stop and timeout ask the host to end it. [ADR-0038](0038-let-plugins-run-installed-programs-in-the-owners-projects.md) refines decisions 1, 5 and 7: the supervisor also runs an installed program without a shell, with its output as bytes.
 
 ## Context
 

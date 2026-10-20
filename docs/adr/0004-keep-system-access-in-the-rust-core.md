@@ -7,7 +7,7 @@
 | Deciders | Owner                                                                                                                                                                                             |
 | Related  | [ADR-0003](0003-build-the-desktop-app-on-tauri-2.md), [ADR-0007](0007-generate-ipc-bindings-from-rust.md), [Desktop app](../architecture/desktop-app.md), [Security](../architecture/security.md) |
 
-Later changes: [ADR-0034](0034-build-plugins-on-a-plugin-sdk.md) refines decision 3: a plugin's command gets its permission at build time through its inlined plugin, and only the main window receives grants.
+Later changes: [ADR-0034](0034-build-plugins-on-a-plugin-sdk.md) refines decision 3: a plugin's command gets its permission at build time through its inlined plugin, and only the main window receives grants. [ADR-0038](0038-let-plugins-run-installed-programs-in-the-owners-projects.md) refines decision 2: a plugin's command may run a program that its manifest declares to read a project's folders, which the core checks as it checks a model's reads.
 
 ## Context
 

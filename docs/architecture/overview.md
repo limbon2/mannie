@@ -41,7 +41,7 @@ flowchart LR
   WorkerB -->|tools| HostB[("Host B")]
 ```
 
-The owner works only with the desktop app. Its core calls model providers and runs tools on the owner's machine. Plugins add to it while they are on: with the Workers plugin, the master delegates tasks to workers on other hosts, each of which calls the providers itself, and tools act on the machine of the agent that calls them ([ADR-0015](../adr/0015-run-an-agent-runtime-on-every-machine.md), [ADR-0031](../adr/0031-move-workers-into-the-first-plugin.md)); with the SSH plugin, the master's agents also run single commands on computers without Mannie that the owner registered, each under the master's policy ([ADR-0036](../adr/0036-let-plugins-run-commands-on-remote-hosts.md)).
+The owner works only with the desktop app. Its core calls model providers and runs tools on the owner's machine. Plugins add to it while they are on: with the Workers plugin, the master delegates tasks to workers on other hosts, each of which calls the providers itself, and tools act on the machine of the agent that calls them ([ADR-0015](../adr/0015-run-an-agent-runtime-on-every-machine.md), [ADR-0031](../adr/0031-move-workers-into-the-first-plugin.md)); with the SSH plugin, the master's agents also run single commands on computers without Mannie that the owner registered, each under the master's policy ([ADR-0036](../adr/0036-let-plugins-run-commands-on-remote-hosts.md)); and with the Git plugin, agents work with the owner's git repositories through the installed git program, which the core runs without a shell under its supervisor and policy ([ADR-0038](../adr/0038-let-plugins-run-installed-programs-in-the-owners-projects.md)).
 
 ## 3. Components
 

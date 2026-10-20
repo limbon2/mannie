@@ -7,7 +7,7 @@
 | Deciders | Owner                                                                                                                 |
 | Related  | [ADR-0014](0014-contain-process-trees.md), [Tools](../architecture/tools.md), [Security](../architecture/security.md) |
 
-Later changes: [ADR-0036](0036-let-plugins-run-commands-on-remote-hosts.md) refines decisions 2 and 3: an operation's accesses also name commands on remote hosts, which a plugin's prepare returns, and their grants and rules are bound to the host.
+Later changes: [ADR-0036](0036-let-plugins-run-commands-on-remote-hosts.md) refines decisions 2 and 3: an operation's accesses also name commands on remote hosts, which a plugin's prepare returns, and their grants and rules are bound to the host. [ADR-0038](0038-let-plugins-run-installed-programs-in-the-owners-projects.md) refines decisions 2 and 3: an operation's accesses also name a plugin's paths, with a state that the plugin read, and its runs of installed programs with their effects, and a preparation may run a declared program to read.
 
 ## Context
 

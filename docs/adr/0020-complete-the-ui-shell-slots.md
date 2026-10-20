@@ -7,6 +7,8 @@
 | Deciders | Owner                                                                                                                                                                                                                                                                                                                                          |
 | Related  | [ADR-0002](0002-grow-through-extension-points.md), [ADR-0006](0006-use-shadcn-svelte-through-its-cli.md), [Extension points](../architecture/extension-points.md#37-ui-shell-slots), [Desktop app](../architecture/desktop-app.md#6-frontend-structure), [Chat](../features/chat/README.md), [Window and tray](../features/window-and-tray.md) |
 
+Later changes: [ADR-0039](0039-let-plugins-describe-their-tool-calls-in-the-transcript.md) refines decision 1: the slot of tool kinds lets a plugin describe its tool calls inside the core's `tool_call` renderer.
+
 ## Context
 
 - The UI shell slots are an extension point ([extension points](../architecture/extension-points.md#37-ui-shell-slots)). The catalog names navigation entries, views, panels, settings sections, command palette actions and part renderers. M0 built navigation entries, views, settings sections and commands, because they were the ones the shell itself needed. Panels and part renderers are named but have no shape yet.
