@@ -352,6 +352,12 @@ tasks:
       - task: gen
       - node scripts/plugins/grants.mjs
 
+  ci:runners:install:
+    desc: Install the Hyper-V runner controller and start its elevated sign-in task (run as the Windows user who saved its GitHub token)
+    platforms: [windows]
+    cmds:
+      - powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/ci/runners/host/install-controller.ps1 -MachineNames "{{default "mannie-ci-windows-11,mannie-ci-ubuntu-24.04,mannie-ci-ubuntu-22.04" .MACHINES}}" -Start
+
   # Documentation
 
   docs:fmt:

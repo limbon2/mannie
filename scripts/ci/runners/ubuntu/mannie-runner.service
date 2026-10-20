@@ -1,0 +1,19 @@
+# Runs the GitHub Actions runner for one job at every boot of an Ubuntu runner
+# image, as the user runner, then powers the machine off
+# (docs/engineering/ci-runners.md, section 6). setup-runner-image.sh installs
+# it as /etc/systemd/system/mannie-runner.service.
+[Unit]
+Description=GitHub Actions runner for one job
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=simple
+User=runner
+WorkingDirectory=/home/runner/actions-runner
+# The PATH of a login shell with the user's rustup, which the jobs call.
+Environment=PATH=/home/runner/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/local/libexec/mannie-runner/start-runner.sh
+
+[Install]
+WantedBy=multi-user.target
