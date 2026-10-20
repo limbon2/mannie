@@ -23,8 +23,7 @@ runs:
       if: runner.os == 'Linux'
       shell: bash
       run: |
-        sudo apt-get update
-        sudo apt-get install -y --no-install-recommends \
+        sudo sh scripts/ci/install-ubuntu-packages.sh \
           libwebkit2gtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev libxdo-dev \
           webkit2gtk-driver xvfb dbus-x11
 
