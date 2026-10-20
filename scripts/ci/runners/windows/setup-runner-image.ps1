@@ -30,6 +30,13 @@ function Assert-Success {
     }
 }
 
+function Test-PowerShellExecutable {
+    $powerShell = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+    if (-not $powerShell) { return $false }
+    $appAliases = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps'
+    return -not $powerShell.Source.StartsWith($appAliases + '\', [StringComparison]::OrdinalIgnoreCase)
+}
+
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = New-Object Security.Principal.WindowsPrincipal($identity)
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -49,8 +56,8 @@ if (-not $git) {
         $missing += 'Git Bash from Git for Windows'
     }
 }
-if (-not (Get-Command pwsh.exe -ErrorAction SilentlyContinue)) {
-    $missing += 'PowerShell 7'
+if (-not (Test-PowerShellExecutable)) {
+    $missing += 'PowerShell 7 from the MSI or ZIP package, with its folder on PATH'
 }
 if (-not (Test-Path -LiteralPath (Join-Path $env:USERPROFILE '.cargo\bin\rustup.exe'))) {
     $missing += 'rustup'

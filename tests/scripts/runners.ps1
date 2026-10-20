@@ -73,6 +73,7 @@ switch ($TestCase) {
         $bashExe = Join-Path $gitBin 'bash.exe'
         Set-Content -LiteralPath $gitExe, $bashExe -Value ''
         $originalPath = $env:Path
+        $originalLocalAppData = $env:LOCALAPPDATA
         $script:gitAvailable = $true
         function Get-Command {
             param([string] $Name, [string] $ErrorAction)
@@ -88,8 +89,25 @@ switch ($TestCase) {
             Assert-Fails { Set-GitBashPath } 'Git Bash is missing'
             $script:gitAvailable = $false
             Assert-Fails { Set-GitBashPath } 'install Git for Windows first'
+
+            $setup = Join-Path $root 'scripts/ci/runners/windows/setup-runner-image.ps1'
+            $setupAst = [System.Management.Automation.Language.Parser]::ParseFile($setup, [ref]$tokens, [ref]$errors)
+            $check = $setupAst.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Test-PowerShellExecutable' }, $true)
+            . ([scriptblock]::Create($check.Extent.Text))
+            $env:LOCALAPPDATA = $folder
+            $script:powerShellSource = $null
+            function Get-Command {
+                param([string] $Name, [string] $ErrorAction)
+                if ($script:powerShellSource) { return [pscustomobject]@{ Source = $script:powerShellSource } }
+            }
+            Assert-True (-not (Test-PowerShellExecutable)) 'A missing PowerShell installation must fail the image preflight.'
+            $script:powerShellSource = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\pwsh.exe'
+            Assert-True (-not (Test-PowerShellExecutable)) 'A Store app execution alias must not pass as an executable that Node can open.'
+            $script:powerShellSource = Join-Path $folder 'PowerShell\7\pwsh.exe'
+            Assert-True (Test-PowerShellExecutable) 'The MSI installation must pass the image preflight.'
         } finally {
             $env:Path = $originalPath
+            $env:LOCALAPPDATA = $originalLocalAppData
             foreach ($file in $gitExe, $bashExe) {
                 if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force }
             }
