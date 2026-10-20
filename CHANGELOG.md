@@ -10,6 +10,8 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ### Fixed
 
+- The validation build passes EdgeDriver's browser arguments and temporary profile through the WebView2 API, so UI tests can connect when a Windows runner runs as administrator.
+- The Windows runner image keeps the firewall enabled with incoming connections blocked and suppresses its interactive notifications, which can cover the desktop during UI tests.
 - The Windows runner image preflight rejects a PowerShell Store app execution alias, which Actions cannot open as an executable; the setup guide selects the MSI package.
 - CI installs Node.js before pnpm, so fresh runner images can set up the package manager without a preinstalled npm.
 - The Windows runner adds Git Bash to the command search path that its jobs inherit, so a default Git for Windows installation can run the workflows' Bash steps.

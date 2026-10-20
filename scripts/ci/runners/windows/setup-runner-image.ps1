@@ -144,6 +144,11 @@ $updatePolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
 New-Item -Path $updatePolicy -Force | Out-Null
 Set-ItemProperty -Path $updatePolicy -Name 'NoAutoUpdate' -Type DWord -Value 1
 
+# Incoming connections stay blocked. A firewall notification can cover the
+# desktop that UI tests need, even after the program that raised it exits.
+# NotifyOnListen controls only the notification (verified on 2026-10-20).
+Set-NetFirewallProfile -Profile Domain, Private, Public -Enabled True -DefaultInboundAction Block -NotifyOnListen False
+
 # Name lookups go over HTTPS, which is TCP: the host's route to the internet
 # may lose UDP, as the owner's lost up to 60 percent of plain lookups while
 # every lookup over TCP passed (observed on 2026-10-19). Windows knows the
