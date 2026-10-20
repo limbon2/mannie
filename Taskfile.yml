@@ -8,6 +8,13 @@ version: "3"
 # `cargo metadata | node scripts/...`.
 set: [pipefail]
 
+vars:
+  # Prettier walks every folder it is given and only then drops what
+  # .gitignore and .prettierignore name, so its walk skips the build output
+  # and the agents' worktrees, which hold hundreds of thousands of files
+  # (ADR-0037).
+  PRETTIER_PATHS: '. "!target/**" "!.claude/worktrees/**"'
+
 tasks:
   default:
     desc: List the tasks
@@ -16,10 +23,11 @@ tasks:
       - task --list
 
   setup:
-    desc: Install the pinned tooling and fetch the crates of every Cargo workspace (run once after cloning) - the pnpm packages, cargo-deny, tauri-driver and the crates that the committed locks pin - then generate
+    desc: Install the pinned tooling and fetch the crates of every Cargo workspace (run once after cloning) - the pnpm packages, cargo-deny, cargo-nextest, tauri-driver and the crates that the committed locks pin - then generate
     cmds:
       - pnpm install --frozen-lockfile
       - cargo install --locked cargo-deny@0.20.2
+      - cargo install --locked cargo-nextest@0.9.148
       - cargo install --locked tauri-driver@2.1.0
       # The crates of the root, of each plugin and of each fixture plugin, the
       # one step that needs the network for them: `task gen` resolves offline
@@ -82,9 +90,9 @@ tasks:
     cmds:
       # ESLint sorts imports, type members and Svelte attributes, then Prettier
       # lays out the result. Problems ESLint cannot fix are left to `task lint`.
-      - cmd: pnpm exec eslint --fix .
+      - cmd: pnpm exec eslint --fix --concurrency 2 .
         ignore_error: true
-      - pnpm exec prettier --write --log-level warn .
+      - pnpm exec prettier --write --log-level warn {{.PRETTIER_PATHS}}
       - pnpm exec tombi format --quiet
       - pnpm exec buf format --write
       - task: fmt:rust
@@ -100,7 +108,7 @@ tasks:
   fmt:check:
     desc: Check that all code and documentation is formatted and sorted
     cmds:
-      - pnpm exec prettier --check --log-level warn .
+      - pnpm exec prettier --check --log-level warn {{.PRETTIER_PATHS}}
       - pnpm exec tombi format --check --quiet
       - pnpm exec buf format --diff --exit-code
       - task: fmt:check:rust
@@ -127,7 +135,9 @@ tasks:
   lint:ts:
     desc: Lint TypeScript, Svelte and JavaScript with ESLint, including the order of imports, types and attributes
     cmds:
-      - pnpm exec eslint --max-warnings 0 .
+      # Two threads lint in under half the time of one, for about 1 GB more
+      # memory; four save little more and take almost 4 GB (ADR-0037).
+      - pnpm exec eslint --max-warnings 0 --concurrency 2 .
 
   lint:types:
     desc: Type-check the desktop app and its unit tests (svelte-check), and the end-to-end tests (tsc)
@@ -147,7 +157,11 @@ tasks:
       - node scripts/check-link-contracts.mjs
 
   lint:rust:
-    desc: Check that every crate inherits its workspace's lints and that every workspace repeats the root's settings, then run Clippy with warnings denied in every workspace and the launcher, and on the library crates that each plugin ships with the core's rule against direct native calls
+    desc: Check that every crate inherits its workspace's lints and that every workspace repeats the root's settings, then run Clippy with warnings denied in every workspace and the launcher, and on the library crates that each plugin ships with the core's rule against direct native calls, all in target/clippy
+    # Clippy builds in a target folder of its own, so that it runs beside the
+    # builds in target/ (ADR-0037, decision 2).
+    env:
+      CARGO_TARGET_DIR: target/clippy
     cmds:
       - node scripts/check-workspace-lints.mjs
       - node scripts/plugins/each.mjs --launcher -- cargo clippy --manifest-path {manifest} --workspace --all-targets --all-features --locked -- -D warnings
@@ -159,13 +173,15 @@ tasks:
   lint:deps:
     desc: Check the dependencies' advisories, licenses, bans and sources in every Cargo workspace and the launcher (cargo-deny), the worker's graph (V5), the boundaries between the core and the plugins, and the desktop app's npm licenses
     cmds:
+      # The advisory database once, which the checks below read offline.
+      - cargo deny fetch db
       # Every run reads the root's deny.toml, in the folder where it runs. Each
       # workspace holds a part of the shipped graph and its own tests'
       # crates, so a ban's wrapper or an ignored advisory outside its part is
       # expected there.
-      - node scripts/plugins/each.mjs -- cargo deny --manifest-path {manifest} --locked check --allow unused-wrapper --allow advisory-not-detected
+      - node scripts/plugins/each.mjs -- cargo deny --manifest-path {manifest} --locked --offline check --allow unused-wrapper --allow advisory-not-detected
       # The launcher's graph is the one that ships in the desktop app.
-      - cargo deny --manifest-path .generated/desktop/Cargo.toml --locked check
+      - cargo deny --manifest-path .generated/desktop/Cargo.toml --locked --offline check
       # No crate of the desktop stack reaches a headless program, such as the
       # worker, on any target (V5).
       - node scripts/plugins/programs.mjs check
@@ -195,13 +211,22 @@ tasks:
       - task: test:scripts
 
   test:rust:
-    desc: Run the Rust tests of every Cargo workspace and of the desktop binary
+    desc: Run the Rust tests of every Cargo workspace and of the desktop binary with cargo-nextest, then the doctests
     cmds:
-      # Every test binary runs even after one fails, so a single run, which
-      # takes long in CI, reports every failure.
-      - node scripts/plugins/each.mjs -- cargo test --manifest-path {manifest} --workspace --all-features --locked --no-fail-fast
+      # cargo-nextest runs the tests of every binary side by side, and every
+      # test runs even after one fails (.config/nextest.toml), so a single run
+      # reports every failure (ADR-0037, decision 4).
+      - node scripts/plugins/each.mjs -- cargo nextest run --config-file .config/nextest.toml --manifest-path {manifest} --workspace --all-features --locked
       # The desktop binary belongs to the launcher, which `task gen` writes.
-      - cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml -p mannie-desktop --all-features --locked --no-fail-fast
+      - cargo nextest run --config-file .config/nextest.toml --manifest-path apps/desktop/src-tauri/Cargo.toml -p mannie-desktop --all-features --locked
+      # nextest leaves the doctests to cargo test.
+      - node scripts/plugins/each.mjs -- cargo test --doc --manifest-path {manifest} --workspace --all-features --locked --no-fail-fast
+
+  test:rust:build:
+    desc: Build the Rust tests of every Cargo workspace and of the desktop binary without running them
+    cmds:
+      - node scripts/plugins/each.mjs -- cargo nextest run --no-run --config-file .config/nextest.toml --manifest-path {manifest} --workspace --all-features --locked
+      - cargo nextest run --no-run --config-file .config/nextest.toml --manifest-path apps/desktop/src-tauri/Cargo.toml -p mannie-desktop --all-features --locked
 
   test:desktop:
     desc: Run the desktop app's unit tests with Vitest
@@ -332,12 +357,17 @@ tasks:
   docs:fmt:
     desc: Format the documentation and repository configuration with Prettier
     cmds:
-      - pnpm exec prettier --write --log-level warn .
+      - pnpm exec prettier --write --log-level warn {{.PRETTIER_PATHS}}
 
   docs:check:
     desc: Check formatting, Markdown rules, spelling, links and consistency of the documentation
     cmds:
-      - pnpm exec prettier --check --log-level warn .
+      - pnpm exec prettier --check --log-level warn {{.PRETTIER_PATHS}}
+      - task: docs:lint
+
+  docs:lint:
+    desc: Check the Markdown rules, spelling, links and consistency of the documentation, without the formatting, which `task fmt:check` checks too
+    cmds:
       - pnpm exec markdownlint-cli2
       - pnpm exec cspell lint --no-progress --no-summary "**/*.md"
       # The vendored agent skill keeps its authors' links (ADR-0006).
@@ -345,10 +375,7 @@ tasks:
       - node scripts/check-docs.mjs
 
   ci:
-    desc: Run every check a change must pass (after `task setup`)
+    desc: Run every check a change must pass, side by side within limits that keep the machine usable, and list each step's result and time (after `task setup`)
     cmds:
-      - task: gen
-      - task: docs:check
-      - task: fmt:check
-      - task: lint
-      - task: test
+      # The steps, their order and the limits are in the script (ADR-0037).
+      - node scripts/ci.mjs

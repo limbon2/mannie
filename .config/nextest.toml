@@ -1,0 +1,23 @@
+# The settings of cargo-nextest, which runs the Rust tests of `task test:rust`
+# (ADR-0037). Every workspace reads this file: the task passes it with
+# `--config-file` to the runs in the root workspace, in each plugin's and for
+# the desktop binary.
+#
+# It runs as many tests at once as the machine has logical processors, which
+# is what `cargo test` already ran inside one test binary, such as the tools'
+# conformance tests with their shells. A test that needs fewer neighbours gets
+# a test group in an override of its own workspace's run: nextest refuses an
+# override here that names a binary that the workspace does not have.
+
+# The version that `task setup` installs; an older nextest stops with a message.
+nextest-version = "0.9.148"
+
+[profile.default]
+# Every failing test is reported, as `cargo test --no-fail-fast` did.
+fail-fast = false
+# Names the tests that took longer than a minute, so a test that grows slower
+# shows up in the summary.
+final-status-level = "slow"
+# A test is slow after a minute and is stopped after five, so a test that hangs
+# cannot keep the machine busy.
+slow-timeout = { period = "60s", terminate-after = 5 }

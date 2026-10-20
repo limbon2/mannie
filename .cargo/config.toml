@@ -1,6 +1,22 @@
 # One target folder for the root workspace, every plugin workspace and the
 # generated launcher, so they share build output and the paths that the
 # tasks, the end-to-end tests and the workflows name stay target/... (ADR-0035,
-# decision 4).
+# decision 4). Clippy builds in target/clippy instead, which `task lint:rust`
+# sets, so that it runs beside the builds (ADR-0037, decision 2).
 [build]
 target-dir = "target"
+
+# Dev builds and tests keep line tables for the members of the workspace that
+# builds them, so a panic's backtrace names their files and lines, and no debug
+# information for any other crate, which keeps builds, links and the target
+# folder small (ADR-0037, decision 5). Release builds keep their own profile.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+# rust-lld, which ships with the Rust toolchain, links every build on Windows,
+# releases included, faster than MSVC's link.exe (ADR-0037, decision 6).
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"

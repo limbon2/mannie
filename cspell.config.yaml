@@ -6,6 +6,9 @@ useGitignore: true
 ignorePaths:
   - pnpm-lock.yaml
   - LICENSE
+  # The build output, which cspell would otherwise walk before .gitignore
+  # drops it.
+  - target/**
   - .claude/worktrees/**
   # The vendored shadcn-svelte agent skill (ADR-0006).
   - .claude/skills/**
@@ -29,6 +32,7 @@ words:
   - cyclonedx
   - dbus
   - DMABUF
+  - doctests
   - dumpable
   - edgedriver
   - EFAULT
@@ -63,6 +67,7 @@ words:
   - lifecycles
   - limbon
   - linkme
+  - lld
   - LOCALAPPDATA
   - lockfiles
   - LOGNAME
@@ -72,6 +77,7 @@ words:
   - metacharacters
   - msvc
   - netrc
+  - nextest
   - nohup
   - nologin
   - NSIS
@@ -105,6 +111,7 @@ words:
   - RustSec
   - rustup
   - savepoints
+  - sccache
   - schemars
   - serde
   - setsid
@@ -132,6 +139,7 @@ words:
   - winapi
   - windir
   - winget
+  - worktrees
   - zbus
   - zenity
   - zeroize

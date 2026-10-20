@@ -12,6 +12,7 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 ### Changed
 
 - Turning a plugin off waits up to 5 seconds for the calls of its tools that run, then lets them go: an operation becomes uncertain, and a read ends as not run. An operation of a plugin's tool that the owner stopped while it ran is uncertain too, and each says why.
+- `task ci` runs its checks side by side within limits that keep the machine usable, with Clippy in a target folder of its own, `target/clippy`, and ends with every step's result and time; a failed step no longer stops the others (ADR-0037). The Rust tests run with cargo-nextest, which `task setup` installs, dev builds keep line tables and no debug information for other crates, and Windows builds link with rust-lld.
 
 ### Fixed
 

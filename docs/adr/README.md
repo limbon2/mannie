@@ -54,3 +54,4 @@ Each ADR has exactly one of these statuses:
 | [0034](0034-build-plugins-on-a-plugin-sdk.md)                          | Build plugins on a plugin SDK that bridges them to the core                                   | Accepted (D33)         | M5         |
 | [0035](0035-find-plugins-at-build-time-in-folders-of-their-own.md)     | Find plugins at build time, each in a folder and a Cargo workspace of its own                 | Accepted (D33)         | M5         |
 | [0036](0036-let-plugins-run-commands-on-remote-hosts.md)               | Let plugins run commands on remote hosts under the master's policy                            | Accepted (D35)         | M8         |
+| [0037](0037-run-the-checks-of-task-ci-side-by-side.md)                 | Run the checks of `task ci` side by side, with Clippy in a target folder of its own           | Accepted (D36)         | None       |

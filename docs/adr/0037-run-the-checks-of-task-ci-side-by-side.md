@@ -1,0 +1,68 @@
+# ADR-0037: Run the checks of `task ci` side by side
+
+|          |                                                                                                                                                                                                                                                                                      |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Status   | Accepted (D36)                                                                                                                                                                                                                                                                       |
+| Date     | 2026-10-20                                                                                                                                                                                                                                                                           |
+| Deciders | Owner                                                                                                                                                                                                                                                                                |
+| Related  | [ADR-0017](0017-license-and-dependency-policy.md), [ADR-0035](0035-find-plugins-at-build-time-in-folders-of-their-own.md), [Engineering standards](../engineering/standards.md), [Repository](../engineering/repository.md), [Technology stack](../architecture/technology-stack.md) |
+
+## Context
+
+- `task ci` is the check that a change passes on the owner's machines before it is done ([D24](../roadmap/milestones.md#5-decisions)), and agents run it after every change. It ran about 40 commands one after another, and it got slower with every plugin and with every build. The owner's workstation runs Windows 11 with 8 cores, 16 logical processors and 31 GB of memory, which it shares with other agents' builds and a CI virtual machine. On 2026-10-20 a run took 17 min 35 s on its first pass, 7 min 21 s with nothing changed and 10 min 23 s after a change to `mannie-runtime` (Validation).
+- Mannie builds from a root workspace, a workspace for each plugin and the generated launcher, with one target folder ([ADR-0035](0035-find-plugins-at-build-time-in-folders-of-their-own.md), decision 4). With Images, SSH, Workers and the fixture plugin, that is six workspaces. Cargo hashes a path crate relative to the root of the workspace that builds it, and features unify for each workspace, so every workspace compiles the core's crates again: with three plugin workspaces, a cold run compiled `mannie-plugin-sdk` 15 times, and each plugin adds Clippy, the native-call Clippy and a test build of most of the core in its own workspace. Cargo lets one command at a time use a target folder, so none of these builds overlapped.
+- The 80 test binaries ran one at a time, and the dev profile wrote full debug information for every crate, which made every build and link slower and the target folder 101 GB. CI already built with line tables only. While the test binaries linked after a change to the runtime, the available memory fell twice from about 10 GB to less than 150 MB.
+- Prettier, which runs in `task fmt:check` and again in `task docs:check`, walked about 310,000 files that the ignore files then dropped one by one: the target folder and the agents' worktrees in `.claude/worktrees/`. cspell walked the target folder too. Both walks grew with every build.
+- cargo-deny fetched the advisory database once for each workspace, and the message and boundary checks repeated what `task gen` had just done.
+- Task 3.40, the oldest release that the repository supports, runs a task's `deps` side by side, but it cancels the others when one fails, and one output mode applies to every task, `task dev` included.
+- cargo-nextest 0.9.148 (Apache-2.0 OR MIT, released 2026-10-08, verified on crates.io on 2026-10-20) runs every test of a workspace as its own process, across all test binaries, within a configured number of threads.
+
+## Decision
+
+1. `task ci` runs `scripts/ci.mjs`, which runs the checks as steps, each a task of `Taskfile.yml`. A step starts once the steps it needs have passed, and a step whose prerequisite failed is skipped, while every other step still runs, so one run reports every failure. A step's output is printed in one block when the step passes, a failed step's output comes after all the others, and the run ends with every step's status and duration. The public tasks keep their commands and their order: `task lint`, `task test`, `task fmt:check` and `task docs:check` still run alone. `task ci` leaves out `task lint:plugins`, whose check right after `task gen` cannot fail, and runs Prettier once. Vitest runs after ESLint and svelte-check, because its Paraglide plugin compiles the messages again and rewrites the files that they read.
+2. Clippy builds into `target/clippy`, a target folder of its own: `task lint:rust` sets `CARGO_TARGET_DIR` for all its Clippy runs, the native-call check included. The builds of `task gen`, the tests, the end-to-end tests, `task dev` and `task build` keep `target/`, so every path that the tasks, the tests and the workflows name stays the same. `scripts/ci.mjs` gives each folder a lane, runs the two lanes side by side, and runs the Rust tests in both lanes, so no compiler runs while they do.
+3. The run keeps the machine usable. It runs at below-normal priority, which every command inherits. Two cargo steps that run side by side share the logical processors through `CARGO_BUILD_JOBS`: three quarters for the builds, which take longer, and a quarter for Clippy, so together they start as many compilers as one cargo build. At most three other steps run at a time, one when less than 8 GB of memory is free when the run starts. A machine with fewer than 8 logical processors or less than 16 GB of memory, such as a CI runner, runs one cargo step and one other step at a time.
+4. The Rust tests run with cargo-nextest, pinned at 0.9.148, which `task setup` and the CI setup action install. `.config/nextest.toml` serves every workspace: it reports every failure, reports a test as slow after a minute and stops it after five, and names the slow tests in the summary. It runs as many tests at once as there are logical processors, which `cargo test` already ran inside one test binary. The doctests still run through `cargo test --doc`, which nextest does not run.
+5. The dev profile, which tests and dev builds use, keeps line tables for the members of the workspace that builds them and no debug information for every other crate, set in `.cargo/config.toml` for every workspace. Panic messages keep their file and line, which come from the panic's location. Backtraces lose line numbers in the frames of crates outside the workspace, which includes the core's crates in a plugin's tests and in the desktop binary. The release profile does not change.
+6. Every build for `x86_64-pc-windows-msvc` links with rust-lld, which ships with the Rust toolchain, in place of MSVC's `link.exe`. This also links the release builds.
+7. Prettier skips the target folder and `.claude/worktrees/` while it walks, cspell ignores the target folder, and `task lint:deps` fetches the advisory database once and then checks every workspace offline. ESLint lints with two threads, which took 34 s where one took 78 s, for about 1 GB more memory; four threads took 28 s and almost 4 GB more.
+
+Earlier decisions that this ADR changes:
+
+| ADR  | Decision | Change                                                                                                                                |
+| ---- | -------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 0035 | d4       | Refined by decision 2: Clippy builds into `target/clippy`, a target folder of its own, so that it runs beside the builds in `target/` |
+
+## Consequences
+
+- Positive: the builds, Clippy and the other checks run at the same time, and the tests run side by side across every binary. A change that adds a plugin adds work to the lanes, which overlap. A step that fails no longer stops the run, and the summary shows which step takes the time as Mannie grows.
+- Negative: `target/clippy` holds Clippy's output and its own build scripts and procedural macros, which costs disk. The output of the steps arrives in the order they end. A debugger shows no local variables in a dev build, and in a backtrace the frames of crates outside the workspace have no line numbers. cargo-nextest is one more tool to install and keep current, and a test that only passes when it runs alone now fails.
+- Risks: a test that holds a fixed resource or a short timeout can fail when tests of other binaries run beside it. A test that fails side by side gets its wait fixed. A test group for it would need a configuration of its own workspace's run, because nextest refuses an override in the shared file that names a binary that another workspace does not have. Running tests side by side also writes more files at once, which a virus scanner or an indexer opens, and a replace of a file that such a program holds fails on Windows (Validation). rust-lld could link something differently from `link.exe`; the tests, the end-to-end tests and `task build` exercise it on Windows. The limits of decision 3 assume compilers of a similar size; a run that still exhausts memory shows up as paging and a slower run, and lowering the limits fixes it.
+
+## Alternatives considered
+
+| Option                                                      | Why not chosen                                                                                                                                                                                  |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| One workspace for every crate, for the checks only          | A crate belongs to the workspace whose manifest lies above it, so a generated workspace cannot hold the plugins' crates, and making the plugins members of the root's is what ADR-0035 rejected |
+| Task's own `deps` and output modes                          | Task 3.40 cancels the other dependencies when one fails, and a grouped output mode would also hold back the output of `task dev`                                                                |
+| A target folder for each workspace                          | More builds could overlap, but every third-party crate would compile once for each workspace, and the paths of the desktop binary and the programs would move                                   |
+| sccache                                                     | Its cache keys include Cargo's metadata hash, which differs for each workspace, so it would not share the core's builds between them                                                            |
+| `cargo test` with its binaries run side by side by a script | It would need a second runner beside Cargo's, which nextest already is, with timeouts and slow-test reports                                                                                     |
+
+## Validation
+
+Measured on the owner's workstation on 2026-10-20, which other agents' work shared. Before is the sequential `task ci`, and after is `scripts/ci.mjs` with every step passing:
+
+| State                              | Before      | After      |
+| ---------------------------------- | ----------- | ---------- |
+| Nothing changed since the last run | 7 min 21 s  | 1 min 49 s |
+| After a change to `mannie-runtime` | 10 min 23 s | 3 min 09 s |
+
+- From an empty target folder the run took 12 min 06 s, and Clippy's lane, with a quarter of the processors, ended last. Before the change, the first run of the day, which rebuilt part of the workspaces, took 17 min 35 s.
+- After the change to the runtime, the available memory fell to 3 MB and 122 MB before, with up to 19 compilers at once. After, it stayed above 5 GB, with at most 12 compilers.
+- With nothing changed, `task docs:check` took 43 s before and 19 s after, and `task fmt:check` 26 to 34 s before and 19 s after.
+- cargo-nextest ran the 1,278 Rust tests in about 38 s, where `cargo test` ran them in about 118 s.
+- The Rust tests then ran five times in a row. Four runs passed. In one, `delegated_conformance` failed because Windows refused to replace a file that the test had just written; 15 further runs of the Workers suite under nextest and 15 of that test alone under `cargo test` passed.
+- `task e2e` passed 20 of its 21 spec files; the compaction spec failed once and passed in both runs after. `task build` built the installer, linked with rust-lld.
+- A list line written with the wrong marker in this document failed Prettier's and markdownlint's steps, and the other twelve steps still ran and passed in the same run.
+- After the run from an empty target folder, these test runs, the end-to-end build and the release build, the target folder held 26 GB: 19 GB of dev builds, 5 GB of Clippy's and 3 GB of release builds. Before the change it held 101 GB, with the builds of earlier days.

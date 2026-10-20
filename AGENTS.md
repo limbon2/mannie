@@ -148,7 +148,7 @@ Documents follow the conventions in [docs/README.md](docs/README.md): a status t
 
 `Taskfile.yml` defines every workflow, and `task --list` shows them. The ones you use most:
 
-- `task setup` installs the pinned pnpm packages, cargo-deny and tauri-driver, fetches the crates of every Cargo workspace and runs `task gen`;
+- `task setup` installs the pinned pnpm packages, cargo-deny, cargo-nextest and tauri-driver, fetches the crates of every Cargo workspace and runs `task gen`;
 - `task gen` writes the launcher of the desktop binary with its lock, generates the IPC bindings of the core and of each plugin, compiles the message catalogs and writes SvelteKit's types; run it after changing a command, a type that crosses IPC, a message, or a plugin's manifest or `Cargo.toml`;
 - `task plugins:new ID=<id>` makes a new plugin in `plugins/<id>/` from the fixture plugin, and `task plugins:grants` lists what each plugin may use;
 - `task plugins:lock ID=<id>` records a plugin's changed `Cargo.toml` in its own `Cargo.lock`, and `task deps:align` brings the plugins' locks to the root's versions;
@@ -158,7 +158,7 @@ Documents follow the conventions in [docs/README.md](docs/README.md): a status t
 - `task test` runs the Rust, Vitest and script tests;
 - `task e2e` builds the validation app and runs the end-to-end tests through tauri-driver (V1, V2, V3, V11);
 - `task docs:check` checks the documentation;
-- `task ci` runs every check a change must pass;
+- `task ci` runs every check a change must pass, side by side, and ends with each step's result and time;
 - `task release:prepare VERSION=x.y.z` prepares a release ([releasing](docs/engineering/releasing.md)).
 
 ## Environment

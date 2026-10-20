@@ -89,8 +89,8 @@ Nothing reaches `main` as a placeholder: no stubbed security checks, no TODO in 
 
 | Level                | What it covers                                                                                                                 | How                                                                  |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
-| Unit                 | Pure logic                                                                                                                     | `cargo test`, Vitest                                                 |
-| Integration          | Modules against real dependencies: SQLite, processes, the link over loopback                                                   | `cargo test` in each crate's `tests/`                                |
+| Unit                 | Pure logic                                                                                                                     | cargo-nextest, Vitest                                                |
+| Integration          | Modules against real dependencies: SQLite, processes, the link over loopback                                                   | cargo-nextest on each crate's `tests/`                               |
 | Provider conformance | Each adapter and quirk profile                                                                                                 | Recorded server-sent event fixtures; live endpoints every night (V8) |
 | Loop                 | The agent loop without a network                                                                                               | A scripted fake provider                                             |
 | Model evaluations    | Prompts and tool descriptions still work with real models                                                                      | Evaluation suites, on demand and every night                         |
