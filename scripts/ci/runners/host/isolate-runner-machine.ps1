@@ -7,8 +7,8 @@
 # the machine to the runners' internal switch, and before taking the machine's
 # clean checkpoint:
 #   ./scripts/ci/runners/host/isolate-runner-machine.ps1 -Machine mannie-ci-ubuntu-24.04
-# Rules that the owner added for a server stay: an allow rule for one address
-# outranks the deny rule of its network.
+# The validated baseline allows only IPv4's default route and the gateway.
+# Additional server exceptions require a reviewed address and port policy.
 param(
     [Parameter(Mandatory)]
     [string] $Machine

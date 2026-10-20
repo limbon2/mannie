@@ -38,6 +38,10 @@ $machines = @(
             TookJob         = $false
             # Running a job that began before this script started.
             Inherited       = $false
+            InheritedRunnerIds = @()
+            InheritedStarted = $null
+            InheritedLastOnline = $null
+            InheritedEndedAt = $null
             # Running without a cycle, so the owner may be working on it.
             ReportedRunning = $false
             FailedCycles    = 0
@@ -144,7 +148,8 @@ function Reset-Machine {
     param(
         [Parameter(Mandatory)]
         [pscustomobject] $Machine,
-        [object[]] $Runners
+        [object[]] $Runners,
+        [switch] $UnknownRunners
     )
 
     # This script may have stopped while its cycles ran. A runner that is
@@ -152,9 +157,19 @@ function Reset-Machine {
     # is turned off and removed.
     $own = @(Get-MachineRunners -Machine $Machine -Runners $Runners)
     $vm = Get-VM -Name $Machine.Name
-    if ($vm.State -ne 'Off' -and @($own | Where-Object { $_.busy }).Count -gt 0) {
+    if ($vm.State -ne 'Off' -and ($UnknownRunners -or @($own | Where-Object { $_.busy }).Count -gt 0)) {
         $Machine.Inherited = $true
-        Write-RunnerLog ('{0}: is running a job that began before this script started; it is left to finish' -f $Machine.Name)
+        $Machine.InheritedRunnerIds = @($own | Where-Object { $_.busy } | ForEach-Object { $_.id })
+        $now = Get-Date
+        # VM uptime preserves the overall bound across controller restarts.
+        $Machine.InheritedStarted = $now - $vm.Uptime
+        $Machine.InheritedLastOnline = $now
+        $Machine.InheritedEndedAt = $null
+        if ($UnknownRunners) {
+            Write-RunnerLog ('{0}: its earlier runner cannot be read yet; watching the machine within the inherited deadlines' -f $Machine.Name)
+        } else {
+            Write-RunnerLog ('{0}: is running a job that began before this script started; it is left to finish' -f $Machine.Name)
+        }
         return
     }
     if ($vm.State -ne 'Off') {
@@ -162,6 +177,76 @@ function Reset-Machine {
         Write-RunnerLog ('{0}: turned off the machine, which was running without a job' -f $Machine.Name)
     }
     Remove-MachineRunners -Machine $Machine -Runners $own
+}
+
+function Initialize-RunnerMachines {
+    $unknown = $false
+    $runners = @()
+    try {
+        Test-RepositoryAccess -Repository $repository
+        $runners = @(Get-RepositoryRunners -Repository $repository)
+    } catch {
+        $unknown = $true
+        Write-RunnerProblem -Key 'queue' -Text ("cannot read GitHub at startup; watching configured running machines until it recovers: {0}" -f $_.Exception.Message)
+    }
+    foreach ($machine in $machines) { Reset-Machine -Machine $machine -Runners $runners -UnknownRunners:$unknown }
+}
+
+function Stop-InheritedMachine {
+    param([Parameter(Mandatory)] [pscustomobject] $Machine, [Parameter(Mandatory)] [string] $Reason)
+
+    # Free the memory and slot before GitHub cleanup, which may fail while
+    # the network is down. Remaining registrations are reconciled at startup.
+    Stop-RunnerMachine -Machine $Machine.Name
+    $Machine.Inherited = $false
+    Write-RunnerLog ('{0}: ended the inherited cycle: {1}' -f $Machine.Name, $Reason)
+    foreach ($id in $Machine.InheritedRunnerIds) {
+        try { Remove-Runner -Repository $repository -Id $id | Out-Null }
+        catch { Write-RunnerProblem -Key ($Machine.Name + '/cleanup') -Text ('{0}: could not remove inherited runner {1}: {2}' -f $Machine.Name, $id, $_.Exception.Message) }
+    }
+}
+
+function Update-InheritedMachine {
+    param([Parameter(Mandatory)] [pscustomobject] $Machine)
+
+    $now = Get-Date
+    $vm = Get-VM -Name $Machine.Name
+    $reason = $null
+    if ($vm.State -eq 'Off') { $reason = 'the guest powered off' }
+    elseif ($now - $Machine.InheritedStarted -gt (New-TimeSpan -Hours 7)) { $reason = 'the machine ran for longer than 7 hours' }
+    elseif ($null -ne $Machine.InheritedEndedAt -and $now - $Machine.InheritedEndedAt -gt (New-TimeSpan -Minutes 5)) { $reason = 'the guest did not power off within 5 minutes after its job' }
+    elseif ($now - $Machine.InheritedLastOnline -gt (New-TimeSpan -Minutes 10)) { $reason = 'the runner was offline or unreadable for 10 minutes' }
+    if ($reason) {
+        Stop-InheritedMachine -Machine $Machine -Reason $reason
+        return
+    }
+    # Check deadlines before requests, so an API outage cannot extend them.
+    try {
+        if ($Machine.InheritedRunnerIds.Count -eq 0) {
+            $own = @(Get-MachineRunners -Machine $Machine -Runners @(Get-RepositoryRunners -Repository $repository))
+            $Machine.InheritedRunnerIds = @($own | ForEach-Object { $_.id })
+        }
+        $states = @(
+            foreach ($id in $Machine.InheritedRunnerIds) {
+                $state = Get-Runner -Repository $repository -Id $id
+                if ($null -ne $state) { $state }
+            }
+        )
+    } catch {
+        Write-RunnerProblem -Key ($Machine.Name + '/runner') -Text ('{0}: cannot read inherited runner: {1}' -f $Machine.Name, $_.Exception.Message)
+        return
+    }
+    Clear-RunnerProblem -Key ($Machine.Name + '/runner') -Text ('{0}: the inherited runner is readable again' -f $Machine.Name)
+    $online = @($states | Where-Object { $_.status -eq 'online' })
+    if ($online.Count -gt 0) { $Machine.InheritedLastOnline = $now }
+    if (@($online | Where-Object { $_.busy }).Count -gt 0) {
+        $Machine.InheritedEndedAt = $null
+    } elseif ($states.Count -eq 0 -or $online.Count -gt 0) {
+        if ($null -eq $Machine.InheritedEndedAt) {
+            $Machine.InheritedEndedAt = $now
+            Write-RunnerLog ('{0}: its inherited runner was removed or finished its job; waiting for shutdown' -f $Machine.Name)
+        }
+    }
 }
 
 function Receive-Cycle {
@@ -217,11 +302,7 @@ function Update-Machine {
         }
         return
     }
-    if ($Machine.Inherited -and (Get-VM -Name $Machine.Name).State -eq 'Off') {
-        $Machine.Inherited = $false
-        Write-RunnerLog ('{0}: the job that began before this script started is over' -f $Machine.Name)
-        Remove-MachineRunners -Machine $Machine -Runners @(Get-RepositoryRunners -Repository $repository)
-    }
+    if ($Machine.Inherited) { Update-InheritedMachine -Machine $Machine }
     if ($Machine.ReportedRunning -and (Get-VM -Name $Machine.Name).State -eq 'Off') {
         $Machine.ReportedRunning = $false
     }
@@ -320,7 +401,6 @@ function Stop-Cycles {
 $controllerLock = Enter-ControllerLock -Repository $repository
 try {
     Connect-GitHub
-    Test-RepositoryAccess -Repository $repository
     foreach ($machine in $machines) {
         try {
             Get-VM -Name $machine.Name | Out-Null
@@ -332,10 +412,7 @@ try {
         }
     }
     Write-RunnerLog "serving $repository with $(@($machines.Name) -join ', '), at most $($config.MaxRunning) at once"
-    $runners = @(Get-RepositoryRunners -Repository $repository)
-    foreach ($machine in $machines) {
-        Reset-Machine -Machine $machine -Runners $runners
-    }
+    Initialize-RunnerMachines
 
     try {
         while ($true) {

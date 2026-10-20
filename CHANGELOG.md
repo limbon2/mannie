@@ -8,6 +8,13 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 - The self-hosted runners run on Hyper-V machines on the owner's workstation: `scripts/ci/runners/` starts a machine from its clean checkpoint for each waiting job, hands it a just-in-time runner and turns it off after the job, and the machines reach the internet and nothing else, the host included, with name lookups over TLS.
 
+### Fixed
+
+- `task ci` finishes the desktop unit tests before starting the Rust tests, so desktop transforms no longer compete with their timing checks.
+
+- The Hyper-V controller rejects network allow rules outside its baseline, bounds GitHub requests, and reconciles inherited runners within offline, shutdown and overall deadlines after a restart, including an API outage at startup.
+- The Windows close-action test waits for the settings to finish saving before closing the window, so its tray check uses the saved choice.
+
 ## 0.4.0 - 2026-10-20
 
 ### Added

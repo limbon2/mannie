@@ -207,6 +207,8 @@ The application icons in `apps/desktop/src-tauri/icons/` are assets, not code: t
 | `task docs:lint`                       | Checks the documents' Markdown rules, spelling, links and consistency, without the formatting that `task fmt:check` checks                                                                                                                                                                                      |
 | `task ci`                              | Runs every check a change must pass, the steps of `gen`, `docs:check`, `fmt:check`, `lint` and `test`, side by side through `scripts/ci.mjs` within limits that keep the machine usable, and ends with every step's result and time ([ADR-0037](../adr/0037-run-the-checks-of-task-ci-side-by-side.md))         |
 
+`task ci` finishes the desktop unit tests before running the Rust tests, including when the desktop suite fails. The Rust tests also occupy both Cargo lanes, so their timing checks share no processors with desktop transforms or compilers ([ADR-0037](../adr/0037-run-the-checks-of-task-ci-side-by-side.md)).
+
 Task commands call real executables only, never Unix utilities, so every task runs the same on Windows, Linux and FreeBSD.
 
 ## 8. Environment

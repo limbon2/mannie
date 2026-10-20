@@ -3,7 +3,7 @@
 # access nor a token, network, runner registration or virtual machine.
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('syntax', 'labels', 'scheduling', 'configuration', 'queue', 'isolation', 'identity', 'lifecycle', 'lock', 'lock-child')]
+    [ValidateSet('syntax', 'labels', 'scheduling', 'configuration', 'queue', 'isolation', 'api', 'recovery', 'identity', 'lifecycle', 'lock', 'lock-child')]
     [string] $TestCase,
     [string] $Repository
 )
@@ -33,8 +33,14 @@ function New-Machine {
         Labels = @('self-hosted', 'disposable', $System)
         InCycle = $false
         Inherited = $false
+        InheritedRunnerIds = @()
+        InheritedStarted = $null
+        InheritedLastOnline = $null
+        InheritedEndedAt = $null
         Paused = $false
         Running = $false
+        Job = $null
+        ReportedRunning = $false
     }
 }
 function New-QueuedJob {
@@ -155,14 +161,179 @@ switch ($TestCase) {
             $missingGuards = @(Get-RunnerMachineProblems 'test')
             $script:serviceEnabled = $false
             $missingService = @(Get-RunnerMachineProblems 'test')
-            $script:rules += [pscustomobject]@{ Direction = 'Outbound'; Action = 'Allow'; RemoteAddress = '192.168.0.0/16' }
-            $allowedNetwork = @(Get-RunnerMachineProblems 'test')
-            [pscustomobject]@{ Good = $good; MissingGuards = $missingGuards; MissingService = $missingService; AllowedNetwork = $allowedNetwork }
+            $script:serviceEnabled = $true
+            $script:extended = @(
+                foreach ($direction in 'Inbound', 'Outbound') {
+                    [pscustomobject]@{ Direction = $direction; Action = 'Deny'; RemoteIPAddress = '10.77.1.1/32'; Protocol = 'ANY'; LocalPort = 'ANY'; RemotePort = 'ANY'; Weight = 10; Stateful = $false }
+                }
+                [pscustomobject]@{ Direction = 'Inbound'; Action = 'Allow'; RemoteIPAddress = '10.77.1.1'; Protocol = 'TCP'; LocalPort = '22'; RemotePort = 'ANY'; Weight = 20; Stateful = $true }
+            )
+            $baseRules = @($script:rules)
+            $bypasses = @(
+                foreach ($address in @('192.168.0.0/24', '192.168.0.0/16', '192.0.0.0/8', '192.168.0.1/32', '10.77.1.0/24', '10.77.1.2', '::/0', '::/1', 'fd00::/64', 'fd00::1/128', '::ffff:192.168.0.1', 'malformed/999')) {
+                    $script:rules = @($baseRules) + @(
+                        foreach ($direction in 'Inbound', 'Outbound') {
+                            [pscustomobject]@{ Direction = $direction; Action = 'Allow'; RemoteAddress = $address }
+                        }
+                    )
+                    [pscustomobject]@{ Address = $address; Problems = @(Get-RunnerMachineProblems 'test') }
+                }
+            )
+            $script:rules = @($baseRules | ForEach-Object {
+                $address = $_.RemoteAddress
+                if ($address -eq '::/0') { $address = '0:0:0:0:0:0:0:0/0' }
+                if ($address -eq '10.77.1.1') { $address = '10.77.1.1/32' }
+                [pscustomobject]@{ Direction = $_.Direction; Action = $_.Action; RemoteAddress = $address }
+            }) + @([pscustomobject]@{ Direction = 'Outbound'; Action = 'Allow'; RemoteAddress = '0.0.0.0/0' })
+            $normalized = @(Get-RunnerMachineProblems 'test')
+            [pscustomobject]@{ Good = $good; MissingGuards = $missingGuards; MissingService = $missingService; Bypasses = $bypasses; Normalized = $normalized }
         }
         Assert-True ($outcomes.Good.Count -eq 0) 'Accept the fully isolated machine.'
         Assert-True (($outcomes.MissingGuards -join ' ').Contains('does not refuse')) 'Refuse an image that exposes host services.'
         Assert-True (($outcomes.MissingService -join ' ').Contains('Guest services are off')) 'Refuse an image that cannot receive the host configuration.'
-        Assert-True (($outcomes.AllowedNetwork -join ' ').Contains('allows traffic with all of 192.168.0.0/16')) 'Refuse a broad exception to private-network isolation.'
+        foreach ($bypass in $outcomes.Bypasses) {
+            Assert-True (($bypass.Problems -join ' ').Contains('unexpected allow')) "Refuse the unreviewed allow $($bypass.Address), even when a broader deny exists."
+        }
+        Assert-True ($outcomes.Normalized.Count -eq 0) 'Accept equivalent host and IPv6 prefixes and the default IPv4 internet allow.'
+    }
+    'api' {
+        & $module {
+            $script:token = ConvertTo-SecureString 'fake-runner-test-token' -AsPlainText -Force
+            $script:requestTimeouts = [System.Collections.Generic.List[object]]::new()
+            $script:failure = ''
+            function script:Invoke-RestMethod {
+                param($Method, $Uri, $Headers, $UserAgent, $TimeoutSec, $OperationTimeoutSeconds, $Body, $ContentType)
+                $script:requestTimeouts.Add([pscustomobject]@{ Connection = $TimeoutSec; Operation = $OperationTimeoutSeconds })
+                if ($script:failure -eq 'timeout') { throw [Net.WebException]::new('request timed out') }
+                if ($script:failure -eq 'missing') {
+                    $error = [Exception]::new('not found')
+                    $error | Add-Member -NotePropertyName Response -NotePropertyValue ([pscustomobject]@{ StatusCode = 404 })
+                    throw $error
+                }
+                return [pscustomobject]@{ ok = $true }
+            }
+            foreach ($method in 'GET', 'POST', 'DELETE') { Invoke-GitHubApi -Method $method -Path 'test' | Out-Null }
+            foreach ($request in $script:requestTimeouts) {
+                if ($request.Connection -ne 30) { throw 'A GitHub request has no finite connection timeout.' }
+                if ($PSVersionTable.PSVersion -ge [version]'7.4' -and $request.Operation -ne 30) { throw 'A PowerShell 7 request has no finite read timeout.' }
+            }
+            $script:failure = 'timeout'
+            $caught = $false
+            try { Invoke-GitHubApi -Method GET -Path 'test' | Out-Null }
+            catch {
+                $caught = $_.Exception.Message.Contains('GitHub: GET /test failed: request timed out')
+                if ($_.Exception.Message.Contains('fake-runner-test-token')) { throw 'The API error exposed a token.' }
+            }
+            if (-not $caught) { throw 'An API timeout did not reach the controller as a recoverable failure.' }
+            $script:failure = 'missing'
+            if ($null -ne (Invoke-GitHubApi -Method GET -Path 'test' -AllowNotFound)) { throw 'A removed runner must return no state.' }
+        }
+    }
+    'recovery' {
+        $tokens = $null
+        $errors = $null
+        $tree = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $hostFolder 'run-runners.ps1'), [ref]$tokens, [ref]$errors)
+        foreach ($name in @('Get-MachineRunners', 'Remove-MachineRunners', 'Reset-Machine', 'Initialize-RunnerMachines', 'Stop-InheritedMachine', 'Update-InheritedMachine', 'Update-Machine')) {
+            $definition = $tree.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
+            . ([scriptblock]::Create($definition.Extent.Text))
+        }
+        $repository = 'limbon2/mannie'
+        function Get-Date { return $script:clock }
+        function Get-VM { return [pscustomobject]@{ State = $script:vmState; Uptime = $script:uptime } }
+        function Stop-RunnerMachine { $script:stops += 1; $script:vmState = 'Off' }
+        function Get-Runner {
+            $script:reads += 1
+            if ($script:unavailable) { throw 'API unavailable' }
+            if ($script:response -eq 'removed') { return $null }
+            return [pscustomobject]@{ status = $script:response; busy = $script:busy }
+        }
+        function Test-RepositoryAccess { if ($script:unavailable) { throw 'API unavailable' } }
+        function Get-RepositoryRunners {
+            if ($script:unavailable) { throw 'API unavailable' }
+            return [pscustomobject]@{ id = 42; name = 'recovery-test-20261020-000000'; busy = $true; status = 'online' }
+        }
+        function Remove-Runner {
+            if ($script:unavailable) { throw 'API unavailable' }
+            $script:removed += 1
+            return $true
+        }
+        function Write-RunnerLog { param($Text) $script:messages.Add($Text) }
+        function Write-RunnerProblem { param($Key, $Text) $script:messages.Add($Text) }
+        function Clear-RunnerProblem { }
+        function Start-InheritedFixture {
+            $script:clock = [datetime]'2026-10-20T00:00:00'
+            $script:vmState = 'Running'
+            $script:uptime = New-TimeSpan -Hours 1
+            $script:stops = 0
+            $script:reads = 0
+            $script:removed = 0
+            $script:unavailable = $false
+            $script:response = 'online'
+            $script:busy = $true
+            $script:messages = [System.Collections.Generic.List[string]]::new()
+            $machine = New-Machine 'recovery-test'
+            $registration = [pscustomobject]@{ id = 42; name = 'recovery-test-20261020-000000'; busy = $true; status = 'online' }
+            Reset-Machine -Machine $machine -Runners @($registration)
+            Assert-True $machine.Inherited 'Adopt the busy registered machine.'
+            Assert-True ($machine.InheritedStarted -eq $script:clock.AddHours(-1)) 'Keep the original VM boot time across controller restarts.'
+            return $machine
+        }
+        $machine = Start-InheritedFixture
+        $script:clock = $script:clock.AddMinutes(8)
+        Update-Machine $machine
+        Assert-True ($machine.Inherited -and $script:stops -eq 0 -and $machine.InheritedLastOnline -eq $script:clock) 'Leave a healthy inherited job running and refresh its observed state.'
+
+        foreach ($runnerState in 'removed', 'online') {
+            $machine = Start-InheritedFixture
+            $script:response = $runnerState
+            $script:busy = $false
+            Update-Machine $machine
+            Assert-True ($null -ne $machine.InheritedEndedAt) 'Observe a completed inherited job.'
+            $script:clock = $script:clock.AddMinutes(6)
+            $script:unavailable = $true
+            Update-Machine $machine
+            Assert-True (-not $machine.Inherited -and $script:stops -eq 1 -and $script:reads -eq 1) 'Stop after the shutdown deadline even when the next API read and cleanup would fail.'
+        }
+        foreach ($runnerState in 'offline', 'unavailable') {
+            $machine = Start-InheritedFixture
+            $script:response = $runnerState
+            $script:unavailable = $runnerState -eq 'unavailable'
+            $script:clock = $script:clock.AddMinutes(9)
+            Update-Machine $machine
+            Assert-True $machine.Inherited 'Allow a short loss of runner visibility.'
+            $script:clock = $script:clock.AddMinutes(2)
+            Update-Machine $machine
+            Assert-True (-not $machine.Inherited -and $script:stops -eq 1 -and $script:reads -eq 1) "An offline runner or API outage must not occupy capacity forever ($runnerState; inherited=$($machine.Inherited); stops=$script:stops; reads=$script:reads; logs=$($script:messages -join ' / '))."
+        }
+        $machine = Start-InheritedFixture
+        $machine.InheritedStarted = $script:clock.AddHours(-8)
+        $script:unavailable = $true
+        Update-Machine $machine
+        Assert-True (-not $machine.Inherited -and $script:stops -eq 1 -and $script:reads -eq 0) 'Enforce the original overall deadline before attempting GitHub.'
+
+        foreach ($recovers in @($true, $false)) {
+            $machine = Start-InheritedFixture
+            $machine.Inherited = $false
+            $machine.InheritedRunnerIds = @()
+            $machines = @($machine)
+            $script:unavailable = $true
+            Initialize-RunnerMachines
+            Assert-True ($machine.Inherited -and $machine.InheritedRunnerIds.Count -eq 0) 'An initial API outage must not abort monitoring of configured running VMs.'
+            if ($recovers) {
+                $script:clock = $script:clock.AddMinutes(1)
+                $script:unavailable = $false
+                Update-Machine $machine
+                Assert-True ($machine.Inherited -and $machine.InheritedRunnerIds[0] -eq 42 -and $script:stops -eq 0) 'Discover the owned runner and leave its job running when GitHub recovers.'
+            } else {
+                $script:clock = $script:clock.AddMinutes(11)
+                Update-Machine $machine
+                Assert-True (-not $machine.Inherited -and $script:stops -eq 1) 'An initial API outage must still bound VM lifetime.'
+            }
+        }
+        $machine = Start-InheritedFixture
+        $script:vmState = 'Off'
+        Update-Machine $machine
+        Assert-True (-not $machine.Inherited -and $script:removed -eq 1) 'Free a stopped inherited machine and remove its registration.'
     }
     'lifecycle' {
         # Load the cycle's real wait function without running its VM setup or

@@ -107,21 +107,40 @@ function Get-SwitchGateway {
     return $addresses[0].IPAddress
 }
 
+function ConvertTo-IpPrefix {
+    param([string] $Text)
+
+    # Hyper-V normalizes addresses and may omit a host's /32 or /128. Compare
+    # network bytes, not spelling, including expanded IPv6 and host bits.
+    $parts = $Text.Split('/')
+    $address = $null
+    if ($parts.Count -gt 2 -or $Text.Contains('%') -or -not [Net.IPAddress]::TryParse($parts[0], [ref]$address)) { return $null }
+    $bytes = $address.GetAddressBytes()
+    $length = $bytes.Length * 8
+    if ($parts.Count -eq 2) {
+        if (-not [int]::TryParse($parts[1], [ref]$length) -or $length -lt 0 -or $length -gt $bytes.Length * 8) { return $null }
+    }
+    for ($index = 0; $index -lt $bytes.Length; $index += 1) {
+        $remaining = $length - $index * 8
+        if ($remaining -le 0) { $bytes[$index] = 0 }
+        elseif ($remaining -lt 8) { $bytes[$index] = $bytes[$index] -band (255 -shl (8 - $remaining)) }
+    }
+    return [pscustomobject]@{ Family = $bytes.Length; Length = $length; Network = [Convert]::ToBase64String($bytes) }
+}
+
 function Test-AclRemoteAddress {
     param(
-        [Parameter(Mandatory)]
-        [object] $Rule,
-        [Parameter(Mandatory)]
-        [string] $Address
+        [Parameter(Mandatory)] [object] $Rule,
+        [Parameter(Mandatory)] [string] $Address
     )
 
-    # Hyper-V shows a single address without its /32. Port ACLs name it
-    # RemoteAddress, and extended port ACLs RemoteIPAddress.
+    # Basic and extended port ACLs use different property names.
     $remote = $Rule.PSObject.Properties['RemoteAddress']
-    if (-not $remote) {
-        $remote = $Rule.PSObject.Properties['RemoteIPAddress']
-    }
-    return $remote -and ($remote.Value -eq $Address -or $remote.Value -eq "$Address/32")
+    if (-not $remote) { $remote = $Rule.PSObject.Properties['RemoteIPAddress'] }
+    if (-not $remote) { return $false }
+    $actual = ConvertTo-IpPrefix ([string]$remote.Value)
+    $expected = ConvertTo-IpPrefix $Address
+    return $null -ne $actual -and $null -ne $expected -and $actual.Family -eq $expected.Family -and $actual.Length -eq $expected.Length -and $actual.Network -eq $expected.Network
 }
 
 function Test-HostGuardRule {
@@ -367,7 +386,12 @@ function Invoke-GitHubApi {
         Uri       = "https://api.github.com/$Path"
         Headers   = $headers
         UserAgent = 'mannie-ci-runners'
+        TimeoutSec = 30
     }
+    # Since 7.4, TimeoutSec limits connection establishment only. Bound reads
+    # as well; Windows PowerShell 5.1 uses its request timeout (verified on
+    # 2026-10-20, linked in docs/engineering/ci-runners.md).
+    if ($PSVersionTable.PSVersion -ge [version]'7.4') { $request.OperationTimeoutSeconds = 30 }
     if ($Body) {
         $request.Body = ConvertTo-Json -InputObject $Body -Compress
         $request.ContentType = 'application/json; charset=utf-8'
@@ -652,7 +676,10 @@ function Get-RunnerMachineProblems {
     if (-not $guestService -or -not $guestService.Enabled) {
         $problems.Add('Guest services are off, so the host cannot copy the runner configuration into the guest')
     }
-    foreach ($adapter in @(Get-VMNetworkAdapter -VM $vm)) {
+    $adapters = @(Get-VMNetworkAdapter -VM $vm)
+    if ($adapters.Count -eq 0) { $problems.Add('the machine has no network adapter') }
+    foreach ($adapter in $adapters) {
+        $gateway = $null
         $rules = @(Get-VMNetworkAdapterAcl -VMNetworkAdapter $adapter)
         if ($adapter.SwitchName) {
             $switch = Get-VMSwitch -Name $adapter.SwitchName
@@ -681,6 +708,8 @@ function Get-RunnerMachineProblems {
                     $problems.Add("$($adapter.Name) has an extended port ACL that allows $("$($rule.Direction)".ToLower()) traffic with $($rule.RemoteIPAddress), which could let jobs reach the host")
                 }
             }
+        } else {
+            $problems.Add("$($adapter.Name) is not connected to a switch")
         }
         if ($adapter.DhcpGuard -ne 'On') {
             $problems.Add("$($adapter.Name) has DHCP guard off")
@@ -693,16 +722,20 @@ function Get-RunnerMachineProblems {
         }
         foreach ($network in $blockedNetworks) {
             foreach ($direction in 'Inbound', 'Outbound') {
-                $denied = @($rules | Where-Object { $_.Direction -eq $direction -and $_.Action -eq 'Deny' -and $_.RemoteAddress -eq $network })
+                $denied = @($rules | Where-Object { $_.Direction -eq $direction -and $_.Action -eq 'Deny' -and (Test-AclRemoteAddress -Rule $_ -Address $network) })
                 if ($denied.Count -eq 0) {
                     $problems.Add("$($adapter.Name) does not deny $($direction.ToLower()) traffic with $network")
                 }
             }
-            # An exception for a server allows its own address, which is longer
-            # than the network's prefix; an allow rule for the whole network
-            # would contend with its deny rule.
-            if (@($rules | Where-Object { $_.Action -eq 'Allow' -and $_.RemoteAddress -eq $network }).Count -gt 0) {
-                $problems.Add("$($adapter.Name) allows traffic with all of $network")
+        }
+        # A narrower Allow outranks a required deny. Accept only the explicit
+        # baseline: the gateway host (guarded above) and IPv4's default route.
+        # Private-server exceptions need a separately reviewed policy change.
+        foreach ($rule in @($rules | Where-Object { $_.Action -eq 'Allow' })) {
+            $isGateway = $gateway -and (Test-AclRemoteAddress -Rule $rule -Address $gateway)
+            $isInternet = Test-AclRemoteAddress -Rule $rule -Address '0.0.0.0/0'
+            if (-not $isGateway -and -not $isInternet) {
+                $problems.Add("$($adapter.Name) has an unexpected allow for $($rule.RemoteAddress), which can bypass its network denies")
             }
         }
     }

@@ -9,7 +9,8 @@
 // - Cargo lets one command at a time use a target folder. The builds use
 //   target/ and Clippy uses target/clippy, so a cargo step holds the lane of
 //   its folder, and the two lanes run side by side. The Rust tests hold both
-//   lanes, so no compiler takes the processors that their timeouts count on.
+//   lanes, after the desktop tests finish, so no compiler takes the processors
+//   that their timeouts count on.
 // - The machine stays usable. The run has below-normal priority, which every
 //   command inherits. Two cargo steps that run side by side share the logical
 //   processors, three quarters for the builds and a quarter for Clippy, so
@@ -79,14 +80,14 @@ export const STEPS = [
   { lanes: ['build'], task: 'gen' },
   { lanes: ['build'], needs: ['gen'], task: 'test:rust:build' },
   { lanes: ['clippy'], needs: ['gen'], task: 'lint:rust' },
-  // After the build, also when it failed: the workspaces that built still run
-  // their tests.
-  { after: ['test:rust:build'], lanes: ['build', 'clippy'], needs: ['gen'], task: 'test:rust' },
   { needs: ['gen'], task: 'lint:ts' },
   { needs: ['gen'], task: 'lint:types' },
   // Vitest's Paraglide plugin compiles the messages again and rewrites their
   // files, which ESLint and svelte-check read, so it runs after them.
   { after: ['lint:ts', 'lint:types'], needs: ['gen'], task: 'test:desktop' },
+  // Wait for desktop transforms and tests to finish before timing Rust
+  // behavior. These steps still run after a failed build or desktop suite.
+  { after: ['test:rust:build', 'test:desktop'], lanes: ['build', 'clippy'], needs: ['gen'], task: 'test:rust' },
   { needs: ['gen'], task: 'lint:deps' },
   { needs: ['gen'], task: 'fmt:check' },
   { needs: ['gen'], task: 'lint:messages' },

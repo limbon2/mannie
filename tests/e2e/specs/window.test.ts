@@ -59,6 +59,8 @@ async function chooseCloseAction(action: 'ask' | 'quit' | 'tray'): Promise<void>
   const choice = await $(`#window-close-${action}`);
   await choice.click();
   await expect(choice).toHaveAttribute('data-state', 'checked');
+  // The radio updates before the saved close action reaches the core.
+  await expect(choice).toBeEnabled();
 }
 
 /** Waits until a process ends, and kills it when it does not end in time. */

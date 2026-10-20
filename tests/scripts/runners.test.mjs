@@ -27,6 +27,8 @@ describe(
       'configuration',
       'queue',
       'isolation',
+      'api',
+      'recovery',
       'identity',
       'lifecycle',
       'lock',
