@@ -40,8 +40,14 @@ $user = $identity.Name
 # The software of docs/engineering/ci-runners.md, section 3, which the owner
 # installs before running this script.
 $missing = @()
-if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) {
+$git = Get-Command git.exe -ErrorAction SilentlyContinue
+if (-not $git) {
     $missing += 'Git for Windows'
+} else {
+    $gitRoot = Split-Path -Parent (Split-Path -Parent $git.Source)
+    if (-not (Test-Path -LiteralPath (Join-Path $gitRoot 'bin\bash.exe'))) {
+        $missing += 'Git Bash from Git for Windows'
+    }
 }
 if (-not (Get-Command pwsh.exe -ErrorAction SilentlyContinue)) {
     $missing += 'PowerShell 7'

@@ -10,6 +10,7 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ### Fixed
 
+- The Windows runner adds Git Bash to the command search path that its jobs inherit, so a default Git for Windows installation can run the workflows' Bash steps.
 - `task ci` finishes the desktop unit tests before starting the Rust tests, so desktop transforms no longer compete with their timing checks.
 
 - The Hyper-V controller rejects network allow rules outside its baseline, bounds GitHub requests, and reconciles inherited runners within offline, shutdown and overall deadlines after a restart, including an API outage at startup.

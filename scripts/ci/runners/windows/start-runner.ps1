@@ -22,6 +22,27 @@ function Write-Log {
     Add-Content -LiteralPath $log -Value ('{0:yyyy-MM-dd HH:mm:ss} {1}' -f (Get-Date), $Text)
 }
 
+function Set-GitBashPath {
+    $git = Get-Command git.exe -ErrorAction SilentlyContinue
+    if (-not $git) {
+        throw 'start-runner: install Git for Windows first'
+    }
+    $gitRoot = Split-Path -Parent (Split-Path -Parent $git.Source)
+    $gitBin = Join-Path $gitRoot 'bin'
+    if (-not (Test-Path -LiteralPath (Join-Path $gitBin 'bash.exe'))) {
+        throw 'start-runner: Git Bash is missing from the Git for Windows installation'
+    }
+    # Git's default installer adds cmd to PATH, but the jobs also use bash.
+    $env:Path = $gitBin + [IO.Path]::PathSeparator + $env:Path
+}
+
+try {
+    Set-GitBashPath
+} catch {
+    Write-Log $_.Exception.Message
+    throw
+}
+
 Set-Content -LiteralPath $log -Value ('{0:yyyy-MM-dd HH:mm:ss} waiting for the runner configuration from the host' -f (Get-Date))
 # The host copies the marker after the configuration, so the configuration is
 # complete once the marker is there.

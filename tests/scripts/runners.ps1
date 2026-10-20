@@ -3,7 +3,7 @@
 # access nor a token, network, runner registration or virtual machine.
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('syntax', 'labels', 'scheduling', 'configuration', 'queue', 'isolation', 'api', 'recovery', 'identity', 'lifecycle', 'lock', 'lock-child')]
+    [ValidateSet('syntax', 'windows-path', 'labels', 'scheduling', 'configuration', 'queue', 'isolation', 'api', 'recovery', 'identity', 'lifecycle', 'lock', 'lock-child')]
     [string] $TestCase,
     [string] $Repository
 )
@@ -55,6 +55,45 @@ switch ($TestCase) {
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors) | Out-Null
             Assert-True -Condition ($errors.Count -eq 0) -Reason "$($file.Name): $($errors -join '; ')"
+        }
+    }
+    'windows-path' {
+        $startup = Join-Path $root 'scripts/ci/runners/windows/start-runner.ps1'
+        $tokens = $null
+        $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($startup, [ref]$tokens, [ref]$errors)
+        $definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Set-GitBashPath' }, $true)
+        . ([scriptblock]::Create($definition.Extent.Text))
+        $folder = Join-Path ([IO.Path]::GetTempPath()) ('mannie-git-path-' + [guid]::NewGuid().ToString('N'))
+        $gitRoot = Join-Path $folder 'Git with spaces'
+        $gitBin = Join-Path $gitRoot 'bin'
+        $gitCmd = Join-Path $gitRoot 'cmd'
+        New-Item -ItemType Directory -Path $gitBin, $gitCmd -Force | Out-Null
+        $gitExe = Join-Path $gitCmd 'git.exe'
+        $bashExe = Join-Path $gitBin 'bash.exe'
+        Set-Content -LiteralPath $gitExe, $bashExe -Value ''
+        $originalPath = $env:Path
+        $script:gitAvailable = $true
+        function Get-Command {
+            param([string] $Name, [string] $ErrorAction)
+            if ($script:gitAvailable) { return [pscustomobject]@{ Source = $gitExe } }
+        }
+        try {
+            Set-GitBashPath
+            $powerShell = (Get-Process -Id $PID).Path
+            $inherited = & $powerShell -NoProfile -NonInteractive -Command '[Console]::Write((Get-Command bash.exe -ErrorAction Stop).Source)'
+            Assert-True ($LASTEXITCODE -eq 0 -and $inherited -eq $bashExe) 'Jobs must find Git Bash through the inherited PATH, including an installation folder with spaces.'
+            Assert-True ($env:Path.EndsWith($originalPath)) 'Keep the rest of the inherited command search path.'
+            Remove-Item -LiteralPath $bashExe
+            Assert-Fails { Set-GitBashPath } 'Git Bash is missing'
+            $script:gitAvailable = $false
+            Assert-Fails { Set-GitBashPath } 'install Git for Windows first'
+        } finally {
+            $env:Path = $originalPath
+            foreach ($file in $gitExe, $bashExe) {
+                if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force }
+            }
+            Remove-Item -LiteralPath $gitBin, $gitCmd, $gitRoot, $folder -Force
         }
     }
     'labels' {

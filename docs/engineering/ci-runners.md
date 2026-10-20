@@ -51,7 +51,7 @@ The checkpoint holds no registration and no token: they reach the machine after 
 
 - 4 virtual processors, 8 GB of memory and 64 GB of disk. The owner chose 8 GB on 2026-10-20 to leave more memory for work on the host. Validate memory use in the first complete Windows job before increasing the allocation.
 - An administrator account that signs in automatically, and the runner started in that session with administrator rights, for example by a scheduled task at sign-in that runs with the highest privileges. The end-to-end tests open the app's window on that session's desktop, and the worker service job installs a Windows service. A runner installed as a Windows service runs without a desktop.
-- Git for Windows, whose bash runs the steps with `shell: bash` (verified on 2026-10-16).
+- Git for Windows, whose bash runs the steps with `shell: bash` (verified on 2026-10-20). The image setup checks that Git Bash is installed, and the runner adds Git's `bin` folder to the command search path that its jobs inherit.
 - PowerShell 7, which runs the steps without a `shell` and those with `shell: pwsh` (verified on 2026-10-16).
 - Visual Studio's C++ build tools, with the Desktop development with C++ workload, as for development ([CONTRIBUTING](../../CONTRIBUTING.md)).
 - rustup without a toolchain. Each job installs the toolchain that `rust-toolchain.toml` pins.
