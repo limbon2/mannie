@@ -213,14 +213,16 @@ export async function waitForPointerInput(): Promise<void> {
   });
 }
 
-/** Types a message into the message box and sends it with Enter. */
+/** Sends with Enter and waits for the new turn, so reply checks cannot read the previous one. */
 export async function sendMessage(text: string): Promise<void> {
   await waitForComposer();
+  const before = await turnCount();
   await waitForPointerInput();
   const box = await $(COMPOSER);
   await box.click();
   await box.setValue(text);
   await browser.keys(Key.Enter);
+  await waitForNewTurn(before);
 }
 
 /** How many turns the transcript shows. */
@@ -306,10 +308,7 @@ export async function waitForNewTurn(before: number): Promise<void> {
  * loading, such as after leaving the settings, shows all its turns.
  */
 export async function send(text: string): Promise<void> {
-  await waitForComposer();
-  const before = await turnCount();
   await sendMessage(text);
-  await waitForNewTurn(before);
 }
 
 /** The status of the latest tool call in the latest turn, or `null` when it has none. */
