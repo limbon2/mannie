@@ -3,7 +3,7 @@
 |              |                                                                                                                       |
 | ------------ | --------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                      |
-| Last updated | 2026-10-20                                                                                                            |
+| Last updated | 2026-10-21                                                                                                            |
 | Related      | [AGENTS.md](../AGENTS.md), [README](../README.md), [ADR index](adr/README.md), [Feature protocol](features/README.md) |
 
 This is the project's documentation: the vision, scope, architecture, decisions and working rules, and the results of the validations that settle the decisions.
