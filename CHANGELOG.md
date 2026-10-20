@@ -10,7 +10,8 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ### Fixed
 
-- The validation build passes EdgeDriver's browser arguments and temporary profile through the WebView2 API, so UI tests can connect when a Windows runner runs as administrator.
+- The context compaction test waits for the new turn before reading its reply, so an earlier reply cannot satisfy its completion check.
+- Regular Windows CI checks use the signed-in user's normal interactive token, where Windows Credential Manager can persist credentials and EdgeDriver can configure WebView2; the worker service smoke test keeps administrator rights.
 - The Windows runner image keeps the firewall enabled with incoming connections blocked and suppresses its interactive notifications, which can cover the desktop during UI tests.
 - The Windows runner image preflight rejects a PowerShell Store app execution alias, which Actions cannot open as an executable; the setup guide selects the MSI package.
 - CI installs Node.js before pnpm, so fresh runner images can set up the package manager without a preinstalled npm.

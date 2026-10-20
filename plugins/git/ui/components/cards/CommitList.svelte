@@ -23,10 +23,10 @@
   {#each commits as commit (commit.oid)}
     <li class="min-w-0">
       {#if choose === undefined}
-        <div class="flex items-center gap-2 text-sm"><CommitRow {commit} /></div>
+        <div class="flex flex-wrap items-center gap-2 text-sm"><CommitRow {commit} /></div>
       {:else}
         <button
-          class="flex w-full items-center gap-2 rounded-sm px-1 text-start text-sm hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none aria-current:bg-muted"
+          class="flex w-full flex-wrap items-center gap-2 rounded-sm px-1 text-start text-sm hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none aria-current:bg-muted"
           aria-current={current === commit.oid ? 'true' : undefined}
           type="button"
           onclick={() => choose(commit.oid)}

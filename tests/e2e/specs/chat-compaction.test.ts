@@ -7,7 +7,7 @@ import {
   addProfile,
   chooseConversationAction,
   clickWithText,
-  sendMessage,
+  send,
   startNewConversation,
   turnCount,
   waitForCompleteReply,
@@ -64,7 +64,7 @@ describe('context budget and compaction', () => {
     while (summaryRequests(provider).length === 0) {
       turns += 1;
       expect(turns).toBeLessThanOrEqual(MAX_TURNS);
-      await sendMessage(`Message ${String(turns)}`);
+      await send(`Message ${String(turns)}`);
       await waitForCompleteReply();
     }
 
@@ -104,7 +104,7 @@ describe('context budget and compaction', () => {
 
   it('says that a conversation with one turn has nothing to compact', async () => {
     await startNewConversation();
-    await sendMessage('Only one turn');
+    await send('Only one turn');
     await waitForCompleteReply();
     const summariesBefore = summaryRequests(provider).length;
 
@@ -118,7 +118,7 @@ describe('context budget and compaction', () => {
 
   it('compacts every turn but the latest when the owner asks', async () => {
     await clickWithText('main [data-slot="alert"] button', 'Dismiss');
-    await sendMessage('A second turn');
+    await send('A second turn');
     await waitForCompleteReply();
     const summariesBefore = summaryRequests(provider).length;
 

@@ -254,10 +254,30 @@ describe('Git', () => {
     await expect(panel.$('[data-git-branch]')).toHaveText('On main');
     await expect(panel.$('[data-git-entries]')).toHaveText(expect.stringContaining('todo.txt'));
     await axeInBothThemes();
-    await clickWithText('[data-git-panel] [role="tab"]', 'History');
-
-    await expect(panel.$('[data-git-commits]')).toHaveText(expect.stringContaining('Push me without asking'));
-    await axeInBothThemes();
+    // Branch labels and the author must not squeeze the subject out of a
+    // narrow panel. WebDriver omits text that has no visible space.
+    const previousMaxWidth = await browser.execute(() => {
+      const panel = document.querySelector<HTMLElement>('[data-git-panel]');
+      if (panel === null) {
+        throw new Error('the Git panel is missing');
+      }
+      const previous = panel.style.maxWidth;
+      panel.style.maxWidth = '20rem';
+      return previous;
+    });
+    try {
+      await clickWithText('[data-git-panel] [role="tab"]', 'History');
+      await expect(panel.$('[data-git-commits]')).toHaveText(expect.stringContaining('Push me without asking'));
+      await expect(panel.$('[data-git-commits]')).toHaveText(expect.stringContaining('HEAD -> main'));
+      await axeInBothThemes();
+    } finally {
+      await browser.execute((previous: string) => {
+        const panel = document.querySelector<HTMLElement>('[data-git-panel]');
+        if (panel !== null) {
+          panel.style.maxWidth = previous;
+        }
+      }, previousMaxWidth);
+    }
   });
 
   it('lists the saved rule in the settings, where the owner deletes it', async () => {

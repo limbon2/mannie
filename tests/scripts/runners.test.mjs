@@ -23,6 +23,7 @@ describe(
     for (const testCase of [
       'syntax',
       'windows-path',
+      'windows-checks',
       'labels',
       'scheduling',
       'configuration',

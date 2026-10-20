@@ -24,6 +24,7 @@ Show the owner the repository that the agents work in, beside the conversation, 
   - Conflicts, while an operation is in progress or a file is conflicted: each conflicted file with its hunks and their sides. The tab goes away with the conflicts, and the panel then shows Changes.
 - The panel reads the repository again after each of the plugin's own changes in a repository, on "Refresh", and every 15 seconds while it shows, so changes made in a terminal show at the next read. After a read fails, it waits twice as long before the next one, up to 2 minutes. Each read also reads the tabs that were opened again, and the history from its first page when HEAD moved.
 - A value that shows stays while it is read again, and a read that fails keeps it, with what failed above it.
+- Commit rows wrap their metadata when the panel is narrow, so branch and tag labels and the author keep space for the subject.
 - The panel only reads: it does not stage, commit or abort ([panel actions](panel-actions.md)).
 - A repository whose git folder lies outside the project shows that Mannie needs the owner's permission to read it, which "Allow for this project" on an agent's request gives.
 

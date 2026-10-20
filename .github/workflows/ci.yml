@@ -50,7 +50,12 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           cache-key: check
-      - run: task ci
+      - name: Run the checks on Windows
+        if: runner.os == 'Windows'
+        run: ./scripts/ci/runners/windows/run-check.ps1 -Check ci
+      - name: Run the checks on Linux
+        if: runner.os == 'Linux'
+        run: task ci
 
   e2e:
     name: End-to-end tests (${{ matrix.os }})
@@ -67,7 +72,7 @@ jobs:
           cache-key: e2e
       - name: Run the end-to-end tests on WebView2
         if: runner.os == 'Windows'
-        run: task e2e
+        run: ./scripts/ci/runners/windows/run-check.ps1 -Check e2e
       # WebKitGTK needs a display, the single-instance plugin a session bus,
       # and provider profiles a Secret Service for their credentials.
       - name: Install GNOME Keyring
@@ -82,7 +87,7 @@ jobs:
         if: runner.os == 'Windows'
         env:
           MANNIE_PERF_REPORT_ONLY: "1"
-        run: pnpm exec wdio run tests/e2e/wdio.perf.conf.ts
+        run: ./scripts/ci/runners/windows/run-check.ps1 -Check performance
       - name: Measure the performance targets on WebKitGTK
         if: runner.os == 'Linux'
         env:

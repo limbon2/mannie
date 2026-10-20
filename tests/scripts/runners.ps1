@@ -3,7 +3,7 @@
 # access nor a token, network, runner registration or virtual machine.
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('syntax', 'windows-path', 'labels', 'scheduling', 'configuration', 'queue', 'isolation', 'api', 'recovery', 'identity', 'lifecycle', 'lock', 'lock-child')]
+    [ValidateSet('syntax', 'windows-path', 'windows-checks', 'labels', 'scheduling', 'configuration', 'queue', 'isolation', 'api', 'recovery', 'identity', 'lifecycle', 'lock', 'lock-child')]
     [string] $TestCase,
     [string] $Repository
 )
@@ -112,6 +112,86 @@ switch ($TestCase) {
                 if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force }
             }
             Remove-Item -LiteralPath $gitBin, $gitCmd, $gitRoot, $folder -Force
+        }
+    }
+    'windows-checks' {
+        $scriptPath = Join-Path $root 'scripts/ci/runners/windows/run-check.ps1'
+        $tokens = $null
+        $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$tokens, [ref]$errors)
+        foreach ($name in 'Get-CheckCommand', 'Get-CheckEnvironment', 'Stop-CheckProcess', 'Remove-CheckFile') {
+            $function = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
+            . ([scriptblock]::Create($function.Extent.Text))
+        }
+        function Get-Command {
+            param([string]$Name, [string]$ErrorAction)
+            return [pscustomobject]@{ Source = $Name }
+        }
+        Assert-True ((Get-CheckCommand -Name 'ci').Arguments[0] -eq 'ci') 'Run the full CI task.'
+        Assert-True ((Get-CheckCommand -Name 'e2e').Arguments[0] -eq 'e2e') 'Run the UI build and tests.'
+        $performance = Get-CheckCommand -Name 'performance'
+        Assert-True ($performance.Executable -eq 'pnpm.cmd' -and ($performance.Arguments -join ' ') -eq 'exec wdio run tests/e2e/wdio.perf.conf.ts') 'Preserve the performance command arguments.'
+        Assert-Fails { Get-CheckCommand -Name 'other' } 'unknown check'
+        $savedToken = $env:GITHUB_TOKEN
+        $savedColor = $env:CARGO_TERM_COLOR
+        $folder = Join-Path ([IO.Path]::GetTempPath()) ('mannie-check-test-' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $folder | Out-Null
+        try {
+            $env:GITHUB_TOKEN = 'synthetic-token-must-not-be-forwarded'
+            $env:CARGO_TERM_COLOR = 'never'
+            $environment = Get-CheckEnvironment
+            Assert-True (-not $environment.ContainsKey('GITHUB_TOKEN')) 'Never put the job token in the configuration file.'
+            Assert-True ($environment.CARGO_TERM_COLOR -eq 'never') 'Keep build settings in the normal task.'
+            Assert-True (-not (($environment | ConvertTo-Json).Contains($env:GITHUB_TOKEN))) 'The serialized handover must not contain the token.'
+            $configuration = Join-Path $folder 'configuration.json'
+            $log = Join-Path $folder 'check.log'
+            $result = Join-Path $folder 'result.json'
+            $started = Join-Path $folder 'started.json'
+            $startMarker = Join-Path $folder 'run'
+            Set-Content -LiteralPath $startMarker -Value 'Unit test startup acknowledgment.'
+            $data = @{
+                Executable = (Get-Process -Id $PID).Path
+                Arguments = @('-NoProfile', '-NonInteractive', '-Command', 'Write-Output $env:CARGO_TERM_COLOR; exit 7')
+                Directory = $folder
+                Environment = @{ CARGO_TERM_COLOR = 'never' }
+                Log = $log
+                Result = $result
+                Started = $started
+                StartMarker = $startMarker
+            }
+            $child = Join-Path $root 'scripts/ci/runners/windows/run-check-task.ps1'
+            $data | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $configuration -Encoding UTF8
+            & $data.Executable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $child -Configuration $configuration
+            Assert-True ($LASTEXITCODE -eq 7) 'The child must return the failing command exit code.'
+            Assert-True ((Get-Content -LiteralPath $log -Raw).Contains('never')) 'Keep the command output for the parent.'
+            Assert-True ((Get-Content -LiteralPath $result -Raw | ConvertFrom-Json).ExitCode -eq 7) 'Publish the same failing exit code in the completion file.'
+            Assert-True (-not (Test-Path -LiteralPath ($result + '.pending'))) 'Publish the completion by renaming its finished file.'
+            Assert-True ((Get-Content -LiteralPath $started -Raw | ConvertFrom-Json).Id -gt 0) 'Record the child process before it starts a command.'
+            Remove-Item -LiteralPath $log, $result, $started
+            $data.Executable = Join-Path $folder 'missing.exe'
+            $data | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $configuration -Encoding UTF8
+            & (Get-Process -Id $PID).Path -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $child -Configuration $configuration
+            Assert-True ($LASTEXITCODE -eq 1 -and (Get-Content -LiteralPath $result -Raw | ConvertFrom-Json).ExitCode -eq 1) 'A launch failure must also complete with failure.'
+            Assert-Fails { Stop-CheckProcess -Id $PID -StartedUtcTicks 0 -PowerShell (Get-Process -Id $PID).Path -Script $child } 'identity changed'
+            $locked = Join-Path $folder 'locked'
+            Set-Content -LiteralPath $locked -Value 'synthetic lock'
+            $script:removeAttempts = 0
+            function Remove-Item {
+                param([string]$LiteralPath, [switch]$Force, [string]$ErrorAction)
+                $script:removeAttempts++
+                if ($script:removeAttempts -le 2) { throw [IO.IOException]::new('synthetic file lock') }
+                Microsoft.PowerShell.Management\Remove-Item -LiteralPath $LiteralPath -Force -ErrorAction Stop
+            }
+            Remove-CheckFile -Path $locked
+            Assert-True ($script:removeAttempts -eq 3 -and -not (Test-Path -LiteralPath $locked)) 'Retry transient file locks within a bounded cleanup.'
+        } finally {
+            $env:GITHUB_TOKEN = $savedToken
+            $env:CARGO_TERM_COLOR = $savedColor
+            foreach ($name in 'configuration.json', 'check.log', 'result.json', 'result.json.pending', 'started.json', 'started.json.pending', 'run', 'locked') {
+                $path = Join-Path $folder $name
+                if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+            }
+            Remove-Item -LiteralPath $folder -Force
         }
     }
     'labels' {
