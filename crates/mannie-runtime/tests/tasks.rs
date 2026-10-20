@@ -644,9 +644,29 @@ async fn a_reply_with_unread_reports_waits_and_asks_once_without_their_text() {
     setup.parent(reply("Started it."));
     setup.parent(reply("Finished without reading."));
     setup.child("CHILD-U", reply("u"));
-    setup.child("CHILD-U", reply("Report U, secret details."));
+    // Keep the child pending until the parent actually waits. Otherwise a
+    // fast report legitimately needs no waiting activity, and replay keeps
+    // only the current run state rather than its earlier activities.
+    let report_ready = std::sync::Arc::new(tokio::sync::Notify::new());
+    let mut report = vec![Step::Wait(std::sync::Arc::clone(&report_ready))];
+    report.extend(reply("Report U, secret details."));
+    setup.child("CHILD-U", report);
 
     let (conversation, run) = setup.start("OWNER: one in the background").await;
+    let waiting = setup
+        .harness
+        .wait_until(&conversation, |transcript| {
+            transcript.events.iter().any(|event| {
+                matches!(event,
+                    mannie_types::transcript::ConversationEvent::RunUpdated { run }
+                    if run.activity == Some(RunActivity::WaitingForTasks {
+                        count: 1, workers: 0, kinds: Vec::new(),
+                    })
+                )
+            })
+        })
+        .await;
+    report_ready.notify_one();
     let transcript = setup.harness.wait_for_run(&conversation, &run).await;
 
     assert_eq!(transcript.run_state(&run), Some(RunState::Completed));
@@ -662,7 +682,7 @@ async fn a_reply_with_unread_reports_waits_and_asks_once_without_their_text() {
             assert!(!text.contains("Report U"), "{text}");
         }
     }
-    let waited = transcript.events.iter().any(|event| {
+    let waited = waiting.events.iter().any(|event| {
         matches!(
             event,
             mannie_types::transcript::ConversationEvent::RunUpdated { run }

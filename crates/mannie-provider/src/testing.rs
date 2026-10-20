@@ -27,6 +27,8 @@ pub enum Step {
     Error(ProviderError),
     /// Waits before the next step.
     Delay(Duration),
+    /// Waits for a test to release the next step, without relying on timing.
+    Wait(Arc<tokio::sync::Notify>),
     /// Never yields again, like a server that stops sending. Only dropping the
     /// stream ends it.
     Hang,
@@ -107,6 +109,7 @@ impl Provider for ScriptedProvider {
                             return Some((Err(error), steps));
                         }
                         Step::Delay(duration) => tokio::time::sleep(duration).await,
+                        Step::Wait(ready) => ready.notified().await,
                         Step::Hang => std::future::pending::<()>().await,
                     }
                 }

@@ -2,6 +2,8 @@
 // acceptance): the owner adds, tests, edits, chooses the default and deletes
 // profiles. The core checks every field, and a stored credential is never
 // shown again; the owner replaces it by typing a new one, or removes it.
+import { Key } from 'webdriverio';
+
 import { clickWithText, waitForPointerInput } from '../support/chat.ts';
 import { deleteProviderProfiles } from '../support/harness.ts';
 import { axeViolations, openSettings, waitForAnimations, waitForApp, waitForShownText } from '../support/page.ts';
@@ -12,7 +14,15 @@ const DIALOG = '[data-slot="dialog-content"]';
 /** Replaces a field's text as the owner types it, so that its binding sees each change. */
 async function fill(selector: string, value: string): Promise<void> {
   const field = await $(selector);
-  await field.setValue(value);
+  if (value === '') {
+    // WebKit rejects an empty send-keys request, and a native clear alone
+    // can leave the binding unchanged. Delete through real keyboard events.
+    await field.click();
+    await browser.keys([Key.Ctrl, 'a']);
+    await browser.keys(Key.Backspace);
+  } else {
+    await field.setValue(value);
+  }
   await expect(field).toHaveValue(value);
 }
 

@@ -484,6 +484,7 @@ impl Provider for FakeModel {
                             return Some((Err(error), steps));
                         }
                         Step::Delay(duration) => tokio::time::sleep(duration).await,
+                        Step::Wait(ready) => ready.notified().await,
                         Step::Hang => std::future::pending::<()>().await,
                     }
                 }

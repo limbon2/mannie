@@ -39,7 +39,24 @@ runs:
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       with:
         cache-on-failure: true
+        cache-all-crates: true
+        # Compiler results use sccache. Keep Clippy's metadata, which sccache
+        # cannot cache, without storing another copy of every debug build.
+        cache-targets: false
+        cache-directories: ${{ inputs.cache-key == 'check' && 'target/clippy' || '' }}
         key: ${{ inputs.cache-key }}
+
+    - uses: Mozilla-Actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      with:
+        version: v0.18.0
+        disable_annotations: true
+
+    - name: Enable the shared compiler cache
+      shell: bash
+      run: |
+        echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+        echo "SCCACHE_IGNORE_SERVER_IO_ERROR=1" >> "$GITHUB_ENV"
+        echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
 
     - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
