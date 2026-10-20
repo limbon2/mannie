@@ -4,6 +4,8 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+## 0.4.0 - 2026-10-20
+
 ### Added
 
 - A plugin's tool may run commands on remote hosts that the owner registered with the plugin (ADR-0036): each command is an operation that the policy decides and the journal records, its approval shows the host, its address and its key, grants and rules for it cover only that host, and the Tools settings list those rules with their host.
@@ -13,10 +15,31 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - The process supervisor runs installed programs without a shell: a program receives its arguments exactly, reads its input and writes its output as bytes, and ends with its whole process tree at its timeout, when its output passes its limit, or when its caller lets it go (ADR-0038).
 - A plugin may run an installed program that its manifest declares, such as git, through the core's `processes` service, which the Plugins page and `task plugins:grants` list with the program's fixed arguments (ADR-0038). A run by a plugin's tool is an operation whose approval shows the program, its folder and what it does beyond the workspace, such as running a repository's hooks, discarding work, rewriting commits that a remote already has or connecting to a remote. Grants and saved rules can allow such runs, a rule keeps the run's first words and what it does, and the Tools settings list these rules.
 
+#### SSH
+
+- The SSH plugin lets agents run commands on computers without Mannie. The owner registers a host in the SSH settings with its address, port, user name and password, which Mannie keeps in the system's credential store, and trusts its key after comparing the fingerprint; Mannie sends the password only to a host that shows that key, and refuses hosts that offer only RSA keys.
+- The tool `run_ssh_command` runs one command on a registered host for the conversation agent and the `general` child agent. Each command asks the owner like a local command, with the host, its address and its key, and grants and rules cover only that host; full access runs commands without asking.
+- A command's output reads as `run_command`'s, with long streams archived for `read_tool_output` and the host's password replaced. The timeout and Stop ask the host to end the command and close its channel.
+- The system prompt lists the registered hosts, and "@" in the message box points an agent at one.
+
+#### Git
+
+- The git plugin gives agents tools for the owner's repositories, which run the installed git 2.40 or later without a shell: reading the status, the history, diffs, blame, searches, branches and tags and the conflicts; staging, committing, branching, switching, restoring, resetting and stashing; merging, rebasing, cherry-picking and reverting; fetching, pulling and pushing. The tools show only in a conversation whose project is in a repository.
+- Reads run without asking inside the project. A change asks like a file change, and a change that runs the repository's hooks or programs that its configuration names, discards work, rewrites commits that a remote already has or connects to a remote asks first and says so. Grants and saved rules can allow these, and full access runs everything without asking. Uncommitted work that a change discards is kept in a stash entry first. Only fetches, pulls and pushes connect to a remote, so in a partial clone, a read or a change that needs an object that the clone lacks fails instead of fetching it.
+- A merge, a rebase, a cherry-pick or a revert that stops on conflicts says where it stopped and which files conflict, with each conflict's current, base and incoming lines named by their commits. `git_resolve` resolves a conflict by taking a side, both sides or new content, and `git_operation` continues, skips or aborts. The operation stays git's own, so the owner can finish it in a terminal.
+- `git_edit_history` rewords, squashes, fixes up, drops and reorders a branch's commits in one step, which changes nothing when a step conflicts.
+- Each call of a git tool shows a card in the transcript: the changed files with their diffs, the commits, the branches and tags, the conflicts, what a fetch moved or a push updated, and how an operation ended.
+- "@" in the message box mentions the uncommitted changes, a commit or a branch, which the model reads as a diff, a commit's message and patch, or a branch's commits and changed files.
+- The Git button in a conversation's toolbar names the project's branch and opens the Git side panel: the branch with its upstream, the operation in progress, the changed files with their diffs, the history with each commit's changes, the branches and tags, and the conflicts. The panel reads the repository again after each change of the plugin's tools, on Refresh and every 15 seconds.
+
 ### Changed
 
 - Turning a plugin off waits up to 5 seconds for the calls of its tools that run, then lets them go: an operation becomes uncertain, and a read ends as not run. An operation of a plugin's tool that the owner stopped while it ran is uncertain too, and each says why.
 - `task ci` runs its checks side by side within limits that keep the machine usable, with Clippy in a target folder of its own, `target/clippy`, and ends with every step's result and time; a failed step no longer stops the others (ADR-0037). The Rust tests run with cargo-nextest, which `task setup` installs, dev builds keep line tables and no debug information for other crates, and Windows builds link with rust-lld.
+
+#### Workers
+
+- The documents of tool calls on the link gain the field `interruption` (ADR-0036), which a master or a worker one minor version behind ignores; their fixtures for v0.4 are in `crates/mannie-link/tests/fixtures/documents/v0.4/`.
 
 ### Fixed
 
