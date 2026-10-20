@@ -12,6 +12,8 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ### Fixed
 
+- Wait for a sent message to appear before checking its reply in desktop tests.
+
 - Make CI's text assertions work on WebKit and wait for completed runtime cleanup before retrying; measure parser work without time given to other CI processes.
 
 ### Security
