@@ -120,7 +120,8 @@ describe('provider profiles', () => {
     // test provider answers with a call of its tool.
     expect(text.match(/Passed\./gu)?.length).toBe(6);
     expect(text).toContain('Skipped because the profile sets no reasoning effort.');
-    expect(text).toContain('The server reports a context window of 65,536 tokens.');
+    const contextWindow = await browser.execute(() => new Intl.NumberFormat().format(65_536));
+    expect(text).toContain(`The server reports a context window of ${contextWindow} tokens.`);
     const reply = provider.requests().find((request) => {
       const content = JSON.stringify(request.body?.messages ?? null);
       return content.includes('Reply with the single word: ready');

@@ -53,6 +53,10 @@ jobs:
 
   e2e:
     name: End-to-end tests (${{ matrix.os }})
+    # These are disposable desktops. Let the webview paint normally rather
+    # than using the off-screen mode that keeps local tests out of the way.
+    env:
+      MANNIE_E2E_SHOW_WINDOW: "1"
     strategy:
       fail-fast: false
       matrix:

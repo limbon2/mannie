@@ -208,7 +208,12 @@ async fn input_variables_and_output_travel_as_bytes() {
         ident.output,
         b"Set Name <set@example.com> 1700000000 +0000\n"
     );
-    assert_eq!(cut.ending, ProgramEnding::OutputFull);
+    // The supervisor gives an observed exit precedence over a full output
+    // pipe. This short git invocation may already have exited when read.
+    assert!(matches!(
+        cut.ending,
+        ProgramEnding::Exited | ProgramEnding::OutputFull
+    ));
     assert!(cut.output.len() <= 16, "{}", cut.output.len());
     assert!(cut.output_cut(), "{cut:?}");
 }

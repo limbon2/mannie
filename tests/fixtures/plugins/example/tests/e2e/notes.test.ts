@@ -37,7 +37,8 @@ async function axeInBothThemes(): Promise<void> {
 /** Types a note into the focused field and adds it with Enter. */
 async function addNote(text: string): Promise<void> {
   await $(NOTE_FIELD).click();
-  await browser.keys(text.split(''));
+  await $(NOTE_FIELD).addValue(text);
+  await expect($(NOTE_FIELD)).toHaveValue(text);
   await browser.keys(Key.Enter);
 }
 

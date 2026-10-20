@@ -21,10 +21,7 @@ afterEach(() => {
 
 function elementWith(text, { displayed = true, exists = true } = {}) {
   const element = {
-    getProperty: async (name) => {
-      assert.equal(name, 'textContent');
-      return text;
-    },
+    innerText: text,
     getText: () => {
       throw new Error('WebKit cannot report this truncated text through getText');
     },
@@ -36,6 +33,7 @@ function elementWith(text, { displayed = true, exists = true } = {}) {
   Object.defineProperty(globalThis, 'browser', {
     configurable: true,
     value: {
+      execute: async (read, target) => read(target),
       waitUntil: async (condition, options) => {
         if (!(await condition())) {
           throw new Error(options.timeoutMsg);

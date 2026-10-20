@@ -36,6 +36,7 @@ import {
   leaveSettings,
   openSettings,
   runCommand,
+  shownText,
   waitForApp,
   waitForShownText,
 } from '../support/page.ts';
@@ -410,7 +411,7 @@ describe('child agents', () => {
     await button.click();
     await $('[data-slot="dropdown-menu-content"]').waitForDisplayed();
 
-    const items = await $$(MENU_ITEMS).map(async (item) => item.getText());
+    const items = await $$(MENU_ITEMS).map(async (item) => shownText(item));
     expect(items).toHaveLength(2);
     expect(items[0]).toContain('Task 1: Watch the first');
     expect(items[0]).toContain('Stopped');

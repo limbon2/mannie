@@ -60,6 +60,9 @@ export const config: WebdriverIO.Config = {
       'tauri:options': { application: applicationPath() },
     },
   ],
+  // Driver requests stay on this machine. Retrying a failed new session
+  // relaunches the same broken runtime and hides the startup failure.
+  connectionRetryCount: 0,
   framework: 'mocha',
   hostname: '127.0.0.1',
   logLevel: 'warn',

@@ -221,7 +221,8 @@ describe('chat', () => {
     await waitForAnimations();
     expect(await focusedElement()).toMatchObject({ tag: 'input' });
     await browser.keys([Key.Ctrl, 'a']);
-    await browser.keys('Renamed from the keyboard'.split(''));
+    await title.addValue('Renamed from the keyboard');
+    await expect(title).toHaveValue('Renamed from the keyboard');
     await browser.keys(Key.Enter);
 
     await title.waitForDisplayed({ reverse: true });

@@ -28,7 +28,7 @@ GitHub provides a fresh machine for each job. The FreeBSD jobs start a virtual m
 - Pushing a prepared `vX.Y.Z` tag runs the same release pipeline, then signs the worker archives and creates a draft release after all checks and install tests pass. The draft holds the durable downloads. The owner publishes it after the [release checks](releasing.md#3-steps).
 - The live provider tests and evaluations run separately. Their configured providers can charge for model requests; they do not block a release.
 
-Builds and tests run side by side across jobs. Each job has a timeout. A failed job reports its failing command, and GitHub can rerun that job without repeating successful jobs. A cold Rust build can still take tens of minutes; hosted runners remove the local machine queue and maintenance rather than promising a fixed run time.
+Builds and tests run side by side across jobs. Each job has a timeout. A failed job reports its failing command, and GitHub can rerun that job without repeating successful jobs. Hosted end-to-end tests show their window on the disposable desktop so the webview paints normally. Before the end-to-end suite, one startup check opens a browser session and reaches the app. A driver that cannot start fails that check once; it does not retry the same startup failure for every test file. A cold Rust build can still take tens of minutes; hosted runners remove the local machine queue and maintenance rather than promising a fixed run time.
 
 ## 3. Cost and storage
 

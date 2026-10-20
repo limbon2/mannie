@@ -283,12 +283,14 @@ tasks:
     desc: Build the validation app and the programs that the tests use, such as the worker, and run the end-to-end tests (V1, V2, V3, V11) through tauri-driver
     cmds:
       - task: e2e:build
+      - pnpm exec wdio run tests/e2e/wdio.startup.conf.ts
       - pnpm exec wdio run tests/e2e/wdio.conf.ts
 
   e2e:perf:
     desc: Build the validation app and measure the performance targets NFR-PERF-01 to 04; MANNIE_PERF_REPORT_ONLY=1 reports without enforcing
     cmds:
       - task: e2e:build
+      - pnpm exec wdio run tests/e2e/wdio.startup.conf.ts
       - pnpm exec wdio run tests/e2e/wdio.perf.conf.ts
 
   e2e:build:

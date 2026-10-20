@@ -37,6 +37,17 @@ export async function waitForApp(): Promise<void> {
  * have finished. Animations that run forever, such as spinners, do not count.
  */
 export async function waitForAnimations(): Promise<void> {
+  // A newly inserted dialog can be displayed before its first animation
+  // frame. Let styles and the first frame settle before checking animations.
+  await browser.execute(async () => {
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          resolve();
+        }),
+      );
+    });
+  });
   await browser.waitUntil(
     async () =>
       browser.execute(() =>
@@ -73,6 +84,11 @@ export async function axeViolations(): Promise<AxeViolation[]> {
   }, WCAG_TAGS);
 }
 
+/** Reads rendered text, including text in a box that truncates it. */
+export async function shownText(element: WebdriverIO.Element): Promise<string> {
+  return browser.execute((node: HTMLElement) => node.innerText.trim(), element);
+}
+
 /**
  * Waits until the element is displayed and its text is `expected`, or
  * contains it when `expected` is a regular expression. It reads the DOM text:
@@ -102,21 +118,24 @@ export async function waitForShownText(
   if (expected instanceof RegExp) {
     expectedText = expected.toString();
   }
-  await browser.waitUntil(
-    async () => {
-      const displayed = (await element.isExisting()) && (await element.isDisplayed());
-      if (!displayed) {
-        return false;
-      }
-      const content: unknown = await element.getProperty('textContent');
-      last = typeof content === 'string' ? content.trim() : '';
-      return matches(last);
-    },
-    {
-      timeout: 10_000,
-      timeoutMsg: `${label} did not show ${expectedText}; it showed ${JSON.stringify(last)}`,
-    },
-  );
+  try {
+    await browser.waitUntil(
+      async () => {
+        const displayed = (await element.isExisting()) && (await element.isDisplayed());
+        if (!displayed) {
+          return false;
+        }
+        last = await shownText(element);
+        return matches(last);
+      },
+      {
+        timeout: 10_000,
+        timeoutMsg: `${label} did not show ${expectedText}`,
+      },
+    );
+  } catch (cause) {
+    throw new Error(`${label} did not show ${expectedText}; it showed ${JSON.stringify(last)}`, { cause });
+  }
 }
 
 /**

@@ -322,7 +322,10 @@ describe('workers', () => {
 
     await $('[data-remove-worker-confirm]').click();
 
-    await $(PANEL).waitForExist({ reverse: true, timeout: 20_000 });
+    await browser.waitUntil(
+      async () => browser.execute((selector: string) => document.querySelector(selector) === null, PANEL),
+      { timeout: 20_000, timeoutMsg: 'the workers group remained after removal' },
+    );
     // The worker forgot this app: a new code pairs it again.
     expect(existsSync(join(worker.folder, 'data', 'master-pin'))).toBe(false);
   });
