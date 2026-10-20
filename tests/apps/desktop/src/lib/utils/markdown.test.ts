@@ -1,6 +1,8 @@
 // The Markdown parser of model output (ADR-0021): only Mannie's node kinds come
 // out, raw HTML stays text, URLs stay data, and hostile or pathological text
 // neither escapes the tree nor freezes the window.
+import { threadCpuUsage } from 'node:process';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -253,9 +255,12 @@ describe('isCheapToParse', () => {
 
     for (const text of worstWithinBounds) {
       expect(isCheapToParse(text), `${text.slice(0, 12)}…`).toBe(true);
-      const started = performance.now();
+      // Count this thread's work, without time when another CI process has
+      // the processor. The complexity limit keeps the same 250 ms budget.
+      const started = threadCpuUsage();
       parseMarkdown(text);
-      const took = performance.now() - started;
+      const elapsed = threadCpuUsage(started);
+      const took = (elapsed.user + elapsed.system) / 1_000;
       expect(took, `${text.slice(0, 12)}…`).toBeLessThan(250);
     }
   });

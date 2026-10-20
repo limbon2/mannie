@@ -79,23 +79,43 @@ export async function axeViolations(): Promise<AxeViolation[]> {
  * WebKitWebDriver reports no visible text for text in a box that truncates
  * it, such as the header's heading and the value of a select.
  */
-export async function waitForShownText(selector: string, expected: RegExp | string): Promise<void> {
-  const matches = (text: string): boolean => (typeof expected === 'string' ? text === expected : expected.test(text));
+export async function waitForShownText(
+  target: ReturnType<typeof $> | string | WebdriverIO.Element,
+  expected: RegExp | string | { asymmetricMatch(value: unknown): boolean },
+): Promise<void> {
+  const matches = (text: string): boolean => {
+    if (typeof expected === 'string') {
+      return text === expected;
+    }
+    if (expected instanceof RegExp) {
+      return expected.test(text);
+    }
+    return expected.asymmetricMatch(text);
+  };
   let last = '';
+  const element = typeof target === 'string' ? await $(target) : await target;
+  const label = typeof element.selector === 'string' ? element.selector : 'the element';
+  let expectedText = 'matching text';
+  if (typeof expected === 'string') {
+    expectedText = JSON.stringify(expected);
+  }
+  if (expected instanceof RegExp) {
+    expectedText = expected.toString();
+  }
   await browser.waitUntil(
     async () => {
-      const element = await $(selector);
       const displayed = (await element.isExisting()) && (await element.isDisplayed());
       if (!displayed) {
         return false;
       }
-      last = await browser.execute(
-        (found: string) => document.querySelector(found)?.textContent.trim() ?? '',
-        selector,
-      );
+      const content: unknown = await element.getProperty('textContent');
+      last = typeof content === 'string' ? content.trim() : '';
       return matches(last);
     },
-    { timeout: 10_000, timeoutMsg: `${selector} did not show ${String(expected)}; it showed ${JSON.stringify(last)}` },
+    {
+      timeout: 10_000,
+      timeoutMsg: `${label} did not show ${expectedText}; it showed ${JSON.stringify(last)}`,
+    },
   );
 }
 

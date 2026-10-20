@@ -18,7 +18,15 @@ import {
   waitForToolStatus,
 } from '#e2e/chat.ts';
 import { deleteProviderProfiles } from '#e2e/harness.ts';
-import { axeViolations, leaveSettings, openPluginUses, openSettings, setPluginEnabled, waitForApp } from '#e2e/page.ts';
+import {
+  axeViolations,
+  leaveSettings,
+  openPluginUses,
+  openSettings,
+  setPluginEnabled,
+  waitForApp,
+  waitForShownText,
+} from '#e2e/page.ts';
 import { MODELS, type ProviderServer, startProviderServer } from '#e2e/provider-server.ts';
 
 import { BUILD_AND_START_TIMEOUT_MILLIS, TestSshServer } from './support/server.ts';
@@ -82,7 +90,7 @@ describe('SSH hosts', () => {
     // family is found by its start and its text is checked apart.
     const family = $(`${PLUGIN} [data-plugin-secret^="ssh/host/"]`);
     await expect(family).toBeDisplayed();
-    await expect(family).toHaveText('ssh/host/<key>');
+    await waitForShownText(family, 'ssh/host/<key>');
     await expect($(`${PLUGIN} [data-plugin-command="add_host"]`)).toBeDisplayed();
     await expect($(`${PLUGIN} [data-plugin-channel="follow_hosts"]`)).toBeDisplayed();
     await expect($(`${PLUGIN} [data-plugin-crate="russh"]`)).toBeDisplayed();
@@ -102,7 +110,7 @@ describe('SSH hosts', () => {
     await fill('#ssh-host-note', 'The end-to-end tests’ server.');
     await $('[data-ssh-host-submit]').click();
 
-    await expect($('[data-ssh-fingerprint]')).toHaveText(server.fingerprint);
+    await waitForShownText($('[data-ssh-fingerprint]'), server.fingerprint);
     await axeInBothThemes();
     await $('[data-ssh-trust]').click();
     await $('[data-ssh-key-tested]').waitForDisplayed({ timeout: 30_000 });
@@ -125,9 +133,9 @@ describe('SSH hosts', () => {
     const shown = await $$(`${LATEST_MAIN_TURN} [data-remote-command]`).filter((list) => list.isDisplayed());
     expect(shown).toHaveLength(1);
     for (const access of shown) {
-      await expect(access).toHaveText(expect.stringContaining(HOST));
-      await expect(access).toHaveText(expect.stringContaining(`${server.username}@127.0.0.1:${String(server.port)}`));
-      await expect(access).toHaveText(expect.stringContaining(server.fingerprint));
+      await waitForShownText(access, expect.stringContaining(HOST));
+      await waitForShownText(access, expect.stringContaining(`${server.username}@127.0.0.1:${String(server.port)}`));
+      await waitForShownText(access, expect.stringContaining(server.fingerprint));
     }
     await axeInBothThemes();
     await clickInLatestTurn('Allow once');

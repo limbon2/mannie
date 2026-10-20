@@ -23,7 +23,14 @@ import {
   waitForNewTurn,
 } from '../support/chat.ts';
 import { deleteProviderProfiles } from '../support/harness.ts';
-import { axeViolations, focusedElement, leaveSettings, waitForAnimations, waitForApp } from '../support/page.ts';
+import {
+  axeViolations,
+  focusedElement,
+  leaveSettings,
+  waitForAnimations,
+  waitForApp,
+  waitForShownText,
+} from '../support/page.ts';
 import { MODELS, type ProviderServer, type RecordedRequest, startProviderServer } from '../support/provider-server.ts';
 
 /** The calls of the model, without the model lists and the server probes. */
@@ -55,7 +62,7 @@ describe('chat', () => {
     await clickWithText('main [data-slot="alert"] button', 'Open the provider settings');
 
     await expect($('[data-slot="sidebar"] a[href$="?section=chat.providers"]')).toHaveAttribute('aria-current', 'page');
-    await expect($('main')).toHaveText(expect.stringContaining('No provider profiles yet'));
+    await waitForShownText($('main'), expect.stringContaining('No provider profiles yet'));
 
     await leaveSettings();
 
@@ -98,7 +105,7 @@ describe('chat', () => {
     await browser.waitUntil(async () => (await listedConversations()).includes('Renamed by the test'), {
       timeoutMsg: 'the list did not show the new title',
     });
-    await expect($('h1')).toHaveText('Renamed by the test');
+    await waitForShownText($('h1'), 'Renamed by the test');
   });
 
   it('refuses an empty title and says why', async () => {

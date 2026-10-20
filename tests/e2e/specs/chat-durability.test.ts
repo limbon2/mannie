@@ -15,7 +15,7 @@ import {
   waitForLatestPart,
 } from '../support/chat.ts';
 import { deleteProviderProfiles, processId } from '../support/harness.ts';
-import { waitForApp } from '../support/page.ts';
+import { waitForApp, waitForShownText } from '../support/page.ts';
 import {
   MODELS,
   pacedText,
@@ -128,7 +128,7 @@ describe('durable replies', () => {
 
     await sendMessage('Try within the limit');
 
-    await expect($('main')).toHaveText(expect.stringContaining('Trying again in'));
+    await waitForShownText($('main'), expect.stringContaining('Trying again in'));
     expect(await waitForCompleteReply()).toBe('Reply to: Try within the limit');
     const calls = provider.requests().filter((request) => request.body?.model === MODELS.rateLimited);
     expect(calls).toHaveLength(2);
@@ -143,7 +143,7 @@ describe('durable replies', () => {
 
     const error = await waitForLatestPart('error', ['complete']);
     expect(error.text).toContain('The provider refused the API key.');
-    await expect($('main article:last-of-type button')).toHaveText('Retry');
+    await waitForShownText($('main article:last-of-type button'), 'Retry');
     const calls = provider.requests().filter((request) => request.body?.model === MODELS.unauthorized);
     // A refused credential is not tried again.
     expect(calls).toHaveLength(1);
@@ -164,7 +164,7 @@ describe('durable replies', () => {
     const interrupted = await waitForLatestPart('text', ['interrupted']);
     expect(interrupted.text).not.toBe('');
     expect(pacedText().startsWith(interrupted.text)).toBe(true);
-    await expect($('main')).toHaveText(expect.stringContaining('Mannie quit before this reply finished.'));
+    await waitForShownText($('main'), expect.stringContaining('Mannie quit before this reply finished.'));
 
     await retryLatestReply();
 

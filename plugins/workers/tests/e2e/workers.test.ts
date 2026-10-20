@@ -167,7 +167,7 @@ describe('workers', () => {
 
     await openSettings('workers.settings');
 
-    await expect($('main')).toHaveText(expect.stringContaining('No workers'));
+    await waitForShownText($('main'), expect.stringContaining('No workers'));
     await expect($('main [data-pair-worker-settings]')).toBeDisplayed();
     await axeInBothThemes();
     await leaveSettings();
@@ -207,20 +207,20 @@ describe('workers', () => {
 
     await $('[data-pair-worker-dialog]').waitForExist({ reverse: true, timeout: 20_000 });
     await waitForWorkerStatus('connected');
-    await expect($(`${PANEL} [data-worker-row]`)).toHaveText(expect.stringContaining(OWNER_NAME));
+    await waitForShownText($(`${PANEL} [data-worker-row]`), expect.stringContaining(OWNER_NAME));
     await axeInBothThemes();
   });
 
   it('shows the worker in the settings with what it said about its host', async () => {
     await openSettings('workers.settings');
     const details = $('main [data-worker-details]');
-    await expect(details).toHaveText(expect.stringContaining(OWNER_NAME));
-    await expect(details).toHaveText(expect.stringContaining(worker.address));
+    await waitForShownText(details, expect.stringContaining(OWNER_NAME));
+    await waitForShownText(details, expect.stringContaining(worker.address));
 
     await $('main [data-worker-more]').click();
 
-    await expect(details).toHaveText(expect.stringContaining('Runs the end-to-end tests'));
-    await expect(details).toHaveText(expect.stringContaining('Asks before every change and command'));
+    await waitForShownText(details, expect.stringContaining('Runs the end-to-end tests'));
+    await waitForShownText(details, expect.stringContaining('Asks before every change and command'));
     await axeInBothThemes();
     await leaveSettings();
   });
@@ -236,13 +236,13 @@ describe('workers', () => {
     await waitForToolStatus('awaiting_approval');
 
     const shown = $(card(1));
-    await expect(shown).toHaveText(expect.stringContaining('Task 1'));
-    await expect(shown).toHaveText(expect.stringContaining('Write the notes'));
+    await waitForShownText(shown, expect.stringContaining('Task 1'));
+    await waitForShownText(shown, expect.stringContaining('Write the notes'));
     // The badge of the Workers plugin's kind of task says to screen readers
     // that the name is the worker's. The request names the host as the card
     // does, by the owner's name.
-    await expect($(`${card(1)} [data-task-target][data-task-kind="workers"] [data-content]`)).toHaveText(OWNER_NAME);
-    await expect($(`${card(1)} [data-approval-host]`)).toHaveText(OWNER_NAME);
+    await waitForShownText($(`${card(1)} [data-task-target][data-task-kind="workers"] [data-content]`), OWNER_NAME);
+    await waitForShownText($(`${card(1)} [data-approval-host]`), OWNER_NAME);
     // The request leaves the focus in the message box.
     expect(await focusedElement()).toEqual(expect.objectContaining({ tag: 'textarea' }));
     await axeInBothThemes();
@@ -262,8 +262,8 @@ describe('workers', () => {
     await waitForShownText(`${PANELS} [role="tab"][aria-selected="true"]`, /^Task 1:/u);
     const panel = $(`${PANELS} [role="tabpanel"]:not([hidden])`);
     await panel.$('article').waitForDisplayed({ timeout: 10_000 });
-    await expect(panel).toHaveText(expect.stringContaining('belongs to a task on a worker'));
-    await expect(panel).toHaveText(expect.stringContaining('notes.md'));
+    await waitForShownText(panel, expect.stringContaining('belongs to a task on a worker'));
+    await waitForShownText(panel, expect.stringContaining('notes.md'));
     await axeInBothThemes();
     await browser.keys(Key.Escape);
   });
@@ -278,7 +278,7 @@ describe('workers', () => {
     await stop.click();
 
     await waitForTaskState(1, 'canceled');
-    await expect($(card(1))).toHaveText(expect.stringContaining('Stopped'));
+    await waitForShownText($(card(1)), expect.stringContaining('Stopped'));
   });
 
   it('shows a worker that stops as offline, and as connected once it is back', async () => {
@@ -298,7 +298,7 @@ describe('workers', () => {
     await $('[data-rename-worker-dialog]').waitForDisplayed();
     const name = $('#rename-worker-name');
     await expect(name).toHaveValue(OWNER_NAME);
-    await expect($('[data-rename-worker-dialog] dd[data-content]')).toHaveText(WORKER_NAME);
+    await waitForShownText($('[data-rename-worker-dialog] dd[data-content]'), WORKER_NAME);
     await waitForAnimations();
     await axeInBothThemes();
 
@@ -308,7 +308,7 @@ describe('workers', () => {
     await browser.keys(Key.Enter);
 
     await $('[data-rename-worker-dialog]').waitForExist({ reverse: true, timeout: 10_000 });
-    await expect($(`${PANEL} [data-worker-row]`)).toHaveText(expect.stringContaining(WORKER_NAME));
+    await waitForShownText($(`${PANEL} [data-worker-row]`), expect.stringContaining(WORKER_NAME));
   });
 
   it('removes a worker after asking, which hides the group', async () => {

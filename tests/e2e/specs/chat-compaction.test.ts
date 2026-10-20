@@ -13,7 +13,7 @@ import {
   waitForCompleteReply,
 } from '../support/chat.ts';
 import { deleteProviderProfiles } from '../support/harness.ts';
-import { axeViolations, waitForAnimations, waitForApp } from '../support/page.ts';
+import { axeViolations, waitForAnimations, waitForApp, waitForShownText } from '../support/page.ts';
 import {
   isSummaryRequest,
   MODELS,
@@ -85,7 +85,8 @@ describe('context budget and compaction', () => {
     expect(JSON.stringify(next?.body)).toContain(`Message ${String(turns)}`);
     // The owner's transcript still has every turn.
     expect(await turnCount()).toBe(turns);
-    await expect($('main')).toHaveText(
+    await waitForShownText(
+      $('main'),
       expect.stringContaining('Messages above this line are summarized for the model.'),
     );
   });
@@ -96,7 +97,7 @@ describe('context budget and compaction', () => {
     const dialog = await $('[data-slot="dialog-content"]');
     await dialog.waitForDisplayed();
     await waitForAnimations();
-    await expect(dialog).toHaveText(expect.stringContaining(SUMMARY_PREFIX));
+    await waitForShownText(dialog, expect.stringContaining(SUMMARY_PREFIX));
     expect(await axeViolations()).toEqual([]);
     await clickWithText('[data-slot="dialog-content"] button', 'Close');
     await dialog.waitForDisplayed({ reverse: true });
@@ -110,7 +111,8 @@ describe('context budget and compaction', () => {
 
     await chooseConversationAction('Compact now');
 
-    await expect($('main [data-slot="alert"]')).toHaveText(
+    await waitForShownText(
+      $('main [data-slot="alert"]'),
       expect.stringContaining('There are not enough earlier messages to summarize yet.'),
     );
     expect(summaryRequests(provider)).toHaveLength(summariesBefore);
@@ -127,7 +129,8 @@ describe('context budget and compaction', () => {
     await browser.waitUntil(() => summaryRequests(provider).length > summariesBefore, {
       timeoutMsg: 'the conversation was not compacted',
     });
-    await expect($('main')).toHaveText(
+    await waitForShownText(
+      $('main'),
       expect.stringContaining('Messages above this line are summarized for the model.'),
     );
     const summary = summaryRequests(provider).at(-1);

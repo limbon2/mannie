@@ -30,7 +30,14 @@ import {
   waitForToolStatus,
 } from '../support/chat.ts';
 import { deleteProviderProfiles } from '../support/harness.ts';
-import { axeViolations, leaveSettings, openSettings, waitForAnimations, waitForApp } from '../support/page.ts';
+import {
+  axeViolations,
+  leaveSettings,
+  openSettings,
+  waitForAnimations,
+  waitForApp,
+  waitForShownText,
+} from '../support/page.ts';
 import { MODELS, type ProviderServer, startProviderServer, TOOLS_DONE } from '../support/provider-server.ts';
 
 const DIALOG = '[role="dialog"]';
@@ -179,8 +186,8 @@ describe('projects', () => {
   it('adds the folder chosen in the folder dialog as a project, which opens with a new conversation', async () => {
     project = await addProject(folder);
 
-    await expect(projectRow(project)).toHaveText(expect.stringContaining(PROJECT_NAME));
-    await expect($('main')).toHaveText(expect.stringContaining(`Start a conversation in ${PROJECT_NAME}`));
+    await waitForShownText(projectRow(project), expect.stringContaining(PROJECT_NAME));
+    await waitForShownText($('main'), expect.stringContaining(`Start a conversation in ${PROJECT_NAME}`));
     await axeInBothThemes();
 
     // The same folder again opens the same project.
@@ -269,7 +276,7 @@ describe('projects', () => {
     // The move is the turn's first call.
     const moveRow = (await $$('main article:last-of-type [data-tool-toggle]'))[0];
     await moveRow?.click();
-    await expect($('main article:last-of-type')).toHaveText(expect.stringContaining(`Moved to ${PROJECT_NAME}`));
+    await waitForShownText($('main article:last-of-type'), expect.stringContaining(`Moved to ${PROJECT_NAME}`));
   });
 
   it('asks before a move that the message does not name', async () => {
@@ -278,7 +285,8 @@ describe('projects', () => {
     await send(`call move_to_project {"project":"${escaped(PROJECT_NAME)}"}`);
     await waitForToolStatus('awaiting_approval');
 
-    await expect($('main article:last-of-type')).toHaveText(
+    await waitForShownText(
+      $('main article:last-of-type'),
       expect.stringContaining(`Move this conversation to the project ${PROJECT_NAME}`),
     );
     await expect($('main article:last-of-type [data-allow-for]')).not.toBeExisting();
@@ -314,15 +322,15 @@ describe('projects', () => {
     expect(readFileSync(join(outside, 'four.txt'), 'utf8')).toBe('4');
 
     await openSettings('tools.settings');
-    await expect($('main')).toHaveText(expect.stringContaining(`In the project ${PROJECT_NAME}`));
-    await expect($('main')).toHaveText(expect.stringContaining('In every conversation'));
+    await waitForShownText($('main'), expect.stringContaining(`In the project ${PROJECT_NAME}`));
+    await waitForShownText($('main'), expect.stringContaining('In every conversation'));
     for (const remaining of [1, 0]) {
       await clickWithText('main button', 'Revoke');
       await browser.waitUntil(async () => (await revokeButtons()) === remaining, {
         timeoutMsg: 'the grant stayed in the list',
       });
     }
-    await expect($('main')).toHaveText(expect.stringContaining('No permissions'));
+    await waitForShownText($('main'), expect.stringContaining('No permissions'));
     await leaveSettings();
   });
 
@@ -386,7 +394,7 @@ describe('projects', () => {
     await clickWithText(`${DIALOG} button`, 'Save');
     await dialog.waitForDisplayed({ reverse: true });
 
-    await expect(projectRow(project)).toHaveText(expect.stringContaining('Atlas app'));
+    await waitForShownText(projectRow(project), expect.stringContaining('Atlas app'));
   });
 
   it('removes the project after saying how many conversations go, and deletes them', async () => {
@@ -398,7 +406,7 @@ describe('projects', () => {
     const dialog = $(ALERT_DIALOG);
     await dialog.waitForDisplayed();
     await waitForAnimations();
-    await expect(dialog).toHaveText(expect.stringContaining(`its ${String(conversations.length)} conversations`));
+    await waitForShownText(dialog, expect.stringContaining(`its ${String(conversations.length)} conversations`));
     expect(await axeViolations()).toEqual([]);
     await clickWithText(`${ALERT_DIALOG} button`, `Remove and delete ${String(conversations.length)} conversations`);
     await dialog.waitForDisplayed({ reverse: true });

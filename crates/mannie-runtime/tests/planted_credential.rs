@@ -69,6 +69,7 @@ fn streamed_reply() -> FixtureResponse {
 }
 
 async fn wait_for_end(
+    runtime: &Runtime,
     store: &mannie_store::Store,
     conversation: &ConversationId,
     run: &RunId,
@@ -84,7 +85,9 @@ async fn wait_for_end(
             .run
             .as_ref()
             .is_some_and(|view| view.id == *run && !view.state.is_active());
-        if ended {
+        // Persistence finishes before the hub removes the active run. Retry
+        // is allowed only once both parts of completion have finished.
+        if ended && runtime.active_run_count() == 0 {
             return snapshot;
         }
         assert!(std::time::Instant::now() < deadline, "the run did not end");
@@ -176,9 +179,9 @@ async fn a_planted_credential_reaches_only_the_authorization_header() {
         .start_conversation(StartConversation::new("Hello"))
         .await
         .unwrap();
-    let failed = wait_for_end(&store, &started.conversation_id, &started.run_id).await;
+    let failed = wait_for_end(&runtime, &store, &started.conversation_id, &started.run_id).await;
     let retried = runtime.retry_reply(&started.conversation_id).await.unwrap();
-    let completed = wait_for_end(&store, &started.conversation_id, &retried.run_id).await;
+    let completed = wait_for_end(&runtime, &store, &started.conversation_id, &retried.run_id).await;
     runtime.shutdown().await;
 
     let failed_run = failed.turns[0].run.as_ref().unwrap();

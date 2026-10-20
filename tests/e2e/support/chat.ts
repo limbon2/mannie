@@ -5,7 +5,7 @@
 import { Key } from 'webdriverio';
 
 import { createProviderProfile, type ProfileInput, setFolderChoice } from './harness.ts';
-import { leaveSettings, waitForAnimations } from './page.ts';
+import { leaveSettings, waitForAnimations, waitForShownText } from './page.ts';
 
 /** The message box. */
 export const COMPOSER = 'textarea[aria-describedby="composer-hint"]';
@@ -55,7 +55,8 @@ export async function clickWithText(selector: string, text: string): Promise<voi
   await browser.waitUntil(
     async () => {
       for (const element of await $$(selector)) {
-        const shown = (await element.isDisplayed()) && (await element.getText()).trim() === text;
+        const content: unknown = await element.getProperty('textContent');
+        const shown = (await element.isDisplayed()) && typeof content === 'string' && content.trim() === text;
         if (shown) {
           await element.click();
           return true;
@@ -79,7 +80,7 @@ export async function useProfile(name: string): Promise<void> {
   await waitForPointerInput();
   await $('main button[aria-label^="Provider profile"]').click();
   await clickWithText('[data-slot="dropdown-menu-radio-item"]', name);
-  await expect($('main button[aria-label^="Provider profile"]')).toHaveText(name);
+  await waitForShownText($('main button[aria-label^="Provider profile"]'), name);
 }
 
 /** Adds a profile for the test provider at `baseUrl`. The first profile becomes the default. */

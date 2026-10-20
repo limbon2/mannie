@@ -37,6 +37,7 @@ import {
   runCommand,
   waitForAnimations,
   waitForApp,
+  waitForShownText,
 } from '../support/page.ts';
 import { MODELS, type ProviderServer, startProviderServer, TOOLS_DONE } from '../support/provider-server.ts';
 
@@ -166,7 +167,7 @@ describe('system tools', () => {
   it('makes the folder chosen in the folder dialog a project, which opens with a new conversation', async () => {
     project = await addProject(workspace);
 
-    await expect(projectRow(project)).toHaveText(expect.stringContaining(basename(workspace)));
+    await waitForShownText(projectRow(project), expect.stringContaining(basename(workspace)));
     expect(await axeViolations()).toEqual([]);
   });
 
@@ -192,15 +193,15 @@ describe('system tools', () => {
     await waitForCompleteReply();
 
     const row = $('main article:last-of-type [data-tool-toggle]');
-    await expect(row).toHaveText(expect.stringContaining('Reading the notes'));
+    await waitForShownText(row, expect.stringContaining('Reading the notes'));
     // The line that Mannie built names the file; the row leaves it to the details.
     await expect(row).not.toHaveText(expect.stringContaining('notes.txt'));
     await row.click();
     await waitForAnimations();
 
     const call = $('main article:last-of-type [data-tool-status]');
-    await expect(call).toHaveText(expect.stringContaining('lines 1 to 2 of 2'));
-    await expect(call).toHaveText(expect.stringContaining('notes.txt'));
+    await waitForShownText(call, expect.stringContaining('lines 1 to 2 of 2'));
+    await waitForShownText(call, expect.stringContaining('notes.txt'));
     await axeInBothThemes();
   });
 
@@ -238,7 +239,7 @@ describe('system tools', () => {
     await send(callMessage('write_file', { content: 'hello', path: 'created.txt' }));
     await waitForToolStatus('awaiting_approval');
 
-    await expect($('main')).toHaveText(expect.stringContaining('Waiting for your approval.'));
+    await waitForShownText($('main'), expect.stringContaining('Waiting for your approval.'));
     await expect($('[data-slot="sidebar"] svg[aria-label="Waiting for your approval"]')).toBeExisting();
     expect(await focusedElement()).toEqual(expect.objectContaining({ tag: 'textarea' }));
     await axeInBothThemes();
@@ -274,7 +275,7 @@ describe('system tools', () => {
     await runCommand('Show the permissions of this conversation');
     const dialog = await $(DIALOG);
     const grant = `Creating files and folders in ${workspace}`;
-    await expect(dialog).toHaveText(expect.stringContaining(grant));
+    await waitForShownText(dialog, expect.stringContaining(grant));
     await waitForAnimations();
     expect(await axeViolations()).toEqual([]);
     await clickWithText(`${DIALOG} button`, 'Revoke');
@@ -307,9 +308,9 @@ describe('system tools', () => {
     expect(await latestToolStatus()).toBe('completed');
 
     await openSettings('tools.settings');
-    await expect($('main')).toHaveText(expect.stringContaining(`In ${workspace} and the folders inside it`));
+    await waitForShownText($('main'), expect.stringContaining(`In ${workspace} and the folders inside it`));
     await clickWithText('main button', 'Delete');
-    await expect($('main')).toHaveText(expect.stringContaining('No rules yet'));
+    await waitForShownText($('main'), expect.stringContaining('No rules yet'));
     await leaveSettings();
   });
 
@@ -318,7 +319,7 @@ describe('system tools', () => {
     await waitForToolStatus('awaiting_approval');
     await clickInLatestTurn('Allow once');
     await waitForToolStatus('executing');
-    await expect($('main')).toHaveText(expect.stringContaining('Running a command…'));
+    await waitForShownText($('main'), expect.stringContaining('Running a command…'));
     await browser.execute(() => {
       const timing: StopTiming = { ended: 0, keydown: 0 };
       window.toolStopTiming = timing;
@@ -353,10 +354,8 @@ describe('system tools', () => {
     const timing = await browser.execute(() => window.toolStopTiming);
     expect(timing?.ended).toBeGreaterThan(0);
     expect((timing?.ended ?? 0) - (timing?.keydown ?? 0)).toBeLessThan(1_000);
-    await expect($('main')).toHaveText(expect.stringContaining('You stopped this reply.'));
-    await expect($('main article:last-of-type [data-tool-status]')).toHaveText(
-      expect.stringContaining('stopped after'),
-    );
+    await waitForShownText($('main'), expect.stringContaining('You stopped this reply.'));
+    await waitForShownText($('main article:last-of-type [data-tool-status]'), expect.stringContaining('stopped after'));
   });
 
   it('shows a waiting request again after the window reloads', async () => {
@@ -382,13 +381,13 @@ describe('system tools', () => {
     await $('main article:last-of-type [data-tool-toggle]').click();
     await clickInLatestTurn('Show full output');
     const dialog = await $(DIALOG);
-    await expect(dialog).toHaveText(expect.stringContaining('Showing 500 of'));
-    await expect(dialog).toHaveText(expect.stringContaining('line 1'));
+    await waitForShownText(dialog, expect.stringContaining('Showing 500 of'));
+    await waitForShownText(dialog, expect.stringContaining('line 1'));
     await waitForAnimations();
     expect(await axeViolations()).toEqual([]);
     await clickWithText(`${DIALOG} button`, 'Load more');
 
-    await expect(dialog).toHaveText(expect.stringContaining('Showing 1,000 of'));
+    await waitForShownText(dialog, expect.stringContaining('Showing 1,000 of'));
     await clickWithText(`${DIALOG} button`, 'Close');
     await dialog.waitForDisplayed({ reverse: true });
   });
@@ -400,12 +399,13 @@ describe('system tools', () => {
     await expect($('#tools-allow-changes')).toHaveAttribute('aria-checked', 'true');
     await fill('#tools-environment', 'GITHUB_TOKEN');
     await clickWithText('main button', 'Save');
-    await expect($('main')).toHaveText(
+    await waitForShownText(
+      $('main'),
       expect.stringContaining('GITHUB_TOKEN looks like the name of a secret, which commands never receive.'),
     );
     await fill('#tools-environment', 'MANNIE_E2E_VALUE');
     await clickWithText('main button', 'Save');
-    await expect($('main')).toHaveText(expect.stringContaining('Saved'));
+    await waitForShownText($('main'), expect.stringContaining('Saved'));
     await leaveSettings();
 
     await send(callMessage('write_file', { content: 'free', path: 'free.txt' }));
@@ -504,7 +504,7 @@ describe('system tools', () => {
     await waitForApp();
 
     await waitForToolStatus('uncertain');
-    await expect($('main article:last-of-type [data-tool-status]')).toHaveText(expect.stringContaining('May have run'));
+    await waitForShownText($('main article:last-of-type [data-tool-status]'), expect.stringContaining('May have run'));
     await retryLatestReply();
 
     expect(await waitForCompleteReply()).toContain(TOOLS_DONE);

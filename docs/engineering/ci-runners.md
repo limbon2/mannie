@@ -36,6 +36,7 @@ Verified on 2026-10-21 against [GitHub's Actions billing documentation](https://
 
 - Standard GitHub-hosted runner minutes are free in public repositories. Larger runners are charged even for public repositories; no workflow uses one.
 - Keep the repository's cache limit at the included 10 GB. Old caches may be evicted, which makes a later build colder rather than preventing it from running.
+- Save Rust dependency caches after a failed check too, so the next repair can reuse the compiled dependencies.
 - Release intermediates expire after one day. Published release files remain in GitHub Releases. Performance measurements go into the job log and summary, which do not consume artifact storage.
 - Making the repository private again restores GitHub's private-repository allowances and billing. Reconsider that cost before changing visibility.
 
