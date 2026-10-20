@@ -7,13 +7,13 @@ import {
   addProfile,
   chooseConversationAction,
   clickWithText,
-  sendMessage,
+  send,
   startNewConversation,
   turnCount,
   waitForCompleteReply,
 } from '../support/chat.ts';
 import { deleteProviderProfiles } from '../support/harness.ts';
-import { axeViolations, waitForAnimations, waitForApp } from '../support/page.ts';
+import { axeViolations, waitForAnimations, waitForApp, waitForShownText } from '../support/page.ts';
 import {
   isSummaryRequest,
   MODELS,
@@ -64,7 +64,7 @@ describe('context budget and compaction', () => {
     while (summaryRequests(provider).length === 0) {
       turns += 1;
       expect(turns).toBeLessThanOrEqual(MAX_TURNS);
-      await sendMessage(`Message ${String(turns)}`);
+      await send(`Message ${String(turns)}`);
       await waitForCompleteReply();
     }
 
@@ -85,7 +85,8 @@ describe('context budget and compaction', () => {
     expect(JSON.stringify(next?.body)).toContain(`Message ${String(turns)}`);
     // The owner's transcript still has every turn.
     expect(await turnCount()).toBe(turns);
-    await expect($('main')).toHaveText(
+    await waitForShownText(
+      $('main'),
       expect.stringContaining('Messages above this line are summarized for the model.'),
     );
   });
@@ -96,7 +97,7 @@ describe('context budget and compaction', () => {
     const dialog = await $('[data-slot="dialog-content"]');
     await dialog.waitForDisplayed();
     await waitForAnimations();
-    await expect(dialog).toHaveText(expect.stringContaining(SUMMARY_PREFIX));
+    await waitForShownText(dialog, expect.stringContaining(SUMMARY_PREFIX));
     expect(await axeViolations()).toEqual([]);
     await clickWithText('[data-slot="dialog-content"] button', 'Close');
     await dialog.waitForDisplayed({ reverse: true });
@@ -104,13 +105,14 @@ describe('context budget and compaction', () => {
 
   it('says that a conversation with one turn has nothing to compact', async () => {
     await startNewConversation();
-    await sendMessage('Only one turn');
+    await send('Only one turn');
     await waitForCompleteReply();
     const summariesBefore = summaryRequests(provider).length;
 
     await chooseConversationAction('Compact now');
 
-    await expect($('main [data-slot="alert"]')).toHaveText(
+    await waitForShownText(
+      $('main [data-slot="alert"]'),
       expect.stringContaining('There are not enough earlier messages to summarize yet.'),
     );
     expect(summaryRequests(provider)).toHaveLength(summariesBefore);
@@ -118,7 +120,7 @@ describe('context budget and compaction', () => {
 
   it('compacts every turn but the latest when the owner asks', async () => {
     await clickWithText('main [data-slot="alert"] button', 'Dismiss');
-    await sendMessage('A second turn');
+    await send('A second turn');
     await waitForCompleteReply();
     const summariesBefore = summaryRequests(provider).length;
 
@@ -127,7 +129,8 @@ describe('context budget and compaction', () => {
     await browser.waitUntil(() => summaryRequests(provider).length > summariesBefore, {
       timeoutMsg: 'the conversation was not compacted',
     });
-    await expect($('main')).toHaveText(
+    await waitForShownText(
+      $('main'),
       expect.stringContaining('Messages above this line are summarized for the model.'),
     );
     const summary = summaryRequests(provider).at(-1);

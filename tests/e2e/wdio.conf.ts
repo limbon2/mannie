@@ -9,13 +9,23 @@ import type { ChildProcess } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { createConnection } from 'node:net';
-import { basename, join } from 'node:path';
+import { basename, isAbsolute, join, resolve, sep } from 'node:path';
 
 import { applicationPath, plantDatabaseFromTheFuture, repository, resetDataDirectory } from './support/app.ts';
 
 const DRIVER_PORT = 4444;
 
 let driver: ChildProcess | undefined;
+
+const focusedSpec = process.env.MANNIE_E2E_SPEC?.trim();
+const hasFocusedSpec = focusedSpec !== undefined && focusedSpec !== '';
+if (hasFocusedSpec) {
+  const insideRepository = resolve(repository, focusedSpec).startsWith(resolve(repository) + sep);
+  const testFile = focusedSpec.endsWith('.test.ts') && existsSync(resolve(repository, focusedSpec));
+  if (isAbsolute(focusedSpec) || !insideRepository || !testFile) {
+    throw new Error('MANNIE_E2E_SPEC must name a .test.ts file inside the repository');
+  }
+}
 
 /**
  * On Windows, the Microsoft Edge WebDriver that `node scripts/edgedriver.mjs`
@@ -60,6 +70,9 @@ export const config: WebdriverIO.Config = {
       'tauri:options': { application: applicationPath() },
     },
   ],
+  // Driver requests stay on this machine. Retrying a failed new session
+  // relaunches the same broken runtime and hides the startup failure.
+  connectionRetryCount: 0,
   framework: 'mocha',
   hostname: '127.0.0.1',
   logLevel: 'warn',
@@ -70,11 +83,13 @@ export const config: WebdriverIO.Config = {
   runner: 'local',
   // The core's specs, and each plugin's in its folder's tests/e2e (ADR-0035,
   // decision 9), which import this folder's support as `#e2e/<module>.ts`.
-  specs: [
-    './specs/**/*.test.ts',
-    '../../plugins/*/tests/e2e/**/*.test.ts',
-    '../fixtures/plugins/*/tests/e2e/**/*.test.ts',
-  ],
+  specs: focusedSpec
+    ? [resolve(repository, focusedSpec)]
+    : [
+        './specs/**/*.test.ts',
+        '../../plugins/*/tests/e2e/**/*.test.ts',
+        '../fixtures/plugins/*/tests/e2e/**/*.test.ts',
+      ],
   waitforTimeout: 10_000,
 
   beforeSession: async (_config, _capabilities, specs) => {

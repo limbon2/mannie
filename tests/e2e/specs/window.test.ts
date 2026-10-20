@@ -18,7 +18,7 @@ import {
   waitForLatestPart,
 } from '../support/chat.ts';
 import { chooseTrayItem, closeMainWindow, deleteProviderProfiles, processId, windowState } from '../support/harness.ts';
-import { axeViolations, openSettings, waitForAnimations, waitForApp } from '../support/page.ts';
+import { axeViolations, openSettings, waitForAnimations, waitForApp, waitForShownText } from '../support/page.ts';
 import { MODELS, pacedText, type ProviderServer, startProviderServer } from '../support/provider-server.ts';
 
 const QUESTION = '[data-slot="dialog-content"]';
@@ -59,6 +59,8 @@ async function chooseCloseAction(action: 'ask' | 'quit' | 'tray'): Promise<void>
   const choice = await $(`#window-close-${action}`);
   await choice.click();
   await expect(choice).toHaveAttribute('data-state', 'checked');
+  // The radio updates before the saved close action reaches the core.
+  await expect(choice).toBeEnabled();
 }
 
 /** Waits until a process ends, and kills it when it does not end in time. */
@@ -110,8 +112,8 @@ describe('window and tray', () => {
     const question = await $(QUESTION);
     await question.waitForDisplayed();
     await waitForAnimations();
-    await expect(question).toHaveText(expect.stringContaining('What should closing the window do?'));
-    await expect(question).toHaveText(expect.stringContaining('1 reply is being written.'));
+    await waitForShownText(question, expect.stringContaining('What should closing the window do?'));
+    await waitForShownText(question, expect.stringContaining('1 reply is being written.'));
     expect(await axeViolations()).toEqual([]);
     await clickWithText(`${QUESTION} button`, 'Keep running in the tray');
     await waitForVisibility(false);
@@ -147,7 +149,7 @@ describe('window and tray', () => {
     const warning = await $(WARNING);
     await warning.waitForDisplayed();
     await waitForAnimations();
-    await expect(warning).toHaveText(expect.stringContaining('Quit while replies are being written?'));
+    await waitForShownText(warning, expect.stringContaining('Quit while replies are being written?'));
     expect(await axeViolations()).toEqual([]);
     await clickWithText(`${WARNING} button`, 'Cancel');
     await warning.waitForDisplayed({ reverse: true });
@@ -177,7 +179,16 @@ describe('window and tray', () => {
     const warning = await $(WARNING);
     await warning.waitForDisplayed();
     await waitForAnimations();
-    await clickWithText(`${WARNING} button`, 'Quit anyway');
+    try {
+      await clickWithText(`${WARNING} button`, 'Quit anyway');
+    } catch (error) {
+      // WebKit can close its session before the click response arrives.
+      // The process-exit assertion below still proves that Quit succeeded.
+      const sessionEnded = error instanceof Error && error.message.includes('invalid session id');
+      if (!sessionEnded) {
+        throw error;
+      }
+    }
     await poll(() => !isRunning(pid), 15_000, 'Mannie did not quit');
 
     await browser.reloadSession();

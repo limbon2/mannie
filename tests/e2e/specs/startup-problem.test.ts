@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import { dataDirectory } from '../support/app.ts';
-import { axeViolations, waitForApp } from '../support/page.ts';
+import { axeViolations, waitForApp, waitForShownText } from '../support/page.ts';
 
 describe('a database from a newer version of Mannie', () => {
   before(async () => {
@@ -13,9 +13,9 @@ describe('a database from a newer version of Mannie', () => {
   });
 
   it('shows what failed and what the owner can do', async () => {
-    await expect($('h1')).toHaveText('Mannie could not start');
-    await expect($('main')).toHaveText(expect.stringContaining('schema version 999'));
-    await expect($('main')).toHaveText(expect.stringContaining('Install the newer version of Mannie'));
+    await waitForShownText($('h1'), 'Mannie could not start');
+    await waitForShownText($('main'), expect.stringContaining('schema version 999'));
+    await waitForShownText($('main'), expect.stringContaining('Install the newer version of Mannie'));
     expect(await axeViolations()).toEqual([]);
   });
 

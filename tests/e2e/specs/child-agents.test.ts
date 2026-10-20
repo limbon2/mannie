@@ -36,6 +36,7 @@ import {
   leaveSettings,
   openSettings,
   runCommand,
+  shownText,
   waitForApp,
   waitForShownText,
 } from '../support/page.ts';
@@ -188,7 +189,7 @@ async function chooseLimit(value: string, shown: string): Promise<void> {
   await $('#child-agents-limit').click();
   await $(`[data-slot="select-item"][data-value="${value}"]`).click();
   await waitForShownText('#child-agents-limit', shown);
-  await expect($('main')).toHaveText(expect.stringContaining('Saved.'));
+  await waitForShownText($('main'), expect.stringContaining('Saved.'));
 }
 
 describe('child agents', () => {
@@ -225,13 +226,13 @@ describe('child agents', () => {
 
     // The card names the task that asks, so the request is not mistaken for the parent's.
     const shown = $(card(1));
-    await expect(shown).toHaveText(expect.stringContaining('Task 1'));
-    await expect(shown).toHaveText(expect.stringContaining('Write the summary'));
-    await expect(shown).toHaveText(expect.stringContaining('General'));
-    await expect(shown).toHaveText(expect.stringContaining('Waiting for your approval'));
-    await expect(shown).toHaveText(expect.stringContaining('Writing the summary'));
+    await waitForShownText(shown, expect.stringContaining('Task 1'));
+    await waitForShownText(shown, expect.stringContaining('Write the summary'));
+    await waitForShownText(shown, expect.stringContaining('General'));
+    await waitForShownText(shown, expect.stringContaining('Waiting for your approval'));
+    await waitForShownText(shown, expect.stringContaining('Writing the summary'));
     // The parent waits for the owner too, and the request leaves the focus in the message box.
-    await expect($('main')).toHaveText(expect.stringContaining('Waiting for your approval.'));
+    await waitForShownText($('main'), expect.stringContaining('Waiting for your approval.'));
     await expect($('[data-slot="sidebar"] svg[aria-label="Waiting for your approval"]')).toBeExisting();
     expect(await focusedElement()).toEqual(expect.objectContaining({ tag: 'textarea' }));
     await axeInBothThemes();
@@ -251,8 +252,8 @@ describe('child agents', () => {
 
     // The card's own details, not those of a call inside it.
     const details = $(`${card(1)} > [data-slot="collapsible"] > [data-slot="collapsible-content"]`);
-    await expect(details).toHaveText(expect.stringContaining('summary.md'));
-    await expect(details).toHaveText(expect.stringContaining(TOOLS_DONE));
+    await waitForShownText(details, expect.stringContaining('summary.md'));
+    await waitForShownText(details, expect.stringContaining(TOOLS_DONE));
   });
 
   it('opens the child’s conversation read-only in a side panel, and gives the focus back when it closes', async () => {
@@ -262,9 +263,9 @@ describe('child agents', () => {
     await waitForShownText(SHOWN_TAB, 'Task 1: Write the summary');
     // The child's turn: its call and its report, with no message box.
     const panels = $(PANELS);
-    await expect(panels).toHaveText(expect.stringContaining('Writing the summary'));
-    await expect(panels).toHaveText(expect.stringContaining(TOOLS_DONE));
-    await expect(panels).toHaveText(expect.stringContaining('This conversation belongs to a child agent.'));
+    await waitForShownText(panels, expect.stringContaining('Writing the summary'));
+    await waitForShownText(panels, expect.stringContaining(TOOLS_DONE));
+    await waitForShownText(panels, expect.stringContaining('This conversation belongs to a child agent.'));
     await expect($(`${PANELS} textarea`)).not.toBeExisting();
     // The main view stays beside the panel.
     await expect($(card(1))).toBeDisplayed();
@@ -348,15 +349,15 @@ describe('child agents', () => {
 
     await waitForTaskState(1, 'running');
     await waitForTaskState(2, 'accepted');
-    await expect($(card(2))).toHaveText(expect.stringContaining('Waiting for a free slot'));
-    await expect($('main')).toHaveText(expect.stringContaining('Waiting for 2 child agents…'));
+    await waitForShownText($(card(2)), expect.stringContaining('Waiting for a free slot'));
+    await waitForShownText($('main'), expect.stringContaining('Waiting for 2 child agents…'));
     // The toolbar counts the child agents that work, also the one that waits for its slot.
     await expect($(CHILD_AGENTS_BUTTON)).toHaveAttribute('aria-label', 'Child agents, 2 working');
 
     await clickInCard(1, 'stop');
 
     await waitForTaskState(1, 'canceled');
-    await expect($(card(1))).toHaveText(expect.stringContaining('Stopped'));
+    await waitForShownText($(card(1)), expect.stringContaining('Stopped'));
     // The stopped child gave its slot to the waiting one.
     await waitForTaskState(2, 'running');
     await clickInCard(2, 'stop');
@@ -410,7 +411,7 @@ describe('child agents', () => {
     await button.click();
     await $('[data-slot="dropdown-menu-content"]').waitForDisplayed();
 
-    const items = await $$(MENU_ITEMS).map(async (item) => item.getText());
+    const items = await $$(MENU_ITEMS).map(async (item) => shownText(item));
     expect(items).toHaveLength(2);
     expect(items[0]).toContain('Task 1: Watch the first');
     expect(items[0]).toContain('Stopped');
@@ -456,8 +457,8 @@ describe('child agents', () => {
     await waitForTaskState(1, 'reported');
 
     const wait = $(`${LATEST_MAIN_TURN} [data-task-wait]`);
-    await expect(wait).toHaveText(expect.stringContaining('Read the reports'));
-    await expect(wait).toHaveText(expect.stringContaining('Read the notes'));
-    await expect(wait).toHaveText(expect.stringContaining('Reported'));
+    await waitForShownText(wait, expect.stringContaining('Read the reports'));
+    await waitForShownText(wait, expect.stringContaining('Read the notes'));
+    await waitForShownText(wait, expect.stringContaining('Reported'));
   });
 });

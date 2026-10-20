@@ -37,6 +37,17 @@ export async function waitForApp(): Promise<void> {
  * have finished. Animations that run forever, such as spinners, do not count.
  */
 export async function waitForAnimations(): Promise<void> {
+  // A newly inserted dialog can be displayed before its first animation
+  // frame. Let styles and the first frame settle before checking animations.
+  await browser.execute(async () => {
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          resolve();
+        }),
+      );
+    });
+  });
   await browser.waitUntil(
     async () =>
       browser.execute(() =>
@@ -73,30 +84,58 @@ export async function axeViolations(): Promise<AxeViolation[]> {
   }, WCAG_TAGS);
 }
 
+/** Reads rendered text, including text in a box that truncates it. */
+export async function shownText(element: WebdriverIO.Element): Promise<string> {
+  return browser.execute((node: HTMLElement) => node.innerText.trim(), element);
+}
+
 /**
  * Waits until the element is displayed and its text is `expected`, or
  * contains it when `expected` is a regular expression. It reads the DOM text:
  * WebKitWebDriver reports no visible text for text in a box that truncates
  * it, such as the header's heading and the value of a select.
  */
-export async function waitForShownText(selector: string, expected: RegExp | string): Promise<void> {
-  const matches = (text: string): boolean => (typeof expected === 'string' ? text === expected : expected.test(text));
+export async function waitForShownText(
+  target: ReturnType<typeof $> | string | WebdriverIO.Element,
+  expected: RegExp | string | { asymmetricMatch(value: unknown): boolean },
+): Promise<void> {
+  const matches = (text: string): boolean => {
+    if (typeof expected === 'string') {
+      return text === expected;
+    }
+    if (expected instanceof RegExp) {
+      return expected.test(text);
+    }
+    return expected.asymmetricMatch(text);
+  };
   let last = '';
-  await browser.waitUntil(
-    async () => {
-      const element = await $(selector);
-      const displayed = (await element.isExisting()) && (await element.isDisplayed());
-      if (!displayed) {
-        return false;
-      }
-      last = await browser.execute(
-        (found: string) => document.querySelector(found)?.textContent.trim() ?? '',
-        selector,
-      );
-      return matches(last);
-    },
-    { timeout: 10_000, timeoutMsg: `${selector} did not show ${String(expected)}; it showed ${JSON.stringify(last)}` },
-  );
+  const element = typeof target === 'string' ? await $(target) : await target;
+  const label = typeof element.selector === 'string' ? element.selector : 'the element';
+  let expectedText = 'matching text';
+  if (typeof expected === 'string') {
+    expectedText = JSON.stringify(expected);
+  }
+  if (expected instanceof RegExp) {
+    expectedText = expected.toString();
+  }
+  try {
+    await browser.waitUntil(
+      async () => {
+        const displayed = (await element.isExisting()) && (await element.isDisplayed());
+        if (!displayed) {
+          return false;
+        }
+        last = await shownText(element);
+        return matches(last);
+      },
+      {
+        timeout: 10_000,
+        timeoutMsg: `${label} did not show ${expectedText}`,
+      },
+    );
+  } catch (cause) {
+    throw new Error(`${label} did not show ${expectedText}; it showed ${JSON.stringify(last)}`, { cause });
+  }
 }
 
 /**

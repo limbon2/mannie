@@ -114,7 +114,7 @@ export function buildCommands(programs, options) {
 }
 
 /** The runners of CI's smoke tests, by the platform of a script. */
-const SMOKE_RUNNERS = { unix: 'ubuntu-24.04', windows: 'windows-11' };
+const SMOKE_RUNNERS = { unix: 'ubuntu-24.04', windows: 'windows-2025' };
 
 /**
  * The platforms of the release's archives, by target (ADR-0008, ADR-0018):

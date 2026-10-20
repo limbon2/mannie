@@ -45,12 +45,16 @@ fn a_read_only_file_in_a_folder_without_the_right_to_add_cannot_be_changed() {
         .join("System32")
         .join("icacls.exe");
     let user = std::env::var("USERNAME").unwrap();
-    // The folder's own entries replace the inherited ones: the account may
-    // read and list, but neither write the file nor add one.
+    // Replace permissions on the file as well as its folder, and deny writes
+    // to this account explicitly. An elevated runner may retain a separate
+    // Administrators grant after inherited permissions have been removed.
     let restricted = Command::new(&icacls)
         .arg(&config)
         .args(["/inheritance:r", "/grant:r"])
         .arg(format!("{user}:(OI)(CI)RX"))
+        .arg("/deny")
+        .arg(format!("{user}:(OI)(CI)(WD,AD)"))
+        .arg("/T")
         .output()
         .unwrap();
     assert!(restricted.status.success(), "{restricted:?}");

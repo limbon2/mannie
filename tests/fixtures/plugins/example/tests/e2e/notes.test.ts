@@ -1,4 +1,12 @@
-import { axeViolations, leaveSettings, openSettings, runCommand, setPluginEnabled, waitForApp } from '#e2e/page.ts';
+import {
+  axeViolations,
+  leaveSettings,
+  openSettings,
+  runCommand,
+  setPluginEnabled,
+  waitForApp,
+  waitForShownText,
+} from '#e2e/page.ts';
 // The plugin in the app: once it is on, its command opens its settings
 // section, which adds a note through the
 // plugin's command and shows it, and the sidebar's group shows the notes
@@ -29,7 +37,8 @@ async function axeInBothThemes(): Promise<void> {
 /** Types a note into the focused field and adds it with Enter. */
 async function addNote(text: string): Promise<void> {
   await $(NOTE_FIELD).click();
-  await browser.keys(text.split(''));
+  await $(NOTE_FIELD).addValue(text);
+  await expect($(NOTE_FIELD)).toHaveValue(text);
   await browser.keys(Key.Enter);
 }
 
@@ -53,12 +62,12 @@ describe('the example plugin', () => {
     await addNote('Water the plants');
 
     await $('[data-example-note]').waitForDisplayed();
-    await expect($('[data-example-note]')).toHaveText('Water the plants');
+    await waitForShownText($('[data-example-note]'), 'Water the plants');
     await expect($(NOTE_FIELD)).toHaveValue('');
     await axeInBothThemes();
     await leaveSettings();
     await $('[data-example-panel]').waitForDisplayed();
-    await expect($('[data-example-panel] [data-example-panel-note]')).toHaveText('Water the plants');
+    await waitForShownText($('[data-example-panel] [data-example-panel-note]'), 'Water the plants');
     await axeInBothThemes();
   });
 

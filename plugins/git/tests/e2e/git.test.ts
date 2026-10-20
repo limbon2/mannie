@@ -35,6 +35,7 @@ import {
   setPluginEnabled,
   waitForAnimations,
   waitForApp,
+  waitForShownText,
 } from '#e2e/page.ts';
 import { MODELS, type ProviderServer, startProviderServer, TOOLS_DONE } from '#e2e/provider-server.ts';
 
@@ -96,7 +97,7 @@ async function expectShownEffects(expected: readonly string[]): Promise<void> {
   expect(shown).toHaveLength(1);
   for (const list of shown) {
     for (const text of expected) {
-      await expect(list).toHaveText(expect.stringContaining(text));
+      await waitForShownText(list, expect.stringContaining(text));
     }
   }
 }
@@ -174,8 +175,8 @@ describe('Git', () => {
     expect(await latestToolStatus()).toBe('completed');
     await openLatestCall();
     const entries = $(`${LATEST_MAIN_TURN} [data-git-entries]`);
-    await expect(entries).toHaveText(expect.stringContaining('modified: notes.txt'));
-    await expect(entries).toHaveText(expect.stringContaining('todo.txt'));
+    await waitForShownText(entries, expect.stringContaining('modified: notes.txt'));
+    await waitForShownText(entries, expect.stringContaining('todo.txt'));
     await axeInBothThemes();
   });
 
@@ -240,30 +241,30 @@ describe('Git', () => {
 
     await openLatestCall();
 
-    await expect($(`${LATEST_MAIN_TURN} [data-git-diff]`)).toHaveText(expect.stringContaining('notes.txt'));
-    await expect($(`${LATEST_MAIN_TURN} [data-git-hunk]`)).toHaveText(expect.stringContaining('second line'));
+    await waitForShownText($(`${LATEST_MAIN_TURN} [data-git-diff]`), expect.stringContaining('notes.txt'));
+    await waitForShownText($(`${LATEST_MAIN_TURN} [data-git-hunk]`), expect.stringContaining('second line'));
     await axeInBothThemes();
   });
 
   it('opens the Git panel from the toolbar, with the branch, the changes and the history', async () => {
     const control = $('[data-git-control]');
-    await expect(control).toHaveText(expect.stringContaining('main'));
+    await waitForShownText(control, expect.stringContaining('main'));
     await control.click();
 
     const panel = $('[data-git-panel]');
-    await expect(panel.$('[data-git-branch]')).toHaveText('On main');
-    await expect(panel.$('[data-git-entries]')).toHaveText(expect.stringContaining('todo.txt'));
+    await waitForShownText(panel.$('[data-git-branch]'), 'On main');
+    await waitForShownText(panel.$('[data-git-entries]'), expect.stringContaining('todo.txt'));
     await axeInBothThemes();
     await clickWithText('[data-git-panel] [role="tab"]', 'History');
 
-    await expect(panel.$('[data-git-commits]')).toHaveText(expect.stringContaining('Push me without asking'));
+    await waitForShownText(panel.$('[data-git-commits]'), expect.stringContaining('Push me without asking'));
     await axeInBothThemes();
   });
 
   it('lists the saved rule in the settings, where the owner deletes it', async () => {
     await openSettings('tools.settings');
     const rule = $('[data-program-rule]');
-    await expect(rule).toHaveText(expect.stringContaining('git push'));
+    await waitForShownText(rule, expect.stringContaining('git push'));
 
     await clickWithText('[data-program-rule] button', 'Delete');
 

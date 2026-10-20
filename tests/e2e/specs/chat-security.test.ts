@@ -19,7 +19,7 @@ import {
 import { type ConnectionCounter, countConnections } from '../support/connections.ts';
 import { chooseTrayItem, cspViolations, deleteProviderProfiles, openedLinks, processId } from '../support/harness.ts';
 import { hostileMarkdown } from '../support/hostile-html.ts';
-import { axeViolations, waitForAnimations, waitForApp } from '../support/page.ts';
+import { axeViolations, waitForAnimations, waitForApp, waitForShownText } from '../support/page.ts';
 import { MODELS, type ProviderServer, startProviderServer } from '../support/provider-server.ts';
 
 /** A credential that must never appear outside the system's credential store. */
@@ -138,7 +138,7 @@ describe('chat security', () => {
     const dialog = await $('[data-slot="alert-dialog-content"]');
     await dialog.waitForDisplayed();
     await waitForAnimations();
-    await expect(dialog).toHaveText(expect.stringContaining(`${counter.origin}/link`));
+    await waitForShownText(dialog, expect.stringContaining(`${counter.origin}/link`));
     await clickWithText('[data-slot="alert-dialog-content"] button', 'Open in browser');
     await dialog.waitForDisplayed({ reverse: true });
 
@@ -152,7 +152,7 @@ describe('chat security', () => {
     const dialog = await $('[data-slot="alert-dialog-content"]');
     await dialog.waitForDisplayed();
     await waitForAnimations();
-    await expect(dialog).toHaveText(expect.stringContaining('Links of the type javascript do not open from Mannie.'));
+    await waitForShownText(dialog, expect.stringContaining('Links of the type javascript do not open from Mannie.'));
     const buttons = await browser.execute(() =>
       [...document.querySelectorAll('[data-slot="alert-dialog-content"] button')].map((button) =>
         button.textContent.trim(),

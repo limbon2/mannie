@@ -14,12 +14,16 @@ const DIALOG = '[data-slot="dialog-content"]';
 /** Replaces a field's text as the owner types it, so that its binding sees each change. */
 async function fill(selector: string, value: string): Promise<void> {
   const field = await $(selector);
-  await field.click();
-  await browser.keys([Key.Ctrl, 'a']);
-  await browser.keys(Key.Backspace);
-  if (value !== '') {
-    await browser.keys(value.split(''));
+  if (value === '') {
+    // WebKit rejects an empty send-keys request, and a native clear alone
+    // can leave the binding unchanged. Delete through real keyboard events.
+    await field.click();
+    await browser.keys([Key.Ctrl, 'a']);
+    await browser.keys(Key.Backspace);
+  } else {
+    await field.setValue(value);
   }
+  await expect(field).toHaveValue(value);
 }
 
 /** The profiles in the list, each as the text of its row. */
@@ -77,7 +81,7 @@ describe('provider profiles', () => {
   });
 
   it('starts without profiles, and offers to add one', async () => {
-    await expect($('main')).toHaveText(expect.stringContaining('No provider profiles yet'));
+    await waitForShownText($('main'), expect.stringContaining('No provider profiles yet'));
     expect(await axeViolations()).toEqual([]);
   });
 
@@ -98,7 +102,8 @@ describe('provider profiles', () => {
 
     await save();
 
-    await expect($(DIALOG)).toHaveText(
+    await waitForShownText(
+      $(DIALOG),
       expect.stringContaining(
         'Over plain HTTP, Mannie sends an API key only to this computer or to a private network address.',
       ),
@@ -119,13 +124,14 @@ describe('provider profiles', () => {
     await clickWithText('main button', 'Test');
 
     const dialog = await $(DIALOG);
-    await expect(dialog).toHaveText(expect.stringContaining('Server: Other server'));
+    await waitForShownText(dialog, expect.stringContaining('Server: Other server'));
     const text = await dialog.getText();
     // Every check passes but reasoning, including the Tools check, which the
     // test provider answers with a call of its tool.
     expect(text.match(/Passed\./gu)?.length).toBe(6);
     expect(text).toContain('Skipped because the profile sets no reasoning effort.');
-    expect(text).toContain('The server reports a context window of 65,536 tokens.');
+    const contextWindow = await browser.execute(() => new Intl.NumberFormat().format(65_536));
+    expect(text).toContain(`The server reports a context window of ${contextWindow} tokens.`);
     const reply = provider.requests().find((request) => {
       const content = JSON.stringify(request.body?.messages ?? null);
       return content.includes('Reply with the single word: ready');
@@ -133,7 +139,7 @@ describe('provider profiles', () => {
     expect(reply?.authorization).toBe('Bearer e2e-key');
 
     await clickWithText(`${DIALOG} button`, 'Use these limits');
-    await expect(dialog).toHaveText(expect.stringContaining('The profile uses these limits now.'));
+    await waitForShownText(dialog, expect.stringContaining('The profile uses these limits now.'));
     await clickWithText(`${DIALOG} button`, 'Close');
     await dialog.waitForDisplayed({ reverse: true });
     expect(await profileRows()).toEqual([`Mock ${MODELS.echo} · Chat Completions Default Other server Test`]);
@@ -148,7 +154,7 @@ describe('provider profiles', () => {
     await expect(credential).toHaveValue('');
     await expect(credential).toHaveAttribute('placeholder', 'A key is saved. Type a new key to replace it.');
     await fill('#profile-credential', 'replacement-key');
-    await expect($(DIALOG)).toHaveText(expect.stringContaining('Saving replaces the saved key.'));
+    await waitForShownText($(DIALOG), expect.stringContaining('Saving replaces the saved key.'));
     expect(await axeViolations()).toEqual([]);
     // An empty field keeps the stored credential.
     await fill('#profile-credential', '');
@@ -170,14 +176,14 @@ describe('provider profiles', () => {
     await clickWithText(`${DIALOG} button`, 'Keep the key');
     await expect($('#profile-credential')).toBeEnabled();
     await clickWithText(`${DIALOG} button`, 'Remove the key');
-    await expect($(DIALOG)).toHaveText(expect.stringContaining('Saving removes the saved key.'));
+    await waitForShownText($(DIALOG), expect.stringContaining('Saving removes the saved key.'));
     await save();
     await $(DIALOG).waitForDisplayed({ reverse: true });
 
     const requestsBefore = provider.requests().length;
     await clickWithText('main button', 'Test');
     const dialog = await $(DIALOG);
-    await expect(dialog).toHaveText(expect.stringContaining('Skipped because the profile has no API key.'));
+    await waitForShownText(dialog, expect.stringContaining('Skipped because the profile has no API key.'));
     await clickWithText(`${DIALOG} button`, 'Close');
     await dialog.waitForDisplayed({ reverse: true });
 

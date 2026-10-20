@@ -5,11 +5,9 @@
 # Keyring, KWallet and no Secret Service (V7), and the programs of the
 # plugins' manifests, such as the worker: their smoke tests on Windows and
 # Linux and their builds for FreeBSD and static Linux (ADR-0035, decision
-# 10). The release workflow runs it too. Every job runs on the owner's self-hosted runners, virtual machines
-# that are thrown away after one job, which is what the label `disposable`
-# promises. Their system labels start with `mannie-`, so that no job that asks
-# for a GitHub-hosted image, such as the release's signing job, can land on
-# them (docs/engineering/ci-runners.md). Actions are pinned by commit SHA.
+# 10). The release workflow runs it too. Every job uses a standard GitHub-hosted
+# runner, which is free in this public repository (docs/engineering/ci-runners.md).
+# Actions are pinned by commit SHA.
 name: CI
 
 on:
@@ -17,13 +15,33 @@ on:
   push:
     branches: [main]
   workflow_call:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Full CI, one Rust test, or desktop end-to-end tests
+        type: choice
+        options: [full, rust, e2e]
+        default: full
+      platform:
+        description: Platform for a focused run; full CI always uses both
+        type: choice
+        options: [both, linux, windows]
+        default: both
+      cargo-arguments:
+        description: For Rust, Cargo arguments as a JSON array with --locked, a package and an exact test or filter
+        type: string
+        default: ""
+      e2e-spec:
+        description: For end-to-end tests, one repository-relative .test.ts file; empty runs the suite
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ inputs.scope || 'full' }}-${{ inputs.platform || 'both' }}
+  cancel-in-progress: ${{ github.event_name != 'push' || github.ref_type != 'tag' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -35,12 +53,14 @@ env:
 
 jobs:
   check:
-    name: task ci (${{ matrix.os }})
+    if: inputs.scope != 'e2e'
+    name: ${{ inputs.scope == 'rust' && 'Selected Rust test' || 'task ci' }} (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-11, ubuntu-24.04]
-    runs-on: [self-hosted, disposable, "mannie-${{ matrix.os }}"]
+        os: ${{ fromJSON(inputs.scope == 'rust' && inputs.platform == 'windows' && '["windows-2025"]' || inputs.scope == 'rust' && inputs.platform == 'linux' && '["ubuntu-24.04"]' || '["windows-2025","ubuntu-24.04"]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
       # The whole history and the tags: `task lint:proto` compares the link's
       # contracts with the merge base and the newest release that has them.
@@ -50,54 +70,75 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           cache-key: check
-      - run: task ci
+      - name: Run the full checks
+        if: inputs.scope != 'rust'
+        run: task ci
+      - name: Run the selected Rust test
+        if: inputs.scope == 'rust'
+        env:
+          MANNIE_CARGO_ARGUMENTS: ${{ inputs.cargo-arguments }}
+        run: node scripts/ci/run-cargo-test.mjs
+      - name: Report compiler cache use
+        if: always() && env.SCCACHE_PATH != ''
+        run: sccache --show-stats
 
   e2e:
+    if: inputs.scope != 'rust'
     name: End-to-end tests (${{ matrix.os }})
+    # These are disposable desktops. Let the webview paint normally rather
+    # than using the off-screen mode that keeps local tests out of the way.
+    env:
+      MANNIE_E2E_SHOW_WINDOW: "1"
+      MANNIE_E2E_SPEC: ${{ inputs.scope == 'e2e' && inputs.e2e-spec || '' }}
     strategy:
       fail-fast: false
       matrix:
         # V1 names the WebKitGTK 4.1 of Ubuntu 22.04, the oldest supported LTS.
-        os: [windows-11, ubuntu-22.04]
-    runs-on: [self-hosted, disposable, "mannie-${{ matrix.os }}"]
+        os: ${{ fromJSON(inputs.scope == 'e2e' && inputs.platform == 'windows' && '["windows-2025"]' || inputs.scope == 'e2e' && inputs.platform == 'linux' && '["ubuntu-22.04"]' || '["windows-2025","ubuntu-22.04"]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
         with:
           cache-key: e2e
+      - name: Build the validation app
+        run: task e2e:build
       - name: Run the end-to-end tests on WebView2
         if: runner.os == 'Windows'
-        run: task e2e
+        run: pwsh -File scripts/ci/run-windows-e2e.ps1
       # WebKitGTK needs a display, the single-instance plugin a session bus,
       # and provider profiles a Secret Service for their credentials.
       - name: Install GNOME Keyring
         if: runner.os == 'Linux'
-        run: sudo apt-get install -y --no-install-recommends gnome-keyring
+        run: sudo sh scripts/ci/install-ubuntu-packages.sh gnome-keyring
       - name: Run the end-to-end tests on WebKitGTK
         if: runner.os == 'Linux'
-        run: dbus-run-session -- sh scripts/ci/with-secret-service.sh gnome-keyring xvfb-run --auto-servernum task e2e
+        run: dbus-run-session -- sh scripts/ci/with-secret-service.sh gnome-keyring xvfb-run --auto-servernum task e2e:run
       # Shared runners measure their neighbours as much as Mannie, so CI
       # records the figures without enforcing the targets.
       - name: Measure the performance targets on WebView2
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && env.MANNIE_E2E_SPEC == ''
         env:
           MANNIE_PERF_REPORT_ONLY: "1"
-        run: pnpm exec wdio run tests/e2e/wdio.perf.conf.ts
+        run: pwsh -File scripts/ci/run-windows-e2e.ps1 -Mode performance
       - name: Measure the performance targets on WebKitGTK
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && env.MANNIE_E2E_SPEC == ''
         env:
           MANNIE_PERF_REPORT_ONLY: "1"
         run: dbus-run-session -- sh scripts/ci/with-secret-service.sh gnome-keyring xvfb-run --auto-servernum pnpm exec wdio run tests/e2e/wdio.perf.conf.ts
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
-        with:
-          name: performance-${{ matrix.os }}
-          path: target/perf/results.json
-          if-no-files-found: ignore
+      - name: Record the performance measurements
+        if: always() && env.MANNIE_E2E_SPEC == ''
+        run: node scripts/ci/summarize-performance.mjs
+      - name: Report compiler cache use
+        if: always() && env.SCCACHE_PATH != ''
+        run: sccache --show-stats
 
   credentials:
+    if: inputs.scope != 'rust' && inputs.scope != 'e2e'
     name: Credential store (${{ matrix.secret-service }})
-    runs-on: [self-hosted, disposable, mannie-ubuntu-24.04]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -110,7 +151,7 @@ jobs:
       - name: Install the Secret Service
         if: matrix.secret-service != 'none'
         run: |
-          sudo apt-get install -y --no-install-recommends ${{ matrix.secret-service == 'kwallet' && 'libkf5wallet-bin libqca-qt5-2-plugins' || 'gnome-keyring' }}
+          sudo sh scripts/ci/install-ubuntu-packages.sh ${{ matrix.secret-service == 'kwallet' && 'libkf5wallet-bin libqca-qt5-2-plugins' || 'gnome-keyring' }}
       - name: Build the tests
         run: cargo test --locked -p mannie-secrets --no-run
       - name: Store, read, replace and delete a credential
@@ -128,18 +169,21 @@ jobs:
   # The programs of the plugins' manifests and what CI does with each, so
   # that a plugin with a program changes no workflow (ADR-0035, decision 10).
   plan:
+    if: inputs.scope != 'rust' && inputs.scope != 'e2e'
     name: Plan the programs' jobs
-    runs-on: [self-hosted, disposable, mannie-ubuntu-24.04]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
       builds: ${{ steps.plan.outputs.builds }}
       smoke: ${{ steps.plan.outputs.smoke }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-          cache: pnpm
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          cache: true
       # The manifests' TOML parser is a development dependency of the root.
       - run: pnpm install --frozen-lockfile --filter mannie
       - id: plan
@@ -153,7 +197,8 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.smoke) }}
-    runs-on: [self-hosted, disposable, "mannie-${{ matrix.os }}"]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install the Rust toolchain from rust-toolchain.toml
@@ -186,7 +231,8 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.builds) }}
-    runs-on: [self-hosted, disposable, mannie-ubuntu-24.04]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install the Rust toolchain from rust-toolchain.toml and the target
@@ -199,8 +245,7 @@ jobs:
       - name: Install musl-tools for a static Linux build
         if: endsWith(matrix.target, '-musl')
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends musl-tools
+          sudo sh scripts/ci/install-ubuntu-packages.sh musl-tools
       - name: Build with cargo
         if: matrix.tool == 'cargo'
         run: cargo build --locked --release --manifest-path ${{ matrix.folder }}/Cargo.toml -p ${{ matrix.package }} --target ${{ matrix.target }}
@@ -223,8 +268,10 @@ jobs:
   # The core's crates that run inside a worker on FreeBSD, with the
   # FreeBSD halves of the tools and the process supervisor (ADR-0014).
   core-freebsd:
+    if: inputs.scope != 'rust' && inputs.scope != 'e2e'
     name: The core's crates for FreeBSD
-    runs-on: [self-hosted, disposable, mannie-ubuntu-24.04]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install the Rust toolchain from rust-toolchain.toml and the target

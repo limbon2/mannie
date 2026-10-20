@@ -135,7 +135,7 @@ describe('matrices', () => {
       {
         folder: 'plugins/workers',
         helpers: '--example smoke-master',
-        os: 'windows-11',
+        os: 'windows-2025',
         package: 'mannie-worker',
         script: 'plugins/workers/ci/smoke.ps1',
       },

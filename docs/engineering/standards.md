@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                        |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                                       |
-| Last updated | 2026-10-19                                                                                                                                                                             |
+| Last updated | 2026-10-21                                                                                                                                                                             |
 | Related      | [Repository](repository.md), [Releasing](releasing.md), [Security](../architecture/security.md), [Extension points](../architecture/extension-points.md), [AGENTS.md](../../AGENTS.md) |
 
 ## 1. Definition of Done
@@ -110,7 +110,7 @@ A flaky test is quarantined within a day and fixed within a week.
 - cargo-deny checks advisories, licenses ([ADR-0017](../adr/0017-license-and-dependency-policy.md)), bans ([ADR-0008](../adr/0008-one-workspace-two-binaries.md)) and sources (crates.io only, unless an exception is listed).
 - pnpm's minimum release age stays in effect. Tooling versions are pinned exactly.
 - GitHub Actions are pinned by commit SHA and run with minimal permissions.
-- Release artifacts are built, installed and signed only on GitHub-hosted runners. The other CI jobs run on the owner's self-hosted runners, virtual machines that are reset after each job ([CI runners](ci-runners.md)).
+- Every CI job uses a standard GitHub-hosted runner. Release artifacts are built and installed on fresh machines, and only tagged releases are signed ([CI runners](ci-runners.md)).
 - Release signing keys are kept outside the repository.
 
 ## 10. Versioning, branching and changelog

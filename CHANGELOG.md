@@ -4,6 +4,20 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+### Changed
+
+- Cache Rust compilations across hosted jobs, retain Clippy metadata and run selected Rust tests or desktop specs when repairing CI.
+
+- Run all CI on standard GitHub-hosted runners for the public repository, and build and install-check Windows, Linux and FreeBSD artifacts through the Release workflow, including manual branch builds.
+
+### Fixed
+
+- Make CI's text assertions work on WebKit and wait for completed runtime cleanup before retrying; measure parser work without time given to other CI processes.
+
+### Security
+
+- Patch certificate verification for RUSTSEC-2026-0382, rejecting the distrusted intermediates.
+
 ## 0.4.0 - 2026-10-20
 
 ### Added
