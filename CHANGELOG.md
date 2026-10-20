@@ -10,6 +10,7 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ### Fixed
 
+- CI installs Node.js before pnpm, so fresh runner images can set up the package manager without a preinstalled npm.
 - The Windows runner adds Git Bash to the command search path that its jobs inherit, so a default Git for Windows installation can run the workflows' Bash steps.
 - `task ci` finishes the desktop unit tests before starting the Rust tests, so desktop transforms no longer compete with their timing checks.
 
