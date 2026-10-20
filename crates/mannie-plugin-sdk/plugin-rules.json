@@ -1,5 +1,6 @@
 {
   "coreTablePrefixes": ["settings", "runtime", "provider", "tools", "store", "validation", "sqlite"],
+  "loaderNamePrefixes": ["LD_", "DYLD_"],
   "reservedIds": [
     "app",
     "core",
@@ -53,11 +54,13 @@
     "sdk"
   ],
   "sdkMajor": 1,
-  "sensitiveServices": ["credentials", "secrets"],
+  "secretNameParts": ["KEY", "APIKEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "CREDENTIALS"],
+  "sensitiveServices": ["credentials", "processes", "secrets"],
   "services": {
     "credentials": 1,
     "executor-host": 1,
     "file-dialog": 1,
+    "processes": 1,
     "secrets": 1,
     "store": 1
   },

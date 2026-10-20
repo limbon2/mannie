@@ -45,6 +45,10 @@ mod tests {
     use super::{digest, revision};
 
     fn write(identity: &str) -> Access {
+        with_state(identity, None)
+    }
+
+    fn with_state(identity: &str, state: Option<&str>) -> Access {
         Access::Path {
             path: "/work/notes.txt".to_owned(),
             mode: AccessMode::Write,
@@ -52,7 +56,20 @@ mod tests {
             exists: true,
             identity: identity.to_owned(),
             entries: None,
+            state: state.map(str::to_owned),
         }
+    }
+
+    #[test]
+    fn a_plugin_s_state_of_a_path_changes_the_digest() {
+        assert_ne!(
+            digest(&[with_state("2049:12", Some("HEAD 1a"))]),
+            digest(&[with_state("2049:12", Some("HEAD 2b"))])
+        );
+        assert_ne!(
+            digest(&[with_state("2049:12", Some("HEAD 1a"))]),
+            digest(&[write("2049:12")])
+        );
     }
 
     #[test]

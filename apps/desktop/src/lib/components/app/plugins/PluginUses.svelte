@@ -11,17 +11,25 @@
   // What a plugin's manifest lets it use (docs/features/plugins.md; ADR-0034,
   // decision 13): the services of Mannie, the sensitive ones marked, its
   // entries in the credential store, the commands and channels that its UI
-  // may call, the programs that ship with it, the libraries that only it may
-  // use, and the system access that its manifest grants outside Mannie's
-  // services (ADR-0035, decision 6). The names are the plugin's, so they
-  // show as code beside the words. The list starts collapsed below the
-  // plugin's description.
+  // may call, the programs that ship with it, the installed programs that it
+  // runs (ADR-0038, decision 7), the libraries that only it may use, and the
+  // system access that its manifest grants outside Mannie's services
+  // (ADR-0035, decision 6). The names are the plugin's, so they show as code
+  // beside the words. The list starts collapsed below the plugin's
+  // description.
   let { open = $bindable(false), uses }: { open?: boolean; uses: PluginUses } = $props();
 
   const nothing = $derived(
-    [uses.services, uses.secrets, uses.commands, uses.channels, uses.programs, uses.crates, uses.native].every(
-      (list) => list.length === 0,
-    ),
+    [
+      uses.services,
+      uses.secrets,
+      uses.commands,
+      uses.channels,
+      uses.programs,
+      uses.installedPrograms,
+      uses.crates,
+      uses.native,
+    ].every((list) => list.length === 0),
   );
 </script>
 
@@ -89,6 +97,16 @@
             <dd class="flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
               {#each uses.programs as program (program)}
                 <code class="text-xs" data-content data-plugin-program={program}>{program}</code>
+              {/each}
+            </dd>
+          </div>
+        {/if}
+        {#if uses.installedPrograms.length > 0}
+          <div class="flex flex-col gap-1">
+            <dt class="font-medium">{m.plugins_use_installed_programs()}</dt>
+            <dd class="flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
+              {#each uses.installedPrograms as program (program)}
+                <code class="text-xs" data-content data-plugin-installed-program={program}>{program}</code>
               {/each}
             </dd>
           </div>

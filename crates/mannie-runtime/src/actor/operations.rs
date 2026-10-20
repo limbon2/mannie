@@ -24,8 +24,8 @@ use mannie_types::ids::ProjectId;
 use mannie_types::run::{RunActivity, RunFailure};
 use mannie_types::tools::{
     Access, ApprovalChoice, ApprovalRequest, ArchiveRef, CommandRule, Decision, GrantScope,
-    Interruption, NotRunReason, ProcessRecord, Refusal, RemoteCommandRule, ToolCallStatus,
-    ToolOutcome, ToolResult, ToolsSettings,
+    Interruption, NotRunReason, ProcessRecord, ProgramRule, Refusal, RemoteCommandRule,
+    ToolCallStatus, ToolOutcome, ToolResult, ToolsSettings,
 };
 use tokio::sync::oneshot;
 
@@ -68,14 +68,25 @@ async fn aborted(abort: Option<&StopSignal>) {
     }
 }
 
-/// What preparing a call found.
-enum Preparation {
-    /// The accesses of the operation.
-    Accesses(Vec<Access>),
+/// Why a prepared call does not run.
+enum Unprepared {
     /// The call never runs.
     NotRun(NotRunReason),
     /// The call cannot run; the failure is its result.
     Failed(Done),
+}
+
+/// The owner's choice and the decision that an answer to an approval gives.
+fn decision_of(answer: Answer) -> (Option<ApprovalChoice>, Decision) {
+    match answer {
+        Answer::Owner(choice) => {
+            let decision = Decision::of_choice(&choice);
+            (Some(choice), decision)
+        }
+        // Full access allows this call once; it grants nothing longer and
+        // saves no rule (ADR-0029, decision 5).
+        Answer::FullAccess => (None, Decision::FullAccess),
+    }
 }
 
 /// What a call needs from its surroundings, read again for every call, so a
@@ -93,6 +104,8 @@ struct Surroundings {
     rules: Vec<CommandRule>,
     /// The rules for commands on remote hosts (ADR-0036).
     remote_rules: Vec<RemoteCommandRule>,
+    /// The rules for runs of installed programs (ADR-0038).
+    program_rules: Vec<ProgramRule>,
     /// The conversation's project.
     project: Option<ProjectId>,
     /// On a worker, the ceiling of the task, narrowed as the task asks.
@@ -194,21 +207,19 @@ impl RunActor {
                 return Ok(CallEnd::Ran);
             }
         };
+        // The card of a plugin's call is its plugin's to describe (ADR-0039),
+        // so the call's record names the plugin from its first write on.
+        call.document.plugin = setup
+            .plugin_tool(&call.document.tool)
+            .map(|offered| offered.plugin.clone());
         let arguments = call.arguments.clone().unwrap_or_default();
         let mut surroundings = self.surroundings(setup).await?;
         let mut accesses = match self
             .prepare_tool(&tool, &surroundings.context, &arguments)
             .await?
         {
-            Preparation::Accesses(accesses) => accesses,
-            Preparation::NotRun(reason) => {
-                self.end_call(call, reason);
-                return Ok(CallEnd::Ran);
-            }
-            Preparation::Failed(done) => {
-                self.complete_call(call, done);
-                return Ok(CallEnd::Ran);
-            }
+            Ok(accesses) => accesses,
+            Err(unprepared) => return Ok(self.end_unprepared(call, unprepared)),
         };
         let moves = accesses
             .iter()
@@ -234,16 +245,7 @@ impl RunActor {
                     return Ok(CallEnd::Ran);
                 }
             };
-            let answer = self.ask(&mut call, &accesses, &request).await?;
-            let (choice, decision) = match answer {
-                Answer::Owner(choice) => {
-                    let decision = Decision::of_choice(&choice);
-                    (Some(choice), decision)
-                }
-                // Full access allows this call once; it grants nothing longer
-                // and saves no rule (ADR-0029, decision 5).
-                Answer::FullAccess => (None, Decision::FullAccess),
-            };
+            let (choice, decision) = decision_of(self.ask(&mut call, &accesses, &request).await?);
             call.document.decision = Some(decision);
             call.document.decided_at = Some(self.now());
             if !decision.allows() {
@@ -272,7 +274,7 @@ impl RunActor {
                 .prepare_tool(&tool, &surroundings.context, &arguments)
                 .await?
             {
-                Preparation::Accesses(again) => {
+                Ok(again) => {
                     let unchanged = digest(&again) == request.digest;
                     accesses = again;
                     if unchanged {
@@ -280,18 +282,20 @@ impl RunActor {
                     }
                     tracing::info!(run = %self.run, part = %call.part_id, "the accesses of an approved tool call changed; asking the policy again");
                 }
-                Preparation::NotRun(reason) => {
-                    self.end_call(call, reason);
-                    return Ok(CallEnd::Ran);
-                }
-                Preparation::Failed(done) => {
-                    self.complete_call(call, done);
-                    return Ok(CallEnd::Ran);
-                }
+                Err(unprepared) => return Ok(self.end_unprepared(call, unprepared)),
             }
         }
         self.execute(setup, &tool, call, surroundings, arguments, accesses)
             .await
+    }
+
+    /// Ends a call whose preparation left it nothing to run.
+    fn end_unprepared(&mut self, call: StepCall, unprepared: Unprepared) -> CallEnd {
+        match unprepared {
+            Unprepared::NotRun(reason) => self.end_call(call, reason),
+            Unprepared::Failed(done) => self.complete_call(call, done),
+        }
+        CallEnd::Ran
     }
 
     /// What the policy decides about a call's accesses in its surroundings.
@@ -314,6 +318,7 @@ impl RunActor {
                 },
                 rules: &surroundings.rules,
                 remote_rules: &surroundings.remote_rules,
+                program_rules: &surroundings.program_rules,
                 project: surroundings.project.as_ref(),
                 owner_request,
                 ceiling: surroundings.ceiling.as_ref(),
@@ -580,6 +585,14 @@ impl RunActor {
                         .add_remote_rule(&ids.rule(), target, words)
                         .await
                         .map(drop),
+                    Some(Ok(SavedRule::Program {
+                        target,
+                        words,
+                        folder,
+                    })) => store
+                        .add_program_rule(&ids.rule(), target, words, folder)
+                        .await
+                        .map(drop),
                     Some(Err(_)) | None => Ok(()),
                 };
                 if let Err(error) = saved {
@@ -590,24 +603,26 @@ impl RunActor {
         }
     }
 
-    /// Prepares a call. Stop and Shutdown end the wait.
+    /// Prepares a call, which yields the accesses of its operation or why it
+    /// does not run. Stop and Shutdown end the wait.
     async fn prepare_tool(
         &mut self,
         tool: &Arc<dyn Tool>,
         context: &ToolContext,
         arguments: &str,
-    ) -> Result<Preparation, Ending> {
+    ) -> Result<Result<Vec<Access>, Unprepared>, Ending> {
         let prepared = self
             .wait(tool.prepare(context.clone(), arguments.to_owned()))
             .await?;
         Ok(match prepared {
-            Ok(prepared) => Preparation::Accesses(prepared.accesses),
+            Ok(prepared) => Ok(prepared.accesses),
             Err(PrepareError::InvalidArguments { detail }) => {
-                Preparation::NotRun(NotRunReason::InvalidArguments {
+                Err(Unprepared::NotRun(NotRunReason::InvalidArguments {
                     detail: detail.chars().take(MAX_DETAIL_CHARS).collect(),
-                })
+                }))
             }
-            Err(PrepareError::Failed(failure)) => Preparation::Failed(Done::failed(failure)),
+            Err(PrepareError::Failed(failure)) => Err(Unprepared::Failed(Done::failed(failure))),
+            Err(PrepareError::Ended(done)) => Err(Unprepared::Failed(done)),
         })
     }
 
@@ -631,6 +646,7 @@ impl RunActor {
             always: always_grants,
             rules,
             remote_rules,
+            program_rules,
         } = self
             .runtime
             .policy_grants(Some(&self.authority), project.as_ref())
@@ -688,6 +704,7 @@ impl RunActor {
             always_grants,
             rules,
             remote_rules,
+            program_rules,
             project,
             ceiling,
             host,

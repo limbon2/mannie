@@ -24,6 +24,7 @@ mod mutate;
 mod output;
 mod paths;
 mod policy;
+mod programs;
 mod projects;
 mod registry;
 mod results;
@@ -43,7 +44,7 @@ pub use activity::{
 };
 pub use ceiling::Ceiling;
 pub use digest::digest;
-pub use environment::CommandEnvironment;
+pub use environment::{CommandEnvironment, ProgramEnvironmentError};
 pub use lock::MutationLock;
 pub use mentions::{
     FileMention, FolderMention, IndexMatch, IndexMatches, MAX_FOLDER_ENTRIES, MAX_INDEX_ENTRIES,
@@ -51,8 +52,12 @@ pub use mentions::{
     may_hold_secrets, resolve_mention,
 };
 pub use output::output_page;
-pub use paths::{FolderError, canonical_folder, workspace_folder};
+pub use paths::{FolderError, canonical_folder, is_inside as path_is_inside, workspace_folder};
 pub use policy::{Grants, PolicyInputs, SavedRule, Verdict, decide, saved_rule};
+pub use programs::{
+    MAX_PROGRAM_INPUT_BYTES, MAX_PROGRAM_OUTPUT_BYTES, MAX_PROGRAM_TIMEOUT, PROGRAM_ERROR_BYTES,
+    ProgramEnding, ProgramNotFound, ProgramOutput, ProgramRun, find_program, run_program,
+};
 pub use projects::{Availability, MoveFailure, ProjectFacts, ProjectMoves};
 pub use registry::{RegisterError, ToolRegistry, takes_activity};
 pub use results::{MIN_RESULT_LIMIT_BYTES, RESULT_LIMIT_BYTES, result_limit};
@@ -63,4 +68,4 @@ pub use system::{ShellFacts, SystemFacts};
 pub use tool::{
     ArchivedOutput, Done, Execution, PermissionClass, PrepareError, Prepared, Tool, ToolContext,
 };
-pub use tools::stopped;
+pub use tools::{plugin_path_access, stopped};

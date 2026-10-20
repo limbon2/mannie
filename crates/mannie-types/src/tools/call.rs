@@ -135,6 +135,9 @@ pub enum Refusal {
     /// worker, so its tools never ask; the refusal keeps the ceiling's
     /// answer for every access (ADR-0036).
     NoRemoteCommands,
+    /// A worker runs no plugin's installed programs, for the same reason
+    /// (ADR-0038, decision 6).
+    NoProgramsOnHost,
 }
 
 /// Why an operation that was executing ended without its result while the
@@ -221,6 +224,10 @@ pub struct ToolCallDocument {
     /// the owner stopped it or turned off its plugin.
     #[serde(default)]
     pub interruption: Option<Interruption>,
+    /// The plugin whose tool the call is, whose card describes it in the
+    /// transcript (ADR-0039); none for the core's tools and older calls.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<String>,
 }
 
 /// Reads the result of a stored call. An outcome that this version cannot
@@ -285,6 +292,7 @@ impl ToolCallDocument {
             not_run: None,
             process: None,
             interruption: None,
+            plugin: None,
         }
     }
 
@@ -315,6 +323,7 @@ impl ToolCallDocument {
             result: self.result.clone(),
             not_run: self.not_run.clone(),
             interruption: self.interruption.clone(),
+            plugin: self.plugin.clone(),
         }
     }
 }
@@ -353,6 +362,10 @@ pub struct ToolCallView {
     /// the owner stopped it or turned off its plugin.
     #[serde(default)]
     pub interruption: Option<Interruption>,
+    /// The plugin whose tool the call is, which the card of its tool kind
+    /// describes (ADR-0039).
+    #[serde(default)]
+    pub plugin: Option<String>,
 }
 
 #[cfg(test)]
@@ -476,12 +489,32 @@ mod tests {
         assert_eq!(
             complete.result.unwrap().outcome,
             ToolOutcome::Plugin {
-                plugin: "notes".to_owned()
+                plugin: "notes".to_owned(),
+                data: None,
+                failure: None,
             }
         );
         let result = without_plugin.result.unwrap();
         assert_eq!(result.outcome, ToolOutcome::Unknown);
         assert_eq!(result.output, "2 notes.");
+    }
+
+    #[test]
+    fn a_plugin_s_call_names_its_plugin_and_a_core_call_stores_no_plugin() {
+        let mut plugin_call =
+            ToolCallDocument::receiving("call_1".to_owned(), "git_status".to_owned());
+        plugin_call.plugin = Some("git".to_owned());
+        let core_call = ToolCallDocument::receiving("call_2".to_owned(), "read_file".to_owned());
+
+        assert_eq!(
+            serde_json::to_value(&plugin_call).unwrap()["plugin"],
+            serde_json::json!("git")
+        );
+        assert_eq!(plugin_call.view("{}").plugin.as_deref(), Some("git"));
+        let stored = serde_json::to_value(&core_call).unwrap();
+        assert!(stored.get("plugin").is_none(), "{stored}");
+        let read: ToolCallDocument = serde_json::from_value(stored).unwrap();
+        assert_eq!(read.plugin, None);
     }
 
     #[test]

@@ -327,6 +327,7 @@ async fn reads_declare_their_canonical_accesses() {
             exists,
             identity,
             entries,
+            state: None,
         },
     ] = file.accesses.as_slice()
     else {
@@ -847,7 +848,10 @@ fn path_accesses(accesses: &[Access]) -> Vec<(String, AccessMode, bool)> {
             Access::Path {
                 path, mode, folder, ..
             } => (path.clone(), *mode, *folder),
-            Access::Command { .. } | Access::Project { .. } | Access::RemoteCommand { .. } => {
+            Access::Command { .. }
+            | Access::Project { .. }
+            | Access::RemoteCommand { .. }
+            | Access::Program { .. } => {
                 panic!("not a path access: {access:?}")
             }
         })

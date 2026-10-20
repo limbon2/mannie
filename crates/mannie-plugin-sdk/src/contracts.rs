@@ -52,9 +52,12 @@ pub use mannie_types::tasks::{
     TASK_TITLE_ARGUMENT, TaskAssignment, TaskExecutorRef, TaskState, task_still_running,
 };
 // The owner's decisions and the archived outputs of a task conversation that
-// an executor serves, and their errors.
+// an executor serves, and their errors; how a plugin's tool uses a path
+// (ADR-0038, decision 4); and what a run of an installed program does beyond
+// the workspace (decision 5).
 pub use mannie_types::tools::{
-    ApprovalChoice, DecideApproval, ReadToolOutput, ToolOutputPage, ToolsError,
+    AccessMode, ApprovalChoice, DecideApproval, DiscardedWork, MAX_EFFECT_ITEMS, ProgramEffect,
+    ReadToolOutput, ToolOutputPage, ToolsError,
 };
 // What a task conversation that an executor serves shows: its checkpoints and
 // the updates of a subscription, and why the core ends a subscription, which

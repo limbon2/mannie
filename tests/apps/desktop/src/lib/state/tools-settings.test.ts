@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
   CommandRule,
+  ProgramRule,
   RemoteCommandRule,
   SharedGrant,
   ToolsError,
@@ -19,9 +20,11 @@ import {
 
 const core = vi.hoisted(() => ({
   deleteCommandRule: vi.fn(),
+  deleteProgramRule: vi.fn(),
   deleteRemoteCommandRule: vi.fn(),
   getToolsSettings: vi.fn(),
   listCommandRules: vi.fn(),
+  listProgramRules: vi.fn(),
   listRemoteCommandRules: vi.fn(),
   listSharedGrants: vi.fn(),
   revokeSharedGrant: vi.fn(),
@@ -52,6 +55,19 @@ const REMOTE_RULE: RemoteCommandRule = {
     target: '0199e0f2-0000-7000-8000-0000000000aa',
   },
   words: ['systemctl', 'status'],
+};
+
+const PROGRAM_RULE: ProgramRule = {
+  createdAt: 0,
+  folder: null,
+  id: '0199e0f2-0000-7000-8000-0000000000ee',
+  target: {
+    effects: [{ effect: 'runs_folder_code', name: 'pre-commit', source: '.git/hooks/pre-commit' }],
+    name: 'git',
+    plugin: 'git',
+    program: 'C:\\Program Files\\Git\\cmd\\git.exe',
+  },
+  words: ['git', 'commit'],
 };
 
 function ok<T>(data: T): { data: T; status: 'ok' } {
@@ -124,6 +140,7 @@ describe('ToolsSettingsState', () => {
 describe('CommandRulesState', () => {
   beforeEach(() => {
     core.listRemoteCommandRules.mockResolvedValue(ok([]));
+    core.listProgramRules.mockResolvedValue(ok([]));
   });
 
   it('lists the rules and deletes one', async () => {
@@ -215,6 +232,36 @@ describe('CommandRulesState', () => {
     });
     expect(rules.rules).toEqual([RULE]);
     expect(rules.remoteRules).toEqual([REMOTE_RULE]);
+  });
+
+  it('lists the rules of installed programs beside the others, and deletes one of them', async () => {
+    const rules = new CommandRulesState();
+    core.listCommandRules.mockResolvedValue(ok([]));
+    core.listProgramRules.mockResolvedValue(ok([PROGRAM_RULE, { ...PROGRAM_RULE, id: 'kept' }]));
+    core.deleteProgramRule.mockResolvedValueOnce(ok(null));
+
+    await rules.load();
+    expect(rules.status).toBe('ready');
+    expect(rules.isEmpty).toBe(false);
+    await rules.removeProgram(PROGRAM_RULE.id);
+    core.deleteProgramRule.mockResolvedValueOnce(refused({ code: 'storage_failed' }));
+    await rules.removeProgram('kept');
+
+    expect(core.deleteProgramRule).toHaveBeenCalledWith({ ruleId: PROGRAM_RULE.id });
+    expect(core.deleteCommandRule).not.toHaveBeenCalled();
+    expect(rules.programRules.map((rule) => rule.id)).toEqual(['kept']);
+    expect(rules.deleteFailure?.kind).toBe('core');
+  });
+
+  it('reports the rules as unreadable when the rules of installed programs cannot be read', async () => {
+    const rules = new CommandRulesState();
+    core.listCommandRules.mockResolvedValue(ok([RULE]));
+    core.listProgramRules.mockResolvedValue(refused({ code: 'storage_failed' }));
+
+    await rules.load();
+
+    expect(rules.status).toBe('error');
+    expect(rules.readFailure?.kind).toBe('core');
   });
 });
 

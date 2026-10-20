@@ -18,10 +18,11 @@ use mannie_plugin_sdk::ids::{
     CORE_TABLE_PREFIXES, IdError, PluginId, RESERVED_IDS, TAURI_PLUGIN_CRATE_PREFIX,
 };
 use mannie_plugin_sdk::manifest::{
-    CratesSection, Manifest, ManifestError, NativeSection, SecretsSection,
+    CratesSection, Manifest, ManifestError, NativeSection, SecretsSection, is_process_name,
 };
 use mannie_plugin_sdk::services::SERVICES;
 use mannie_plugin_sdk::version::SDK_MAJOR;
+use mannie_types::tools::{LOADER_NAME_PREFIXES, SECRET_NAME_PARTS};
 use serde_json::{Value, json};
 
 /// A manifest with the fields that every manifest has, and nothing else.
@@ -58,9 +59,154 @@ fn a_manifest_with_the_required_fields_parses_with_no_service_and_no_secret() {
     assert_eq!(manifest.services, BTreeMap::new());
     assert_eq!(manifest.secrets, SecretsSection::default());
     assert_eq!(manifest.crates, CratesSection::default());
+    assert_eq!(manifest.processes, BTreeMap::new());
     assert_eq!(manifest.native, NativeSection::default());
     assert_eq!(manifest.native.grants(), Vec::<(&str, &str)>::new());
     assert!(!manifest.declares("executor-host"));
+}
+
+/// The minimal manifest with the service `processes`, running `program`
+/// with a reason and the lines of `table` in its table.
+fn running(program: &str, table: &str) -> String {
+    let key = serde_json::to_string(program).unwrap();
+    with(&format!(
+        "[services]\nprocesses = 1\n\n[processes.{key}]\nreason = \"Runs it.\"\n{table}"
+    ))
+}
+
+#[test]
+fn a_manifest_lists_the_installed_programs_that_it_runs() {
+    let manifest = Manifest::parse(&running(
+        "git",
+        "fixed = [\"-c\", \"core.fsmonitor=false\"]
+inherit = [\"HOME\", \"SSH_AUTH_SOCK\"]
+
+[processes.pandoc]
+reason = \"Converts the notes.\"",
+    ))
+    .unwrap();
+    let unknown = toml_message(&running("git", "shell = true"));
+    let missing = toml_message(&with(
+        "[services]\nprocesses = 1\n\n[processes.git]\nfixed = []",
+    ));
+
+    assert_eq!(
+        manifest.processes.keys().collect::<Vec<_>>(),
+        ["git", "pandoc"]
+    );
+    let git = &manifest.processes["git"];
+    assert_eq!(git.reason, "Runs it.");
+    assert_eq!(git.fixed, ["-c", "core.fsmonitor=false"]);
+    assert_eq!(git.inherit, ["HOME", "SSH_AUTH_SOCK"]);
+    let pandoc = &manifest.processes["pandoc"];
+    assert_eq!(pandoc.reason, "Converts the notes.");
+    assert!(pandoc.fixed.is_empty() && pandoc.inherit.is_empty());
+    assert!(unknown.contains("unknown field `shell`"), "{unknown}");
+    assert!(missing.contains("reason"), "{missing}");
+}
+
+#[test]
+fn an_installed_program_without_a_reason_or_with_a_nul_in_a_fixed_argument_is_refused() {
+    for reason in ["", " \\t"] {
+        let text = with(&format!(
+            "[services]\nprocesses = 1\n\n[processes.git]\nreason = \"{reason}\""
+        ));
+
+        assert_eq!(
+            Manifest::parse(&text),
+            Err(ManifestError::ProcessWithoutReason {
+                program: "git".to_owned()
+            }),
+            "{reason:?}"
+        );
+    }
+    let nul = running("git", "fixed = [\"-c\", \"a\\u0000b\"]");
+
+    assert_eq!(
+        Manifest::parse(&nul),
+        Err(ManifestError::ProcessArgument {
+            program: "git".to_owned()
+        })
+    );
+}
+
+#[test]
+fn installed_programs_without_the_service_processes_are_refused_after_their_own_checks() {
+    let without = with("[processes.git]\nreason = \"Runs it.\"");
+    let bad_name_without = with("[processes.\"../git\"]\nreason = \"Runs it.\"");
+    let service_alone = with("[services]\nprocesses = 1");
+
+    assert_eq!(
+        Manifest::parse(&without),
+        Err(ManifestError::ProcessesWithoutService)
+    );
+    assert_eq!(
+        Manifest::parse(&bad_name_without),
+        Err(ManifestError::ProcessName {
+            name: "../git".to_owned()
+        })
+    );
+    assert_eq!(
+        Manifest::parse(&service_alone).unwrap().processes,
+        BTreeMap::new()
+    );
+}
+
+/// The names over which `tests/scripts/plugins/manifests.test.mjs` runs the
+/// generator's check of `[processes]`: `names` lists names of installed
+/// programs and `inherited` names of the variables that they inherit, each
+/// accepted or refused as `Manifest::parse` judges them.
+fn processes_fixture() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/plugin-processes.json")
+}
+
+#[test]
+fn every_name_of_the_processes_fixture_is_accepted_or_refused_as_it_is_listed() {
+    let text = std::fs::read_to_string(processes_fixture()).unwrap();
+    let fixture: Value = serde_json::from_str(&text).unwrap();
+    let list = |group: &str, verdict: &str| -> Vec<String> {
+        let names = fixture[group][verdict].as_array().unwrap();
+        assert!(!names.is_empty(), "{group}.{verdict}");
+        names
+            .iter()
+            .map(|name| name.as_str().unwrap().to_owned())
+            .collect()
+    };
+    let inheriting = |name: &str| {
+        let list = serde_json::to_string(&[name]).unwrap();
+        running("git", &format!("inherit = {list}"))
+    };
+
+    for name in list("names", "accepted") {
+        assert!(is_process_name(&name), "{name:?}");
+        assert!(Manifest::parse(&running(&name, "")).is_ok(), "{name:?}");
+    }
+    for name in list("names", "refused") {
+        assert!(!is_process_name(&name), "{name:?}");
+        assert_eq!(
+            Manifest::parse(&running(&name, "")),
+            Err(ManifestError::ProcessName { name: name.clone() }),
+            "{name:?}"
+        );
+    }
+    for name in list("inherited", "accepted") {
+        let manifest = Manifest::parse(&inheriting(&name)).unwrap();
+        assert_eq!(
+            manifest.processes["git"].inherit,
+            std::slice::from_ref(&name),
+            "{name:?}"
+        );
+    }
+    for name in list("inherited", "refused") {
+        assert_eq!(
+            Manifest::parse(&inheriting(&name)),
+            Err(ManifestError::ProcessInherits {
+                program: "git".to_owned(),
+                name: name.clone()
+            }),
+            "{name:?}"
+        );
+    }
 }
 
 #[test]
@@ -549,6 +695,35 @@ fn a_refusal_says_what_was_refused() {
             },
             "the manifest grants sockets under [native] without a reason",
         ),
+        (
+            ManifestError::ProcessName {
+                name: "../git".to_owned(),
+            },
+            "\"../git\" is not the name of an installed program, which is a letter or a digit, then letters, digits, \".\", \"_\" and \"-\", at most 64 characters, never ending in a dot",
+        ),
+        (
+            ManifestError::ProcessWithoutReason {
+                program: "git".to_owned(),
+            },
+            "the manifest runs the program git under [processes] without a reason",
+        ),
+        (
+            ManifestError::ProcessArgument {
+                program: "git".to_owned(),
+            },
+            "a fixed argument of the program git holds a NUL character",
+        ),
+        (
+            ManifestError::ProcessInherits {
+                program: "git".to_owned(),
+                name: "GITHUB_TOKEN".to_owned(),
+            },
+            "the program git inherits \"GITHUB_TOKEN\", which is not a variable's name, looks like a secret's or loads libraries",
+        ),
+        (
+            ManifestError::ProcessesWithoutService,
+            "the manifest lists programs under [processes] but does not declare the service processes",
+        ),
     ] {
         assert_eq!(error.to_string(), text);
     }
@@ -613,9 +788,11 @@ fn committed_rules() -> PathBuf {
 /// The rules that `scripts/plugins/generate.mjs` checks manifests with, from
 /// the constants that `Manifest::parse` and `PluginId::parse` use: the SDK's
 /// major, the reserved IDs, the start of the names of Tauri's plugin crates,
-/// the table prefixes that are not a plugin's, and each service with its
-/// major. The pattern of an ID's syntax is the schema's. The services that
-/// reach sensitive data are listed too, for `task plugins:grants`.
+/// the table prefixes that are not a plugin's, each service with its major,
+/// and the parts and starts of the names of variables that an installed
+/// program may not inherit. The pattern of an ID's syntax is the schema's.
+/// The services that reach sensitive data are listed too, for `task
+/// plugins:grants`.
 fn manifest_rules() -> Value {
     let services: BTreeMap<&str, u16> = SERVICES
         .iter()
@@ -628,8 +805,10 @@ fn manifest_rules() -> Value {
         .collect();
     json!({
         "coreTablePrefixes": CORE_TABLE_PREFIXES,
+        "loaderNamePrefixes": LOADER_NAME_PREFIXES,
         "reservedIds": RESERVED_IDS,
         "sdkMajor": SDK_MAJOR,
+        "secretNameParts": SECRET_NAME_PARTS,
         "sensitiveServices": sensitive,
         "services": services,
         "tauriPluginCratePrefix": TAURI_PLUGIN_CRATE_PREFIX,

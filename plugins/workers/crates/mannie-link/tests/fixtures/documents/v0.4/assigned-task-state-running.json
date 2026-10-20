@@ -25,7 +25,8 @@
           "folder": false,
           "exists": false,
           "identity": "803:1442",
-          "entries": null
+          "entries": null,
+          "state": null
         }
       ],
       "request": {

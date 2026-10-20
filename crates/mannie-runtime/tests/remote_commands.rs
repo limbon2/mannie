@@ -137,8 +137,9 @@ impl Tool for RemoteShell {
         let command = execution
             .authorized
             .iter()
-            .map(|access| match access {
-                ToolAccess::RemoteCommand(remote) => remote.command.clone(),
+            .filter_map(|access| match access {
+                ToolAccess::RemoteCommand(remote) => Some(remote.command.clone()),
+                ToolAccess::Path(_) | ToolAccess::Program(_) => None,
             })
             .collect::<Vec<_>>()
             .join(" ");
@@ -302,7 +303,9 @@ async fn a_remote_command_asks_and_runs_what_was_authorized_once_allowed() {
     assert_eq!(
         result.outcome,
         ToolOutcome::Plugin {
-            plugin: PLUGIN.to_owned()
+            plugin: PLUGIN.to_owned(),
+            data: None,
+            failure: None,
         }
     );
     assert_eq!(result.output, "Ran systemctl status nginx.");

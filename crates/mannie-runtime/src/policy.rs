@@ -1,14 +1,14 @@
 //! What the policy reads besides an operation's accesses (docs/features/
 //! system-tools/operations-and-approvals.md, policy): the grants that apply to
-//! a conversation, the command rules, the rules of remote hosts and the tools
-//! settings. Tool calls and mentions read them the same way, so a mention is
-//! authorized as the model's read would be (ADR-0004, decision 2; ADR-0032,
-//! decision 8).
+//! a conversation, the command rules, the rules of remote hosts, the rules of
+//! installed programs and the tools settings. Tool calls and mentions read
+//! them the same way, so a mention is authorized as the model's read would be
+//! (ADR-0004, decision 2; ADR-0032, decision 8).
 
 use std::fmt::Display;
 
 use mannie_types::ids::{ConversationId, ProjectId};
-use mannie_types::tools::{CommandRule, GrantScope, RemoteCommandRule, ToolsSettings};
+use mannie_types::tools::{CommandRule, GrantScope, ProgramRule, RemoteCommandRule, ToolsSettings};
 
 use crate::Runtime;
 
@@ -27,6 +27,8 @@ pub(crate) struct PolicyGrants {
     pub(crate) rules: Vec<CommandRule>,
     /// The rules for commands on remote hosts (ADR-0036).
     pub(crate) remote_rules: Vec<RemoteCommandRule>,
+    /// The rules for runs of installed programs (ADR-0038).
+    pub(crate) program_rules: Vec<ProgramRule>,
 }
 
 /// What could not be read, with the error, for the log.
@@ -81,6 +83,10 @@ impl Runtime {
             .remote_rules()
             .await
             .map_err(|error| read_error("the rules of remote hosts", &error))?;
+        grants.program_rules = store
+            .program_rules()
+            .await
+            .map_err(|error| read_error("the rules of installed programs", &error))?;
         Ok(grants)
     }
 }

@@ -136,6 +136,23 @@ required-features = ["testing"]
 name = "planted_credential"
 required-features = ["testing"]
 
+# Plugins' tools on the owner's paths: the workspace, offering, path accesses
+# and the data of tool cards (ADR-0038, ADR-0039).
+[[test]]
+name = "plugin_paths"
+required-features = ["testing"]
+
+# The service `processes`, which runs the installed git (ADR-0038).
+[[test]]
+name = "processes"
+required-features = ["testing"]
+
+# Plugins' tools that run installed programs: their accesses, grants, rules
+# and full access (ADR-0038).
+[[test]]
+name = "plugin_programs"
+required-features = ["testing"]
+
 [dependencies]
 # The bytes of a stored image as `read_image` returns them (ADR-0033).
 base64 = { workspace = true }

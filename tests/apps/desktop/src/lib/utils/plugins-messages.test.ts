@@ -16,7 +16,16 @@ import {
 } from '../../../../../../apps/desktop/src/lib/utils/plugins-messages.js';
 
 /** What a plugin uses that declares nothing. */
-const NO_USES = { channels: [], commands: [], crates: [], native: [], programs: [], secrets: [], services: [] };
+const NO_USES = {
+  channels: [],
+  commands: [],
+  crates: [],
+  installedPrograms: [],
+  native: [],
+  programs: [],
+  secrets: [],
+  services: [],
+};
 
 afterEach(() => {
   setPluginCatalog([]);

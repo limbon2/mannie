@@ -17,6 +17,7 @@ import type {
   SidebarPanel,
   SidePanelKind,
   TaskKind,
+  ToolKind,
 } from '#lib/types/shell-slots.js';
 
 // What the model got of a sent mention, which a mention kind words.
@@ -42,6 +43,9 @@ export type {
   SidePanelKind,
   SidePanelProps,
   TaskKind,
+  ToolKind,
+  ToolKindCall,
+  ToolKindDetailsProps,
 } from '#lib/types/shell-slots.js';
 
 /** Every slot of the shell by its name, with the type of its entries. */
@@ -57,6 +61,7 @@ export interface SlotCatalog {
   readonly sidebarPanels: SidebarPanel;
   readonly sidePanels: SidePanelKind;
   readonly taskKinds: TaskKind;
+  readonly toolKinds: ToolKind;
   readonly views: ShellView;
 }
 

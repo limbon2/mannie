@@ -8,9 +8,9 @@ use mannie_store::{Change, Durability, RuntimeStoreError, SettingsStoreError, To
 use mannie_tools::output_page;
 use mannie_types::ids::ConversationId;
 use mannie_types::tools::{
-    CommandRule, ConversationGrant, GrantRef, ReadToolOutput, RemoteCommandRule, RemoteRuleRef,
-    RuleRef, SetFullAccess, SharedGrant, SharedGrantRef, ToolOutputPage, ToolsError, ToolsSettings,
-    UpdateToolsSettings,
+    CommandRule, ConversationGrant, GrantRef, ProgramRule, ProgramRuleRef, ReadToolOutput,
+    RemoteCommandRule, RemoteRuleRef, RuleRef, SetFullAccess, SharedGrant, SharedGrantRef,
+    ToolOutputPage, ToolsError, ToolsSettings, UpdateToolsSettings,
 };
 
 use crate::Runtime;
@@ -157,6 +157,31 @@ impl Runtime {
             return Err(ToolsError::RuleNotFound);
         }
         tracing::info!(rule = %input.rule_id, "deleted a rule for commands on a remote host");
+        Ok(())
+    }
+
+    /// The rules for runs of installed programs, the oldest first
+    /// (ADR-0038).
+    pub async fn program_rules(&self) -> Result<Vec<ProgramRule>, ToolsError> {
+        self.inner
+            .store
+            .program_rules()
+            .await
+            .map_err(tools_store_failure)
+    }
+
+    /// Deletes a rule for runs of an installed program.
+    pub async fn delete_program_rule(&self, input: ProgramRuleRef) -> Result<(), ToolsError> {
+        let deleted = self
+            .inner
+            .store
+            .delete_program_rule(&input.rule_id)
+            .await
+            .map_err(tools_store_failure)?;
+        if !deleted {
+            return Err(ToolsError::RuleNotFound);
+        }
+        tracing::info!(rule = %input.rule_id, "deleted a rule for runs of an installed program");
         Ok(())
     }
 

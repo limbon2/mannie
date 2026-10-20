@@ -683,6 +683,7 @@ mod tests {
             secrets: SecretsSection::default(),
             crates: CratesSection::default(),
             programs: Vec::new(),
+            processes: BTreeMap::new(),
             native: NativeSection::default(),
         }
     }

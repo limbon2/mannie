@@ -363,7 +363,10 @@ export function callStatus(call: ToolCallView, now: number): CallStatus {
       return { label: m.tools_status_canceled(), quiet: false, tone: 'ended' };
     }
     case 'completed': {
-      const failed = call.result?.outcome.kind === 'failed';
+      const outcome = call.result?.outcome;
+      // A plugin's call that failed names its code in its outcome (ADR-0039).
+      const pluginFailed = outcome?.kind === 'plugin' && (outcome.failure ?? null) !== null;
+      const failed = outcome?.kind === 'failed' || pluginFailed;
       return failed
         ? { label: m.tools_status_failed(), quiet: false, tone: 'failed' }
         : { label: m.tools_status_done(), quiet: true, tone: 'done' };

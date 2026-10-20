@@ -4,8 +4,9 @@ use mannie_types::ceiling::CeilingMode;
 use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{ProjectId, RuleId};
 use mannie_types::tools::{
-    Access, AccessMode, ApprovalReason, ApprovalRequest, CommandRule, Decision, EntryCount,
-    GrantScope, Refusal, RemoteCommandRule, RemoteTarget, RuleProposal, ToolsError,
+    Access, AccessMode, ApprovalReason, ApprovalRequest, CommandRule, Decision, DiscardedWork,
+    EntryCount, GrantScope, ProgramEffect, ProgramRule, ProgramTarget, Refusal, RemoteCommandRule,
+    RemoteTarget, RuleProposal, ToolsError, effect_keys,
 };
 
 use super::{Grants, PolicyInputs, SavedRule, Verdict, decide, saved_rule};
@@ -29,6 +30,7 @@ fn path_access(path: &str, mode: AccessMode, folder: bool) -> Access {
         exists: mode != AccessMode::Create,
         identity: "1:1".to_owned(),
         entries: None,
+        state: None,
     }
 }
 
@@ -81,6 +83,7 @@ struct Inputs {
     always_grants: Vec<GrantScope>,
     rules: Vec<CommandRule>,
     remote_rules: Vec<RemoteCommandRule>,
+    program_rules: Vec<ProgramRule>,
     project: Option<ProjectId>,
     owner_request: Option<String>,
     ceiling: Option<Ceiling>,
@@ -100,6 +103,7 @@ impl Inputs {
             always_grants: Vec::new(),
             rules: Vec::new(),
             remote_rules: Vec::new(),
+            program_rules: Vec::new(),
             project: None,
             owner_request: None,
             ceiling: None,
@@ -138,6 +142,7 @@ impl Inputs {
                 },
                 rules: &self.rules,
                 remote_rules: &self.remote_rules,
+                program_rules: &self.program_rules,
                 project: self.project.as_ref(),
                 owner_request: self.owner_request.as_deref(),
                 ceiling: self.ceiling.as_ref(),
@@ -327,6 +332,7 @@ fn commands_ask_and_offer_a_grant_and_a_rule() {
                 words: vec!["git".to_owned(), "status".to_owned(), "--short".to_owned()],
                 folder: at("/work"),
                 remote: None,
+                program: None,
             })
         )
     );
@@ -442,6 +448,7 @@ fn grants_cover_a_folder_itself_and_the_folder_of_a_file() {
             files: 10,
             folders: 2,
         }),
+        state: None,
     }];
     let create_folders = [
         path_access("/other/new", AccessMode::Create, true),
@@ -613,6 +620,7 @@ fn windows_paths_compare_without_regard_to_case() {
             exists: true,
             identity: "1:3".to_owned(),
             entries: None,
+            state: None,
         }]),
         Verdict::Ask(_)
     ));
@@ -624,6 +632,7 @@ fn saved_rules_keep_the_chosen_leading_words() {
         words: vec!["git".to_owned(), "status".to_owned(), "--short".to_owned()],
         folder: at("/work"),
         remote: None,
+        program: None,
     };
 
     assert_eq!(
@@ -989,6 +998,7 @@ fn a_remote_command_asks_and_offers_a_grant_and_a_rule_for_its_host() {
                 ],
                 folder: String::new(),
                 remote: Some(host(SSH_HOST, ENDPOINT)),
+                program: None,
             })
         )
     );
@@ -1127,6 +1137,7 @@ fn a_saved_remote_rule_is_always_limited_to_its_host() {
         ],
         folder: String::new(),
         remote: Some(host(SSH_HOST, ENDPOINT)),
+        program: None,
     };
 
     for limit_to_folder in [false, true] {
@@ -1140,6 +1151,369 @@ fn a_saved_remote_rule_is_always_limited_to_its_host() {
     }
     assert_eq!(
         saved_rule(&proposal, 0, false),
+        Err(ToolsError::RulePrefixInvalid)
+    );
+}
+
+// Runs of installed programs (ADR-0038): never allowed by the workspace; a
+// grant covers the same run with effects among its own, and a rule leading
+// words of the same program with the effects of the run that it was saved
+// from.
+
+fn program_run_in(directory: &str, arguments: &[&str], effects: Vec<ProgramEffect>) -> Access {
+    Access::Program {
+        plugin: "git".to_owned(),
+        name: "git".to_owned(),
+        program: at("/usr/bin/git"),
+        fixed: vec!["-c".to_owned(), "gc.auto=0".to_owned()],
+        arguments: arguments
+            .iter()
+            .map(|argument| (*argument).to_owned())
+            .collect(),
+        working_directory: at(directory),
+        effects,
+        state: Some("HEAD 1a2b3c".to_owned()),
+    }
+}
+
+fn program_run(arguments: &[&str], effects: Vec<ProgramEffect>) -> Access {
+    program_run_in("/work", arguments, effects)
+}
+
+fn hook(name: &str) -> ProgramEffect {
+    ProgramEffect::RunsFolderCode {
+        name: name.to_owned(),
+        source: format!(".git/hooks/{name}"),
+    }
+}
+
+fn network(endpoint: &str) -> ProgramEffect {
+    ProgramEffect::Network {
+        endpoint: endpoint.to_owned(),
+    }
+}
+
+fn discards(work: DiscardedWork, items: &[&str]) -> ProgramEffect {
+    ProgramEffect::DiscardsWork {
+        work,
+        count: u32::try_from(items.len()).unwrap(),
+        items: items.iter().map(|item| (*item).to_owned()).collect(),
+        snapshot: true,
+    }
+}
+
+const ORIGIN: &str = "https://example.com/repo.git";
+
+fn git_target(effects: &[ProgramEffect]) -> ProgramTarget {
+    ProgramTarget {
+        plugin: "git".to_owned(),
+        name: "git".to_owned(),
+        program: at("/usr/bin/git"),
+        effects: effect_keys(effects),
+    }
+}
+
+/// The grant that "Allow for" gives a run.
+fn program_grant(arguments: &[&str], effects: &[ProgramEffect]) -> GrantScope {
+    GrantScope::Program {
+        plugin: "git".to_owned(),
+        name: "git".to_owned(),
+        program: at("/usr/bin/git"),
+        fixed: vec!["-c".to_owned(), "gc.auto=0".to_owned()],
+        arguments: arguments
+            .iter()
+            .map(|argument| (*argument).to_owned())
+            .collect(),
+        working_directory: at("/work"),
+        effects: effect_keys(effects),
+    }
+}
+
+fn program_rule(words: &[&str], folder: Option<&str>, effects: &[ProgramEffect]) -> ProgramRule {
+    ProgramRule {
+        id: RuleId::parse("0199e0f2-0000-7000-9000-000000000003").unwrap(),
+        target: git_target(effects),
+        words: words.iter().map(|word| (*word).to_owned()).collect(),
+        folder: folder.map(at),
+        created_at: UtcMillis::EPOCH,
+    }
+}
+
+#[test]
+fn a_program_run_asks_beside_its_paths_and_offers_a_grant_and_a_rule() {
+    let mut inputs = Inputs::new();
+    inputs.allow_changes_in_workspace = true;
+    let commit = ["commit", "-F", "-"];
+    let effects = vec![hook("pre-commit")];
+    let accesses = [
+        path_access("/work", AccessMode::Write, true),
+        program_run(&commit, effects.clone()),
+    ];
+    let proposal = RuleProposal {
+        words: vec![
+            "git".to_owned(),
+            "commit".to_owned(),
+            "-F".to_owned(),
+            "-".to_owned(),
+        ],
+        folder: at("/work"),
+        remote: None,
+        program: Some(git_target(&effects)),
+    };
+
+    assert_eq!(
+        inputs.decide(&accesses),
+        ask(
+            &accesses,
+            &[ApprovalReason::Program],
+            vec![program_grant(&commit, &effects)],
+            Some(proposal.clone())
+        )
+    );
+    // Without the setting, the change of the workspace asks too.
+    inputs.allow_changes_in_workspace = false;
+    assert_eq!(
+        inputs.decide(&accesses),
+        ask(
+            &accesses,
+            &[ApprovalReason::ChangeInWorkspace, ApprovalReason::Program],
+            vec![
+                path_grant(AccessMode::Write, "/work"),
+                program_grant(&commit, &effects)
+            ],
+            Some(proposal)
+        )
+    );
+}
+
+#[test]
+fn neither_the_workspace_nor_a_commands_rule_or_grant_allows_a_program_run() {
+    let mut inputs = Inputs::new();
+    inputs.allow_changes_in_workspace = true;
+    inputs.rules = vec![rule(&["git"], None)];
+    inputs.grants = vec![command_grant("git commit -F -", "/work")];
+
+    assert!(matches!(
+        inputs.decide(&[program_run(&["commit", "-F", "-"], Vec::new())]),
+        Verdict::Ask(_)
+    ));
+}
+
+#[test]
+fn a_grant_covers_the_same_run_with_effects_among_its_own() {
+    let mut inputs = Inputs::new();
+    let commit = ["commit", "-F", "-"];
+    let hooks = [hook("pre-commit"), hook("commit-msg")];
+    inputs.grants = vec![program_grant(&commit, &hooks)];
+
+    for effects in [hooks.to_vec(), vec![hook("pre-commit")], Vec::new()] {
+        assert_eq!(
+            inputs.decide(&[program_run(&commit, effects.clone())]),
+            Verdict::Allowed(Decision::Grant),
+            "{effects:?}"
+        );
+    }
+    // The state that the plugin read is for the digest alone.
+    let mut later = program_run(&commit, hooks.to_vec());
+    if let Access::Program { state, .. } = &mut later {
+        *state = Some("HEAD 4d5e6f".to_owned());
+    }
+    assert_eq!(inputs.decide(&[later]), Verdict::Allowed(Decision::Grant));
+
+    let mut other_plugin = program_run(&commit, Vec::new());
+    if let Access::Program { plugin, .. } = &mut other_plugin {
+        "tools".clone_into(plugin);
+    }
+    let mut other_program = program_run(&commit, Vec::new());
+    if let Access::Program { program, .. } = &mut other_program {
+        *program = at("/work/git");
+    }
+    let mut other_fixed = program_run(&commit, Vec::new());
+    if let Access::Program { fixed, .. } = &mut other_fixed {
+        fixed.clear();
+    }
+    for access in [
+        program_run(&commit, vec![hook("pre-commit"), hook("post-commit")]),
+        program_run(&["commit", "--amend", "-F", "-"], Vec::new()),
+        program_run_in("/work/other", &commit, Vec::new()),
+        program_run(&commit, vec![network(ORIGIN)]),
+        other_plugin,
+        other_program,
+        other_fixed,
+    ] {
+        assert!(
+            matches!(
+                inputs.decide(std::slice::from_ref(&access)),
+                Verdict::Ask(_)
+            ),
+            "{access:?}"
+        );
+    }
+
+    let mut shared = Inputs::new();
+    shared.project_grants = vec![program_grant(&commit, &hooks)];
+    assert_eq!(
+        shared.decide(&[program_run(&commit, hooks.to_vec())]),
+        Verdict::Allowed(Decision::ProjectGrant)
+    );
+    shared.project_grants = Vec::new();
+    shared.always_grants = vec![program_grant(&commit, &hooks)];
+    assert_eq!(
+        shared.decide(&[program_run(&commit, hooks.to_vec())]),
+        Verdict::Allowed(Decision::AlwaysGrant)
+    );
+}
+
+#[test]
+fn a_grant_counts_discarded_work_by_its_kind() {
+    let mut inputs = Inputs::new();
+    let reset = ["reset", "--hard", "HEAD"];
+    inputs.grants = vec![program_grant(
+        &reset,
+        &[discards(DiscardedWork::UncommittedChanges, &["a.txt"])],
+    )];
+
+    assert_eq!(
+        inputs.decide(&[program_run(
+            &reset,
+            vec![discards(
+                DiscardedWork::UncommittedChanges,
+                &["b.txt", "c.txt"]
+            )]
+        )]),
+        Verdict::Allowed(Decision::Grant)
+    );
+    assert!(matches!(
+        inputs.decide(&[program_run(
+            &reset,
+            vec![discards(DiscardedWork::Commits, &["1a2b3c"])]
+        )]),
+        Verdict::Ask(_)
+    ));
+}
+
+#[test]
+fn a_program_rule_allows_leading_words_with_the_effects_that_it_covers() {
+    let mut inputs = Inputs::new();
+    inputs.program_rules = vec![program_rule(&["git", "push"], None, &[network(ORIGIN)])];
+    let push = ["push", "origin", "main"];
+
+    assert_eq!(
+        inputs.decide(&[program_run(&push, vec![network(ORIGIN)])]),
+        Verdict::Allowed(Decision::Rule)
+    );
+    for access in [
+        program_run(&push, vec![network("https://example.com/other.git")]),
+        program_run(&push, vec![network(ORIGIN), hook("pre-push")]),
+        program_run(&["fetch", "origin"], vec![network(ORIGIN)]),
+    ] {
+        assert!(
+            matches!(
+                inputs.decide(std::slice::from_ref(&access)),
+                Verdict::Ask(_)
+            ),
+            "{access:?}"
+        );
+    }
+    // A rule of a program never matches a command.
+    assert!(matches!(
+        inputs.decide(&[command("git push origin main", "/work")]),
+        Verdict::Ask(_)
+    ));
+
+    let mut limited = Inputs::new();
+    limited.program_rules = vec![program_rule(&["git", "commit"], Some("/work"), &[])];
+    assert_eq!(
+        limited.decide(&[program_run_in("/work/sub", &["commit"], Vec::new())]),
+        Verdict::Allowed(Decision::Rule)
+    );
+    assert!(matches!(
+        limited.decide(&[program_run_in("/elsewhere", &["commit"], Vec::new())]),
+        Verdict::Ask(_)
+    ));
+}
+
+#[test]
+fn a_program_run_in_mannies_folders_asks_without_a_grant_or_a_rule() {
+    let mut inputs = Inputs::new();
+    inputs.program_rules = vec![program_rule(&["git"], None, &[])];
+    let accesses = [program_run_in("/data/mannie", &["status"], Vec::new())];
+
+    assert_eq!(
+        inputs.decide(&accesses),
+        ask(&accesses, &[ApprovalReason::MannieFolder], Vec::new(), None)
+    );
+}
+
+#[test]
+fn two_program_runs_offer_a_grant_for_each_and_no_rule() {
+    let inputs = Inputs::new();
+    let accesses = [
+        program_run(&["push", "origin", "main"], vec![network(ORIGIN)]),
+        program_run(&["push", "origin", "v1"], vec![network(ORIGIN)]),
+    ];
+
+    assert_eq!(
+        inputs.decide(&accesses),
+        ask(
+            &accesses,
+            &[ApprovalReason::Program],
+            vec![
+                program_grant(&["push", "origin", "main"], &[network(ORIGIN)]),
+                program_grant(&["push", "origin", "v1"], &[network(ORIGIN)]),
+            ],
+            None
+        )
+    );
+}
+
+#[test]
+fn full_access_allows_a_program_run() {
+    let mut inputs = Inputs::new();
+    inputs.full_access = true;
+
+    assert_eq!(
+        inputs.decide(&[program_run(
+            &["push", "--force-with-lease", "origin", "main"],
+            vec![network(ORIGIN), hook("pre-push")]
+        )]),
+        Verdict::Allowed(Decision::FullAccess)
+    );
+}
+
+#[test]
+fn a_worker_refuses_a_program_run_in_every_mode() {
+    for mode in MODES.into_iter().chain([CeilingMode::FullAccess]) {
+        assert_eq!(
+            Inputs::worker(mode).decide(&[program_run_in("/srv/app", &["status"], Vec::new())]),
+            Verdict::Refused(Refusal::NoProgramsOnHost),
+            "{mode:?}"
+        );
+    }
+}
+
+#[test]
+fn a_saved_program_rule_keeps_its_program_and_effects_and_may_be_limited_to_its_folder() {
+    let effects = [hook("pre-commit")];
+    let proposal = RuleProposal {
+        words: vec!["git".to_owned(), "commit".to_owned(), "-F".to_owned()],
+        folder: at("/work"),
+        remote: None,
+        program: Some(git_target(&effects)),
+    };
+
+    for (limit_to_folder, folder) in [(false, None), (true, Some(at("/work")))] {
+        assert_eq!(
+            saved_rule(&proposal, 2, limit_to_folder),
+            Ok(SavedRule::Program {
+                target: git_target(&effects),
+                words: vec!["git".to_owned(), "commit".to_owned()],
+                folder,
+            })
+        );
+    }
+    assert_eq!(
+        saved_rule(&proposal, 4, false),
         Err(ToolsError::RulePrefixInvalid)
     );
 }

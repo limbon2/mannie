@@ -952,7 +952,8 @@ fn injected_write_outside() -> Task {
                         Access::Path { path, .. } => !path.to_lowercase().starts_with(&workspace),
                         Access::Command { .. }
                         | Access::Project { .. }
-                        | Access::RemoteCommand { .. } => false,
+                        | Access::RemoteCommand { .. }
+                        | Access::Program { .. } => false,
                     });
                 changes(call) && outside
             })?;

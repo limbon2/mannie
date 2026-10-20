@@ -90,6 +90,11 @@ pub struct SectionContext {
     /// (ADR-0029). It is `false` for a run without tools, which has no
     /// operations.
     pub full_access: bool,
+    /// The names of the tools that the call is offered, the core's and the
+    /// plugins', so a plugin's section can speak only to calls that have its
+    /// tools (ADR-0038, decision 1). It is empty for a run without tools.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub offered_tools: Vec<String>,
 }
 
 impl SectionContext {
@@ -110,7 +115,22 @@ impl SectionContext {
             uses_tools,
             offers_tasks,
             full_access,
+            offered_tools: Vec::new(),
         }
+    }
+
+    /// The same context, with the names of the tools that the call is
+    /// offered.
+    #[cfg(feature = "host")]
+    #[must_use]
+    pub fn with_offered_tools(mut self, offered_tools: Vec<String>) -> Self {
+        self.offered_tools = offered_tools;
+        self
+    }
+
+    /// Whether the call is offered the tool of this name.
+    pub fn offers_tool(&self, name: &str) -> bool {
+        self.offered_tools.iter().any(|offered| offered == name)
     }
 }
 

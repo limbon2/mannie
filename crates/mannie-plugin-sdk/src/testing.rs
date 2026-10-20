@@ -395,6 +395,7 @@ mod tests {
             },
             crates: CratesSection::default(),
             programs: Vec::new(),
+            processes: BTreeMap::new(),
             native: NativeSection::default(),
         }
     }

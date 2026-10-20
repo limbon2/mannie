@@ -2,14 +2,26 @@
   import { Badge } from '#lib/components/ui/badge/index.js';
   import type { Access } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
-  import { accessModeLabel, entryCountMessage } from '#lib/utils/tools-messages.js';
+  import {
+    accessModeLabel,
+    entryCountMessage,
+    keepsSnapshot,
+    programEffectItems,
+    programEffectMessage,
+    programRunText,
+  } from '#lib/utils/tools-messages.js';
+
+  import AccessText from './AccessText.svelte';
 
   // What an operation touches, exactly as the core prepared it: canonical
   // paths with their access modes, a command with its shell and working
   // directory, a command on a remote host with the host, its address and its
-  // key (ADR-0036), or the project that the conversation moves into, with its
-  // folder (docs/features/system-tools/tool-activity.md). Paths, commands and
-  // names are content, and render as text in their own elements (T-3).
+  // key (ADR-0036), a run of an installed program with its path, its working
+  // directory, the arguments that its plugin fixes and what it does beyond
+  // the workspace (ADR-0038), or the project that the conversation moves
+  // into, with its folder (docs/features/system-tools/tool-activity.md).
+  // Paths, commands, arguments and names are content, and render as text in
+  // their own elements (T-3).
   let { accesses }: { accesses: readonly Access[] } = $props();
 </script>
 
@@ -32,15 +44,37 @@
           <dt class="text-muted-foreground">{m.tools_access_project_folder()}</dt>
           <dd class="font-mono break-all" data-content>{access.folder}</dd>
         </dl>
+      {:else if access.kind === 'program'}
+        <AccessText label={m.tools_access_program_run()} text={programRunText([access.name, ...access.arguments])} />
+        <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs" data-program-run="">
+          <dt class="text-muted-foreground">{m.tools_access_program()}</dt>
+          <dd class="font-mono break-all" data-content>{access.program}</dd>
+          <dt class="text-muted-foreground">{m.tools_access_working_directory()}</dt>
+          <dd class="font-mono break-all" data-content>{access.workingDirectory}</dd>
+          {#if access.fixed.length > 0}
+            <dt class="text-muted-foreground">{m.tools_access_program_fixed()}</dt>
+            <dd class="font-mono break-all" data-content>{programRunText(access.fixed)}</dd>
+          {/if}
+        </dl>
+        {#if access.effects.length > 0}
+          <p class="text-xs font-medium text-muted-foreground">{m.tools_access_program_effects()}</p>
+          <ul class="flex list-disc flex-col gap-1 ps-5 text-sm" data-program-effects="">
+            {#each access.effects as effect, effectIndex (effectIndex)}
+              {const items = $derived(programEffectItems(effect))}
+              <li class="break-all">
+                <span data-content>{programEffectMessage(effect)}</span>
+                {#if items !== null}
+                  <span class="block font-mono text-xs text-muted-foreground" data-content>{items}</span>
+                {/if}
+                {#if keepsSnapshot(effect)}
+                  <span class="block text-xs text-muted-foreground">{m.tools_effect_snapshot()}</span>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        {/if}
       {:else}
-        <!-- Focusable, so that the owner can scroll a long command from the keyboard (WCAG 2.1.1). -->
-        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-        <pre
-          class="max-h-48 overflow-auto rounded-md bg-muted px-2 py-1.5 font-mono text-xs break-all whitespace-pre-wrap outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          aria-label={m.tools_access_command()}
-          data-content
-          role="group"
-          tabindex="0">{access.command}</pre>
+        <AccessText label={m.tools_access_command()} text={access.command} />
         {#if access.kind === 'command'}
           <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs">
             <dt class="text-muted-foreground">{m.tools_access_shell()}</dt>

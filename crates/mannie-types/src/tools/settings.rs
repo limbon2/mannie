@@ -16,8 +16,9 @@ const MAX_ENV_NAME_CHARACTERS: usize = 128;
 
 /// Parts of a variable name that mark a secret. A name with one of them
 /// between its underscores never reaches a command (AGENTS.md: secrets never
-/// reach child process environments).
-const SECRET_NAME_PARTS: [&str; 8] = [
+/// reach child process environments). The build's check of plugin manifests
+/// reads the list from the SDK's `plugin-rules.json`.
+pub const SECRET_NAME_PARTS: [&str; 8] = [
     "KEY",
     "APIKEY",
     "TOKEN",
@@ -27,6 +28,20 @@ const SECRET_NAME_PARTS: [&str; 8] = [
     "CREDENTIAL",
     "CREDENTIALS",
 ];
+
+/// The starts of the names of variables that make programs load libraries,
+/// such as `LD_PRELOAD` and `DYLD_INSERT_LIBRARIES`. An installed program
+/// that a plugin runs never receives one by the plugin's choice (ADR-0038,
+/// decision 7).
+pub const LOADER_NAME_PREFIXES: [&str; 2] = ["LD_", "DYLD_"];
+
+/// Whether a variable's name makes programs load libraries, in any case.
+pub fn is_loader_name(name: &str) -> bool {
+    let upper = name.to_ascii_uppercase();
+    LOADER_NAME_PREFIXES
+        .iter()
+        .any(|prefix| upper.starts_with(prefix))
+}
 
 /// The name of an environment variable that commands receive. Names that look
 /// like a secret are refused.

@@ -13,6 +13,7 @@ mod approval;
 mod call;
 mod commands;
 mod outcome;
+mod program;
 mod settings;
 
 pub use access::{Access, AccessMode, EntryCount};
@@ -25,11 +26,17 @@ pub use call::{
     Refusal, ToolCallDocument, ToolCallStatus, ToolCallView,
 };
 pub use commands::{
-    CommandRule, ConversationGrant, GrantRef, MAX_OUTPUT_PAGE_LINES, ReadToolOutput,
-    RemoteCommandRule, RemoteRuleRef, RuleRef, SetFullAccess, SharedGrant, SharedGrantRef,
-    ToolOutputPage, ToolsError,
+    CommandRule, ConversationGrant, GrantRef, MAX_OUTPUT_PAGE_LINES, ProgramRule, ProgramRuleRef,
+    ReadToolOutput, RemoteCommandRule, RemoteRuleRef, RuleRef, SetFullAccess, SharedGrant,
+    SharedGrantRef, ToolOutputPage, ToolsError,
 };
 pub use outcome::{
     ArchiveRef, CommandEnding, EntryKind, PathRefusal, ToolFailure, ToolOutcome, ToolResult,
 };
-pub use settings::{EnvName, MAX_ENVIRONMENT_NAMES, ToolsSettings, UpdateToolsSettings};
+pub use program::{
+    DiscardedWork, MAX_EFFECT_ITEMS, ProgramEffect, ProgramEffectKey, ProgramTarget, effect_keys,
+};
+pub use settings::{
+    EnvName, LOADER_NAME_PREFIXES, MAX_ENVIRONMENT_NAMES, SECRET_NAME_PARTS, ToolsSettings,
+    UpdateToolsSettings, is_loader_name,
+};

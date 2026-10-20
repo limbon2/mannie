@@ -2,10 +2,12 @@
 // What each plugin may use, for the review of a plugin's change (ADR-0034,
 // decision 13): the services that its manifest declares, the sensitive ones
 // marked, its entries in the credential store, the commands and channels of
-// its interface, its programs, the crates that only it may use and the
-// direct native calls that its manifest grants (ADR-0035, decision 6). The
-// Plugins page shows the same for each plugin. `task plugins:grants` prints
-// it.
+// its interface, its programs, the installed programs that it runs with
+// their reasons, fixed arguments and inherited variables (ADR-0038, decision
+// 7), the crates that only it may use and the direct native calls that its
+// manifest grants (ADR-0035, decision 6). The Plugins page shows the same
+// for each plugin, without the reasons and the arguments. `task
+// plugins:grants` prints it.
 
 import { nativeGrants } from './native.mjs';
 
@@ -50,6 +52,11 @@ export function grantLines(plugin, pluginInterface, sensitiveServices) {
     const crates = program.crates ?? [];
     return crates.length > 0 ? `${program.package}, with ${crates.join(', ')}` : program.package;
   });
+  const installed = Object.entries(manifest.processes ?? {}).flatMap(([program, process]) => [
+    `    ${program}: ${process.reason}`,
+    `      Fixed arguments: ${listOf(process.fixed ?? [], ' ')}`,
+    `      Inherited variables: ${listOf(process.inherit ?? [])}`,
+  ]);
   const native = nativeGrants(manifest).map((grant) => `    ${grant.category}: ${grant.reason}`);
   const where = plugin.validation ? `${plugin.folder}, in validation builds only` : plugin.folder;
   return [
@@ -59,6 +66,7 @@ export function grantLines(plugin, pluginInterface, sensitiveServices) {
     `  Commands: ${listOf(pluginInterface.commands)}`,
     `  Channels: ${listOf(pluginInterface.channels)}`,
     `  Programs: ${listOf(programs, '; ')}`,
+    ...(installed.length > 0 ? ['  Installed programs:', ...installed] : ['  Installed programs: none']),
     `  Crates that only it may use: ${listOf(manifest.crates?.exclusive ?? [])}`,
     ...(native.length > 0 ? ['  Native calls:', ...native] : ['  Native calls: none']),
   ];

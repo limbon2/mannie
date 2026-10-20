@@ -89,6 +89,9 @@ pub enum PrepareError {
     /// The call cannot run, for example because a path is refused or does
     /// not exist. The failure is the call's result.
     Failed(ToolFailure),
+    /// The call ends at once with this result, without running, such as a
+    /// plugin's refusal that carries a code for its card (ADR-0039).
+    Ended(Done),
 }
 
 impl From<ToolFailure> for PrepareError {

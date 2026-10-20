@@ -3,10 +3,12 @@
 // and the checks that `task gen` makes on them before any Rust compiles
 // (decision 6). The rules come from the plugin SDK: the shape from
 // `plugin.schema.json`, and the SDK's major, the reserved IDs, the table
-// prefixes and the services from `plugin-rules.json`. The SDK's tests keep
-// both files equal to what the host checks with, and
-// `crates/mannie-plugin-sdk/tests/fixtures/plugin-ids.json` holds IDs that
-// the host's check and this one must judge alike.
+// prefixes, the services and the names of variables that installed programs
+// may not inherit from `plugin-rules.json`. The SDK's tests keep both files
+// equal to what the host checks with, and
+// `crates/mannie-plugin-sdk/tests/fixtures/plugin-ids.json` and
+// `plugin-processes.json` hold IDs and names that the host's check and this
+// one must judge alike.
 //
 // Validation builds also bundle the fixture plugins of `tests/fixtures/plugins/`
 // (decision 9), which the same checks cover.
@@ -28,9 +30,11 @@ import { nativeGrants } from './native.mjs';
  * @typedef {object} Rules
  * @property {string[]} coreTablePrefixes the prefixes of the tables that are not a plugin's
  * @property {RegExp} idPattern the syntax of a plugin ID
+ * @property {string[]} loaderNamePrefixes the starts of the names of variables that load libraries into programs
  * @property {string[]} reservedIds IDs that no plugin may have
  * @property {JsonSchema} schema the manifest's JSON Schema
  * @property {number} sdkMajor the major of the SDK that this build has
+ * @property {string[]} secretNameParts the parts of variables' names that mark a secret
  * @property {string[]} sensitiveServices the services that reach sensitive data, such as provider credentials
  * @property {Record<string, number>} services each service of the SDK with its major
  * @property {string} tauriPluginCratePrefix the start of the names of Tauri's plugin crates
@@ -45,6 +49,7 @@ import { nativeGrants } from './native.mjs';
  * @property {number} sdk
  * @property {{ exclusive?: string[] }} [crates]
  * @property {Partial<Record<import('./native.mjs').NativeCategory, string>>} [native]
+ * @property {Record<string, { fixed?: string[], inherit?: string[], reason: string }>} [processes]
  * @property {{ crates?: string[], package: string }[]} [programs]
  * @property {{ entries?: string[], keyed?: string[], legacy?: string[] }} [secrets]
  * @property {Record<string, number>} [services]
@@ -298,9 +303,70 @@ function isInFamily(name, family) {
 }
 
 /**
+ * Whether a text can name an installed program, as `is_process_name` in the
+ * SDK decides: a letter or a digit, then letters, digits, `.`, `_` and `-`,
+ * at most 64 characters, never ending in a dot.
+ * @param {string} name
+ */
+export function isProcessName(name) {
+  const hasSyntax = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(name);
+  const endsWithDot = name.endsWith('.');
+  return hasSyntax && !endsWithDot;
+}
+
+/**
+ * Whether an installed program may inherit a variable's name, as the SDK
+ * decides: a letter or an underscore, then letters, digits, underscores or
+ * parentheses, at most 128 characters, with no part that marks a secret and
+ * no start that loads libraries.
+ * @param {string} name
+ * @param {Rules} rules
+ */
+export function isInheritable(name, rules) {
+  const isName = /^[A-Za-z_][A-Za-z0-9_()]{0,127}$/u.test(name);
+  const looksSecret = name.split(/[_()]/u).some((part) => rules.secretNameParts.includes(part.toUpperCase()));
+  const loadsLibraries = rules.loaderNamePrefixes.some((prefix) => name.toUpperCase().startsWith(prefix));
+  return isName && !looksSecret && !loadsLibraries;
+}
+
+/**
+ * The first problem of the installed programs under `[processes]`, in the
+ * order of `Manifest::parse`, or `null`.
+ * @param {Manifest} manifest
+ * @param {Rules} rules
+ * @returns {string | null}
+ */
+function processProblem(manifest, rules) {
+  const processes = Object.entries(manifest.processes ?? {});
+  for (const [program, process] of processes) {
+    if (!isProcessName(program)) {
+      return `${JSON.stringify(program)} is not the name of an installed program, which is a letter or a digit, then letters, digits, ".", "_" and "-", at most 64 characters, never ending in a dot`;
+    }
+    // A blank reason, as Rust's `str::trim` sees it, which removes White_Space.
+    if (/^\p{White_Space}*$/u.test(process.reason)) {
+      return `the manifest runs the program ${program} under [processes] without a reason`;
+    }
+    if ((process.fixed ?? []).some((argument) => argument.includes('\0'))) {
+      return `a fixed argument of the program ${program} holds a NUL character`;
+    }
+    const refused = (process.inherit ?? []).find((name) => !isInheritable(name, rules));
+    if (refused !== undefined) {
+      return `the program ${program} inherits ${JSON.stringify(refused)}, which is not a variable's name, looks like a secret's or loads libraries`;
+    }
+  }
+  const listsProcesses = processes.length > 0;
+  const declaresProcesses = Object.hasOwn(manifest.services ?? {}, 'processes');
+  if (listsProcesses && !declaresProcesses) {
+    return 'the manifest lists programs under [processes] but does not declare the service processes';
+  }
+  return null;
+}
+
+/**
  * Parses and checks the text of a `plugin.toml` in the order of
  * `Manifest::parse`: another SDK major first, then the shape, the ID, the
- * secrets' names, the services and the service that secrets need.
+ * secrets' names, the services, the service that secrets need, the reasons
+ * of native grants, the installed programs and the service that they need.
  * @param {string} text
  * @param {Rules} rules
  * @returns {{ manifest: Manifest, problems: [] } | { manifest: null, problems: string[] }}
@@ -397,6 +463,10 @@ export function checkManifest(text, rules) {
       manifest: null,
       problems: [`the manifest grants ${withoutReason.category} under [native] without a reason`],
     };
+  }
+  const process = processProblem(manifest, rules);
+  if (process !== null) {
+    return { manifest: null, problems: [process] };
   }
   return { manifest, problems: [] };
 }

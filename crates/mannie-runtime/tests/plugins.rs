@@ -1024,7 +1024,9 @@ async fn a_plugins_tool_runs_while_the_plugin_is_on() {
     assert_eq!(
         result.outcome,
         ToolOutcome::Plugin {
-            plugin: PLUGIN.to_owned()
+            plugin: PLUGIN.to_owned(),
+            data: None,
+            failure: None,
         }
     );
     assert_eq!(result.output, r#"Echo: {"text":"hi"}"#);
@@ -1221,7 +1223,9 @@ async fn a_plugin_tool_with_the_name_of_an_executors_tool_is_refused_and_a_run_o
     assert_eq!(
         call.result.unwrap().outcome,
         ToolOutcome::Plugin {
-            plugin: PLUGIN.to_owned()
+            plugin: PLUGIN.to_owned(),
+            data: None,
+            failure: None,
         }
     );
     let task_calls = transcript.task_calls(0);
@@ -1372,7 +1376,9 @@ async fn a_plugin_tools_output_is_cut_to_the_result_limit() {
     assert_eq!(
         stored.outcome,
         ToolOutcome::Plugin {
-            plugin: PLUGIN.to_owned()
+            plugin: PLUGIN.to_owned(),
+            data: None,
+            failure: None,
         }
     );
 }

@@ -23,7 +23,16 @@ function view(enabled: boolean): PluginView {
     failure: null,
     id: 'workers',
     state: enabled ? 'on' : 'off',
-    uses: { channels: [], commands: [], crates: [], native: [], programs: [], secrets: [], services: [] },
+    uses: {
+      channels: [],
+      commands: [],
+      crates: [],
+      installedPrograms: [],
+      native: [],
+      programs: [],
+      secrets: [],
+      services: [],
+    },
   };
 }
 

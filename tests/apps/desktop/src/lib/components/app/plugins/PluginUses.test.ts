@@ -3,9 +3,9 @@
 // side: collapsed at first, with the list hidden; open, the services in words with their names and
 // the sensitive ones marked, the entries in the credential store, the
 // commands and channels that its window may call, its programs, the
-// libraries that only it may use and its system access outside Mannie's
-// services in words with their names; and a line for a plugin that uses
-// nothing.
+// installed programs that it runs, the libraries that only it may use and
+// its system access outside Mannie's services in words with their names;
+// and a line for a plugin that uses nothing.
 import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 
@@ -17,6 +17,7 @@ const WORKERS_USES: Uses = {
   channels: ['subscribe_workers'],
   commands: ['pair_worker', 'rename_worker', 'remove_worker'],
   crates: ['protox', 'tonic', 'tonic-prost', 'tonic-prost-build'],
+  installedPrograms: [],
   native: ['sockets'],
   programs: ['mannie-worker'],
   secrets: ['link/master-key'],
@@ -26,6 +27,18 @@ const WORKERS_USES: Uses = {
     { major: 1, name: 'secrets', sensitive: true },
     { major: 1, name: 'store', sensitive: false },
   ],
+};
+
+/** What a plugin that runs the installed git may use. */
+const GIT_USES: Uses = {
+  channels: [],
+  commands: ['repository_overview'],
+  crates: [],
+  installedPrograms: ['git'],
+  native: [],
+  programs: [],
+  secrets: [],
+  services: [{ major: 1, name: 'processes', sensitive: true }],
 };
 
 function shown(uses: Uses, open: boolean): string {
@@ -74,11 +87,32 @@ describe('PluginUses', () => {
     }
     expect(body).toContain('data-plugin-native="sockets"');
     expect(body).toContain('Opens network connections itself');
+    expect(body).not.toContain('Installed programs that it runs');
+  });
+
+  it('lists the installed programs that a plugin runs, with the sensitive service that runs them', () => {
+    const body = shown(GIT_USES, true);
+
+    expect(body).toContain('Installed programs that it runs');
+    expect(body).toContain('data-plugin-installed-program="git"');
+    expect(body).toContain('>git</code>');
+    expect(body).toContain('Installed programs that its manifest names, under your approvals');
+    expect(body).toContain('data-plugin-service="processes"');
+    expect(count(body, 'data-plugin-service-sensitive')).toBe(1);
   });
 
   it('says so for a plugin that uses nothing', () => {
     const body = shown(
-      { channels: [], commands: [], crates: [], native: [], programs: [], secrets: [], services: [] },
+      {
+        channels: [],
+        commands: [],
+        crates: [],
+        installedPrograms: [],
+        native: [],
+        programs: [],
+        secrets: [],
+        services: [],
+      },
       true,
     );
 

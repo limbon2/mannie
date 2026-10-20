@@ -10,7 +10,8 @@ use mannie_types::ceiling::CeilingMode;
 use mannie_types::ids::ProjectId;
 use mannie_types::tools::{
     Access, AccessMode, ApprovalReason, ApprovalRequest, CommandRule, Decision, GrantScope,
-    Refusal, RemoteCommandRule, RemoteTarget, RuleProposal, ToolsError,
+    ProgramEffectKey, ProgramRule, ProgramTarget, Refusal, RemoteCommandRule, RemoteTarget,
+    RuleProposal, ToolsError, effect_keys,
 };
 
 use crate::ceiling::Ceiling;
@@ -48,6 +49,10 @@ pub struct PolicyInputs<'a> {
     /// The rules for commands on remote hosts, each limited to its host
     /// (ADR-0036).
     pub remote_rules: &'a [RemoteCommandRule],
+    /// The rules for runs of installed programs, each limited to its
+    /// plugin's program and to the effects of the run that it was saved from
+    /// (ADR-0038).
+    pub program_rules: &'a [ProgramRule],
     /// The conversation's project, which "Allow for this project" would
     /// cover.
     pub project: Option<&'a ProjectId>,
@@ -92,14 +97,15 @@ pub enum Verdict {
 /// 3. a change inside the workspace is allowed when the settings say so;
 /// 4. a grant of the conversation, of its project or for every conversation
 ///    allows what it covers;
-/// 5. a rule allows a command it matches, and a rule of a remote host a
-///    command on that host;
+/// 5. a rule allows a command it matches, a rule of a remote host a command
+///    on that host, and a rule of an installed program a run of that
+///    program with the effects that the rule covers;
 /// 6. a move into a project that the owner's request names is allowed;
 /// 7. everything else asks.
 ///
-/// Commands, here or on a remote host, are never allowed by the workspace, a
-/// command with a metacharacter is never allowed by a grant or a rule, and a
-/// move is never granted.
+/// Commands, here or on a remote host, and runs of installed programs are
+/// never allowed by the workspace, a command with a metacharacter is never
+/// allowed by a grant or a rule, and a move is never granted.
 ///
 /// On a worker, its ceiling decides in place of the workspace and the rules
 /// ([`decide_under_ceiling`]): an access that the ceiling forbids refuses the
@@ -251,8 +257,10 @@ fn decide_under_ceiling(
         }
         Access::Project { .. } => Err(Hold::Refuse(Refusal::NoProjectsOnHost)),
         // A worker runs no plugins, so no tool of its own reaches a remote
-        // host; the refusal keeps every access answered (ADR-0036).
+        // host or runs a plugin's program; the refusals keep every access
+        // answered (ADR-0036, ADR-0038).
         Access::RemoteCommand { .. } => Err(Hold::Refuse(Refusal::NoRemoteCommands)),
+        Access::Program { .. } => Err(Hold::Refuse(Refusal::NoProgramsOnHost)),
     }
 }
 
@@ -347,7 +355,103 @@ fn decide_access(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decision,
             }
             Err(ApprovalReason::RemoteCommand)
         }
+        Access::Program { .. } => decide_program(access, inputs),
     }
+}
+
+/// What allows a run of an installed program, or why it asks: a grant or a
+/// rule that covers it, never the workspace, and nothing in Mannie's own
+/// folders, where it asks and offers no grant (T-18).
+fn decide_program(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decision, ApprovalReason> {
+    let Some(run) = RunKey::of(access) else {
+        return Err(ApprovalReason::Program);
+    };
+    if is_protected(Path::new(run.working_directory), inputs) {
+        return Err(ApprovalReason::MannieFolder);
+    }
+    if let Some(decision) = granted(&inputs.grants, |grant| covers_program(grant, &run)) {
+        return Ok(decision);
+    }
+    if inputs
+        .program_rules
+        .iter()
+        .any(|rule| program_rule_matches(rule, &run))
+    {
+        return Ok(Decision::Rule);
+    }
+    Err(ApprovalReason::Program)
+}
+
+/// The parts of a run of an installed program that decide what a grant or a
+/// rule covers: its plugin, the program's name and path, the arguments, the
+/// working directory and the keys of the effects. The effects' counts and
+/// items and the run's state never count (ADR-0038, decision 6).
+struct RunKey<'a> {
+    plugin: &'a str,
+    name: &'a str,
+    program: &'a str,
+    fixed: &'a [String],
+    arguments: &'a [String],
+    working_directory: &'a str,
+    effects: Vec<ProgramEffectKey>,
+}
+
+impl<'a> RunKey<'a> {
+    /// The key of a program's run, or `None` for another access.
+    fn of(access: &'a Access) -> Option<Self> {
+        let Access::Program {
+            plugin,
+            name,
+            program,
+            fixed,
+            arguments,
+            working_directory,
+            effects,
+            ..
+        } = access
+        else {
+            return None;
+        };
+        Some(Self {
+            plugin,
+            name,
+            program,
+            fixed,
+            arguments,
+            working_directory,
+            effects: effect_keys(effects),
+        })
+    }
+
+    /// The words that a rule matches: the program's name, then the plugin's
+    /// arguments.
+    fn words(&self) -> Vec<String> {
+        let mut words = vec![self.name.to_owned()];
+        words.extend(self.arguments.iter().cloned());
+        words
+    }
+}
+
+/// Whether every effect of `effects` is among `covered`.
+fn covers_effects(covered: &[ProgramEffectKey], effects: &[ProgramEffectKey]) -> bool {
+    effects.iter().all(|effect| covered.contains(effect))
+}
+
+/// Whether a rule allows a program's run: the same plugin and program,
+/// words that the run's name and arguments start with, a working directory
+/// inside the rule's folder, and only effects that the rule covers.
+fn program_rule_matches(rule: &ProgramRule, run: &RunKey<'_>) -> bool {
+    let target = &rule.target;
+    let same_program =
+        target.plugin == run.plugin && target.name == run.name && target.program == run.program;
+    let in_folder = rule
+        .folder
+        .as_ref()
+        .is_none_or(|folder| is_inside(Path::new(run.working_directory), Path::new(folder)));
+    same_program
+        && in_folder
+        && starts_with_words(&run.words(), &rule.words)
+        && covers_effects(&target.effects, &run.effects)
 }
 
 /// The parts of a remote host that decide what a grant or a rule covers: its
@@ -414,7 +518,9 @@ fn covers_path(grant: &GrantScope, path: &Path, mode: AccessMode) -> bool {
             mode: granted,
             folder,
         } => *granted == mode && is_inside(path, Path::new(folder)),
-        GrantScope::Command { .. } | GrantScope::RemoteCommand { .. } => false,
+        GrantScope::Command { .. }
+        | GrantScope::RemoteCommand { .. }
+        | GrantScope::Program { .. } => false,
     }
 }
 
@@ -425,7 +531,9 @@ fn covers_command(grant: &GrantScope, command: &str, directory: &Path) -> bool {
             command: granted,
             working_directory,
         } => granted == command && is_same_path(directory, Path::new(working_directory)),
-        GrantScope::Path { .. } | GrantScope::RemoteCommand { .. } => false,
+        GrantScope::Path { .. } | GrantScope::RemoteCommand { .. } | GrantScope::Program { .. } => {
+            false
+        }
     }
 }
 
@@ -445,7 +553,37 @@ fn covers_remote_command(grant: &GrantScope, host: &HostKey<'_>, command: &str) 
                 && endpoint == host.endpoint
                 && granted == command
         }
-        GrantScope::Path { .. } | GrantScope::Command { .. } => false,
+        GrantScope::Path { .. } | GrantScope::Command { .. } | GrantScope::Program { .. } => false,
+    }
+}
+
+/// Whether a grant covers a program's run: the same plugin, program,
+/// arguments and working directory, and only effects that the grant covers.
+fn covers_program(grant: &GrantScope, run: &RunKey<'_>) -> bool {
+    match grant {
+        GrantScope::Program {
+            plugin,
+            name,
+            program,
+            fixed,
+            arguments,
+            working_directory,
+            effects,
+        } => {
+            plugin == run.plugin
+                && name == run.name
+                && program == run.program
+                && fixed.as_slice() == run.fixed
+                && arguments.as_slice() == run.arguments
+                && is_same_path(
+                    Path::new(run.working_directory),
+                    Path::new(working_directory),
+                )
+                && covers_effects(effects, &run.effects)
+        }
+        GrantScope::Path { .. } | GrantScope::Command { .. } | GrantScope::RemoteCommand { .. } => {
+            false
+        }
     }
 }
 
@@ -477,7 +615,8 @@ fn grants_for(asking: &[&Access]) -> Vec<GrantScope> {
 
 /// The grant that covers an access: its mode in the folder itself for a
 /// folder, in the folder of a file; the same command in the same working
-/// directory; or the same command on the same remote host.
+/// directory; the same command on the same remote host; or the same run of
+/// an installed program with its effects.
 fn grant_scope(access: &Access) -> Option<GrantScope> {
     match access {
         Access::Path {
@@ -520,6 +659,18 @@ fn grant_scope(access: &Access) -> Option<GrantScope> {
                 label: label.clone(),
                 endpoint: endpoint.clone(),
                 command: command.clone(),
+            })
+        }
+        Access::Program { .. } => {
+            let run = RunKey::of(access)?;
+            Some(GrantScope::Program {
+                plugin: run.plugin.to_owned(),
+                name: run.name.to_owned(),
+                program: run.program.to_owned(),
+                fixed: run.fixed.to_vec(),
+                arguments: run.arguments.to_vec(),
+                working_directory: run.working_directory.to_owned(),
+                effects: run.effects,
             })
         }
     }
@@ -569,12 +720,41 @@ fn scope_covers(wider: &GrantScope, narrower: &GrantScope) -> bool {
                 && endpoint == narrower_endpoint
                 && command == narrower_command
         }
+        (
+            GrantScope::Program {
+                plugin,
+                name,
+                program,
+                fixed,
+                arguments,
+                working_directory,
+                effects,
+            },
+            GrantScope::Program {
+                plugin: narrower_plugin,
+                name: narrower_name,
+                program: narrower_program,
+                fixed: narrower_fixed,
+                arguments: narrower_arguments,
+                working_directory: narrower_directory,
+                effects: narrower_effects,
+            },
+        ) => {
+            plugin == narrower_plugin
+                && name == narrower_name
+                && program == narrower_program
+                && fixed == narrower_fixed
+                && arguments == narrower_arguments
+                && is_same_path(Path::new(narrower_directory), Path::new(working_directory))
+                && covers_effects(effects, narrower_effects)
+        }
         _ => false,
     }
 }
 
-/// The rule that "Save rule" can make: only for an operation that is one
-/// command that a rule can cover, here or on a remote host.
+/// The rule that "Save rule" can make: for an operation that is one command
+/// that a rule can cover, here or on a remote host, or one run of an
+/// installed program.
 fn rule_for(accesses: &[Access]) -> Option<RuleProposal> {
     match accesses {
         [
@@ -587,6 +767,7 @@ fn rule_for(accesses: &[Access]) -> Option<RuleProposal> {
             words: command_words(command)?,
             folder: working_directory.clone(),
             remote: None,
+            program: None,
         }),
         [
             Access::RemoteCommand {
@@ -606,9 +787,40 @@ fn rule_for(accesses: &[Access]) -> Option<RuleProposal> {
                 label: label.clone(),
                 endpoint: endpoint.clone(),
             }),
+            program: None,
         }),
-        _ => None,
+        _ => program_rule_for(accesses),
     }
+}
+
+/// The rule from an operation with one run of an installed program, beside
+/// the paths that it reads or changes, which keep their own policy: the
+/// run's words and folder, and the keys of its effects (ADR-0038, decision
+/// 6).
+fn program_rule_for(accesses: &[Access]) -> Option<RuleProposal> {
+    let mut runs = accesses
+        .iter()
+        .filter(|access| matches!(access, Access::Program { .. }));
+    let run = RunKey::of(runs.next()?)?;
+    let is_alone = runs.next().is_none();
+    let is_beside_paths = accesses
+        .iter()
+        .all(|access| matches!(access, Access::Path { .. } | Access::Program { .. }));
+    if !(is_alone && is_beside_paths) {
+        return None;
+    }
+    let words = run.words();
+    Some(RuleProposal {
+        words,
+        folder: run.working_directory.to_owned(),
+        remote: None,
+        program: Some(ProgramTarget {
+            plugin: run.plugin.to_owned(),
+            name: run.name.to_owned(),
+            program: run.program.to_owned(),
+            effects: run.effects,
+        }),
+    })
 }
 
 /// The rule that "Save rule" makes from a request's proposal.
@@ -629,6 +841,18 @@ pub enum SavedRule {
         /// The leading words a command must start with.
         words: Vec<String>,
     },
+    /// A rule for runs of one plugin's installed program, with the effects
+    /// of the run that it was saved from (ADR-0038).
+    Program {
+        /// The program, with the effects that the rule covers.
+        target: ProgramTarget,
+        /// The leading words that a run's program name and arguments must
+        /// start with.
+        words: Vec<String>,
+        /// The folder the working directory must lie in, or `None` for
+        /// anywhere.
+        folder: Option<String>,
+    },
 }
 
 /// The rule that "Save rule" makes from a request's proposal, with the
@@ -646,15 +870,18 @@ pub fn saved_rule(
         return Err(ToolsError::RulePrefixInvalid);
     }
     let words = proposal.words[..count].to_vec();
-    Ok(match &proposal.remote {
-        Some(target) => SavedRule::Remote {
+    let folder = limit_to_folder.then(|| proposal.folder.clone());
+    Ok(match (&proposal.remote, &proposal.program) {
+        (Some(target), _) => SavedRule::Remote {
             target: target.clone(),
             words,
         },
-        None => SavedRule::Local {
+        (None, Some(target)) => SavedRule::Program {
+            target: target.clone(),
             words,
-            folder: limit_to_folder.then(|| proposal.folder.clone()),
+            folder,
         },
+        (None, None) => SavedRule::Local { words, folder },
     })
 }
 

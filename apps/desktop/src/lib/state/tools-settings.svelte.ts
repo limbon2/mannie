@@ -6,6 +6,7 @@ import {
   type CommandRule,
   commands,
   type GrantId,
+  type ProgramRule,
   type RemoteCommandRule,
   type RuleId,
   type SharedGrant,
@@ -80,12 +81,17 @@ export class ToolsSettingsState {
   }
 }
 
-/** The command rules, of this computer and of remote hosts, and the outcome of the latest request. */
+/**
+ * The rules of commands on this computer and on remote hosts, and of runs of
+ * installed programs, and the outcome of the latest request.
+ */
 export class CommandRulesState {
   /** Why the latest deletion failed, if it failed. */
   deleteFailure: ToolsFailure | null = $state(null);
   /** The rules being deleted. */
   deleting: RuleId[] = $state([]);
+  /** The rules for runs of installed programs, each limited to its plugin's program, the oldest first, once read (ADR-0038). */
+  programRules: ProgramRule[] = $state([]);
   /** Why the rules could not be read, if they could not. */
   readFailure: ToolsFailure | null = $state(null);
   /** The rules for commands on remote hosts, each limited to its host, the oldest first, once read (ADR-0036). */
@@ -94,22 +100,24 @@ export class CommandRulesState {
   rules: CommandRule[] = $state([]);
   status: 'error' | 'loading' | 'ready' = $state('loading');
 
-  /** Whether no rule of either kind is listed. */
+  /** Whether no rule of any kind is listed. */
   get isEmpty(): boolean {
     const hasNoLocalRules = this.rules.length === 0;
     const hasNoRemoteRules = this.remoteRules.length === 0;
-    return hasNoLocalRules && hasNoRemoteRules;
+    const hasNoProgramRules = this.programRules.length === 0;
+    return hasNoLocalRules && hasNoRemoteRules && hasNoProgramRules;
   }
 
-  /** Reads both kinds of rules from the core, and keeps the last lists when either cannot be read. */
+  /** Reads every kind of rule from the core, and keeps the last lists when one cannot be read. */
   async load(): Promise<void> {
     this.readFailure = null;
     if (this.isEmpty) {
       this.status = 'loading';
     }
-    const [local, remote] = await Promise.all([
+    const [local, remote, program] = await Promise.all([
       call(() => commands.listCommandRules()),
       call(() => commands.listRemoteCommandRules()),
+      call(() => commands.listProgramRules()),
     ]);
     if (!local.ok) {
       this.readFailure = local.failure;
@@ -121,9 +129,23 @@ export class CommandRulesState {
       this.status = 'error';
       return;
     }
+    if (!program.ok) {
+      this.readFailure = program.failure;
+      this.status = 'error';
+      return;
+    }
     this.rules = local.data;
     this.remoteRules = remote.data;
+    this.programRules = program.data;
     this.status = 'ready';
+  }
+
+  /** Deletes a rule of an installed program. A rule that no longer exists leaves the list as well. */
+  async removeProgram(ruleId: RuleId): Promise<void> {
+    const deleted = await this.#delete(ruleId, () => commands.deleteProgramRule({ ruleId }));
+    if (deleted) {
+      this.programRules = this.programRules.filter((rule) => rule.id !== ruleId);
+    }
   }
 
   /** Deletes a rule of this computer. A rule that no longer exists leaves the list as well. */

@@ -131,8 +131,9 @@ impl Listed {
     /// (ADR-0034, decision 13): its services by name, each marked sensitive
     /// as the SDK marks it, its entries in the credential store as the store
     /// names them, the commands and channels of its interface, which the
-    /// build grants its UI (decision 8), its programs, the crates that only
-    /// it may use and the kinds of direct native calls that it grants its
+    /// build grants its UI (decision 8), its programs, the installed
+    /// programs that it runs (ADR-0038, decision 7), the crates that only it
+    /// may use and the kinds of direct native calls that it grants its
     /// library crates (ADR-0035, decision 6). A plugin for another major of
     /// the SDK uses nothing here, since its code is never called.
     fn uses(&self) -> PluginUses {
@@ -174,6 +175,7 @@ impl Listed {
                 .iter()
                 .map(|program| program.package.clone())
                 .collect(),
+            installed_programs: manifest.processes.keys().cloned().collect(),
             crates: manifest.crates.exclusive.clone(),
             native: manifest
                 .native

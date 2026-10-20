@@ -93,6 +93,7 @@ impl MentionContext {
                 },
                 rules: &self.grants.rules,
                 remote_rules: &self.grants.remote_rules,
+                program_rules: &self.grants.program_rules,
                 project: self.project.as_ref(),
                 // Content never counts as the owner's words, and a mention
                 // moves no conversation.
@@ -414,7 +415,10 @@ impl Runtime {
     }
 
     /// The place of a message as providers see it.
-    async fn mention_context(&self, place: &MentionPlace) -> Result<MentionContext, ChatError> {
+    pub(crate) async fn mention_context(
+        &self,
+        place: &MentionPlace,
+    ) -> Result<MentionContext, ChatError> {
         match place {
             MentionPlace::Conversation { conversation_id } => {
                 let summary = self

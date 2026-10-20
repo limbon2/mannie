@@ -39,6 +39,7 @@ use windows_sys::Win32::System::Threading::{
 };
 
 use super::CommandSpec;
+use crate::programs::ProgramRun;
 
 /// The script that Windows PowerShell runs. It reads the command's text from
 /// standard input as UTF-8, sets UTF-8 for output, turns off progress output
@@ -110,13 +111,47 @@ impl Contained {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         let mut child = command.spawn()?;
+        let contained = Self::contain(job, &mut child)?;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(spec.text.as_bytes()).await?;
+            // Closing standard input ends the shell's read of the text.
+            drop(stdin);
+        }
+        Ok((contained, child))
+    }
+
+    /// Starts an installed program in a new job, with its arguments exactly
+    /// and no shell (ADR-0038). The standard library quotes each argument
+    /// for the program's own parsing of its command line; the resolver only
+    /// ever hands over `.exe` files, whose parsing follows those rules, and
+    /// never `.bat` or `.cmd` files, which `cmd.exe` would read.
+    pub(super) fn spawn_program(run: &ProgramRun) -> io::Result<(Self, Child)> {
+        let job = create_job()?;
+        let mut command = Command::new(&run.program);
+        command
+            .args(&run.arguments)
+            .creation_flags(CREATE_SUSPENDED | CREATE_NO_WINDOW)
+            .current_dir(&run.working_directory)
+            .env_clear()
+            .envs(run.environment.iter().map(|(name, value)| (name, value)))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        let mut child = command.spawn()?;
+        let contained = Self::contain(job, &mut child)?;
+        Ok((contained, child))
+    }
+
+    /// Puts a suspended process into its job, and only then lets it run.
+    fn contain(job: OwnedHandle, child: &mut Child) -> io::Result<Self> {
         let Some(process) = child.raw_handle() else {
-            return Err(io::Error::other("the shell exited before it started"));
+            return Err(io::Error::other("the process exited before it started"));
         };
         let pid = child.id().unwrap_or(0);
         let joined = assign(&job, process).and_then(|()| resume(pid));
         if let Err(error) = joined {
-            // The shell is still suspended: end it before it runs anything.
+            // The process is still suspended: end it before it runs anything.
             terminate(&job);
             child.start_kill()?;
             return Err(error);
@@ -125,13 +160,27 @@ impl Contained {
             pid,
             start_time: creation_time(process).unwrap_or_default(),
         };
-        let contained = Self { job, record };
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(spec.text.as_bytes()).await?;
-            // Closing standard input ends the shell's read of the text.
-            drop(stdin);
-        }
-        Ok((contained, child))
+        Ok(Self { job, record })
+    }
+
+    /// Gives a program its input, written while its output is read, so a
+    /// program that writes before it reads cannot block on a full pipe.
+    #[expect(
+        clippy::unused_self,
+        reason = "the Unix half keeps the input pipe on the run, and both halves share one signature"
+    )]
+    pub(super) fn send_input(&mut self, child: &mut Child, input: Vec<u8>) {
+        let Some(mut stdin) = child.stdin.take() else {
+            return;
+        };
+        tokio::spawn(async move {
+            // A program that ends without reading all of it closes the pipe,
+            // and the write fails; nothing waits for the rest.
+            if let Err(error) = stdin.write_all(&input).await {
+                tracing::debug!(%error, "a program did not read all of its input");
+            }
+            // Dropping the pipe closes the program's standard input.
+        });
     }
 
     /// The shell's process, for the journal.

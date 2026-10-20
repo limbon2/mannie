@@ -79,6 +79,9 @@ export function pluginServiceLabel(name: string): string {
     case 'file-dialog': {
       return m.plugins_use_service_file_dialog();
     }
+    case 'processes': {
+      return m.plugins_use_service_processes();
+    }
     case 'secrets': {
       return m.plugins_use_service_secrets();
     }

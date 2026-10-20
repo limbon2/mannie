@@ -9,8 +9,8 @@ use std::collections::BTreeSet;
 
 use mannie_plugin_sdk::context::{HostInfo, HostProfile};
 use mannie_plugin_sdk::contracts::{
-    ArchiveId, CommandError, ImageFormat, MentionEntry, MentionSummary, ProfileSnapshot,
-    SubscriptionEnd, TaskExecutorRef, TaskState, WorkItem,
+    AccessMode, ArchiveId, CommandError, ImageFormat, MentionEntry, MentionSummary,
+    ProfileSnapshot, SubscriptionEnd, TaskExecutorRef, TaskState, WorkItem,
 };
 use mannie_plugin_sdk::error::StartFailure;
 use mannie_plugin_sdk::ids::PluginId;
@@ -23,8 +23,8 @@ use mannie_plugin_sdk::points::executors::{
 use mannie_plugin_sdk::points::mentions::{ProviderSuggestions, ReadVerdict, RenderedMention};
 use mannie_plugin_sdk::points::sections::SectionContext;
 use mannie_plugin_sdk::points::tools::{
-    AgentSelector, RemoteCommandAccess, ToolAccess, ToolArchive, ToolCall, ToolExecution,
-    ToolRefusal, ToolResult, ToolSpec,
+    AgentSelector, PathAccess, RemoteCommandAccess, ToolAccess, ToolArchive, ToolCall,
+    ToolExecution, ToolOffering, ToolRefusal, ToolResult, ToolSpec,
 };
 use mannie_plugin_sdk::services::credentials::LendError;
 use mannie_plugin_sdk::services::executor_host::{ExecutorTask, HostFailure, OutboxItem};
@@ -225,6 +225,12 @@ fn a_section_context_crosses_json_unchanged() {
     });
     let error = serde_json::from_value::<SectionContext>(without_requester).unwrap_err();
     assert!(error.to_string().contains("requester"), "{error}");
+    let mut with_tools = json;
+    with_tools["offeredTools"] = json!(["read_file", "git_status"]);
+    let offered = serde_json::from_value::<SectionContext>(with_tools.clone()).unwrap();
+    assert!(offered.offers_tool("git_status"));
+    assert!(!offered.offers_tool("git_push"));
+    assert_eq!(serde_json::to_value(&offered).unwrap(), with_tools);
 }
 
 #[test]
@@ -486,6 +492,121 @@ fn a_result_carries_its_archives_and_an_execution_its_authorized_accesses() {
     assert_eq!(execution.authorized.len(), 1);
     assert_eq!(execution.result_limit, 4096);
     assert_eq!(execution.archive_ids, vec![archive_id]);
+}
+
+#[test]
+fn a_path_crosses_json_with_its_mode_and_its_state() {
+    let plain = ToolAccess::Path(PathAccess::new("/work/repository", AccessMode::Read));
+    let pinned = ToolAccess::Path(
+        PathAccess::new("/work/repository", AccessMode::Write).with_state("HEAD 1a2b"),
+    );
+    let plain_json = json!({ "kind": "path", "path": "/work/repository", "mode": "read" });
+    let pinned_json = json!({
+        "kind": "path",
+        "path": "/work/repository",
+        "mode": "write",
+        "state": "HEAD 1a2b"
+    });
+
+    assert_eq!(serde_json::to_value(&plain).unwrap(), plain_json);
+    assert_eq!(serde_json::to_value(&pinned).unwrap(), pinned_json);
+    assert_eq!(
+        serde_json::from_value::<ToolAccess>(plain_json).unwrap(),
+        plain
+    );
+    assert_eq!(
+        serde_json::from_value::<ToolAccess>(pinned_json).unwrap(),
+        pinned
+    );
+    for json in [
+        json!({ "kind": "path", "path": "/work", "mode": "rename" }),
+        json!({ "kind": "path", "mode": "read" }),
+    ] {
+        let error = serde_json::from_value::<ToolAccess>(json.clone()).unwrap_err();
+        assert!(error.is_data(), "{json}: {error}");
+    }
+}
+
+#[test]
+fn a_call_and_its_execution_carry_the_workspace_and_omit_none() {
+    let json = json!({
+        "arguments": "{}",
+        "conversationId": "0199e0f2-0000-7000-8000-000000000001",
+        "workspace": "/work/repository"
+    });
+
+    let call = serde_json::from_value::<ToolCall>(json.clone()).unwrap();
+    let execution = serde_json::from_value::<ToolExecution>(json.clone()).unwrap();
+
+    assert_eq!(
+        call.workspace.as_deref(),
+        Some(std::path::Path::new("/work/repository"))
+    );
+    assert_eq!(execution.workspace, call.workspace);
+    assert_eq!(serde_json::to_value(&call).unwrap(), json);
+    let general = serde_json::from_value::<ToolCall>(json!({
+        "arguments": "{}",
+        "conversationId": "0199e0f2-0000-7000-8000-000000000001"
+    }))
+    .unwrap();
+    assert_eq!(general.workspace, None);
+    assert!(
+        serde_json::to_value(&general)
+            .unwrap()
+            .get("workspace")
+            .is_none()
+    );
+}
+
+#[test]
+fn a_refusal_carries_its_code_and_a_result_its_card_data_and_failure() {
+    let refusal =
+        ToolRefusal::new("This folder is not a repository.").with_code("not_a_repository");
+    let result = ToolResult::new("2 files conflict.")
+        .with_data(json!({ "conflicted": ["a.txt", "b.txt"] }))
+        .with_failure("merge_conflicts");
+
+    let refusal_json = serde_json::to_value(&refusal).unwrap();
+    let result_json = serde_json::to_value(&result).unwrap();
+
+    assert_eq!(
+        refusal_json,
+        json!({ "detail": "This folder is not a repository.", "code": "not_a_repository" })
+    );
+    assert_eq!(
+        result_json,
+        json!({
+            "output": "2 files conflict.",
+            "data": { "conflicted": ["a.txt", "b.txt"] },
+            "failure": "merge_conflicts"
+        })
+    );
+    assert_eq!(
+        serde_json::from_value::<ToolRefusal>(refusal_json).unwrap(),
+        refusal
+    );
+    assert_eq!(
+        serde_json::from_value::<ToolResult>(result_json).unwrap(),
+        result
+    );
+}
+
+#[test]
+fn an_offering_crosses_json_with_its_marker() {
+    for (offering, json) in [
+        (ToolOffering::Always, json!("always")),
+        (ToolOffering::InWorkspace, json!("in_workspace")),
+        (
+            ToolOffering::WhereWorkspaceHolds(".git".to_owned()),
+            json!({ "where_workspace_holds": ".git" }),
+        ),
+    ] {
+        assert_eq!(serde_json::to_value(&offering).unwrap(), json);
+        assert_eq!(
+            serde_json::from_value::<ToolOffering>(json).unwrap(),
+            offering
+        );
+    }
 }
 
 /// A worker as a task's target.

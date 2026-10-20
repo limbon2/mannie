@@ -416,11 +416,21 @@ pub enum ToolOutcome {
         /// Its folder, the conversation's workspace from now on.
         folder: String,
     },
-    /// A plugin's tool ran (ADR-0034, decision 6). A plugin's tool reports
-    /// only its output for the model, so the UI names the call by its tool.
+    /// A plugin's tool ran (ADR-0034, decision 6). The model reads only its
+    /// output; the data and the failure are for the call's card, which the
+    /// plugin describes through the slot of tool kinds (ADR-0039).
     Plugin {
         /// The ID of the plugin whose tool it is.
         plugin: String,
+        /// The data of the call's card: a JSON object as text, which the
+        /// plugin's card reads. Older calls have none.
+        #[serde(default)]
+        data: Option<String>,
+        /// The plugin's code of how the call failed, such as
+        /// `not_a_repository`, which its card words; none when it did not
+        /// fail.
+        #[serde(default)]
+        failure: Option<String>,
     },
     /// The tool failed.
     Failed {
@@ -502,9 +512,31 @@ mod tests {
         );
         let plugin = ToolOutcome::Plugin {
             plugin: "notes".to_owned(),
+            data: None,
+            failure: None,
         };
-        let json = serde_json::json!({ "kind": "plugin", "plugin": "notes" });
-        assert_eq!(serde_json::to_value(&plugin).unwrap(), json);
-        assert_eq!(serde_json::from_value::<ToolOutcome>(json).unwrap(), plugin);
+        let older = serde_json::json!({ "kind": "plugin", "plugin": "notes" });
+        assert_eq!(
+            serde_json::to_value(&plugin).unwrap(),
+            serde_json::json!({ "kind": "plugin", "plugin": "notes", "data": null, "failure": null })
+        );
+        assert_eq!(
+            serde_json::from_value::<ToolOutcome>(older).unwrap(),
+            plugin
+        );
+        let described = ToolOutcome::Plugin {
+            plugin: "git".to_owned(),
+            data: Some(r#"{"commit":"1a2b3c"}"#.to_owned()),
+            failure: Some("not_a_repository".to_owned()),
+        };
+        assert_eq!(
+            serde_json::to_value(&described).unwrap(),
+            serde_json::json!({
+                "kind": "plugin",
+                "plugin": "git",
+                "data": r#"{"commit":"1a2b3c"}"#,
+                "failure": "not_a_repository",
+            })
+        );
     }
 }

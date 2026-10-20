@@ -8,6 +8,7 @@ import type {
   ConversationSummary,
   MentionSummary,
   PartView,
+  ToolCallStatus,
   TurnView,
 } from '#lib/generated/bindings.js';
 
@@ -228,6 +229,47 @@ export interface MentionKind {
   readonly variantName: (variant: string) => string | null;
   /** The words of a warning code, such as "may hold secrets", or `null` for a code it does not know. */
   readonly warning: (code: string) => string | null;
+}
+
+/** What a tool kind reads of one call of its plugin's tool (ADR-0039, decision 1). */
+export interface ToolKindCall {
+  /** The arguments that the model wrote, without the call's activity, or an empty object while they are cut or not an object. */
+  readonly arguments: Readonly<Record<string, unknown>>;
+  /** The data that the plugin returned for the call's card, a JSON object that the core checked, or `null` without any. */
+  readonly data: Readonly<Record<string, unknown>> | null;
+  /** The plugin's code of how the call failed, or `null`. */
+  readonly failure: string | null;
+  /** Where the call is in its life. */
+  readonly status: ToolCallStatus;
+}
+
+/** What the details of a tool kind receive. */
+export interface ToolKindDetailsProps {
+  /** The call. */
+  readonly call: ToolKindCall;
+  /** The conversation the call belongs to. */
+  readonly conversationId: ConversationId;
+}
+
+/**
+ * How the transcript shows the calls of one of a plugin's tools (ADR-0039,
+ * decision 1): their icon, their line, the sentence of a failure code and
+ * details below the core's accesses. The core uses an entry only for calls of
+ * the plugin that registered it, and keeps the accesses, the approval and
+ * the outputs that did not fit its own. Without an entry, such as while its
+ * plugin is off, a call shows the core's generic texts.
+ */
+export interface ToolKind {
+  /** What the call's data shows, below its accesses. It never inserts raw HTML. */
+  readonly details?: Component<ToolKindDetailsProps>;
+  /** The sentence of one of the plugin's failure codes, or `null` for a code it does not know. */
+  readonly failure: (code: string) => string | null;
+  /** An icon from @lucide/svelte for the tool's calls. */
+  readonly icon: Component;
+  /** The tool's name, as the plugin's tool spec gives it. */
+  readonly id: string;
+  /** The line of a call, such as "Committed a1b2c3d Fix the parser", or `null` for the core's. */
+  readonly summary: (call: ToolKindCall) => string | null;
 }
 
 /** An image that a source prepared, as the message box shows and sends it (ADR-0033, decision 7). */

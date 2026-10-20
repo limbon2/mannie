@@ -10,6 +10,8 @@ import type {
   Interruption,
   NotRunReason,
   PathRefusal,
+  ProgramEffect,
+  ProgramEffectKey,
   Refusal,
   ToolFailure,
   ToolsError,
@@ -18,11 +20,16 @@ import {
   accessModeLabel,
   approvalReasonMessage,
   decisionMessage,
+  effectKeyPhrase,
+  effectKeysText,
   entryCountMessage,
   formatBytes,
   grantScopeMessage,
   notRunMessage,
   pathRefusalMessage,
+  programEffectItems,
+  programEffectMessage,
+  programRunText,
   refusalMessage,
   toolFailureMessage,
   toolsFailureMessage,
@@ -122,9 +129,37 @@ const GRANTS: GrantScope[] = [
     plugin: 'ssh',
     target: '0199e0f2-0000-7000-8000-0000000000aa',
   },
+  {
+    arguments: ['push', 'origin', 'main'],
+    effects: [{ effect: 'network', endpoint: 'https://example.com/repo.git' }],
+    fixed: [],
+    kind: 'program',
+    name: 'git',
+    plugin: 'git',
+    program: '/usr/bin/git',
+    workingDirectory: 'D:\\Projects\\app',
+  },
 ];
 
-const REFUSALS: Refusal[] = ['no_projects_on_host', 'no_remote_commands', 'read_only_host'];
+const REFUSALS: Refusal[] = ['no_projects_on_host', 'no_remote_commands', 'no_programs_on_host', 'read_only_host'];
+
+const EFFECTS: ProgramEffect[] = [
+  { effect: 'network', endpoint: 'https://example.com/repo.git' },
+  { effect: 'runs_folder_code', name: 'pre-commit', source: '.git/hooks/pre-commit' },
+  { count: 3, effect: 'discards_work', items: ['a.txt'], snapshot: true, work: 'uncommitted_changes' },
+  { count: 1, effect: 'discards_work', items: ['stash@{0}'], snapshot: false, work: 'stash_entries' },
+  { count: 2, effect: 'discards_work', items: [], snapshot: false, work: 'commits' },
+  { count: 2, effect: 'rewrites_published', places: ['origin/main'] },
+];
+
+const EFFECT_KEYS: ProgramEffectKey[] = [
+  { effect: 'network', endpoint: 'https://example.com/repo.git' },
+  { effect: 'runs_folder_code', name: 'pre-commit', source: '.git/hooks/pre-commit' },
+  { effect: 'discards_work', work: 'uncommitted_changes' },
+  { effect: 'discards_work', work: 'stash_entries' },
+  { effect: 'discards_work', work: 'commits' },
+  { effect: 'rewrites_published' },
+];
 
 const INTERRUPTIONS: (Interruption | null)[] = [null, { reason: 'stopped' }, { plugin: 'ssh', reason: 'plugin_off' }];
 
@@ -194,6 +229,7 @@ describe('tools messages', () => {
       'no_workspace',
       'move_to_project',
       'remote_command',
+      'program',
     ];
     const decisions: Decision[] = [
       'workspace',
@@ -238,6 +274,52 @@ describe('tools messages', () => {
     expect(message).toContain('build-box');
     expect(message).toContain('deploy@build-box.lan:22');
     expect(message).not.toContain('0199e0f2');
+  });
+
+  it('show a program run’s words with quotes only where a word needs them', () => {
+    expect(programRunText(['git', 'commit', '-m', 'Fix the parser', ''])).toBe('git commit -m "Fix the parser" ""');
+    expect(programRunText(['git', 'log', '--format=%H'])).toBe('git log --format=%H');
+    expect(programRunText(['git', 'show', 'say "hi"'])).toBe(String.raw`git show "say \"hi\""`);
+  });
+
+  it('describe every effect of a program’s run, with what it names', () => {
+    expectDistinct(EFFECTS.map((effect) => programEffectMessage(effect)));
+    expectDistinct(EFFECT_KEYS.map((key) => effectKeyPhrase(key)));
+    expect(programEffectMessage(EFFECTS[1])).toContain('.git/hooks/pre-commit');
+    expect(programEffectMessage(EFFECTS[0])).toContain('https://example.com/repo.git');
+    expect(programEffectMessage(EFFECTS[5])).toContain('origin/main');
+    expect(programEffectMessage(EFFECTS[2])).toMatch(/3/u);
+    // The first names of what a run discards, and how many more there are.
+    const listed = programEffectItems(EFFECTS[2]);
+    expect(listed).toContain('a.txt');
+    expect(listed).toMatch(/2/u);
+    expect(programEffectItems(EFFECTS[3])).toBe('stash@{0}');
+    expect(programEffectItems(EFFECTS[4])).toBeNull();
+    expect(programEffectItems(EFFECTS[0])).toBeNull();
+  });
+
+  it('name the run, its folder and the effects that a grant of a program covers', () => {
+    const run: GrantScope = {
+      arguments: ['commit', '-F', '-'],
+      effects: [],
+      fixed: ['-c', 'gc.auto=0'],
+      kind: 'program',
+      name: 'git',
+      plugin: 'git',
+      program: 'C:\\Program Files\\Git\\cmd\\git.exe',
+      workingDirectory: 'D:\\Projects\\app',
+    };
+    const withHook: GrantScope = { ...run, effects: [EFFECT_KEYS[1]] };
+
+    const plain = grantScopeMessage(run);
+    const hooked = grantScopeMessage(withHook);
+
+    expect(plain).toContain('git commit -F -');
+    expect(plain).toContain('D:\\Projects\\app');
+    expect(plain).not.toContain('gc.auto');
+    expect(hooked).toContain('pre-commit');
+    expect(hooked).toContain(effectKeysText([EFFECT_KEYS[1]]));
+    expect(hooked).not.toBe(plain);
   });
 
   it('count what a recursive delete removes', () => {

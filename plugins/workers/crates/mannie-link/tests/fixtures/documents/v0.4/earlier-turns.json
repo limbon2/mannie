@@ -53,7 +53,8 @@
                   "folder": false,
                   "exists": false,
                   "identity": "803:1442",
-                  "entries": null
+                  "entries": null,
+                  "state": null
                 }
               ],
               "request": {
@@ -78,7 +79,8 @@
                 "archives": []
               },
               "notRun": null,
-              "interruption": null
+              "interruption": null,
+              "plugin": null
             }
           },
           "createdAt": 1792000000020

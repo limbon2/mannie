@@ -1,19 +1,20 @@
 //! A plugin's manifest, `plugins/<id>/plugin.toml` (ADR-0035, decision 1):
 //! the plugin's ID, the SDK major that it builds on, its order, its entry
 //! crate, the services that it uses, its secret entries, the third-party
-//! crates that only it may use, its programs and its direct native calls.
+//! crates that only it may use, its programs, the installed programs that it
+//! runs and its direct native calls.
 //!
 //! The manifest is the reviewed registration of a plugin, so the host grants
 //! the plugin the services that it declares and nothing else (ADR-0034,
 //! decisions 5 and 13). Each field has a reader: the host reads the ID, the
-//! major, the order, the services and the secrets, and shows the names of
-//! the programs, the crates and the native calls on the Plugins page; the
-//! build's generator reads the entry crate (ADR-0035, decision 3), the
-//! build's boundary check reads the crates (decision 6), the build, CI and
-//! the release read the programs (decision 10), and the lint's Clippy run
-//! reads the native calls (decision 6). A field that nothing reads is not
-//! part of the manifest, and `Manifest::parse`, behind the feature
-//! `manifest`, refuses it.
+//! major, the order, the services, the secrets and the installed programs,
+//! and shows the names of the programs, the installed programs, the crates
+//! and the native calls on the Plugins page; the build's generator reads the
+//! entry crate (ADR-0035, decision 3), the build's boundary check reads the
+//! crates (decision 6), the build, CI and the release read the programs
+//! (decision 10), and the lint's Clippy run reads the native calls (decision
+//! 6). A field that nothing reads is not part of the manifest, and
+//! `Manifest::parse`, behind the feature `manifest`, refuses it.
 //!
 //! The SDK commits the manifest's JSON Schema as `plugin.schema.json`, which
 //! a manifest names in its first line, `#:schema`, so Tombi and editors check
@@ -61,6 +62,11 @@ pub struct Manifest {
     /// plugin's workspace, as `[[programs]]` tables.
     #[serde(default)]
     pub programs: Vec<ProgramSection>,
+    /// The installed programs that the plugin runs through the service
+    /// `processes`, as `[processes.<name>]` tables, such as `[processes.git]`
+    /// (ADR-0038, decision 7).
+    #[serde(default)]
+    pub processes: BTreeMap<String, ProcessSection>,
     /// The direct native calls that the plugin's library crates make past
     /// the SDK's services.
     #[serde(default)]
@@ -254,6 +260,50 @@ pub struct SmokeSection {
     pub helpers: Vec<String>,
 }
 
+/// A `[processes.<name>]` table of a manifest: an installed program that the
+/// plugin runs through the service `processes`, which the core finds by the
+/// table's name on Mannie's `PATH`, such as `git` (ADR-0038, decision 7). The
+/// provider of the service runs these programs and no other, and the Plugins
+/// page shows their names.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+#[non_exhaustive]
+pub struct ProcessSection {
+    /// Why the plugin runs the program, which the review of the manifest
+    /// and `task plugins:grants` read.
+    pub reason: String,
+    /// The arguments that every run passes before the plugin's own, such as
+    /// settings that keep a repository's configuration from starting
+    /// programs.
+    #[serde(default)]
+    pub fixed: Vec<String>,
+    /// The names of the variables that a run receives when Mannie's
+    /// environment has them, besides the environment of commands, such as
+    /// `SSH_AUTH_SOCK`. A name that looks like a secret's or loads libraries
+    /// is refused.
+    #[serde(default)]
+    pub inherit: Vec<String>,
+}
+
+/// The most characters of the name of an installed program.
+pub const MAX_PROCESS_NAME_CHARS: usize = 64;
+
+/// Whether `name` can name an installed program under `[processes]`: a
+/// letter or a digit, then letters, digits, `.`, `_` and `-`, at most 64
+/// characters, never ending in a dot, which Windows would drop. The name
+/// never holds a path, so the core looks for it on the `PATH` alone.
+pub fn is_process_name(name: &str) -> bool {
+    let has_valid_length = (1..=MAX_PROCESS_NAME_CHARS).contains(&name.len());
+    let starts_well = name
+        .bytes()
+        .next()
+        .is_some_and(|first| first.is_ascii_alphanumeric());
+    let continues_well = name
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'));
+    has_valid_length && starts_well && continues_well && !name.ends_with('.')
+}
+
 impl Manifest {
     /// Whether the manifest declares the service with this name.
     pub fn declares(&self, name: &str) -> bool {
@@ -266,12 +316,17 @@ pub use parse::ManifestError;
 
 #[cfg(feature = "manifest")]
 mod parse {
-    use super::Manifest;
+    use mannie_types::tools::{EnvName, is_loader_name};
+
+    use super::{Manifest, is_process_name};
     use crate::services::service_info;
     use crate::version::SDK_MAJOR;
 
     /// The name of the service whose declaration `[secrets]` needs.
     const SECRETS_SERVICE: &str = "secrets";
+
+    /// The name of the service whose declaration `[processes]` needs.
+    const PROCESSES_SERVICE: &str = "processes";
 
     impl Manifest {
         /// Parses and checks the text of a `plugin.toml`, in this order:
@@ -288,7 +343,11 @@ mod parse {
         /// 4. its services, each one the SDK has, at the SDK's major;
         /// 5. that a manifest with secrets declares the service `secrets`;
         /// 6. that each grant under `[native]` gives its reason, which the
-        ///    review of the manifest reads.
+        ///    review of the manifest reads;
+        /// 7. each installed program under `[processes]`: its name, its
+        ///    reason, its fixed arguments and the names that it inherits;
+        /// 8. that a manifest with installed programs declares the service
+        ///    `processes`.
         pub fn parse(text: &str) -> Result<Self, ManifestError> {
             let table: toml::Table = text
                 .parse()
@@ -321,7 +380,43 @@ mod parse {
                     category: category.to_owned(),
                 });
             }
+            manifest.check_processes()?;
+            if !manifest.processes.is_empty() && !manifest.declares(PROCESSES_SERVICE) {
+                return Err(ManifestError::ProcessesWithoutService);
+            }
             Ok(manifest)
+        }
+
+        fn check_processes(&self) -> Result<(), ManifestError> {
+            for (program, process) in &self.processes {
+                if !is_process_name(program) {
+                    return Err(ManifestError::ProcessName {
+                        name: program.clone(),
+                    });
+                }
+                if process.reason.trim().is_empty() {
+                    return Err(ManifestError::ProcessWithoutReason {
+                        program: program.clone(),
+                    });
+                }
+                // No argument of a process can carry a NUL character.
+                if process.fixed.iter().any(|argument| argument.contains('\0')) {
+                    return Err(ManifestError::ProcessArgument {
+                        program: program.clone(),
+                    });
+                }
+                let refused = process
+                    .inherit
+                    .iter()
+                    .find(|name| EnvName::parse(name).is_err() || is_loader_name(name));
+                if let Some(name) = refused {
+                    return Err(ManifestError::ProcessInherits {
+                        program: program.clone(),
+                        name: name.clone(),
+                    });
+                }
+            }
+            Ok(())
         }
 
         fn check_secret_names(&self) -> Result<(), ManifestError> {
@@ -482,6 +577,46 @@ mod parse {
             /// The category, as `[native]` names it, such as `sockets`.
             category: String,
         },
+        /// The name of a table under `[processes]` is not the plain name of
+        /// a program.
+        #[error(
+            "{name:?} is not the name of an installed program, which is a letter or a digit, then letters, digits, \".\", \"_\" and \"-\", at most 64 characters, never ending in a dot"
+        )]
+        ProcessName {
+            /// The refused name.
+            name: String,
+        },
+        /// An installed program has a reason that is empty or only white
+        /// space.
+        #[error("the manifest runs the program {program} under [processes] without a reason")]
+        ProcessWithoutReason {
+            /// The program's name.
+            program: String,
+        },
+        /// A fixed argument of an installed program holds a NUL character,
+        /// which no argument can carry.
+        #[error("a fixed argument of the program {program} holds a NUL character")]
+        ProcessArgument {
+            /// The program's name.
+            program: String,
+        },
+        /// An installed program inherits a name that is not a variable's
+        /// name, looks like a secret's or loads libraries into programs.
+        #[error(
+            "the program {program} inherits {name:?}, which is not a variable's name, looks like a secret's or loads libraries"
+        )]
+        ProcessInherits {
+            /// The program's name.
+            program: String,
+            /// The refused name.
+            name: String,
+        },
+        /// The manifest lists installed programs but does not declare the
+        /// service `processes`, which runs them.
+        #[error(
+            "the manifest lists programs under [processes] but does not declare the service processes"
+        )]
+        ProcessesWithoutService,
     }
 
     impl ManifestError {

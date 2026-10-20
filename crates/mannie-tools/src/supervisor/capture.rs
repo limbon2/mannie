@@ -1,12 +1,17 @@
 //! The capture of a command's output (docs/features/system-tools/commands.md,
 //! output): each stream keeps its first 256 KiB and its last 768 KiB, and
 //! marks the cut with the number of bytes left out.
+//!
+//! An installed program's output is captured as bytes instead (ADR-0038):
+//! its records can hold NUL bytes and any encoding, which only the plugin
+//! that runs it reads.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::sync::Notify;
 
 /// The first bytes of each stream that a command's capture keeps.
 const HEAD_BYTES: usize = 256 * 1024;
@@ -152,9 +157,146 @@ impl Stream {
     }
 }
 
+/// What a stream of a program produced: its first bytes up to a limit, and
+/// how many bytes it wrote in all.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct CapturedBytes {
+    /// The bytes, at most the limit.
+    pub(crate) bytes: Vec<u8>,
+    /// The size of the whole stream, which is larger than the bytes when
+    /// the stream went past its limit.
+    pub(crate) total: u64,
+}
+
+/// The first bytes of a stream, as they arrive.
+#[derive(Debug)]
+struct ByteCapture {
+    bytes: Vec<u8>,
+    total: u64,
+    limit: usize,
+}
+
+impl ByteCapture {
+    /// Keeps what fits under the limit and counts the rest. Returns whether
+    /// the stream is now past its limit.
+    fn push(&mut self, chunk: &[u8]) -> bool {
+        self.total = self
+            .total
+            .saturating_add(u64::try_from(chunk.len()).unwrap_or(u64::MAX));
+        let room = self.limit.saturating_sub(self.bytes.len()).min(chunk.len());
+        self.bytes.extend_from_slice(&chunk[..room]);
+        self.total > u64::try_from(self.limit).unwrap_or(u64::MAX)
+    }
+}
+
+/// A stream of a program being captured as bytes. A stream that its run
+/// stops at the limit wakes [`ByteStream::full`] when it goes past it; any
+/// other stream is read to its end, and what goes past its limit is counted
+/// and dropped, so the program never blocks on a full pipe.
+pub(super) struct ByteStream {
+    capture: Arc<Mutex<ByteCapture>>,
+    reader: tokio::task::JoinHandle<()>,
+    full: Option<Arc<Notify>>,
+}
+
+impl ByteStream {
+    pub(super) fn capture(
+        pipe: impl AsyncRead + Unpin + Send + 'static,
+        limit: usize,
+        stop_when_full: bool,
+    ) -> Self {
+        let capture = Arc::new(Mutex::new(ByteCapture {
+            bytes: Vec::new(),
+            total: 0,
+            limit,
+        }));
+        let full = stop_when_full.then(|| Arc::new(Notify::new()));
+        let shared = Arc::clone(&capture);
+        let notify = full.clone();
+        let reader = tokio::spawn(async move {
+            let mut pipe = pipe;
+            let mut buffer = vec![0_u8; 64 * 1024];
+            let mut told = false;
+            loop {
+                match pipe.read(&mut buffer).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => {
+                        let past_limit = shared
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .push(&buffer[..read]);
+                        if past_limit
+                            && !told
+                            && let Some(notify) = &notify
+                        {
+                            // `notify_one` keeps a permit when nobody waits
+                            // yet, so a run that starts waiting later still
+                            // wakes.
+                            notify.notify_one();
+                            told = true;
+                        }
+                    }
+                }
+            }
+        });
+        Self {
+            capture,
+            reader,
+            full,
+        }
+    }
+
+    /// Resolves once a stream that its run stops at the limit went past it.
+    /// Any other stream never resolves.
+    pub(super) async fn full(stream: Option<&Self>) {
+        match stream.and_then(|stream| stream.full.as_ref()) {
+            Some(notify) => notify.notified().await,
+            None => std::future::pending().await,
+        }
+    }
+
+    /// What the stream produced, once it closed or its time to close ran
+    /// out.
+    pub(super) async fn finish(stream: Option<Self>) -> CapturedBytes {
+        let Some(mut stream) = stream else {
+            return CapturedBytes::default();
+        };
+        if tokio::time::timeout(DRAIN_TIMEOUT, &mut stream.reader)
+            .await
+            .is_err()
+        {
+            stream.reader.abort();
+        }
+        let capture = stream
+            .capture
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        CapturedBytes {
+            bytes: capture.bytes.clone(),
+            total: capture.total,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Capture, HEAD_BYTES, TAIL_BYTES};
+    use super::{ByteCapture, Capture, HEAD_BYTES, TAIL_BYTES};
+
+    #[test]
+    fn a_byte_capture_keeps_bytes_up_to_its_limit_and_counts_the_rest() {
+        let mut capture = ByteCapture {
+            bytes: Vec::new(),
+            total: 0,
+            limit: 5,
+        };
+
+        assert!(!capture.push(b"ab\0"));
+        assert!(!capture.push(b"cd"));
+        assert!(capture.push(b"\xffgh"));
+
+        assert_eq!(capture.bytes, b"ab\0cd");
+        assert_eq!(capture.total, 8);
+    }
 
     #[test]
     fn small_streams_are_kept_whole() {

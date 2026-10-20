@@ -8,6 +8,7 @@ use crate::clock::UtcMillis;
 use crate::ids::{ArchiveId, ConversationId, GrantId, ProjectId, RuleId};
 
 use super::approval::{GrantScope, RemoteTarget};
+use super::program::ProgramTarget;
 
 /// A command rule as the settings list it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -51,6 +52,32 @@ pub struct RemoteCommandRule {
 #[derive(Debug, Clone, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteRuleRef {
+    /// The rule.
+    pub rule_id: RuleId,
+}
+
+/// A rule for runs of an installed program that a plugin's manifest
+/// declares, as the settings list it (ADR-0038, decision 6). It lives apart
+/// from the rules of commands, so a rule of one never matches the other.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ProgramRule {
+    /// The rule.
+    pub id: RuleId,
+    /// The program, and the effects that the rule covers.
+    pub target: ProgramTarget,
+    /// The words that a run's program name and arguments must start with.
+    pub words: Vec<String>,
+    /// The folder the working directory must lie in, or `None` for anywhere.
+    pub folder: Option<String>,
+    /// When the owner saved it.
+    pub created_at: UtcMillis,
+}
+
+/// The argument of `delete_program_rule`.
+#[derive(Debug, Clone, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ProgramRuleRef {
     /// The rule.
     pub rule_id: RuleId,
 }

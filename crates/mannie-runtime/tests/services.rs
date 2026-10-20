@@ -17,6 +17,7 @@ use mannie_plugin_sdk::manifest::Manifest;
 use mannie_plugin_sdk::points::executors::{Executors, TaskExecutor, TaskSubmission};
 use mannie_plugin_sdk::services::credentials::{Credentials, LendError};
 use mannie_plugin_sdk::services::executor_host::{ExecutorHost, ExecutorTask, OutboxItem};
+use mannie_plugin_sdk::services::processes::Processes;
 use mannie_plugin_sdk::services::service_info;
 use mannie_provider::testing::Step;
 use mannie_provider::{Content, ModelRequest, Role};
@@ -205,8 +206,8 @@ fn unknown_task() -> TaskId {
     TaskId::parse("0199e0f2-7a1b-7c3d-8e4f-0000000009ff").unwrap()
 }
 
-/// A manifest of the fake plugin that declares both services of the
-/// runtime.
+/// A manifest of the fake plugin that declares the executor host and
+/// credentials.
 fn fake_manifest() -> Manifest {
     serde_json::from_value(json!({
         "id": FAKE_EXECUTOR_KIND,
@@ -219,7 +220,7 @@ fn fake_manifest() -> Manifest {
 }
 
 #[tokio::test]
-async fn the_runtimes_providers_bind_the_executor_host_and_credentials_to_the_plugin() {
+async fn the_runtimes_providers_bind_the_executor_host_credentials_and_processes_to_the_plugin() {
     let setup = Setup::new().await;
     let (_conversation, _run, submission) = setup.give_task().await;
     let providers = setup.harness.runtime.service_providers();
@@ -231,19 +232,25 @@ async fn the_runtimes_providers_bind_the_executor_host_and_credentials_to_the_pl
         .iter()
         .map(|provider| (provider.name(), provider.major()))
         .collect();
-    let [host_provider, credentials_provider] = providers.as_slice() else {
-        panic!("the runtime provides two services: {provided:?}");
+    let [host_provider, credentials_provider, processes_provider] = providers.as_slice() else {
+        panic!("the runtime provides three services: {provided:?}");
     };
     let host = host_provider.bind(&binding).unwrap();
     let lender = credentials_provider.bind(&binding).unwrap();
+    let programs = processes_provider.bind(&binding).unwrap();
 
-    assert_eq!(provided, [("executor-host", 1), ("credentials", 1)]);
+    assert_eq!(
+        provided,
+        [("executor-host", 1), ("credentials", 1), ("processes", 1)]
+    );
     for (name, major) in provided {
         let listed = service_info(name).expect("the SDK lists the service");
         assert_eq!(listed.major, major, "{name}");
     }
     assert!(host.get::<Credentials>().is_none(), "{host:?}");
     assert!(lender.get::<ExecutorHost>().is_none(), "{lender:?}");
+    assert!(programs.get::<ExecutorHost>().is_none(), "{programs:?}");
+    assert!(programs.get::<Processes>().is_some(), "{programs:?}");
     let active = host
         .get::<ExecutorHost>()
         .unwrap()

@@ -298,7 +298,7 @@ impl Runtime {
         // the agents that its selector offers it to (ADR-0034, decision 6).
         let (plugin_tools, adapters): (Vec<OfferedPluginTool>, Vec<Arc<dyn Tool>>) =
             if profile.use_tools {
-                offered_tools(&snapshot, &agent).into_iter().unzip()
+                offered_tools(&snapshot, &agent, self).into_iter().unzip()
             } else {
                 (Vec::new(), Vec::new())
             };
@@ -550,6 +550,10 @@ impl Runtime {
             projects: &projects,
         };
         let definitions = setup.definitions_for(&availability);
+        let offered: Vec<&str> = definitions
+            .iter()
+            .map(|definition| definition.name.as_str())
+            .collect();
         // Only a run that can move into a project learns the owner's
         // projects; a child works in its parent's workspace.
         let movable: &[_] = if setup.tool(MOVE_TO_PROJECT).is_some() {
@@ -570,6 +574,7 @@ impl Runtime {
                 project,
                 projects: movable,
                 full_access,
+                offered: &offered,
             }),
             offers_tasks: setup.offers_tasks(),
             machine: self.machine_context(setup),
@@ -578,30 +583,7 @@ impl Runtime {
             .inner
             .instructions
             .assemble_with(&context, &setup.plugin_sections);
-        let left_out = if options.leave_out_results {
-            older_results(&turns)
-        } else {
-            HashSet::new()
-        };
-        let shape = RequestShape {
-            instructions: &instructions,
-            model: &setup.model,
-            interface: setup.interface,
-            binding: &setup.binding,
-            max_output_tokens: setup.output_limit,
-            reasoning_effort: setup.reasoning_effort,
-            tools: &definitions,
-            tool_choice: if options.tools_used_up {
-                ToolChoice::None
-            } else {
-                ToolChoice::Auto
-            },
-            note: (options.tools_used_up && setup.uses_tools())
-                .then(|| texts::tool_budget_used(setup.requester())),
-            left_out: &left_out,
-            requester: setup.requester(),
-        };
-        let request = build_request(shape, &turns);
+        let request = call_request(setup, options, &instructions, &definitions, &turns);
         let estimate = estimate_request(&request);
         let ledger = Ledger::parse(
             self.inner
@@ -864,6 +846,42 @@ async fn read_machine_instructions(path: Option<PathBuf>) -> Option<String> {
     }
     let text = String::from_utf8_lossy(&bytes[..end]).trim().to_owned();
     (!text.is_empty()).then_some(text)
+}
+
+/// The request of a call: its instructions, the tools that it offers and the
+/// turns that the model reads, with the older results of the latest turn
+/// left out when the context runs low.
+fn call_request(
+    setup: &Setup,
+    options: CallOptions,
+    instructions: &str,
+    definitions: &[ToolDefinition],
+    turns: &[ModelTurn],
+) -> ModelRequest {
+    let left_out = if options.leave_out_results {
+        older_results(turns)
+    } else {
+        HashSet::new()
+    };
+    let shape = RequestShape {
+        instructions,
+        model: &setup.model,
+        interface: setup.interface,
+        binding: &setup.binding,
+        max_output_tokens: setup.output_limit,
+        reasoning_effort: setup.reasoning_effort,
+        tools: definitions,
+        tool_choice: if options.tools_used_up {
+            ToolChoice::None
+        } else {
+            ToolChoice::Auto
+        },
+        note: (options.tools_used_up && setup.uses_tools())
+            .then(|| texts::tool_budget_used(setup.requester())),
+        left_out: &left_out,
+        requester: setup.requester(),
+    };
+    build_request(shape, turns)
 }
 
 /// The calls of the latest turn whose results can be left out: every

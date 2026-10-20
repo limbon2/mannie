@@ -10,22 +10,31 @@
 //!
 //! A tool declares its effect ([`ToolEffect`]). A tool that reads only its
 //! own plugin's data returns no access, and the owner is never asked about
-//! it. A tool with side effects returns the accesses on which the policy
-//! decides, and each of its calls is an operation with a journal record: a
-//! command on a remote host is the first such access (ADR-0036). Any other
-//! access, to files, processes or the network, needs an SDK change with an
-//! ADR that maps it onto the core's accesses and policy.
+//! it. A tool that reads the owner's files returns its reads, which the
+//! policy decides as it decides `read_file`'s (ADR-0038). A tool with side
+//! effects returns the accesses on which the policy decides, and each of its
+//! calls is an operation with a journal record: a command on a remote host
+//! (ADR-0036), a path that it reads or changes, or a run of an installed
+//! program with an effect beyond the workspace (ADR-0038). Any other access
+//! needs an SDK change with an ADR that maps it onto the core's accesses and
+//! policy.
+//!
+//! A call learns the conversation's workspace, and a tool says where it is
+//! offered ([`ToolOffering`]). A result may carry data and a failure code for
+//! the call's card in the transcript, which the model never reads
+//! (ADR-0039).
 //!
 //! A tool's name follows the rule `Global`: it is unique among the core's
 //! tools, the task tools and every plugin's tools (decision 6).
 
 use std::fmt;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
 use crate::BoxFuture;
-use crate::contracts::{ArchiveId, ConversationId};
+use crate::contracts::{AccessMode, ArchiveId, ConversationId, ProgramEffect};
 use crate::contributions::{ExtensionPoint, IdRule};
 
 /// The point of plugins' tools, whose entries are [`PluginTool`]s named by
@@ -98,16 +107,126 @@ impl ToolSpec {
 /// decides.
 ///
 /// SDK 1 began without accesses (decision 6). ADR-0036 adds the first, a
-/// command on a remote host; an access to files, processes or other remote
-/// services comes with the SDK change that maps it onto the core's accesses.
-/// The enum stays exhaustive, because plugins produce its values and the core
-/// matches them.
+/// command on a remote host, and ADR-0038 a path and a run of an installed
+/// program; an access to other remote services comes with the SDK change
+/// that maps it onto the core's accesses. The enum stays exhaustive, because
+/// plugins produce its values and the core matches them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ToolAccess {
     /// A command on a remote host that the plugin reaches itself, such as a
     /// host that the owner registered with the SSH plugin (ADR-0036).
     RemoteCommand(RemoteCommandAccess),
+    /// A path that the call reads or changes on the owner's machine, such as
+    /// a repository's folder (ADR-0038, decision 4).
+    Path(PathAccess),
+    /// A run of an installed program with an effect beyond the workspace,
+    /// such as git running a repository's hooks (ADR-0038, decision 5).
+    Program(ProgramAccess),
+}
+
+/// A run of an installed program that the plugin's manifest declares under
+/// `[processes]`, with an effect beyond the workspace that the owner decides
+/// on (ADR-0038, decision 5). A call returns it beside the path accesses of
+/// the place that it changes, when one of the effects applies.
+///
+/// The core adds the plugin, the program's path and the arguments that the
+/// manifest fixes, resolves the working directory to its canonical place and
+/// decides on every field: an approval covers only this run, a grant or a
+/// rule covers only the same program with no other effect, and a changed
+/// state sends the call back to the policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct ProgramAccess {
+    /// The program's name under `[processes]` in the plugin's manifest, such
+    /// as `git`.
+    pub name: String,
+    /// The plugin's arguments, exactly as the program receives them after
+    /// the ones that the manifest fixes.
+    pub arguments: Vec<String>,
+    /// The absolute folder that the program runs in. A call's authorized
+    /// accesses name its canonical form.
+    pub working_directory: PathBuf,
+    /// What the run does beyond the workspace, each shown to the owner.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<ProgramEffect>,
+    /// What the plugin read of the place when it prepared, such as a
+    /// repository's HEAD.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+}
+
+impl ProgramAccess {
+    /// A run of the program `name` with `arguments` in `working_directory`,
+    /// without an effect or a state.
+    pub fn new(
+        name: impl Into<String>,
+        working_directory: impl Into<PathBuf>,
+        arguments: Vec<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            arguments,
+            working_directory: working_directory.into(),
+            effects: Vec::new(),
+            state: None,
+        }
+    }
+
+    /// The same run, with one more effect.
+    #[must_use]
+    pub fn with_effect(mut self, effect: ProgramEffect) -> Self {
+        self.effects.push(effect);
+        self
+    }
+
+    /// The same run, with the state that the plugin read of the place.
+    #[must_use]
+    pub fn with_state(mut self, state: impl Into<String>) -> Self {
+        self.state = Some(state.into());
+        self
+    }
+}
+
+/// A path that a call of a plugin's tool reads or changes. The core resolves
+/// it to its canonical place, following links, and decides on it as it
+/// decides on the paths of its own tools: reads inside the workspace are
+/// allowed, and changes inside it follow the owner's setting. A call's
+/// authorized accesses name the canonical path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct PathAccess {
+    /// The absolute path. A path that could reach a network host, such as a
+    /// UNC path, is refused before any access to the file system.
+    pub path: PathBuf,
+    /// How the call uses it.
+    pub mode: AccessMode,
+    /// What the plugin read of the place when it prepared, such as a
+    /// repository's HEAD. The core shows nothing of it, and an approval
+    /// covers only the same state, so a tool that finds another state when
+    /// it executes refuses to act.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+}
+
+impl PathAccess {
+    /// A path that a call uses as `mode` says, without a state.
+    pub fn new(path: impl Into<PathBuf>, mode: AccessMode) -> Self {
+        Self {
+            path: path.into(),
+            mode,
+            state: None,
+        }
+    }
+
+    /// The same access, with the state that the plugin read of the place.
+    #[must_use]
+    pub fn with_state(mut self, state: impl Into<String>) -> Self {
+        self.state = Some(state.into());
+        self
+    }
 }
 
 /// A command on a remote host, as a plugin's tool prepares it. The core adds
@@ -162,12 +281,34 @@ pub enum ToolEffect {
     /// access, the owner is never asked, and its calls are not journaled.
     #[default]
     ReadsOwnData,
+    /// It reads the owner's files. Its preparation returns 1 to 16 path
+    /// accesses that only read, which the policy decides as it decides the
+    /// reads of `read_file`; its calls are not journaled, and the explore
+    /// agent may be offered it (ADR-0038, decision 3).
+    ReadsFiles,
     /// It acts outside Mannie, such as on a remote host. Its preparation
     /// returns at least one access, the policy decides on them, and each call
     /// is an operation whose executing status is journaled before it starts
     /// (ADR-0013). The core never offers such a tool to the explore agent,
     /// which only reads.
     SideEffects,
+}
+
+/// Where a plugin's tool is offered, which the core decides for each model
+/// call from the conversation, without running the plugin's code (ADR-0038,
+/// decision 2).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolOffering {
+    /// In every conversation.
+    #[default]
+    Always,
+    /// Only in a conversation with a workspace, a project's folder.
+    InWorkspace,
+    /// Only where the workspace, or a folder above it, holds an entry of
+    /// this name, such as `.git` for a repository. The name is one entry,
+    /// without a separator.
+    WhereWorkspaceHolds(String),
 }
 
 /// The agents whose runs are offered a plugin's tool, when their profiles
@@ -200,12 +341,15 @@ pub struct PluginTool {
     pub spec: ToolSpec,
     /// What the tool does beyond reading its plugin's own data.
     pub effect: ToolEffect,
+    /// Where the tool is offered.
+    pub offering: ToolOffering,
 }
 
 impl PluginTool {
     /// A tool for the agents that `offered_to` names, which reads only its
-    /// plugin's own data. Reads the tool's spec once, so the model is told
-    /// the same of the tool while the plugin is on.
+    /// plugin's own data and is offered in every conversation. Reads the
+    /// tool's spec once, so the model is told the same of the tool while the
+    /// plugin is on.
     pub fn new(tool: Arc<dyn Tool>, offered_to: AgentSelector) -> Self {
         let spec = tool.spec();
         Self {
@@ -213,6 +357,7 @@ impl PluginTool {
             offered_to,
             spec,
             effect: ToolEffect::ReadsOwnData,
+            offering: ToolOffering::Always,
         }
     }
 
@@ -221,6 +366,21 @@ impl PluginTool {
     #[must_use]
     pub fn with_side_effects(mut self) -> Self {
         self.effect = ToolEffect::SideEffects;
+        self
+    }
+
+    /// The same tool, reading the owner's files: its calls return their
+    /// reads, which the policy decides (ADR-0038).
+    #[must_use]
+    pub fn with_file_reads(mut self) -> Self {
+        self.effect = ToolEffect::ReadsFiles;
+        self
+    }
+
+    /// The same tool, offered only where `offering` says.
+    #[must_use]
+    pub fn offered_where(mut self, offering: ToolOffering) -> Self {
+        self.offering = offering;
         self
     }
 }
@@ -236,16 +396,30 @@ pub struct ToolCall {
     pub arguments: String,
     /// The conversation of the agent that made the call.
     pub conversation_id: ConversationId,
+    /// The conversation's workspace, the canonical folder of its project, or
+    /// none for a general conversation (ADR-0038, decision 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<PathBuf>,
 }
 
 impl ToolCall {
-    /// A call with its arguments. Only the core builds one.
+    /// A call with its arguments, without a workspace. Only the core builds
+    /// one.
     #[cfg(feature = "host")]
     pub fn new(arguments: String, conversation_id: ConversationId) -> Self {
         Self {
             arguments,
             conversation_id,
+            workspace: None,
         }
+    }
+
+    /// The same call, in the conversation's workspace.
+    #[cfg(feature = "host")]
+    #[must_use]
+    pub fn with_workspace(mut self, workspace: Option<PathBuf>) -> Self {
+        self.workspace = workspace;
+        self
     }
 }
 
@@ -254,6 +428,12 @@ pub const MAX_TOOL_ARCHIVES: usize = 4;
 
 /// The most bytes of one archive of a plugin's tool.
 pub const MAX_TOOL_ARCHIVE_BYTES: usize = 2 * 1024 * 1024;
+
+/// The most bytes of a result's data for its card, as JSON text.
+pub const MAX_TOOL_DATA_BYTES: usize = 64 * 1024;
+
+/// The most characters of a result's or a refusal's failure code.
+pub const MAX_FAILURE_CODE_CHARS: usize = 64;
 
 /// The result limit of an execution that names none: the core's largest.
 const DEFAULT_RESULT_LIMIT: u32 = 64 * 1024;
@@ -288,11 +468,15 @@ pub struct ToolExecution {
     /// the model reads it with `read_tool_output`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub archive_ids: Vec<ArchiveId>,
+    /// The conversation's workspace, as the call's preparation had it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<PathBuf>,
 }
 
 impl ToolExecution {
     /// An execution of a call with its arguments, with nothing authorized,
-    /// the largest result limit and no archives. Only the core builds one.
+    /// the largest result limit, no archives and no workspace. Only the core
+    /// builds one.
     #[cfg(feature = "host")]
     pub fn new(arguments: String, conversation_id: ConversationId) -> Self {
         Self {
@@ -301,7 +485,16 @@ impl ToolExecution {
             authorized: Vec::new(),
             result_limit: DEFAULT_RESULT_LIMIT,
             archive_ids: Vec::new(),
+            workspace: None,
         }
+    }
+
+    /// The same execution, in the conversation's workspace.
+    #[cfg(feature = "host")]
+    #[must_use]
+    pub fn with_workspace(mut self, workspace: Option<PathBuf>) -> Self {
+        self.workspace = workspace;
+        self
     }
 
     /// The same execution, with the accesses that were authorized.
@@ -337,6 +530,12 @@ impl ToolExecution {
 pub struct ToolRefusal {
     /// What is wrong with the arguments, for the model.
     pub detail: String,
+    /// The plugin's code of the refusal, such as `not_a_repository`, which
+    /// the call's card words (ADR-0039). A refusal with a code ends the call
+    /// as completed with that failure, and one without stays a call that did
+    /// not run for its arguments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
 }
 
 impl ToolRefusal {
@@ -344,7 +543,16 @@ impl ToolRefusal {
     pub fn new(detail: impl Into<String>) -> Self {
         Self {
             detail: detail.into(),
+            code: None,
         }
+    }
+
+    /// The same refusal, with the plugin's code for the call's card: 1 to 64
+    /// lower-case letters and underscores.
+    #[must_use]
+    pub fn with_code(mut self, code: impl Into<String>) -> Self {
+        self.code = Some(code.into());
+        self
     }
 }
 
@@ -361,6 +569,16 @@ pub struct ToolResult {
     /// with the call, and the model reads them with `read_tool_output`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub archives: Vec<ToolArchive>,
+    /// The data of the call's card, a JSON object of at most
+    /// [`MAX_TOOL_DATA_BYTES`] as text, which the plugin's card reads and the
+    /// model never does (ADR-0039). Data that breaks these rules is dropped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
+    /// The plugin's code of how the call failed, such as `merge_conflicts`,
+    /// which the call's card words: 1 to 64 lower-case letters and
+    /// underscores.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
 }
 
 impl ToolResult {
@@ -369,6 +587,8 @@ impl ToolResult {
         Self {
             output: output.into(),
             archives: Vec::new(),
+            data: None,
+            failure: None,
         }
     }
 
@@ -376,6 +596,20 @@ impl ToolResult {
     #[must_use]
     pub fn with_archives(mut self, archives: Vec<ToolArchive>) -> Self {
         self.archives = archives;
+        self
+    }
+
+    /// The same result, with the data of the call's card.
+    #[must_use]
+    pub fn with_data(mut self, data: serde_json::Value) -> Self {
+        self.data = Some(data);
+        self
+    }
+
+    /// The same result, failed with the plugin's code.
+    #[must_use]
+    pub fn with_failure(mut self, code: impl Into<String>) -> Self {
+        self.failure = Some(code.into());
         self
     }
 }

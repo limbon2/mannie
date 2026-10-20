@@ -91,6 +91,7 @@ fn seeded_call(call_id: String) -> ToolCallDocument {
             exists: true,
             identity: "2049:131074".to_owned(),
             entries: None,
+            state: None,
         }],
         decision: Some(Decision::Workspace),
         decided_at: Some(at),

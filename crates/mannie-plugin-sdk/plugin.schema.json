@@ -37,6 +37,34 @@
       },
       "type": "object"
     },
+    "ProcessSection": {
+      "additionalProperties": false,
+      "description": "A `[processes.<name>]` table of a manifest: an installed program that the\nplugin runs through the service `processes`, which the core finds by the\ntable's name on Mannie's `PATH`, such as `git` (ADR-0038, decision 7). The\nprovider of the service runs these programs and no other, and the Plugins\npage shows their names.",
+      "properties": {
+        "fixed": {
+          "default": [],
+          "description": "The arguments that every run passes before the plugin's own, such as\nsettings that keep a repository's configuration from starting\nprograms.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "inherit": {
+          "default": [],
+          "description": "The names of the variables that a run receives when Mannie's\nenvironment has them, besides the environment of commands, such as\n`SSH_AUTH_SOCK`. A name that looks like a secret's or loads libraries\nis refused.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "description": "Why the plugin runs the program, which the review of the manifest\nand `task plugins:grants` read.",
+          "type": "string"
+        }
+      },
+      "required": ["reason"],
+      "type": "object"
+    },
     "ProgramSection": {
       "additionalProperties": false,
       "description": "A `[[programs]]` table of a manifest: a program of the plugin's workspace\nthat ships beside the desktop app, such as Workers' worker service. The\nbuild, the end-to-end tests, CI and the release iterate over these\n(ADR-0035, decision 10). The host only shows the package on the Plugins\npage.",
@@ -183,6 +211,13 @@
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
+    },
+    "processes": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ProcessSection"
+      },
+      "description": "The installed programs that the plugin runs through the service\n`processes`, as `[processes.<name>]` tables, such as `[processes.git]`\n(ADR-0038, decision 7).",
+      "type": "object"
     },
     "programs": {
       "description": "The programs that ship beside the desktop app, built from the\nplugin's workspace, as `[[programs]]` tables.",

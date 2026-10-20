@@ -255,6 +255,12 @@ const TOOLS: StoreModule = StoreModule {
             description: "create the rules for commands on remote hosts",
             sql: include_str!("tools/migrations/0030_create_remote_rules.sql"),
         },
+        Migration {
+            version: 5,
+            legacy_version: None,
+            description: "create the rules for runs of installed programs",
+            sql: include_str!("tools/migrations/0031_create_program_rules.sql"),
+        },
     ]),
     confined: false,
 };

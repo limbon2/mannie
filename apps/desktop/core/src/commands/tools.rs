@@ -7,9 +7,9 @@ use mannie_runtime::Runtime;
 use mannie_types::chat::ConversationRef;
 use mannie_types::ipc::CommandError;
 use mannie_types::tools::{
-    CommandRule, ConversationGrant, DecideApproval, GrantRef, ReadToolOutput, RemoteCommandRule,
-    RemoteRuleRef, RuleRef, SetFullAccess, SharedGrant, SharedGrantRef, ToolOutputPage, ToolsError,
-    ToolsSettings, UpdateToolsSettings,
+    CommandRule, ConversationGrant, DecideApproval, GrantRef, ProgramRule, ProgramRuleRef,
+    ReadToolOutput, RemoteCommandRule, RemoteRuleRef, RuleRef, SetFullAccess, SharedGrant,
+    SharedGrantRef, ToolOutputPage, ToolsError, ToolsSettings, UpdateToolsSettings,
 };
 use tauri::State;
 
@@ -142,6 +142,34 @@ pub(crate) async fn delete_remote_command_rule(
         .delete_remote_command_rule(input)
         .await
         .map_err(refused("delete_remote_command_rule"))
+}
+
+/// The rules for runs of installed programs, each limited to its plugin's
+/// program and to the effects of the run that it was saved from (ADR-0038).
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn list_program_rules(
+    core: State<'_, Core>,
+) -> Result<Vec<ProgramRule>, CommandError<ToolsError>> {
+    runtime(&core)
+        .map_err(refused("list_program_rules"))?
+        .program_rules()
+        .await
+        .map_err(refused("list_program_rules"))
+}
+
+/// Deletes a rule for runs of an installed program.
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn delete_program_rule(
+    core: State<'_, Core>,
+    input: ProgramRuleRef,
+) -> Result<(), CommandError<ToolsError>> {
+    runtime(&core)
+        .map_err(refused("delete_program_rule"))?
+        .delete_program_rule(input)
+        .await
+        .map_err(refused("delete_program_rule"))
 }
 
 /// The grants of a conversation.

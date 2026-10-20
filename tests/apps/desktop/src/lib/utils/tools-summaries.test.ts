@@ -239,6 +239,22 @@ describe('callStatus', () => {
     expect(callStatus(failed, 0).label).not.toBe(callStatus(done, 0).label);
   });
 
+  it('marks a plugin’s call that failed with its own code as failed', () => {
+    const pluginCall = (failure: string | null): ToolCallView =>
+      call(
+        'git_merge',
+        {},
+        {
+          plugin: 'git',
+          result: result({ data: null, failure, kind: 'plugin', plugin: 'git' }),
+          status: 'completed',
+        },
+      );
+
+    expect(callStatus(pluginCall('merge_conflicts'), 0).tone).toBe('failed');
+    expect(callStatus(pluginCall(null), 0).tone).toBe('done');
+  });
+
   it('says how long a command has run, in whole seconds', () => {
     const running = call('run_command', { command: 'sleep 30' }, { startedAt: 1_000, status: 'executing' });
     const reading = call('read_file', { path: 'a' }, { startedAt: 1_000, status: 'running' });

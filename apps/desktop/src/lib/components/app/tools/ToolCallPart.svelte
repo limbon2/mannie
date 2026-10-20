@@ -8,9 +8,11 @@
   import type { ToolCallView } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
   import { secondClock } from '#lib/state/second-clock.js';
+  import { getShellSlots } from '#lib/state/shell-slots.svelte.js';
   import { toolsActions } from '#lib/state/tools-actions.svelte.js';
   import type { PartRendererProps } from '#lib/types/shell-slots.js';
   import { failedForPluginOff } from '#lib/utils/plugins-messages.js';
+  import { callToolKind, pluginFailure, pluginFailureMessage, toolKindCall } from '#lib/utils/tool-kinds.js';
   import {
     notRunMessage,
     toolFailureMessage,
@@ -29,23 +31,36 @@
   // a request for the owner waits below it with what the core prepared. The
   // core replaces the whole call with every change, so the row shows its
   // latest state. A status region announces a request without taking the
-  // focus.
+  // focus. A call of a plugin's tool takes its icon, its line, the sentence
+  // of its failure and its details from the tool kind that its plugin
+  // registered, if one did (ADR-0039).
   let { conversationId, part }: PartRendererProps = $props();
+
+  const slots = getShellSlots();
 
   let open = $state(false);
 
   const call: ToolCallView | null = $derived(part.content.kind === 'tool_call' ? part.content.call : null);
+  const kind = $derived(
+    call === null ? undefined : callToolKind(call, (tool, plugin) => slots.toolKinds.findOf(tool, plugin)),
+  );
   const runsCommand = $derived(
     call?.tool === RUN_COMMAND && (call.status === 'executing' || call.status === 'running'),
   );
   // Only a running command reads the clock, so other rows start no timer.
   const now = $derived(runsCommand ? secondClock.now : 0);
-  const summary = $derived(call === null ? '' : callSummary(call));
+  const summary = $derived(call === null ? '' : lineOf(call));
   const activity = $derived(call?.activity ?? null);
-  const Icon = $derived(toolIcon(call?.tool ?? ''));
+  const Icon = $derived(kind?.icon ?? toolIcon(call?.tool ?? ''));
   const request = $derived(call?.status === 'awaiting_approval' ? call.request : null);
   const decisionFailure = $derived(toolsActions.decisionFailures[part.id] ?? null);
   const explanation = $derived(call === null ? null : explain(call));
+
+  /** The call's line: its tool kind's, or the one that Mannie builds. */
+  function lineOf(current: ToolCallView): string {
+    const kindLine = kind === undefined ? null : kind.summary(toolKindCall(current));
+    return kindLine ?? callSummary(current);
+  }
 
   /** What the owner should know about how the call ended, beyond its status. */
   function explain(current: ToolCallView): string | null {
@@ -55,7 +70,11 @@
       }
       case 'completed': {
         const outcome = current.result?.outcome;
-        return outcome?.kind === 'failed' ? toolFailureMessage(outcome.failure) : null;
+        if (outcome?.kind === 'failed') {
+          return toolFailureMessage(outcome.failure);
+        }
+        const code = pluginFailure(current);
+        return code === null ? null : pluginFailureMessage(kind, code);
       }
       case 'denied': {
         return m.tools_denied_description();
@@ -124,7 +143,7 @@
         {#if explanation !== null}
           <p class={['text-sm', status.tone === 'failed' && 'text-destructive']}>{explanation}</p>
         {/if}
-        <ToolCallDetails {call} {conversationId} />
+        <ToolCallDetails {call} {conversationId} {kind} />
       </Collapsible.Content>
     </Collapsible.Root>
     {#if decisionFailure !== null}

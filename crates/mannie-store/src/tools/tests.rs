@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use mannie_types::clock::{Clock, ManualClock, UtcMillis};
 use mannie_types::ids::{ConversationId, GrantId, ProjectId, RuleId};
-use mannie_types::tools::{AccessMode, GrantScope, RemoteTarget};
+use mannie_types::tools::{AccessMode, GrantScope, ProgramEffectKey, ProgramTarget, RemoteTarget};
 
 use super::ToolsStoreError;
 use crate::{Change, Durability, NewConversation, Store, StoreOptions};
@@ -233,6 +233,79 @@ async fn a_remote_rule_is_saved_once_for_its_host_and_endpoint_and_apart_from_lo
     assert_eq!(
         fixture.store.remote_rules().await.unwrap(),
         vec![other_endpoint]
+    );
+}
+
+fn git_with(effects: Vec<ProgramEffectKey>) -> ProgramTarget {
+    ProgramTarget {
+        plugin: "git".to_owned(),
+        name: "git".to_owned(),
+        program: "/usr/bin/git".to_owned(),
+        effects,
+    }
+}
+
+fn hook(name: &str) -> ProgramEffectKey {
+    ProgramEffectKey::RunsFolderCode {
+        name: name.to_owned(),
+        source: format!(".git/hooks/{name}"),
+    }
+}
+
+#[tokio::test]
+async fn a_program_rule_is_saved_once_for_its_program_effects_and_folder_and_apart_from_other_rules()
+ {
+    let fixture = Fixture::new();
+    let words = vec!["git".to_owned(), "commit".to_owned()];
+    let hooks = vec![hook("pre-commit"), hook("commit-msg")];
+    let mut sorted = hooks.clone();
+    sorted.sort();
+
+    let saved = fixture
+        .store
+        .add_program_rule(&rule_id(1), git_with(hooks.clone()), words.clone(), None)
+        .await
+        .unwrap();
+    // The same effects in another order make the same rule.
+    let reversed = hooks.iter().rev().cloned().collect();
+    let again = fixture
+        .store
+        .add_program_rule(&rule_id(2), git_with(reversed), words.clone(), None)
+        .await
+        .unwrap();
+    let in_folder = fixture
+        .store
+        .add_program_rule(
+            &rule_id(3),
+            git_with(hooks.clone()),
+            words.clone(),
+            Some("/work".to_owned()),
+        )
+        .await
+        .unwrap();
+    let other_effects = fixture
+        .store
+        .add_program_rule(&rule_id(4), git_with(Vec::new()), words.clone(), None)
+        .await
+        .unwrap();
+
+    assert_eq!(again, saved);
+    assert_eq!(saved.target, git_with(sorted));
+    assert_eq!(saved.words, words);
+    assert_eq!(in_folder.folder.as_deref(), Some("/work"));
+    assert_ne!(in_folder.id, saved.id);
+    assert_ne!(other_effects.id, saved.id);
+    assert_eq!(
+        fixture.store.program_rules().await.unwrap(),
+        vec![saved.clone(), in_folder.clone(), other_effects.clone()]
+    );
+    assert_eq!(fixture.store.rules().await.unwrap(), Vec::new());
+    assert_eq!(fixture.store.remote_rules().await.unwrap(), Vec::new());
+    assert!(fixture.store.delete_program_rule(&saved.id).await.unwrap());
+    assert!(!fixture.store.delete_program_rule(&saved.id).await.unwrap());
+    assert_eq!(
+        fixture.store.program_rules().await.unwrap(),
+        vec![in_folder, other_effects]
     );
 }
 

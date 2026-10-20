@@ -1,0 +1,53 @@
+{
+  "names": {
+    "accepted": [
+      "git",
+      "git-lfs",
+      "python3.12",
+      "clang_format",
+      "7z",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ],
+    "refused": [
+      "",
+      "../git",
+      "git.",
+      ".git",
+      "-git",
+      "_git",
+      "git lfs",
+      "git/x",
+      "git\\x",
+      "git:x",
+      "gît",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ]
+  },
+  "inherited": {
+    "accepted": [
+      "HOME",
+      "GIT_ASKPASS",
+      "SSH_AUTH_SOCK",
+      "XDG_CONFIG_HOME",
+      "ProgramFiles(x86)",
+      "_PRIVATE_DIR",
+      "KEYBOARD_LAYOUT",
+      "LDAP_HOST",
+      "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV"
+    ],
+    "refused": [
+      "",
+      "1PATH",
+      "A-B",
+      "PATH VAR",
+      "GITHUB_TOKEN",
+      "db_password",
+      "AWS_SECRET_ACCESS_KEY",
+      "GIT_CREDENTIALS",
+      "LD_PRELOAD",
+      "ld_library_path",
+      "DYLD_INSERT_LIBRARIES",
+      "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV"
+    ]
+  }
+}

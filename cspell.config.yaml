@@ -21,6 +21,7 @@ words:
   - Authenticode
   - AUTOINCREMENT
   - autolinks
+  - autosquash
   - bsdtar
   - bufbuild
   - checksummed
@@ -34,6 +35,7 @@ words:
   - DMABUF
   - doctests
   - dumpable
+  - DYLD
   - edgedriver
   - EFAULT
   - egui
@@ -44,6 +46,7 @@ words:
   - fastrand
   - flate
   - fpid
+  - fsmonitor
   - globset
   - HMAC
   - htpasswd
@@ -59,6 +62,7 @@ words:
   - libc
   - libdbus
   - libexec
+  - libgit
   - libqca
   - libssh
   - librsvg
@@ -86,8 +90,10 @@ words:
   - PaneForge
   - Paraglide
   - PATHEXT
+  - pathspecs
   - pgpass
   - pidfds
+  - pinentry
   - prerender
   - prerendered
   - prerendering
@@ -98,8 +104,11 @@ words:
   - protox
   - pypirc
   - QUIC
+  - receivepack
   - redb
   - redirections
+  - reflog
+  - reftable
   - remarkrc
   - reparented
   - reqwest
@@ -124,6 +133,7 @@ words:
   - subr
   - subreaper
   - Taskfile
+  - textconv
   - Tauri
   - Tauri's
   - taurignore
@@ -133,6 +143,7 @@ words:
   - Unpair
   - unpairing
   - unpairs
+  - uploadpack
   - USERDOMAIN
   - USERPROFILE
   - WCAG
@@ -141,5 +152,6 @@ words:
   - winget
   - worktrees
   - zbus
+  - zdiff
   - zenity
   - zeroize

@@ -80,6 +80,22 @@ describe('Slot', () => {
     expect(slot.pluginOff('missing')).toBeNull();
   });
 
+  it('finds an entry for one plugin only when that plugin registered it and is on', () => {
+    const plugins = pluginsOn('git');
+    const slot = new Slot<Entry>('tool kinds', plugins.isOn);
+    slot.register({ id: 'git_status', order: 0 }, 'git');
+    slot.register({ id: 'read_file', order: 1 });
+
+    expect(slot.findOf('git_status', 'git')).toEqual({ id: 'git_status', order: 0 });
+    // Another plugin's call of a tool of the same name, and the core's entries,
+    // are never described by it.
+    expect(slot.findOf('git_status', 'shell')).toBeUndefined();
+    expect(slot.findOf('read_file', 'git')).toBeUndefined();
+    expect(slot.findOf('missing', 'git')).toBeUndefined();
+    plugins.on.delete('git');
+    expect(slot.findOf('git_status', 'git')).toBeUndefined();
+  });
+
   it('refuses an ID that an entry of a plugin that is off has', () => {
     const slot = new Slot<Entry>('commands', pluginsOn().isOn);
     slot.register({ id: 'workers.pair', order: 0 }, 'workers');

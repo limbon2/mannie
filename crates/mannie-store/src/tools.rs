@@ -1,14 +1,16 @@
 //! The system tools repository: the grants of conversations, the grants for
-//! a project or for every conversation, the command rules and the rules for
-//! commands on remote hosts (docs/features/system-tools/
-//! operations-and-approvals.md; ADR-0036). The journal of operations lives in
-//! the tool call parts of the runtime's tables, so the runtime stores each
-//! change of an operation together with its event.
+//! a project or for every conversation, the command rules, the rules for
+//! commands on remote hosts and the rules for runs of installed programs
+//! (docs/features/system-tools/operations-and-approvals.md; ADR-0036;
+//! ADR-0038). The journal of operations lives in the tool call parts of the
+//! runtime's tables, so the runtime stores each change of an operation
+//! together with its event.
 
 use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{ConversationId, GrantId, ProjectId, RuleId};
 use mannie_types::tools::{
-    CommandRule, ConversationGrant, GrantScope, RemoteCommandRule, RemoteTarget, SharedGrant,
+    CommandRule, ConversationGrant, GrantScope, ProgramEffectKey, ProgramRule, ProgramTarget,
+    RemoteCommandRule, RemoteTarget, SharedGrant,
 };
 use rusqlite::{OptionalExtension, params};
 
@@ -49,6 +51,16 @@ const INSERT_REMOTE_RULE: &str = "INSERT INTO tools_remote_rules \
      (id, plugin, target, endpoint, label, version, words, created_at) \
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)";
 const DELETE_REMOTE_RULE: &str = "DELETE FROM tools_remote_rules WHERE id = ?1";
+const SELECT_PROGRAM_RULES: &str = "SELECT id, plugin, name, program, version, words, effects, \
+     folder, created_at FROM tools_program_rules ORDER BY created_at, id";
+const SELECT_PROGRAM_RULE: &str = "SELECT id, plugin, name, program, version, words, effects, \
+     folder, created_at FROM tools_program_rules \
+     WHERE plugin = ?1 AND name = ?2 AND program = ?3 AND words = ?4 AND effects = ?5 \
+     AND COALESCE(folder, '') = COALESCE(?6, '')";
+const INSERT_PROGRAM_RULE: &str = "INSERT INTO tools_program_rules \
+     (id, plugin, name, program, version, words, effects, folder, created_at) \
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)";
+const DELETE_PROGRAM_RULE: &str = "DELETE FROM tools_program_rules WHERE id = ?1";
 
 /// Every statement of this module.
 #[cfg(test)]
@@ -69,6 +81,10 @@ pub(crate) const STATEMENTS: &[&str] = &[
     SELECT_REMOTE_RULE,
     INSERT_REMOTE_RULE,
     DELETE_REMOTE_RULE,
+    SELECT_PROGRAM_RULES,
+    SELECT_PROGRAM_RULE,
+    INSERT_PROGRAM_RULE,
+    DELETE_PROGRAM_RULE,
 ];
 
 /// Why grants or rules could not be read or saved.
@@ -260,6 +276,57 @@ impl RawRemoteRule {
                 endpoint: self.endpoint,
             },
             words,
+            created_at: UtcMillis::from_millis(self.created_at),
+        })
+    }
+}
+
+struct RawProgramRule {
+    id: String,
+    plugin: String,
+    name: String,
+    program: String,
+    version: i64,
+    words: String,
+    effects: String,
+    folder: Option<String>,
+    created_at: i64,
+}
+
+fn program_rule_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawProgramRule> {
+    Ok(RawProgramRule {
+        id: row.get(0)?,
+        plugin: row.get(1)?,
+        name: row.get(2)?,
+        program: row.get(3)?,
+        version: row.get(4)?,
+        words: row.get(5)?,
+        effects: row.get(6)?,
+        folder: row.get(7)?,
+        created_at: row.get(8)?,
+    })
+}
+
+impl RawProgramRule {
+    fn into_rule(self) -> Result<ProgramRule, ToolsStoreError> {
+        check_version(self.version, "a program rule")?;
+        let invalid = |error: serde_json::Error| {
+            ToolsStoreError::invalid(format!("program rule {}: {error}", self.id))
+        };
+        let words: Vec<String> = serde_json::from_str(&self.words).map_err(invalid)?;
+        let effects: Vec<ProgramEffectKey> =
+            serde_json::from_str(&self.effects).map_err(invalid)?;
+        Ok(ProgramRule {
+            id: RuleId::parse(&self.id)
+                .map_err(|error| ToolsStoreError::invalid(error.to_string()))?,
+            target: ProgramTarget {
+                plugin: self.plugin,
+                name: self.name,
+                program: self.program,
+                effects,
+            },
+            words,
+            folder: self.folder,
             created_at: UtcMillis::from_millis(self.created_at),
         })
     }
@@ -596,6 +663,97 @@ impl Store {
             .write(Durability::Full, move |transaction| {
                 transaction
                     .prepare_cached(DELETE_REMOTE_RULE)?
+                    .execute([rule])
+            })
+            .await?;
+        Ok(deleted > 0)
+    }
+
+    /// Every rule for runs of installed programs, the oldest first.
+    pub async fn program_rules(&self) -> Result<Vec<ProgramRule>, ToolsStoreError> {
+        let raw: Vec<RawProgramRule> = self
+            .read(|connection| {
+                let mut select = connection.prepare_cached(SELECT_PROGRAM_RULES)?;
+                let rows = select.query_map([], program_rule_from_row)?;
+                rows.collect()
+            })
+            .await?;
+        raw.into_iter().map(RawProgramRule::into_rule).collect()
+    }
+
+    /// Saves a rule for runs of one plugin's installed program with full
+    /// durability. When the same rule exists, returns it instead. The keys of
+    /// the effects are stored sorted, so the same effects make the same rule.
+    pub async fn add_program_rule(
+        &self,
+        id: &RuleId,
+        target: ProgramTarget,
+        words: Vec<String>,
+        folder: Option<String>,
+    ) -> Result<ProgramRule, ToolsStoreError> {
+        let id = id.as_str().to_owned();
+        let words = to_json(&words)?;
+        let mut keys = target.effects;
+        keys.sort();
+        keys.dedup();
+        let effects = to_json(&keys)?;
+        let ProgramTarget {
+            plugin,
+            name,
+            program,
+            ..
+        } = target;
+        let now = self.clock().now().as_millis();
+        let raw = self
+            .transact(Durability::Full, move |transaction| {
+                let existing = transaction
+                    .prepare_cached(SELECT_PROGRAM_RULE)?
+                    .query_row(
+                        params![plugin, name, program, words, effects, folder],
+                        program_rule_from_row,
+                    )
+                    .optional()?;
+                if let Some(existing) = existing {
+                    return Ok(existing);
+                }
+                transaction
+                    .prepare_cached(INSERT_PROGRAM_RULE)?
+                    .execute(params![
+                        id,
+                        plugin,
+                        name,
+                        program,
+                        DOCUMENT_VERSION,
+                        words,
+                        effects,
+                        folder,
+                        now
+                    ])?;
+                Ok(RawProgramRule {
+                    id,
+                    plugin,
+                    name,
+                    program,
+                    version: i64::from(DOCUMENT_VERSION),
+                    words,
+                    effects,
+                    folder,
+                    created_at: now,
+                })
+            })
+            .await
+            .map_err(|error: TransactError<ToolsStoreError>| ToolsStoreError::from(error))?;
+        raw.into_rule()
+    }
+
+    /// Deletes a rule for runs of an installed program. Returns whether it
+    /// existed.
+    pub async fn delete_program_rule(&self, rule_id: &RuleId) -> Result<bool, ToolsStoreError> {
+        let rule = rule_id.as_str().to_owned();
+        let deleted = self
+            .write(Durability::Full, move |transaction| {
+                transaction
+                    .prepare_cached(DELETE_PROGRAM_RULE)?
                     .execute([rule])
             })
             .await?;

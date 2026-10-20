@@ -35,7 +35,10 @@ pub(crate) fn unchanged(
 ) -> Result<(), ToolFailure> {
     match fresh {
         Ok(fresh) if fresh == authorized => Ok(()),
-        Ok(_) => Err(ToolFailure::PathChanged),
+        // Only plugins' tools end a call in their preparation, so a change of
+        // the core's that meets one has changed underneath, as one whose
+        // accesses differ has.
+        Ok(_) | Err(PrepareError::Ended(_)) => Err(ToolFailure::PathChanged),
         Err(PrepareError::Failed(failure)) => Err(failure),
         Err(PrepareError::InvalidArguments { detail }) => {
             Err(ToolFailure::IoError { kind: detail })
@@ -47,9 +50,10 @@ pub(crate) fn unchanged(
 pub(crate) fn path_of(access: &Access) -> Result<(PathBuf, &str), ToolFailure> {
     match access {
         Access::Path { path, identity, .. } => Ok((PathBuf::from(path), identity.as_str())),
-        Access::Command { .. } | Access::Project { .. } | Access::RemoteCommand { .. } => {
-            Err(ToolFailure::PathChanged)
-        }
+        Access::Command { .. }
+        | Access::Project { .. }
+        | Access::RemoteCommand { .. }
+        | Access::Program { .. } => Err(ToolFailure::PathChanged),
     }
 }
 
@@ -159,6 +163,7 @@ pub(crate) fn create_access(path: &Path, folder: bool) -> Result<Access, ToolFai
         exists: false,
         identity: identity(path)?,
         entries: None,
+        state: None,
     })
 }
 

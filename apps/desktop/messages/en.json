@@ -690,6 +690,7 @@
   "tools_refusal_read_only_host": "The computer that runs this task only reads and searches, so it refused this.",
   "tools_refusal_no_projects_on_host": "The computer that runs this task has no projects to move a conversation into.",
   "tools_refusal_no_remote_commands": "The computer that runs this task runs no commands on other computers.",
+  "tools_refusal_no_programs_on_host": "The computer that runs this task runs no plugin's programs.",
   "tools_details_accesses": "What it touches",
   "tools_details_arguments": "Arguments",
   "tools_details_arguments_cut": "The arguments are longer than shown here.",
@@ -703,6 +704,60 @@
   "tools_access_remote_host": "Host",
   "tools_access_remote_endpoint": "Address",
   "tools_access_remote_identity": "Host key",
+  "tools_access_program_run": "Run of an installed program",
+  "tools_access_program": "Program",
+  "tools_access_program_fixed": "Set by the plugin",
+  "tools_access_program_effects": "Beyond the workspace",
+  "tools_effect_network": "Connects to {endpoint}",
+  "tools_effect_runs_folder_code": "Runs {name} from {source}",
+  "tools_effect_discards_uncommitted_changes": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Discards 1 uncommitted change",
+        "countPlural=other": "Discards {count: number} uncommitted changes"
+      }
+    }
+  ],
+  "tools_effect_discards_stash_entries": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Discards 1 stash entry",
+        "countPlural=other": "Discards {count: number} stash entries"
+      }
+    }
+  ],
+  "tools_effect_discards_commits": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Discards 1 commit that no other branch holds",
+        "countPlural=other": "Discards {count: number} commits that no other branch holds"
+      }
+    }
+  ],
+  "tools_effect_rewrites_published": [
+    {
+      "declarations": ["input count", "input places", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Rewrites 1 commit that is already on {places}",
+        "countPlural=other": "Rewrites {count: number} commits that are already on {places}"
+      }
+    }
+  ],
+  "tools_effect_snapshot": "A snapshot is kept first, so you can take the work back.",
+  "tools_effect_more": "and {count: number} more",
+  "tools_effect_key_network": "connects to {endpoint}",
+  "tools_effect_key_runs_folder_code": "runs {name} from {source}",
+  "tools_effect_key_discards_uncommitted_changes": "discards uncommitted changes",
+  "tools_effect_key_discards_stash_entries": "discards stash entries",
+  "tools_effect_key_discards_commits": "discards commits that no other branch holds",
+  "tools_effect_key_rewrites_published": "rewrites commits that are already on a remote branch",
   "tools_count_files": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],
@@ -761,12 +816,16 @@
   "tools_reason_outside_allowed_folders": "It reaches outside the allowed folders of the computer that runs the task.",
   "tools_reason_host_asks": "The settings of the computer that runs the task ask before this change or command.",
   "tools_reason_remote_command": "It runs a command on another computer, and no rule or permission covers it.",
+  "tools_reason_program": "It runs an installed program that does something beyond the workspace, and no rule or permission covers it.",
+  "tools_plugin_failed": "The tool reported the failure {code}.",
   "tools_grant_read": "Reading in {folder}",
   "tools_grant_write": "Changing files in {folder}",
   "tools_grant_create": "Creating files and folders in {folder}",
   "tools_grant_delete": "Deleting in {folder}",
   "tools_grant_command": "The command {command} in {folder}",
   "tools_grant_remote_command": "The command {command} on {host} ({endpoint})",
+  "tools_grant_program": "The run {run} in {folder}",
+  "tools_grant_program_effects": "The run {run} in {folder}, also when it {effects}",
   "tools_allow_once": "Allow once",
   "tools_allow_for": "Allow for…",
   "tools_allow_for_conversation": "This conversation",
@@ -780,6 +839,10 @@
   "tools_rule_limit_folder": "Only in this folder and the folders inside it",
   "tools_rule_remote_description": "Commands that start with the words you choose then run without asking on this host, in every conversation. Commands with shell operators always ask.",
   "tools_rule_limit_host": "Only on {host}",
+  "tools_rule_program_description": "In every conversation, runs of {program} that start with the words you choose no longer ask for the run. What a call changes in the workspace still follows the setting for changes.",
+  "tools_rule_program_effects": "Also when a run {effects}. A run that does more beyond the workspace asks.",
+  "tools_rule_program_no_effects": "A run that does anything beyond the workspace asks.",
+  "tools_rule_limit_program": "Only for {program} as {plugin} runs it",
   "tools_rule_save": "Save rule and allow",
   "tools_output_title": "Full output",
   "tools_output_title_stdout": "Full output",
@@ -837,6 +900,8 @@
   "tools_settings_rule_anywhere": "In any folder",
   "tools_settings_rule_in_folder": "In {folder} and the folders inside it",
   "tools_settings_rule_on_host": "On {host} ({endpoint})",
+  "tools_settings_rule_program": "Runs of {program} by {plugin}",
+  "tools_settings_rule_program_effects": "Also when a run {effects}",
   "tools_settings_rule_delete": "Delete",
   "tools_settings_rule_delete_label": "Delete the rule {words}",
   "tools_settings_environment_label": "Extra environment variables for commands",
@@ -996,6 +1061,7 @@
   "plugins_use_commands": "Commands that its window may call",
   "plugins_use_channels": "Channels that its window may follow",
   "plugins_use_programs": "Programs that ship with it",
+  "plugins_use_installed_programs": "Installed programs that it runs",
   "plugins_use_crates": "Libraries that only it may use",
   "plugins_use_native": "System access outside Mannie's services",
   "plugins_use_nothing": "Nothing beyond its own parts.",
@@ -1005,6 +1071,7 @@
   "plugins_use_service_credentials": "Provider credentials, lent to its own tasks",
   "plugins_use_service_executor_host": "The tasks that conversations give it",
   "plugins_use_service_file_dialog": "The system's file dialog",
+  "plugins_use_service_processes": "Installed programs that its manifest names, under your approvals",
   "plugins_use_service_other": "The service {name}",
   "plugins_use_native_file_writes": "Writes files itself",
   "plugins_use_native_processes": "Starts and ends processes itself",

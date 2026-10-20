@@ -5,26 +5,32 @@
   import type { ArchiveRef, ConversationId, ToolCallView } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
   import { toolsActions } from '#lib/state/tools-actions.svelte.js';
+  import type { ToolKind } from '#lib/types/shell-slots.js';
+  import { toolKindCall } from '#lib/utils/tool-kinds.js';
   import { decisionMessage } from '#lib/utils/tools-messages.js';
 
   import ToolAccessList from './ToolAccessList.svelte';
 
   // The details of a tool call (docs/features/system-tools/tool-activity.md,
-  // tool calls in the reply): what it touches, its arguments as the model
+  // tool calls in the reply): what it touches, the details that its tool
+  // kind shows of a plugin's call (ADR-0039), its arguments as the model
   // wrote them, what allowed it, and the result the model read, with the
   // outputs that did not fit. Everything the model or the system wrote is
   // content, shown as plain text (T-3).
   interface Props {
     call: ToolCallView;
     conversationId: ConversationId;
+    /** The tool kind of a plugin's call, which its own plugin registered. */
+    kind?: ToolKind | undefined;
   }
 
-  let { call, conversationId }: Props = $props();
+  let { call, conversationId, kind }: Props = $props();
 
   const id = $props.id();
 
   const shownArguments = $derived(formatArguments(call));
   const archives = $derived(call.result?.archives ?? []);
+  const KindDetails = $derived(kind?.details ?? null);
 
   /** The arguments, indented when they are complete JSON, and nothing for a call without any. */
   function formatArguments(current: ToolCallView): string {
@@ -63,6 +69,11 @@
     <div class="flex flex-col gap-1.5">
       <p class="text-xs font-medium text-muted-foreground">{m.tools_details_accesses()}</p>
       <ToolAccessList accesses={call.accesses} />
+    </div>
+  {/if}
+  {#if KindDetails !== null}
+    <div class="flex min-w-0 flex-col gap-1.5" data-tool-kind-details="">
+      <KindDetails call={toolKindCall(call)} {conversationId} />
     </div>
   {/if}
   {#if shownArguments !== ''}

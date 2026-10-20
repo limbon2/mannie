@@ -23,7 +23,7 @@ pub(crate) mod write_file;
 use std::fs::Metadata;
 use std::sync::Arc;
 
-use mannie_types::tools::{Access, AccessMode, EntryKind, ToolFailure};
+use mannie_types::tools::{Access, AccessMode, EntryKind, PathRefusal, ToolFailure};
 
 use crate::identity::identity;
 use crate::paths::{Resolved, is_link};
@@ -69,6 +69,35 @@ pub(crate) fn path_access(
         exists: resolved.exists(),
         identity: identity(&resolved.path)?,
         entries: None,
+        state: None,
+    })
+}
+
+/// The core's access of a path that a plugin's tool returned (ADR-0038,
+/// decision 4), with the state that the plugin read of the place. The path
+/// must be absolute. The text rules refuse it before any access to the file
+/// system (T-17), and links are followed to the canonical place for every
+/// mode, because the plugin's program, not the core, does the writing.
+pub fn plugin_path_access(
+    path: &str,
+    mode: AccessMode,
+    state: Option<String>,
+) -> Result<Access, ToolFailure> {
+    crate::paths::check_text(path).map_err(|reason| ToolFailure::PathRefused { reason })?;
+    if !std::path::Path::new(path).is_absolute() {
+        return Err(ToolFailure::PathRefused {
+            reason: PathRefusal::NotAbsolute,
+        });
+    }
+    let resolved = crate::paths::for_read(None, path)?;
+    Ok(Access::Path {
+        path: resolved.text()?,
+        mode,
+        folder: resolved.is_folder(),
+        exists: resolved.exists(),
+        identity: identity(&resolved.path)?,
+        entries: None,
+        state,
     })
 }
 

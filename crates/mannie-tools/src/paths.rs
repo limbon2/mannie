@@ -312,7 +312,7 @@ pub(crate) fn io_failure(error: &io::Error, path: &Path) -> ToolFailure {
 
 /// Whether `path` is `folder` or lies below it. Both are canonical. Windows
 /// compares names without regard to case, as its file systems do.
-pub(crate) fn is_inside(path: &Path, folder: &Path) -> bool {
+pub fn is_inside(path: &Path, folder: &Path) -> bool {
     let mut path_components = path.components();
     for folder_component in folder.components() {
         let Some(path_component) = path_components.next() else {

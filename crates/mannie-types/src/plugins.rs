@@ -93,6 +93,10 @@ pub struct PluginUses {
     /// The programs that ship beside Mannie for the plugin, by their
     /// packages, such as `mannie-worker`.
     pub programs: Vec<String>,
+    /// The installed programs that the plugin runs through the service
+    /// `processes`, by the names that the core finds them by, such as `git`
+    /// (ADR-0038, decision 7).
+    pub installed_programs: Vec<String>,
     /// The third-party crates that only the plugin may use, such as
     /// `tonic`.
     pub crates: Vec<String>,
@@ -250,6 +254,7 @@ mod tests {
                 commands: vec!["pair_worker".to_owned()],
                 channels: vec!["subscribe_workers".to_owned()],
                 programs: vec!["mannie-worker".to_owned()],
+                installed_programs: vec!["git".to_owned()],
                 crates: vec!["tonic".to_owned()],
                 native: vec!["sockets".to_owned()],
             },
@@ -267,6 +272,7 @@ mod tests {
                     "commands": ["pair_worker"],
                     "channels": ["subscribe_workers"],
                     "programs": ["mannie-worker"],
+                    "installedPrograms": ["git"],
                     "crates": ["tonic"],
                     "native": ["sockets"],
                 },

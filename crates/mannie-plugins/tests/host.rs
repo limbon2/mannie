@@ -1001,7 +1001,7 @@ async fn the_views_list_what_each_manifest_lets_its_plugin_use() {
     let fixture = Fixture::new();
     let notes = Arc::new(fixture.plugin("notes").with_module(NOTES_MODULE));
     let journal = Arc::new(fixture.plugin("journal"));
-    let both = "\n[services]\nsecrets = 1\nstore = 1\n\n[secrets]\nentries = [\"token\"]\nkeyed = [\"device\"]\n\n[crates]\nexclusive = [\"tonic\"]\n\n[native]\nsockets = \"Syncs the notes.\"\n\n[[programs]]\npackage = \"mannie-notes-sync\"\n";
+    let both = "\n[services]\nprocesses = 1\nsecrets = 1\nstore = 1\n\n[secrets]\nentries = [\"token\"]\nkeyed = [\"device\"]\n\n[crates]\nexclusive = [\"tonic\"]\n\n[native]\nsockets = \"Syncs the notes.\"\n\n[[programs]]\npackage = \"mannie-notes-sync\"\n\n[processes.pandoc]\nreason = \"Converts the notes.\"\n\n[processes.git]\nreason = \"Keeps the notes' history.\"\n";
     let (_store, host) = fixture.start(vec![entry(&notes, 10, both), entry(&journal, 20, "")]);
 
     let views = host.views();
@@ -1010,6 +1010,11 @@ async fn the_views_list_what_each_manifest_lets_its_plugin_use() {
         views[0].uses,
         PluginUses {
             services: vec![
+                ServiceUse {
+                    name: "processes".to_owned(),
+                    major: 1,
+                    sensitive: true,
+                },
                 ServiceUse {
                     name: "secrets".to_owned(),
                     major: 1,
@@ -1025,6 +1030,7 @@ async fn the_views_list_what_each_manifest_lets_its_plugin_use() {
             commands: Vec::new(),
             channels: Vec::new(),
             programs: vec!["mannie-notes-sync".to_owned()],
+            installed_programs: vec!["git".to_owned(), "pandoc".to_owned()],
             crates: vec!["tonic".to_owned()],
             native: vec!["sockets".to_owned()],
         }

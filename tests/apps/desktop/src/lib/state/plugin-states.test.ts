@@ -38,7 +38,16 @@ function plugin(state: PluginState, id = 'workers'): PluginView {
     failure: state === 'failed' ? 'storage_failed' : null,
     id,
     state,
-    uses: { channels: [], commands: [], crates: [], native: [], programs: [], secrets: [], services: [] },
+    uses: {
+      channels: [],
+      commands: [],
+      crates: [],
+      installedPrograms: [],
+      native: [],
+      programs: [],
+      secrets: [],
+      services: [],
+    },
   };
 }
 

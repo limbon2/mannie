@@ -7,6 +7,7 @@ use specta::Type;
 use crate::ids::{ConversationId, PartId, ProjectId};
 
 use super::access::AccessMode;
+use super::program::{ProgramEffectKey, ProgramTarget};
 
 /// Why the policy asks the owner about an operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
@@ -35,6 +36,9 @@ pub enum ApprovalReason {
     HostAsks,
     /// A command on a remote host, which no rule or grant allows (ADR-0036).
     RemoteCommand,
+    /// A run of an installed program with an effect beyond the workspace,
+    /// which no rule or grant allows (ADR-0038).
+    Program,
 }
 
 /// What a grant covers.
@@ -74,6 +78,25 @@ pub enum GrantScope {
         /// The command's text.
         command: String,
     },
+    /// Runs of the same installed program with the same arguments in the
+    /// same working directory, whose effects are among the grant's
+    /// (ADR-0038, decision 6).
+    Program {
+        /// The plugin whose tool runs the program.
+        plugin: String,
+        /// The program's name in the plugin's manifest.
+        name: String,
+        /// The program's canonical path.
+        program: String,
+        /// The arguments that the manifest fixes.
+        fixed: Vec<String>,
+        /// The plugin's arguments.
+        arguments: Vec<String>,
+        /// The canonical working directory.
+        working_directory: String,
+        /// The keys of the effects that the grant covers, sorted.
+        effects: Vec<ProgramEffectKey>,
+    },
 }
 
 /// A remote host as a grant, a rule or a proposal names it: the plugin, its
@@ -95,11 +118,13 @@ pub struct RemoteTarget {
 /// The rule that "Save rule" can make from a command: its words, of which the
 /// owner keeps a leading part, and the folder the rule can be limited to; or,
 /// for a command on a remote host, the host that the rule is always limited
-/// to.
+/// to; or, for a run of an installed program, the program and the effects
+/// that the rule covers.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RuleProposal {
-    /// The command's words, as the rule would match them.
+    /// The command's words, as the rule would match them. For a program's
+    /// run, the program's name and the plugin's arguments.
     pub words: Vec<String>,
     /// The canonical working directory, to which the owner can limit the rule.
     /// Empty for a command on a remote host, which has none.
@@ -108,6 +133,11 @@ pub struct RuleProposal {
     /// machine. A rule from it applies only on that host (ADR-0036).
     #[serde(default)]
     pub remote: Option<RemoteTarget>,
+    /// The installed program of the run, or `None` for a command. A rule
+    /// from it applies only to that plugin's program, with the effects of
+    /// the run (ADR-0038, decision 6).
+    #[serde(default)]
+    pub program: Option<ProgramTarget>,
 }
 
 /// A question to the owner about one operation. It shows exactly what will

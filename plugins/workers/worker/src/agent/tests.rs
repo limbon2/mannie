@@ -35,6 +35,7 @@ fn a_worker_reads_its_host_and_never_the_owners_instructions() {
             project: None,
             projects: &[],
             full_access: false,
+            offered: &[],
         }),
         offers_tasks: false,
         machine: Some(MachineContext {

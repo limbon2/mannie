@@ -24,6 +24,7 @@ import type {
   SidebarPanel,
   SidePanelKind,
   TaskKind,
+  ToolKind,
 } from '#lib/types/shell-slots.js';
 
 interface SlotEntry {
@@ -67,6 +68,23 @@ export class Slot<T extends SlotEntry> {
   /** The entry with this ID, if one is registered and shows. */
   find(id: string): T | undefined {
     const registered = this.#registered.find((candidate) => candidate.entry.id === id);
+    if (registered === undefined) {
+      return undefined;
+    }
+    return this.#shows(registered) ? registered.entry : undefined;
+  }
+
+  /**
+   * The entry with this ID when the plugin `plugin` registered it and it
+   * shows, so that an entry describes only what its own plugin made, such as
+   * the calls of its tools (ADR-0039, decision 1).
+   */
+  findOf(id: string, plugin: string): T | undefined {
+    const registered = this.#registered.find((candidate) => {
+      const isEntry = candidate.entry.id === id;
+      const isTheirs = candidate.plugin === plugin;
+      return isEntry && isTheirs;
+    });
     if (registered === undefined) {
       return undefined;
     }
@@ -145,6 +163,7 @@ export class ShellSlots implements CatalogSlots {
   readonly sidebarPanels: Slot<SidebarPanel>;
   readonly sidePanels: Slot<SidePanelKind>;
   readonly taskKinds: Slot<TaskKind>;
+  readonly toolKinds: Slot<ToolKind>;
   readonly views: Slot<ShellView>;
 
   /** The slots; `isOn` tells whether a plugin's entries show, and every plugin's do without it. */
@@ -160,6 +179,7 @@ export class ShellSlots implements CatalogSlots {
     this.sidebarPanels = new Slot('sidebar panels', isOn);
     this.sidePanels = new Slot('side panels', isOn, checkSidePanelKind);
     this.taskKinds = new Slot('task kinds', isOn);
+    this.toolKinds = new Slot('tool kinds', isOn);
     this.views = new Slot('views', isOn);
   }
 
@@ -182,6 +202,7 @@ export class PluginSlots implements SdkPluginSlots {
   readonly sidebarPanels: PluginSlot<SidebarPanel>;
   readonly sidePanels: PluginSlot<SidePanelKind>;
   readonly taskKinds: PluginSlot<TaskKind>;
+  readonly toolKinds: PluginSlot<ToolKind>;
   readonly views: PluginSlot<ShellView>;
 
   constructor(slots: ShellSlots, plugin: string) {
@@ -196,6 +217,7 @@ export class PluginSlots implements SdkPluginSlots {
     this.sidebarPanels = new PluginSlot(slots.sidebarPanels, plugin);
     this.sidePanels = new PluginSlot(slots.sidePanels, plugin);
     this.taskKinds = new PluginSlot(slots.taskKinds, plugin);
+    this.toolKinds = new PluginSlot(slots.toolKinds, plugin);
     this.views = new PluginSlot(slots.views, plugin);
   }
 }

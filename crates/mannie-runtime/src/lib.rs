@@ -34,6 +34,7 @@ mod plugin_executions;
 mod plugin_tools;
 mod plugins;
 mod policy;
+mod processes;
 mod profiles;
 mod projects;
 mod retry;
@@ -86,6 +87,7 @@ use crate::hub::Hubs;
 use crate::ids::IdGenerator;
 use crate::plugin_executions::PluginExecutions;
 use crate::plugins::Registry;
+use crate::processes::{ProcessesProvider, Programs};
 use crate::tasks::ChildSlots;
 
 /// What the system tools work with. The composition root builds it once.
@@ -227,6 +229,9 @@ struct Inner {
     /// The executions of plugins' tools that run now, which turning a plugin
     /// off waits for (ADR-0034, decision 8).
     plugin_executions: Arc<PluginExecutions>,
+    /// The installed programs that the plugins' manifests declare, and where
+    /// the core found them (ADR-0038, decision 7).
+    programs: Programs,
     /// The tasks that another machine assigned, while they are active, and
     /// that machine's watches of them.
     assigned: Arc<AssignedTasks>,
@@ -352,6 +357,7 @@ impl Runtime {
             contributions: Registry::default(),
             agent_plugins: AgentPlugins::default(),
             plugin_executions: Arc::default(),
+            programs: Programs::default(),
             assigned: Arc::default(),
             assigning: tokio::sync::Mutex::new(()),
             approvals: Mutex::default(),
@@ -374,11 +380,13 @@ impl Runtime {
     /// The providers of the services that the runtime owns, which the plugin
     /// host binds to each plugin that declares them (ADR-0034, decision 5):
     /// the executor host and credentials, each bound to the executor kind
-    /// that equals the plugin's ID.
+    /// that equals the plugin's ID, and the installed programs, bound to the
+    /// programs of the plugin's manifest (ADR-0038, decision 7).
     pub fn service_providers(&self) -> Vec<Arc<dyn ServiceProvider>> {
         vec![
             Arc::new(ExecutorHostProvider::new(self)),
             Arc::new(CredentialsProvider::new(self)),
+            Arc::new(ProcessesProvider::new(self)),
         ]
     }
 

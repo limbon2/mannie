@@ -76,6 +76,9 @@ pub struct ToolEnvironment<'a> {
     /// access, so its operations run without the owner's approval
     /// (ADR-0029).
     pub full_access: bool,
+    /// The names of the tools that the call is offered, which a plugin's
+    /// section reads (ADR-0038, decision 1).
+    pub offered: &'a [&'a str],
 }
 
 /// The text of a section for a call, or `None` to leave it out.
@@ -179,7 +182,18 @@ pub(crate) fn section_context(context: &InstructionContext<'_>) -> SectionContex
     // Full access belongs to where the tools work: a run without tools has
     // no operations for it to cover.
     let full_access = context.tools.is_some_and(|tools| tools.full_access);
+    let offered_tools = context
+        .tools
+        .map(|tools| {
+            tools
+                .offered
+                .iter()
+                .map(|name| (*name).to_owned())
+                .collect()
+        })
+        .unwrap_or_default();
     SectionContext::new(agent, requester, uses_tools, offers_tasks, full_access)
+        .with_offered_tools(offered_tools)
 }
 
 /// A section whose ID is already registered.
@@ -355,6 +369,7 @@ mod tests {
             project: None,
             projects: &[],
             full_access,
+            offered: &[],
         }
     }
 
@@ -536,6 +551,7 @@ mod tests {
                 project: Some(&work),
                 projects: &projects,
                 full_access: false,
+                offered: &[],
             }),
             offers_tasks: false,
             machine: None,
@@ -568,6 +584,7 @@ mod tests {
             project: None,
             projects: &[],
             full_access: false,
+            offered: &[],
         };
         let parent = InstructionContext {
             agent: &CONVERSATION,
@@ -609,6 +626,7 @@ mod tests {
             project: None,
             projects,
             full_access: false,
+            offered: &[],
         };
 
         let listed = texts::environment(&general(&projects));
@@ -644,6 +662,7 @@ mod tests {
             project: None,
             projects: &projects,
             full_access: false,
+            offered: &[],
         });
 
         assert!(listed.contains("  - project 60: /work/60"), "{listed}");

@@ -10,6 +10,8 @@ import {
   checkId,
   checkManifest,
   findPlugins,
+  isInheritable,
+  isProcessName,
   memberFolders,
   prefixesNest,
   readRules,
@@ -99,6 +101,29 @@ describe('checkId', () => {
       for (const id of ids) {
         assert.equal(checkId(id, rules)?.rule, rule, JSON.stringify(id));
       }
+    }
+  });
+});
+
+describe('isProcessName and isInheritable', () => {
+  // The SDK's test `manifest` holds `Manifest::parse` to the same fixture.
+  it('judge the names of the SDK fixture as the host does', () => {
+    /** @type {Record<'inherited' | 'names', { accepted: string[], refused: string[] }>} */
+    const fixture = JSON.parse(
+      readFileSync(join(root, 'crates/mannie-plugin-sdk/tests/fixtures/plugin-processes.json'), 'utf8'),
+    );
+
+    for (const name of fixture.names.accepted) {
+      assert.equal(isProcessName(name), true, JSON.stringify(name));
+    }
+    for (const name of fixture.names.refused) {
+      assert.equal(isProcessName(name), false, JSON.stringify(name));
+    }
+    for (const name of fixture.inherited.accepted) {
+      assert.equal(isInheritable(name, rules), true, JSON.stringify(name));
+    }
+    for (const name of fixture.inherited.refused) {
+      assert.equal(isInheritable(name, rules), false, JSON.stringify(name));
     }
   });
 });
@@ -226,6 +251,39 @@ describe('checkManifest', () => {
     assert.deepEqual(problemsOf(withMore('[native]\nsockets = "Connects."\nfile-writes = " \\t\u00a0"')), [
       'the manifest grants file-writes under [native] without a reason',
     ]);
+  });
+
+  it('accepts installed programs and refuses what the SDK refuses, in its order', () => {
+    /** @param {string} table the lines of the table of the program git */
+    const running = (table) => withMore(`[services]\nprocesses = 1\n\n[processes.git]\n${table}`);
+    const checked = checkManifest(
+      running('reason = "Reads the history."\nfixed = ["-c", "gc.auto=0"]\ninherit = ["HOME"]'),
+      rules,
+    );
+
+    assert.deepEqual(checked.problems, []);
+    assert.deepEqual(checked.manifest?.processes?.git.fixed, ['-c', 'gc.auto=0']);
+    assert.deepEqual(problemsOf(running('reason = "Runs it."\nshell = true')), [
+      'processes.git has the unknown field shell',
+    ]);
+    assert.deepEqual(problemsOf(running('fixed = []')), ['processes.git is missing the field reason']);
+    assert.deepEqual(problemsOf(withMore('[services]\nprocesses = 1\n\n[processes."../git"]\nreason = "Runs it."')), [
+      '"../git" is not the name of an installed program, which is a letter or a digit, then letters, digits, ".", "_" and "-", at most 64 characters, never ending in a dot',
+    ]);
+    assert.deepEqual(problemsOf(running('reason = " \\t"')), [
+      'the manifest runs the program git under [processes] without a reason',
+    ]);
+    assert.deepEqual(problemsOf(running('reason = "Runs it."\nfixed = ["a\\u0000b"]')), [
+      'a fixed argument of the program git holds a NUL character',
+    ]);
+    assert.deepEqual(problemsOf(running('reason = "Runs it."\ninherit = ["GITHUB_TOKEN"]')), [
+      'the program git inherits "GITHUB_TOKEN", which is not a variable\'s name, looks like a secret\'s or loads libraries',
+    ]);
+    assert.deepEqual(problemsOf(withMore('[processes.git]\nreason = "Runs it."')), [
+      'the manifest lists programs under [processes] but does not declare the service processes',
+    ]);
+    // A program's own checks come before the service that it needs.
+    assert.match(problemsOf(withMore('[processes."../git"]\nreason = "Runs it."'))[0], /is not the name/u);
   });
 });
 

@@ -12,11 +12,12 @@
   import { Skeleton } from '#lib/components/ui/skeleton/index.js';
   import { Switch } from '#lib/components/ui/switch/index.js';
   import { Textarea } from '#lib/components/ui/textarea/index.js';
-  import type { CommandRule, RemoteCommandRule, SharedGrant } from '#lib/generated/bindings.js';
+  import type { CommandRule, ProgramRule, RemoteCommandRule, SharedGrant } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
   import { conversationList } from '#lib/state/conversation-list.svelte.js';
+  import { pluginName } from '#lib/state/plugin-catalog.js';
   import { commandRules, sharedGrants, toolsSettings } from '#lib/state/tools-settings.svelte.js';
-  import { grantScopeMessage, toolsFailureMessage } from '#lib/utils/tools-messages.js';
+  import { effectKeysText, grantScopeMessage, programRunText, toolsFailureMessage } from '#lib/utils/tools-messages.js';
 
   // The Tools section of the settings (docs/features/system-tools/
   // tool-activity.md, settings): whether changes inside a workspace run
@@ -46,6 +47,22 @@
 
   function ruleWords(rule: CommandRule | RemoteCommandRule): string {
     return rule.words.join(' ');
+  }
+
+  /** Where a rule of an installed program applies and what else its runs may do, one line each. */
+  function programRulePlace(rule: ProgramRule): string[] {
+    const program = m.tools_settings_rule_program({
+      plugin: pluginName(rule.target.plugin),
+      program: rule.target.name,
+    });
+    const folder =
+      rule.folder === null
+        ? m.tools_settings_rule_anywhere()
+        : m.tools_settings_rule_in_folder({ folder: rule.folder });
+    if (rule.target.effects.length === 0) {
+      return [program, folder];
+    }
+    return [program, folder, m.tools_settings_rule_program_effects({ effects: effectKeysText(rule.target.effects) })];
   }
 
   /** Where a grant applies: in a project, by its name, or in every conversation. */
@@ -208,6 +225,31 @@
                   size="sm"
                   variant="outline"
                   onclick={() => void commandRules.removeRemote(rule.id)}
+                >
+                  {m.tools_settings_rule_delete()}
+                </Button>
+              </Item.Actions>
+            </Item.Root>
+          {/each}
+          {#each commandRules.programRules as rule (rule.id)}
+            <Item.Root data-program-rule="" role="listitem" size="sm" variant="outline">
+              <Item.Content class="min-w-0">
+                <Item.Title class="line-clamp-none w-full">
+                  <span class="font-mono break-all" data-content>{programRunText(rule.words)}</span>
+                </Item.Title>
+                <Item.Description class="line-clamp-none break-all">
+                  {#each programRulePlace(rule) as line, lineIndex (lineIndex)}
+                    <span class="block">{line}</span>
+                  {/each}
+                </Item.Description>
+              </Item.Content>
+              <Item.Actions>
+                <Button
+                  aria-label={m.tools_settings_rule_delete_label({ words: programRunText(rule.words) })}
+                  disabled={commandRules.deleting.includes(rule.id)}
+                  size="sm"
+                  variant="outline"
+                  onclick={() => void commandRules.removeProgram(rule.id)}
                 >
                   {m.tools_settings_rule_delete()}
                 </Button>

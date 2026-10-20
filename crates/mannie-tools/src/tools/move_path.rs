@@ -111,6 +111,9 @@ impl TypedTool for MovePath {
 fn volume(access: &Access) -> Option<&str> {
     match access {
         Access::Path { identity, .. } => identity.split(':').next(),
-        Access::Command { .. } | Access::Project { .. } | Access::RemoteCommand { .. } => None,
+        Access::Command { .. }
+        | Access::Project { .. }
+        | Access::RemoteCommand { .. }
+        | Access::Program { .. } => None,
     }
 }

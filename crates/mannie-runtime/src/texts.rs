@@ -155,6 +155,10 @@ the plugin."
 /// runs no plugin that reaches one (ADR-0036).
 pub const NO_REMOTE_COMMANDS: &str = "Not run: this host runs no commands on other hosts.";
 
+/// The result of a run of a plugin's installed program that a worker
+/// refused: a worker runs no plugin (ADR-0038).
+pub const NO_PROGRAMS_ON_HOST: &str = "Not run: this host runs no plugin's programs.";
+
 /// The result of a call beyond the reply's tool calls.
 pub const OVER_BUDGET: &str = "Not run: this reply has used all its tool calls.";
 

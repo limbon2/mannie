@@ -7,11 +7,14 @@ import type {
   AccessMode,
   ApprovalReason,
   Decision,
+  DiscardedWork,
   EntryCount,
   GrantScope,
   Interruption,
   NotRunReason,
   PathRefusal,
+  ProgramEffect,
+  ProgramEffectKey,
   Refusal,
   ToolFailure,
 } from '#lib/generated/bindings.js';
@@ -274,6 +277,9 @@ export function notRunMessage(reason: NotRunReason): string {
 /** What the ceiling of the computer that runs a task forbids. */
 export function refusalMessage(refusal: Refusal): string {
   switch (refusal) {
+    case 'no_programs_on_host': {
+      return m.tools_refusal_no_programs_on_host();
+    }
     case 'no_projects_on_host': {
       return m.tools_refusal_no_projects_on_host();
     }
@@ -312,6 +318,9 @@ export function approvalReasonMessage(reason: ApprovalReason): string {
     }
     case 'outside_workspace': {
       return m.tools_reason_outside_workspace();
+    }
+    case 'program': {
+      return m.tools_reason_program();
     }
     case 'remote_command': {
       return m.tools_reason_remote_command();
@@ -412,6 +421,114 @@ export function uncertainMessage(interruption: Interruption | null): string {
   }
 }
 
+/**
+ * The words of a run of an installed program as one line, such as
+ * `git commit -m "Fix the parser"`, for the owner to read. The program
+ * receives each word exactly, without a shell; the quotes only show where a
+ * word with spaces, quotes or nothing in it begins and ends.
+ */
+export function programRunText(words: readonly string[]): string {
+  return words
+    .map((word) => {
+      const needsQuotes = word === '' || /[\s"'\\]/u.test(word);
+      return needsQuotes ? JSON.stringify(word) : word;
+    })
+    .join(' ');
+}
+
+/** What a run of an installed program does beyond the workspace, as a sentence, such as "Runs pre-commit from .git/hooks/pre-commit". */
+export function programEffectMessage(effect: ProgramEffect): string {
+  switch (effect.effect) {
+    case 'discards_work': {
+      return discardsMessage(effect.work, effect.count);
+    }
+    case 'network': {
+      return m.tools_effect_network({ endpoint: effect.endpoint });
+    }
+    case 'rewrites_published': {
+      const places = new Intl.ListFormat(undefined, { type: 'conjunction' }).format(effect.places);
+      return m.tools_effect_rewrites_published({ count: effect.count, places });
+    }
+    case 'runs_folder_code': {
+      return m.tools_effect_runs_folder_code({ name: effect.name, source: effect.source });
+    }
+  }
+}
+
+/** What a run discards, by its kind and how much of it. */
+function discardsMessage(work: DiscardedWork, count: number): string {
+  switch (work) {
+    case 'commits': {
+      return m.tools_effect_discards_commits({ count });
+    }
+    case 'stash_entries': {
+      return m.tools_effect_discards_stash_entries({ count });
+    }
+    case 'uncommitted_changes': {
+      return m.tools_effect_discards_uncommitted_changes({ count });
+    }
+  }
+}
+
+/**
+ * The names of what a run discards, such as its files, with how many more
+ * there are, or `null` for an effect that names nothing.
+ */
+export function programEffectItems(effect: ProgramEffect): string | null {
+  if (effect.effect !== 'discards_work') {
+    return null;
+  }
+  if (effect.items.length === 0) {
+    return null;
+  }
+  const more = effect.count - effect.items.length;
+  const items = more > 0 ? [...effect.items, m.tools_effect_more({ count: more })] : effect.items;
+  return new Intl.ListFormat(undefined, { type: 'unit' }).format(items);
+}
+
+/** Whether a run keeps a snapshot of the work that it discards, from which the owner can take it back. */
+export function keepsSnapshot(effect: ProgramEffect): boolean {
+  return effect.effect === 'discards_work' ? effect.snapshot : false;
+}
+
+/** What a grant or a rule covers of discarded work, as a phrase that follows "when it". */
+function discardedKeyPhrase(work: DiscardedWork): string {
+  switch (work) {
+    case 'commits': {
+      return m.tools_effect_key_discards_commits();
+    }
+    case 'stash_entries': {
+      return m.tools_effect_key_discards_stash_entries();
+    }
+    case 'uncommitted_changes': {
+      return m.tools_effect_key_discards_uncommitted_changes();
+    }
+  }
+}
+
+/** What a grant or a rule covers of an effect, as a phrase that follows "when it", such as "runs pre-commit from .git/hooks/pre-commit". */
+export function effectKeyPhrase(key: ProgramEffectKey): string {
+  switch (key.effect) {
+    case 'discards_work': {
+      return discardedKeyPhrase(key.work);
+    }
+    case 'network': {
+      return m.tools_effect_key_network({ endpoint: key.endpoint });
+    }
+    case 'rewrites_published': {
+      return m.tools_effect_key_rewrites_published();
+    }
+    case 'runs_folder_code': {
+      return m.tools_effect_key_runs_folder_code({ name: key.name, source: key.source });
+    }
+  }
+}
+
+/** The phrases of several effects as one, such as "runs pre-commit from … and connects to …". */
+export function effectKeysText(keys: readonly ProgramEffectKey[]): string {
+  return new Intl.ListFormat(undefined, { type: 'conjunction' }).format(keys.map((key) => effectKeyPhrase(key)));
+}
+
 /** What a grant allows, such as "Changing files in D:\Projects\app". */
 export function grantScopeMessage(scope: GrantScope): string {
   if (scope.kind === 'command') {
@@ -419,6 +536,13 @@ export function grantScopeMessage(scope: GrantScope): string {
   }
   if (scope.kind === 'remote_command') {
     return m.tools_grant_remote_command({ command: scope.command, endpoint: scope.endpoint, host: scope.label });
+  }
+  if (scope.kind === 'program') {
+    const run = programRunText([scope.name, ...scope.arguments]);
+    const folder = scope.workingDirectory;
+    return scope.effects.length === 0
+      ? m.tools_grant_program({ folder, run })
+      : m.tools_grant_program_effects({ effects: effectKeysText(scope.effects), folder, run });
   }
   switch (scope.mode) {
     case 'create': {
