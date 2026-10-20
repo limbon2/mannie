@@ -1,0 +1,292 @@
+{
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "git_plugin_name": "Git",
+  "git_plugin_description": "Lets agents work with your repositories through the installed git: status, history, diffs, conflicts, commits, branches, merges and rebases, fetches and pushes. Runs that start a repository's hooks, throw work away, rewrite pushed commits or reach a remote ask you first.",
+  "git_mention_group": "Git",
+  "git_mention_changes": "Uncommitted changes",
+  "git_mention_commit": "Commit",
+  "git_mention_branch": "Branch",
+  "git_mention_summary_changes": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "status and diff of 1 changed file",
+        "countPlural=other": "status and diff of {count: number} changed files"
+      }
+    }
+  ],
+  "git_mention_summary_commit": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "message and patch of 1 file",
+        "countPlural=other": "message and patch of {count: number} files"
+      }
+    }
+  ],
+  "git_mention_summary_branch": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "1 commit and the files that it changes",
+        "countPlural=other": "{count: number} commits and the files that they change"
+      }
+    }
+  ],
+  "git_mention_summary_not_read": "not read: reading this repository here needs your permission",
+  "git_mention_invalid_key": "This mention does not name a commit, a branch or the uncommitted changes.",
+  "git_mention_unknown_revision": "The commit or the branch no longer exists.",
+  "git_error_project_not_found": "The project no longer exists.",
+  "git_error_not_a_repository": "The project's folder is not in a git repository.",
+  "git_error_bare_repository": "The repository has no work tree, which the git plugin needs.",
+  "git_error_git_missing": "git was not found. Install git 2.40 or later.",
+  "git_error_git_too_old": "The installed git is older than 2.40. Install a newer git.",
+  "git_error_dubious_ownership": "git refuses this repository because another user owns its folder. Change the folder's owner, or mark the folder safe in your git configuration.",
+  "git_error_read_not_allowed": "Reading this repository here needs your permission. Allow an agent's read of it first.",
+  "git_error_unknown_commit": "The commit no longer exists.",
+  "git_error_locked": "Another git process holds a lock on the repository. Try again when it ends.",
+  "git_error_timed_out": "git did not finish in time. Try again.",
+  "git_error_git_failed": "git failed. Try again.",
+  "git_failure_unknown_revision": "The revision names no commit.",
+  "git_failure_invalid_argument": "git did not run: the call's arguments were refused.",
+  "git_failure_repository_changed": "The repository changed after the call was allowed, so nothing ran.",
+  "git_failure_identity_missing": "git needs your name and email for commits, and its configuration has neither.",
+  "git_failure_operation_refused": "git refused and changed nothing.",
+  "git_files": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "1 file",
+        "countPlural=other": "{count: number} files"
+      }
+    }
+  ],
+  "git_summary_status": "Read the status of {branch}",
+  "git_summary_status_detached": "Read the status of a detached HEAD",
+  "git_summary_log": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Listed 1 commit",
+        "countPlural=other": "Listed {count: number} commits"
+      }
+    }
+  ],
+  "git_summary_log_pending": "Listing commits",
+  "git_summary_show_commit": "Showed {commit}",
+  "git_summary_show_file": "Read {path} at {revision}",
+  "git_summary_show_pending": "Showing {revision}",
+  "git_summary_diff_unstaged": "Unstaged changes: {files}",
+  "git_summary_diff_staged": "Staged changes: {files}",
+  "git_summary_diff_from": "Changes from {from}: {files}",
+  "git_summary_diff_between": "Changes from {from} to {to}: {files}",
+  "git_summary_diff_pending": "Comparing changes",
+  "git_summary_blame": "Blamed {path}",
+  "git_summary_grep": [
+    {
+      "declarations": ["input count", "input pattern", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Searched for “{pattern}”: 1 match",
+        "countPlural=other": "Searched for “{pattern}”: {count: number} matches"
+      }
+    }
+  ],
+  "git_summary_grep_pending": "Searching for “{pattern}”",
+  "git_summary_refs": "Listed branches, tags and remotes",
+  "git_summary_conflicts": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "1 conflicted file",
+        "countPlural=other": "{count: number} conflicted files"
+      }
+    }
+  ],
+  "git_summary_conflicts_pending": "Reading the conflicts",
+  "git_summary_stage": "Staged changes",
+  "git_summary_stage_all": "Staged every change",
+  "git_summary_unstage": "Unstaged changes",
+  "git_summary_commit": "Committed {commit}",
+  "git_summary_commit_pending": "Commit “{subject}”",
+  "git_summary_amend": "Amended the commit to {commit}",
+  "git_summary_amend_pending": "Amending the last commit",
+  "git_summary_branch_create": "Created the branch {name}",
+  "git_summary_branch_rename": "Renamed the branch {name} to {newName}",
+  "git_summary_branch_delete": "Deleted the branch {name}",
+  "git_summary_branch_set_upstream": "Made {name} track {upstream}",
+  "git_summary_branch_unset_upstream": "Made {name} track no branch",
+  "git_summary_switch": "Switched to {target}",
+  "git_summary_switch_create": "Created {target} and switched to it",
+  "git_summary_switch_detach": "Detached HEAD at {target}",
+  "git_summary_restore": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Restored 1 path",
+        "countPlural=other": "Restored {count: number} paths"
+      }
+    }
+  ],
+  "git_summary_reset": "Reset the branch to {target}",
+  "git_summary_stash_push": "Stashed the uncommitted changes",
+  "git_summary_stash_apply": "Applied a stash entry",
+  "git_summary_stash_pop": "Popped a stash entry",
+  "git_summary_stash_drop": "Dropped a stash entry",
+  "git_summary_merge": "Merge of {branch}",
+  "git_summary_rebase": "Rebase onto {onto}",
+  "git_summary_cherry_pick": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Cherry-pick of 1 commit",
+        "countPlural=other": "Cherry-pick of {count: number} commits"
+      }
+    }
+  ],
+  "git_summary_revert": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Revert of 1 commit",
+        "countPlural=other": "Revert of {count: number} commits"
+      }
+    }
+  ],
+  "git_summary_operation_continue": "Continued the operation",
+  "git_summary_operation_skip": "Skipped a step of the operation",
+  "git_summary_operation_abort": "Aborted the operation",
+  "git_summary_resolve": "Resolved {path}",
+  "git_summary_edit_history": "Rewrote the commits after {base}",
+  "git_summary_fetch": "Fetched from {remote}",
+  "git_summary_fetch_default": "Fetched from the remote",
+  "git_summary_pull": "Pulled from {remote}",
+  "git_summary_pull_default": "Pulled from the remote",
+  "git_summary_push": "Pushed {branch} to {remote}",
+  "git_summary_push_default": "Pushed the current branch",
+  "git_outcome_stopped": "{summary}: stopped on conflicts",
+  "git_outcome_completed": "{summary}: completed",
+  "git_status_conflicted": "Conflicted",
+  "git_status_staged": "Staged",
+  "git_status_unstaged": "Not staged",
+  "git_status_untracked": "Untracked",
+  "git_status_clean": "Nothing to commit: the work tree and the index match HEAD.",
+  "git_status_more": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "and 1 more file",
+        "countPlural=other": "and {count: number} more files"
+      }
+    }
+  ],
+  "git_change_modified": "modified",
+  "git_change_added": "added",
+  "git_change_deleted": "deleted",
+  "git_change_renamed": "renamed",
+  "git_change_copied": "copied",
+  "git_change_type_changed": "type changed",
+  "git_change_changed": "changed",
+  "git_renamed_from": "from {path}",
+  "git_entry_line": "{change}: {path}",
+  "git_entry_renamed_line": "{change}: {path} from {original}",
+  "git_conflict_both_changed": "both changed",
+  "git_conflict_both_added": "both added",
+  "git_conflict_both_deleted": "both deleted",
+  "git_conflict_added_current": "added on the current side",
+  "git_conflict_added_incoming": "added on the incoming side",
+  "git_conflict_deleted_current": "deleted on the current side",
+  "git_conflict_deleted_incoming": "deleted on the incoming side",
+  "git_conflict_hunks_left": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "1 conflict left",
+        "countPlural=other": "{count: number} conflicts left"
+      }
+    }
+  ],
+  "git_conflict_current": "Current",
+  "git_conflict_base": "Base",
+  "git_conflict_incoming": "Incoming",
+  "git_conflict_no_lines": "No lines",
+  "git_diff_binary": "Binary file",
+  "git_diff_no_changes": "No changes in this file.",
+  "git_diff_added_line": "added",
+  "git_diff_removed_line": "removed",
+  "git_diff_no_newline": "no line break at the end",
+  "git_diff_stat": "+{added} −{removed}",
+  "git_diff_patches_left": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "The patch of 1 more file is in the text that the agent read.",
+        "countPlural=other": "The patches of {count: number} more files are in the text that the agent read."
+      }
+    }
+  ],
+  "git_commits_label": "Commits",
+  "git_merge_commit": "merge",
+  "git_grep_matches_label": "Matches",
+  "git_refs_branches": "Branches",
+  "git_refs_remote_branches": "Remote branches",
+  "git_refs_tags": "Tags",
+  "git_refs_current": "current",
+  "git_refs_ahead_behind": "{ahead} ahead, {behind} behind {upstream}",
+  "git_refs_gone": "{upstream} is gone",
+  "git_transfer_label": "Remote-tracking branches",
+  "git_transfer_new": "new at {commit}",
+  "git_transfer_moved": "moved from {from} to {to}",
+  "git_transfer_removed": "removed",
+  "git_transfer_unchanged": "No remote-tracking branch moved.",
+  "git_panel_title": "Git",
+  "git_panel_loading": "Loading the repository…",
+  "git_panel_failed_title": "The repository could not be read",
+  "git_panel_try_again": "Try again",
+  "git_panel_refresh": "Refresh",
+  "git_panel_tabs_label": "Repository views",
+  "git_panel_changes": "Changes",
+  "git_panel_history": "History",
+  "git_panel_branches": "Branches",
+  "git_panel_conflicts": "Conflicts",
+  "git_panel_on_branch": "On {branch}",
+  "git_panel_detached": "HEAD detached",
+  "git_panel_unborn": "No commits yet",
+  "git_panel_no_upstream": "no upstream",
+  "git_panel_operation_merge": "A merge is in progress.",
+  "git_panel_operation_rebase": "A rebase is in progress.",
+  "git_panel_operation_rebase_step": "A rebase is at step {step} of {total}.",
+  "git_panel_operation_cherry_pick": "A cherry-pick is in progress.",
+  "git_panel_operation_revert": "A revert is in progress.",
+  "git_panel_stash": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "1 stash entry",
+        "countPlural=other": "{count: number} stash entries"
+      }
+    }
+  ],
+  "git_panel_show_more": "Show more",
+  "git_panel_history_empty": "The branch has no commits yet.",
+  "git_panel_choose_file": "Choose a file to see its changes.",
+  "git_panel_choose_commit": "Choose a commit to see its changes.",
+  "git_panel_no_conflicts": "No file is conflicted.",
+  "git_panel_back": "Back",
+  "git_control_label": "Git: {branch}",
+  "git_control_detached": "Git: detached HEAD",
+  "git_control_open": "Open the Git panel"
+}

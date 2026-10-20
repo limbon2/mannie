@@ -1,0 +1,66 @@
+#:schema ../../crates/mannie-plugin-sdk/plugin.schema.json
+# The git plugin (plugins/git/docs/README.md; ADR-0038): tools that read and
+# change the owner's repositories through the installed git, under the core's
+# policy, with git mentions, cards and a side panel.
+
+id = "git"
+sdk = 1
+# After Workers, Images and SSH, on the Plugins page too.
+order = 40
+
+[rust]
+entry = "mannie-git"
+
+[services]
+# The installed git, run without a shell under the process supervisor.
+processes = 1
+
+# The owner's installed git, 2.40 or later (plugins/git/docs/adr/
+# 0001-run-the-owners-installed-git.md).
+[processes.git]
+reason = "The git tools, mentions and side panel run the owner's installed git without a shell. Its reads stay inside the conversation's workspace, and runs that start hooks, discard work, rewrite published commits or reach a remote ask the owner unless a grant, a rule or full access allows them."
+# Every run starts with these: no pager, and no program that a repository's
+# own configuration could start on a read, such as a file system monitor;
+# no automatic garbage collection or maintenance, no submodule recursion, and
+# the conflict style and output that the plugin parses.
+fixed = [
+  "--no-pager",
+  "-c",
+  "core.fsmonitor=false",
+  "-c",
+  "gc.auto=0",
+  "-c",
+  "maintenance.auto=false",
+  "-c",
+  "submodule.recurse=false",
+  "-c",
+  "fetch.recurseSubmodules=false",
+  "-c",
+  "merge.conflictStyle=zdiff3",
+  "-c",
+  "log.showSignature=false",
+  "-c",
+  "core.quotePath=false",
+  "-c",
+  "color.ui=false",
+]
+# What git reads beyond the environment of commands when Mannie's
+# environment has it: the owner's git configuration, the SSH agent and
+# askpass programs for remotes, GnuPG's home for signing, and the display
+# that a credential helper's window needs.
+inherit = [
+  "HOME",
+  "XDG_CONFIG_HOME",
+  "GIT_CONFIG_GLOBAL",
+  "GIT_CONFIG_SYSTEM",
+  "GIT_CONFIG_NOSYSTEM",
+  "GIT_SSH",
+  "GIT_SSH_COMMAND",
+  "GIT_ASKPASS",
+  "SSH_ASKPASS",
+  "SSH_AUTH_SOCK",
+  "GNUPGHOME",
+  "DISPLAY",
+  "WAYLAND_DISPLAY",
+  "XAUTHORITY",
+]

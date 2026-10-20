@@ -1,0 +1,18 @@
+[package]
+name = "mannie-git-testing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Repositories for the git plugin's tests, which the installed git builds in temporary folders. Never shipped."
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The service processes of the unit tests, which runs the installed git with
+# the fixed arguments of the plugin's manifest, as the core's service does.
+mannie-plugin-sdk = { workspace = true, features = ["manifest", "testing"] }
+# The temporary folders of the repositories.
+tempfile = { workspace = true }
+
+[lints]
+workspace = true
