@@ -370,19 +370,50 @@ async fn show_path(
             detail: format!("{path} does not exist at {revision}."),
         });
     }
-    // A submodule's commit is not an object of this repository.
-    let kind = reading
-        .git
-        .run(reading.run(["cat-file", "-t", object_id.as_str()]))
-        .await?;
-    match kind.text().trim() {
+    let kind = if path == TOP {
+        "tree".to_owned()
+    } else {
+        entry_kind(reading, commit, path).await?
+    };
+    match kind.as_str() {
         "blob" => show_file(reading, arguments, revision, path, &object_id).await,
         "tree" => show_folder(reading, revision, path, &object_id).await,
-        _submodule => Ok(Answer {
+        "commit" => Ok(Answer {
             text: format!("{path} is a submodule at {revision}, at its commit {object_id}.\n"),
             data: None,
         }),
+        other => Err(GitFailure::failed(&format!(
+            "git names {path} at {revision} a {other}, which this tool does not show"
+        ))),
     }
+}
+
+/// The kind of the entry at `path` in `commit`, as its parent folder names
+/// it: `blob`, `tree`, or `commit` for a submodule. The object itself cannot
+/// tell, since neither a submodule's commit nor a blob that a partial clone
+/// lacks is an object here, and reading its size would fetch the blob.
+async fn entry_kind(reading: &Reading, commit: &str, path: &str) -> Result<String, GitFailure> {
+    let (parent, name) = match path.rsplit_once('/') {
+        Some((parent, name)) => (format!("{commit}:{parent}"), name),
+        None => (format!("{commit}^{{tree}}"), path),
+    };
+    let ran = reading
+        .git
+        .output(reading.run([
+            "ls-tree".to_owned(),
+            "-z".to_owned(),
+            "--format=%(objecttype)%x1f%(path)".to_owned(),
+            parent,
+        ]))
+        .await?;
+    ran.text()
+        .split('\0')
+        .filter_map(|entry| entry.split_once('\u{1f}'))
+        .find(|(_kind, entry_name)| *entry_name == name)
+        .map(|(kind, _name)| kind.to_owned())
+        .ok_or_else(|| GitFailure::InvalidArgument {
+            detail: format!("{path} does not exist at {commit}."),
+        })
 }
 
 async fn show_file(

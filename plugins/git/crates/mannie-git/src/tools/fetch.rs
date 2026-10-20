@@ -260,7 +260,10 @@ async fn act(acting: &Acting, plan: Plan<Fetching>) -> Result<Answer, GitFailure
     let remote = plan.planned.remote.clone();
     let before = tracking(reading, &remote).await?;
     let head = head_commit(reading).await?;
-    let ran = reading.git.run(acting.run(plan.command)).await?;
+    let ran = reading
+        .git
+        .run(acting.run(plan.command).reaching_remote())
+        .await?;
     let after = tracking(reading, &remote).await?;
     let changes = moved(&before, &after);
     let mut summary = if changes.is_empty() {

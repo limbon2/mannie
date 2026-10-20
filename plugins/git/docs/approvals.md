@@ -29,6 +29,7 @@ Ask the owner where the owner decided that git should ask, and nowhere else ([D3
 - A grant for the conversation, the project or every conversation covers the same run of git: the same arguments, folder, hooks by name and source, remote, and what it discards or rewrites by kind. A saved rule covers runs whose arguments start with its words, such as `git commit`, optionally in one folder, and for a remote only at its URL.
 - The write of a change follows the setting for changes in the workspace also when a grant or a rule covers its run of git. "Allow for…" grants both, so the same change runs again without asking; a saved rule covers the run only, so a push that a rule covers runs without asking once changes in the workspace do, and asks for its write until then.
 - Rules and grants of `run_command` never cover a run of the plugin's git, and the reverse.
+- Only fetches, pulls and pushes reach a remote, and every other run allows git no transport. In a partial clone, a read or a change that needs an object that the clone lacks therefore fails with git's message where git would fetch the object. The same command in a terminal fetches it.
 
 ### Which hooks a change runs
 
@@ -46,9 +47,9 @@ The plugin asks git which hooks a change will run: `git hook list` for each even
 | Merge, rebase, cherry-pick, revert, continue or skip a stopped one | the commit's events, `pre-merge-commit`, `post-merge`, `pre-rebase`, `post-checkout`, `post-rewrite`, `post-index-change`, `reference-transaction` |
 | Push                                                               | `pre-push`                                                                                                                                         |
 
-A change that keeps a snapshot first also counts `reference-transaction`, since storing a stash entry moves `refs/stash`. A test installs every client hook as a recorder, runs each change tool, and checks that every hook that ran is among the ones that the change listed. It ran against git 2.54 on Windows; git 2.40 and Linux are still to check.
+A change that keeps a snapshot first also counts `reference-transaction`, since storing a stash entry moves `refs/stash`. A test installs every client hook as a recorder, runs each change tool, and checks that every hook that ran is among the ones that the change listed. It passed with git 2.54 on Windows and with git 2.40, 2.47 and 2.54 on Linux ([M9 validation](../../../docs/roadmap/m9-validation.md#4-versions-of-git)).
 
-The programs that the repository's own configuration names count where the change runs them: filters (`filter.<driver>.clean`, `smudge` and `process`) for changes that read or write the work tree's files, merge drivers (`merge.<driver>.driver`) for changes that merge, signing programs (`gpg.program`, `gpg.<format>.program`, `gpg.ssh.defaultKeyCommand`) for changes that commit, and the programs that reach a remote (`core.sshCommand`, `core.askPass`, `core.gitProxy`, credential helpers, and a remote's `uploadpack`, `receivepack` and `vcs`) for fetches and pushes. The owner's global and system configuration is the owner's own, and its programs do not count.
+The programs that the repository's own configuration names count where the change runs them: filters (`filter.<driver>.clean`, `smudge` and `process`) for changes that read or write the work tree's files, merge drivers (`merge.<driver>.driver`) for changes that merge, signing programs (`gpg.program`, `gpg.<format>.program`, `gpg.ssh.defaultKeyCommand`) for changes that commit, and the programs that reach a remote (`core.sshCommand`, `core.askPass`, `core.gitProxy`, credential helpers, a remote's `uploadpack`, `receivepack` and `vcs`, and `core.alternateRefsCommand`, which lists the refs of the repository's alternates) for fetches and pushes. The owner's global and system configuration is the owner's own, and its programs do not count.
 
 ## Design
 
@@ -59,7 +60,7 @@ The programs that the repository's own configuration names count where the chang
 - T-46: the core resolves git outside the owner's projects and Mannie's folders, `.exe` only on Windows, and the approval shows its path.
 - T-47: URLs lose their user information in every result, card, access, log and error, and git's messages are scanned for credentials before anything shows them.
 - T-48: accesses name the folders that git reports for the repository, so a git folder outside the project asks like any other folder there.
-- T-49: a run that reaches a remote names its effective URL, after `insteadOf`; `GIT_ALLOW_PROTOCOL` allows only `file`, `git`, `http`, `https` and `ssh`, so `ext::` never runs.
+- T-49: a run that reaches a remote names its effective URL, after `insteadOf`. For fetches, pulls and pushes, `GIT_ALLOW_PROTOCOL` allows only `file`, `git`, `http`, `https` and `ssh`, so `ext::` never runs, also where the repository's configuration allows it; every other run allows no transport, so a partial clone's fetch of a missing object never reaches a remote unasked.
 - T-50: a change that discards work asks and keeps a snapshot first; a history edit changes nothing when a step conflicts; moving a branch with `reset --keep` refuses to overwrite local changes.
 - Logs at `info` name the plugin, the program and how a run ended, never its arguments, which can hold the owner's content.
 
@@ -69,3 +70,4 @@ The programs that the repository's own configuration names count where the chang
 - The recording hooks of every client hook against git 2.40 and the newest.
 - Planted configuration: a file system monitor, a filter, a text conversion, an external diff, a pager and a signing program that write a marker file, which no read writes.
 - A remote URL with `user:token@` that appears in no result, card, access, log or table of the database.
+- A remote of the `ext` transport, which the repository's configuration allows, whose command a fetch never starts, and a partial clone whose remote neither a read nor a local change reaches.

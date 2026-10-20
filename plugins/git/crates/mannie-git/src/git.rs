@@ -29,14 +29,26 @@ use crate::version::Version;
 pub(crate) const GIT: &str = "git";
 
 /// The variables that every run sets.
-const VARIABLES: [(&str, &str); 6] = [
+const VARIABLES: [(&str, &str); 5] = [
     ("GIT_TERMINAL_PROMPT", "0"),
     ("GIT_EDITOR", ":"),
     ("GIT_SEQUENCE_EDITOR", ":"),
     ("GIT_PAGER", "cat"),
     ("GIT_MERGE_AUTOEDIT", "no"),
-    ("GIT_ALLOW_PROTOCOL", "file:git:http:https:ssh"),
 ];
+
+/// The protocols of a run that reaches a remote, as `GIT_ALLOW_PROTOCOL`
+/// names them: never `ext`, which runs a command that the URL names (T-49).
+const REMOTE_PROTOCOLS: &str = "file:git:http:https:ssh";
+
+/// The protocols of every other run: a name that no URL gives its transport,
+/// since a URL's scheme holds no underscore, so git refuses every remote. A
+/// read or a local change in a partial clone then fails where git would
+/// fetch a missing object from the promisor remote, which would start the
+/// programs that the repository's configuration names for it. A remote's
+/// `vcs` setting can name any helper, this one too, but git would then start
+/// a program `git-remote-no_protocol`, which git does not ship.
+const NO_PROTOCOL: &str = "no_protocol";
 
 /// The time of a run that names none, in seconds.
 const DEFAULT_TIMEOUT_SECONDS: u32 = 60;
@@ -54,6 +66,9 @@ pub(crate) struct GitRun {
     timeout_seconds: u32,
     output_limit: u32,
     reads: Option<ReadPlace>,
+    /// Whether the run may reach a remote, which only fetches, pulls and
+    /// pushes do.
+    remote: bool,
 }
 
 impl GitRun {
@@ -70,7 +85,16 @@ impl GitRun {
             timeout_seconds: DEFAULT_TIMEOUT_SECONDS,
             output_limit: DEFAULT_OUTPUT_LIMIT,
             reads: None,
+            remote: false,
         }
+    }
+
+    /// The same run, allowed to reach a remote, for a fetch, a pull or a push
+    /// that the owner allowed with its endpoint.
+    #[must_use]
+    pub(crate) fn reaching_remote(mut self) -> Self {
+        self.remote = true;
+        self
     }
 
     /// The same run, with git's standard input.
@@ -243,6 +267,12 @@ impl Git {
         for (name, value) in VARIABLES {
             program = program.with_variable(name, value);
         }
+        let protocols = if run.remote {
+            REMOTE_PROTOCOLS
+        } else {
+            NO_PROTOCOL
+        };
+        program = program.with_variable("GIT_ALLOW_PROTOCOL", protocols);
         for (name, value) in &run.variables {
             program = program.with_variable(name.as_str(), value.as_str());
         }

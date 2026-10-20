@@ -18,7 +18,10 @@ use crate::tools::push::GitPush;
 use crate::tools::rebase::GitRebase;
 use crate::tools::reset::GitReset;
 use crate::tools::resolve::GitResolve;
+use crate::tools::show::GitShow;
 use crate::tools::stage::GitStage;
+use crate::tools::switch::GitSwitch;
+use crate::tools::testing::call;
 
 /// A repository with one commit of `a.txt`.
 fn started() -> TestRepository {
@@ -79,6 +82,115 @@ async fn a_commit_without_hooks_only_writes_and_one_with_a_hook_lists_it() {
     assert!(result.output.starts_with("Committed "), "{}", result.output);
     assert!(result.output.contains("    Two\n"), "{}", result.output);
     assert_eq!(repository.git(&["log", "-1", "--format=%s"]).trim(), "Two");
+}
+
+/// A URL of the repository in `path` for git's file transport, which a
+/// clone with a filter needs: git ignores a filter for a plain path.
+fn file_url(path: &std::path::Path) -> String {
+    let path = path.display().to_string().replace('\\', "/");
+    if path.starts_with('/') {
+        format!("file://{path}")
+    } else {
+        format!("file:///{path}")
+    }
+}
+
+/// A partial clone fetches a missing object from its promisor remote when
+/// a run of git needs it. Only a fetch, a pull or a push may reach a
+/// remote, so a read and a local change fail there instead, and the program
+/// that the clone's configuration names for the remote never starts.
+#[tokio::test]
+async fn neither_a_read_nor_a_local_change_reaches_the_remote_of_a_partial_clone() {
+    // Each version of each file has a blob of its own.
+    let origin = TestRepository::new();
+    origin.write("a.txt", "a one\n");
+    origin.write("b.txt", "b one\n");
+    origin.commit("One");
+    origin.write("a.txt", "a two\n");
+    origin.write("b.txt", "b two\n");
+    origin.commit("Two");
+    origin.git(&["config", "uploadpack.allowFilter", "true"]);
+    origin.git(&["config", "uploadpack.allowAnySHA1InWant", "true"]);
+    let workspace = TestRepository::new();
+    workspace.git(&[
+        "clone",
+        "--quiet",
+        "--filter=blob:none",
+        &file_url(origin.path()),
+        "clone",
+    ]);
+    let clone = workspace.path().join("clone");
+    let marker = workspace.sibling("markers").join("ran");
+    let upload = TestRepository::marking_command(&marker, "upload-pack", "git upload-pack");
+    workspace.git_in(&clone, &["config", "remote.origin.uploadpack", &upload]);
+    // Plain git fetches the old b.txt and starts the planted program.
+    workspace.git_in(&clone, &["show", "HEAD~1:b.txt"]);
+    assert!(
+        marker.exists(),
+        "plain git fetches lazily in a partial clone"
+    );
+    std::fs::remove_file(&marker).unwrap();
+
+    let read = call::<GitShow>(
+        &workspace,
+        json!({ "repository": "clone", "revision": "HEAD~1", "path": "a.txt" }),
+    )
+    .await;
+    let switched = change::<GitSwitch>(
+        &workspace,
+        json!({ "repository": "clone", "target": "HEAD~1", "detach": true }),
+    )
+    .await;
+
+    assert!(read.failure.is_some(), "{}", read.output);
+    assert!(switched.failure.is_some(), "{}", switched.output);
+    let ran = std::fs::read_to_string(&marker).unwrap_or_default();
+    assert!(ran.is_empty(), "a run reached the remote: {ran}");
+}
+
+/// A remote of the `ext` transport names a command that git starts to reach
+/// it. A fetch allows only the transports of other remotes, so git refuses
+/// the remote before its command starts, also where the repository's own
+/// configuration allows `ext`.
+#[tokio::test]
+async fn a_fetch_from_a_remote_of_the_ext_transport_starts_no_command() {
+    let repository = started();
+    let marker = repository.sibling("markers").join("ran");
+    // git splits an ext command at its spaces and reads `%` as an escape.
+    let marker_argument = marker
+        .display()
+        .to_string()
+        .replace('\\', "/")
+        .replace('%', "%%")
+        .replace(' ', "% ");
+    let url = format!("ext::git init --quiet {marker_argument}");
+    repository.git(&["config", "protocol.ext.allow", "always"]);
+    repository.git(&["remote", "add", "planted", &url]);
+    // Plain git starts the command, which makes the marker's folder.
+    let _fetched = repository.git_may_fail(&["fetch", "planted"]);
+    assert!(
+        marker.exists(),
+        "plain git starts the command of an ext remote"
+    );
+    std::fs::remove_dir_all(&marker).unwrap();
+
+    let prepared = prepare::<GitFetch>(&repository, json!({ "remote": "planted" })).await;
+    let endpoints: Vec<String> = prepared
+        .effects()
+        .into_iter()
+        .filter_map(|effect| match effect {
+            ProgramEffect::Network { endpoint } => Some(endpoint),
+            _other => None,
+        })
+        .collect();
+    assert_eq!(endpoints, [url]);
+    let fetched = prepared.execute().await;
+
+    assert!(fetched.failure.is_some(), "{}", fetched.output);
+    assert!(
+        !marker.exists(),
+        "the fetch started the ext remote's command"
+    );
 }
 
 /// On Unix, git skips a hook file without its executable bit, so the change

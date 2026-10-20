@@ -220,7 +220,11 @@ struct PushData<'a> {
 
 async fn act(acting: &Acting, plan: Plan<Pushing>) -> Result<Answer, GitFailure> {
     let pushing = &plan.planned;
-    let ran = acting.reading.git.run(acting.run(plan.command)).await?;
+    let ran = acting
+        .reading
+        .git
+        .run(acting.run(plan.command).reaching_remote())
+        .await?;
     let pushed = parse_pushed(&ran.text());
     let rejected = pushed.iter().any(|update| update.flag == '!');
     if !ran.succeeded() || rejected {

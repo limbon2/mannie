@@ -204,11 +204,13 @@ enum ProgramKind {
 }
 
 /// The settings that name a program that reaching a remote runs: by key,
-/// and by the name of a subsection's key.
-const TRANSPORT_KEYS: [&str; 4] = [
+/// and by the name of a subsection's key. A fetch in a repository with
+/// alternates runs `core.alternateRefsCommand` to list their refs.
+const TRANSPORT_KEYS: [&str; 5] = [
     "core.sshcommand",
     "core.askpass",
     "core.gitproxy",
+    "core.alternaterefscommand",
     "credential.helper",
 ];
 
@@ -603,5 +605,52 @@ worktree\0gpg.ssh.defaultkeycommand\nkey-it\0local\0core.editor\nvim\0",
                 "gpg.ssh.defaultkeycommand"
             ]
         );
+    }
+
+    /// The names of the programs that `effects` lists.
+    fn program_names(effects: &[ProgramEffect]) -> Vec<String> {
+        effects
+            .iter()
+            .map(|effect| match effect {
+                ProgramEffect::RunsFolderCode { name, .. } => name.clone(),
+                other => format!("{other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_fetch_and_a_push_count_every_program_that_reaching_a_remote_runs() {
+        let settings = parse_settings(
+            b"local\0core.sshcommand\nssh -i planted\0local\0core.askpass\nask-it\0\
+local\0core.gitproxy\nproxy-it\0local\0core.alternaterefscommand\nlist-it\0\
+local\0credential.helper\nhelp-it\0local\0credential.https://example.com.helper\nhelp-there\0\
+local\0remote.origin.uploadpack\nupload-it\0local\0remote.origin.receivepack\nreceive-it\0\
+local\0remote.origin.vcs\nhelper-it\0local\0remote.origin.url\nhttps://example.com/app.git\0",
+        );
+        let expected = [
+            "core.sshcommand",
+            "core.askpass",
+            "core.gitproxy",
+            "core.alternaterefscommand",
+            "credential.helper",
+            "credential.https://example.com.helper",
+            "remote.origin.uploadpack",
+            "remote.origin.receivepack",
+            "remote.origin.vcs",
+        ];
+
+        let fetch = configured_programs(&settings, Change::Fetch { integrates: false });
+        let push = configured_programs(&settings, Change::Push);
+        let commit = configured_programs(
+            &settings,
+            Change::Commit {
+                amend: false,
+                all: false,
+            },
+        );
+
+        assert_eq!(program_names(&fetch), expected);
+        assert_eq!(program_names(&push), expected);
+        assert_eq!(commit, Vec::<ProgramEffect>::new());
     }
 }
