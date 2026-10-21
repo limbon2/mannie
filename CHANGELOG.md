@@ -10,6 +10,8 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ### Fixed
 
+- Attach the child-command listener before approval in the task crash-recovery test so a delayed reader cannot miss the executing state.
+
 - Run desktop unit tests without concurrent Rust compilation so cold message evaluation stays within the existing timeout on Windows CI.
 
 - Follow the current selected tab in desktop text assertions and compare native canonical export paths on Windows.
