@@ -62,15 +62,18 @@ jobs:
 
   checks:
     name: Checks
+    needs: version
     uses: ./.github/workflows/ci.yml
 
   freebsd-tests:
     name: FreeBSD tests
+    needs: version
     uses: ./.github/workflows/nightly.yml
 
   # The programs of the plugins' manifests and their builds.
   plan:
     name: Plan the programs
+    needs: version
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -397,9 +400,27 @@ jobs:
           pnpm licenses list --json --long --filter mannie-desktop | node scripts/third-party-notices.mjs > "dist/THIRD-PARTY-NOTICES-$VERSION-npm.md"
       - name: Write the checksums
         run: node scripts/release.mjs checksums dist
-      - name: Create the draft release
+      - name: Create or refresh the draft release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -eu
           node scripts/release.mjs notes "$VERSION" > notes.md
-          gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Mannie $VERSION" --notes-file notes.md dist/*
+          state="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .draft")"
+          case "$state" in
+            true)
+              gh release upload "$GITHUB_REF_NAME" --clobber dist/*
+              gh release edit "$GITHUB_REF_NAME" --draft --title "Mannie $VERSION" --notes-file notes.md
+              ;;
+            false)
+              echo "Release $GITHUB_REF_NAME is already published; its files will not be replaced." >&2
+              exit 1
+              ;;
+            '')
+              gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Mannie $VERSION" --notes-file notes.md dist/*
+              ;;
+            *)
+              echo "Expected one release for $GITHUB_REF_NAME, received ambiguous release metadata." >&2
+              exit 1
+              ;;
+          esac

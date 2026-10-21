@@ -6,6 +6,8 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ### Changed
 
+- Refresh an existing release draft on retry and validate its version before starting CI or FreeBSD tests.
+
 - Cache Rust compilations across hosted jobs, retain Clippy metadata and run selected Rust tests or desktop specs when repairing CI.
 
 - Run all CI on standard GitHub-hosted runners for the public repository, and build and install-check Windows, Linux and FreeBSD artifacts through the Release workflow, including manual branch builds.
