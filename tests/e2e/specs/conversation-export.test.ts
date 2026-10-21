@@ -8,10 +8,12 @@ import { seedConversation, setFolderChoice } from '../support/harness.ts';
 import {
   axeViolations,
   openSettings,
+  shownText,
   switchToPseudoLocale,
   uncataloguedText,
   waitForAnimations,
   waitForApp,
+  waitForShownText,
 } from '../support/page.ts';
 
 /** Open a seeded conversation without depending on a provider or credentials. */
@@ -28,7 +30,7 @@ async function savedFolder(): Promise<string> {
   const destination = $('[data-export-destination]');
   await destination.waitForDisplayed();
   await waitForAnimations();
-  return destination.getText();
+  return shownText(await destination);
 }
 
 /** Remove only the temporary directory created for this suite. */
@@ -81,7 +83,7 @@ describe('conversation export', () => {
     expect(readdirSync(folder)).not.toContain('.incomplete');
     expect(realpathSync.native(dirname(folder))).toBe(destination);
     expect(await browser.execute(() => document.activeElement?.closest('[role="dialog"]') !== null)).toBe(true);
-    await expect($('[role="dialog"] [role="status"]')).toHaveText('The conversation was exported.');
+    await waitForShownText('[role="dialog"] [role="status"]', 'The conversation was exported.');
     expect(await axeViolations()).toEqual([]);
     await browser.execute(() => document.documentElement.classList.add('dark'));
     expect(await axeViolations()).toEqual([]);
@@ -105,7 +107,7 @@ describe('conversation export', () => {
     await setFolderChoice(join(destination, 'missing-parent'));
     await $('[data-export-conversation]').click();
     await $('[role="dialog"] [data-slot="alert"]').waitForDisplayed();
-    await expect($('[role="dialog"]')).toHaveText(expect.stringContaining('could not be written'));
+    await waitForShownText('[role="dialog"]', expect.stringContaining('could not be written'));
     await setFolderChoice(destination);
     await $('[role="dialog"] [data-slot="dialog-footer"] button:first-child').click();
     await savedFolder();
