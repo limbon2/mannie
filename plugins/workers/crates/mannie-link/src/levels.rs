@@ -11,7 +11,7 @@ pub const LEVELS: [(&str, u32); 6] = [
     ("mannie.link.session.v1", 1),
     ("mannie.link.pairing.v1", 1),
     ("mannie.link.tasks.v1", 1),
-    ("mannie.link.events.v1", 1),
+    ("mannie.link.events.v1", 2),
     ("mannie.link.approvals.v1", 1),
     ("mannie.link.leases.v1", 1),
 ];

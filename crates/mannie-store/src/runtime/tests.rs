@@ -2244,3 +2244,5 @@ mod executor_tasks;
 /// The tests of tasks and task conversations (docs/features/child-agents/
 /// tasks.md, data).
 mod tasks;
+
+mod conversation_export;

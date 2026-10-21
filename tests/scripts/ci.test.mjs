@@ -305,6 +305,46 @@ describe('summary', () => {
 });
 
 describe('STEPS', () => {
+  it('keeps desktop tests out of both compiler lanes on small and large machines', async () => {
+    const selected = new Set(['gen', 'test:rust:build', 'lint:rust', 'lint:ts', 'lint:types', 'test:desktop']);
+    for (const limits of [SMALL, LARGE]) {
+      const run = start(
+        STEPS.filter((step) => selected.has(step.task)),
+        limits,
+      );
+      await settle();
+      run.finish('gen');
+      await settle();
+      run.finish('lint:ts');
+      await settle();
+      run.finish('lint:types');
+      await settle();
+      assert.equal(
+        run.started.some((entry) => entry.task === 'test:desktop'),
+        false,
+      );
+
+      run.finish('test:rust:build');
+      await settle();
+      assert.equal(
+        run.started.some((entry) => entry.task === 'test:desktop'),
+        false,
+      );
+      run.finish('lint:rust');
+      await settle();
+      assert.ok(run.started.some((entry) => entry.task === 'test:desktop'));
+      run.finish('test:desktop');
+      const outcomes = await run.outcomes;
+      assert.ok(outcomes.every((outcome) => outcome.status === 'passed'));
+      const overlap = run.overlaps.some((tasks) => {
+        const hasDesktop = tasks.includes('test:desktop');
+        const hasNeighbor = tasks.length > 1;
+        return hasDesktop && hasNeighbor;
+      });
+      assert.equal(overlap, false);
+    }
+  });
+
   it('finishes desktop tests before Rust tests in the actual graph, including a desktop failure', async () => {
     for (const desktopCode of [0, 1]) {
       const run = start(STEPS);

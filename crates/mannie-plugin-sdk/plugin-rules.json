@@ -1,5 +1,5 @@
 {
-  "coreTablePrefixes": ["settings", "runtime", "provider", "tools", "store", "validation", "sqlite"],
+  "coreTablePrefixes": ["settings", "runtime", "exports", "provider", "tools", "store", "validation", "sqlite"],
   "loaderNamePrefixes": ["LD_", "DYLD_"],
   "reservedIds": [
     "app",
@@ -16,6 +16,7 @@
     "webview",
     "window",
     "link",
+    "exports",
     "provider",
     "runtime",
     "settings",

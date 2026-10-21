@@ -27,7 +27,7 @@ use mannie_runtime::testing::{
     FakeModel, MemoryVault, Transcript, fast_config, open_store, reply, start_runtime_with_tools,
     test_tools, tool_calls, wait_for_leftover_command,
 };
-use mannie_runtime::{AgentRegistry, Runtime, texts};
+use mannie_runtime::{AgentRegistry, ConversationSubscription, Runtime, texts};
 use mannie_store::Store;
 use mannie_types::chat::{SendMessage, StartConversation, SubscribeConversation};
 use mannie_types::ids::{ConversationId, RunId};
@@ -131,14 +131,7 @@ fn start_arguments() -> String {
 }
 
 /// Prints the statuses of the child's tool calls, for the test to read.
-async fn print_child_calls(runtime: Runtime, conversation: ConversationId) {
-    let mut subscription = runtime
-        .subscribe(SubscribeConversation {
-            conversation_id: conversation,
-            after_seq: Some(0),
-        })
-        .await
-        .unwrap();
+async fn print_child_calls(mut subscription: ConversationSubscription) {
     while let Some(update) = subscription.next().await {
         let ConversationUpdate::Event { event, .. } = update else {
             continue;
@@ -218,7 +211,6 @@ async fn follow_and_approve(runtime: Runtime, conversation: ConversationId) {
         })
         .await
         .unwrap();
-    let mut following = false;
     let mut approved = false;
     while let Some(update) = subscription.next().await {
         let ConversationUpdate::Event { event, .. } = update else {
@@ -240,18 +232,21 @@ async fn follow_and_approve(runtime: Runtime, conversation: ConversationId) {
         let Some(task) = &call.task else {
             continue;
         };
-        if !following {
-            following = true;
-            tokio::spawn(print_child_calls(
-                runtime.clone(),
-                task.conversation_id.clone(),
-            ));
-        }
         let state = serde_json::to_value(task.state).unwrap();
         print_event(&format!("event task {}", state.as_str().unwrap()));
         if let Some(approval) = &task.approval
             && !approved
         {
+            // The approval confirms that the child conversation exists.
+            // Subscribe before granting it so Executing cannot be missed.
+            let child_subscription = runtime
+                .subscribe(SubscribeConversation {
+                    conversation_id: task.conversation_id.clone(),
+                    after_seq: Some(0),
+                })
+                .await
+                .unwrap();
+            tokio::spawn(print_child_calls(child_subscription));
             approved = true;
             runtime
                 .decide_approval(DecideApproval {
@@ -301,7 +296,7 @@ fn run_child_until(directory: &Path, kill: KillPoint) {
         ])
         .env(CHILD_DIRECTORY, directory)
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        .stderr(Stdio::inherit());
     if kill == KillPoint::ParentEnded {
         command.env(PARENT_ENDS, "1");
     }
@@ -312,6 +307,7 @@ fn run_child_until(directory: &Path, kill: KillPoint) {
         KillPoint::Reported => "event task reported",
         KillPoint::ParentEnded => "event parent completed",
     };
+    let mut reached = false;
     for line in stdout.lines() {
         let line = line.unwrap();
         if line.trim_end() == wanted {
@@ -321,11 +317,13 @@ fn run_child_until(directory: &Path, kill: KillPoint) {
                     std::thread::sleep(Duration::from_millis(20));
                 }
             }
+            reached = true;
             child.kill().unwrap();
             break;
         }
     }
-    child.wait().unwrap();
+    let status = child.wait().unwrap();
+    assert!(reached, "child exited {status} before {wanted} at {kill:?}");
 }
 
 /// Follows a conversation until its latest run, `run`, has ended.

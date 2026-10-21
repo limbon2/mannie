@@ -141,6 +141,11 @@ uuid_id!(
     WorkerId
 );
 
+uuid_id!(
+    /// Identifies an owner-initiated conversation export operation.
+    ExportId
+);
+
 #[cfg(test)]
 mod tests {
     use super::{ConversationId, RunId};

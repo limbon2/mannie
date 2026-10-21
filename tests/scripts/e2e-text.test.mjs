@@ -68,3 +68,20 @@ test('visible text still fails an incorrect exact or partial expectation', async
   await assert.rejects(waitForShownText('#sample', 'Expected text'), /did not show/u);
   await assert.rejects(waitForShownText('#sample', /Expected/u), /did not show/u);
 });
+
+for (const exists of [true, false]) {
+  test(`a selector is resolved again when ${exists ? 'selection changes' : 'a matching element appears'}`, async () => {
+    const first = elementWith('Task 1', { exists });
+    const second = { ...first, innerText: 'Task 2', isExisting: async () => true };
+    let selected = first;
+    Object.defineProperty(globalThis, '$', { configurable: true, value: async () => selected });
+    globalThis.browser.waitUntil = async (condition, options) => {
+      assert.equal(await condition(), false);
+      selected = second;
+      assert.equal(await condition(), true, options.timeoutMsg);
+    };
+
+    await waitForShownText('[aria-selected="true"]', 'Task 2');
+    assert.equal(first.innerText, 'Task 1');
+  });
+}

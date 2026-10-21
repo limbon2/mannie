@@ -358,6 +358,19 @@ pub trait TaskExecutor: Send + Sync + fmt::Debug + 'static {
         after_seq: Option<u32>,
     ) -> BoxFuture<'static, Result<BoxStream<'static, ConversationUpdate>, ChatError>>;
 
+    /// A complete saved record, distinct from shortened UI views (ADR-0040).
+    /// An executor without this capability is explicitly unsupported.
+    fn export_record(
+        &self,
+        _target: &TaskExecutorRef,
+        _conversation: &ConversationId,
+    ) -> BoxFuture<
+        'static,
+        Result<crate::contracts::ConversationRecord, crate::contracts::ExportError>,
+    > {
+        Box::pin(async { Err(crate::contracts::ExportError::Unsupported) })
+    }
+
     /// Earlier turns of a task conversation on its target.
     fn earlier_turns(
         &self,

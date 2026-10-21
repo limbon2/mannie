@@ -271,4 +271,24 @@ async fn a_delegated_task_uses_every_tool_of_the_worker_agent() {
     assert_eq!(page.lines.len(), 3, "{page:?}");
     assert!(page.lines[0].starts_with("line "), "{page:?}");
     assert!(page.total_lines >= LONG_OUTPUT_LINES, "{page:?}");
+    let exported = master
+        .runtime
+        .export_record(&task.conversation_id)
+        .await
+        .unwrap();
+    let full_output = exported
+        .archives
+        .iter()
+        .find(|entry| entry.id == archive.id)
+        .expect("the export includes the complete archive");
+    assert!(full_output.content.contains("line 20000"));
+    assert_eq!(
+        exported
+            .turns
+            .iter()
+            .flat_map(|turn| &turn.parts)
+            .filter(|part| part.kind == "tool_call")
+            .count(),
+        calls.len()
+    );
 }

@@ -66,3 +66,9 @@ pub use mannie_types::tools::{
 pub use mannie_types::transcript::{
     Checkpoint, ConversationUpdate, SubscriptionEnd, SubscriptionId,
 };
+
+// Complete read-only conversation records for task executors (ADR-0040).
+pub use mannie_types::export::{
+    ConversationRecord, ExportError, ExportWarning, MAX_EXPORT_CHUNK_BYTES, RECORD_VERSION,
+    RecordArchive, RecordImage, RecordPart, RecordTurn,
+};

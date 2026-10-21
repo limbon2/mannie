@@ -46,6 +46,7 @@ pub const RESERVED_IDS: &[&str] = &[
     // commands, and the core's namespaces in the credential store: provider
     // credentials under `provider/` and Workers' legacy entry `link/master-key`.
     "link",
+    "exports",
     "provider",
     "runtime",
     "settings",
@@ -108,6 +109,7 @@ pub const RESERVED_IDS: &[&str] = &[
 pub const CORE_TABLE_PREFIXES: &[&str] = &[
     "settings",
     "runtime",
+    "exports",
     "provider",
     "tools",
     "store",
@@ -384,6 +386,7 @@ mod tests {
     #[test]
     fn ids_whose_tables_nest_with_a_core_prefix_are_refused() {
         for (id, core) in [
+            ("exports-private", "exports"),
             ("runtime-x", "runtime"),
             ("settings-extra", "settings"),
             ("provider-keys", "provider"),

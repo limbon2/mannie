@@ -57,3 +57,4 @@ Each ADR has exactly one of these statuses:
 | [0037](0037-run-the-checks-of-task-ci-side-by-side.md)                    | Run the checks of `task ci` side by side, with Clippy in a target folder of its own           | Accepted (D36)         | None       |
 | [0038](0038-let-plugins-run-installed-programs-in-the-owners-projects.md) | Let plugins run installed programs in the owner's projects under the master's policy          | Accepted (D37)         | M9         |
 | [0039](0039-let-plugins-describe-their-tool-calls-in-the-transcript.md)   | Let plugins describe their tool calls in the transcript                                       | Accepted (D37)         | M9         |
+| [0040](0040-export-complete-conversation-records.md)                      | Let the owner export complete conversation records                                            | Accepted (D38)         | M10        |

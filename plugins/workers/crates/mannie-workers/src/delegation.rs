@@ -98,6 +98,21 @@ pub trait Delegation: Send + Sync + fmt::Debug + 'static {
         after_seq: Option<u32>,
     ) -> BoxFuture<'static, Result<BoxStream<'static, ConversationUpdate>, ChatError>>;
 
+    /// A complete record, or an explicit unsupported error for older hosts.
+    fn export_record(
+        &self,
+        _worker: &WorkerId,
+        _conversation: &ConversationId,
+    ) -> BoxFuture<
+        'static,
+        Result<
+            mannie_plugin_sdk::contracts::ConversationRecord,
+            mannie_plugin_sdk::contracts::ExportError,
+        >,
+    > {
+        Box::pin(async { Err(mannie_plugin_sdk::contracts::ExportError::Unsupported) })
+    }
+
     /// Earlier turns of a task conversation on its worker.
     fn earlier_turns(
         &self,

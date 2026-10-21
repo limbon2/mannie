@@ -18,6 +18,7 @@
     "allow-delete-provider-profile",
     "allow-delete-remote-command-rule",
     "allow-dismiss-window-request",
+    "allow-export-conversation",
     "allow-get-chat-settings",
     "allow-get-checkpoint",
     "allow-get-child-agents-settings",

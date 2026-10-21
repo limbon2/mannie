@@ -22,7 +22,8 @@ use tauri::Wry;
 use tauri_specta::{Builder, ErrorHandlingMode, collect_commands};
 
 use crate::commands::{
-    chat, child_agents, interface, links, plugins, projects, providers, startup, tools, window,
+    chat, child_agents, export, interface, links, plugins, projects, providers, startup, tools,
+    window,
 };
 
 /// The first line of every generated file.
@@ -77,6 +78,7 @@ macro_rules! app_commands {
             chat::send_message,
             chat::suggest_mentions,
             chat::read_image,
+            export::export_conversation,
             chat::stop_reply,
             chat::retry_reply,
             chat::rename_conversation,

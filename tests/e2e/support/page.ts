@@ -109,8 +109,13 @@ export async function waitForShownText(
     return expected.asymmetricMatch(text);
   };
   let last = '';
-  const element = typeof target === 'string' ? await $(target) : await target;
-  const label = typeof element.selector === 'string' ? element.selector : 'the element';
+  const resolvedTarget = typeof target === 'string' ? target : await target;
+  let label = 'the element';
+  if (typeof resolvedTarget === 'string') {
+    label = resolvedTarget;
+  } else if (typeof resolvedTarget.selector === 'string') {
+    label = resolvedTarget.selector;
+  }
   let expectedText = 'matching text';
   if (typeof expected === 'string') {
     expectedText = JSON.stringify(expected);
@@ -121,6 +126,8 @@ export async function waitForShownText(
   try {
     await browser.waitUntil(
       async () => {
+        // A selector can match a different tab after its selected state changes.
+        const element = typeof resolvedTarget === 'string' ? await $(resolvedTarget) : resolvedTarget;
         const displayed = (await element.isExisting()) && (await element.isDisplayed());
         if (!displayed) {
           return false;
