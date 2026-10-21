@@ -10,6 +10,8 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ### Fixed
 
+- Follow the current selected tab in desktop text assertions and compare native canonical export paths on Windows.
+
 - Validation builds refuse the normal app identifier before opening owner data, including when a parallel build replaces the native test executable.
 
 ## 0.4.0 - 2026-10-21

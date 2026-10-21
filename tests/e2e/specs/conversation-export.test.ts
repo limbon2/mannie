@@ -35,7 +35,7 @@ async function savedFolder(): Promise<string> {
 
 /** Remove only the temporary directory created for this suite. */
 function removeExportFolder(folder: string): void {
-  const isInTemporaryDirectory = dirname(folder) === realpathSync(tmpdir());
+  const isInTemporaryDirectory = dirname(folder) === realpathSync.native(tmpdir());
   const isExportTestFolder = basename(folder).startsWith('mannie-export-');
   if (!isInTemporaryDirectory || !isExportTestFolder) {
     throw new Error('unexpected export test folder');
@@ -48,7 +48,7 @@ describe('conversation export', () => {
   let conversation: string;
 
   before(async () => {
-    destination = realpathSync(mkdtempSync(join(tmpdir(), 'mannie-export-')));
+    destination = realpathSync.native(mkdtempSync(join(tmpdir(), 'mannie-export-')));
     await waitForApp();
     conversation = await seedConversation(60);
     await openConversation(conversation);

@@ -4,7 +4,7 @@
 | ------------ | ---------------------------------------------------------------------------------------------------------------------- |
 | Status       | Building                                                                                                               |
 | Milestone    | M10                                                                                                                    |
-| Last updated | 2026-10-20                                                                                                             |
+| Last updated | 2026-10-21                                                                                                             |
 | Related      | [Chat](chat/README.md), [ADR-0040](../adr/0040-export-complete-conversation-records.md), [Feature protocol](README.md) |
 
 ## Intent
@@ -58,4 +58,5 @@ None.
 - 2026-10-20, Windows 11 and WebView2: the six native export checks pass. They cover picker cancellation, all 60 seeded turns beyond the initial page, keyboard access, focus in the result dialog, status announcements, both themes, the command palette, separate export folders, destination failures and retry, side panels, pseudo-localization and axe checks. The ten existing child-agent and side-panel regression checks also pass.
 - 2026-10-20, Linux: `task test:linux` passes, including Clippy and the core and plugin Rust tests over the authenticated worker link.
 - Validation builds reject the normal app identifier before startup opens owner data.
-- Linux desktop behavior still needs a machine with WebKitGTK and WebKitWebDriver. The Linux Rust validation uses the repository's read-only Docker workflow, which excludes desktop crates.
+- 2026-10-21, GitHub-hosted Ubuntu 22.04 and WebKitGTK: all 23 desktop test files pass, including the six export checks, and the performance checks pass. On Ubuntu 24.04, all 14 checks of `task ci` pass.
+- 2026-10-21, FreeBSD 14.4: the native core and worker tests pass. Worker builds for FreeBSD and static Linux, worker service checks on Windows and Linux, and all three credential-store checks also pass.
