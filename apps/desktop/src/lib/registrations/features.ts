@@ -7,6 +7,7 @@ import type { ShellSlots } from '#lib/state/shell-slots.svelte.js';
 
 import { registerChat } from './chat.js';
 import { registerChildAgents } from './child-agents.js';
+import { registerExport } from './export.js';
 import { registerPlugins } from './plugins.js';
 import { registerTools } from './tools.js';
 import { registerWindowAndTray } from './window-and-tray.js';
@@ -20,5 +21,6 @@ export const features: readonly FeatureRegistration[] = [
   registerWindowAndTray,
   registerTools,
   registerChildAgents,
+  registerExport,
   registerPlugins,
 ];

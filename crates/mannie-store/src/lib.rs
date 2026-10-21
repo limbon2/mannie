@@ -14,6 +14,7 @@
 //!   which [`service_providers`] binds to the plugin.
 
 mod error;
+mod exports;
 mod legacy;
 mod plugin_store;
 mod provider;
@@ -60,6 +61,7 @@ pub enum Durability {
 pub(crate) fn all_statements() -> impl Iterator<Item = &'static str> {
     settings::STATEMENTS
         .iter()
+        .chain(exports::STATEMENTS)
         .chain(provider::STATEMENTS)
         .chain(tools::STATEMENTS)
         .copied()

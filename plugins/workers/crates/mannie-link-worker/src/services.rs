@@ -31,7 +31,8 @@ use mannie_link::proto::approvals::{DecideRequest, DecideResponse};
 use mannie_link::proto::events::events_service_server::EventsService;
 use mannie_link::proto::events::{
     CheckpointRequest, CheckpointResponse, EarlierTurnsRequest, EarlierTurnsResponse,
-    SubscribeRequest, SubscribeResponse, ToolOutputRequest, ToolOutputResponse,
+    ExportRecordRequest, ExportRecordResponse, SubscribeRequest, SubscribeResponse,
+    ToolOutputRequest, ToolOutputResponse,
 };
 use mannie_link::proto::leases::leases_service_server::LeasesService;
 use mannie_link::proto::leases::{DeliverRequest, DeliverResponse, RevokeRequest, RevokeResponse};
@@ -247,6 +248,37 @@ impl EventsService for Services {
         });
         let updates = updates.take_until(link_stops(self.stops.clone()));
         Ok(Response::new(updates.boxed()))
+    }
+
+    type ExportRecordStream = BoxStream<'static, Result<ExportRecordResponse, Status>>;
+
+    async fn export_record(
+        &self,
+        request: Request<ExportRecordRequest>,
+    ) -> Result<Response<Self::ExportRecordStream>, Status> {
+        let conversation = ConversationId::parse(&request.into_inner().conversation_id)
+            .map_err(|_invalid| Status::invalid_argument("the conversation ID is invalid"))?;
+        let record = self
+            .runtime
+            .assigned_export_record(&conversation)
+            .await
+            .map_err(|error| refused_with(&error))?;
+        let bytes = tokio::task::spawn_blocking(move || serde_json::to_vec(&record))
+            .await
+            .map_err(|_join| Status::internal("record serialization failed"))?
+            .map_err(|_json| Status::internal("record serialization failed"))?;
+        let chunks = futures_util::stream::unfold((bytes, 0_usize), |(bytes, start)| async move {
+            if start == bytes.len() {
+                return None;
+            }
+            let end =
+                (start + mannie_plugin_sdk::contracts::MAX_EXPORT_CHUNK_BYTES).min(bytes.len());
+            let chunk = bytes[start..end].to_vec();
+            Some((Ok(ExportRecordResponse { chunk }), (bytes, end)))
+        });
+        Ok(Response::new(
+            chunks.take_until(link_stops(self.stops.clone())).boxed(),
+        ))
     }
 
     async fn earlier_turns(

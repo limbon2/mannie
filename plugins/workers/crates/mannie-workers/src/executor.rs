@@ -718,6 +718,34 @@ impl TaskExecutor for WorkersExecutor {
         async move { subscribing.await.map_err(|error| chat_error(error, &label)) }.boxed()
     }
 
+    fn export_record(
+        &self,
+        target: &TaskExecutorRef,
+        conversation: &ConversationId,
+    ) -> BoxFuture<
+        'static,
+        Result<
+            mannie_plugin_sdk::contracts::ConversationRecord,
+            mannie_plugin_sdk::contracts::ExportError,
+        >,
+    > {
+        let Ok(worker) = WorkerId::parse(&target.target_id) else {
+            return futures_util::future::ready(Err(
+                mannie_plugin_sdk::contracts::ExportError::HostUnavailable,
+            ))
+            .boxed();
+        };
+        let reading = self.shared.delegation.export_record(&worker, conversation);
+        let mut stopping = self.shared.stopping.subscribe();
+        async move {
+            if *stopping.borrow_and_update() { return Err(mannie_plugin_sdk::contracts::ExportError::PluginOff); }
+            tokio::select! {
+                answer = reading => answer,
+                _stopped = stopping.changed() => Err(mannie_plugin_sdk::contracts::ExportError::PluginOff),
+            }
+        }.boxed()
+    }
+
     fn earlier_turns(
         &self,
         target: &TaskExecutorRef,

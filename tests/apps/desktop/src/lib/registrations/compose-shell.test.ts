@@ -116,12 +116,14 @@ describe('composeShell', () => {
     expect(slots.conversationControls.entries.map((control) => control.id)).toEqual([
       'tools.full-access',
       'child-agents.control',
+      'export.conversation',
     ]);
     expect(slots.overlays.entries.map((overlay) => overlay.id)).toEqual([
       'shell.link-confirmation',
       'chat.dialogs',
       'window.requests',
       'tools.dialogs',
+      'export.result',
     ]);
     expect(slots.partRenderers.entries.map((renderer) => renderer.id)).toEqual([
       'user_text',

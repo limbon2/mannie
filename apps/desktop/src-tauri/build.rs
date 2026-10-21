@@ -241,6 +241,7 @@ const APP_COMMANDS: &[&str] = &[
     "open_link",
     "plugin_work",
     "read_image",
+    "export_conversation",
     "read_tool_output",
     "remove_project",
     "rename_conversation",

@@ -12,7 +12,8 @@ use mannie_link::proto::approvals::DecideRequest;
 use mannie_link::proto::approvals::approvals_service_client::ApprovalsServiceClient;
 use mannie_link::proto::events::events_service_client::EventsServiceClient;
 use mannie_link::proto::events::{
-    CheckpointRequest, EarlierTurnsRequest, SubscribeRequest, ToolOutputRequest,
+    CheckpointRequest, EarlierTurnsRequest, ExportRecordRequest, SubscribeRequest,
+    ToolOutputRequest,
 };
 use mannie_link::proto::leases::leases_service_client::LeasesServiceClient;
 use mannie_link::proto::leases::{DeliverRequest, RevokeRequest};
@@ -103,6 +104,51 @@ impl Hub {
             .map(|connection| connection.channel.clone())
             .ok_or(DelegationError::Unreachable)
     }
+}
+
+async fn read_export_record(
+    connection: Option<std::sync::Arc<Connection>>,
+    conversation_id: String,
+) -> Result<
+    mannie_plugin_sdk::contracts::ConversationRecord,
+    mannie_plugin_sdk::contracts::ExportError,
+> {
+    use mannie_plugin_sdk::contracts::{ExportError, MAX_EXPORT_CHUNK_BYTES};
+    let connection = connection.ok_or(ExportError::HostUnavailable)?;
+    if connection
+        .levels
+        .get("mannie.link.events.v1")
+        .copied()
+        .unwrap_or_default()
+        < 2
+    {
+        return Err(ExportError::Unsupported);
+    }
+    let mut stream = events(connection.channel.clone())
+        .export_record(ExportRecordRequest { conversation_id })
+        .await
+        .map_err(|status| match answer(&status) {
+            Answer::Refused(json) => {
+                serde_json::from_str(&json).unwrap_or(ExportError::HostUnavailable)
+            }
+            Answer::Unreachable => ExportError::HostUnavailable,
+        })?
+        .into_inner();
+    let mut bytes = Vec::new();
+    while let Some(message) = stream
+        .message()
+        .await
+        .map_err(|_status| ExportError::HostUnavailable)?
+    {
+        if message.chunk.is_empty() || message.chunk.len() > MAX_EXPORT_CHUNK_BYTES {
+            return Err(ExportError::InvalidRecord);
+        }
+        bytes.extend_from_slice(&message.chunk);
+    }
+    tokio::task::spawn_blocking(move || serde_json::from_slice(&bytes))
+        .await
+        .map_err(|_join| ExportError::InvalidRecord)?
+        .map_err(|_json| ExportError::InvalidRecord)
 }
 
 impl Delegation for Hub {
@@ -279,6 +325,20 @@ impl Delegation for Hub {
         .boxed()
     }
 
+    fn export_record(
+        &self,
+        worker: &WorkerId,
+        conversation: &ConversationId,
+    ) -> BoxFuture<
+        'static,
+        Result<
+            mannie_plugin_sdk::contracts::ConversationRecord,
+            mannie_plugin_sdk::contracts::ExportError,
+        >,
+    > {
+        read_export_record(self.connection(worker), conversation.to_string()).boxed()
+    }
+
     fn earlier_turns(
         &self,
         worker: &WorkerId,
@@ -379,5 +439,29 @@ impl Delegation for Hub {
             Ok(())
         }
         .boxed()
+    }
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn a_level_one_connection_is_refused_before_an_export_rpc_can_run() {
+        let channel = tonic::transport::Endpoint::from_static("http://127.0.0.1:1").connect_lazy();
+        let connection = Arc::new(Connection::new(
+            channel,
+            HashMap::from([("mannie.link.events.v1".to_owned(), 1)]),
+        ));
+        assert_eq!(
+            read_export_record(Some(connection), "conversation".to_owned()).await,
+            Err(mannie_plugin_sdk::contracts::ExportError::Unsupported)
+        );
+        assert_eq!(
+            read_export_record(None, "conversation".to_owned()).await,
+            Err(mannie_plugin_sdk::contracts::ExportError::HostUnavailable)
+        );
     }
 }

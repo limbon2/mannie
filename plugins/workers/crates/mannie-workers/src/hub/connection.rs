@@ -146,10 +146,10 @@ pub(crate) async fn channel(
 }
 
 /// What a worker said in `Hello`, once the master agreed to work with it.
-/// Every package is at level 1 in this version, so no call checks the
-/// agreed levels yet.
+/// Complete-record reads require events level 2; existing reads use level 1.
 #[derive(Debug, Clone)]
 pub(crate) struct Hello {
+    pub(crate) levels: HashMap<String, u32>,
     pub(crate) name: String,
     pub(crate) details: WorkerDetails,
 }
@@ -188,6 +188,7 @@ pub(crate) async fn hello(channel: &Channel, master_version: &str) -> Result<Hel
         })));
     }
     Ok(Hello {
+        levels: agreed,
         name: response.name,
         details,
     })
@@ -197,6 +198,7 @@ pub(crate) async fn hello(channel: &Channel, master_version: &str) -> Result<Hel
 /// tasks for the runtime's follower.
 #[derive(Debug)]
 pub(crate) struct Connection {
+    pub(crate) levels: HashMap<String, u32>,
     pub(crate) channel: Channel,
     states: broadcast::Sender<AssignedTaskState>,
     /// The latest state of each active task, for a follower that watches
@@ -205,8 +207,9 @@ pub(crate) struct Connection {
 }
 
 impl Connection {
-    pub(crate) fn new(channel: Channel) -> Self {
+    pub(crate) fn new(channel: Channel, levels: HashMap<String, u32>) -> Self {
         Self {
+            levels,
             channel,
             states: broadcast::Sender::new(STATES_QUEUE),
             active: Mutex::default(),

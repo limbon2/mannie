@@ -4,6 +4,14 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+### Added
+
+- Export a conversation and its child conversations as linked Markdown documents, with stored images, complete tool outputs, and explicit warnings for unavailable worker records.
+
+### Fixed
+
+- Validation builds refuse the normal app identifier before opening owner data, including when a parallel build replaces the native test executable.
+
 ## 0.4.0 - 2026-10-21
 
 ### Added

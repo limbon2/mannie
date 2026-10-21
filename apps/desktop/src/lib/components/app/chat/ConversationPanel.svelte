@@ -3,6 +3,7 @@
   import MessageSquareOffIcon from '@lucide/svelte/icons/message-square-off';
   import { onMount, untrack } from 'svelte';
 
+  import ConversationControlOutlet from '#lib/components/app/shell/ConversationControlOutlet.svelte';
   import PluginOffState from '#lib/components/app/shell/PluginOffState.svelte';
   import * as Alert from '#lib/components/ui/alert/index.js';
   import { Button } from '#lib/components/ui/button/index.js';
@@ -120,6 +121,11 @@
       <PluginOffState plugin={offPlugin} />
     {/if}
   {:else}
+    {#if summary !== null}
+      <div class="flex shrink-0 justify-end gap-1 border-b px-3 py-1.5">
+        <ConversationControlOutlet conversation={summary} turns={transcript.turns} />
+      </div>
+    {/if}
     {#if conversation.status === 'ended'}
       <p class="border-b px-4 py-2 text-sm text-muted-foreground">{m.chat_conversation_ended()}</p>
     {/if}

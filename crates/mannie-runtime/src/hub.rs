@@ -330,7 +330,7 @@ impl std::fmt::Debug for Source {
 /// A worker's summary of a task conversation, with what the master knows of
 /// it in place of what the worker says: the title, the parent, the number
 /// and the worker. The worker says whether its run is active.
-fn localize_summary(
+pub(crate) fn localize_summary(
     master: &ConversationSummary,
     worker: &ConversationSummary,
 ) -> ConversationSummary {

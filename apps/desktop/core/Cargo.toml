@@ -75,12 +75,16 @@ tauri-plugin-opener = { workspace = true }
 tauri-plugin-single-instance = { workspace = true }
 tauri-specta = { workspace = true }
 thiserror = { workspace = true }
+# UTC timestamps in exported Markdown. The workspace already uses time.
+time = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
 # The tests parse plugins' manifests and bind their services.
 mannie-plugin-sdk = { workspace = true, features = ["host", "manifest"] }
+# Exercise export against persisted runtime records and missing child records.
+mannie-runtime = { workspace = true, features = ["testing"] }
 # The file dialog's tests read real files from a temporary folder.
 tempfile = { workspace = true }
 # test-util lets the channel tests run on a paused clock.

@@ -15,6 +15,7 @@
 
 mod commands;
 mod credentials;
+mod export;
 mod file_dialog;
 mod folder_dialog;
 mod ipc;
@@ -36,6 +37,10 @@ use crate::state::Core;
 /// owner quits it, then shuts the core down: active replies become
 /// interrupted, and the store and the logs close.
 pub fn run(context: Context<Wry>, plugins: Vec<PluginEntry>) -> anyhow::Result<()> {
+    // CI and native tests can rebuild the same executable. Refuse a validation
+    // build with the normal bundle ID before startup opens any owner data.
+    #[cfg(feature = "validation")]
+    check_validation_identifier(&context.config().identifier)?;
     let commands = ipc::runtime_builder();
     // Debug builds keep the core's bindings in the source tree current
     // (ADR-0007); `task gen` writes the plugins' bindings.
@@ -47,6 +52,7 @@ pub fn run(context: Context<Wry>, plugins: Vec<PluginEntry>) -> anyhow::Result<(
     let started: Arc<OnceLock<Core>> = Arc::default();
     let setup_core = Arc::clone(&started);
     let mut builder = tauri::Builder::default()
+        .manage(export::Exports::default())
         // Registered first: a second start of Mannie hands over to the running
         // app before anything else happens.
         .plugin(tauri_plugin_single_instance::init(
@@ -81,4 +87,22 @@ pub fn run(context: Context<Wry>, plugins: Vec<PluginEntry>) -> anyhow::Result<(
         anyhow::bail!("the event loop ended with code {exit_code}");
     }
     Ok(())
+}
+
+#[cfg(feature = "validation")]
+fn check_validation_identifier(identifier: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        identifier == "io.github.limbon2.mannie.validation",
+        "a validation build requires the validation bundle identifier; rebuild it with tauri.validation.conf.json"
+    );
+    Ok(())
+}
+
+#[cfg(all(test, feature = "validation"))]
+mod validation_tests {
+    #[test]
+    fn validation_builds_refuse_the_owners_bundle_before_startup() {
+        assert!(super::check_validation_identifier("io.github.limbon2.mannie").is_err());
+        super::check_validation_identifier("io.github.limbon2.mannie.validation").unwrap();
+    }
 }

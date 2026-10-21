@@ -4,7 +4,7 @@
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Building                                                                                                                                                                                                                                                                        |
 | Milestone    | M4                                                                                                                                                                                                                                                                              |
-| Last updated | 2026-10-16                                                                                                                                                                                                                                                                      |
+| Last updated | 2026-10-20                                                                                                                                                                                                                                                                      |
 | Part of      | [Workers](README.md)                                                                                                                                                                                                                                                            |
 | Related      | [ADR-0016](../../../docs/adr/0016-link-machines-over-pinned-mtls-grpc.md), [ADR-0018](../../../docs/adr/0018-release-from-tagged-builds.md), [Releasing](../../../docs/engineering/releasing.md), [Pairing and the link](pairing-and-link.md), [The worker service](service.md) |
 
@@ -19,6 +19,8 @@
 ### Feature levels
 
 Each package of the link has a feature level, 1 for every package in v0.2.0. In `Hello`, each side lists the levels it supports, and the master uses the lower level of each package. A feature checks the agreed level before it uses a call that a later level added. A test checks that every package of `plugins/workers/proto/` has a level.
+
+The events package has level 2 for complete saved conversation records ([ADR-0040](../../../docs/adr/0040-export-complete-conversation-records.md)). A level-1 worker still serves existing transcript reads; export identifies its complete record as unavailable.
 
 ### Contract checks
 

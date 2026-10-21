@@ -354,7 +354,7 @@ impl Hub {
             view.details = hello.details.clone();
             view.connected_at = Some(now);
         });
-        Ok(Arc::new(Connection::new(channel)))
+        Ok(Arc::new(Connection::new(channel, hello.levels)))
     }
 
     /// Gives a worker the name that the owner chose, or with a blank name

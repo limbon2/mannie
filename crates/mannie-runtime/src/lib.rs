@@ -25,6 +25,7 @@ mod compaction;
 mod context;
 mod conversations;
 mod executors;
+mod export;
 mod hub;
 mod ids;
 mod images;
@@ -302,6 +303,7 @@ impl Runtime {
         deps: RuntimeDeps,
         config: RuntimeConfig,
     ) -> Result<Self, RuntimeStoreError> {
+        deps.store.recover_exports().await?;
         let recovered = deps.store.recover_interrupted_runs().await?;
         if !recovered.is_empty() {
             tracing::info!(

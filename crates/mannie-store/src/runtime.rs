@@ -10,6 +10,7 @@
 
 mod apply;
 mod archives;
+mod export;
 mod images;
 mod projects;
 mod reads;
@@ -563,6 +564,7 @@ pub(crate) fn statements() -> impl Iterator<Item = &'static str> {
     apply::STATEMENTS
         .iter()
         .chain(archives::STATEMENTS)
+        .chain(export::STATEMENTS)
         .chain(images::STATEMENTS)
         .chain(projects::STATEMENTS)
         .chain(reads::STATEMENTS)

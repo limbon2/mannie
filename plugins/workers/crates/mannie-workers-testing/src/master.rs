@@ -431,6 +431,28 @@ impl Delegation for LocalDelegation {
         .boxed()
     }
 
+    fn export_record(
+        &self,
+        _worker: &WorkerId,
+        conversation: &ConversationId,
+    ) -> BoxFuture<
+        'static,
+        Result<
+            mannie_plugin_sdk::contracts::ConversationRecord,
+            mannie_plugin_sdk::contracts::ExportError,
+        >,
+    > {
+        let worker = self.worker();
+        let conversation = conversation.clone();
+        async move {
+            worker
+                .map_err(|_unreachable| mannie_plugin_sdk::contracts::ExportError::HostUnavailable)?
+                .assigned_export_record(&conversation)
+                .await
+        }
+        .boxed()
+    }
+
     fn earlier_turns(
         &self,
         _worker: &WorkerId,

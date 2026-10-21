@@ -270,7 +270,18 @@ const TOOLS: StoreModule = StoreModule {
 /// so a plugin's migration finds the core's tables up to date. Migrations 19,
 /// 20 and 22 of the single list before M5 belong to the Workers plugin's
 /// module now (ADR-0031, decision 8).
-pub(crate) const CORE_MODULES: [StoreModule; 4] = [SETTINGS, RUNTIME, PROVIDER, TOOLS];
+const EXPORTS: StoreModule = StoreModule {
+    name: "exports",
+    migrations: Cow::Borrowed(&[Migration {
+        version: 1,
+        legacy_version: None,
+        description: "create the owner-initiated export journal",
+        sql: include_str!("exports/0001_create_operations.sql"),
+    }]),
+    confined: false,
+};
+
+pub(crate) const CORE_MODULES: [StoreModule; 5] = [SETTINGS, RUNTIME, PROVIDER, TOOLS, EXPORTS];
 
 /// The records of a database: each module's name and how many of its
 /// migrations the database has. Modules that this binary does not know keep

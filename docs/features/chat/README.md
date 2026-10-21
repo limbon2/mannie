@@ -26,7 +26,7 @@ The owner wants general chat with AI models in the desktop app, using OpenAI mod
 - Testing a profile: a test sends a short request and reports what worked and what failed, including a round trip with a tool ([system tools](../system-tools/README.md)).
 - Context: a meter shows how much of the model's context the conversation uses. When it runs low, Mannie compacts older turns into a checkpoint automatically. The owner can view the checkpoint and start a compaction by hand. The stored conversation never changes.
 - Instructions: the owner can write global instructions that apply to every conversation.
-- Not included: attachments other than mentions and images, search, export, branching from a message, and more than one window. Each of these would be a feature of its own.
+- Not included: attachments other than mentions and images, search, branching from a message, and more than one window. Each of these would be a feature of its own.
 
 ## Fit
 
@@ -72,3 +72,7 @@ None.
 - [Projects](projects.md): projects in the sidebar, conversations in a project, moving a conversation into one, and removing a project.
 - [Mentions](mentions.md): the "@" list of the message box, its kinds of mentions from features and plugins, the files and folders of a project, and what the model reads of them.
 - [Conversation mentions](conversation-mentions.md): an idea, mentioning a sibling conversation.
+
+## Conversation export
+
+[Conversation export](../conversation-export.md) is being built in M10: Markdown documents with complete saved records, child conversations, images and archived tool outputs.

@@ -11,6 +11,8 @@ package mannie.link.events.v1;
 service EventsService {
   // Follows a conversation from a cursor, or from a snapshot.
   rpc Subscribe(SubscribeRequest) returns (stream SubscribeResponse);
+  // A complete saved record, available at events feature level 2.
+  rpc ExportRecord(ExportRecordRequest) returns (stream ExportRecordResponse);
   // Earlier turns of a conversation.
   rpc EarlierTurns(EarlierTurnsRequest) returns (EarlierTurnsResponse);
   // A checkpoint of a conversation, with its summary.
@@ -68,4 +70,16 @@ message ToolOutputRequest {
 message ToolOutputResponse {
   // The JSON of `ToolOutputPage`.
   string page_json = 1;
+}
+
+// Reads a complete conversation assigned by the paired master.
+message ExportRecordRequest {
+  // The assigned conversation's ID.
+  string conversation_id = 1;
+}
+
+// Consecutive chunks of one versioned ConversationRecord JSON document.
+message ExportRecordResponse {
+  // At most 256 KiB. A stream ending with an error is incomplete.
+  bytes chunk = 1;
 }
