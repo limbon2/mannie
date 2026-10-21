@@ -4,20 +4,26 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+## 0.5.0 - 2026-10-21
+
 ### Added
 
 - Export a conversation and its child conversations as linked Markdown documents, with stored images, complete tool outputs, and explicit warnings for unavailable worker records.
 
+#### Workers
+
+- Complete saved task-conversation records for Markdown export, through an authenticated level-2 events read.
+
+### Changed
+
+- Manual release builds can select Windows and FreeBSD artifacts, with worker signatures, checksums, SBOMs and notices; the static Linux worker remains an internal signature check.
+
 ### Fixed
 
 - Reserve the test pool for the one-second parent-stop check so concurrent tests cannot consume its deadline.
-
 - Wait for the child conversation to exist and attach its command listener before approval in the task crash-recovery test; report a child that exits before the intended kill point.
-
 - Run desktop unit tests without concurrent Rust compilation so cold message evaluation stays within the existing timeout on Windows CI.
-
 - Follow the current selected tab in desktop text assertions and compare native canonical export paths on Windows.
-
 - Validation builds refuse the normal app identifier before opening owner data, including when a parallel build replaces the native test executable.
 
 ## 0.4.0 - 2026-10-21

@@ -29,7 +29,11 @@
 4. Install the draft's artifacts on clean Windows 11, Ubuntu LTS, Fedora and FreeBSD 14 machines, including an upgrade from the previous release's data.
 5. Publish the draft. When a check fails in CI while the build works and the tests pass on the owner's machines, the workflow drafts nothing. The owner then checks the worker archives' signatures with `node scripts/release.mjs verify release/mannie-release.pub <archives>` and creates the release from the run's artifacts by hand, as for v0.2.0 ([D24](../roadmap/milestones.md#5-decisions)).
 
-For a build without publishing a release, run `Release` manually on a branch from the Actions page. It runs the same builds, checks and install tests and keeps the unsigned artifacts on the run for one day. It does not sign them or create a draft. Tagged builds follow the steps above.
+For a build without publishing a release, run `Release` manually on a branch from the Actions page. It runs the same builds, checks and install tests and keeps the unsigned artifacts on the run for one day. A manual branch build does not sign them or create a draft. A manual run on a version tag signs the artifacts and creates or refreshes its draft, as a tag push does.
+
+The `artifacts` input defaults to `all`. When the owner requests `windows-freebsd`, the build omits the Linux desktop packages and their install checks, then removes the static Linux worker archive and its signature after checking all worker signatures. The draft keeps the Windows installer, the Windows and FreeBSD worker archives, their signatures, checksums, SBOMs, notices and the desktop lock. All checks and the FreeBSD tests still run.
+
+For a limited draft, include `[skip ci]` in the release commit to prevent the tag push from starting an automatic full build, then run `gh workflow run release.yml --ref v0.5.0 -f artifacts=windows-freebsd`. GitHub's [skip instructions](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/skip-workflow-runs) apply to pushes and leave manual runs available (verified on 2026-10-21).
 
 ## 4. Artifacts
 

@@ -16,6 +16,12 @@ on:
   push:
     tags: ["v*.*.*"]
   workflow_dispatch:
+    inputs:
+      artifacts:
+        description: Platforms to include in the draft or manual build
+        type: choice
+        options: [all, windows-freebsd]
+        default: all
 
 permissions:
   contents: read
@@ -134,6 +140,7 @@ jobs:
 
   linux-desktop:
     name: Linux packages
+    if: github.event_name != 'workflow_dispatch' || inputs.artifacts != 'windows-freebsd'
     needs: version
     # The oldest supported Ubuntu LTS, so the packages run on every supported distribution.
     runs-on: ubuntu-22.04
@@ -278,8 +285,9 @@ jobs:
   install-linux:
     name: Install check on ${{ matrix.distribution }}
     needs: [version, linux-desktop, linux-programs]
-    # The static Linux builds are skipped when no program has one.
-    if: ${{ !failure() && !cancelled() }}
+    # The static Linux builds are skipped when no program has one. A limited
+    # draft also skips the desktop packages and their install checks.
+    if: ${{ !failure() && !cancelled() && needs.linux-desktop.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
@@ -342,7 +350,8 @@ jobs:
 
   publish:
     name: Draft the release
-    if: github.ref_type == 'tag'
+    # A limited draft skips Linux installation; every job that runs must pass.
+    if: ${{ !failure() && !cancelled() && github.ref_type == 'tag' }}
     needs: [version, checks, freebsd-tests, install-windows, install-linux, install-freebsd]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -398,6 +407,11 @@ jobs:
           cargo about generate --locked --config about.toml --manifest-path apps/desktop/src-tauri/Cargo.toml -o "dist/THIRD-PARTY-NOTICES-$VERSION-rust.md" about.hbs
           node scripts/plugins/programs.mjs notices dist "$VERSION"
           pnpm licenses list --json --long --filter mannie-desktop | node scripts/third-party-notices.mjs > "dist/THIRD-PARTY-NOTICES-$VERSION-npm.md"
+      # The static Linux programs still prove the embedded update key above.
+      # Remove their archives only after every signature has been checked.
+      - name: Keep the selected platforms
+        if: inputs.artifacts == 'windows-freebsd'
+        run: rm dist/*-"$VERSION"-linux-*
       - name: Write the checksums
         run: node scripts/release.mjs checksums dist
       - name: Create or refresh the draft release
@@ -409,6 +423,12 @@ jobs:
           state="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .draft")"
           case "$state" in
             true)
+              if [ "${{ inputs.artifacts }}" = windows-freebsd ]; then
+                gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name | select(contains("-linux-"))' |
+                  while IFS= read -r asset; do
+                    gh release delete-asset "$GITHUB_REF_NAME" "$asset" --yes
+                  done
+              fi
               gh release upload "$GITHUB_REF_NAME" --clobber dist/*
               gh release edit "$GITHUB_REF_NAME" --draft --title "Mannie $VERSION" --notes-file notes.md
               ;;
