@@ -64,6 +64,10 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## 0.3.0 - 2026-10-19
 
+### Security
+
+- Patch certificate verification for RUSTSEC-2026-0382, rejecting the distrusted intermediates.
+
 ### Added
 
 - Typing "@" in the message box lists the files and folders of the conversation's project, hidden and ignored ones included, and a file that may hold secrets shows a warning. The model reads a bounded page of each mentioned file and a listing of each mentioned folder after the message, and the transcript shows what it got.
