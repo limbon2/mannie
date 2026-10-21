@@ -211,7 +211,6 @@ async fn follow_and_approve(runtime: Runtime, conversation: ConversationId) {
         })
         .await
         .unwrap();
-    let mut following = false;
     let mut approved = false;
     while let Some(update) = subscription.next().await {
         let ConversationUpdate::Event { event, .. } = update else {
@@ -233,10 +232,13 @@ async fn follow_and_approve(runtime: Runtime, conversation: ConversationId) {
         let Some(task) = &call.task else {
             continue;
         };
-        if !following {
-            following = true;
-            // Replayed parts have their current state. Attach the listener
-            // before approval, so even a delayed reader sees Executing live.
+        let state = serde_json::to_value(task.state).unwrap();
+        print_event(&format!("event task {}", state.as_str().unwrap()));
+        if let Some(approval) = &task.approval
+            && !approved
+        {
+            // The approval confirms that the child conversation exists.
+            // Subscribe before granting it so Executing cannot be missed.
             let child_subscription = runtime
                 .subscribe(SubscribeConversation {
                     conversation_id: task.conversation_id.clone(),
@@ -245,12 +247,6 @@ async fn follow_and_approve(runtime: Runtime, conversation: ConversationId) {
                 .await
                 .unwrap();
             tokio::spawn(print_child_calls(child_subscription));
-        }
-        let state = serde_json::to_value(task.state).unwrap();
-        print_event(&format!("event task {}", state.as_str().unwrap()));
-        if let Some(approval) = &task.approval
-            && !approved
-        {
             approved = true;
             runtime
                 .decide_approval(DecideApproval {
@@ -300,7 +296,7 @@ fn run_child_until(directory: &Path, kill: KillPoint) {
         ])
         .env(CHILD_DIRECTORY, directory)
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        .stderr(Stdio::inherit());
     if kill == KillPoint::ParentEnded {
         command.env(PARENT_ENDS, "1");
     }
@@ -311,6 +307,7 @@ fn run_child_until(directory: &Path, kill: KillPoint) {
         KillPoint::Reported => "event task reported",
         KillPoint::ParentEnded => "event parent completed",
     };
+    let mut reached = false;
     for line in stdout.lines() {
         let line = line.unwrap();
         if line.trim_end() == wanted {
@@ -320,11 +317,13 @@ fn run_child_until(directory: &Path, kill: KillPoint) {
                     std::thread::sleep(Duration::from_millis(20));
                 }
             }
+            reached = true;
             child.kill().unwrap();
             break;
         }
     }
-    child.wait().unwrap();
+    let status = child.wait().unwrap();
+    assert!(reached, "child exited {status} before {wanted} at {kill:?}");
 }
 
 /// Follows a conversation until its latest run, `run`, has ended.

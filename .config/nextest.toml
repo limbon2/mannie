@@ -21,3 +21,9 @@ final-status-level = "slow"
 # A test is slow after a minute and is stopped after five, so a test that hangs
 # cannot keep the machine busy.
 slow-timeout = { period = "60s", terminate-after = 5 }
+
+# Reserve the pool so competing tests cannot consume the one-second stop budget.
+# A test-name filter remains valid in plugin workspaces without this binary.
+[[profile.default.overrides]]
+filter = "test(=stopping_the_parent_ends_every_child_within_a_second)"
+threads-required = "num-test-threads"

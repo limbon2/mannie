@@ -10,7 +10,9 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ### Fixed
 
-- Attach the child-command listener before approval in the task crash-recovery test so a delayed reader cannot miss the executing state.
+- Reserve the test pool for the one-second parent-stop check so concurrent tests cannot consume its deadline.
+
+- Wait for the child conversation to exist and attach its command listener before approval in the task crash-recovery test; report a child that exits before the intended kill point.
 
 - Run desktop unit tests without concurrent Rust compilation so cold message evaluation stays within the existing timeout on Windows CI.
 
