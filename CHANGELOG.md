@@ -102,6 +102,7 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ### Fixed
 
+- Set denied writes explicitly in the Windows worker permission test when it runs under an administrator account.
 - Commands on Windows receive `PSModuleAnalysisCachePath`, so Windows PowerShell reads the module cache that the system prepared; without it, a command on GitHub's Windows runners took about 20 seconds to start.
 - CI and the FreeBSD tests build with line tables in place of full debug information, which outgrew the disk of the Linux runners, and the runtime's test helpers wait up to two minutes for a state, as the link's do.
 
