@@ -4,25 +4,7 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
-### Changed
-
-- Refresh an existing release draft on retry and validate its version before starting CI or FreeBSD tests.
-
-- Cache Rust compilations across hosted jobs, retain Clippy metadata and run selected Rust tests or desktop specs when repairing CI.
-
-- Run all CI on standard GitHub-hosted runners for the public repository, and build and install-check Windows, Linux and FreeBSD artifacts through the Release workflow, including manual branch builds.
-
-### Fixed
-
-- Wait for a sent message to appear before checking its reply in desktop tests.
-
-- Make CI's text assertions work on WebKit and wait for completed runtime cleanup before retrying; measure parser work without time given to other CI processes.
-
-### Security
-
-- Patch certificate verification for RUSTSEC-2026-0382, rejecting the distrusted intermediates.
-
-## 0.4.0 - 2026-10-20
+## 0.4.0 - 2026-10-21
 
 ### Added
 
@@ -55,6 +37,10 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - Turning a plugin off waits up to 5 seconds for the calls of its tools that run, then lets them go: an operation becomes uncertain, and a read ends as not run. An operation of a plugin's tool that the owner stopped while it ran is uncertain too, and each says why.
 - `task ci` runs its checks side by side within limits that keep the machine usable, with Clippy in a target folder of its own, `target/clippy`, and ends with every step's result and time; a failed step no longer stops the others (ADR-0037). The Rust tests run with cargo-nextest, which `task setup` installs, dev builds keep line tables and no debug information for other crates, and Windows builds link with rust-lld.
 
+- Refresh an existing release draft on retry and validate its version before starting CI or FreeBSD tests.
+- Cache Rust compilations across hosted jobs, retain Clippy metadata and run selected Rust tests or desktop specs when repairing CI.
+- Run all CI on standard GitHub-hosted runners for the public repository, and build and install-check Windows, Linux and FreeBSD artifacts through the Release workflow, including manual branch builds.
+
 #### Workers
 
 - The documents of tool calls on the link gain the field `interruption` (ADR-0036), which a master or a worker one minor version behind ignores; their fixtures for v0.4 are in `crates/mannie-link/tests/fixtures/documents/v0.4/`.
@@ -63,6 +49,26 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 - The note in a command's cut output says how many bytes of a long line it leaves out, where it said the whole line was left out while showing part of it, and calls the archive whole only when Mannie kept all of the output.
 - `read_tool_output` shows the beginning of a line longer than a page, marked as cut, and the next page starts after it; it showed no line and could not get past it.
+
+- Wait for a sent message to appear before checking its reply in desktop tests.
+- Make CI's text assertions work on WebKit and wait for completed runtime cleanup before retrying; measure parser work without time given to other CI processes.
+
+#### Workers
+
+- Check full displayed text in end-to-end tests on both WebView2 and WebKit.
+- Apply read-only permissions to both the file and its directory in the Windows access test.
+
+#### SSH
+
+- Check full displayed text in end-to-end tests on both WebView2 and WebKit.
+
+#### Git
+
+- Check full displayed text in end-to-end tests on both WebView2 and WebKit.
+
+### Security
+
+- Patch certificate verification for RUSTSEC-2026-0382, rejecting the distrusted intermediates.
 
 ## 0.3.0 - 2026-10-19
 
