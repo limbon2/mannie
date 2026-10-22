@@ -338,7 +338,15 @@ async fn a_command_outlives_its_reply_and_reads_return_its_new_lines() {
         .unwrap()
         .unwrap();
     assert_eq!(archive.name, "output");
-    assert_eq!(archive.content, "first\nready on 5173\n");
+    assert!(
+        archive.content.starts_with("first\nready on 5173\n"),
+        "{}",
+        archive.content
+    );
+    assert_eq!(
+        u64::try_from(archive.content.lines().count()).unwrap(),
+        ended.lines
+    );
     setup.harness.runtime.shutdown().await;
 }
 

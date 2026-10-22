@@ -337,13 +337,14 @@ fn plugin_off() -> Result<Value, CallFailure> {
 
 /// Waits until `done` holds, letting other tasks run.
 async fn until(done: impl Fn() -> bool) {
-    for _ in 0..1_000 {
-        if done() {
-            return;
+    // A yield count can expire before the store's blocking work runs.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !done() {
+            tokio::time::sleep(Duration::from_millis(1)).await;
         }
-        tokio::task::yield_now().await;
-    }
-    panic!("the condition never held");
+    })
+    .await
+    .expect("the condition never held");
 }
 
 #[tokio::test]

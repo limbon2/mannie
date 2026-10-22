@@ -39,7 +39,7 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ### Fixed
 
-- Preserve shell termination output in background-command lifecycle tests and compile the background supervisor without Unix async warnings.
+- Preserve shell termination output in background-command lifecycle tests, wait for plugin startup by elapsed time instead of a yield count, and compile the background supervisor without Unix async warnings.
 - Keep background-command output readers open until process cleanup ends, so a Unix shell reporting a terminated child cannot exit early and leave processes running.
 
 - A dialog taller than the window scrolls, so that its last fields and its buttons can be reached.
