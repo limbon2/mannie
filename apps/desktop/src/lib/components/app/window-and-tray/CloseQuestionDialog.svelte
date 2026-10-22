@@ -10,10 +10,10 @@
 
   // The first close of the window (docs/features/window-and-tray.md,
   // behavior): keep running in the tray, or quit. While replies are being
-  // written, it says that quitting interrupts them, so choosing Quit here
-  // needs no second warning. Cancel keeps the window open and asks again on
-  // the next close.
-  let { activeRuns }: { activeRuns: number } = $props();
+  // written or background commands run, it says that quitting ends them, so
+  // choosing Quit here needs no second warning. Cancel keeps the window open
+  // and asks again on the next close.
+  let { activeRuns, backgroundCommands }: { activeRuns: number; backgroundCommands: number } = $props();
 </script>
 
 <Dialog.Root
@@ -35,6 +35,12 @@
       <Alert.Root>
         <CircleAlertIcon />
         <Alert.Description>{m.window_active_runs({ count: activeRuns })}</Alert.Description>
+      </Alert.Root>
+    {/if}
+    {#if backgroundCommands > 0}
+      <Alert.Root>
+        <CircleAlertIcon />
+        <Alert.Description>{m.window_background_commands({ count: backgroundCommands })}</Alert.Description>
       </Alert.Root>
     {/if}
     {#if windowRequests.failure !== null}

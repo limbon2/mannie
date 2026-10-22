@@ -7,12 +7,14 @@
 //! Its platform modules are the only code in Mannie that uses `unsafe`, and
 //! each unsafe block says why it is sound.
 
+mod background;
 #[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 mod capture;
 #[cfg(target_os = "freebsd")]
 mod freebsd;
 #[cfg(target_os = "linux")]
 mod linux;
+mod live;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod unix;
 #[cfg(windows)]
@@ -39,6 +41,9 @@ use crate::system::ShellFacts;
 pub(crate) use capture::Captured;
 #[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 use capture::{ByteStream, Stream};
+
+pub use background::{BackgroundProcess, BackgroundSpec};
+pub use live::{ArchivedLog, LiveLog, LogLines, LogMark, MAX_LINE_BYTES};
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use unix as platform;
@@ -95,8 +100,6 @@ pub(crate) struct CommandSpec<'a> {
     pub(crate) working_directory: &'a Path,
     /// The variables the command receives.
     pub(crate) environment: &'a [(OsString, OsString)],
-    /// How long the command may run.
-    pub(crate) timeout: Duration,
 }
 
 /// A command that ended, with every process it started.
@@ -115,12 +118,13 @@ pub(crate) struct Finished {
     pub(crate) stderr: Captured,
 }
 
-/// Runs a command contained: when it ends, on its own, at its timeout or by
+/// Runs a command contained: when it ends, on its own, at its `timeout` or by
 /// Stop, every process it started ends with it. `on_start` receives the
 /// shell's process as soon as it runs, for the journal.
 #[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 pub(crate) async fn run(
     spec: &CommandSpec<'_>,
+    timeout: Duration,
     stop: &StopSignal,
     on_start: impl FnOnce(ProcessRecord),
 ) -> std::io::Result<Finished> {
@@ -136,7 +140,7 @@ pub(crate) async fn run(
     let stderr = child.stderr.take().map(Stream::capture);
     let (ending, exit_code) = tokio::select! {
         code = contained.finished(&mut child) => (CommandEnding::Exited, code),
-        () = tokio::time::sleep(spec.timeout) => (CommandEnding::TimedOut, None),
+        () = tokio::time::sleep(timeout) => (CommandEnding::TimedOut, None),
         () = stop.stopped() => (ending_of(stop.reason()), None),
     };
     contained

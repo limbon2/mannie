@@ -7,6 +7,7 @@ use crate::clock::UtcMillis;
 use crate::ids::{CheckpointId, ConversationId, ProfileId, ProjectId, TurnId};
 use crate::run::RunView;
 use crate::tasks::TaskConversation;
+use crate::tools::BackgroundCommandView;
 
 use super::parts::PartView;
 
@@ -148,6 +149,10 @@ pub struct ConversationSnapshot {
     pub checkpoint: Option<CheckpointView>,
     /// How much of the context the conversation uses, once it is known.
     pub context: Option<ContextUsage>,
+    /// The conversation's background commands, oldest first (ADR-0041). A
+    /// snapshot of a version before them reads as none.
+    #[serde(default)]
+    pub background_commands: Vec<BackgroundCommandView>,
 }
 
 #[cfg(test)]

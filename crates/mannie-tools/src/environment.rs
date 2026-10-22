@@ -107,7 +107,7 @@ impl CommandEnvironment {
 
     /// The variables, with their values.
     #[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
-    pub(crate) fn variables(&self) -> &[(OsString, OsString)] {
+    pub fn variables(&self) -> &[(OsString, OsString)] {
         &self.variables
     }
 

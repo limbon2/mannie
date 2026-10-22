@@ -103,6 +103,10 @@
     void toolsSettings.update({ fullAccessForNewConversations: false });
   }
 
+  function setWakeOnCommandEnd(wake: boolean): void {
+    void toolsSettings.update({ wakeOnCommandEnd: wake });
+  }
+
   function confirmFullAccessDefault(): void {
     confirmingFullAccess = false;
     void toolsSettings.update({ fullAccessForNewConversations: true });
@@ -157,6 +161,18 @@
         id="tools-full-access"
         disabled={toolsSettings.saving}
         bind:checked={() => settings.fullAccessForNewConversations ?? false, setFullAccessDefault}
+      />
+    </Field.Field>
+
+    <Field.Field orientation="horizontal">
+      <Field.Content>
+        <Field.Label for="tools-wake">{m.tools_settings_wake()}</Field.Label>
+        <Field.Description>{m.tools_settings_wake_description()}</Field.Description>
+      </Field.Content>
+      <Switch
+        id="tools-wake"
+        disabled={toolsSettings.saving}
+        bind:checked={() => settings.wakeOnCommandEnd ?? true, setWakeOnCommandEnd}
       />
     </Field.Field>
 

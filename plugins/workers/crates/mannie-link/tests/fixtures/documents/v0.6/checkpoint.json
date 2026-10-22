@@ -1,0 +1,10 @@
+{
+  "view": {
+    "id": "0199e0f2-0000-7000-a000-0000000000c1",
+    "coversThroughTurn": 3,
+    "tokensBefore": 96000,
+    "tokensAfter": 4200,
+    "createdAt": 1792000060000
+  },
+  "summary": "The backend builds. The tests of the store fail on a missing fixture."
+}

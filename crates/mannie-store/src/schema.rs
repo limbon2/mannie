@@ -213,6 +213,12 @@ const RUNTIME: StoreModule = StoreModule {
             description: "create the table of the images that the owner's messages hold",
             sql: include_str!("runtime/migrations/0029_create_images.sql"),
         },
+        Migration {
+            version: 21,
+            legacy_version: None,
+            description: "create the table of background commands",
+            sql: include_str!("runtime/migrations/0032_create_background_commands.sql"),
+        },
     ]),
     confined: false,
 };
@@ -260,6 +266,12 @@ const TOOLS: StoreModule = StoreModule {
             legacy_version: None,
             description: "create the rules for runs of installed programs",
             sql: include_str!("tools/migrations/0031_create_program_rules.sql"),
+        },
+        Migration {
+            version: 6,
+            legacy_version: None,
+            description: "let rules cover commands in the background",
+            sql: include_str!("tools/migrations/0033_add_background_to_rules.sql"),
         },
     ]),
     confined: false,

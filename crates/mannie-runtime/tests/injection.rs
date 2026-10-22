@@ -203,6 +203,7 @@ impl Sandbox {
                 &mannie_types::ids::RuleId::parse("0199e0f2-0000-7000-9000-000000000001").unwrap(),
                 vec!["git".to_owned(), "status".to_owned()],
                 None,
+                false,
             )
             .await
             .unwrap();

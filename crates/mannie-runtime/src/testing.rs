@@ -27,6 +27,7 @@ use mannie_plugin_sdk::points::executors::{
     TaskPlan, TaskSubmission,
 };
 use mannie_plugin_sdk::points::tools::ToolSpec;
+use mannie_plugin_sdk::services::background_commands::BackgroundCommandsApi;
 use mannie_plugin_sdk::services::credentials::CredentialsApi;
 use mannie_plugin_sdk::services::executor_host::ExecutorHostApi;
 use mannie_provider::testing::Step;
@@ -53,8 +54,8 @@ use mannie_types::tasks::{
     TaskView,
 };
 use mannie_types::tools::{
-    CommandRule, DecideApproval, ProcessRecord, ReadToolOutput, ToolCallView, ToolOutputPage,
-    ToolsError,
+    BackgroundCommandView, CommandRule, DecideApproval, ProcessRecord, ReadToolOutput,
+    ToolCallView, ToolOutputPage, ToolsError,
 };
 use mannie_types::transcript::{
     Checkpoint, ConversationEvent, ConversationUpdate, PartContent, PartState, TurnView,
@@ -1379,6 +1380,19 @@ pub fn credentials(runtime: &Runtime, plugin: &str) -> Arc<dyn CredentialsApi> {
     runtime.bound_credentials(plugin.as_str())
 }
 
+/// The background commands that the runtime binds to a plugin, as its
+/// provider binds the service `background-commands` when the plugin host
+/// starts a plugin that declares it (ADR-0041, decision 11), without a
+/// manifest.
+///
+/// # Panics
+///
+/// When `plugin` is not a plugin ID, which fails the test.
+pub fn background_commands(runtime: &Runtime, plugin: &str) -> Arc<dyn BackgroundCommandsApi> {
+    let plugin = PluginId::parse(plugin).expect("the test names a plugin ID");
+    runtime.bound_background_commands(plugin.as_str())
+}
+
 /// The kind of the [`FakeExecutor`].
 pub const FAKE_EXECUTOR_KIND: &str = "fake";
 
@@ -1717,6 +1731,8 @@ pub struct Transcript {
     pub ended: Option<mannie_types::transcript::SubscriptionEnd>,
     /// Every event applied, in order.
     pub events: Vec<ConversationEvent>,
+    /// The background commands by number, as the toolbar lists them.
+    pub background_commands: BTreeMap<u32, BackgroundCommandView>,
 }
 
 fn append_text(content: &mut PartContent, delta: &str) {
@@ -1733,6 +1749,7 @@ fn append_text(content: &mut PartContent, delta: &str) {
         | PartContent::Error { .. }
         | PartContent::Mention { .. }
         | PartContent::Image { .. }
+        | PartContent::CommandNote { .. }
         | PartContent::Unknown { .. } => {}
     }
 }
@@ -1746,6 +1763,11 @@ impl Transcript {
                 for turn in &snapshot.turns {
                     self.insert_turn(turn);
                 }
+                self.background_commands = snapshot
+                    .background_commands
+                    .iter()
+                    .map(|command| (command.number, command.clone()))
+                    .collect();
                 self.snapshot_seq = Some(snapshot.through_seq);
             }
             ConversationUpdate::Event { seq, event } => {
@@ -1849,6 +1871,10 @@ impl Transcript {
                 for turn in self.turns.values_mut() {
                     turn.parts.retain(|_, part| !part_ids.contains(&part.id));
                 }
+            }
+            ConversationEvent::BackgroundCommandChanged { command } => {
+                self.background_commands
+                    .insert(command.number, command.clone());
             }
             ConversationEvent::CheckpointCreated { .. }
             | ConversationEvent::ContextUsageChanged { .. }

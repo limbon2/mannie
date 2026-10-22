@@ -53,6 +53,7 @@ words:
   - huntabyte
   - inlang
   - jexec
+  - journalctl
   - journaled
   - keepalive
   - kwallet

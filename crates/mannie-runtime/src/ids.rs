@@ -111,6 +111,13 @@ impl IdGenerator {
     pub(crate) fn task(&self) -> TaskId {
         self.make(TaskId::parse)
     }
+
+    /// The text of a new ticket of a plugin's call (ADR-0041, decision 11).
+    /// Its random bits keep a plugin from guessing the ticket of another
+    /// call.
+    pub(crate) fn ticket(&self) -> String {
+        self.next()
+    }
 }
 
 #[cfg(test)]

@@ -30,7 +30,18 @@ describe('the SSH plugin', () => {
     expect(context.shell.commands.entries.map((command) => command.id)).toEqual(['ssh.add-host']);
     expect(context.shell.settingsSections.entries.map((section) => section.id)).toEqual(['ssh.settings']);
     expect(context.shell.mentionKinds.entries.map((kind) => kind.id)).toEqual(['ssh']);
+    expect(context.shell.toolKinds.entries.map((kind) => kind.id)).toEqual(['run_ssh_command', 'start_ssh_command']);
     expect(list.follow).toHaveBeenCalledWith(context);
+  });
+
+  it('words the failure of a command that Mannie did not take, and leaves the line to the core', () => {
+    const context = new TestPluginContext('ssh', true);
+    plugin.register(context);
+    const kind = context.shell.toolKinds.entries.find((entry) => entry.id === 'start_ssh_command');
+
+    expect(kind?.failure('not_started')).not.toBeNull();
+    expect(kind?.failure('other')).toBeNull();
+    expect(kind?.summary({ arguments: {}, data: null, failure: null, status: 'completed' })).toBeNull();
   });
 
   it('opens the settings with the host dialog from the command palette', async () => {

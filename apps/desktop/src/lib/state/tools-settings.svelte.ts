@@ -66,6 +66,7 @@ export class ToolsSettingsState {
       allowChangesInWorkspace: current.allowChangesInWorkspace,
       commandEnvironment: [...current.commandEnvironment],
       fullAccessForNewConversations: current.fullAccessForNewConversations ?? false,
+      wakeOnCommandEnd: current.wakeOnCommandEnd ?? true,
       ...change,
     };
     this.saving = true;

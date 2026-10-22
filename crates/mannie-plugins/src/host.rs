@@ -20,8 +20,8 @@ use mannie_plugin_sdk::context::{DefaultContext, HostInfo, StartContext};
 use mannie_plugin_sdk::contracts::{Clock, SubscriptionEnd};
 use mannie_plugin_sdk::error::{CONTRIBUTIONS_REFUSED, SDK_INCOMPATIBLE, SERVICE_UNAVAILABLE};
 use mannie_plugin_sdk::host::{
-    ContributionConsumer, PluginBinding, ServiceProvider, add_contributions, drain_contributions,
-    remove_contributions,
+    CORE_WORK_PREFIX, ContributionConsumer, PluginBinding, ServiceProvider, add_contributions,
+    drain_contributions, remove_contributions,
 };
 use mannie_plugin_sdk::ids::{PluginId, prefixes_nest};
 use mannie_plugin_sdk::ipc::Handlers;
@@ -528,8 +528,11 @@ impl PluginHost {
     }
 
     /// The work that a plugin has in progress, which turning it off lets go,
-    /// as its instance reports it (ADR-0034, decision 4): none while the
-    /// plugin is not on, and never an item whose count is 0.
+    /// as its instance reports it (ADR-0034, decision 4), followed by the
+    /// work that its entries handed the core's consumers, such as background
+    /// commands (ADR-0041, decision 11): none while the plugin is not on, and
+    /// never an item whose count is 0. An item of the plugin under a code of
+    /// the core is left out.
     pub async fn work(&self, id: &str) -> Result<PluginWork, PluginsError> {
         let entry = self.entry(id).ok_or(PluginsError::UnknownPlugin)?;
         let pending = lock(&entry.running)
@@ -538,11 +541,16 @@ impl PluginHost {
         let Some(pending) = pending else {
             return Ok(PluginWork::default());
         };
-        let items = pending
+        let own = pending
             .await
             .into_iter()
-            .filter(|item| item.count > 0)
-            .collect();
+            .filter(|item| !item.code.starts_with(CORE_WORK_PREFIX));
+        let core = self
+            .inner
+            .consumers
+            .iter()
+            .flat_map(|consumer| consumer.work(&entry.listed.id));
+        let items = own.chain(core).filter(|item| item.count > 0).collect();
         Ok(PluginWork { items })
     }
 

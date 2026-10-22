@@ -8,21 +8,31 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use futures_util::future::BoxFuture;
 use mannie_store::{Store, StoreOptions};
 #[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 use mannie_tools::StopReason;
 use mannie_tools::{
-    Availability, CommandEnvironment, Done, Execution, MoveFailure, MutationLock, PrepareError,
-    Prepared, ProjectFacts, ProjectMoves, StopSignal, SystemFacts, ToolContext, ToolRegistry,
+    Availability, BackgroundCommands, CommandEnvironment, CommandRead, CommandStop, Done,
+    Execution, LogLines, MoveFailure, MutationLock, PrepareError, Prepared, ProjectFacts,
+    ProjectMoves, ReadRequest, StartRequest, Started, StopSignal, SystemFacts, ToolContext,
+    ToolRegistry,
 };
 use mannie_types::clock::{Clock, SystemClock, UtcMillis};
-use mannie_types::ids::{ArchiveId, ConversationId, ProjectId};
+use mannie_types::ids::{ArchiveId, ConversationId, PartId, ProjectId};
 use mannie_types::projects::ProjectView;
 #[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 use mannie_types::tools::CommandEnding;
-use mannie_types::tools::{Access, AccessMode, EntryCount, EntryKind, ToolFailure, ToolOutcome};
+use mannie_types::tools::{
+    Access, AccessMode, BackgroundCommandView, BackgroundEnding, BackgroundSource, EntryCount,
+    EntryKind, ToolFailure, ToolOutcome,
+};
 use serde_json::{Value, json};
 use tempfile::TempDir;
+
+/// The part of every call that the harness executes, as the runtime names
+/// the part of each call.
+const CALL_PART: &str = "0199e0f2-0000-7000-c000-000000000001";
 
 /// A workspace in a temporary folder, a store and the system tools.
 struct Harness {
@@ -53,6 +63,7 @@ impl Harness {
             }),
             system: Arc::new(SystemFacts::detect()),
             projects: ProjectFacts::none(),
+            background: mannie_tools::no_background_commands(),
         };
         Self {
             _folder: folder,
@@ -107,6 +118,7 @@ impl Harness {
             accesses,
             stop,
             process: None,
+            part_id: Some(PartId::parse(CALL_PART).unwrap()),
         })
         .await
     }
@@ -1718,7 +1730,7 @@ impl ProjectMoves for RecordedMoves {
         &self,
         conversation: ConversationId,
         project: ProjectId,
-    ) -> futures_util::future::BoxFuture<'static, Result<ProjectView, MoveFailure>> {
+    ) -> BoxFuture<'static, Result<ProjectView, MoveFailure>> {
         let found = self
             .projects
             .iter()
@@ -1832,4 +1844,453 @@ fn move_to_project_is_offered_only_to_a_general_conversation_while_projects_exis
         project: Some(&project),
         projects: &[],
     }));
+}
+
+// Commands in the background (docs/features/system-tools/
+// background-commands.md): the tools prepare and render here, and hand the
+// commands to the registry of the runtime, which a script stands in for.
+
+/// A registry of background commands that records each call and answers
+/// with what the test scripted.
+#[derive(Debug, Default)]
+struct ScriptedCommands {
+    starts: std::sync::Mutex<Vec<(ConversationId, PartId, String, PathBuf)>>,
+    reads: std::sync::Mutex<Vec<ReadRequest>>,
+    stops: std::sync::Mutex<Vec<(ConversationId, u32)>>,
+    read: std::sync::Mutex<Option<Result<CommandRead, ToolFailure>>>,
+    stop: std::sync::Mutex<Option<Result<CommandStop, ToolFailure>>>,
+}
+
+impl BackgroundCommands for ScriptedCommands {
+    fn start(&self, request: StartRequest) -> BoxFuture<'static, Result<Started, ToolFailure>> {
+        let mut starts = self.starts.lock().unwrap();
+        starts.push((
+            request.conversation,
+            request.part_id,
+            request.spec.text,
+            request.spec.working_directory,
+        ));
+        let number = u32::try_from(starts.len()).unwrap();
+        Box::pin(async move { Ok(Started { number }) })
+    }
+
+    fn read(
+        &self,
+        request: ReadRequest,
+        _stop: StopSignal,
+    ) -> BoxFuture<'static, Result<CommandRead, ToolFailure>> {
+        self.reads.lock().unwrap().push(request);
+        let answer = self.read.lock().unwrap().clone().expect("a scripted read");
+        Box::pin(async move { answer })
+    }
+
+    fn stop(
+        &self,
+        conversation: ConversationId,
+        number: u32,
+    ) -> BoxFuture<'static, Result<CommandStop, ToolFailure>> {
+        self.stops.lock().unwrap().push((conversation, number));
+        let answer = self.stop.lock().unwrap().clone().expect("a scripted stop");
+        Box::pin(async move { answer })
+    }
+}
+
+fn with_commands(mut harness: Harness) -> (Harness, Arc<ScriptedCommands>) {
+    let commands = Arc::new(ScriptedCommands::default());
+    harness.context.background = Arc::<ScriptedCommands>::clone(&commands);
+    (harness, commands)
+}
+
+fn command_view(ending: Option<BackgroundEnding>, exit_code: Option<i32>) -> BackgroundCommandView {
+    BackgroundCommandView {
+        number: 3,
+        part_id: PartId::parse(CALL_PART).unwrap(),
+        command: "npm run dev".to_owned(),
+        source: BackgroundSource::Local {
+            shell: "/bin/sh".to_owned(),
+            working_directory: "/work/app".to_owned(),
+        },
+        started_at: UtcMillis::EPOCH,
+        ending,
+        exit_code,
+        signal: None,
+        ended_at: None,
+        lines: 0,
+        bytes: 0,
+        archive_id: None,
+        on_worker: false,
+    }
+}
+
+fn numbered(range: std::ops::RangeInclusive<u64>) -> Vec<(u64, String)> {
+    range
+        .map(|number| (number, format!("line {number}")))
+        .collect()
+}
+
+fn read_of(view: BackgroundCommandView, lines: LogLines, total_lines: u64) -> CommandRead {
+    CommandRead {
+        view,
+        ran_for: std::time::Duration::from_secs(75),
+        lines,
+        total_lines,
+        matched: None,
+        stopped: false,
+        replaced: false,
+        lost: false,
+    }
+}
+
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
+#[tokio::test]
+async fn start_command_prepares_as_run_command_does_with_the_background_marked() {
+    let harness = Harness::new();
+    let arguments = json!({ "command": "npm run dev" });
+
+    let background = harness.prepare("start_command", &arguments).await.unwrap();
+    let foreground = harness.prepare("run_command", &arguments).await.unwrap();
+
+    let [
+        Access::Command {
+            command,
+            working_directory,
+            background: true,
+            ..
+        },
+    ] = background.accesses.as_slice()
+    else {
+        panic!("{:?}", background.accesses);
+    };
+    assert_eq!(command, "npm run dev");
+    assert_eq!(*working_directory, harness.root.to_str().unwrap());
+    assert!(matches!(
+        foreground.accesses.as_slice(),
+        [Access::Command {
+            background: false,
+            ..
+        }]
+    ));
+    assert_eq!(
+        harness
+            .failure(
+                "start_command",
+                json!({ "command": "npm run dev", "working_directory": "missing" })
+            )
+            .await,
+        ToolFailure::NotFound {
+            path: harness.text("missing")
+        }
+    );
+}
+
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
+#[tokio::test]
+async fn start_command_hands_the_command_to_the_registry_and_returns_its_number() {
+    let (harness, commands) = with_commands(Harness::new());
+
+    let done = harness
+        .done("start_command", json!({ "command": "npm run dev" }))
+        .await;
+
+    assert_eq!(
+        done.outcome,
+        ToolOutcome::CommandStarted {
+            number: 1,
+            command: "npm run dev".to_owned(),
+        }
+    );
+    assert!(
+        done.output
+            .starts_with("Command 1 started in the background, in "),
+        "{}",
+        done.output
+    );
+    assert!(
+        done.output.contains("read_command_output, command 1"),
+        "{}",
+        done.output
+    );
+    assert_eq!(
+        *commands.starts.lock().unwrap(),
+        vec![(
+            harness.context.conversation_id.clone(),
+            PartId::parse(CALL_PART).unwrap(),
+            "npm run dev".to_owned(),
+            harness.root.clone(),
+        )]
+    );
+}
+
+#[tokio::test]
+async fn read_command_output_shows_the_state_and_the_new_lines() {
+    let (harness, commands) = with_commands(Harness::new());
+    let lines = LogLines {
+        lines: numbered(4..=6),
+        left_out: None,
+    };
+    *commands.read.lock().unwrap() = Some(Ok(read_of(command_view(None, None), lines, 6)));
+
+    let done = harness
+        .done("read_command_output", json!({ "command": 3 }))
+        .await;
+
+    assert_eq!(
+        done.output,
+        "Command 3: npm run dev\nIt runs in /work/app.\nIt runs, for 1 min 15 s so far.\nLines 4 to 6 of 6:\nline 4\nline 5\nline 6\n"
+    );
+    assert_eq!(
+        done.outcome,
+        ToolOutcome::CommandOutputRead {
+            number: 3,
+            first_line: 4,
+            last_line: 6,
+            total_lines: 6,
+            ending: None,
+            exit_code: None,
+        }
+    );
+    let reads = commands.reads.lock().unwrap();
+    assert_eq!(reads.len(), 1);
+    assert_eq!(reads[0].number, 3);
+    assert_eq!(reads[0].from_line, None);
+    assert_eq!(reads[0].wait, std::time::Duration::ZERO);
+    assert!(reads[0].until.is_none());
+}
+
+#[tokio::test]
+async fn read_command_output_says_when_nothing_is_new_and_how_the_command_ended() {
+    let (harness, commands) = with_commands(Harness::new());
+    let view = command_view(Some(BackgroundEnding::Exited), Some(1));
+    *commands.read.lock().unwrap() = Some(Ok(read_of(view, LogLines::default(), 12)));
+
+    let done = harness
+        .done("read_command_output", json!({ "command": 3 }))
+        .await;
+
+    assert!(
+        done.output
+            .contains("It ended with exit code 1 after 1 min 15 s.\nNo new lines since your last read; it wrote 12 lines so far.\n"),
+        "{}",
+        done.output
+    );
+    assert_eq!(
+        done.outcome,
+        ToolOutcome::CommandOutputRead {
+            number: 3,
+            first_line: 0,
+            last_line: 0,
+            total_lines: 12,
+            ending: Some(BackgroundEnding::Exited),
+            exit_code: Some(1),
+        }
+    );
+}
+
+#[tokio::test]
+async fn read_command_output_waits_at_most_ten_minutes_for_its_pattern() {
+    let (harness, commands) = with_commands(Harness::new());
+    let mut read = read_of(
+        command_view(None, None),
+        LogLines {
+            lines: numbered(1..=2),
+            left_out: None,
+        },
+        2,
+    );
+    read.matched = Some(2);
+    *commands.read.lock().unwrap() = Some(Ok(read));
+
+    let done = harness
+        .done(
+            "read_command_output",
+            json!({ "command": 3, "wait_seconds": 3600, "until": "ready on \\d+" }),
+        )
+        .await;
+
+    assert!(
+        done.output.contains("Line 2 matches until."),
+        "{}",
+        done.output
+    );
+    let reads = commands.reads.lock().unwrap();
+    assert_eq!(reads[0].wait, std::time::Duration::from_secs(600));
+    assert!(reads[0].until.as_ref().unwrap().is_match("ready on 5173"));
+}
+
+#[tokio::test]
+async fn read_command_output_reads_a_page_from_a_line() {
+    let (harness, commands) = with_commands(Harness::new());
+    let lines = LogLines {
+        lines: numbered(10..=12),
+        left_out: None,
+    };
+    *commands.read.lock().unwrap() = Some(Ok(read_of(command_view(None, None), lines, 40)));
+
+    let done = harness
+        .done(
+            "read_command_output",
+            json!({ "command": 3, "from_line": 10 }),
+        )
+        .await;
+
+    assert!(
+        done.output.ends_with(
+            "Lines 10 to 12 of 40:\nline 10\nline 11\nline 12\nMore follows: call read_command_output again with command 3 and from_line 13.\n"
+        ),
+        "{}",
+        done.output
+    );
+    assert_eq!(commands.reads.lock().unwrap()[0].from_line, Some(10));
+}
+
+#[tokio::test]
+async fn read_command_output_keeps_the_start_and_the_end_of_new_lines_that_do_not_fit() {
+    let (harness, commands) = with_commands(Harness::new());
+    let harness = with_small_limit(harness, 4096);
+    let lines = LogLines {
+        lines: numbered(1..=2000),
+        left_out: None,
+    };
+    *commands.read.lock().unwrap() = Some(Ok(read_of(command_view(None, None), lines, 2000)));
+
+    let done = harness
+        .done("read_command_output", json!({ "command": 3 }))
+        .await;
+
+    assert!(done.output.len() <= 4096, "{}", done.output.len());
+    assert!(
+        done.output.contains("\nline 1\nline 2\n"),
+        "{}",
+        done.output
+    );
+    assert!(done.output.ends_with("\nline 2000\n"), "{}", done.output);
+    assert!(
+        done.output.contains(
+            "are left out of this result: read them with read_command_output, command 3, from_line "
+        ),
+        "{}",
+        done.output
+    );
+    assert!(matches!(
+        done.outcome,
+        ToolOutcome::CommandOutputRead {
+            first_line: 1,
+            last_line: 2000,
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
+async fn read_command_output_refuses_line_zero_and_invalid_patterns() {
+    let (harness, _commands) = with_commands(Harness::new());
+
+    let zero = harness
+        .prepare(
+            "read_command_output",
+            &json!({ "command": 3, "from_line": 0 }),
+        )
+        .await;
+    let invalid = harness
+        .failure("read_command_output", json!({ "command": 3, "until": "(" }))
+        .await;
+
+    assert!(
+        matches!(zero, Err(PrepareError::InvalidArguments { .. })),
+        "{zero:?}"
+    );
+    assert!(
+        matches!(invalid, ToolFailure::InvalidPattern { .. }),
+        "{invalid:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_unknown_command_fails_with_its_code() {
+    let (harness, commands) = with_commands(Harness::new());
+    *commands.read.lock().unwrap() = Some(Err(ToolFailure::CommandNotFound { number: 9 }));
+    *commands.stop.lock().unwrap() = Some(Err(ToolFailure::CommandNotFound { number: 9 }));
+
+    assert_eq!(
+        harness
+            .failure("read_command_output", json!({ "command": 9 }))
+            .await,
+        ToolFailure::CommandNotFound { number: 9 }
+    );
+    assert_eq!(
+        harness
+            .failure("stop_command", json!({ "command": 9 }))
+            .await,
+        ToolFailure::CommandNotFound { number: 9 }
+    );
+}
+
+#[tokio::test]
+async fn stop_command_has_no_accesses_and_says_how_the_command_ended() {
+    let (harness, commands) = with_commands(Harness::new());
+    *commands.stop.lock().unwrap() = Some(Ok(CommandStop {
+        view: command_view(Some(BackgroundEnding::StoppedByAgent), None),
+        ran_for: std::time::Duration::from_mins(182),
+        had_ended: false,
+        unread: 14,
+        remote: false,
+    }));
+    let arguments = json!({ "command": 3 });
+
+    let prepared = harness.prepare("stop_command", &arguments).await.unwrap();
+    let done = harness.done("stop_command", arguments).await;
+
+    assert_eq!(prepared.accesses, Vec::new());
+    assert_eq!(
+        done.output,
+        "Command 3 (npm run dev, in /work/app) is stopped. You stopped it after 3 h 2 min. 14 of its lines are unread.\n"
+    );
+    assert_eq!(
+        done.outcome,
+        ToolOutcome::CommandStopped {
+            number: 3,
+            ending: BackgroundEnding::StoppedByAgent,
+            exit_code: None,
+        }
+    );
+    assert_eq!(
+        *commands.stops.lock().unwrap(),
+        vec![(harness.context.conversation_id.clone(), 3)]
+    );
+}
+
+#[tokio::test]
+async fn background_commands_fail_where_no_registry_runs() {
+    let harness = Harness::new();
+
+    assert!(matches!(
+        harness
+            .failure("read_command_output", json!({ "command": 1 }))
+            .await,
+        ToolFailure::IoError { .. }
+    ));
+}
+
+#[tokio::test]
+async fn read_command_output_says_when_mannie_lost_the_output() {
+    let (harness, commands) = with_commands(Harness::new());
+    let mut read = read_of(
+        command_view(Some(BackgroundEnding::Interrupted), None),
+        LogLines::default(),
+        0,
+    );
+    read.lost = true;
+    *commands.read.lock().unwrap() = Some(Ok(read));
+
+    let done = harness
+        .done("read_command_output", json!({ "command": 3 }))
+        .await;
+
+    assert!(
+        done.output.ends_with(
+            "It ended when Mannie quit or stopped unexpectedly.\nIts output was not kept: Mannie ended before it could store it.\n"
+        ),
+        "{}",
+        done.output
+    );
 }

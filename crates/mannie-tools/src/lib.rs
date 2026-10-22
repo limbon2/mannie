@@ -14,6 +14,7 @@
 //! (ADR-0014).
 
 mod activity;
+mod background;
 mod ceiling;
 mod digest;
 mod environment;
@@ -42,6 +43,10 @@ pub use activity::{
     ACTIVITY_ARGUMENT, MAX_ACTIVITY_CHARS, SplitArguments, clean_label, split_activity,
     with_activity,
 };
+pub use background::{
+    BackgroundCommands, CommandRead, CommandStop, MAX_WAIT_SECONDS, ReadRequest, StartRequest,
+    Started, no_background_commands,
+};
 pub use ceiling::Ceiling;
 pub use digest::digest;
 pub use environment::{CommandEnvironment, ProgramEnvironmentError};
@@ -63,9 +68,12 @@ pub use registry::{RegisterError, ToolRegistry, takes_activity};
 pub use results::{MIN_RESULT_LIMIT_BYTES, RESULT_LIMIT_BYTES, result_limit};
 pub use rules::{command_words, remote_command_words};
 pub use stop::{StopReason, StopSignal};
-pub use supervisor::end_leftover_command;
+pub use supervisor::{
+    ArchivedLog, BackgroundProcess, BackgroundSpec, LiveLog, LogLines, LogMark, MAX_LINE_BYTES,
+    end_leftover_command,
+};
 pub use system::{ShellFacts, SystemFacts};
 pub use tool::{
     ArchivedOutput, Done, Execution, PermissionClass, PrepareError, Prepared, Tool, ToolContext,
 };
-pub use tools::{plugin_path_access, stopped};
+pub use tools::{plugin_path_access, spawn_failure, stopped};

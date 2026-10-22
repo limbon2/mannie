@@ -5,7 +5,7 @@
   // The controls that features add to a conversation's toolbar (ADR-0026),
   // in their order. The conversation view renders this outlet and never
   // imports the features behind the controls.
-  let { conversation, turns }: ConversationControlProps = $props();
+  let { backgroundCommands = [], conversation, turns }: ConversationControlProps = $props();
 
   const slots = getShellSlots();
 
@@ -13,5 +13,5 @@
 </script>
 
 {#each controls as control (control.id)}
-  <control.component {conversation} {turns} />
+  <control.component {backgroundCommands} {conversation} {turns} />
 {/each}

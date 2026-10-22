@@ -7,6 +7,8 @@
 | Deciders | Owner                                                                                                                                                                                                                                                                                                                                                                          |
 | Related  | [ADR-0002](0002-grow-through-extension-points.md), [ADR-0012](0012-run-agents-as-durable-actors.md), [ADR-0013](0013-journal-every-side-effect.md), [ADR-0015](0015-run-an-agent-runtime-on-every-machine.md), [ADR-0023](0023-organize-conversations-into-projects.md), [Child agents](../features/child-agents/README.md), [Orchestration](../architecture/orchestration.md) |
 
+Later changes: [ADR-0041](0041-let-agents-run-commands-in-the-background.md) refines decisions 3, 7 and 9: the owner may also stop a background command of a task conversation, the registry of background commands writes a conversation's command records, events and archives beside its run, and a child's background commands end with its task's run, while a task conversation never wakes.
+
 ## Context
 
 - [Child agents](../features/child-agents/README.md) let the conversation agent give tasks to child agents on the same machine: explore children that read and general children that also change files, in parallel up to a limit, in the background, with follow-ups that keep a child's context, approvals in the parent's conversation, and stopping that reaches every child ([orchestration](../architecture/orchestration.md#3-child-agents)).

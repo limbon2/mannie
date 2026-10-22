@@ -99,10 +99,11 @@ impl From<&AgentSpec> for AgentDefinition {
 }
 
 /// The system tools (docs/features/system-tools/tools-and-results.md).
-/// `run_command` exists only where the registry holds it, and
-/// `move_to_project` is offered only to a general conversation while the
-/// owner has projects.
-pub const SYSTEM_TOOLS: [&str; 15] = [
+/// The commands' tools exist only where the registry holds them, the tools
+/// that read and stop background commands come only with `start_command`
+/// (ADR-0041), and `move_to_project` is offered only to a general
+/// conversation while the owner has projects.
+pub const SYSTEM_TOOLS: [&str; 18] = [
     "system_info",
     "list_directory",
     "file_info",
@@ -116,12 +117,15 @@ pub const SYSTEM_TOOLS: [&str; 15] = [
     "move_path",
     "delete_path",
     "run_command",
+    "start_command",
+    "read_command_output",
+    "stop_command",
     "read_tool_output",
     "move_to_project",
 ];
 
 /// The conversation agent's tools: the system tools and the task tools.
-const CONVERSATION_TOOLS: [&str; 18] = [
+const CONVERSATION_TOOLS: [&str; 21] = [
     SYSTEM_TOOLS[0],
     SYSTEM_TOOLS[1],
     SYSTEM_TOOLS[2],
@@ -137,6 +141,9 @@ const CONVERSATION_TOOLS: [&str; 18] = [
     SYSTEM_TOOLS[12],
     SYSTEM_TOOLS[13],
     SYSTEM_TOOLS[14],
+    SYSTEM_TOOLS[15],
+    SYSTEM_TOOLS[16],
+    SYSTEM_TOOLS[17],
     TASK_TOOLS[0],
     TASK_TOOLS[1],
     TASK_TOOLS[2],
@@ -155,8 +162,9 @@ const EXPLORE_TOOLS: [&str; 7] = [
 ];
 
 /// The tools of a general child: every system tool but `move_to_project`,
-/// since a child never moves its parent's conversation.
-const GENERAL_TOOLS: [&str; 14] = [
+/// since a child never moves its parent's conversation. Its background
+/// commands end with its task (ADR-0041, decision 9).
+const GENERAL_TOOLS: [&str; 17] = [
     "system_info",
     "list_directory",
     "file_info",
@@ -170,6 +178,9 @@ const GENERAL_TOOLS: [&str; 14] = [
     "move_path",
     "delete_path",
     "run_command",
+    "start_command",
+    "read_command_output",
+    "stop_command",
     "read_tool_output",
 ];
 

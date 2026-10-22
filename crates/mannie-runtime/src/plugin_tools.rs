@@ -17,6 +17,10 @@
 //! The adapter also decides where a tool is offered, from its offering and
 //! the conversation's workspace, and keeps the data and the failure code of
 //! a result for the call's card, which the model never reads (ADR-0039).
+//!
+//! A call whose authorized accesses hold a remote command in the background
+//! gets a ticket in its execution, which lets it hand the core that one
+//! command while it executes (ADR-0041, decision 11).
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -426,21 +430,34 @@ impl Tool for PluginToolAdapter {
             arguments,
             accesses,
             stop,
+            part_id,
             ..
         } = execution;
         let limit = context.result_limit;
         let reserved: Vec<ArchiveId> = (0..MAX_TOOL_ARCHIVES)
             .map(|_| (context.archive_ids)())
             .collect();
-        let running = self.tool.execute(
-            ToolExecution::new(arguments, context.conversation_id)
-                .with_authorized(sdk_accesses(&accesses))
-                .with_result_limit(u32::try_from(limit).unwrap_or(u32::MAX))
-                .with_archive_ids(reserved.clone())
-                .with_workspace(context.workspace),
-        );
+        let ticket = part_id.and_then(|part_id| {
+            self.runtime.issue_background_ticket(
+                &self.plugin,
+                &context.conversation_id,
+                &part_id,
+                &accesses,
+            )
+        });
+        let mut tool_execution = ToolExecution::new(arguments, context.conversation_id)
+            .with_authorized(sdk_accesses(&accesses))
+            .with_result_limit(u32::try_from(limit).unwrap_or(u32::MAX))
+            .with_archive_ids(reserved.clone())
+            .with_workspace(context.workspace);
+        if let Some(guard) = &ticket {
+            tool_execution = tool_execution.with_background(guard.ticket());
+        }
+        let running = self.tool.execute(tool_execution);
         let plugin = self.plugin.clone();
         async move {
+            // The ticket is good while the call executes.
+            let _ticket = ticket;
             tokio::select! {
                 // A result that is ready wins over a stop that arrives at the
                 // same moment, so an operation that finished keeps its result.
@@ -537,7 +554,13 @@ fn core_accesses(
             ),
         ToolEffect::SideEffects => !accesses.is_empty() && accesses.len() <= MAX_ACCESSES,
     };
-    if !fits {
+    // A call hands the core at most one command in the background, the one
+    // that its ticket names.
+    let in_background = accesses
+        .iter()
+        .filter(|access| matches!(access, ToolAccess::RemoteCommand(remote) if remote.background))
+        .count();
+    if !fits || in_background > 1 {
         return Err(broken(plugin));
     }
     accesses
@@ -757,6 +780,7 @@ fn remote_access(plugin: &str, remote: RemoteCommandAccess) -> Option<Access> {
         endpoint: remote.endpoint,
         identity: remote.identity,
         command: remote.command,
+        background: remote.background,
     })
 }
 
@@ -771,14 +795,22 @@ fn sdk_accesses(accesses: &[Access]) -> Vec<ToolAccess> {
                 endpoint,
                 identity,
                 command,
+                background,
                 ..
-            } => Some(ToolAccess::RemoteCommand(RemoteCommandAccess::new(
-                target.clone(),
-                label.clone(),
-                endpoint.clone(),
-                identity.clone(),
-                command.clone(),
-            ))),
+            } => {
+                let access = RemoteCommandAccess::new(
+                    target.clone(),
+                    label.clone(),
+                    endpoint.clone(),
+                    identity.clone(),
+                    command.clone(),
+                );
+                Some(ToolAccess::RemoteCommand(if *background {
+                    access.in_background()
+                } else {
+                    access
+                }))
+            }
             Access::Path {
                 path, mode, state, ..
             } => {
@@ -1339,6 +1371,20 @@ mod tests {
         ))
     }
 
+    /// A remote command that runs in the background.
+    fn background(target: &str, label: &str, command: &str) -> ToolAccess {
+        ToolAccess::RemoteCommand(
+            RemoteCommandAccess::new(
+                target.to_owned(),
+                label.to_owned(),
+                "deploy@build-box.lan:22".to_owned(),
+                "SHA256:x".to_owned(),
+                command.to_owned(),
+            )
+            .in_background(),
+        )
+    }
+
     fn invalid() -> PrepareError {
         PrepareError::Failed(ToolFailure::PluginInvalid {
             plugin: "shell".to_owned(),
@@ -1384,7 +1430,30 @@ mod tests {
                 endpoint: "deploy@build-box.lan:22".to_owned(),
                 identity: "SHA256:x".to_owned(),
                 command: "uptime".to_owned(),
+                background: false,
             }]
+        );
+    }
+
+    #[test]
+    fn a_remote_command_in_the_background_keeps_its_mode_both_ways() {
+        let accesses = core_accesses(
+            "shell",
+            ToolEffect::SideEffects,
+            vec![background("key-1", "build-box", "journalctl -f")],
+        )
+        .unwrap();
+
+        assert!(matches!(
+            &accesses[..],
+            [Access::RemoteCommand {
+                background: true,
+                ..
+            }]
+        ));
+        assert_eq!(
+            sdk_accesses(&accesses),
+            vec![background("key-1", "build-box", "journalctl -f")]
         );
     }
 
@@ -1414,6 +1483,14 @@ mod tests {
             (
                 ToolEffect::SideEffects,
                 (0..17).map(|_| remote("key-1", "box", "uptime")).collect(),
+            ),
+            // A call hands the core one command in the background at most.
+            (
+                ToolEffect::SideEffects,
+                vec![
+                    background("key-1", "box", "journalctl -f"),
+                    background("key-1", "box", "tail -f /var/log/syslog"),
+                ],
             ),
         ];
         for (effect, accesses) in cases {

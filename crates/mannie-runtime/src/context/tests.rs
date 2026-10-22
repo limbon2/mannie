@@ -213,6 +213,46 @@ fn mentions_follow_the_owner_s_text_in_the_same_message() {
     );
 }
 
+#[test]
+fn a_note_that_joins_a_request_follows_the_owner_s_message_in_the_same_message() {
+    let note = ModelPart {
+        run_id: None,
+        attempt: 0,
+        ..part(
+            3,
+            Some(PartKind::ContinuationNote),
+            "Background commands of this conversation:",
+        )
+    };
+    let turns = [turn(
+        0,
+        Some(RunState::Running),
+        vec![
+            part(1, Some(PartKind::UserText), "Is the server up?"),
+            mention(2, "The owner mentioned the file a.rs."),
+            note,
+            in_step(1, part(4, Some(PartKind::Text), "It is.")),
+        ],
+    )];
+
+    let request = build_request(shape(ApiInterface::Responses), &turns);
+
+    assert_eq!(
+        request.messages,
+        [
+            Message {
+                role: Role::User,
+                content: vec![
+                    Content::Text("Is the server up?".to_owned()),
+                    Content::Text("The owner mentioned the file a.rs.".to_owned()),
+                    Content::Text("Background commands of this conversation:".to_owned()),
+                ],
+            },
+            Message::text(Role::Assistant, "It is."),
+        ]
+    );
+}
+
 /// An image of the owner's message, whose bytes are `byte` repeated.
 fn image(number: u32, byte: u8) -> ModelPart {
     ModelPart {

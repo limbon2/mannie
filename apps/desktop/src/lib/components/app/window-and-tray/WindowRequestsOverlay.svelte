@@ -24,7 +24,7 @@
 </script>
 
 {#if request?.kind === 'ask_close_action'}
-  <CloseQuestionDialog activeRuns={request.activeRuns} />
+  <CloseQuestionDialog activeRuns={request.activeRuns} backgroundCommands={request.backgroundCommands} />
 {:else if request?.kind === 'confirm_quit'}
-  <QuitWarningDialog activeRuns={request.activeRuns} />
+  <QuitWarningDialog activeRuns={request.activeRuns} backgroundCommands={request.backgroundCommands} />
 {/if}

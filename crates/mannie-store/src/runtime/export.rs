@@ -11,6 +11,7 @@ use mannie_types::transcript::{Checkpoint, PartState};
 use rusqlite::{Connection, params};
 
 use super::RuntimeStoreError;
+use super::background::{self, StoredBackgroundCommand};
 use super::rows::{self, millis, parse_id, part_from_row, position, turn_from_row};
 use crate::Store;
 
@@ -69,6 +70,10 @@ fn record_in(
     let (images, archives) = record_assets(connection, id, &turns)?;
     let children = record_children(connection, id)?;
     let warnings = missing_attachments(id, &turns, &images, &archives)?;
+    let background_commands = background::commands(connection, id.as_str())?
+        .iter()
+        .map(StoredBackgroundCommand::view)
+        .collect();
     Ok(Some(ConversationRecord {
         version: RECORD_VERSION,
         conversation,
@@ -80,6 +85,7 @@ fn record_in(
         archives,
         children,
         warnings,
+        background_commands,
     }))
 }
 

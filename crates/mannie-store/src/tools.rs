@@ -27,12 +27,15 @@ const SELECT_CONVERSATION_EXISTS: &str = "SELECT 1 FROM runtime_conversations WH
 const INSERT_GRANT: &str = "INSERT INTO tools_grants (id, conversation_id, version, scope, created_at) \
      VALUES (?1, ?2, ?3, ?4, ?5)";
 const DELETE_GRANT: &str = "DELETE FROM tools_grants WHERE id = ?1 AND conversation_id = ?2";
-const SELECT_RULES: &str =
-    "SELECT id, version, words, folder, created_at FROM tools_rules ORDER BY created_at, id";
-const SELECT_RULE: &str = "SELECT id, version, words, folder, created_at FROM tools_rules \
-     WHERE words = ?1 AND COALESCE(folder, '') = COALESCE(?2, '')";
-const INSERT_RULE: &str = "INSERT INTO tools_rules (id, version, words, folder, created_at) \
-     VALUES (?1, ?2, ?3, ?4, ?5)";
+const SELECT_RULES: &str = "SELECT id, version, words, folder, created_at, background \
+     FROM tools_rules ORDER BY created_at, id";
+const SELECT_RULE: &str = "SELECT id, version, words, folder, created_at, background \
+     FROM tools_rules WHERE words = ?1 AND COALESCE(folder, '') = COALESCE(?2, '')";
+const INSERT_RULE: &str = "INSERT INTO tools_rules \
+     (id, version, words, folder, created_at, background) VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
+// A rule from a command in the background covers both modes, so it widens a
+// rule of the same words that covered only the foreground (ADR-0041).
+const WIDEN_RULE: &str = "UPDATE tools_rules SET background = 1 WHERE id = ?1";
 const DELETE_RULE: &str = "DELETE FROM tools_rules WHERE id = ?1";
 const SELECT_SHARED_GRANTS: &str = "SELECT id, project_id, version, scope, created_at \
      FROM tools_shared_grants ORDER BY created_at, id";
@@ -43,13 +46,14 @@ const INSERT_SHARED_GRANT: &str = "INSERT INTO tools_shared_grants \
      (id, project_id, version, scope, created_at) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT DO NOTHING";
 const DELETE_SHARED_GRANT: &str = "DELETE FROM tools_shared_grants WHERE id = ?1";
 const SELECT_REMOTE_RULES: &str = "SELECT id, plugin, target, endpoint, label, version, words, \
-     created_at FROM tools_remote_rules ORDER BY created_at, id";
+     created_at, background FROM tools_remote_rules ORDER BY created_at, id";
 const SELECT_REMOTE_RULE: &str = "SELECT id, plugin, target, endpoint, label, version, words, \
-     created_at FROM tools_remote_rules \
+     created_at, background FROM tools_remote_rules \
      WHERE plugin = ?1 AND target = ?2 AND endpoint = ?3 AND words = ?4";
 const INSERT_REMOTE_RULE: &str = "INSERT INTO tools_remote_rules \
-     (id, plugin, target, endpoint, label, version, words, created_at) \
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)";
+     (id, plugin, target, endpoint, label, version, words, created_at, background) \
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)";
+const WIDEN_REMOTE_RULE: &str = "UPDATE tools_remote_rules SET background = 1 WHERE id = ?1";
 const DELETE_REMOTE_RULE: &str = "DELETE FROM tools_remote_rules WHERE id = ?1";
 const SELECT_PROGRAM_RULES: &str = "SELECT id, plugin, name, program, version, words, effects, \
      folder, created_at FROM tools_program_rules ORDER BY created_at, id";
@@ -72,6 +76,7 @@ pub(crate) const STATEMENTS: &[&str] = &[
     SELECT_RULES,
     SELECT_RULE,
     INSERT_RULE,
+    WIDEN_RULE,
     DELETE_RULE,
     SELECT_SHARED_GRANTS,
     SELECT_PROJECT_EXISTS,
@@ -80,6 +85,7 @@ pub(crate) const STATEMENTS: &[&str] = &[
     SELECT_REMOTE_RULES,
     SELECT_REMOTE_RULE,
     INSERT_REMOTE_RULE,
+    WIDEN_REMOTE_RULE,
     DELETE_REMOTE_RULE,
     SELECT_PROGRAM_RULES,
     SELECT_PROGRAM_RULE,
@@ -209,6 +215,7 @@ struct RawRule {
     words: String,
     folder: Option<String>,
     created_at: i64,
+    background: bool,
 }
 
 fn rule_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawRule> {
@@ -218,6 +225,7 @@ fn rule_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawRule> {
         words: row.get(2)?,
         folder: row.get(3)?,
         created_at: row.get(4)?,
+        background: row.get(5)?,
     })
 }
 
@@ -231,6 +239,7 @@ impl RawRule {
                 .map_err(|error| ToolsStoreError::invalid(error.to_string()))?,
             words,
             folder: self.folder,
+            background: self.background,
             created_at: UtcMillis::from_millis(self.created_at),
         })
     }
@@ -245,6 +254,7 @@ struct RawRemoteRule {
     version: i64,
     words: String,
     created_at: i64,
+    background: bool,
 }
 
 fn remote_rule_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawRemoteRule> {
@@ -257,6 +267,7 @@ fn remote_rule_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawRemoteRu
         version: row.get(5)?,
         words: row.get(6)?,
         created_at: row.get(7)?,
+        background: row.get(8)?,
     })
 }
 
@@ -276,6 +287,7 @@ impl RawRemoteRule {
                 endpoint: self.endpoint,
             },
             words,
+            background: self.background,
             created_at: UtcMillis::from_millis(self.created_at),
         })
     }
@@ -548,6 +560,7 @@ impl Store {
         id: &RuleId,
         words: Vec<String>,
         folder: Option<String>,
+        background: bool,
     ) -> Result<CommandRule, ToolsStoreError> {
         let id = id.as_str().to_owned();
         let words = to_json(&words)?;
@@ -558,7 +571,13 @@ impl Store {
                     .prepare_cached(SELECT_RULE)?
                     .query_row(params![words, folder], rule_from_row)
                     .optional()?;
-                if let Some(existing) = existing {
+                if let Some(mut existing) = existing {
+                    if background && !existing.background {
+                        transaction
+                            .prepare_cached(WIDEN_RULE)?
+                            .execute([&existing.id])?;
+                        existing.background = true;
+                    }
                     return Ok(existing);
                 }
                 transaction.prepare_cached(INSERT_RULE)?.execute(params![
@@ -566,7 +585,8 @@ impl Store {
                     DOCUMENT_VERSION,
                     words,
                     folder,
-                    now
+                    now,
+                    background
                 ])?;
                 Ok(RawRule {
                     id,
@@ -574,6 +594,7 @@ impl Store {
                     words,
                     folder,
                     created_at: now,
+                    background,
                 })
             })
             .await
@@ -611,6 +632,7 @@ impl Store {
         id: &RuleId,
         target: RemoteTarget,
         words: Vec<String>,
+        background: bool,
     ) -> Result<RemoteCommandRule, ToolsStoreError> {
         let id = id.as_str().to_owned();
         let words = to_json(&words)?;
@@ -624,7 +646,13 @@ impl Store {
                         remote_rule_from_row,
                     )
                     .optional()?;
-                if let Some(existing) = existing {
+                if let Some(mut existing) = existing {
+                    if background && !existing.background {
+                        transaction
+                            .prepare_cached(WIDEN_REMOTE_RULE)?
+                            .execute([&existing.id])?;
+                        existing.background = true;
+                    }
                     return Ok(existing);
                 }
                 transaction
@@ -637,7 +665,8 @@ impl Store {
                         target.label,
                         DOCUMENT_VERSION,
                         words,
-                        now
+                        now,
+                        background
                     ])?;
                 Ok(RawRemoteRule {
                     id,
@@ -648,6 +677,7 @@ impl Store {
                     version: i64::from(DOCUMENT_VERSION),
                     words,
                     created_at: now,
+                    background,
                 })
             })
             .await

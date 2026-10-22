@@ -5,13 +5,16 @@
 
 use mannie_runtime::Runtime;
 use mannie_types::chat::ConversationRef;
-use mannie_types::ipc::CommandError;
+use mannie_types::ipc::{ChannelBatch, CommandError};
 use mannie_types::tools::{
-    CommandRule, ConversationGrant, DecideApproval, GrantRef, ProgramRule, ProgramRuleRef,
-    ReadToolOutput, RemoteCommandRule, RemoteRuleRef, RuleRef, SetFullAccess, SharedGrant,
-    SharedGrantRef, ToolOutputPage, ToolsError, ToolsSettings, UpdateToolsSettings,
+    BackgroundCommandView, CommandOutputUpdate, CommandRule, ConversationGrant, DecideApproval,
+    GrantRef, ProgramRule, ProgramRuleRef, ReadToolOutput, RemoteCommandRule, RemoteRuleRef,
+    RuleRef, SetFullAccess, SharedGrant, SharedGrantRef, StopBackgroundCommand,
+    SubscribeCommandOutput, ToolOutputPage, ToolsError, ToolsSettings, UpdateToolsSettings,
 };
+use mannie_types::transcript::SubscriptionId;
 use tauri::State;
+use tauri::ipc::Channel;
 
 use crate::state::Core;
 
@@ -239,4 +242,47 @@ pub(crate) async fn read_tool_output(
         .tool_output(input)
         .await
         .map_err(refused("read_tool_output"))
+}
+
+/// Stops a background command at the owner's request, also one of a child's
+/// task conversation, and returns how it ended (ADR-0041).
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn stop_background_command(
+    core: State<'_, Core>,
+    input: StopBackgroundCommand,
+) -> Result<BackgroundCommandView, CommandError<ToolsError>> {
+    runtime(&core)
+        .map_err(refused("stop_background_command"))?
+        .stop_background_command(input)
+        .await
+        .map_err(refused("stop_background_command"))
+}
+
+/// Follows the output of a background command of this machine: the lines
+/// after the line that the view holds, or its last lines, then new lines as
+/// they arrive, until the command ended (ADR-0041).
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn subscribe_command_output(
+    core: State<'_, Core>,
+    input: SubscribeCommandOutput,
+    updates: Channel<ChannelBatch<CommandOutputUpdate>>,
+) -> Result<SubscriptionId, CommandError<ToolsError>> {
+    let page = core.subscriptions().page();
+    let mut output = runtime(&core)
+        .map_err(refused("subscribe_command_output"))?
+        .command_output(input)
+        .await
+        .map_err(refused("subscribe_command_output"))?;
+    Ok(core
+        .subscriptions()
+        .start(page, updates, |sender| async move {
+            while let Some(update) = output.next().await {
+                let ended = matches!(update, CommandOutputUpdate::Ended { .. });
+                if sender.send(update).await.is_err() || ended {
+                    break;
+                }
+            }
+        }))
 }

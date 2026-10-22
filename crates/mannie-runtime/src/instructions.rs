@@ -226,10 +226,15 @@ pub fn builtin_sections() -> Vec<InstructionSection> {
         }),
         InstructionSection::new("tools", 150, |context| {
             context.tools.map(|tools| {
-                if tools.full_access {
-                    texts::FULL_ACCESS_TOOL_GUIDANCE.to_owned()
+                let guidance = if tools.full_access {
+                    texts::FULL_ACCESS_TOOL_GUIDANCE
                 } else {
-                    texts::TOOL_GUIDANCE.to_owned()
+                    texts::TOOL_GUIDANCE
+                };
+                if tools.offered.contains(&"start_command") {
+                    format!("{guidance} {}", texts::BACKGROUND_GUIDANCE)
+                } else {
+                    guidance.to_owned()
                 }
             })
         }),

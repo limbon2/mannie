@@ -617,6 +617,10 @@ fn snapshot_in(
         .as_deref()
         .map(|text| from_json::<ContextUsage>(text, "context usage"))
         .transpose()?;
+    let background_commands = super::background::commands(connection, conversation)?
+        .iter()
+        .map(super::StoredBackgroundCommand::view)
+        .collect();
     Ok(Some(ConversationSnapshot {
         conversation: summary,
         through_seq,
@@ -624,6 +628,7 @@ fn snapshot_in(
         has_earlier_turns,
         checkpoint,
         context,
+        background_commands,
     }))
 }
 

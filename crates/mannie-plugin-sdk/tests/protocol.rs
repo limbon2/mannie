@@ -26,6 +26,9 @@ use mannie_plugin_sdk::points::tools::{
     AgentSelector, PathAccess, RemoteCommandAccess, ToolAccess, ToolArchive, ToolCall,
     ToolExecution, ToolOffering, ToolRefusal, ToolResult, ToolSpec,
 };
+use mannie_plugin_sdk::services::background_commands::{
+    BackgroundError, BackgroundScope, BackgroundTicket, RemoteEnding, RemoteOutput, StartedCommand,
+};
 use mannie_plugin_sdk::services::credentials::LendError;
 use mannie_plugin_sdk::services::executor_host::{ExecutorTask, HostFailure, OutboxItem};
 use mannie_plugin_sdk::services::file_dialog::{DialogError, FileFilter};
@@ -1101,4 +1104,130 @@ fn an_input_refusal_crosses_json_with_its_field() {
 
     assert_eq!(refusal, InputRefusal::new("name"));
     assert_eq!(serde_json::to_value(&refusal).unwrap(), json);
+}
+
+#[test]
+fn a_remote_command_in_the_background_crosses_json_with_its_mode() {
+    let access = ToolAccess::RemoteCommand(
+        RemoteCommandAccess::new(
+            "t".to_owned(),
+            "build-box".to_owned(),
+            "deploy@build-box.lan:22".to_owned(),
+            "SHA256:x".to_owned(),
+            "journalctl -f".to_owned(),
+        )
+        .in_background(),
+    );
+    let json = json!({
+        "kind": "remote_command",
+        "target": "t",
+        "label": "build-box",
+        "endpoint": "deploy@build-box.lan:22",
+        "identity": "SHA256:x",
+        "command": "journalctl -f",
+        "background": true
+    });
+
+    assert_eq!(serde_json::to_value(&access).unwrap(), json);
+    assert_eq!(serde_json::from_value::<ToolAccess>(json).unwrap(), access);
+}
+
+#[test]
+fn an_execution_carries_its_ticket_and_omits_none() {
+    let json = json!({
+        "arguments": "{}",
+        "conversationId": "0199e0f2-0000-7000-8000-000000000001",
+        "resultLimit": 4096,
+        "background": "0199e0f2-0000-7000-8000-0000000000dd"
+    });
+
+    let execution = serde_json::from_value::<ToolExecution>(json.clone()).unwrap();
+    let mut plain = execution.clone();
+    plain.background = None;
+    let without = serde_json::to_value(&plain).unwrap();
+
+    assert_eq!(
+        execution.background,
+        Some(BackgroundTicket::new(
+            "0199e0f2-0000-7000-8000-0000000000dd".to_owned()
+        ))
+    );
+    assert_eq!(serde_json::to_value(&execution).unwrap(), json);
+    assert!(without.get("background").is_none(), "{without}");
+}
+
+#[test]
+fn the_output_of_a_command_in_the_background_crosses_json_with_its_kind() {
+    let cases = [
+        (
+            RemoteOutput::lines(vec!["started".to_owned()]),
+            json!({ "kind": "lines", "lines": ["started"] }),
+        ),
+        (
+            RemoteOutput::ended(RemoteEnding::Exited { status: 3 }),
+            json!({ "kind": "ended", "ending": { "kind": "exited", "status": 3 } }),
+        ),
+        (
+            RemoteOutput::ended(RemoteEnding::Signaled {
+                signal: "TERM".to_owned(),
+            }),
+            json!({ "kind": "ended", "ending": { "kind": "signaled", "signal": "TERM" } }),
+        ),
+        (
+            RemoteOutput::ended(RemoteEnding::Closed),
+            json!({ "kind": "ended", "ending": { "kind": "closed" } }),
+        ),
+        (
+            RemoteOutput::ended(RemoteEnding::SessionClosed),
+            json!({ "kind": "ended", "ending": { "kind": "session_closed" } }),
+        ),
+    ];
+    for (output, json) in cases {
+        assert_eq!(serde_json::to_value(&output).unwrap(), json);
+        assert_eq!(
+            serde_json::from_value::<RemoteOutput>(json).unwrap(),
+            output
+        );
+    }
+}
+
+#[test]
+fn a_start_in_the_background_and_its_errors_cross_json() {
+    let cases = [
+        (
+            BackgroundError::TooMany {
+                scope: BackgroundScope::Conversation,
+                limit: 8,
+            },
+            json!({ "code": "too_many", "scope": "conversation", "limit": 8 }),
+        ),
+        (
+            BackgroundError::TicketInvalid,
+            json!({ "code": "ticket_invalid" }),
+        ),
+        (
+            BackgroundError::ShuttingDown,
+            json!({ "code": "shutting_down" }),
+        ),
+        (
+            BackgroundError::StorageFailed,
+            json!({ "code": "storage_failed" }),
+        ),
+    ];
+    for (error, json) in cases {
+        assert_eq!(serde_json::to_value(&error).unwrap(), json);
+        assert_eq!(
+            serde_json::from_value::<BackgroundError>(json).unwrap(),
+            error
+        );
+    }
+    let started = StartedCommand::new(2);
+    assert_eq!(
+        serde_json::to_value(started).unwrap(),
+        json!({ "number": 2 })
+    );
+    assert_eq!(
+        serde_json::from_value::<StartedCommand>(json!({ "number": 2 })).unwrap(),
+        started
+    );
 }

@@ -13,6 +13,8 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::Notify;
 
+use super::live::complete_start;
+
 /// The first bytes of each stream that a command's capture keeps.
 const HEAD_BYTES: usize = 256 * 1024;
 /// The last bytes of each stream that a command's capture keeps.
@@ -88,14 +90,6 @@ impl Capture {
             total: self.total,
             replaced,
         }
-    }
-}
-
-/// The bytes before a character that the end of `bytes` cuts.
-fn complete_start(bytes: &[u8]) -> &[u8] {
-    match std::str::from_utf8(bytes) {
-        Err(error) if error.error_len().is_none() => &bytes[..error.valid_up_to()],
-        _ => bytes,
     }
 }
 

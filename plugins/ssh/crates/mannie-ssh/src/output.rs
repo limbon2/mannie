@@ -88,7 +88,7 @@ impl Capture {
 }
 
 /// The bytes before a character that the end of `bytes` cuts.
-fn complete_start(bytes: &[u8]) -> &[u8] {
+pub(crate) fn complete_start(bytes: &[u8]) -> &[u8] {
     match std::str::from_utf8(bytes) {
         Err(error) if error.error_len().is_none() => &bytes[..error.valid_up_to()],
         _whole => bytes,

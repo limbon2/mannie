@@ -5,9 +5,11 @@
 use mannie_types::ids::{ConversationId, PartId, ProfileId, ProjectId, RunId, TurnId};
 use mannie_types::run::{RunActivity, RunOutcome, RunState};
 use mannie_types::tasks::{TaskPartDocument, TaskRefusal, TaskState};
-use mannie_types::tools::{ToolCallDocument, ToolCallStatus};
+use mannie_types::tools::{
+    BackgroundCommandDocument, CommandNoteView, ToolCallDocument, ToolCallStatus,
+};
 use mannie_types::transcript::{ContextUsage, ConversationEvent, PartKind, PartState};
-use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, ToSql, Transaction, params};
 
 use super::rows::ImageDocument;
 use super::rows::{
@@ -16,7 +18,7 @@ use super::rows::{
 use super::{
     Applied, Change, DOCUMENT_VERSION, NewArchive, NewCheckpoint, NewConversation, NewImage,
     NewMention, NewPart, NewRun, NewTask, ProviderItem, RuntimeStoreError, TaskEnding, archives,
-    images, tasks,
+    background, images, tasks,
 };
 use crate::writer::TransactError;
 use crate::{Durability, Store};
@@ -72,6 +74,8 @@ const SELECT_ACTIVE_RUN_TURN: &str = "SELECT turn_id FROM runtime_runs \
      WHERE id = ?1 AND conversation_id = ?2 AND state IN ('queued', 'running')";
 const SELECT_NEXT_PART_POSITION: &str =
     "SELECT COALESCE(MAX(position) + 1, 0) FROM runtime_parts WHERE turn_id = ?1";
+const SELECT_TURN_OF_CONVERSATION: &str =
+    "SELECT 1 FROM runtime_turns WHERE id = ?1 AND conversation_id = ?2";
 const SELECT_PART_STATE: &str =
     "SELECT state FROM runtime_parts WHERE id = ?1 AND conversation_id = ?2";
 const SELECT_PART_KIND: &str =
@@ -125,6 +129,7 @@ pub(crate) const STATEMENTS: &[&str] = &[
     END_RUN,
     SELECT_ACTIVE_RUN_TURN,
     SELECT_NEXT_PART_POSITION,
+    SELECT_TURN_OF_CONVERSATION,
     SELECT_PART_STATE,
     SELECT_PART_KIND,
     UPDATE_PART_DOCUMENT,
@@ -297,13 +302,7 @@ impl Batch<'_> {
                 task,
             } => self.end_run(run_id, state, &outcome, task.as_ref()),
             Change::StartPart { part } => {
-                self.insert_part(&part, PartState::Streaming, "")?;
-                self.append(
-                    kinds::PART_STARTED,
-                    Some(part.id.as_str()),
-                    &EventBody::empty(),
-                )?;
-                Ok(())
+                self.add_part(&part, PartState::Streaming, "", kinds::PART_STARTED)
             }
             Change::Delta { part_id, text } => self.delta(&part_id, text),
             Change::FinishPart {
@@ -313,13 +312,7 @@ impl Batch<'_> {
                 provider_item,
             } => self.finish_streaming_part(&part_id, state, &tail, provider_item),
             Change::AddPart { part, text } => {
-                self.insert_part(&part, PartState::Complete, &text)?;
-                self.append(
-                    kinds::PART_FINISHED,
-                    Some(part.id.as_str()),
-                    &EventBody::empty(),
-                )?;
-                Ok(())
+                self.add_part(&part, PartState::Complete, &text, kinds::PART_FINISHED)
             }
             Change::UpdatePart {
                 part_id,
@@ -335,33 +328,183 @@ impl Batch<'_> {
             Change::DiscardAttempt { run_id, attempt } => self.discard_attempt(run_id, attempt),
             Change::AddCheckpoint { checkpoint } => self.add_checkpoint(checkpoint),
             Change::UpdateContext { ledger, usage } => self.update_context(&ledger, usage),
-            Change::Rename { title } => {
-                self.transaction
-                    .prepare_cached(RENAME)?
-                    .execute(params![self.conversation, title])?;
-                self.append(kinds::CONVERSATION_CHANGED, None, &EventBody::empty())?;
-                self.summary_changed = true;
-                Ok(())
-            }
+            Change::Rename { title } => self.set_summary_field(RENAME, &title),
             Change::SetProfile { profile_id } => {
                 let profile = profile_id.as_ref().map(|id| id.as_str().to_owned());
-                self.transaction
-                    .prepare_cached(SET_PROFILE)?
-                    .execute(params![self.conversation, profile])?;
-                self.append(kinds::CONVERSATION_CHANGED, None, &EventBody::empty())?;
-                self.summary_changed = true;
-                Ok(())
+                self.set_summary_field(SET_PROFILE, &profile)
             }
-            Change::SetFullAccess { enabled } => {
-                self.transaction
-                    .prepare_cached(SET_FULL_ACCESS)?
-                    .execute(params![self.conversation, enabled])?;
-                self.append(kinds::CONVERSATION_CHANGED, None, &EventBody::empty())?;
-                self.summary_changed = true;
-                Ok(())
-            }
+            Change::SetFullAccess { enabled } => self.set_summary_field(SET_FULL_ACCESS, &enabled),
             Change::SetProject { project_id } => self.set_project(&project_id),
+            Change::StartBackgroundCommand {
+                number,
+                part_id,
+                source,
+                document,
+            } => self.start_background(number, &part_id, &source, &document),
+            Change::UpdateBackgroundCommand {
+                number,
+                document,
+                archive,
+                announce,
+            } => self.update_background(number, &document, archive.as_ref(), announce),
+            Change::TellBackgroundEnds { numbers } => self.tell_background_ends(&numbers),
+            Change::StartCommandTurn {
+                turn_id,
+                part_id,
+                text,
+                note,
+                run,
+            } => self.start_command_turn(turn_id, &part_id, &text, &note, run),
+            Change::AddRequestNote {
+                turn_id,
+                part_id,
+                text,
+            } => self.add_request_note(&turn_id, &part_id, &text),
         }
+    }
+
+    /// Stores a part of a run and announces it with the event `kind`.
+    fn add_part(
+        &mut self,
+        part: &NewPart,
+        state: PartState,
+        text: &str,
+        kind: &str,
+    ) -> Result<(), RuntimeStoreError> {
+        self.insert_part(part, state, text)?;
+        self.append(kind, Some(part.id.as_str()), &EventBody::empty())?;
+        Ok(())
+    }
+
+    /// Marks the ends of background commands as told to the model.
+    fn tell_background_ends(&mut self, numbers: &[u32]) -> Result<(), RuntimeStoreError> {
+        for number in numbers {
+            background::tell(self.transaction, self.conversation, *number, self.now)?;
+        }
+        Ok(())
+    }
+
+    /// Adds a note that only the model reads to the request of a turn of
+    /// this conversation, after the request's parts.
+    fn add_request_note(
+        &mut self,
+        turn_id: &TurnId,
+        part_id: &PartId,
+        text: &str,
+    ) -> Result<(), RuntimeStoreError> {
+        let owned: Option<i64> = self
+            .transaction
+            .prepare_cached(SELECT_TURN_OF_CONVERSATION)?
+            .query_row(params![turn_id.as_str(), self.conversation], |row| {
+                row.get(0)
+            })
+            .optional()?;
+        if owned.is_none() {
+            return Err(RuntimeStoreError::invalid(format!(
+                "turn {turn_id} is not a turn of this conversation"
+            )));
+        }
+        let position: i64 = self
+            .transaction
+            .prepare_cached(SELECT_NEXT_PART_POSITION)?
+            .query_row([turn_id.as_str()], |row| row.get(0))?;
+        let kind = PartKind::ContinuationNote;
+        self.transaction
+            .prepare_cached(INSERT_PART)?
+            .execute(params![
+                part_id.as_str(),
+                self.conversation,
+                turn_id.as_str(),
+                Option::<&str>::None,
+                Option::<u32>::None,
+                position,
+                kind.as_str(),
+                kind.audience().as_str(),
+                PartState::Complete.as_str(),
+                text,
+                DOCUMENT_VERSION,
+                "{}",
+                self.now,
+                self.now
+            ])?;
+        Ok(())
+    }
+
+    /// Sets a field of the conversation that its summary shows, with one of
+    /// the statements that take the conversation and the value.
+    fn set_summary_field(
+        &mut self,
+        statement: &str,
+        value: &dyn ToSql,
+    ) -> Result<(), RuntimeStoreError> {
+        self.transaction
+            .prepare_cached(statement)?
+            .execute(params![self.conversation, value])?;
+        self.append(kinds::CONVERSATION_CHANGED, None, &EventBody::empty())?;
+        self.summary_changed = true;
+        Ok(())
+    }
+
+    /// Records a background command that started, beside the part of its
+    /// call, and announces it.
+    fn start_background(
+        &mut self,
+        number: u32,
+        part_id: &PartId,
+        source: &str,
+        document: &BackgroundCommandDocument,
+    ) -> Result<(), RuntimeStoreError> {
+        background::insert(
+            self.transaction,
+            self.conversation,
+            number,
+            part_id,
+            source,
+            document,
+            self.now,
+        )?;
+        self.append_background(number)
+    }
+
+    /// Replaces the record of a background command, with the archive of its
+    /// output under the part of its call once it ended.
+    fn update_background(
+        &mut self,
+        number: u32,
+        document: &BackgroundCommandDocument,
+        archive: Option<&NewArchive>,
+        announce: bool,
+    ) -> Result<(), RuntimeStoreError> {
+        let part_id = background::update(
+            self.transaction,
+            self.conversation,
+            number,
+            document,
+            self.now,
+        )?;
+        if let Some(archive) = archive {
+            archives::insert(
+                self.transaction,
+                self.conversation,
+                &part_id,
+                archive,
+                self.now,
+            )?;
+        }
+        if announce {
+            self.append_background(number)?;
+        }
+        Ok(())
+    }
+
+    /// Announces that a background command started or ended.
+    fn append_background(&mut self, number: u32) -> Result<(), RuntimeStoreError> {
+        let body = EventBody {
+            number: Some(number),
+            ..EventBody::empty()
+        };
+        self.append(kinds::BACKGROUND_COMMAND_CHANGED, None, &body)?;
+        Ok(())
     }
 
     fn create_conversation(
@@ -418,21 +561,7 @@ impl Batch<'_> {
         task: Option<&NewTask>,
         attached: &Attached<'_>,
     ) -> Result<(), RuntimeStoreError> {
-        self.refuse_active_run()?;
-        let position: i64 = self
-            .transaction
-            .prepare_cached(SELECT_NEXT_TURN_POSITION)?
-            .query_row([self.conversation], |row| row.get(0))?;
-        self.transaction
-            .prepare_cached(INSERT_TURN)?
-            .execute(params![
-                turn_id.as_str(),
-                self.conversation,
-                position,
-                run.id.as_str(),
-                self.now
-            ])?;
-        self.insert_run(turn_id.as_str(), &run)?;
+        self.begin_turn(&turn_id, &run)?;
         self.transaction
             .prepare_cached(INSERT_PART)?
             .execute(params![
@@ -515,15 +644,79 @@ impl Batch<'_> {
                 self.now,
             )?;
         }
+        self.announce_turn(turn_id, run.id)
+    }
+
+    /// Stores a new turn after the conversation's last, with the run that
+    /// answers it, while the conversation has no active run.
+    fn begin_turn(&mut self, turn_id: &TurnId, run: &NewRun) -> Result<(), RuntimeStoreError> {
+        self.refuse_active_run()?;
+        let position: i64 = self
+            .transaction
+            .prepare_cached(SELECT_NEXT_TURN_POSITION)?
+            .query_row([self.conversation], |row| row.get(0))?;
+        self.transaction
+            .prepare_cached(INSERT_TURN)?
+            .execute(params![
+                turn_id.as_str(),
+                self.conversation,
+                position,
+                run.id.as_str(),
+                self.now
+            ])?;
+        self.insert_run(turn_id.as_str(), run)
+    }
+
+    /// Announces a turn whose request is stored, and the conversation's
+    /// change.
+    fn announce_turn(&mut self, turn_id: TurnId, run_id: RunId) -> Result<(), RuntimeStoreError> {
         self.touch()?;
         let body = EventBody {
             turn_id: Some(turn_id),
-            run_id: Some(run.id),
+            run_id: Some(run_id),
             ..EventBody::empty()
         };
         self.append(kinds::TURN_STARTED, None, &body)?;
         self.summary_changed = true;
         Ok(())
+    }
+
+    /// Starts a turn whose request is Mannie's note of background commands
+    /// that ended (ADR-0041): the note stands where the owner's message
+    /// stands in other turns.
+    fn start_command_turn(
+        &mut self,
+        turn_id: TurnId,
+        part_id: &PartId,
+        text: &str,
+        note: &CommandNoteView,
+        run: NewRun,
+    ) -> Result<(), RuntimeStoreError> {
+        self.begin_turn(&turn_id, &run)?;
+        let document = PartDocument {
+            command_note: Some(note.clone()),
+            ..PartDocument::default()
+        };
+        let kind = PartKind::CommandNote;
+        self.transaction
+            .prepare_cached(INSERT_PART)?
+            .execute(params![
+                part_id.as_str(),
+                self.conversation,
+                turn_id.as_str(),
+                Option::<&str>::None,
+                Option::<u32>::None,
+                0,
+                kind.as_str(),
+                kind.audience().as_str(),
+                PartState::Complete.as_str(),
+                text,
+                DOCUMENT_VERSION,
+                to_json(&document)?,
+                self.now,
+                self.now
+            ])?;
+        self.announce_turn(turn_id, run.id)
     }
 
     fn retry_turn(&mut self, turn_id: &TurnId, run: NewRun) -> Result<(), RuntimeStoreError> {
@@ -718,6 +911,7 @@ impl Batch<'_> {
             task: None,
             mention: None,
             image: None,
+            command_note: None,
         };
         self.transaction
             .prepare_cached(UPDATE_PART_DOCUMENT)?
@@ -769,6 +963,7 @@ impl Batch<'_> {
             task: Some(task),
             mention: None,
             image: None,
+            command_note: None,
         };
         self.transaction
             .prepare_cached(UPDATE_PART_DOCUMENT)?
@@ -976,6 +1171,7 @@ impl Batch<'_> {
             task: None,
             mention: None,
             image: None,
+            command_note: None,
         };
         let finished_at = (state != PartState::Streaming).then_some(self.now);
         self.transaction

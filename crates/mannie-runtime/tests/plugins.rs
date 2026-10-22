@@ -827,6 +827,7 @@ async fn a_plugins_section_source_sees_the_agent_whether_the_run_uses_tools_and_
             allow_changes_in_workspace: false,
             command_environment: Vec::new(),
             full_access_for_new_conversations: true,
+            wake_on_command_end: true,
         })
         .await
         .unwrap();

@@ -1,11 +1,11 @@
 # System tools
 
-|              |                                                                                                                                                                                                                                                                                                                                                     |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status       | Building                                                                                                                                                                                                                                                                                                                                            |
-| Milestone    | M2                                                                                                                                                                                                                                                                                                                                                  |
-| Last updated | 2026-10-14                                                                                                                                                                                                                                                                                                                                          |
-| Related      | [ADR-0013](../../adr/0013-journal-every-side-effect.md), [ADR-0014](../../adr/0014-contain-process-trees.md), [ADR-0023](../../adr/0023-organize-conversations-into-projects.md), [Tools](../../architecture/tools.md), [Security](../../architecture/security.md), [Agent runtime](../../architecture/agent-runtime.md), [Chat](../chat/README.md) |
+|              |                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status       | Building                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Milestone    | M2                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Last updated | 2026-10-21                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Related      | [ADR-0013](../../adr/0013-journal-every-side-effect.md), [ADR-0014](../../adr/0014-contain-process-trees.md), [ADR-0023](../../adr/0023-organize-conversations-into-projects.md), [ADR-0041](../../adr/0041-let-agents-run-commands-in-the-background.md), [Tools](../../architecture/tools.md), [Security](../../architecture/security.md), [Agent runtime](../../architecture/agent-runtime.md), [Chat](../chat/README.md) |
 
 ## Intent
 
@@ -21,15 +21,17 @@ The owner wants the model to do real work on their computer: read, write, edit a
   - edit a file with exact replacements, all of them or none;
   - create folders, and copy, move and delete files and folders, never following links;
   - run a command in the platform's shell with a working directory and a timeout;
+  - start a command in the background, read its output later and stop it ([background commands](background-commands.md));
   - read back a long output that was archived.
 - Workspace: a conversation's workspace is the folder of its project, which the owner adds in the sidebar ([projects](../chat/projects.md)); a general conversation has none. Reads inside the workspace run without asking. Changes inside it ask, unless the owner allowed them in the settings, and everything else asks.
 - Approvals: an approval shows exactly what will happen: the canonical paths, or the full command with its shell and working directory. The owner allows it once, allows it for the conversation, for the conversation's project or always, saves a rule, or denies it. A denial goes back to the model as the tool's result, and the model's other requests from the same step do not run.
 - Rules: the owner can save command rules by prefix. A rule never matches a command that contains shell metacharacters.
 - Safety: file changes check the revision and are written atomically. Stopping a reply, or a timeout, ends the whole process tree of a running command. When a command ends, every process it started ends with it, including programs it opened. After a crash, an operation that may have run is shown as uncertain and is never repeated automatically.
 - Results: long listings and outputs come in pages, and very large outputs are archived so the model can read them back in parts.
+- Background commands: a command started in the background keeps running after its call and after the reply, until it ends, the agent or the owner stops it, its conversation is deleted, its task ends or Mannie quits. The conversation's toolbar lists its commands with their output and Stop. When one ends on its own while the conversation is idle, Mannie wakes the agent with a reply of its own ([wake-ups](wake-ups.md)).
 - Activity: each tool call appears in the reply as one row, which the model names in a few words, such as "Reading package.json", with the statuses that need the owner's eye. The owner can open a row to see what Mannie ran and the details. A conversation that waits for an approval says so in the conversation list.
 - Provider profiles: each profile has a "Use tools" switch, on by default. Without tools, a profile works as chat did before system tools, and the provider test says when a model cannot use tools.
-- Not included: interactive terminals, a file browser panel, undoing changes, sandboxing at the operating system level, background processes that outlive their command, and notifications of approval requests while the window is hidden. Each of these would be a feature of its own.
+- Not included: interactive terminals, a file browser panel, undoing changes, sandboxing at the operating system level, and notifications of approval requests while the window is hidden. Each of these would be a feature of its own.
 
 ## Fit
 
@@ -56,6 +58,16 @@ None.
 - 2026-10-15: the owner decided:
   - A conversation's workspace is the folder of its project, and the workspace control and the default workspace of the settings give way to projects in the sidebar ([ADR-0023](../../adr/0023-organize-conversations-into-projects.md)).
   - "Allow for…" in an approval request offers three scopes: this conversation, this project, or always, in every conversation.
+- 2026-10-21: the owner decided (D40, [ADR-0041](../../adr/0041-let-agents-run-commands-in-the-background.md)):
+  - Agents start commands in the background, read their output later and stop them. A command outlives the reply that started it, until it ends, the agent or the owner stops it, its conversation is deleted, its task ends or Mannie quits.
+  - When a command ends on its own while its conversation has no active reply, Mannie wakes the agent with a reply of its own.
+  - The owner's conversations, general child agents, worker tasks and SSH hosts get background commands.
+  - A grant or a rule covers a command in the background only when it was given or saved from the approval of a command in the background, and then it covers both modes.
+- 2026-10-21: the defaults below were chosen for background commands when building started, and each waits for the owner's review:
+  - Stopping a reply leaves its background commands running; the owner stops them from the toolbar, the output panel or the call's card.
+  - A conversation runs at most 8 background commands and a machine 32, and each keeps the first 256 KiB and the last 768 KiB of its output in memory.
+  - `read_command_output` waits at most 600 seconds.
+  - Ends within 2 seconds share one wake-up, a conversation wakes at most 6 times an hour, and Stop pauses its wake-ups until the owner's next message.
 - 2026-10-14: the defaults below were chosen when building started. Each one waits for the owner's review, and the part documents give the details.
   - The journal record of an operation is its tool call part in the transcript. Each change of its state is stored with full durability, in the same transaction as its event.
   - A grant for a path covers one access mode in one folder and everything below it. A grant for a command covers the same command text in the same working directory.
@@ -78,6 +90,8 @@ None.
 - [Tools and results](tools-and-results.md): the tools, their inputs and results, file safety, limits and archived outputs.
 - [Operations and approvals](operations-and-approvals.md): the operation lifecycle and its journal, the workspace, policy, grants, rules, approvals and recovery.
 - [Commands](commands.md): running commands, process containment and V4.
+- [Background commands](background-commands.md): commands that run in the background, their output, their ends and their interface (M11).
+- [Wake-ups](wake-ups.md): the notes that tell the model about background commands, and the replies that a command's end starts (M11).
 - [Tool activity](tool-activity.md): tool calls and approval requests in the conversation view, the permissions of a conversation and the settings.
 
 ## Acceptance

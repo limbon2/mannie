@@ -4,10 +4,12 @@
 //! plugin.toml`, gives the services that its start receives. It is off by
 //! default, like every plugin (D28).
 //!
-//! A start reads the hosts and contributes the tool `run_ssh_command`, the
-//! section of the hosts and the mention provider. Turning the plugin off
-//! removes them, the host waits for the tool's calls that run and drops the
-//! rest (ADR-0036, decision 7), and the stop closes every session.
+//! A start reads the hosts and contributes the tools `run_ssh_command` and
+//! `start_ssh_command`, the section of the hosts and the mention provider.
+//! Turning the plugin off removes them, the host waits for the tools' calls
+//! that run and drops the rest (ADR-0036, decision 7), the core ends the
+//! commands in the background (ADR-0041, decision 11), and the stop closes
+//! every session.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -22,10 +24,12 @@ use mannie_plugin_sdk::plugin::{Instance, Plugin, Started};
 use mannie_plugin_sdk::points::mentions::{MentionProvider, Mentions};
 use mannie_plugin_sdk::points::sections::{Section, SectionBody, Sections};
 use mannie_plugin_sdk::points::tools::{AgentSelector, PluginTool, Tools};
+use mannie_plugin_sdk::services::background_commands::BackgroundCommands;
 use mannie_plugin_sdk::services::secrets::Secrets;
 use mannie_plugin_sdk::services::store::{Store, StoreModule};
 use tokio::sync::{oneshot, watch};
 
+use crate::background::StartSshCommand;
 use crate::commands::{
     AddHost, AddHostCommand, FollowHostsChannel, HostListUpdate, HostRef, RemoveHostCommand,
     ScanHostKeyCommand, SshError, TestHostCommand, TrustHostKey, TrustHostKeyCommand, UpdateHost,
@@ -128,6 +132,7 @@ impl SshPlugin {
     async fn start_now(context: StartContext) -> Result<Started, StartFailure> {
         let store = context.service::<Store>()?;
         let secrets = context.service::<Secrets>()?;
+        let commands = context.service::<BackgroundCommands>()?;
         let hosts = Hosts::load(store, secrets, context.clock())
             .await
             .map_err(|error| {
@@ -137,9 +142,14 @@ impl SshPlugin {
                 );
                 StartFailure::new(STORAGE_FAILED)
             })?;
-        let agents = AGENTS.iter().map(|agent| (*agent).to_owned()).collect();
+        let agents: Vec<String> = AGENTS.iter().map(|agent| (*agent).to_owned()).collect();
         let tool = PluginTool::new(
             Arc::new(RunSshCommand::new(hosts.clone())),
+            AgentSelector::Agents(agents.clone()),
+        )
+        .with_side_effects();
+        let background_tool = PluginTool::new(
+            Arc::new(StartSshCommand::new(hosts.clone(), commands)),
             AgentSelector::Agents(agents),
         )
         .with_side_effects();
@@ -151,6 +161,7 @@ impl SshPlugin {
         let mentions: Arc<dyn MentionProvider> = Arc::new(HostMentions::new(hosts.clone()));
         let contributions = Contributions::new()
             .add::<Tools>(tool)
+            .add::<Tools>(background_tool)
             .add::<Sections>(section)
             .add::<Mentions>(mentions);
         let handlers = handlers(&hosts);

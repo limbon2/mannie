@@ -113,6 +113,9 @@ export function toolsFailureMessage(failure: ToolsFailure): string {
     case 'output_not_found': {
       return m.tools_error_output_not_found();
     }
+    case 'background_command_not_found': {
+      return m.tools_error_background_command_not_found();
+    }
     case 'plugin_off': {
       return m.tools_error_plugin_off({ plugin: pluginName(error.plugin) });
     }
@@ -162,6 +165,9 @@ export function toolFailureMessage(failure: ToolFailure): string {
     }
     case 'binary_file': {
       return m.tools_failure_binary_file({ path: failure.path });
+    }
+    case 'command_not_found': {
+      return m.tools_failure_command_not_found({ number: failure.number });
     }
     case 'different_volume': {
       return m.tools_failure_different_volume();
@@ -234,6 +240,11 @@ export function toolFailureMessage(failure: ToolFailure): string {
     }
     case 'too_large': {
       return m.tools_failure_too_large({ limit: formatBytes(failure.limitBytes) });
+    }
+    case 'too_many_background_commands': {
+      return failure.scope === 'conversation'
+        ? m.tools_failure_too_many_commands_in_conversation({ limit: failure.limit })
+        : m.tools_failure_too_many_commands_on_machine({ limit: failure.limit });
     }
     case 'too_many_entries': {
       return m.tools_failure_too_many_entries({ limit: failure.limit });

@@ -105,6 +105,64 @@ describe('callSummary', () => {
     expect(callSummary(ran)).toMatch(/0/u);
   });
 
+  it('names a command in the background by its number once it started', () => {
+    const starting = call('start_command', { command: 'npm run dev\n--port 5173' });
+    const started = call(
+      'start_command',
+      { command: 'npm run dev' },
+      { result: result({ command: 'npm run dev', kind: 'command_started', number: 3 }), status: 'completed' },
+    );
+    const read = call(
+      'read_command_output',
+      { command: 3 },
+      {
+        result: result({
+          ending: null,
+          exitCode: null,
+          firstLine: 120,
+          kind: 'command_output_read',
+          lastLine: 180,
+          number: 3,
+          totalLines: 180,
+        }),
+        status: 'completed',
+      },
+    );
+    const nothing = call(
+      'read_command_output',
+      { command: 3 },
+      {
+        result: result({
+          ending: null,
+          exitCode: null,
+          firstLine: 0,
+          kind: 'command_output_read',
+          lastLine: 0,
+          number: 3,
+          totalLines: 180,
+        }),
+        status: 'completed',
+      },
+    );
+    const stopped = call(
+      'stop_command',
+      { command: 3 },
+      {
+        result: result({ ending: 'stopped_by_agent', exitCode: null, kind: 'command_stopped', number: 3 }),
+        status: 'completed',
+      },
+    );
+
+    expect(callSummary(starting)).toContain('npm run dev …');
+    expect(callSummary(started)).toContain('3');
+    expect(callSummary(read)).toMatch(/120.*180.*3|3.*120.*180/u);
+    expect(callSummary(nothing)).not.toBe(callSummary(read));
+    expect(callSummary(stopped)).toContain('3');
+    expect(callSummary(call('stop_command', { command: 4 }))).toContain('4');
+    expect(callSummary(call('read_command_output', {}))).not.toBe('');
+    expect(toolIcon('start_command')).not.toBe(toolIcon('stop_command'));
+  });
+
   it('names the project of a move, by its name rather than its folder', () => {
     const access = {
       folder: 'D:\\Projects\\atlas',
@@ -186,6 +244,7 @@ describe('callSummary', () => {
   it("names a plugin's command on a remote host by its command and host, once prepared", () => {
     const command = 'journalctl -u nginx\n--since today';
     const access = {
+      background: false,
       command,
       endpoint: 'deploy@build-box.lan:22',
       identity: 'SHA256:uX0dFmYbVKUH4bZmL1nOb4TaZ5WPMbgUpkOvR3EJPr0',
@@ -208,6 +267,22 @@ describe('callSummary', () => {
     expect(callSummary(prepared)).not.toContain('--since');
     expect(callSummary(prepared)).not.toContain('run_ssh_command');
     expect(callSummary(finished)).toBe(callSummary(prepared));
+  });
+
+  it("says that a plugin's command on a remote host starts in the background", () => {
+    const access = {
+      background: true,
+      command: 'journalctl -f',
+      endpoint: 'deploy@build-box.lan:22',
+      identity: 'SHA256:uX0dFmYbVKUH4bZmL1nOb4TaZ5WPMbgUpkOvR3EJPr0',
+      kind: 'remote_command' as const,
+      label: 'build-box',
+      plugin: 'ssh',
+      target: '0199e0f2-0000-7000-8000-0000000000aa',
+    };
+    const prepared = call('start_ssh_command', { command: 'journalctl -f', host: 'build-box' }, { accesses: [access] });
+
+    expect(callSummary(prepared)).toBe('Start journalctl -f on build-box in the background');
   });
 });
 

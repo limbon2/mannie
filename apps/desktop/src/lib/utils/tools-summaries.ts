@@ -3,6 +3,8 @@
 // does or did, its status, and its tool's icon. The line names paths and
 // commands as the result reports them, or as the model wrote them while the
 // call has no result.
+import CirclePlayIcon from '@lucide/svelte/icons/circle-play';
+import CircleStopIcon from '@lucide/svelte/icons/circle-stop';
 import CopyIcon from '@lucide/svelte/icons/copy';
 import FileOutputIcon from '@lucide/svelte/icons/file-output';
 import FilePenIcon from '@lucide/svelte/icons/file-pen';
@@ -15,6 +17,7 @@ import FolderPlusIcon from '@lucide/svelte/icons/folder-plus';
 import InfoIcon from '@lucide/svelte/icons/info';
 import MonitorIcon from '@lucide/svelte/icons/monitor';
 import MoveIcon from '@lucide/svelte/icons/move';
+import ScrollTextIcon from '@lucide/svelte/icons/scroll-text';
 import SquareTerminalIcon from '@lucide/svelte/icons/square-terminal';
 import TextSearchIcon from '@lucide/svelte/icons/text-search';
 import Trash2Icon from '@lucide/svelte/icons/trash-2';
@@ -29,6 +32,9 @@ import { formatBytes } from './tools-messages.js';
 
 /** The tool that runs commands. */
 export const RUN_COMMAND = 'run_command';
+
+/** The tool that starts commands in the background (ADR-0041). */
+export const START_COMMAND = 'start_command';
 
 /** How a status looks: it asks for the owner, works, ended well, failed, or ended without running. */
 export type CallTone = 'attention' | 'busy' | 'done' | 'ended' | 'failed';
@@ -58,9 +64,12 @@ const ICONS: Readonly<Record<string, Component>> = {
   move_path: MoveIcon,
   move_to_project: FolderInputIcon,
   read_file: FileTextIcon,
+  read_command_output: ScrollTextIcon,
   read_tool_output: FileOutputIcon,
   run_command: SquareTerminalIcon,
   search_text: TextSearchIcon,
+  start_command: CirclePlayIcon,
+  stop_command: CircleStopIcon,
   system_info: MonitorIcon,
   write_file: FilePenIcon,
 };
@@ -91,6 +100,13 @@ function argumentText(values: Arguments, key: string): string | null {
   return value === '' ? null : value;
 }
 
+/** A whole number that the model passed, such as a command's number. */
+function argumentNumber(values: Arguments, key: string): number | null {
+  const value = values[key];
+  const isWhole = typeof value === 'number' && Number.isSafeInteger(value);
+  return isWhole ? value : null;
+}
+
 function accessPath(accesses: readonly Access[], index: number): string | null {
   const access = accesses.at(index);
   return access?.kind === 'path' ? access.path : null;
@@ -106,10 +122,17 @@ function accessCommand(accesses: readonly Access[]): string | null {
   return access?.kind === 'command' ? access.command : null;
 }
 
-/** The command on a remote host that a plugin's call runs, with the host's name (ADR-0036). */
-function accessRemoteCommand(accesses: readonly Access[]): { command: string; host: string } | null {
+/**
+ * The command on a remote host that a plugin's call runs, with the host's
+ * name and whether it runs in the background (ADR-0036; ADR-0041, decision 11).
+ */
+function accessRemoteCommand(
+  accesses: readonly Access[],
+): { background: boolean; command: string; host: string } | null {
   const access = accesses.find((candidate) => candidate.kind === 'remote_command');
-  return access?.kind === 'remote_command' ? { command: access.command, host: access.label } : null;
+  return access?.kind === 'remote_command'
+    ? { background: access.background ?? false, command: access.command, host: access.label }
+    : null;
 }
 
 /** A folder's last name, such as `app` for `D:\Projects\app`, or the whole path for a root. */
@@ -161,6 +184,9 @@ function toolLabel(tool: string): string {
     case 'move_to_project': {
       return m.tools_tool_move_to_project();
     }
+    case 'read_command_output': {
+      return m.tools_tool_read_command_output();
+    }
     case 'read_file': {
       return m.tools_tool_read_file();
     }
@@ -172,6 +198,12 @@ function toolLabel(tool: string): string {
     }
     case 'search_text': {
       return m.tools_tool_search_text();
+    }
+    case START_COMMAND: {
+      return m.tools_tool_start_command();
+    }
+    case 'stop_command': {
+      return m.tools_tool_stop_command();
     }
     case 'system_info': {
       return m.tools_call_system_info();
@@ -194,6 +226,7 @@ function intentSummary(call: ToolCallView): string {
   const command = argumentText(values, 'command') ?? accessCommand(call.accesses);
   const pattern = argumentText(values, 'pattern');
   const query = argumentText(values, 'query');
+  const commandNumber = argumentNumber(values, 'command');
   const hasEnds = source !== null && destination !== null;
   switch (call.tool) {
     case 'copy_path': {
@@ -229,6 +262,11 @@ function intentSummary(call: ToolCallView): string {
       const project = accessProject(call.accesses) ?? argumentText(values, 'project');
       return project === null ? toolLabel(call.tool) : m.tools_call_move_to_project({ project });
     }
+    case 'read_command_output': {
+      return commandNumber === null
+        ? toolLabel(call.tool)
+        : m.tools_call_read_command_output({ number: commandNumber });
+    }
     case 'read_file': {
       return path === null ? toolLabel(call.tool) : m.tools_call_read_file({ path });
     }
@@ -241,6 +279,12 @@ function intentSummary(call: ToolCallView): string {
       }
       return path === null ? m.tools_call_search_text_workspace({ query }) : m.tools_call_search_text({ path, query });
     }
+    case START_COMMAND: {
+      return command === null ? toolLabel(call.tool) : m.tools_call_start_command({ command: firstLine(command) });
+    }
+    case 'stop_command': {
+      return commandNumber === null ? toolLabel(call.tool) : m.tools_call_stop_command({ number: commandNumber });
+    }
     case 'write_file': {
       return path === null ? toolLabel(call.tool) : m.tools_call_write_file({ path });
     }
@@ -248,9 +292,11 @@ function intentSummary(call: ToolCallView): string {
       // A plugin's tool that runs a command on a remote host is named by its
       // access, once prepared, whatever the plugin calls the tool.
       const remote = accessRemoteCommand(call.accesses);
-      return remote === null
-        ? toolLabel(call.tool)
-        : m.tools_call_remote_command({ command: firstLine(remote.command), host: remote.host });
+      if (remote === null) {
+        return toolLabel(call.tool);
+      }
+      const words = { command: firstLine(remote.command), host: remote.host };
+      return remote.background ? m.tools_call_remote_command_background(words) : m.tools_call_remote_command(words);
     }
   }
 }
@@ -282,6 +328,21 @@ function outcomeSummary(outcome: ToolOutcome): string | null {
   switch (outcome.kind) {
     case 'command_ran': {
       return commandSummary(outcome);
+    }
+    case 'command_started': {
+      return m.tools_done_command_started({ number: outcome.number });
+    }
+    case 'command_output_read': {
+      return outcome.lastLine === 0
+        ? m.tools_done_command_output_none({ number: outcome.number })
+        : m.tools_done_command_output_read({
+            first: outcome.firstLine,
+            last: outcome.lastLine,
+            number: outcome.number,
+          });
+    }
+    case 'command_stopped': {
+      return m.tools_done_background_stopped({ number: outcome.number });
     }
     case 'copied': {
       return m.tools_done_copied({ destination: outcome.destination, files: outcome.files, source: outcome.source });

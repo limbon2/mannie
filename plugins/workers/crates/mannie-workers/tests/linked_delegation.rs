@@ -7,7 +7,9 @@
 //! task's conversation is read through the link; the worker stops while the
 //! master follows a task; a link that drops during a task comes back, and the
 //! master learns the task's end once; an approval waits while the master is
-//! offline; a worker one minor version behind works and others do not.
+//! offline; a worker one minor version behind works and others do not; a
+//! task's command in the background ends with the task, and the master shows
+//! it as the worker's.
 
 #![cfg(test)]
 
@@ -17,6 +19,7 @@ use mannie_plugin_harness::provider::Step;
 use mannie_plugin_harness::provider::{ProviderEvent, Role};
 use mannie_plugin_harness::runtime::texts;
 use mannie_plugin_harness::runtime::{WorkerOptions, fast_config, reply, tool_calls};
+use mannie_plugin_harness::types::BackgroundEnding;
 use mannie_plugin_harness::types::FinishReason;
 use mannie_plugin_harness::types::SubscribeConversation;
 use mannie_plugin_harness::types::TaskRefusal;
@@ -137,6 +140,7 @@ async fn a_conversation_in_full_access_answers_the_workers_request_over_the_link
             allow_changes_in_workspace: false,
             command_environment: Vec::new(),
             full_access_for_new_conversations: true,
+            wake_on_command_end: true,
         })
         .await
         .unwrap();
@@ -514,4 +518,70 @@ async fn an_approval_waits_while_the_master_is_offline() {
     );
     assert_eq!(tasks[0].state, TaskState::Reported);
     assert_eq!(std::fs::read_to_string(&marker).unwrap(), "built\n");
+}
+
+#[tokio::test]
+async fn a_tasks_command_in_the_background_ends_with_the_task_and_the_master_shows_it_as_the_workers()
+ {
+    let (worker, master) = paired(LinkedWorkerOptions::default()).await;
+    master
+        .runtime
+        .update_tools_settings(UpdateToolsSettings {
+            allow_changes_in_workspace: false,
+            command_environment: Vec::new(),
+            full_access_for_new_conversations: true,
+            wake_on_command_end: true,
+        })
+        .await
+        .unwrap();
+    let long_running = if cfg!(windows) {
+        "Write-Output first; Start-Sleep -Seconds 60"
+    } else {
+        "echo first; sleep 60"
+    };
+    let start = json!({ "activity": "Starting the watcher", "command": long_running }).to_string();
+    master.model.push_reply(tool_calls(&[(
+        "call_1",
+        "delegate_task",
+        &delegation("Start the watcher, then report."),
+    )]));
+    master.model.push_reply(reply("The worker started it."));
+    worker
+        .harness
+        .model
+        .push_reply(tool_calls(&[("call_w", "start_command", &start)]));
+    worker.harness.model.push_reply(reply("Started."));
+    worker
+        .harness
+        .model
+        .push_reply(reply("Report: the watcher ran until the task ended."));
+
+    let conversation = master.start_conversation("Start the watcher").await;
+    let tasks = master
+        .tasks_when(&conversation, |tasks| {
+            tasks.first().is_some_and(|task| !task.state.is_active())
+        })
+        .await;
+    master.wait_for_idle(&conversation).await;
+    let mut subscription = master
+        .runtime
+        .subscribe(SubscribeConversation {
+            conversation_id: tasks[0].conversation_id.clone(),
+            after_seq: None,
+        })
+        .await
+        .unwrap();
+    let first = subscription.next().await.unwrap();
+
+    assert_eq!(tasks[0].state, TaskState::Reported);
+    let ConversationUpdate::Snapshot { snapshot } = first else {
+        panic!("a snapshot comes first: {first:?}");
+    };
+    let [command] = snapshot.background_commands.as_slice() else {
+        panic!("the task started one command: {snapshot:?}");
+    };
+    assert!(command.on_worker, "{command:?}");
+    assert_eq!(command.ending, Some(BackgroundEnding::TaskEnded));
+    assert_eq!(worker.harness.runtime.running_background_count(), 0);
+    assert_eq!(master.runtime.running_background_count(), 0);
 }

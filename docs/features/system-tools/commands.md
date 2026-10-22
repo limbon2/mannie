@@ -4,7 +4,7 @@
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Building                                                                                                                                                                                                          |
 | Milestone    | M2                                                                                                                                                                                                                |
-| Last updated | 2026-10-20                                                                                                                                                                                                        |
+| Last updated | 2026-10-21                                                                                                                                                                                                        |
 | Part of      | [System tools](README.md)                                                                                                                                                                                         |
 | Related      | [ADR-0014](../../adr/0014-contain-process-trees.md), [Tools](../../architecture/tools.md#6-running-commands), [Security](../../architecture/security.md), [Operations and approvals](operations-and-approvals.md) |
 
@@ -13,9 +13,10 @@
 ### The shell
 
 - `run_command` runs the command text in the platform's shell, in the working directory, with a timeout of 60 seconds by default and 600 at most.
+- `start_command` runs a command in the same shell, with the same environment and containment, in the background and without a timeout, until it ends or is stopped ([background commands](background-commands.md)). Its two streams become one log of lines.
 - Windows: Windows PowerShell 5.1, `powershell.exe` from the system folder, never from `PATH`.
 - Linux: `/bin/sh`.
-- FreeBSD: `run_command` arrives with workers in M4, together with its validation of V4. Until then the tool is neither built nor registered there.
+- FreeBSD: `/bin/sh`, for workers, with the reaper of [ADR-0014](../../adr/0014-contain-process-trees.md) decision 4 (M4).
 - One process supervisor in `mannie-tools` starts every command ([ADR-0014](../../adr/0014-contain-process-trees.md)). Its platform modules are the only code in Mannie that uses `unsafe`, and each unsafe block says why it is sound.
 
 ### Windows

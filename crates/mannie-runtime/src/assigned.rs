@@ -647,6 +647,8 @@ impl Runtime {
                 .await
                 .map_err(|error| storage_failure(&error))?;
             if deleted {
+                self.forget_background_commands(std::slice::from_ref(conversation))
+                    .await;
                 self.inner.hubs.ended_task_conversation(conversation).await;
                 tracing::info!(conversation = %conversation, "deleted the conversation of an assigned task");
             }

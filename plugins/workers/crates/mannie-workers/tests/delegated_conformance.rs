@@ -4,7 +4,9 @@
 //! allowed folder of an autonomous host, and the results land on the
 //! worker's disk. A command that the host's rules do not cover asks the
 //! owner through the master, and the master reads its archived output
-//! through the link. CI runs it on Windows, Linux and FreeBSD.
+//! through the link. A command in the background runs under a host rule
+//! from the background, and its output is read before it is stopped. CI
+//! runs it on Windows, Linux and FreeBSD.
 //!
 //! `read_tool_output` needs the ID of an archive from an earlier result,
 //! which a scripted model cannot know, so the master's read of the archive
@@ -145,11 +147,27 @@ fn script(work: &Path) -> Vec<(&'static str, String)> {
                 json!({ "command": long_command(), "timeout_seconds": 120 }),
             ),
         ),
+        (
+            "start_command",
+            arguments("Starting", json!({ "command": "echo background" })),
+        ),
+        (
+            "read_command_output",
+            arguments(
+                "Reading the output",
+                json!({ "command": 1, "wait_seconds": 60, "until": "background" }),
+            ),
+        ),
+        (
+            "stop_command",
+            arguments("Stopping", json!({ "command": 1 })),
+        ),
     ]
 }
 
-/// A worker whose ceiling is autonomous, with a host rule for `echo`, and
-/// a master paired with it.
+/// A worker whose ceiling is autonomous, with a host rule for `echo` from a
+/// command in the background, which covers both modes (D40), and a master
+/// paired with it.
 async fn autonomous_worker_and_master() -> (LinkedWorker, LinkedMaster) {
     paired(LinkedWorkerOptions {
         worker: WorkerOptions {
@@ -159,6 +177,7 @@ async fn autonomous_worker_and_master() -> (LinkedWorker, LinkedMaster) {
                 words: vec!["echo".to_owned()],
                 folder: None,
                 created_at: mannie_plugin_sdk::contracts::UtcMillis::EPOCH,
+                background: true,
             }],
             ..WorkerOptions::default()
         },
@@ -242,9 +261,15 @@ async fn a_delegated_task_uses_every_tool_of_the_worker_agent() {
         );
     }
     assert_eq!(
-        made.iter().map(|call| call.decision).collect::<Vec<_>>()[12..],
-        [Some(Decision::HostRule), Some(Decision::AllowedOnce)]
+        made.iter().map(|call| call.decision).collect::<Vec<_>>()[12..15],
+        [
+            Some(Decision::HostRule),
+            Some(Decision::AllowedOnce),
+            Some(Decision::HostRule)
+        ]
     );
+    let read = made[15].result.as_ref().unwrap();
+    assert!(read.output.contains("background\n"), "{}", read.output);
     assert_eq!(
         std::fs::read_to_string(work.join("src").join("notes.txt")).unwrap(),
         "alpha\ngamma\n"

@@ -12,6 +12,9 @@ order = 30
 entry = "mannie-ssh"
 
 [services]
+# The core's background commands, which take the commands that
+# start_ssh_command starts (ADR-0041, decision 11).
+background-commands = 1
 # The password of each host, in the credential store.
 secrets = 1
 # The table of the hosts.
@@ -30,4 +33,4 @@ exclusive = ["russh"]
 # The direct native calls of the plugin's library crates (ADR-0035, decision
 # 6). The SDK has no network service (ADR-0036, decision 9).
 [native]
-sockets = "The client opens the TCP connection to each registered host itself and speaks SSH over it, when the owner checks a host's key or login and when an authorized call of run_ssh_command runs."
+sockets = "The client opens the TCP connection to each registered host itself and speaks SSH over it, when the owner checks a host's key or login and when an authorized call of run_ssh_command or start_ssh_command runs."

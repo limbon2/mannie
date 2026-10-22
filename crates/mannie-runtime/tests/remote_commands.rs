@@ -283,6 +283,7 @@ async fn a_remote_command_asks_and_runs_what_was_authorized_once_allowed() {
             label: "build-box".to_owned(),
             endpoint: ENDPOINT.to_owned(),
             command: "systemctl status nginx".to_owned(),
+            background: false,
         }]
     );
     let proposal = request.rule.expect("a rule can cover the command");
@@ -444,6 +445,7 @@ async fn full_access_runs_a_remote_command_without_asking() {
             allow_changes_in_workspace: false,
             command_environment: Vec::new(),
             full_access_for_new_conversations: true,
+            wake_on_command_end: true,
         })
         .await
         .unwrap();

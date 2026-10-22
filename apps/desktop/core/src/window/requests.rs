@@ -126,9 +126,13 @@ mod tests {
     fn a_question_is_answered_once_and_a_new_one_replaces_it() {
         let requests = WindowRequests::default();
 
-        let first = requests.ask(WindowRequest::AskCloseAction { active_runs: 0 });
+        let first = requests.ask(WindowRequest::AskCloseAction {
+            active_runs: 0,
+            background_commands: 0,
+        });
         let second = requests.ask(WindowRequest::ConfirmQuit {
             active_runs: 2,
+            background_commands: 1,
             source: QuitSource::Tray,
         });
 
@@ -138,6 +142,7 @@ mod tests {
             requests.take(second),
             Ok(WindowRequest::ConfirmQuit {
                 active_runs: 2,
+                background_commands: 1,
                 source: QuitSource::Tray
             })
         );

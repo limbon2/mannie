@@ -194,9 +194,9 @@ async fn a_new_database_gets_the_whole_schema_in_wal_mode_without_a_backup() {
         [
             ("exports".to_owned(), 1),
             ("provider".to_owned(), 1),
-            ("runtime".to_owned(), 20),
+            ("runtime".to_owned(), 21),
             ("settings".to_owned(), 1),
-            ("tools".to_owned(), 5),
+            ("tools".to_owned(), 6),
         ]
     );
     assert_eq!(fixture.backup_files(), Vec::<PathBuf>::new());
@@ -364,9 +364,9 @@ async fn a_database_of_0_2_0_gets_the_version_of_each_module() {
         [
             ("exports".to_owned(), 1),
             ("provider".to_owned(), 1),
-            ("runtime".to_owned(), 20),
+            ("runtime".to_owned(), 21),
             ("settings".to_owned(), 1),
-            ("tools".to_owned(), 5),
+            ("tools".to_owned(), 6),
         ]
     );
     assert_eq!(user_version(&fixture.database()), latest_user_version());
@@ -1527,4 +1527,70 @@ async fn task_indexes(store: &Store) -> Vec<String> {
         })
         .await
         .unwrap()
+}
+
+/// The core modules as 0.4.0 left them, before background commands
+/// (ADR-0041): each without the migrations that came after it.
+fn modules_of_0_4_0() -> Vec<StoreModule> {
+    CORE_MODULES
+        .iter()
+        .map(|module| {
+            let keep = match module.name {
+                "runtime" => 20,
+                "tools" => 5,
+                _ => module.migrations.len(),
+            };
+            StoreModule {
+                name: module.name,
+                migrations: Cow::Owned(module.migrations[..keep].to_vec()),
+                confined: module.confined,
+            }
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn rules_of_0_4_0_cover_only_the_foreground_after_the_upgrade() {
+    let fixture = Fixture::new();
+    drop(
+        Store::open_with_modules(&fixture.database(), &fixture.options(), &modules_of_0_4_0())
+            .unwrap(),
+    );
+    {
+        // The statements of 0.4.0, which knew no mode.
+        let connection = Connection::open(fixture.database()).unwrap();
+        connection
+            .execute(
+                "INSERT INTO tools_rules (id, version, words, folder, created_at) \
+                 VALUES ('0199e0f2-0000-7000-8000-0000000000c1', 1, '[\"npm\",\"run\",\"dev\"]', NULL, 1)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO tools_remote_rules (id, plugin, target, endpoint, label, version, words, created_at) \
+                 VALUES ('0199e0f2-0000-7000-8000-0000000000c2', 'ssh', 'host', 'deploy@box:22', 'box', 1, '[\"journalctl\"]', 1)",
+                [],
+            )
+            .unwrap();
+    }
+
+    let store = fixture.open_latest().unwrap();
+
+    let rules = store.rules().await.unwrap();
+    assert_eq!(rules.len(), 1);
+    assert!(!rules[0].background);
+    let remote_rules = store.remote_rules().await.unwrap();
+    assert_eq!(remote_rules.len(), 1);
+    assert!(!remote_rules[0].background);
+    assert_eq!(
+        records(&fixture.database()),
+        [
+            ("exports".to_owned(), 1),
+            ("provider".to_owned(), 1),
+            ("runtime".to_owned(), 21),
+            ("settings".to_owned(), 1),
+            ("tools".to_owned(), 6),
+        ]
+    );
 }

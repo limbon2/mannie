@@ -62,6 +62,11 @@ pub enum GrantScope {
         command: String,
         /// The canonical working directory.
         working_directory: String,
+        /// Whether the grant also covers the command in the background, as a
+        /// grant from the approval of a command in the background does; one
+        /// from the foreground covers only the foreground (ADR-0041, D40).
+        #[serde(default)]
+        background: bool,
     },
     /// The same command text on the same remote host, reached at the same
     /// endpoint (ADR-0036). A host whose address, port or user changed is
@@ -77,6 +82,10 @@ pub enum GrantScope {
         endpoint: String,
         /// The command's text.
         command: String,
+        /// Whether the grant also covers the command in the background
+        /// (ADR-0041, D40).
+        #[serde(default)]
+        background: bool,
     },
     /// Runs of the same installed program with the same arguments in the
     /// same working directory, whose effects are among the grant's
@@ -138,6 +147,10 @@ pub struct RuleProposal {
     /// the run (ADR-0038, decision 6).
     #[serde(default)]
     pub program: Option<ProgramTarget>,
+    /// Whether the command runs in the background, so a rule from it also
+    /// covers commands in the background (ADR-0041, D40).
+    #[serde(default)]
+    pub background: bool,
 }
 
 /// A question to the owner about one operation. It shows exactly what will

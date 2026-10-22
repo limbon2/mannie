@@ -75,6 +75,9 @@
         {/if}
       {:else}
         <AccessText label={m.tools_access_command()} text={access.command} />
+        {#if access.background ?? false}
+          <p class="text-xs font-medium" data-background-access="">{m.tools_access_background()}</p>
+        {/if}
         {#if access.kind === 'command'}
           <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs">
             <dt class="text-muted-foreground">{m.tools_access_shell()}</dt>

@@ -5,8 +5,8 @@ import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 
 import type { PluginsError } from '#lib/generated/bindings.js';
 import type { Failure } from '#lib/types/calls.js';
+import { pluginOffQuestion } from '#lib/utils/plugins-messages.js';
 
-import { findPlugin } from './plugin-catalog.js';
 import { pluginStates } from './plugin-states.svelte.js';
 
 /** A plugin whose turning off waits for the owner's answer. */
@@ -54,7 +54,7 @@ export class PluginsActions {
       return;
     }
     const work = await pluginStates.work(id);
-    const question = work.ok ? (findPlugin(id)?.offQuestion(work.data.items) ?? null) : null;
+    const question = work.ok ? pluginOffQuestion(id, work.data.items) : null;
     if (question !== null) {
       this.offQuestion = { id, question };
       this.offOpen = true;

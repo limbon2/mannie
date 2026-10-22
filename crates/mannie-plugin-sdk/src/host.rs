@@ -23,6 +23,7 @@ use std::time::Duration;
 
 use crate::BoxFuture;
 use crate::context::HostProfile;
+use crate::contracts::WorkItem;
 use crate::contributions::{Contributions, IdRule, PointInfo};
 use crate::ids::{PluginId, owned_by};
 use crate::manifest::Manifest;
@@ -151,7 +152,20 @@ pub trait ContributionConsumer: Send + Sync + fmt::Debug + 'static {
     fn drain(&self, _plugin: &PluginId, _grace: Duration) -> BoxFuture<'static, ()> {
         Box::pin(std::future::ready(()))
     }
+
+    /// The work in progress that the plugin's entries handed the consumer
+    /// and that turning the plugin off ends, such as the background commands
+    /// that its tools started (ADR-0041, decision 11). The host adds the
+    /// items to the plugin's own, under codes that start with
+    /// [`CORE_WORK_PREFIX`], which the core's UI words.
+    fn work(&self, _plugin: &PluginId) -> Vec<WorkItem> {
+        Vec::new()
+    }
 }
+
+/// What the codes of the core's items of a plugin's work in progress start
+/// with. A plugin's own codes never do.
+pub const CORE_WORK_PREFIX: &str = "core.";
 
 /// Why the core refused a plugin's contributions. It took none of them, and
 /// the plugin fails to start with `contributions_refused`.

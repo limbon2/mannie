@@ -11,11 +11,17 @@ pub(crate) mod find_files;
 pub(crate) mod list_directory;
 pub(crate) mod move_path;
 pub(crate) mod move_to_project;
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
+pub(crate) mod read_command_output;
 pub(crate) mod read_file;
 pub(crate) mod read_tool_output;
 #[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 pub(crate) mod run_command;
 pub(crate) mod search_text;
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
+pub(crate) mod start_command;
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
+pub(crate) mod stop_command;
 pub(crate) mod system_info;
 mod walk;
 pub(crate) mod write_file;
@@ -48,7 +54,15 @@ pub(crate) fn system_tools() -> Vec<Arc<dyn Tool>> {
         Arc::new(Registered::<delete_path::DeletePath>::new()),
     ];
     #[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
-    tools.push(Arc::new(Registered::<run_command::RunCommand>::new()));
+    {
+        tools.push(Arc::new(Registered::<run_command::RunCommand>::new()));
+        // The tools of background commands (ADR-0041).
+        tools.push(Arc::new(Registered::<start_command::StartCommand>::new()));
+        tools.push(Arc::new(
+            Registered::<read_command_output::ReadCommandOutput>::new(),
+        ));
+        tools.push(Arc::new(Registered::<stop_command::StopCommand>::new()));
+    }
     tools.push(Arc::new(
         Registered::<read_tool_output::ReadToolOutput>::new(),
     ));
@@ -167,6 +181,20 @@ pub(crate) fn page_bounds(
     let offset = usize::try_from(offset.unwrap_or(0)).unwrap_or(usize::MAX);
     let limit = limit.unwrap_or(default).clamp(1, maximum);
     (offset, usize::try_from(limit).unwrap_or(usize::MAX))
+}
+
+/// The failure of a command that could not start, in the foreground or in
+/// the background.
+pub fn spawn_failure(error: &std::io::Error, shell: &std::path::Path) -> ToolFailure {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        ToolFailure::ShellMissing {
+            path: shell.display().to_string(),
+        }
+    } else {
+        ToolFailure::SpawnFailed {
+            reason: error.to_string(),
+        }
+    }
 }
 
 /// The failure of a tool's work that the owner stopped, which the system

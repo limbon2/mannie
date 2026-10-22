@@ -47,7 +47,19 @@ fn command(text: &str, directory: &str) -> Access {
         command: text.to_owned(),
         shell: at("/bin/sh"),
         working_directory: at(directory),
+        background: false,
     }
+}
+
+/// The same access, for a command that runs in the background (ADR-0041).
+fn in_background(mut access: Access) -> Access {
+    match &mut access {
+        Access::Command { background, .. } | Access::RemoteCommand { background, .. } => {
+            *background = true;
+        }
+        other => panic!("only commands run in the background: {other:?}"),
+    }
+    access
 }
 
 fn path_grant(mode: AccessMode, folder: &str) -> GrantScope {
@@ -61,7 +73,20 @@ fn command_grant(text: &str, directory: &str) -> GrantScope {
     GrantScope::Command {
         command: text.to_owned(),
         working_directory: at(directory),
+        background: false,
     }
+}
+
+/// The same grant, given from a command in the background, so it covers both
+/// modes (D40).
+fn background_grant(mut grant: GrantScope) -> GrantScope {
+    match &mut grant {
+        GrantScope::Command { background, .. } | GrantScope::RemoteCommand { background, .. } => {
+            *background = true;
+        }
+        other => panic!("only command grants have a mode: {other:?}"),
+    }
+    grant
 }
 
 fn rule(words: &[&str], folder: Option<&str>) -> CommandRule {
@@ -70,6 +95,7 @@ fn rule(words: &[&str], folder: Option<&str>) -> CommandRule {
         words: words.iter().map(|word| (*word).to_owned()).collect(),
         folder: folder.map(at),
         created_at: UtcMillis::EPOCH,
+        background: false,
     }
 }
 
@@ -333,6 +359,7 @@ fn commands_ask_and_offer_a_grant_and_a_rule() {
                 folder: at("/work"),
                 remote: None,
                 program: None,
+                background: false,
             })
         )
     );
@@ -626,6 +653,113 @@ fn windows_paths_compare_without_regard_to_case() {
     ));
 }
 
+// Commands in the background (ADR-0041, D40): a grant or a rule given from a
+// command in the background covers both modes; one from a command in the
+// foreground still asks before a command in the background.
+
+#[test]
+fn a_command_in_the_background_asks_and_offers_a_grant_and_a_rule_for_both_modes() {
+    let inputs = Inputs::new();
+    let accesses = [in_background(command("npm run dev", "/work"))];
+
+    assert_eq!(
+        inputs.decide(&accesses),
+        ask(
+            &accesses,
+            &[ApprovalReason::Command],
+            vec![background_grant(command_grant("npm run dev", "/work"))],
+            Some(RuleProposal {
+                words: vec!["npm".to_owned(), "run".to_owned(), "dev".to_owned()],
+                folder: at("/work"),
+                remote: None,
+                program: None,
+                background: true,
+            })
+        )
+    );
+}
+
+#[test]
+fn a_grant_or_a_rule_from_the_foreground_still_asks_before_the_background() {
+    let mut inputs = Inputs::new();
+    inputs.grants = vec![command_grant("npm run dev", "/work")];
+    inputs.rules = vec![rule(&["cargo", "watch"], None)];
+    let granted = [in_background(command("npm run dev", "/work"))];
+    let ruled = [in_background(command("cargo watch -x test", "/work"))];
+
+    assert!(matches!(inputs.decide(&granted), Verdict::Ask(_)));
+    assert!(matches!(inputs.decide(&ruled), Verdict::Ask(_)));
+    assert_eq!(
+        inputs.decide(&[command("npm run dev", "/work")]),
+        Verdict::Allowed(Decision::Grant)
+    );
+    assert_eq!(
+        inputs.decide(&[command("cargo watch -x test", "/work")]),
+        Verdict::Allowed(Decision::Rule)
+    );
+}
+
+#[test]
+fn a_grant_or_a_rule_from_the_background_covers_both_modes() {
+    let mut inputs = Inputs::new();
+    inputs.grants = vec![background_grant(command_grant("npm run dev", "/work"))];
+    let mut background_rule = rule(&["cargo", "watch"], None);
+    background_rule.background = true;
+    inputs.rules = vec![background_rule];
+
+    for access in [
+        command("npm run dev", "/work"),
+        in_background(command("npm run dev", "/work")),
+    ] {
+        assert_eq!(inputs.decide(&[access]), Verdict::Allowed(Decision::Grant));
+    }
+    for access in [
+        command("cargo watch -x test", "/work"),
+        in_background(command("cargo watch -x test", "/work")),
+    ] {
+        assert_eq!(inputs.decide(&[access]), Verdict::Allowed(Decision::Rule));
+    }
+}
+
+#[test]
+fn a_background_grant_covers_the_foreground_grant_of_the_same_command_but_not_the_reverse() {
+    let foreground = command_grant("npm run dev", "/work");
+    let background = background_grant(command_grant("npm run dev", "/work"));
+
+    assert!(super::scope_covers(&background, &foreground));
+    assert!(!super::scope_covers(&foreground, &background));
+}
+
+#[test]
+fn a_rule_saved_from_the_background_keeps_its_mode() {
+    let proposal = RuleProposal {
+        words: vec!["cargo".to_owned(), "watch".to_owned(), "-x".to_owned()],
+        folder: at("/work"),
+        remote: None,
+        program: None,
+        background: true,
+    };
+
+    assert_eq!(
+        saved_rule(&proposal, 2, false),
+        Ok(SavedRule::Local {
+            words: vec!["cargo".to_owned(), "watch".to_owned()],
+            folder: None,
+            background: true,
+        })
+    );
+}
+
+#[test]
+fn a_host_rule_of_a_worker_allows_its_commands_in_the_background_too() {
+    let inputs = Inputs::worker(CeilingMode::Autonomous);
+
+    assert_eq!(
+        inputs.decide(&[in_background(command("cargo test --workspace", "/srv/app"))]),
+        Verdict::Allowed(Decision::HostRule)
+    );
+}
+
 #[test]
 fn saved_rules_keep_the_chosen_leading_words() {
     let proposal = RuleProposal {
@@ -633,20 +767,23 @@ fn saved_rules_keep_the_chosen_leading_words() {
         folder: at("/work"),
         remote: None,
         program: None,
+        background: false,
     };
 
     assert_eq!(
         saved_rule(&proposal, 2, false),
         Ok(SavedRule::Local {
             words: vec!["git".to_owned(), "status".to_owned()],
-            folder: None
+            folder: None,
+            background: false,
         })
     );
     assert_eq!(
         saved_rule(&proposal, 3, true),
         Ok(SavedRule::Local {
             words: proposal.words.clone(),
-            folder: Some(at("/work"))
+            folder: Some(at("/work")),
+            background: false,
         })
     );
     assert_eq!(
@@ -944,6 +1081,7 @@ fn remote_on(target: &str, endpoint: &str, text: &str) -> Access {
         endpoint: endpoint.to_owned(),
         identity: "SHA256:vh3fjoyg7pBnxLhORIqZjyJQqYYN/gzBTuj+mPdeJlo".to_owned(),
         command: text.to_owned(),
+        background: false,
     }
 }
 
@@ -967,6 +1105,7 @@ fn remote_grant(text: &str) -> GrantScope {
         label: "build-box".to_owned(),
         endpoint: ENDPOINT.to_owned(),
         command: text.to_owned(),
+        background: false,
     }
 }
 
@@ -976,6 +1115,7 @@ fn remote_rule(target: &str, words: &[&str]) -> RemoteCommandRule {
         target: host(target, ENDPOINT),
         words: words.iter().map(|word| (*word).to_owned()).collect(),
         created_at: UtcMillis::EPOCH,
+        background: false,
     }
 }
 
@@ -999,6 +1139,7 @@ fn a_remote_command_asks_and_offers_a_grant_and_a_rule_for_its_host() {
                 folder: String::new(),
                 remote: Some(host(SSH_HOST, ENDPOINT)),
                 program: None,
+                background: false,
             })
         )
     );
@@ -1082,6 +1223,40 @@ fn a_remote_rule_allows_leading_words_on_its_host_only() {
 }
 
 #[test]
+fn a_remote_grant_or_rule_from_the_foreground_still_asks_before_the_background() {
+    let mut inputs = Inputs::new();
+    inputs.grants = vec![remote_grant("journalctl -f")];
+    inputs.remote_rules = vec![remote_rule(SSH_HOST, &["tail", "-f"])];
+
+    assert!(matches!(
+        inputs.decide(&[in_background(remote("journalctl -f"))]),
+        Verdict::Ask(_)
+    ));
+    assert!(matches!(
+        inputs.decide(&[in_background(remote("tail -f /var/log/syslog"))]),
+        Verdict::Ask(_)
+    ));
+
+    inputs.grants = vec![background_grant(remote_grant("journalctl -f"))];
+    let mut background_rule = remote_rule(SSH_HOST, &["tail", "-f"]);
+    background_rule.background = true;
+    inputs.remote_rules = vec![background_rule];
+
+    assert_eq!(
+        inputs.decide(&[in_background(remote("journalctl -f"))]),
+        Verdict::Allowed(Decision::Grant)
+    );
+    assert_eq!(
+        inputs.decide(&[remote("journalctl -f")]),
+        Verdict::Allowed(Decision::Grant)
+    );
+    assert_eq!(
+        inputs.decide(&[in_background(remote("tail -f /var/log/syslog"))]),
+        Verdict::Allowed(Decision::Rule)
+    );
+}
+
+#[test]
 fn a_remote_command_with_metacharacters_or_a_backslash_can_only_be_allowed_once() {
     let mut inputs = Inputs::new();
     inputs.remote_rules = vec![remote_rule(SSH_HOST, &["uptime"])];
@@ -1138,6 +1313,7 @@ fn a_saved_remote_rule_is_always_limited_to_its_host() {
         folder: String::new(),
         remote: Some(host(SSH_HOST, ENDPOINT)),
         program: None,
+        background: false,
     };
 
     for limit_to_folder in [false, true] {
@@ -1146,6 +1322,7 @@ fn a_saved_remote_rule_is_always_limited_to_its_host() {
             Ok(SavedRule::Remote {
                 target: host(SSH_HOST, ENDPOINT),
                 words: vec!["systemctl".to_owned(), "status".to_owned()],
+                background: false,
             })
         );
     }
@@ -1259,6 +1436,7 @@ fn a_program_run_asks_beside_its_paths_and_offers_a_grant_and_a_rule() {
         folder: at("/work"),
         remote: None,
         program: Some(git_target(&effects)),
+        background: false,
     };
 
     assert_eq!(
@@ -1500,6 +1678,7 @@ fn a_saved_program_rule_keeps_its_program_and_effects_and_may_be_limited_to_its_
         folder: at("/work"),
         remote: None,
         program: Some(git_target(&effects)),
+        background: false,
     };
 
     for (limit_to_folder, folder) in [(false, None), (true, Some(at("/work")))] {

@@ -342,6 +342,7 @@ fn text_of(content: &PartContent) -> String {
         PartContent::Task { call } => format!("{} {:?}", call.tool, call.status),
         PartContent::Mention { mention } => format!("@{}", mention.label),
         PartContent::Image { image } => format!("image {}", image.name),
+        PartContent::CommandNote { note } => format!("ends {}", note.ends.len()),
         PartContent::Unknown { name } => name.clone(),
     }
 }
@@ -2240,6 +2241,8 @@ async fn a_deleted_conversation_leaves_no_archive_or_grant_behind() {
     assert!(!fixture.files_contain(granted), "the grant is gone");
 }
 
+/// The tests of background commands (ADR-0041).
+mod background_commands;
 mod executor_tasks;
 /// The tests of tasks and task conversations (docs/features/child-agents/
 /// tasks.md, data).

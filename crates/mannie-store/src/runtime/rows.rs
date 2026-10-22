@@ -10,7 +10,7 @@ use mannie_types::images::ImageView;
 use mannie_types::mentions::MentionView;
 use mannie_types::run::{RunActivity, RunFailure, RunOutcome, RunState, RunView};
 use mannie_types::tasks::{TaskConversation, TaskPartDocument};
-use mannie_types::tools::ToolCallDocument;
+use mannie_types::tools::{CommandNoteView, ToolCallDocument};
 use mannie_types::transcript::{
     Audience, CheckpointView, ContextUsage, ConversationEvent, ConversationSummary, PartContent,
     PartKind, PartState, PartView, TitleSource, TurnView,
@@ -90,6 +90,9 @@ pub(crate) struct PartDocument {
     /// (ADR-0033).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) image: Option<ImageDocument>,
+    /// The ends that a command note tells (ADR-0041).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) command_note: Option<CommandNoteView>,
 }
 
 /// The document of an image part.
@@ -140,6 +143,9 @@ pub(crate) struct EventBody {
     pub(crate) checkpoint_id: Option<CheckpointId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) usage: Option<ContextUsage>,
+    /// The number of a background command (ADR-0041).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) number: Option<u32>,
 }
 
 impl EventBody {
@@ -151,6 +157,7 @@ impl EventBody {
             part_ids: Vec::new(),
             checkpoint_id: None,
             usage: None,
+            number: None,
         }
     }
 }
@@ -168,6 +175,7 @@ pub(crate) mod kinds {
     pub(crate) const CHECKPOINT_CREATED: &str = "checkpoint_created";
     pub(crate) const CONTEXT_USAGE_CHANGED: &str = "context_usage_changed";
     pub(crate) const CONVERSATION_CHANGED: &str = "conversation_changed";
+    pub(crate) const BACKGROUND_COMMAND_CHANGED: &str = "background_command_changed";
 }
 
 pub(crate) fn to_json<T: Serialize>(value: &T) -> Result<String, RuntimeStoreError> {
@@ -386,6 +394,12 @@ impl PartRow {
                     None => PartContent::Unknown {
                         name: self.kind.clone(),
                     },
+                }
+            }
+            Some(PartKind::CommandNote) => {
+                let document: PartDocument = from_json(&self.document, "part document")?;
+                PartContent::CommandNote {
+                    note: document.command_note.unwrap_or_default(),
                 }
             }
             None => PartContent::Unknown {
@@ -687,6 +701,11 @@ pub(crate) fn hydrate(
         }
         kinds::CONVERSATION_CHANGED => conversation_summary(connection, conversation_id)?
             .map(|conversation| ConversationEvent::ConversationChanged { conversation }),
+        kinds::BACKGROUND_COMMAND_CHANGED => {
+            let number = required(body.number, "background_command_changed without a number")?;
+            super::background::view(connection, conversation_id, number)?
+                .map(|command| ConversationEvent::BackgroundCommandChanged { command })
+        }
         other => Some(ConversationEvent::Unknown {
             name: other.to_owned(),
         }),

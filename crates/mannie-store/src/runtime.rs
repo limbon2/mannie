@@ -10,6 +10,7 @@
 
 mod apply;
 mod archives;
+mod background;
 mod export;
 mod images;
 mod projects;
@@ -26,7 +27,7 @@ use mannie_types::images::{ImageBytes, ImageFormat, ImageView};
 use mannie_types::mentions::MentionView;
 use mannie_types::run::{RunActivity, RunFailure, RunOutcome, RunState};
 use mannie_types::tasks::{TaskExecutorRef, TaskPartDocument, TaskState};
-use mannie_types::tools::ToolCallDocument;
+use mannie_types::tools::{BackgroundCommandDocument, CommandNoteView, ToolCallDocument};
 use mannie_types::transcript::{
     ContextUsage, ConversationEvent, ConversationSummary, PartKind, PartState,
 };
@@ -35,6 +36,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::StoreError;
 
 pub use archives::StoredArchive;
+pub use background::{LOCAL_SOURCE, RecoveredCommand, StoredBackgroundCommand};
 pub use images::StoredImage;
 pub use projects::{AddedProject, ConversationList, ProjectDeletion};
 pub use reads::{EventsAfter, KeptRun, ModelImage, ModelPart, ModelTurn, StoredCheckpoint};
@@ -439,6 +441,66 @@ pub enum Change {
         /// The project.
         project_id: ProjectId,
     },
+    /// A background command started (ADR-0041): its record, beside the part
+    /// of the call that started it, which stays final.
+    StartBackgroundCommand {
+        /// Its number in the conversation, which none of its commands had.
+        number: u32,
+        /// The part of the call that started it.
+        part_id: PartId,
+        /// `local`, or the plugin that runs it on a remote host.
+        source: String,
+        /// Its record.
+        document: Box<BackgroundCommandDocument>,
+    },
+    /// A background command's record changes: it ended, the model read its
+    /// output, or the model was told of its end. An end archives the output
+    /// under the part of its start call. Only a start and an end are
+    /// announced as events; the model's reads change nothing that the view
+    /// shows.
+    UpdateBackgroundCommand {
+        /// Its number in the conversation.
+        number: u32,
+        /// Its record as it is now.
+        document: Box<BackgroundCommandDocument>,
+        /// Its output to archive, when it ended.
+        archive: Option<NewArchive>,
+        /// Whether the change is published as an event.
+        announce: bool,
+    },
+    /// The model is told of the ends of background commands, by the note or
+    /// the result that this batch stores (ADR-0041): each end is told once.
+    TellBackgroundEnds {
+        /// The commands' numbers in the conversation.
+        numbers: Vec<u32>,
+    },
+    /// Adds a turn whose request is Mannie's note of background commands
+    /// that ended, with a queued run to answer it: a wake-up (ADR-0041).
+    /// Refused while the conversation has an active run, as a turn of the
+    /// owner's message is.
+    StartCommandTurn {
+        /// The turn.
+        turn_id: TurnId,
+        /// The part that holds the note.
+        part_id: PartId,
+        /// The note, as the model reads it.
+        text: String,
+        /// The ends that the note tells, as the owner sees them.
+        note: CommandNoteView,
+        /// The run.
+        run: NewRun,
+    },
+    /// A note of Mannie's own that only the model reads joins the request of
+    /// a turn that this batch started, after the request's own parts, so a
+    /// retry of the turn sends it again (ADR-0041).
+    AddRequestNote {
+        /// The turn.
+        turn_id: TurnId,
+        /// The note's part.
+        part_id: PartId,
+        /// The note.
+        text: String,
+    },
 }
 
 /// The result of applying changes: the events to publish, and the sequence
@@ -564,6 +626,7 @@ pub(crate) fn statements() -> impl Iterator<Item = &'static str> {
     apply::STATEMENTS
         .iter()
         .chain(archives::STATEMENTS)
+        .chain(background::STATEMENTS)
         .chain(export::STATEMENTS)
         .chain(images::STATEMENTS)
         .chain(projects::STATEMENTS)

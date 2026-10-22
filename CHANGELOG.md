@@ -4,6 +4,11 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+### Added
+
+- Agents run commands in the background, such as servers, watchers, `journalctl -f` and long test runs (ADR-0041): `start_command` returns at once, `read_command_output` reads the new output later or waits for a line, and `stop_command` ends the command with everything it started. A command keeps running after the reply until it ends, it is stopped, its conversation is deleted, its task ends or Mannie quits; the conversation's "Commands" control lists the commands with their output in a side panel and Stop, and a command that ends on its own wakes an idle agent, which a Tools setting turns off.
+- A plugin's tool may hand the core a command that it starts on a remote host in the background, through the service `background-commands`, and the core follows, reads and ends it as it does a local one (ADR-0041).
+
 ## 0.5.0 - 2026-10-21
 
 ### Added

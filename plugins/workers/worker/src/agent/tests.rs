@@ -94,4 +94,19 @@ fn the_worker_registers_only_the_worker_agent() {
     assert_eq!(WORKER.tools, mannie_host_kit::runtime::GENERAL.tools);
     assert_eq!(WORKER.max_tasks, 0);
     assert!(!WORKER.tools.contains(&"move_to_project"));
+    // A task's commands in the background end with it (ADR-0041).
+    for tool in ["start_command", "read_command_output", "stop_command"] {
+        assert!(WORKER.tools.contains(&tool), "{tool}");
+    }
+}
+
+#[test]
+fn the_guidance_says_that_a_command_in_the_background_ends_with_the_task() {
+    let guidance = worker_tool_guidance(CeilingMode::Autonomous);
+
+    assert!(
+        guidance.contains("start_command runs a command in the background until it ends, you stop it with stop_command, or your task ends"),
+        "{guidance}"
+    );
+    assert!(guidance.contains("without & or nohup"), "{guidance}");
 }
