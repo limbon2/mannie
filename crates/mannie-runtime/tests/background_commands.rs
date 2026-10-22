@@ -344,7 +344,7 @@ async fn a_command_outlives_its_reply_and_reads_return_its_new_lines() {
         archive.content
     );
     assert_eq!(
-        u64::try_from(archive.content.lines().count()).unwrap(),
+        u32::try_from(archive.content.lines().count()).unwrap(),
         ended.lines
     );
     setup.harness.runtime.shutdown().await;
