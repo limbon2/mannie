@@ -4,37 +4,44 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+## 0.5.0 - 2026-10-22
+
 ### Added
 
 - Agents run commands in the background, such as servers, watchers, `journalctl -f` and long test runs (ADR-0041): `start_command` returns at once, `read_command_output` reads the new output later or waits for a line, and `stop_command` ends the command with everything it started. A command keeps running after the reply until it ends, it is stopped, its conversation is deleted, its task ends or Mannie quits; the submenu "Commands" of the conversation's menu lists the commands by what their calls said they do, such as "Command 2: Running test ticks", with their output in a side panel that has Stop, and a command that ends on its own wakes an idle agent, which a Tools setting turns off.
 - A plugin's tool may hand the core a command that it starts on a remote host in the background, through the service `background-commands`, and the core follows, reads and ends it as it does a local one (ADR-0041).
-
-### Changed
-
-- A conversation's toolbar keeps the profile menu and the Git plugin's branch, and moves "Child agents", "Commands" and the export into a menu behind a button with vertical dots, which counts running commands and working child agents (ADR-0042). Full access and the context meter move into the message box, which becomes one framed field with its buttons in a row below the text. The toolbar's own menu of Rename, Compact now and Delete is gone, since the conversation list renames and deletes and the context meter compacts.
-- Dialogs no longer blur the window behind them, which made slower machines stutter; the window behind is only dimmed.
-- The output panel of a background command shows "Follow new lines" on the row of the command's state.
-
-### Fixed
-
-- A dialog taller than the window scrolls, so that its last fields and its buttons can be reached.
-
-## 0.5.0 - 2026-10-21
-
-### Added
-
 - Export a conversation and its child conversations as linked Markdown documents, with stored images, complete tool outputs, and explicit warnings for unavailable worker records.
 
 #### Workers
 
 - Complete saved task-conversation records for Markdown export, through an authenticated level-2 events read.
 
+- A worker task's agent runs commands in the background under the host's ceiling, and they end with the task. The task's conversation on the master lists them with their states.
+
+#### SSH
+
+- The tool `start_ssh_command` starts a command on a registered host in the background, such as `journalctl -f`, which `read_command_output` reads and `stop_command` ends with TERM and KILL. Its approval says that it runs in the background, its lines never show the host's password, and editing or removing the host, turning SSH off and quitting end it.
+
 ### Changed
 
+- A conversation's toolbar keeps the profile menu and the Git plugin's branch, and moves "Child agents", "Commands" and the export into a menu behind a button with vertical dots, which counts running commands and working child agents (ADR-0042). Full access and the context meter move into the message box, which becomes one framed field with its buttons in a row below the text. The toolbar's own menu of Rename, Compact now and Delete is gone, since the conversation list renames and deletes and the context meter compacts.
+- Dialogs no longer blur the window behind them, which made slower machines stutter; the window behind is only dimmed.
+- The output panel of a background command shows "Follow new lines" on the row of the command's state.
 - Manual release builds can select Windows and FreeBSD artifacts, with worker signatures, checksums, SBOMs and notices; the static Linux worker remains an internal signature check.
+
+#### Images
+
+- The button that adds images sits in the row below the message box's text, round and without a border, like the row's other buttons.
+
+#### SSH
+
+- The host dialog's Password and Note for agents fields explain themselves behind a "(?)" button beside their labels, as the other fields do.
 
 ### Fixed
 
+- Preserve shell termination output in background-command lifecycle tests and compile the background supervisor without Unix async warnings.
+
+- A dialog taller than the window scrolls, so that its last fields and its buttons can be reached.
 - Reserve the test pool for the one-second parent-stop check so concurrent tests cannot consume its deadline.
 - Wait for the child conversation to exist and attach its command listener before approval in the task crash-recovery test; report a child that exits before the intended kill point.
 - Run desktop unit tests without concurrent Rust compilation so cold message evaluation stays within the existing timeout on Windows CI.

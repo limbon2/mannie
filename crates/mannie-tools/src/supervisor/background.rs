@@ -68,12 +68,7 @@ impl BackgroundProcess {
             working_directory: &spec.working_directory,
             environment: &spec.environment,
         };
-        // The Windows shell receives the command through its standard input,
-        // which the spawn writes; the Unix shell receives it as an argument.
-        #[cfg(windows)]
-        let (contained, mut child) = platform::Contained::spawn(&command).await?;
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        let (contained, mut child) = platform::Contained::spawn(&command)?;
+        let (contained, mut child) = spawn_contained(&command).await?;
         let log = LiveLog::new();
         let mut readers = Vec::new();
         if let Some(stdout) = child.stdout.take() {
@@ -145,6 +140,22 @@ impl BackgroundProcess {
         #[cfg(not(any(windows, target_os = "linux", target_os = "freebsd")))]
         let _ = graceful;
         self.log.end();
+    }
+}
+
+/// Windows writes the command to the shell asynchronously; Unix passes it
+/// as an argument when it starts the shell.
+#[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
+fn spawn_contained(
+    command: &CommandSpec<'_>,
+) -> impl Future<Output = io::Result<(platform::Contained, tokio::process::Child)>> {
+    #[cfg(windows)]
+    {
+        platform::Contained::spawn(command)
+    }
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    {
+        std::future::ready(platform::Contained::spawn(command))
     }
 }
 

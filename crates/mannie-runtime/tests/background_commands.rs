@@ -310,7 +310,12 @@ async fn a_command_outlives_its_reply_and_reads_return_its_new_lines() {
         stopped.contains("is stopped. You stopped it after"),
         "{stopped}"
     );
-    assert!(stopped.contains("0 of its lines are unread."), "{stopped}");
+    // A Unix shell can write a termination diagnostic when its child stops.
+    let unread_lines = transcript.background_commands[&1].lines - 2;
+    assert!(
+        stopped.contains(&format!("{unread_lines} of its lines are unread.")),
+        "{stopped}"
+    );
     assert_eq!(setup.harness.runtime.running_background_count(), 0);
     let ended = &transcript.background_commands[&1];
     assert_eq!(ended.ending, Some(BackgroundEnding::StoppedByAgent));
@@ -583,7 +588,13 @@ async fn quitting_interrupts_commands_keeps_their_output_and_the_next_reply_tell
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(archive.content, "first\n");
+    // Keep the command's output and any termination diagnostic from its shell.
+    assert!(
+        archive.content.starts_with("first\n"),
+        "{}",
+        archive.content
+    );
+    let archived_lines = archive.content.lines().count();
     assert_eq!(harness.runtime.running_background_count(), 0);
 
     setup.harness.model.push_reply(tool_calls(&[(
@@ -606,7 +617,10 @@ async fn quitting_interrupts_commands_keeps_their_output_and_the_next_reply_tell
     // A read after the end comes from the archive, with the same numbers.
     let archived = result(&requests[3], "call_3");
     assert!(
-        archived.contains("Lines 1 to 1 of 1:\nfirst\n"),
+        archived.contains(&format!(
+            "Lines 1 to {archived_lines} of {archived_lines}:\n{}",
+            archive.content
+        )),
         "{archived}"
     );
     setup.harness.runtime.shutdown().await;
