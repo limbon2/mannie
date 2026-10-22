@@ -93,6 +93,11 @@ export function sshStartFailureMessage(code: string): string | null {
   return code === 'storage_failed' ? m.ssh_start_failed() : null;
 }
 
+/** The sentence of a failure code of the plugin's tools, or `null` for a code that it does not know. */
+export function sshToolFailure(code: string): string | null {
+  return code === 'not_started' ? m.ssh_tool_not_started() : null;
+}
+
 /** The sentence of a refusal of a mention of a host. */
 export function hostMentionRefusal(code: string): string | null {
   return code === 'host_not_found' ? m.ssh_mention_host_not_found() : null;

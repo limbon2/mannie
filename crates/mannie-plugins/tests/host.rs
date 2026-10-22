@@ -106,6 +106,8 @@ struct FakeConsumer {
     events: Events,
     /// How many entries each plugin has in the consumer.
     held: Mutex<BTreeMap<String, usize>>,
+    /// The work in progress that the consumer reports for each plugin.
+    work: Mutex<Vec<WorkItem>>,
 }
 
 impl FakeConsumer {
@@ -115,6 +117,7 @@ impl FakeConsumer {
             refuses_adds: false,
             events: Arc::clone(events),
             held: Mutex::default(),
+            work: Mutex::default(),
         })
     }
 
@@ -126,6 +129,7 @@ impl FakeConsumer {
             refuses_adds: true,
             events: Arc::clone(events),
             held: Mutex::default(),
+            work: Mutex::default(),
         })
     }
 
@@ -171,6 +175,10 @@ impl ContributionConsumer for FakeConsumer {
                 format!("{} removed {plugin}", self.point.name),
             );
         }
+    }
+
+    fn work(&self, _plugin: &PluginId) -> Vec<WorkItem> {
+        lock(&self.work).clone()
     }
 }
 
@@ -645,6 +653,36 @@ async fn the_work_of_a_plugin_is_what_its_instance_reports() {
     assert_eq!(on.items, vec![WorkItem::new("active_tasks", 2)]);
     assert_eq!(stopped, PluginWork::default());
     assert_eq!(unknown, Err(PluginsError::UnknownPlugin));
+}
+
+#[tokio::test]
+async fn the_work_of_a_plugin_ends_with_what_the_core_keeps_for_it() {
+    let fixture = Fixture::new();
+    let plugin = Arc::new(fixture.plugin("notes"));
+    *lock(&plugin.record.work) = vec![
+        WorkItem::new("active_tasks", 2),
+        WorkItem::new("core.background_commands", 9),
+    ];
+    *lock(&fixture.things.work) = vec![
+        WorkItem::new("core.background_commands", 3),
+        WorkItem::new("core.idle", 0),
+    ];
+    let (_store, host) = fixture.start(vec![entry(&plugin, 10, "")]);
+    host.set_enabled("notes", true).await.unwrap();
+
+    let on = host.work("notes").await.unwrap();
+    host.set_enabled("notes", false).await.unwrap();
+    let stopped = host.work("notes").await.unwrap();
+
+    // The plugin's item under a code of the core is left out.
+    assert_eq!(
+        on.items,
+        vec![
+            WorkItem::new("active_tasks", 2),
+            WorkItem::new("core.background_commands", 3),
+        ]
+    );
+    assert_eq!(stopped, PluginWork::default());
 }
 
 #[tokio::test]

@@ -5,6 +5,7 @@
 // change the state in place, so that Svelte's state proxies update only what
 // an event touches.
 import type {
+  BackgroundCommandView,
   CheckpointView,
   ContextUsage,
   ConversationEvent,
@@ -19,6 +20,8 @@ import type {
 
 /** What the conversation view shows of a conversation. */
 export interface TranscriptState {
+  /** The conversation's background commands, by number (ADR-0041). */
+  backgroundCommands: BackgroundCommandView[];
   /** The latest checkpoint. */
   checkpoint: CheckpointView | null;
   /** How much of the context the conversation uses, once known. */
@@ -42,6 +45,7 @@ export type UpdateOutcome = 'applied' | 'deleted' | 'resubscribe' | 'shutdown' |
 /** A transcript before the first update. */
 export function emptyTranscript(): TranscriptState {
   return {
+    backgroundCommands: [],
     checkpoint: null,
     context: null,
     conversation: null,
@@ -53,6 +57,17 @@ export function emptyTranscript(): TranscriptState {
 
 function byPosition(left: { position: number }, right: { position: number }): number {
   return left.position - right.position;
+}
+
+/** Inserts or replaces a background command by its number, keeping the order. */
+function putCommand(commands: BackgroundCommandView[], command: BackgroundCommandView): void {
+  const index = commands.findIndex((existing) => existing.number === command.number);
+  if (index === -1) {
+    commands.push(command);
+    commands.sort((left, right) => left.number - right.number);
+  } else {
+    commands[index] = command;
+  }
 }
 
 /** Inserts or replaces an entry by its position, keeping the order. */
@@ -92,6 +107,7 @@ function appendText(part: PartView, text: string): void {
       content.text += text;
       return;
     }
+    case 'command_note':
     case 'error':
     case 'image':
     case 'mention':
@@ -99,8 +115,8 @@ function appendText(part: PartView, text: string): void {
     case 'tool_call':
     case 'unknown': {
       // A call's arguments arrive whole, with the part's next update; a
-      // task's view never carries them, and a mention or an image is whole
-      // when its turn starts.
+      // task's view never carries them, and a mention, an image or a note
+      // of Mannie's is whole when its turn starts.
       return;
     }
   }
@@ -174,6 +190,10 @@ function applyEvent(state: TranscriptState, event: ConversationEvent): void {
       state.conversation = event.conversation;
       return;
     }
+    case 'background_command_changed': {
+      putCommand(state.backgroundCommands, event.command);
+      return;
+    }
     case 'unknown': {
       // An event of a newer version of Mannie changes nothing that this
       // version shows.
@@ -192,6 +212,10 @@ export function applyUpdate(state: TranscriptState, update: ConversationUpdate):
       state.hasEarlierTurns = snapshot.hasEarlierTurns;
       state.checkpoint = snapshot.checkpoint;
       state.context = snapshot.context;
+      // A snapshot of a version before background commands has none.
+      state.backgroundCommands = [...(snapshot.backgroundCommands ?? [])].sort(
+        (left, right) => left.number - right.number,
+      );
       state.cursor = snapshot.throughSeq;
       return 'applied';
     }

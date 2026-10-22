@@ -91,5 +91,6 @@
   "ssh_mention_host": "SSH host",
   "ssh_mention_summary_host": "The agent knows this host and its address",
   "ssh_mention_not_ready": "not usable yet",
-  "ssh_mention_host_not_found": "The SSH host is no longer registered."
+  "ssh_mention_host_not_found": "The SSH host is no longer registered.",
+  "ssh_tool_not_started": "Mannie did not take the command, so it asked the host to end it."
 }

@@ -20,9 +20,10 @@ pub use mannie_types::provider::{
 pub use mannie_types::run::{FinishReason, RunState};
 pub use mannie_types::tasks::{TaskDocument, TaskPartDocument, TaskRefusal, TaskView};
 pub use mannie_types::tools::{
-    Access, ApprovalChoice, ApprovalReason, ApprovalRequest, CommandRule, DecideApproval, Decision,
-    GrantScope, Interruption, ProgramEffectKey, ProgramRule, ProgramTarget, ReadToolOutput,
-    RemoteCommandRule, RemoteTarget, SetFullAccess, ToolCallDocument, ToolCallStatus, ToolCallView,
-    ToolOutcome, UpdateToolsSettings,
+    Access, ApprovalChoice, ApprovalReason, ApprovalRequest, BackgroundCommandView,
+    BackgroundEnding, BackgroundSource, CommandRule, DecideApproval, Decision, GrantScope,
+    Interruption, ProgramEffectKey, ProgramRule, ProgramTarget, ReadToolOutput, RemoteCommandRule,
+    RemoteTarget, SetFullAccess, StopBackgroundCommand, ToolCallDocument, ToolCallStatus,
+    ToolCallView, ToolOutcome, UpdateToolsSettings,
 };
 pub use mannie_types::transcript::{PartContent, PartKind};

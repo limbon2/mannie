@@ -855,6 +855,7 @@ dependencies = [
  "mannie-store",
  "mannie-tools",
  "mannie-types",
+ "regex",
  "serde",
  "serde_json",
  "sha2",

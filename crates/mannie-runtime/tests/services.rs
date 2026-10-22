@@ -15,6 +15,7 @@ use mannie_plugin_sdk::host::PluginBinding;
 use mannie_plugin_sdk::ids::PluginId;
 use mannie_plugin_sdk::manifest::Manifest;
 use mannie_plugin_sdk::points::executors::{Executors, TaskExecutor, TaskSubmission};
+use mannie_plugin_sdk::services::background_commands::BackgroundCommands;
 use mannie_plugin_sdk::services::credentials::{Credentials, LendError};
 use mannie_plugin_sdk::services::executor_host::{ExecutorHost, ExecutorTask, OutboxItem};
 use mannie_plugin_sdk::services::processes::Processes;
@@ -220,7 +221,8 @@ fn fake_manifest() -> Manifest {
 }
 
 #[tokio::test]
-async fn the_runtimes_providers_bind_the_executor_host_credentials_and_processes_to_the_plugin() {
+async fn the_runtimes_providers_bind_the_executor_host_credentials_processes_and_background_commands_to_the_plugin()
+ {
     let setup = Setup::new().await;
     let (_conversation, _run, submission) = setup.give_task().await;
     let providers = setup.harness.runtime.service_providers();
@@ -232,16 +234,28 @@ async fn the_runtimes_providers_bind_the_executor_host_credentials_and_processes
         .iter()
         .map(|provider| (provider.name(), provider.major()))
         .collect();
-    let [host_provider, credentials_provider, processes_provider] = providers.as_slice() else {
-        panic!("the runtime provides three services: {provided:?}");
+    let [
+        host_provider,
+        credentials_provider,
+        processes_provider,
+        commands_provider,
+    ] = providers.as_slice()
+    else {
+        panic!("the runtime provides four services: {provided:?}");
     };
     let host = host_provider.bind(&binding).unwrap();
     let lender = credentials_provider.bind(&binding).unwrap();
     let programs = processes_provider.bind(&binding).unwrap();
+    let commands = commands_provider.bind(&binding).unwrap();
 
     assert_eq!(
         provided,
-        [("executor-host", 1), ("credentials", 1), ("processes", 1)]
+        [
+            ("executor-host", 1),
+            ("credentials", 1),
+            ("processes", 1),
+            ("background-commands", 1)
+        ]
     );
     for (name, major) in provided {
         let listed = service_info(name).expect("the SDK lists the service");
@@ -251,6 +265,10 @@ async fn the_runtimes_providers_bind_the_executor_host_credentials_and_processes
     assert!(lender.get::<ExecutorHost>().is_none(), "{lender:?}");
     assert!(programs.get::<ExecutorHost>().is_none(), "{programs:?}");
     assert!(programs.get::<Processes>().is_some(), "{programs:?}");
+    assert!(
+        commands.get::<BackgroundCommands>().is_some(),
+        "{commands:?}"
+    );
     let active = host
         .get::<ExecutorHost>()
         .unwrap()

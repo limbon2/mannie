@@ -378,6 +378,82 @@
     }
   },
   {
+    "class": "side_effects",
+    "description": "Starts a command in the shell that system_info names, without a terminal or input, in working_directory or the workspace, and returns at once with the command's number. The command runs in the background, also after your reply, until it ends or is stopped, and every process it starts ends with it. Use it for servers, watchers, log followers and long test runs, and run_command for the rest. Write the command as it runs in the foreground, without & or nohup. Read its output with read_command_output, and stop it with stop_command once you no longer need it.",
+    "name": "start_command",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "activity": {
+          "description": "A few words for the owner that say what this call does, as an ongoing action, such as \"Reading package.json\" or \"Counting the failed tests\".",
+          "type": "string"
+        },
+        "command": {
+          "description": "The command, in the shell that `system_info` names, as it runs in the foreground. It runs without a terminal and without input.",
+          "type": "string"
+        },
+        "working_directory": {
+          "description": "The folder the command runs in, absolute or relative to the workspace. The workspace when null.",
+          "type": ["string", "null"]
+        }
+      },
+      "required": ["activity", "command", "working_directory"],
+      "type": "object"
+    }
+  },
+  {
+    "class": "read_only",
+    "description": "Returns the state of a command that start_command started and the lines that it wrote since your last read. wait_seconds (0 by default, at most 600) first waits until the command ends, until a new line matches the regular expression until, or until the time passes. from_line reads from that line on instead, in pages, and keeps your place.",
+    "name": "read_command_output",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "activity": {
+          "description": "A few words for the owner that say what this call does, as an ongoing action, such as \"Reading package.json\" or \"Counting the failed tests\".",
+          "type": "string"
+        },
+        "command": {
+          "description": "The command's number, as `start_command` returned it.",
+          "type": "integer"
+        },
+        "from_line": {
+          "description": "The first line to read, counting from 1. The lines after your last read when null.",
+          "type": ["integer", "null"]
+        },
+        "until": {
+          "description": "A regular expression: the wait ends at the first new line that matches it. None when null.",
+          "type": ["string", "null"]
+        },
+        "wait_seconds": {
+          "description": "How many seconds to wait first for the command's end or for a new line that matches `until`: 0 when null, at most 600.",
+          "type": ["integer", "null"]
+        }
+      },
+      "required": ["activity", "command", "from_line", "until", "wait_seconds"],
+      "type": "object"
+    }
+  },
+  {
+    "class": "side_effects",
+    "description": "Stops a command that start_command started, with every process that it started, and returns how it ended.",
+    "name": "stop_command",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "activity": {
+          "description": "A few words for the owner that say what this call does, as an ongoing action, such as \"Reading package.json\" or \"Counting the failed tests\".",
+          "type": "string"
+        },
+        "command": {
+          "description": "The command's number, as `start_command` returned it.",
+          "type": "integer"
+        }
+      },
+      "required": ["activity", "command"],
+      "type": "object"
+    }
+  },
+  {
     "class": "read_only",
     "description": "Reads lines of an archived tool output by its reference.",
     "name": "read_tool_output",

@@ -59,11 +59,16 @@ pub enum WindowRequest {
     AskCloseAction {
         /// How many runs quitting would interrupt.
         active_runs: u32,
+        /// How many background commands quitting would end (ADR-0041).
+        background_commands: u32,
     },
-    /// Quitting would interrupt active runs: quit anyway, or cancel?
+    /// Quitting would interrupt active runs or end background commands: quit
+    /// anyway, or cancel?
     ConfirmQuit {
         /// How many runs quitting would interrupt.
         active_runs: u32,
+        /// How many background commands quitting would end (ADR-0041).
+        background_commands: u32,
         /// What asked to quit.
         source: QuitSource,
     },
@@ -253,7 +258,10 @@ mod tests {
     fn requests_serialize_with_their_kind() {
         let update = WindowRequestUpdate::Pending {
             request_id: 3,
-            request: WindowRequest::AskCloseAction { active_runs: 2 },
+            request: WindowRequest::AskCloseAction {
+                active_runs: 2,
+                background_commands: 1,
+            },
         };
 
         assert_eq!(
@@ -261,7 +269,11 @@ mod tests {
             serde_json::json!({
                 "type": "pending",
                 "requestId": 3,
-                "request": { "kind": "ask_close_action", "activeRuns": 2 },
+                "request": {
+                    "kind": "ask_close_action",
+                    "activeRuns": 2,
+                    "backgroundCommands": 1,
+                },
             })
         );
     }

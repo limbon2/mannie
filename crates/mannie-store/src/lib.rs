@@ -33,10 +33,11 @@ pub use plugin_store::{PluginModule, service_providers};
 pub use provider::{ProfileFields, ProfileStoreError, StoredProfile};
 pub use runtime::{
     AddedProject, Applied, Change, ConversationList, EventsAfter, ExecutorTaskProfile, KeptRun,
-    ModelImage, ModelPart, ModelTurn, NewArchive, NewCheckpoint, NewConversation, NewExecutorTask,
-    NewImage, NewMention, NewPart, NewRun, NewTask, OutboxEntry, ProjectDeletion, ProviderItem,
-    Recovered, RuntimeStoreError, StoredArchive, StoredCheckpoint, StoredChild, StoredImage,
-    StoredTask, TaskEnding, TaskExecution, TaskOrigin, UncertainCall,
+    LOCAL_SOURCE, ModelImage, ModelPart, ModelTurn, NewArchive, NewCheckpoint, NewConversation,
+    NewExecutorTask, NewImage, NewMention, NewPart, NewRun, NewTask, OutboxEntry, ProjectDeletion,
+    ProviderItem, Recovered, RecoveredCommand, RuntimeStoreError, StoredArchive,
+    StoredBackgroundCommand, StoredCheckpoint, StoredChild, StoredImage, StoredTask, TaskEnding,
+    TaskExecution, TaskOrigin, UncertainCall,
 };
 pub use settings::SettingsStoreError;
 pub use store::{Store, StoreOptions};

@@ -1,0 +1,290 @@
+[
+  {
+    "type": "event",
+    "seq": 1,
+    "event": {
+      "kind": "turn_started",
+      "turn": {
+        "id": "0199e0f2-0000-7000-a000-000000000003",
+        "position": 0,
+        "run": {
+          "id": "0199e0f2-0000-7000-a000-000000000004",
+          "turnId": "0199e0f2-0000-7000-a000-000000000003",
+          "profileId": "0199e0f2-0000-7000-a000-000000000005",
+          "state": "completed",
+          "activity": null,
+          "outcome": {
+            "failure": null,
+            "finish": "stop",
+            "usage": null,
+            "promptCut": false
+          },
+          "createdAt": 1792000000000,
+          "endedAt": 1792000000052
+        },
+        "parts": [
+          {
+            "id": "0199e0f2-0000-7000-a000-000000000007",
+            "turnId": "0199e0f2-0000-7000-a000-000000000003",
+            "runId": null,
+            "position": 0,
+            "state": "complete",
+            "content": {
+              "kind": "user_text",
+              "text": "Write the marker, then report."
+            },
+            "createdAt": 1792000000000
+          }
+        ],
+        "createdAt": 1792000000000
+      }
+    }
+  },
+  {
+    "type": "event",
+    "seq": 2,
+    "event": {
+      "kind": "run_updated",
+      "run": {
+        "id": "0199e0f2-0000-7000-a000-000000000004",
+        "turnId": "0199e0f2-0000-7000-a000-000000000003",
+        "profileId": "0199e0f2-0000-7000-a000-000000000005",
+        "state": "completed",
+        "activity": null,
+        "outcome": {
+          "failure": null,
+          "finish": "stop",
+          "usage": null,
+          "promptCut": false
+        },
+        "createdAt": 1792000000000,
+        "endedAt": 1792000000052
+      }
+    }
+  },
+  {
+    "type": "event",
+    "seq": 6,
+    "event": {
+      "kind": "part_started",
+      "part": {
+        "id": "0199e0f2-0000-7000-a000-000000000006",
+        "turnId": "0199e0f2-0000-7000-a000-000000000003",
+        "runId": "0199e0f2-0000-7000-a000-000000000004",
+        "position": 1,
+        "state": "complete",
+        "content": {
+          "kind": "tool_call",
+          "call": {
+            "tool": "write_file",
+            "activity": "Writing",
+            "arguments": "{\"activity\":\"Writing\",\"content\":\"built\\n\",\"path\":\"/srv/build/marker.txt\"}",
+            "argumentsCut": false,
+            "status": "completed",
+            "accesses": [
+              {
+                "kind": "path",
+                "path": "/srv/build/marker.txt",
+                "mode": "create",
+                "folder": false,
+                "exists": false,
+                "identity": "803:1442",
+                "entries": null,
+                "state": null
+              }
+            ],
+            "request": {
+              "digest": "3ffac39be6e708d553fc2ccc3875dc46779e081396ccd44524bfc4662f063eab",
+              "reasons": ["host_asks"],
+              "grants": [],
+              "rule": null,
+              "project": null,
+              "host": "build-01"
+            },
+            "decision": "allowed_once",
+            "startedAt": 1792000000033,
+            "endedAt": 1792000000041,
+            "result": {
+              "outcome": {
+                "kind": "written",
+                "path": "/srv/build/marker.txt",
+                "created": true,
+                "bytes": 6
+              },
+              "output": "Created /srv/build/marker.txt (6 bytes).\nRevision: sha256:56f6e6304d02d413bb7d5d463ac5cdc58551266dc7269b467fc385815f39b913\n",
+              "archives": []
+            },
+            "notRun": null,
+            "interruption": null,
+            "plugin": null
+          }
+        },
+        "createdAt": 1792000000020
+      }
+    }
+  },
+  {
+    "type": "event",
+    "seq": 8,
+    "event": {
+      "kind": "part_updated",
+      "part": {
+        "id": "0199e0f2-0000-7000-a000-000000000006",
+        "turnId": "0199e0f2-0000-7000-a000-000000000003",
+        "runId": "0199e0f2-0000-7000-a000-000000000004",
+        "position": 1,
+        "state": "complete",
+        "content": {
+          "kind": "tool_call",
+          "call": {
+            "tool": "write_file",
+            "activity": "Writing",
+            "arguments": "{\"activity\":\"Writing\",\"content\":\"built\\n\",\"path\":\"/srv/build/marker.txt\"}",
+            "argumentsCut": false,
+            "status": "completed",
+            "accesses": [
+              {
+                "kind": "path",
+                "path": "/srv/build/marker.txt",
+                "mode": "create",
+                "folder": false,
+                "exists": false,
+                "identity": "803:1442",
+                "entries": null,
+                "state": null
+              }
+            ],
+            "request": {
+              "digest": "3ffac39be6e708d553fc2ccc3875dc46779e081396ccd44524bfc4662f063eab",
+              "reasons": ["host_asks"],
+              "grants": [],
+              "rule": null,
+              "project": null,
+              "host": "build-01"
+            },
+            "decision": "allowed_once",
+            "startedAt": 1792000000033,
+            "endedAt": 1792000000041,
+            "result": {
+              "outcome": {
+                "kind": "written",
+                "path": "/srv/build/marker.txt",
+                "created": true,
+                "bytes": 6
+              },
+              "output": "Created /srv/build/marker.txt (6 bytes).\nRevision: sha256:56f6e6304d02d413bb7d5d463ac5cdc58551266dc7269b467fc385815f39b913\n",
+              "archives": []
+            },
+            "notRun": null,
+            "interruption": null,
+            "plugin": null
+          }
+        },
+        "createdAt": 1792000000020
+      }
+    }
+  },
+  {
+    "type": "event",
+    "seq": 9,
+    "event": {
+      "kind": "context_usage_changed",
+      "usage": {
+        "usedTokens": 5488,
+        "budgetTokens": 105216,
+        "estimated": true
+      }
+    }
+  },
+  {
+    "type": "event",
+    "seq": 15,
+    "event": {
+      "kind": "part_finished",
+      "part": {
+        "id": "0199e0f2-0000-7000-a000-000000000006",
+        "turnId": "0199e0f2-0000-7000-a000-000000000003",
+        "runId": "0199e0f2-0000-7000-a000-000000000004",
+        "position": 1,
+        "state": "complete",
+        "content": {
+          "kind": "tool_call",
+          "call": {
+            "tool": "write_file",
+            "activity": "Writing",
+            "arguments": "{\"activity\":\"Writing\",\"content\":\"built\\n\",\"path\":\"/srv/build/marker.txt\"}",
+            "argumentsCut": false,
+            "status": "completed",
+            "accesses": [
+              {
+                "kind": "path",
+                "path": "/srv/build/marker.txt",
+                "mode": "create",
+                "folder": false,
+                "exists": false,
+                "identity": "803:1442",
+                "entries": null,
+                "state": null
+              }
+            ],
+            "request": {
+              "digest": "3ffac39be6e708d553fc2ccc3875dc46779e081396ccd44524bfc4662f063eab",
+              "reasons": ["host_asks"],
+              "grants": [],
+              "rule": null,
+              "project": null,
+              "host": "build-01"
+            },
+            "decision": "allowed_once",
+            "startedAt": 1792000000033,
+            "endedAt": 1792000000041,
+            "result": {
+              "outcome": {
+                "kind": "written",
+                "path": "/srv/build/marker.txt",
+                "created": true,
+                "bytes": 6
+              },
+              "output": "Created /srv/build/marker.txt (6 bytes).\nRevision: sha256:56f6e6304d02d413bb7d5d463ac5cdc58551266dc7269b467fc385815f39b913\n",
+              "archives": []
+            },
+            "notRun": null,
+            "interruption": null,
+            "plugin": null
+          }
+        },
+        "createdAt": 1792000000020
+      }
+    }
+  },
+  {
+    "type": "event",
+    "seq": 16,
+    "event": {
+      "kind": "background_command_changed",
+      "command": {
+        "number": 1,
+        "partId": "0199e0f2-0000-7000-a000-000000000008",
+        "command": "tail -f /var/log/build.log",
+        "source": {
+          "kind": "local",
+          "shell": "/bin/sh",
+          "workingDirectory": "/srv/build"
+        },
+        "startedAt": 1792000000030,
+        "ending": "task_ended",
+        "exitCode": null,
+        "signal": null,
+        "endedAt": 1792000000051,
+        "lines": 2,
+        "bytes": 24,
+        "archiveId": "0199e0f2-0000-7000-a000-000000000009",
+        "onWorker": false
+      }
+    }
+  },
+  {
+    "type": "ended",
+    "reason": "deleted"
+  }
+]

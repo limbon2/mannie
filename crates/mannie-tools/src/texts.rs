@@ -3,7 +3,11 @@
 //! the descriptions the model sees). Reviewed like code: a change here changes
 //! how models use the tools.
 
-use mannie_types::tools::{PathRefusal, ToolFailure};
+use std::time::Duration;
+
+use mannie_types::tools::{
+    BackgroundCommandView, BackgroundEnding, BackgroundLimit, PathRefusal, ToolFailure,
+};
 
 /// The description of the argument that every call carries for the owner
 /// (docs/features/system-tools/tool-calls.md, the activity of a call).
@@ -51,6 +55,15 @@ pub(crate) const DELETE_PATH: &str =
 /// The description of `run_command`.
 #[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 pub(crate) const RUN_COMMAND: &str = "Runs a command in the shell that system_info names, without a terminal or input, in working_directory or the workspace. It ends after timeout_seconds (60 by default, at most 600), and every process it started ends with it. Returns the exit code and the output.";
+
+/// The description of `start_command` (ADR-0041).
+pub(crate) const START_COMMAND: &str = "Starts a command in the shell that system_info names, without a terminal or input, in working_directory or the workspace, and returns at once with the command's number. The command runs in the background, also after your reply, until it ends or is stopped, and every process it starts ends with it. Use it for servers, watchers, log followers and long test runs, and run_command for the rest. Write the command as it runs in the foreground, without & or nohup. Read its output with read_command_output, and stop it with stop_command once you no longer need it.";
+
+/// The description of `read_command_output` (ADR-0041).
+pub(crate) const READ_COMMAND_OUTPUT: &str = "Returns the state of a command that start_command started and the lines that it wrote since your last read. wait_seconds (0 by default, at most 600) first waits until the command ends, until a new line matches the regular expression until, or until the time passes. from_line reads from that line on instead, in pages, and keeps your place.";
+
+/// The description of `stop_command` (ADR-0041).
+pub(crate) const STOP_COMMAND: &str = "Stops a command that start_command started, with every process that it started, and returns how it ended.";
 
 /// The description of `read_tool_output`.
 pub(crate) const READ_TOOL_OUTPUT: &str =
@@ -100,6 +113,14 @@ pub(crate) fn failure(failure: &ToolFailure) -> String {
         ToolFailure::SpawnFailed { reason } => format!("The command could not be started: {reason}"),
         ToolFailure::IoError { kind } => format!("The operating system reported an error: {kind}"),
         ToolFailure::PluginInvalid { plugin } => format!("The plugin \"{plugin}\" answered against the rules of Mannie's plugin SDK, so nothing ran. Continue without this tool, or tell the owner."),
+        ToolFailure::CommandNotFound { number } => format!("This conversation has no background command {number}. The numbers come from the results of start_command."),
+        ToolFailure::TooManyBackgroundCommands { scope, limit } => {
+            let place = match scope {
+                BackgroundLimit::Conversation => "in this conversation",
+                BackgroundLimit::Machine => "on this computer",
+            };
+            format!("{limit} background commands run {place} already, the most allowed. Stop one that you no longer need with stop_command, then start this one again.")
+        }
     };
     format!("Error {code}: {explanation}")
 }
@@ -129,6 +150,101 @@ fn refusal(reason: PathRefusal) -> &'static str {
         PathRefusal::TooLong => "The path is longer than 32,767 characters.",
         PathRefusal::NotAbsolute => "The path must be absolute.",
     }
+}
+
+/// A duration as a result names it, such as `12 s`, `4 min 12 s` or
+/// `2 h 5 min`.
+pub(crate) fn duration(duration: Duration) -> String {
+    let seconds = duration.as_secs();
+    let (hours, minutes) = (seconds / 3600, seconds / 60 % 60);
+    match (hours, minutes) {
+        (0, 0) => format!("{seconds} s"),
+        (0, minutes) => format!("{minutes} min {} s", seconds % 60),
+        (hours, minutes) => format!("{hours} h {minutes} min"),
+    }
+}
+
+/// The result of `start_command`.
+pub(crate) fn command_started(number: u32, place: &str) -> String {
+    format!(
+        "Command {number} started in the background, {place}. It runs until it ends or is stopped. Read its output with read_command_output, command {number}, and stop it with stop_command once you no longer need it."
+    )
+}
+
+/// How a background command stands, in one sentence.
+pub(crate) fn command_state(
+    view: &BackgroundCommandView,
+    ran_for: Duration,
+    remote: bool,
+) -> String {
+    let ran = duration(ran_for);
+    let outcome = match (view.exit_code, &view.signal) {
+        (Some(code), _) => format!(" with exit code {code}"),
+        (None, Some(signal)) => format!(" by the signal {signal}"),
+        (None, None) => String::new(),
+    };
+    let leftovers = if remote {
+        "; processes that it started may still run on the host"
+    } else {
+        ""
+    };
+    match view.ending {
+        None => format!("It runs, for {ran} so far."),
+        Some(BackgroundEnding::Exited) => format!("It ended{outcome} after {ran}."),
+        Some(BackgroundEnding::EndedByHost) => {
+            format!("Its host reported its end{outcome} after {ran}{leftovers}.")
+        }
+        Some(BackgroundEnding::StoppedByAgent) => {
+            format!("You stopped it after {ran}{leftovers}.")
+        }
+        Some(BackgroundEnding::StoppedByOwner) => {
+            format!("The owner stopped it after {ran}{leftovers}.")
+        }
+        Some(BackgroundEnding::TaskEnded) => {
+            format!("It ended with its task after {ran}{leftovers}.")
+        }
+        Some(BackgroundEnding::PluginOff) => {
+            format!("It ended when its plugin went off, after {ran}{leftovers}.")
+        }
+        Some(BackgroundEnding::SessionClosed) => {
+            format!("It ended when Mannie closed its session to the host, after {ran}{leftovers}.")
+        }
+        // After a crash, the end is only known at the next start, so the
+        // time it ran is unknown.
+        Some(BackgroundEnding::Interrupted) => {
+            format!("It ended when Mannie quit or stopped unexpectedly{leftovers}.")
+        }
+        Some(BackgroundEnding::LetGo) => {
+            format!("Its plugin let it go after {ran} without saying how it ended{leftovers}.")
+        }
+    }
+}
+
+/// The note between the lines of a read that leaves lines out of the result
+/// to fit it.
+pub(crate) fn command_lines_left_out(number: u32, first: u64, last: u64) -> String {
+    format!(
+        "[Lines {first} to {last} are left out of this result: read them with read_command_output, command {number}, from_line {first}.]"
+    )
+}
+
+/// The note where the lines that the log let go would be.
+pub(crate) fn command_lines_not_kept(first: u64, last: u64) -> String {
+    format!(
+        "[Lines {first} to {last} are no longer kept: the log keeps the first 256 KiB and the last 768 KiB of a command's output.]"
+    )
+}
+
+/// The body of a read of a command whose output Mannie's end lost.
+pub(crate) const COMMAND_OUTPUT_LOST: &str =
+    "Its output was not kept: Mannie ended before it could store it.
+";
+
+/// The note after a page of a command's lines that more follows.
+pub(crate) fn command_read_on(number: u32, next: u64) -> String {
+    format!(
+        "More follows: call read_command_output again with command {number} and from_line {next}."
+    )
 }
 
 /// The note after a page that more follows.

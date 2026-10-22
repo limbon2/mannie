@@ -200,6 +200,12 @@ pub(crate) fn render_turns(turns: &[ModelTurn], requester: Requester) -> Vec<Str
                         lines.push(texts::compaction_mention(&cut(&part.text)));
                         continue;
                     }
+                    // A wake-up's request names the commands that ended
+                    // (ADR-0041).
+                    Some(PartKind::CommandNote) => {
+                        lines.push(texts::compaction_command_note(&cut(&part.text)));
+                        continue;
+                    }
                     // The summary's model reads no image, only its size
                     // (ADR-0033, decision 6).
                     Some(PartKind::Image) => {

@@ -10,12 +10,13 @@ use std::sync::Arc;
 use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
 use mannie_store::Store;
-use mannie_types::ids::{ArchiveId, ConversationId};
+use mannie_types::ids::{ArchiveId, ConversationId, PartId};
 use mannie_types::tools::{Access, ProcessRecord, ToolFailure, ToolOutcome};
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use tokio::sync::oneshot;
 
+use crate::background::BackgroundCommands;
 use crate::environment::CommandEnvironment;
 use crate::lock::MutationLock;
 use crate::projects::{Availability, ProjectFacts};
@@ -56,6 +57,9 @@ pub struct ToolContext {
     /// The conversation's project, the owner's projects, and the move into
     /// one of them.
     pub projects: ProjectFacts,
+    /// The machine's background commands, which the runtime keeps
+    /// (ADR-0041).
+    pub background: Arc<dyn BackgroundCommands>,
 }
 
 impl fmt::Debug for ToolContext {
@@ -146,6 +150,9 @@ pub struct Execution {
     /// Receives the process of a command once it started, so the journal can
     /// record it.
     pub process: Option<oneshot::Sender<ProcessRecord>>,
+    /// The part of the call, which a command that runs in the background
+    /// keeps as its start (ADR-0041).
+    pub part_id: Option<PartId>,
 }
 
 /// A tool in the registry (docs/architecture/extension-points.md, tool
@@ -196,6 +203,8 @@ pub(crate) struct TypedExecution<I> {
     /// Receives a command's process once it started.
     #[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
     pub(crate) process: Option<oneshot::Sender<ProcessRecord>>,
+    /// The part of the call.
+    pub(crate) part_id: Option<PartId>,
 }
 
 /// A tool with typed arguments, which [`Registered`] turns into a [`Tool`].
@@ -319,6 +328,7 @@ impl<T: TypedTool> Tool for Registered<T> {
                 stop: execution.stop,
                 #[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
                 process: execution.process,
+                part_id: execution.part_id,
             };
             T::execute(typed).await.unwrap_or_else(failed)
         }

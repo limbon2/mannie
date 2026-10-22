@@ -4,6 +4,7 @@
 import type { Component } from 'svelte';
 
 import type {
+  BackgroundCommandView,
   ConversationId,
   ConversationSummary,
   MentionSummary,
@@ -138,6 +139,11 @@ export interface SidePanelKind {
 
 /** What a conversation control receives (ADR-0026). */
 export interface ConversationControlProps {
+  /**
+   * The conversation's background commands, by number (ADR-0041). A view
+   * of a version before them passes none.
+   */
+  readonly backgroundCommands?: readonly BackgroundCommandView[];
   /** The conversation whose toolbar shows the control. */
   readonly conversation: ConversationSummary;
   /**

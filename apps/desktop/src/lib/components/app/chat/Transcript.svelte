@@ -34,6 +34,9 @@
   let { conversation, readOnly = false }: Props = $props();
 
   setConversationContext({
+    get backgroundCommands() {
+      return conversation.transcript.backgroundCommands;
+    },
     get readOnly() {
       return readOnly;
     },

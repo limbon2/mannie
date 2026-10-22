@@ -170,6 +170,7 @@ async fn allow_changes(hosted: &HostedPlugin, full_access: bool) {
             allow_changes_in_workspace: true,
             command_environment: Vec::new(),
             full_access_for_new_conversations: full_access,
+            wake_on_command_end: true,
         })
         .await
         .expect("the settings are saved");

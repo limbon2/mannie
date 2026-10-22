@@ -158,17 +158,17 @@ async fn the_same_rule_is_saved_once_and_deleted() {
 
     let saved = fixture
         .store
-        .add_rule(&rule_id(1), words.clone(), Some("/work".to_owned()))
+        .add_rule(&rule_id(1), words.clone(), Some("/work".to_owned()), false)
         .await
         .unwrap();
     let again = fixture
         .store
-        .add_rule(&rule_id(2), words.clone(), Some("/work".to_owned()))
+        .add_rule(&rule_id(2), words.clone(), Some("/work".to_owned()), false)
         .await
         .unwrap();
     let anywhere = fixture
         .store
-        .add_rule(&rule_id(3), words.clone(), None)
+        .add_rule(&rule_id(3), words.clone(), None, false)
         .await
         .unwrap();
 
@@ -181,6 +181,71 @@ async fn the_same_rule_is_saved_once_and_deleted() {
     assert!(fixture.store.delete_rule(&saved.id).await.unwrap());
     assert!(!fixture.store.delete_rule(&saved.id).await.unwrap());
     assert_eq!(fixture.store.rules().await.unwrap(), vec![anywhere]);
+}
+
+#[tokio::test]
+async fn a_rule_from_the_background_widens_the_rule_of_the_same_words() {
+    let fixture = Fixture::new();
+    let words = vec!["npm".to_owned(), "run".to_owned(), "dev".to_owned()];
+
+    let foreground = fixture
+        .store
+        .add_rule(&rule_id(1), words.clone(), None, false)
+        .await
+        .unwrap();
+    let background = fixture
+        .store
+        .add_rule(&rule_id(2), words.clone(), None, true)
+        .await
+        .unwrap();
+    // A rule from the foreground never narrows one that covers both modes.
+    let again = fixture
+        .store
+        .add_rule(&rule_id(3), words.clone(), None, false)
+        .await
+        .unwrap();
+
+    assert!(!foreground.background);
+    assert_eq!(background.id, foreground.id);
+    assert!(background.background);
+    assert_eq!(again, background);
+    assert_eq!(fixture.store.rules().await.unwrap(), vec![background]);
+}
+
+#[tokio::test]
+async fn a_remote_rule_from_the_background_widens_the_rule_of_the_same_words() {
+    let fixture = Fixture::new();
+    let words = vec!["journalctl".to_owned(), "-f".to_owned()];
+    let host = "0199e0f2-0000-7000-8000-0000000000aa";
+    let at = "deploy@build-box.lan:22";
+
+    let foreground = fixture
+        .store
+        .add_remote_rule(
+            &rule_id(1),
+            ssh_host(host, at, "build-box"),
+            words.clone(),
+            false,
+        )
+        .await
+        .unwrap();
+    let background = fixture
+        .store
+        .add_remote_rule(
+            &rule_id(2),
+            ssh_host(host, at, "build-box"),
+            words.clone(),
+            true,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(background.id, foreground.id);
+    assert!(background.background);
+    assert_eq!(
+        fixture.store.remote_rules().await.unwrap(),
+        vec![background]
+    );
 }
 
 fn ssh_host(target: &str, endpoint: &str, label: &str) -> RemoteTarget {
@@ -201,13 +266,23 @@ async fn a_remote_rule_is_saved_once_for_its_host_and_endpoint_and_apart_from_lo
 
     let saved = fixture
         .store
-        .add_remote_rule(&rule_id(1), ssh_host(host, at, "build-box"), words.clone())
+        .add_remote_rule(
+            &rule_id(1),
+            ssh_host(host, at, "build-box"),
+            words.clone(),
+            false,
+        )
         .await
         .unwrap();
     // A renamed host is the same host, so the rule is not saved again.
     let again = fixture
         .store
-        .add_remote_rule(&rule_id(2), ssh_host(host, at, "builder"), words.clone())
+        .add_remote_rule(
+            &rule_id(2),
+            ssh_host(host, at, "builder"),
+            words.clone(),
+            false,
+        )
         .await
         .unwrap();
     let other_endpoint = fixture
@@ -216,6 +291,7 @@ async fn a_remote_rule_is_saved_once_for_its_host_and_endpoint_and_apart_from_lo
             &rule_id(3),
             ssh_host(host, "root@build-box.lan:22", "build-box"),
             words.clone(),
+            false,
         )
         .await
         .unwrap();
@@ -319,6 +395,7 @@ async fn a_remote_grant_is_kept_with_its_host_and_endpoint() {
         label: "build-box".to_owned(),
         endpoint: "deploy@build-box.lan:22".to_owned(),
         command: "uptime".to_owned(),
+        background: false,
     };
 
     let added = fixture

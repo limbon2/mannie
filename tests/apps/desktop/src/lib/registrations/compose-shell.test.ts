@@ -112,9 +112,10 @@ describe('composeShell', () => {
     expect(pluginCatalog()).toEqual([]);
     expect(slots.views.entries.map((view) => view.id)).toEqual(['chat']);
     expect(slots.sidebarPanels.entries.map((panel) => panel.id)).toEqual(['chat.projects', 'chat.conversations']);
-    expect(slots.sidePanels.entries.map((kind) => kind.id)).toEqual(['chat.conversation']);
+    expect(slots.sidePanels.entries.map((kind) => kind.id)).toEqual(['chat.conversation', 'tools.command-output']);
     expect(slots.conversationControls.entries.map((control) => control.id)).toEqual([
       'tools.full-access',
+      'tools.background-commands',
       'child-agents.control',
       'export.conversation',
     ]);
@@ -133,6 +134,7 @@ describe('composeShell', () => {
       'mention',
       'image',
       'tool_call',
+      'command_note',
       'task',
     ]);
     expect(slots.mentionKinds.entries.map((kind) => kind.id)).toEqual(['files']);

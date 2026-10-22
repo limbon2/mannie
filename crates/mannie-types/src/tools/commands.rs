@@ -8,6 +8,7 @@ use crate::clock::UtcMillis;
 use crate::ids::{ArchiveId, ConversationId, GrantId, ProjectId, RuleId};
 
 use super::approval::{GrantScope, RemoteTarget};
+use super::background::BackgroundCommandView;
 use super::program::ProgramTarget;
 
 /// A command rule as the settings list it.
@@ -20,6 +21,11 @@ pub struct CommandRule {
     pub words: Vec<String>,
     /// The folder the working directory must lie in, or `None` for anywhere.
     pub folder: Option<String>,
+    /// Whether the rule also covers commands in the background, as a rule
+    /// saved from the approval of a command in the background does
+    /// (ADR-0041, D40).
+    #[serde(default)]
+    pub background: bool,
     /// When the owner saved it.
     pub created_at: UtcMillis,
 }
@@ -44,6 +50,10 @@ pub struct RemoteCommandRule {
     pub target: RemoteTarget,
     /// The words a command must start with.
     pub words: Vec<String>,
+    /// Whether the rule also covers commands in the background (ADR-0041,
+    /// D40).
+    #[serde(default)]
+    pub background: bool,
     /// When the owner saved it.
     pub created_at: UtcMillis,
 }
@@ -153,6 +163,70 @@ pub struct ReadToolOutput {
     pub first_line: u32,
     /// How many lines to read, at most [`MAX_OUTPUT_PAGE_LINES`].
     pub limit: u32,
+}
+
+/// The argument of `stop_background_command`: the owner's Stop of a
+/// background command, also of a child's task conversation (ADR-0041).
+#[derive(Debug, Clone, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct StopBackgroundCommand {
+    /// The conversation of the command.
+    pub conversation_id: ConversationId,
+    /// The command's number.
+    pub number: u32,
+}
+
+/// The most lines of a command's output that its view holds, and that a
+/// subscription without a line starts with.
+pub const MAX_OUTPUT_VIEW_LINES: u32 = 2_000;
+
+/// The argument of `subscribe_command_output`.
+#[derive(Debug, Clone, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscribeCommandOutput {
+    /// The conversation of the command.
+    pub conversation_id: ConversationId,
+    /// The command's number.
+    pub number: u32,
+    /// The last line that the view holds, or `None` for a view that starts
+    /// with the last [`MAX_OUTPUT_VIEW_LINES`] lines.
+    pub after_line: Option<u32>,
+}
+
+/// What the view of a command's output receives, in the order of the
+/// output.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum CommandOutputUpdate {
+    /// The command as it is when the view subscribes, before its lines.
+    Command {
+        /// The command.
+        command: BackgroundCommandView,
+    },
+    /// Lines of the output, numbered from `first_line` on.
+    Lines {
+        /// The number of the first line.
+        first_line: u32,
+        /// The lines, without their line breaks.
+        lines: Vec<String>,
+    },
+    /// Lines that the command's log no longer holds, which the view never
+    /// receives.
+    LeftOut {
+        /// The first of them.
+        first_line: u32,
+        /// The last of them.
+        last_line: u32,
+    },
+    /// The command ended and every line was sent; nothing follows.
+    Ended {
+        /// The command as it ended.
+        command: BackgroundCommandView,
+    },
 }
 
 /// A page of an archived output.
@@ -269,6 +343,10 @@ pub enum ToolsError {
     /// on the master answer its requests (ADR-0029, decision 5).
     #[error("this worker does not take answers from the master's full access")]
     FullAccessRefused,
+    /// The conversation has no background command with this number on this
+    /// machine (ADR-0041).
+    #[error("the background command does not exist")]
+    BackgroundCommandNotFound,
 }
 
 impl ToolsError {
@@ -297,6 +375,7 @@ impl ToolsError {
             Self::PluginOff { .. } => "tools.plugin_off",
             Self::FullAccessFollowsParent => "tools.full_access_follows_parent",
             Self::FullAccessRefused => "tools.full_access_refused",
+            Self::BackgroundCommandNotFound => "tools.background_command_not_found",
         }
     }
 }

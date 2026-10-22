@@ -67,16 +67,27 @@ describe('WindowRequests', () => {
     const requests = started();
     requests.start();
 
-    deliver({ request: { activeRuns: 2, kind: 'ask_close_action' }, requestId: 4, type: 'pending' });
+    deliver({
+      request: { activeRuns: 2, backgroundCommands: 0, kind: 'ask_close_action' },
+      requestId: 4,
+      type: 'pending',
+    });
 
     expect(core.subscribeWindowRequests).toHaveBeenCalledTimes(1);
     expect(requests.open).toBe(true);
-    expect(requests.question).toEqual({ request: { activeRuns: 2, kind: 'ask_close_action' }, requestId: 4 });
+    expect(requests.question).toEqual({
+      request: { activeRuns: 2, backgroundCommands: 0, kind: 'ask_close_action' },
+      requestId: 4,
+    });
   });
 
   it('saves the first-close choice, closes the dialog and shows the choice in the settings', async () => {
     const requests = started();
-    deliver({ request: { activeRuns: 0, kind: 'ask_close_action' }, requestId: 1, type: 'pending' });
+    deliver({
+      request: { activeRuns: 0, backgroundCommands: 0, kind: 'ask_close_action' },
+      requestId: 1,
+      type: 'pending',
+    });
 
     await requests.answerClose('tray');
 
@@ -88,7 +99,11 @@ describe('WindowRequests', () => {
   it('keeps the dialog open with the reason when the core refuses an answer', async () => {
     core.answerCloseQuestion.mockResolvedValue({ error: { code: 'storage_failed' }, status: 'error' });
     const requests = started();
-    deliver({ request: { activeRuns: 0, kind: 'ask_close_action' }, requestId: 1, type: 'pending' });
+    deliver({
+      request: { activeRuns: 0, backgroundCommands: 0, kind: 'ask_close_action' },
+      requestId: 1,
+      type: 'pending',
+    });
 
     await requests.answerClose('quit');
 
@@ -100,7 +115,11 @@ describe('WindowRequests', () => {
 
   it('confirms quitting for the question that waits', async () => {
     const requests = started();
-    deliver({ request: { activeRuns: 3, kind: 'confirm_quit', source: 'tray' }, requestId: 9, type: 'pending' });
+    deliver({
+      request: { activeRuns: 3, backgroundCommands: 0, kind: 'confirm_quit', source: 'tray' },
+      requestId: 9,
+      type: 'pending',
+    });
 
     await requests.confirmQuit();
 
@@ -109,14 +128,22 @@ describe('WindowRequests', () => {
 
   it('closes the dialog when the owner dismisses it or the core clears the question', async () => {
     const requests = started();
-    deliver({ request: { activeRuns: 1, kind: 'confirm_quit', source: 'window' }, requestId: 2, type: 'pending' });
+    deliver({
+      request: { activeRuns: 1, backgroundCommands: 0, kind: 'confirm_quit', source: 'window' },
+      requestId: 2,
+      type: 'pending',
+    });
 
     await requests.dismiss();
 
     expect(requests.open).toBe(false);
     expect(core.dismissWindowRequest).toHaveBeenCalledWith({ requestId: 2 });
 
-    deliver({ request: { activeRuns: 1, kind: 'confirm_quit', source: 'window' }, requestId: 3, type: 'pending' });
+    deliver({
+      request: { activeRuns: 1, backgroundCommands: 0, kind: 'confirm_quit', source: 'window' },
+      requestId: 3,
+      type: 'pending',
+    });
     deliver({ requestId: 2, type: 'cleared' });
     expect(requests.open).toBe(true);
     deliver({ requestId: 3, type: 'cleared' });
@@ -128,11 +155,15 @@ describe('WindowRequests', () => {
     core.subscribers[0]?.onGap();
 
     core.subscribers[0]?.onItems([
-      { request: { activeRuns: 0, kind: 'ask_close_action' }, requestId: 1, type: 'pending' },
+      { request: { activeRuns: 0, backgroundCommands: 0, kind: 'ask_close_action' }, requestId: 1, type: 'pending' },
     ]);
     expect(requests.open).toBe(false);
 
-    deliver({ request: { activeRuns: 0, kind: 'ask_close_action' }, requestId: 1, type: 'pending' });
+    deliver({
+      request: { activeRuns: 0, backgroundCommands: 0, kind: 'ask_close_action' },
+      requestId: 1,
+      type: 'pending',
+    });
     expect(core.subscribeWindowRequests).toHaveBeenCalledTimes(2);
     expect(requests.open).toBe(true);
   });

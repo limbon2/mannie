@@ -85,6 +85,11 @@ pub enum Access {
         shell: String,
         /// The canonical working directory.
         working_directory: String,
+        /// Whether the command runs in the background, past its call, until
+        /// it ends or is stopped (ADR-0041). An access of a version before it
+        /// reads as the foreground.
+        #[serde(default)]
+        background: bool,
     },
     /// The conversation moves into a project, whose folder becomes its
     /// workspace (docs/features/chat/projects.md).
@@ -115,6 +120,11 @@ pub enum Access {
         identity: String,
         /// The command's text, as the host receives it.
         command: String,
+        /// Whether the command runs in the background, past its call, until
+        /// it ends or is stopped (ADR-0041). An access of a version before it
+        /// reads as the foreground.
+        #[serde(default)]
+        background: bool,
     },
     /// A run of an installed program that a plugin's manifest declares, such
     /// as git, with an effect beyond the workspace that the owner decides on
@@ -179,6 +189,7 @@ mod tests {
             command: "ls".to_owned(),
             shell: "/bin/sh".to_owned(),
             working_directory: "/work".to_owned(),
+            background: false,
         };
 
         assert!(!read.changes());
@@ -195,7 +206,53 @@ mod tests {
             endpoint: "deploy@build-box.lan:22".to_owned(),
             identity: "SHA256:vh3fjoyg7pBnxLhORIqZjyJQqYYN/gzBTuj+mPdeJlo".to_owned(),
             command: "uname -a".to_owned(),
+            background: false,
         }
+    }
+
+    #[test]
+    fn a_command_names_its_mode_and_an_older_access_reads_as_the_foreground() {
+        let foreground = Access::Command {
+            command: "npm run dev".to_owned(),
+            shell: "/bin/sh".to_owned(),
+            working_directory: "/work".to_owned(),
+            background: false,
+        };
+        let background = Access::Command {
+            command: "npm run dev".to_owned(),
+            shell: "/bin/sh".to_owned(),
+            working_directory: "/work".to_owned(),
+            background: true,
+        };
+
+        assert_eq!(
+            serde_json::to_value(&foreground).unwrap(),
+            serde_json::json!({
+                "kind": "command",
+                "command": "npm run dev",
+                "shell": "/bin/sh",
+                "workingDirectory": "/work",
+                "background": false,
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(&background).unwrap()["background"],
+            true
+        );
+        let older: Access = serde_json::from_value(serde_json::json!({
+            "kind": "command",
+            "command": "ls",
+            "shell": "/bin/sh",
+            "workingDirectory": "/work",
+        }))
+        .unwrap();
+        assert!(matches!(
+            older,
+            Access::Command {
+                background: false,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -242,6 +299,7 @@ mod tests {
                 "endpoint": "deploy@build-box.lan:22",
                 "identity": "SHA256:vh3fjoyg7pBnxLhORIqZjyJQqYYN/gzBTuj+mPdeJlo",
                 "command": "uname -a",
+                "background": false,
             })
         );
     }

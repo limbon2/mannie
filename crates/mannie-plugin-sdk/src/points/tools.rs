@@ -36,6 +36,7 @@ use serde::{Deserialize, Serialize};
 use crate::BoxFuture;
 use crate::contracts::{AccessMode, ArchiveId, ConversationId, ProgramEffect};
 use crate::contributions::{ExtensionPoint, IdRule};
+use crate::services::background_commands::BackgroundTicket;
 
 /// The point of plugins' tools, whose entries are [`PluginTool`]s named by
 /// their tools' names.
@@ -249,6 +250,11 @@ pub struct RemoteCommandAccess {
     pub identity: String,
     /// The command's text, exactly as the host receives it.
     pub command: String,
+    /// Whether the command runs in the background, past its call, until it
+    /// ends or is stopped (ADR-0041). A grant or a rule from the foreground
+    /// never covers it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub background: bool,
 }
 
 impl RemoteCommandAccess {
@@ -267,7 +273,17 @@ impl RemoteCommandAccess {
             endpoint,
             identity,
             command,
+            background: false,
         }
+    }
+
+    /// The same command, run in the background: its call hands it to the
+    /// core through the service `background-commands` (ADR-0041,
+    /// decision 11).
+    #[must_use]
+    pub fn in_background(mut self) -> Self {
+        self.background = true;
+        self
     }
 }
 
@@ -471,6 +487,11 @@ pub struct ToolExecution {
     /// The conversation's workspace, as the call's preparation had it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace: Option<PathBuf>,
+    /// The ticket that lets the call hand the core one command that it
+    /// starts on a remote host in the background, when the authorized
+    /// accesses hold one (ADR-0041, decision 11).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<BackgroundTicket>,
 }
 
 impl ToolExecution {
@@ -486,6 +507,7 @@ impl ToolExecution {
             result_limit: DEFAULT_RESULT_LIMIT,
             archive_ids: Vec::new(),
             workspace: None,
+            background: None,
         }
     }
 
@@ -519,6 +541,14 @@ impl ToolExecution {
     #[must_use]
     pub fn with_archive_ids(mut self, archive_ids: Vec<ArchiveId>) -> Self {
         self.archive_ids = archive_ids;
+        self
+    }
+
+    /// The same execution, with the ticket of a command in the background.
+    #[cfg(feature = "host")]
+    #[must_use]
+    pub fn with_background(mut self, ticket: BackgroundTicket) -> Self {
+        self.background = Some(ticket);
         self
     }
 }

@@ -97,6 +97,7 @@ type ScriptedStep = { readonly calls: ScriptedCall[]; readonly kind: 'calls' } |
  * report carries the result it read last.
  */
 const MANNIE_NOTES = [
+  'Background commands of this conversation:',
   'Before you report, check that you did everything the task asks for.',
   'Your last response was empty.',
   'Continue with the next step',

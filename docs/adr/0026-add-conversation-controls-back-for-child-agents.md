@@ -7,6 +7,8 @@
 | Deciders | Owner                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | Related  | [ADR-0002](0002-grow-through-extension-points.md), [ADR-0020](0020-complete-the-ui-shell-slots.md), [ADR-0022](0022-add-conversation-controls-to-the-shell.md), [ADR-0023](0023-organize-conversations-into-projects.md), [ADR-0025](0025-add-side-panels-to-the-shell.md), [Extension points](../architecture/extension-points.md#37-ui-shell-slots), [Child agents](../features/child-agents/README.md), [Conversation view](../features/chat/conversation-view.md) |
 
+Later changes: [ADR-0041](0041-let-agents-run-commands-in-the-background.md) refines decision 2: a control also receives the conversation's background commands.
+
 ## Context
 
 - On 2026-10-15 the owner reviewed the interface of child agents and asked for a button that shows the running child agents ([D19](../roadmap/milestones.md#5-decisions)). So far a child's conversation opens only from its task's card, which can stand far up in the transcript.

@@ -19,6 +19,7 @@ mod actor;
 mod agents;
 mod approvals;
 mod assigned;
+mod background;
 mod budget;
 mod calls;
 mod compaction;
@@ -46,6 +47,7 @@ pub mod texts;
 mod tools;
 #[cfg(feature = "validation")]
 mod validation;
+mod wake_ups;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -67,6 +69,7 @@ pub use agents::{
     EXPLORE_AGENT, GENERAL, GENERAL_AGENT, Requester, SYSTEM_TOOLS,
 };
 pub use assigned::{AssignError, AssignedTaskWatch, LeaseError};
+pub use background::CommandOutput;
 pub use hub::{ConversationSubscription, ListSubscription, SubscriptionLimits};
 pub use instructions::{
     DuplicateSection, InstructionContext, InstructionRegistry, InstructionSection, MachineContext,
@@ -83,6 +86,7 @@ use crate::actor::Command;
 use crate::agents::AgentPlugins;
 use crate::approvals::Pending;
 use crate::assigned::AssignedTasks;
+use crate::background::{BackgroundCommandsProvider, CommandRegistry};
 use crate::executors::{CredentialsProvider, ExecutorFollows, ExecutorHostProvider};
 use crate::hub::Hubs;
 use crate::ids::IdGenerator;
@@ -90,6 +94,7 @@ use crate::plugin_executions::PluginExecutions;
 use crate::plugins::Registry;
 use crate::processes::{ProcessesProvider, Programs};
 use crate::tasks::ChildSlots;
+use crate::wake_ups::WakeUps;
 
 /// What the system tools work with. The composition root builds it once.
 #[derive(Debug, Clone)]
@@ -181,6 +186,10 @@ pub struct RuntimeConfig {
     pub executor_cancel_timeout: Duration,
     /// The seed of the retry jitter, for tests; `None` seeds it at random.
     pub random_seed: Option<u64>,
+    /// How long the ends of background commands gather before they wake an
+    /// idle conversation, so ends that come together share one wake-up
+    /// (ADR-0041).
+    pub wake_up_delay: Duration,
 }
 
 impl Default for RuntimeConfig {
@@ -194,6 +203,7 @@ impl Default for RuntimeConfig {
             shutdown_timeout: Duration::from_secs(3),
             executor_cancel_timeout: Duration::from_secs(10),
             random_seed: None,
+            wake_up_delay: Duration::from_secs(2),
         }
     }
 }
@@ -242,6 +252,10 @@ struct Inner {
     /// The approvals that runs wait for, one per conversation at most, since
     /// a conversation runs its tool calls one at a time.
     approvals: Mutex<HashMap<ConversationId, Pending>>,
+    /// The commands that run in the background on this machine (ADR-0041).
+    background: CommandRegistry,
+    /// What wake-ups know of the conversations (ADR-0041).
+    wake_ups: WakeUps,
     hubs: Hubs,
     /// What each conversation is busy with. The store refuses a second active
     /// run on its own; this map also covers compactions and the moments before
@@ -297,8 +311,9 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl Runtime {
-    /// Starts the runtime. Runs that were active when Mannie last ended become
-    /// interrupted first, before any command can start a new one.
+    /// Starts the runtime. Runs and background commands that were active when
+    /// Mannie last ended become interrupted first, before any command can
+    /// start a new one.
     pub async fn start(
         deps: RuntimeDeps,
         config: RuntimeConfig,
@@ -311,12 +326,21 @@ impl Runtime {
                 "recovered runs that were active when Mannie ended"
             );
         }
+        let commands = deps.store.recover_background_commands().await?;
+        if !commands.is_empty() {
+            tracing::info!(
+                commands = commands.len(),
+                "interrupted background commands that ran when Mannie ended"
+            );
+        }
         // What is left of commands that ran when Mannie ended is ended in the
-        // background, as a best effort; their calls are uncertain already.
+        // background, as a best effort; their calls are uncertain already,
+        // and their background commands interrupted (ADR-0041).
         let leftovers: Vec<_> = recovered
             .iter()
             .flat_map(|run| &run.uncertain)
             .filter_map(|call| call.process.clone())
+            .chain(commands.into_iter().filter_map(|command| command.process))
             .collect();
         if !leftovers.is_empty() {
             tokio::spawn(async move {
@@ -363,6 +387,8 @@ impl Runtime {
             assigned: Arc::default(),
             assigning: tokio::sync::Mutex::new(()),
             approvals: Mutex::default(),
+            background: CommandRegistry::default(),
+            wake_ups: WakeUps::default(),
             hubs: Hubs::default(),
             busy: Mutex::default(),
             verified_checkpoints: Mutex::default(),
@@ -389,6 +415,7 @@ impl Runtime {
             Arc::new(ExecutorHostProvider::new(self)),
             Arc::new(CredentialsProvider::new(self)),
             Arc::new(ProcessesProvider::new(self)),
+            Arc::new(BackgroundCommandsProvider::new(self)),
         ]
     }
 
@@ -409,8 +436,8 @@ impl Runtime {
     }
 
     /// Ends every run as interrupted, waits for them up to the shutdown
-    /// timeout, ends every subscription, and makes everything stored durable.
-    /// No run starts afterwards. The composition root stops the plugins, and
+    /// timeout, ends every background command, ends every subscription, and
+    /// makes everything stored durable. No run starts afterwards. The composition root stops the plugins, and
     /// with them their executors, before.
     pub async fn shutdown(&self) {
         self.inner.shutting_down.store(true, Ordering::SeqCst);
@@ -435,6 +462,9 @@ impl Runtime {
         {
             tracing::warn!("runs did not end in time; the next start marks them as interrupted");
         }
+        // After the runs, so no start is under way, and before the hubs, so
+        // the ends reach the subscribers.
+        self.end_background_commands().await;
         self.inner.hubs.shut_down().await;
         self.inner.assigned.shut_down();
         if let Err(error) = self.inner.store.flush().await {

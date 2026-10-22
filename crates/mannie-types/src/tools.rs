@@ -10,6 +10,7 @@
 
 mod access;
 mod approval;
+mod background;
 mod call;
 mod commands;
 mod outcome;
@@ -21,14 +22,20 @@ pub use approval::{
     ApprovalChoice, ApprovalReason, ApprovalRequest, DecideApproval, Decision, GrantScope,
     RemoteTarget, RuleProposal,
 };
+pub use background::{
+    BackgroundCommandDocument, BackgroundCommandView, BackgroundEnding, BackgroundLimit,
+    BackgroundSource, CommandEndView, CommandNoteView, MAX_COMMANDS_PER_CONVERSATION,
+    MAX_COMMANDS_PER_MACHINE, MAX_VIEW_COMMAND_CHARS,
+};
 pub use call::{
     Interruption, MAX_ARGUMENTS_BYTES, MAX_VIEW_ARGUMENTS_BYTES, NotRunReason, ProcessRecord,
     Refusal, ToolCallDocument, ToolCallStatus, ToolCallView,
 };
 pub use commands::{
-    CommandRule, ConversationGrant, GrantRef, MAX_OUTPUT_PAGE_LINES, ProgramRule, ProgramRuleRef,
-    ReadToolOutput, RemoteCommandRule, RemoteRuleRef, RuleRef, SetFullAccess, SharedGrant,
-    SharedGrantRef, ToolOutputPage, ToolsError,
+    CommandOutputUpdate, CommandRule, ConversationGrant, GrantRef, MAX_OUTPUT_PAGE_LINES,
+    MAX_OUTPUT_VIEW_LINES, ProgramRule, ProgramRuleRef, ReadToolOutput, RemoteCommandRule,
+    RemoteRuleRef, RuleRef, SetFullAccess, SharedGrant, SharedGrantRef, StopBackgroundCommand,
+    SubscribeCommandOutput, ToolOutputPage, ToolsError,
 };
 pub use outcome::{
     ArchiveRef, CommandEnding, EntryKind, PathRefusal, ToolFailure, ToolOutcome, ToolResult,

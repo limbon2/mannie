@@ -99,6 +99,17 @@ impl Reply {
     }
 }
 
+/// Adds text to the owner's message that the messages end with, or as a
+/// message of the owner's own when they end with another.
+fn join_owner_message(messages: &mut Vec<Message>, text: &str) {
+    match messages.last_mut() {
+        Some(owner) if owner.role == Role::User => {
+            owner.content.push(Content::Text(text.to_owned()));
+        }
+        _ => messages.push(Message::text(Role::User, text.to_owned())),
+    }
+}
+
 fn append_turn(messages: &mut Vec<Message>, turn: &ModelTurn, shape: RequestShape<'_>) {
     let mut reply = Reply::default();
     // The parts of the runs that the turn keeps come first, run by run; each
@@ -145,12 +156,12 @@ fn append_turn(messages: &mut Vec<Message>, turn: &ModelTurn, shape: RequestShap
             }
             // What the owner's message mentions follows it, in the same
             // message (ADR-0032, decision 7).
-            Some(PartKind::Mention) => match messages.last_mut() {
-                Some(owner) if owner.role == Role::User => {
-                    owner.content.push(Content::Text(part.text.clone()));
-                }
-                _ => messages.push(Message::text(Role::User, part.text.clone())),
-            },
+            Some(PartKind::Mention) => join_owner_message(messages, &part.text),
+            // A wake-up's request is Mannie's note, where the owner's message
+            // stands in other turns (ADR-0041).
+            Some(PartKind::CommandNote) => {
+                messages.push(Message::text(Role::User, part.text.clone()));
+            }
             // The images follow the text and the mentions, in the same
             // message, and the model never reads their names (ADR-0033,
             // decision 6).
@@ -192,6 +203,12 @@ fn append_turn(messages: &mut Vec<Message>, turn: &ModelTurn, shape: RequestShap
                 }
             }
             Some(PartKind::ToolCall | PartKind::Task) => append_call(&mut reply, part, shape),
+            // Mannie's note that joins a request follows the owner's message,
+            // in the same message (ADR-0041); a run's note is a message of
+            // its own after the run's parts so far.
+            Some(PartKind::ContinuationNote) if part.run_id.is_none() => {
+                join_owner_message(messages, &part.text);
+            }
             Some(PartKind::ContinuationNote) => {
                 reply.flush(messages);
                 messages.push(Message::text(Role::User, part.text.clone()));

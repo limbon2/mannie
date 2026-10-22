@@ -7,6 +7,8 @@
 | Deciders | Owner                                                                                                                                         |
 | Related  | [ADR-0009](0009-persist-state-in-sqlite.md), [ADR-0013](0013-journal-every-side-effect.md), [Agent runtime](../architecture/agent-runtime.md) |
 
+Later changes: [ADR-0041](0041-let-agents-run-commands-in-the-background.md) refines decisions 1 and 6: a run can also start when a background command ends in an idle conversation, and at startup the background commands that ran become interrupted.
+
 ## Context
 
 - Windows reload, the owner closes them, and links to workers drop. If a run belongs to the connection that started it, every disconnect interrupts a reply, and recovery logic spreads through the code.

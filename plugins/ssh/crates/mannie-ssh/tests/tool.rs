@@ -180,6 +180,7 @@ async fn a_command_runs_on_the_host_once_the_owner_allows_it() {
             label: "build-box".to_owned(),
             endpoint: endpoint.clone(),
             command: "echo hello".to_owned(),
+            background: false,
         }]
     );
     assert_eq!(transcript.run_state(&run), Some(RunState::Completed));
@@ -195,6 +196,7 @@ async fn a_command_runs_on_the_host_once_the_owner_allows_it() {
             endpoint: endpoint.clone(),
             identity: server.fingerprint(),
             command: "echo hello".to_owned(),
+            background: false,
         }]
     );
     assert!(

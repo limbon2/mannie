@@ -6,6 +6,7 @@ use std::fmt::Write as _;
 
 use mannie_types::clock::UtcMillis;
 use mannie_types::export::{ConversationRecord, ExportError, ExportWarning, RecordPart};
+use mannie_types::tools::BackgroundEnding;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
@@ -137,6 +138,7 @@ pub(super) fn document(
             fenced(&mut output, "text", &checkpoint.summary);
         }
     }
+    background_commands(&mut output, record, labels)?;
     if !record.children.is_empty() {
         let _written = writeln!(output, "\n## {}\n", labels.get("export_document_children")?);
         for child in &record.children {
@@ -150,6 +152,56 @@ pub(super) fn document(
         }
     }
     Ok(output)
+}
+
+/// The conversation's background commands, each with the call that started
+/// it, how it ended and its whole text (ADR-0041). Their output is the
+/// archive of the call.
+fn background_commands(
+    output: &mut String,
+    record: &ConversationRecord,
+    labels: &Labels,
+) -> Result<(), ExportError> {
+    if record.background_commands.is_empty() {
+        return Ok(());
+    }
+    let _written = writeln!(
+        output,
+        "\n## {}\n",
+        labels.get("export_document_background_commands")?
+    );
+    for command in &record.background_commands {
+        let _written = writeln!(
+            output,
+            "### {} {}\n",
+            labels.get("export_document_background_command")?,
+            command.number
+        );
+        field(
+            output,
+            labels,
+            "export_document_part",
+            command.part_id.as_str(),
+        )?;
+        field(
+            output,
+            labels,
+            "export_document_created",
+            &timestamp(command.started_at)?,
+        )?;
+        let state = command.ending.map_or("running", BackgroundEnding::as_str);
+        field(output, labels, "export_document_state", state)?;
+        if let Some(code) = command.exit_code {
+            field(
+                output,
+                labels,
+                "export_document_exit_code",
+                &code.to_string(),
+            )?;
+        }
+        fenced(output, "text", &command.command);
+    }
+    Ok(())
 }
 
 fn metadata(record: &ConversationRecord, labels: &Labels) -> Result<String, ExportError> {
@@ -260,6 +312,7 @@ fn render_part(
         "task" => "task",
         "mention" => "mention",
         "image" => "image",
+        "command_note" => "command_note",
         "error" => "error",
         _ => "unknown",
     };
@@ -449,6 +502,7 @@ mod record_tests {
             archives: Vec::new(),
             children: Vec::new(),
             warnings: Vec::new(),
+            background_commands: Vec::new(),
         }
     }
 
@@ -464,6 +518,41 @@ mod record_tests {
         assert!(root.contains("still running"));
         assert!(root.contains("\"profileId\": null"));
         assert!(root.contains("\"hasActiveRun\": true"));
+    }
+
+    #[test]
+    fn background_commands_are_listed_with_the_call_that_started_them() {
+        let mut record = record();
+        record.background_commands = vec![mannie_types::tools::BackgroundCommandView {
+            number: 2,
+            part_id: PartId::parse("0199e0f2-0000-7000-8000-000000000002").unwrap(),
+            command: "npm run dev".to_owned(),
+            source: mannie_types::tools::BackgroundSource::Local {
+                shell: "/bin/sh".to_owned(),
+                working_directory: "/work".to_owned(),
+            },
+            started_at: UtcMillis::EPOCH,
+            ending: Some(BackgroundEnding::Exited),
+            exit_code: Some(1),
+            signal: None,
+            ended_at: Some(UtcMillis::EPOCH),
+            lines: 3,
+            bytes: 0,
+            archive_id: None,
+            on_worker: false,
+        }];
+        let labels = Labels::load().unwrap();
+
+        let root = document(&record, &labels, true).unwrap();
+
+        assert!(
+            root.contains("## Background commands\n\n### Command 2\n"),
+            "{root}"
+        );
+        assert!(root.contains("- Part ID: 0199e0f2-0000-7000-8000-000000000002"));
+        assert!(root.contains("- State: exited"));
+        assert!(root.contains("- Exit code: 1"));
+        assert!(root.contains("```text\nnpm run dev\n```"));
     }
 
     #[test]

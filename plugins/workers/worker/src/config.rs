@@ -321,11 +321,14 @@ fn checked_ceiling(ceiling: CeilingFile, now: UtcMillis) -> Result<Ceiling, (Str
             .map(existing_folder)
             .transpose()
             .map_err(|problem| (format!("ceiling.rules[{index}].folder"), problem))?;
+        // A host rule allows its commands in both modes for as long as their
+        // task runs, so it needs no mode of its own (ADR-0041, decision 9).
         rules.push(CommandRule {
             id: new_rule_id(),
             words,
             folder,
             created_at: now,
+            background: false,
         });
     }
     Ok(Ceiling {

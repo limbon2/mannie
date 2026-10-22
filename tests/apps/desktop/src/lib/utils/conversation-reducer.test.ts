@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type {
+  BackgroundCommandView,
   ConversationEvent,
   ConversationSnapshot,
   ConversationUpdate,
@@ -298,6 +299,51 @@ describe('applyUpdate', () => {
     expect(state.context?.usedTokens).toBe(40);
     expect(state.checkpoint?.id).toBe('checkpoint');
     expect(state.cursor).toBe(4);
+  });
+});
+
+describe('background commands', () => {
+  function command(number: number, ending: BackgroundCommandView['ending']): BackgroundCommandView {
+    return {
+      archiveId: null,
+      bytes: 0,
+      command: 'npm run dev',
+      endedAt: null,
+      ending,
+      exitCode: null,
+      lines: 0,
+      number,
+      onWorker: false,
+      partId: `part-${String(number)}`,
+      signal: null,
+      source: { kind: 'local', shell: '/bin/sh', workingDirectory: '/work' },
+      startedAt: 0,
+    };
+  }
+
+  it('reads the commands of a snapshot by number, and none from a snapshot of an older version', () => {
+    const state = emptyTranscript();
+    const update = snapshot([turn(0)], 3);
+    if (update.type === 'snapshot') {
+      update.snapshot.backgroundCommands = [command(2, null), command(1, 'exited')];
+    }
+
+    applyUpdate(state, update);
+    expect(state.backgroundCommands.map((entry) => entry.number)).toEqual([1, 2]);
+
+    applyUpdate(state, snapshot([turn(0)], 4));
+    expect(state.backgroundCommands).toEqual([]);
+  });
+
+  it('adds a command that starts and replaces it when it ends', () => {
+    const state = emptyTranscript();
+    applyUpdate(state, snapshot([turn(0)], 1));
+
+    applyUpdate(state, event(2, { command: command(1, null), kind: 'background_command_changed' }));
+    applyUpdate(state, event(3, { command: command(1, 'stopped_by_owner'), kind: 'background_command_changed' }));
+
+    expect(state.backgroundCommands).toHaveLength(1);
+    expect(state.backgroundCommands[0]?.ending).toBe('stopped_by_owner');
   });
 });
 

@@ -5,6 +5,7 @@ use specta::Type;
 
 use crate::ids::{PartId, RunId};
 use crate::run::RunView;
+use crate::tools::BackgroundCommandView;
 
 use super::parts::PartView;
 use super::views::{CheckpointView, ContextUsage, ConversationSummary, TurnView};
@@ -85,6 +86,12 @@ pub enum ConversationEvent {
         /// The conversation as it is now.
         conversation: ConversationSummary,
     },
+    /// A background command of the conversation started or ended
+    /// (ADR-0041). Its lines never come as events.
+    BackgroundCommandChanged {
+        /// The command as it is now.
+        command: BackgroundCommandView,
+    },
     /// A kind of event that this version does not know.
     Unknown {
         /// The kind's name.
@@ -107,6 +114,7 @@ impl ConversationEvent {
             Self::CheckpointCreated { .. } => "checkpoint_created",
             Self::ContextUsageChanged { .. } => "context_usage_changed",
             Self::ConversationChanged { .. } => "conversation_changed",
+            Self::BackgroundCommandChanged { .. } => "background_command_changed",
             Self::Unknown { name } => name,
         }
     }

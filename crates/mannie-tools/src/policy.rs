@@ -228,6 +228,7 @@ fn decide_under_ceiling(
         Access::Command {
             command,
             working_directory,
+            background,
             ..
         } => {
             if read_only {
@@ -241,10 +242,13 @@ fn decide_under_ceiling(
                 return Err(Hold::Ask(ApprovalReason::Command));
             };
             if let Some(decision) = granted(&inputs.grants, |grant| {
-                covers_command(grant, command, directory)
+                covers_command(grant, command, directory, *background)
             }) {
                 return Ok(decision);
             }
+            // The host's rules come from its configuration, and a ceiling
+            // that allows a command allows it in the background too, for as
+            // long as its task runs (ADR-0041, decision 9).
             let ruled = autonomous
                 && ceiling
                     .rules
@@ -291,6 +295,7 @@ fn decide_access(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decision,
         Access::Command {
             command,
             working_directory,
+            background,
             ..
         } => {
             let directory = Path::new(working_directory);
@@ -301,15 +306,14 @@ fn decide_access(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decision,
                 return Err(ApprovalReason::Command);
             };
             if let Some(decision) = granted(&inputs.grants, |grant| {
-                covers_command(grant, command, directory)
+                covers_command(grant, command, directory, *background)
             }) {
                 return Ok(decision);
             }
-            if inputs
-                .rules
-                .iter()
-                .any(|rule| rule_matches(rule, &words, directory))
-            {
+            let ruled = inputs.rules.iter().any(|rule| {
+                covers_mode(rule.background, *background) && rule_matches(rule, &words, directory)
+            });
+            if ruled {
                 return Ok(Decision::Rule);
             }
             Err(ApprovalReason::Command)
@@ -331,6 +335,7 @@ fn decide_access(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decision,
             target,
             endpoint,
             command,
+            background,
             ..
         } => {
             let Some(words) = remote_command_words(command) else {
@@ -342,15 +347,16 @@ fn decide_access(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decision,
                 endpoint,
             };
             if let Some(decision) = granted(&inputs.grants, |grant| {
-                covers_remote_command(grant, &host, command)
+                covers_remote_command(grant, &host, command, *background)
             }) {
                 return Ok(decision);
             }
-            if inputs
-                .remote_rules
-                .iter()
-                .any(|rule| host.is(&rule.target) && starts_with_words(&words, &rule.words))
-            {
+            let ruled = inputs.remote_rules.iter().any(|rule| {
+                covers_mode(rule.background, *background)
+                    && host.is(&rule.target)
+                    && starts_with_words(&words, &rule.words)
+            });
+            if ruled {
                 return Ok(Decision::Rule);
             }
             Err(ApprovalReason::RemoteCommand)
@@ -524,13 +530,25 @@ fn covers_path(grant: &GrantScope, path: &Path, mode: AccessMode) -> bool {
     }
 }
 
-/// Whether a grant covers a command in a working directory.
-fn covers_command(grant: &GrantScope, command: &str, directory: &Path) -> bool {
+/// Whether a grant or a rule of one mode covers a command of another: one
+/// given or saved from a command in the background covers both modes, and
+/// one from the foreground only the foreground (ADR-0041, D40).
+fn covers_mode(granted_background: bool, background: bool) -> bool {
+    granted_background || !background
+}
+
+/// Whether a grant covers a command in a working directory, in its mode.
+fn covers_command(grant: &GrantScope, command: &str, directory: &Path, background: bool) -> bool {
     match grant {
         GrantScope::Command {
             command: granted,
             working_directory,
-        } => granted == command && is_same_path(directory, Path::new(working_directory)),
+            background: granted_background,
+        } => {
+            granted == command
+                && is_same_path(directory, Path::new(working_directory))
+                && covers_mode(*granted_background, background)
+        }
         GrantScope::Path { .. } | GrantScope::RemoteCommand { .. } | GrantScope::Program { .. } => {
             false
         }
@@ -538,20 +556,27 @@ fn covers_command(grant: &GrantScope, command: &str, directory: &Path) -> bool {
 }
 
 /// Whether a grant covers a command on a remote host: the same command text
-/// on the same host at the same endpoint.
-fn covers_remote_command(grant: &GrantScope, host: &HostKey<'_>, command: &str) -> bool {
+/// on the same host at the same endpoint, in its mode.
+fn covers_remote_command(
+    grant: &GrantScope,
+    host: &HostKey<'_>,
+    command: &str,
+    background: bool,
+) -> bool {
     match grant {
         GrantScope::RemoteCommand {
             plugin,
             target,
             endpoint,
             command: granted,
+            background: granted_background,
             ..
         } => {
             plugin == host.plugin
                 && target == host.target
                 && endpoint == host.endpoint
                 && granted == command
+                && covers_mode(*granted_background, background)
         }
         GrantScope::Path { .. } | GrantScope::Command { .. } | GrantScope::Program { .. } => false,
     }
@@ -635,12 +660,14 @@ fn grant_scope(access: &Access) -> Option<GrantScope> {
         Access::Command {
             command,
             working_directory,
+            background,
             ..
         } => {
             command_words(command)?;
             Some(GrantScope::Command {
                 command: command.clone(),
                 working_directory: working_directory.clone(),
+                background: *background,
             })
         }
         Access::Project { .. } => None,
@@ -650,6 +677,7 @@ fn grant_scope(access: &Access) -> Option<GrantScope> {
             label,
             endpoint,
             command,
+            background,
             ..
         } => {
             remote_command_words(command)?;
@@ -659,6 +687,7 @@ fn grant_scope(access: &Access) -> Option<GrantScope> {
                 label: label.clone(),
                 endpoint: endpoint.clone(),
                 command: command.clone(),
+                background: *background,
             })
         }
         Access::Program { .. } => {
@@ -690,14 +719,17 @@ fn scope_covers(wider: &GrantScope, narrower: &GrantScope) -> bool {
             GrantScope::Command {
                 command,
                 working_directory,
+                background,
             },
             GrantScope::Command {
                 command: narrower_command,
                 working_directory: narrower_directory,
+                background: narrower_background,
             },
         ) => {
             command == narrower_command
                 && is_same_path(Path::new(narrower_directory), Path::new(working_directory))
+                && covers_mode(*background, *narrower_background)
         }
         (
             GrantScope::RemoteCommand {
@@ -705,6 +737,7 @@ fn scope_covers(wider: &GrantScope, narrower: &GrantScope) -> bool {
                 target,
                 endpoint,
                 command,
+                background,
                 ..
             },
             GrantScope::RemoteCommand {
@@ -712,6 +745,7 @@ fn scope_covers(wider: &GrantScope, narrower: &GrantScope) -> bool {
                 target: narrower_target,
                 endpoint: narrower_endpoint,
                 command: narrower_command,
+                background: narrower_background,
                 ..
             },
         ) => {
@@ -719,6 +753,7 @@ fn scope_covers(wider: &GrantScope, narrower: &GrantScope) -> bool {
                 && target == narrower_target
                 && endpoint == narrower_endpoint
                 && command == narrower_command
+                && covers_mode(*background, *narrower_background)
         }
         (
             GrantScope::Program {
@@ -761,6 +796,7 @@ fn rule_for(accesses: &[Access]) -> Option<RuleProposal> {
             Access::Command {
                 command,
                 working_directory,
+                background,
                 ..
             },
         ] => Some(RuleProposal {
@@ -768,6 +804,7 @@ fn rule_for(accesses: &[Access]) -> Option<RuleProposal> {
             folder: working_directory.clone(),
             remote: None,
             program: None,
+            background: *background,
         }),
         [
             Access::RemoteCommand {
@@ -776,6 +813,7 @@ fn rule_for(accesses: &[Access]) -> Option<RuleProposal> {
                 label,
                 endpoint,
                 command,
+                background,
                 ..
             },
         ] => Some(RuleProposal {
@@ -788,6 +826,7 @@ fn rule_for(accesses: &[Access]) -> Option<RuleProposal> {
                 endpoint: endpoint.clone(),
             }),
             program: None,
+            background: *background,
         }),
         _ => program_rule_for(accesses),
     }
@@ -814,6 +853,7 @@ fn program_rule_for(accesses: &[Access]) -> Option<RuleProposal> {
         words,
         folder: run.working_directory.to_owned(),
         remote: None,
+        background: false,
         program: Some(ProgramTarget {
             plugin: run.plugin.to_owned(),
             name: run.name.to_owned(),
@@ -833,6 +873,8 @@ pub enum SavedRule {
         /// The folder the working directory must lie in, or `None` for
         /// anywhere.
         folder: Option<String>,
+        /// Whether it also covers commands in the background (ADR-0041).
+        background: bool,
     },
     /// A rule for commands on one remote host (ADR-0036).
     Remote {
@@ -840,6 +882,8 @@ pub enum SavedRule {
         target: RemoteTarget,
         /// The leading words a command must start with.
         words: Vec<String>,
+        /// Whether it also covers commands in the background (ADR-0041).
+        background: bool,
     },
     /// A rule for runs of one plugin's installed program, with the effects
     /// of the run that it was saved from (ADR-0038).
@@ -875,13 +919,18 @@ pub fn saved_rule(
         (Some(target), _) => SavedRule::Remote {
             target: target.clone(),
             words,
+            background: proposal.background,
         },
         (None, Some(target)) => SavedRule::Program {
             target: target.clone(),
             words,
             folder,
         },
-        (None, None) => SavedRule::Local { words, folder },
+        (None, None) => SavedRule::Local {
+            words,
+            folder,
+            background: proposal.background,
+        },
     })
 }
 

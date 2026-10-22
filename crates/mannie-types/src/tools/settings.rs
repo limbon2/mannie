@@ -93,7 +93,7 @@ impl<'de> Deserialize<'de> for EnvName {
 /// The tools settings section. A section stored before projects replaced
 /// the default workspace still has `defaultWorkspace`, which reading
 /// ignores (ADR-0023).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolsSettings {
     /// Whether changes inside a conversation's workspace run without asking.
@@ -105,6 +105,27 @@ pub struct ToolsSettings {
     /// changes afterwards. Off by default (ADR-0029, decision 2).
     #[serde(default)]
     pub full_access_for_new_conversations: bool,
+    /// Whether a background command's own end wakes an idle agent with a
+    /// reply of Mannie's own (ADR-0041, decision 8). On by default (D40),
+    /// also in a section stored before it existed.
+    #[serde(default = "wake_by_default")]
+    pub wake_on_command_end: bool,
+}
+
+/// Wake-ups are on unless the owner turns them off.
+const fn wake_by_default() -> bool {
+    true
+}
+
+impl Default for ToolsSettings {
+    fn default() -> Self {
+        Self {
+            allow_changes_in_workspace: false,
+            command_environment: Vec::new(),
+            full_access_for_new_conversations: false,
+            wake_on_command_end: wake_by_default(),
+        }
+    }
 }
 
 impl SettingsSection for ToolsSettings {
@@ -123,6 +144,9 @@ pub struct UpdateToolsSettings {
     pub command_environment: Vec<String>,
     /// Whether new conversations start in full access.
     pub full_access_for_new_conversations: bool,
+    /// Whether a background command's own end wakes an idle agent.
+    #[serde(default = "wake_by_default")]
+    pub wake_on_command_end: bool,
 }
 
 impl UpdateToolsSettings {
@@ -144,6 +168,7 @@ impl UpdateToolsSettings {
             allow_changes_in_workspace: self.allow_changes_in_workspace,
             command_environment,
             full_access_for_new_conversations: self.full_access_for_new_conversations,
+            wake_on_command_end: self.wake_on_command_end,
         })
     }
 }
@@ -198,6 +223,7 @@ mod tests {
                 "RUSTUP_HOME".to_owned(),
             ],
             full_access_for_new_conversations: true,
+            wake_on_command_end: false,
         }
         .into_settings()
         .unwrap();
@@ -214,6 +240,21 @@ mod tests {
         assert!(settings.full_access_for_new_conversations);
         assert!(!ToolsSettings::default().allow_changes_in_workspace);
         assert!(!ToolsSettings::default().full_access_for_new_conversations);
+        assert!(!settings.wake_on_command_end);
+        assert!(ToolsSettings::default().wake_on_command_end);
+    }
+
+    #[test]
+    fn a_section_from_before_wake_ups_reads_with_them_on() {
+        let stored = serde_json::json!({
+            "allowChangesInWorkspace": false,
+            "commandEnvironment": [],
+            "fullAccessForNewConversations": false,
+        });
+
+        let settings: ToolsSettings = serde_json::from_value(stored).unwrap();
+
+        assert!(settings.wake_on_command_end);
     }
 
     #[test]
@@ -255,6 +296,7 @@ mod tests {
                 "allowChangesInWorkspace": true,
                 "commandEnvironment": ["CARGO_HOME"],
                 "fullAccessForNewConversations": false,
+                "wakeOnCommandEnd": true,
             })
         );
     }

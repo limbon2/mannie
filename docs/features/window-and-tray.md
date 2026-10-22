@@ -4,7 +4,7 @@
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Building                                                                                                                                                                                                                                                                   |
 | Milestone    | M1                                                                                                                                                                                                                                                                         |
-| Last updated | 2026-10-14                                                                                                                                                                                                                                                                 |
+| Last updated | 2026-10-21                                                                                                                                                                                                                                                                 |
 | Related      | [Desktop app](../architecture/desktop-app.md#7-window-and-lifecycle), [Chat](chat/README.md), [ADR-0003](../adr/0003-build-the-desktop-app-on-tauri-2.md), [ADR-0012](../adr/0012-run-agents-as-durable-actors.md), [ADR-0020](../adr/0020-complete-the-ui-shell-slots.md) |
 
 ## Intent
@@ -16,7 +16,7 @@ When the owner closes the window, Mannie asks once whether to keep running in th
 - The first time the owner closes the main window, Mannie asks whether to keep running in the system tray or to quit when the window closes. The answer is saved as a setting.
 - The settings show the choice, and the owner can change it at any time.
 - Tray mode: closing the window hides it, and runs and worker links continue. The tray icon's menu has "Open Mannie" and "Quit". On Windows, clicking the tray icon also opens the window.
-- Quit mode: closing the window quits Mannie. When runs are active, Mannie first warns how many runs are active and that quitting interrupts them, and that they can be retried later. The owner can quit anyway or cancel.
+- Quit mode: closing the window quits Mannie. When runs are active, Mannie first warns how many runs are active and that quitting interrupts them, and that they can be retried later. When background commands run, the warning also says how many and that quitting ends them ([background commands](system-tools/background-commands.md)). The owner can quit anyway or cancel.
 - Quitting from the tray menu while runs are active shows the same warning.
 - Tasks on workers are not affected by either choice. They keep running on their workers.
 - Starting Mannie again while it runs in the tray brings the window back.
@@ -37,6 +37,7 @@ None.
 
 - 2026-10-13: the owner chooses between tray and quit on the first close, and can change it later (D13).
 - 2026-10-13: quitting from the tray menu while runs are active warns in the same way as closing in quit mode, so that no path quits active runs without a warning.
+- 2026-10-21: the warning before closing or quitting also counts running background commands, which quitting ends, and warns when only they run ([ADR-0041](../adr/0041-let-agents-run-commands-in-the-background.md), D40).
 - 2026-10-14: the defaults below were chosen when building started, and each one waits for the owner's review.
   - The tray icon is present in every mode, once the window has given it its labels.
   - When runs are active, the first-close question says so, and choosing Quit there needs no second warning.
@@ -60,10 +61,12 @@ The core decides what a close request does, in a function with unit tests for ev
 | Quit         | None        | Mannie quits                                                                                               |
 | Quit         | Some        | The window stays and warns with the number of runs                                                         |
 
+Running background commands count as runs do: the question and the warning carry the number of active runs and the number of running background commands, and each sentence names its own.
+
 - "Quit" in the tray menu shows the window and follows the last two rows. "Open Mannie" shows the window and brings it to the front.
 - The window learns about a question through a channel that it opens at startup (`subscribe_window_requests`), so no event permission is granted to the webview. A question that is pending when the window subscribes, for example after a reload, is sent again.
 - The answers are commands: `answer_close_question` (tray or quit, saved before it takes effect), `confirm_quit`, and `dismiss_window_request`. `get_window_settings` and `update_window_settings` serve the settings section.
-- Quitting stops the runtime, which marks active runs as interrupted and waits up to three seconds for them, then closes the store and the logs, and then ends the process.
+- Quitting stops the runtime, which marks active runs as interrupted and waits up to three seconds for them, then ends every background command as interrupted and stores its end, then closes the store and the logs, and then ends the process.
 
 ### Tray
 

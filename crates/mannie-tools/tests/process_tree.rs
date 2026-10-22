@@ -1,6 +1,8 @@
 //! V4 (docs/features/system-tools/commands.md, tests): when a command ends,
 //! on its own, at its timeout or by Stop, every process it started ends with
-//! it, including processes that detach on purpose.
+//! it, including processes that detach on purpose. A command that runs in the
+//! background ends the same way, on its own, when it is ended, and when it is
+//! dropped (ADR-0041).
 //!
 //! Each test runs a command that starts a grandchild of one shape, which
 //! writes its process ID to a file and then sleeps. Once the command ended,
@@ -16,8 +18,8 @@ use std::time::{Duration, Instant};
 
 use mannie_store::{Store, StoreOptions};
 use mannie_tools::{
-    CommandEnvironment, Done, Execution, MutationLock, ProjectFacts, StopReason, StopSignal,
-    SystemFacts, ToolContext, ToolRegistry,
+    BackgroundProcess, BackgroundSpec, CommandEnvironment, Done, Execution, MutationLock,
+    ProjectFacts, StopReason, StopSignal, SystemFacts, ToolContext, ToolRegistry,
 };
 use mannie_types::clock::{Clock, SystemClock};
 use mannie_types::ids::{ArchiveId, ConversationId};
@@ -39,6 +41,17 @@ enum End {
     Timeout,
     /// The command sleeps until Stop.
     Stop,
+}
+
+/// How a test ends a command that runs in the background.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BackgroundEnd {
+    /// The command ends on its own once the grandchild runs.
+    Normal,
+    /// The command sleeps until it is ended.
+    Stop,
+    /// The command sleeps until it is dropped.
+    Drop,
 }
 
 /// A workspace, a store and the system tools.
@@ -70,6 +83,7 @@ impl Harness {
             }),
             system: Arc::new(SystemFacts::detect()),
             projects: ProjectFacts::none(),
+            background: mannie_tools::no_background_commands(),
         };
         Self {
             _folder: folder,
@@ -107,6 +121,7 @@ impl Harness {
             accesses: prepared.accesses,
             stop: stop.clone(),
             process: None,
+            part_id: None,
         });
         let stopper = async {
             if end == End::Stop {
@@ -149,6 +164,58 @@ impl Harness {
     }
 }
 
+impl Harness {
+    /// Runs a command in the background that starts a grandchild, ends it the
+    /// way `end` says, and returns the grandchild's process ID.
+    async fn run_background(&self, start_grandchild: &str, end: BackgroundEnd) -> u32 {
+        let pid_file = self.root.join("grandchild.pid");
+        let wait = wait_for_file(&pid_file);
+        let rest = match end {
+            BackgroundEnd::Normal => "",
+            BackgroundEnd::Stop | BackgroundEnd::Drop => sleep_long(),
+        };
+        let spec = BackgroundSpec {
+            shell: self.context.system.shell.clone().unwrap().path,
+            text: format!(
+                "{start_grandchild}
+{wait}
+{rest}"
+            ),
+            working_directory: self.root.clone(),
+            environment: self.context.environment.variables().to_vec(),
+        };
+        let mut process = BackgroundProcess::spawn(&spec).await.unwrap();
+        if end == BackgroundEnd::Normal {
+            let code = tokio::time::timeout(Duration::from_secs(60), process.finished())
+                .await
+                .expect("the command ends on its own");
+            process.end(true).await;
+            assert_eq!(code, Some(0));
+        } else {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while !pid_file_written(&pid_file) && Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            if end == BackgroundEnd::Stop {
+                let stopped_at = Instant::now();
+                process.end(false).await;
+                assert!(
+                    stopped_at.elapsed() < Duration::from_secs(1),
+                    "ending took {:?}",
+                    stopped_at.elapsed()
+                );
+            } else {
+                drop(process);
+            }
+        }
+        fs::read_to_string(&pid_file)
+            .unwrap_or_else(|error| panic!("no process ID: {error}"))
+            .trim()
+            .parse()
+            .unwrap()
+    }
+}
+
 fn pid_file_written(path: &Path) -> bool {
     fs::read_to_string(path).is_ok_and(|text| text.trim().parse::<u32>().is_ok())
 }
@@ -163,6 +230,20 @@ fn assert_ended(pid: u32) {
             "process {pid} is still alive after its command ended"
         );
         std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Asserts that a process ended, while the runtime goes on running tasks,
+/// such as the end that dropping a command that runs in the background
+/// spawns.
+async fn assert_ended_soon(pid: u32) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while is_alive(pid) {
+        assert!(
+            Instant::now() < deadline,
+            "process {pid} is still alive after its command ended"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
 
@@ -223,14 +304,24 @@ fn sleep_long() -> &'static str {
     "sleep 60"
 }
 
-/// Runs a shape with every way to end, and checks that the grandchild ended
-/// each time.
+/// Runs a shape with every way to end, in the foreground and in the
+/// background, and checks that the grandchild ended each time.
 async fn every_end_ends(start_grandchild: impl Fn(&Path) -> String) {
     for end in [End::Normal, End::Timeout, End::Stop] {
         let harness = Harness::new();
         let start = start_grandchild(&harness.root.join("grandchild.pid"));
         let (_, pid) = harness.run(&start, end).await;
         assert_ended(pid);
+    }
+    for end in [
+        BackgroundEnd::Normal,
+        BackgroundEnd::Stop,
+        BackgroundEnd::Drop,
+    ] {
+        let harness = Harness::new();
+        let start = start_grandchild(&harness.root.join("grandchild.pid"));
+        let pid = harness.run_background(&start, end).await;
+        assert_ended_soon(pid).await;
     }
 }
 

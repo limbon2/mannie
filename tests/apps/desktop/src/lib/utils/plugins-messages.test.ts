@@ -1,7 +1,8 @@
 // The messages of the plugins feature (docs/features/plugins.md; ADR-0019):
 // every error of the plugins commands has a message of its own, a plugin words
-// its own start failures and the core words the host's, and a plugin's state
-// line says when it starts, stops or failed.
+// its own start failures and the core words the host's, a plugin's state line
+// says when it starts, stops or failed, and the question before turning a
+// plugin off joins the plugin's sentence and the core's.
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { PluginsError } from '../../../../../../apps/desktop/src/lib/generated/bindings.js';
@@ -9,6 +10,7 @@ import { setPluginCatalog } from '../../../../../../apps/desktop/src/lib/state/p
 import {
   failedForPluginOff,
   pluginNativeLabel,
+  pluginOffQuestion,
   pluginServiceLabel,
   pluginsFailureMessage,
   pluginStartFailureMessage,
@@ -103,13 +105,51 @@ describe('pluginStateMessage', () => {
 
 describe('pluginServiceLabel', () => {
   it('words each service of SDK 1 in a sentence of its own and names any other service', () => {
-    const services = ['credentials', 'executor-host', 'file-dialog', 'secrets', 'store'];
+    const services = ['background-commands', 'credentials', 'executor-host', 'file-dialog', 'secrets', 'store'];
 
     const labels = services.map((name) => pluginServiceLabel(name));
     const other = pluginServiceLabel('teleport');
 
     expect(new Set([...labels, other]).size).toBe(services.length + 1);
     expect(other).toContain('teleport');
+  });
+});
+
+describe('pluginOffQuestion', () => {
+  it("joins the plugin's sentence for its own work and the core's for the commands that its tools started", () => {
+    setPluginCatalog([
+      {
+        description: () => '',
+        failure: () => null,
+        id: 'ssh',
+        name: () => 'SSH',
+        offQuestion: (items) => (items.length === 0 ? null : `It has ${String(items.length)} kinds of work.`),
+      },
+    ]);
+    const commands = { code: 'core.background_commands', count: 2 };
+    const own = { code: 'open_sessions', count: 1 };
+
+    const both = pluginOffQuestion('ssh', [own, commands]);
+    const core = pluginOffQuestion('ssh', [commands]);
+    const plugin = pluginOffQuestion('ssh', [own]);
+    const none = pluginOffQuestion('ssh', []);
+
+    expect(both).toBe(
+      'It has 1 kinds of work. Its tools started 2 commands in the background that still run. Turning the plugin off stops them.',
+    );
+    expect(core).toBe(
+      'Its tools started 2 commands in the background that still run. Turning the plugin off stops them.',
+    );
+    expect(plugin).toBe('It has 1 kinds of work.');
+    expect(none).toBeNull();
+  });
+
+  it('words the commands of a plugin that is not in the catalog', () => {
+    const question = pluginOffQuestion('gone', [{ code: 'core.background_commands', count: 1 }]);
+
+    expect(question).toBe(
+      'Its tools started a command in the background that still runs. Turning the plugin off stops it.',
+    );
   });
 });
 

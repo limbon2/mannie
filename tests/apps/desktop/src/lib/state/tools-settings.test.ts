@@ -97,6 +97,7 @@ describe('ToolsSettingsState', () => {
       allowChangesInWorkspace: true,
       commandEnvironment: ['JAVA_HOME'],
       fullAccessForNewConversations: false,
+      wakeOnCommandEnd: true,
     });
     expect(settings.settings?.allowChangesInWorkspace).toBe(true);
   });

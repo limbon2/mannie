@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                                                                                                                                                                         |
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                                                                                                                                                                                        |
-| Last updated | 2026-10-16                                                                                                                                                                                                                                                                                                                              |
+| Last updated | 2026-10-21                                                                                                                                                                                                                                                                                                                              |
 | Related      | [ADR-0011](../adr/0011-own-the-provider-adapters.md), [ADR-0012](../adr/0012-run-agents-as-durable-actors.md), [ADR-0024](../adr/0024-run-child-agent-tasks-in-the-parent-run.md), [Tools](tools.md), [Orchestration](orchestration.md), [Domain model](domain-model.md), [ADR-0031](../adr/0031-move-workers-into-the-first-plugin.md) |
 
 The agent runtime (`mannie-runtime`) executes agents. The same runtime runs in the desktop app and in every worker of the Workers plugin ([ADR-0015](../adr/0015-run-an-agent-runtime-on-every-machine.md)). Its composition root gives it its registries and settings, and plugins add their contributions to it while they are on ([ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md)).
@@ -22,8 +22,9 @@ The runtime owns the agent loop, budgets, retries, context management and compac
 - A child agent's run belongs to its parent's run, which starts it, reads its state from a board that the child writes, and writes that state into the parent's conversation as the conversation's only writer. The parent's run ends only after its children have ended ([ADR-0024](../adr/0024-run-child-agent-tasks-in-the-parent-run.md)).
 - A task of a plugin's executor publishes its state on the same board: the executor publishes each state with a version, and an older state changes nothing. For an executor whose tasks outlive their reply, such as a worker's, the parent's run does not wait for an unreachable target when it stops, and quitting or turning the plugin off lets the tasks go while they run on ([orchestration](orchestration.md#4-task-executors), [ADR-0031](../adr/0031-move-workers-into-the-first-plugin.md)).
 - With the settings that a composition root gives it, a ceiling, a description of its machine and a number of task slots, the runtime runs tasks that another machine assigns, each in a task conversation without a parent, as a worker does under its agent definition and policy ceiling ([ADR-0028](../adr/0028-run-assigned-tasks-under-the-host-ceiling.md)).
-- At shutdown, the runtime accepts no new runs, asks every run to stop, and waits up to 3 seconds; runs still active become interrupted.
-- At startup, runs that were active become interrupted, with the text they had written, the runs of task conversations first. The owner retries them, or for tasks the assigning agent decides.
+- A run also starts when a background command of an idle conversation ends on its own: the runtime reserves the conversation as the owner's message does, and the turn's request is a note of Mannie's own, which the owner sees as a row ([wake-ups](../features/system-tools/wake-ups.md), [ADR-0041](../adr/0041-let-agents-run-commands-in-the-background.md)). Wake-ups have limits of their own, since a reply's budgets start again with every reply.
+- At shutdown, the runtime accepts no new runs, asks every run to stop, and waits up to 3 seconds; runs still active become interrupted. Then it ends every background command, the trees of all of them at the same time, and stores their ends.
+- At startup, runs that were active become interrupted, with the text they had written, the runs of task conversations first. The owner retries them, or for tasks the assigning agent decides. Background commands that ran become interrupted from their own records, also where no run was active ([background commands](../features/system-tools/background-commands.md#recovery)).
 
 ## 3. The loop
 
@@ -57,14 +58,15 @@ flowchart TD
 
 Some servers and models stop a step early or put tool calls in the wrong place. Quirk profiles in the provider layer detect these cases and report them as normalized events:
 
-| Case                                                 | What the runtime does                                                                              |
-| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| A step with no text and no tool call                 | Sends a short continuation note to the model and calls it again                                    |
-| A tool call written as text or left in the reasoning | Converts it when the quirk profile allows that, otherwise asks the model to use the tool interface |
-| An answer that announces a next step and then stops  | Sends a continuation note                                                                          |
-| A task report that may be unfinished                 | Asks the agent once to confirm that it is done before the report goes back                         |
+| Case                                                  | What the runtime does                                                                                     |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| A step with no text and no tool call                  | Sends a short continuation note to the model and calls it again                                           |
+| A tool call written as text or left in the reasoning  | Converts it when the quirk profile allows that, otherwise asks the model to use the tool interface        |
+| An answer that announces a next step and then stops   | Sends a continuation note                                                                                 |
+| A task report that may be unfinished                  | Asks the agent once to confirm that it is done before the report goes back                                |
+| A background command ended and the model was not told | Adds a note of Mannie's own before the next model call, and continues a reply that would end once with it |
 
-The number of continuation notes per turn is limited, and a child's confirmation does not count against it. Continuation notes are recorded as parts that only the model sees, and the UI does not show them as messages.
+The number of continuation notes per turn is limited, and a child's confirmation and the notes about background commands do not count against it. A reply that the owner's message starts may hold a note about background commands with its request. Continuation notes are recorded as parts that only the model sees, and the UI does not show them as messages.
 
 ## 6. Transcript and events
 

@@ -350,11 +350,16 @@ pub(crate) fn localize_summary(
     }
 }
 
-/// An update from a worker, with the master's summary in it.
+/// An update from a worker, with the master's summary in it, and with the
+/// worker's background commands marked as the worker's, which the owner
+/// stops by stopping the task (ADR-0041, decision 9).
 fn localize(master: &ConversationSummary, update: ConversationUpdate) -> ConversationUpdate {
     match update {
         ConversationUpdate::Snapshot { mut snapshot } => {
             snapshot.conversation = localize_summary(master, &snapshot.conversation);
+            for command in &mut snapshot.background_commands {
+                command.on_worker = true;
+            }
             ConversationUpdate::Snapshot { snapshot }
         }
         ConversationUpdate::Event {
@@ -366,6 +371,16 @@ fn localize(master: &ConversationSummary, update: ConversationUpdate) -> Convers
                 conversation: localize_summary(master, &conversation),
             },
         },
+        ConversationUpdate::Event {
+            seq,
+            event: ConversationEvent::BackgroundCommandChanged { mut command },
+        } => {
+            command.on_worker = true;
+            ConversationUpdate::Event {
+                seq,
+                event: ConversationEvent::BackgroundCommandChanged { command },
+            }
+        }
         other => other,
     }
 }

@@ -31,6 +31,7 @@ use tokio::sync::oneshot;
 
 use super::{Ending, MAX_DETAIL_CHARS, RunActor, StepCall, halt};
 use crate::approvals::Answer;
+use crate::background::BackgroundPort;
 use crate::budget::budget_bytes;
 use crate::calls::Setup;
 use crate::policy::PolicyGrants;
@@ -171,6 +172,9 @@ impl RunActor {
             }
         }
         self.await_foreground_tasks().await?;
+        // The ends of background commands reach the model before its next
+        // call (ADR-0041).
+        self.note_command_ends().await?;
         self.publish_progress(None);
         let preparing = self.activity(RunActivity::Preparing);
         self.pending.push(preparing);
@@ -383,6 +387,7 @@ impl RunActor {
             accesses,
             stop: stop.clone(),
             process: Some(process_sender),
+            part_id: Some(call.part_id.clone()),
         });
         let abort = execution_guard.as_ref().map(|guard| guard.abort.clone());
         let watched = self
@@ -578,11 +583,20 @@ impl RunActor {
                     .as_ref()
                     .map(|proposal| saved_rule(proposal, *prefix_words, *limit_to_folder));
                 let saved = match rule {
-                    Some(Ok(SavedRule::Local { words, folder })) => {
-                        store.add_rule(&ids.rule(), words, folder).await.map(drop)
-                    }
-                    Some(Ok(SavedRule::Remote { target, words })) => store
-                        .add_remote_rule(&ids.rule(), target, words)
+                    Some(Ok(SavedRule::Local {
+                        words,
+                        folder,
+                        background,
+                    })) => store
+                        .add_rule(&ids.rule(), words, folder, background)
+                        .await
+                        .map(drop),
+                    Some(Ok(SavedRule::Remote {
+                        target,
+                        words,
+                        background,
+                    })) => store
+                        .add_remote_rule(&ids.rule(), target, words, background)
                         .await
                         .map(drop),
                     Some(Ok(SavedRule::Program {
@@ -695,6 +709,11 @@ impl RunActor {
             archive_ids: Arc::new(move || runtime.inner.ids.archive()),
             system: Arc::clone(&inner.tools.system),
             projects,
+            // The commands belong to the call's conversation, also a
+            // child's (ADR-0041).
+            background: Arc::new(BackgroundPort {
+                runtime: self.runtime.clone(),
+            }),
         };
         Ok(Surroundings {
             context,

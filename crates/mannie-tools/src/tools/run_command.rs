@@ -22,7 +22,7 @@ use crate::tool::{
 
 /// The longest command text: well within the longest argument that Linux
 /// passes to a program.
-const MAX_COMMAND_BYTES: usize = 100_000;
+pub(crate) const MAX_COMMAND_BYTES: usize = 100_000;
 /// The timeout when the model names none.
 const DEFAULT_TIMEOUT_SECONDS: u32 = 60;
 /// The longest timeout.
@@ -81,6 +81,7 @@ impl TypedTool for RunCommand {
             command: input.command.clone(),
             shell: path_text(&shell)?,
             working_directory: directory.text()?,
+            background: false,
         }])
     }
 
@@ -91,6 +92,7 @@ impl TypedTool for RunCommand {
             accesses,
             stop,
             mut process,
+            ..
         } = execution;
         async move {
             // The working directory and the shell are checked again right
@@ -126,9 +128,9 @@ impl TypedTool for RunCommand {
                 text: &input.command,
                 working_directory: &working_directory,
                 environment: context.environment.variables(),
-                timeout: Duration::from_secs(u64::from(timeout_seconds)),
             };
-            let finished = supervisor::run(&spec, &stop, |record| {
+            let timeout = Duration::from_secs(u64::from(timeout_seconds));
+            let finished = supervisor::run(&spec, timeout, &stop, |record| {
                 if let Some(sender) = process.take()
                     && sender.send(record).is_err()
                 {
@@ -136,7 +138,7 @@ impl TypedTool for RunCommand {
                 }
             })
             .await
-            .map_err(|error| spawn_failure(&error, &shell))?;
+            .map_err(|error| super::spawn_failure(&error, &shell))?;
             Ok(render(&context, &input.command, timeout_seconds, &finished))
         }
         .boxed()
@@ -144,7 +146,7 @@ impl TypedTool for RunCommand {
 }
 
 /// The shell's path, which must exist.
-fn shell_path(context: &ToolContext) -> Result<PathBuf, ToolFailure> {
+pub(crate) fn shell_path(context: &ToolContext) -> Result<PathBuf, ToolFailure> {
     let Some(shell) = &context.system.shell else {
         return Err(ToolFailure::ShellMissing {
             path: String::new(),
@@ -156,19 +158,6 @@ fn shell_path(context: &ToolContext) -> Result<PathBuf, ToolFailure> {
         });
     }
     Ok(shell.path.clone())
-}
-
-/// The failure of a command that could not start.
-fn spawn_failure(error: &std::io::Error, shell: &std::path::Path) -> ToolFailure {
-    if error.kind() == std::io::ErrorKind::NotFound {
-        ToolFailure::ShellMissing {
-            path: shell.display().to_string(),
-        }
-    } else {
-        ToolFailure::SpawnFailed {
-            reason: error.to_string(),
-        }
-    }
 }
 
 /// The result: how the command ended, how long it ran, and its output within

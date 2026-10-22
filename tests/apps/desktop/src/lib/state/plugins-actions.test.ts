@@ -91,6 +91,27 @@ describe('the Plugins page', () => {
     expect(actions.offQuestion).toBeNull();
   });
 
+  it('names the commands that its tools started in the background beside its own work', async () => {
+    core.pluginWork.mockResolvedValue({
+      data: {
+        items: [
+          { code: 'active_tasks', count: 1 },
+          { code: 'core.background_commands', count: 1 },
+        ],
+      },
+      status: 'ok',
+    });
+    const actions = new PluginsActions();
+
+    await actions.toggle('workers', false);
+
+    expect(actions.offQuestion).toEqual({
+      id: 'workers',
+      question:
+        '1 tasks keep running. Its tools started a command in the background that still runs. Turning the plugin off stops it.',
+    });
+  });
+
   it('turns off a plugin without work at once, and one whose work cannot be read', async () => {
     core.pluginWork
       .mockResolvedValueOnce({ data: { items: [] }, status: 'ok' })

@@ -24,6 +24,7 @@ use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Duration;
 
 use mannie_plugin_sdk::BoxFuture;
+use mannie_plugin_sdk::contracts::WorkItem;
 use mannie_plugin_sdk::contributions::{Contributions, ExtensionPoint, PointInfo};
 use mannie_plugin_sdk::host::{ContributionConsumer, ContributionRefusal, PLUGIN_REGISTERED};
 use mannie_plugin_sdk::ids::PluginId;
@@ -33,6 +34,7 @@ use mannie_plugin_sdk::points::images::ImageSources;
 use mannie_plugin_sdk::points::mentions::Mentions;
 use mannie_plugin_sdk::points::sections::Sections;
 use mannie_plugin_sdk::points::tools::Tools;
+use mannie_plugin_sdk::services::background_commands::BACKGROUND_COMMANDS_WORK;
 
 use crate::Runtime;
 use crate::executors::check_executors;
@@ -333,11 +335,24 @@ impl ContributionConsumer for RuntimeContributions {
 
     /// Waits for the executions of the plugin's tools, and aborts those that
     /// do not end within `grace` (ADR-0034, decision 8). A run records an
-    /// aborted call with side effects as uncertain.
+    /// aborted call with side effects as uncertain. Then the commands that
+    /// the plugin's tools started in the background end (ADR-0041, decision
+    /// 11): after the calls, so no ticket of the plugin is left, and before
+    /// the plugin stops, so it ends them while their sessions are open.
     fn drain(&self, plugin: &PluginId, grace: Duration) -> BoxFuture<'static, ()> {
         let executions = Arc::clone(&self.runtime.inner.plugin_executions);
+        let runtime = self.runtime.clone();
         let plugin = plugin.as_str().to_owned();
-        Box::pin(async move { executions.drain(&plugin, grace).await })
+        Box::pin(async move {
+            executions.drain(&plugin, grace).await;
+            runtime.end_plugin_commands(&plugin).await;
+        })
+    }
+
+    /// The commands that the plugin's tools started and that still run.
+    fn work(&self, plugin: &PluginId) -> Vec<WorkItem> {
+        let count = self.runtime.plugin_command_count(plugin.as_str());
+        vec![WorkItem::new(BACKGROUND_COMMANDS_WORK, count)]
     }
 }
 

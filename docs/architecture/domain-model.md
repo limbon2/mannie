@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                                                                                                                   |
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                                                                                                                                  |
-| Last updated | 2026-10-20                                                                                                                                                                                                                                                                        |
+| Last updated | 2026-10-21                                                                                                                                                                                                                                                                        |
 | Related      | [Glossary](../glossary.md), [Agent runtime](agent-runtime.md), [Tools](tools.md), [Orchestration](orchestration.md), [Overview](overview.md), [ADR-0030](../adr/0030-split-mannie-into-a-core-and-plugins.md), [Workers architecture](../../plugins/workers/docs/architecture.md) |
 
 This document defines the core concepts, their lifecycles and the invariants every contract follows. The [glossary](../glossary.md) gives short definitions; this document shows how the concepts relate.
@@ -108,6 +108,21 @@ stateDiagram-v2
 - Executing is committed durably before the side effect starts.
 - An uncertain operation is reported to the model and to the owner. Nothing repeats it automatically.
 
+- A background command is a command that an operation started and that runs past its tool call. Its record, apart from the call's part, follows it from its start to its end and names who ended it ([background commands](../features/system-tools/background-commands.md)):
+
+```mermaid
+stateDiagram-v2
+  [*] --> Running: the start's operation completes
+  Running --> Exited: the command ends on its own
+  Running --> Stopped: the agent or the owner stops it
+  Running --> Ended: its task, its plugin or its session ends it
+  Running --> Interrupted: Mannie or the worker quits or crashes
+  Exited --> [*]
+  Stopped --> [*]
+  Ended --> [*]
+  Interrupted --> [*]
+```
+
 ## 6. Tasks and reports
 
 A task is work that one agent assigns to another: a child agent on the same machine, or the agent that a plugin's executor runs it with, such as a worker agent ([orchestration](orchestration.md)).
@@ -176,3 +191,4 @@ stateDiagram-v2
 10. A conversation in a project works in the project's folder and never leaves the project.
 11. A child agent works under its parent conversation's workspace, grants and rules, and starts no task of its own. Its parent's run ends only after the child's run ended.
 12. The core never depends on a plugin. Turning a plugin off or on repeats no operation and loses none, and a run keeps the tools it started with.
+13. A background command ends at the latest when its conversation is deleted, its task's run ends or its machine's runtime stops, and on its machine every process it started ends with it. Only its own end wakes an agent, and only in an idle conversation of the owner.

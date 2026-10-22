@@ -4,7 +4,7 @@
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Building                                                                                                                                                                                                                                                                                                       |
 | Milestone    | M2                                                                                                                                                                                                                                                                                                             |
-| Last updated | 2026-10-15                                                                                                                                                                                                                                                                                                     |
+| Last updated | 2026-10-21                                                                                                                                                                                                                                                                                                     |
 | Part of      | [System tools](README.md)                                                                                                                                                                                                                                                                                      |
 | Related      | [ADR-0020](../../adr/0020-complete-the-ui-shell-slots.md), [ADR-0023](../../adr/0023-organize-conversations-into-projects.md), [ADR-0019](../../adr/0019-keep-visible-text-in-message-catalogs.md), [Conversation view](../chat/conversation-view.md), [Operations and approvals](operations-and-approvals.md) |
 
@@ -25,6 +25,7 @@ A part renderer for `tool_call` shows each call as one row in the reply, in the 
 - Activities, paths, commands, arguments, file contents and output are content: they render as plain text inside elements marked `data-content`, never as Markdown or HTML. An activity renders in its own direction, isolated from the text around it. A block that scrolls takes the keyboard focus, so it scrolls from the keyboard.
 - Consecutive rows sit closer together than the other parts of a reply, so a run of tool calls reads as one list.
 - For a command or another archived output, "Show full output" or "Show full error output" opens a dialog that loads the output 500 lines at a time through `read_tool_output`, with "Load more".
+- The calls of background commands show their command's state, and the conversation's toolbar and a side panel show the commands and their output ([background commands](background-commands.md#interface)).
 
 ### Approval requests
 
@@ -63,6 +64,7 @@ The Tools section of the settings holds:
 
 - a switch "Allow changes inside the workspace without asking", off by default, with a description of what it allows;
 - a switch "Full access for new conversations", off by default, which asks first, in a dialog, before it turns on;
+- a switch "Wake the agent when a background command ends", on by default ([wake-ups](wake-ups.md));
 - the command rules, each with its words, its folder and "Delete";
 - the grants for every conversation and for each project, each with "Revoke";
 - the extra environment variables that commands receive, one name per line, with "Save"; a refused name shows why.

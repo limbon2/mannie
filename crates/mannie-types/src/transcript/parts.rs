@@ -9,7 +9,7 @@ use crate::images::ImageView;
 use crate::mentions::MentionView;
 use crate::run::RunFailure;
 use crate::tasks::TaskCallView;
-use crate::tools::ToolCallView;
+use crate::tools::{CommandNoteView, ToolCallView};
 
 /// What a part is. Features add kinds; a reader that meets a kind it does not
 /// know shows a generic placeholder instead of failing.
@@ -39,11 +39,15 @@ pub enum PartKind {
     /// An image that the owner's message holds, whose bytes the store keeps
     /// beside the part (ADR-0033).
     Image,
+    /// The request of a turn that the end of background commands started:
+    /// Mannie's note, which the model reads and the owner sees as a row
+    /// (ADR-0041).
+    CommandNote,
 }
 
 impl PartKind {
     /// Every kind this version knows.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::UserText,
         Self::Text,
         Self::Reasoning,
@@ -53,6 +57,7 @@ impl PartKind {
         Self::Task,
         Self::Mention,
         Self::Image,
+        Self::CommandNote,
     ];
 
     /// The kind's name as the store and the UI know it.
@@ -67,6 +72,7 @@ impl PartKind {
             Self::Task => "task",
             Self::Mention => "mention",
             Self::Image => "image",
+            Self::CommandNote => "command_note",
         }
     }
 
@@ -91,7 +97,8 @@ impl PartKind {
             | Self::ToolCall
             | Self::Task
             | Self::Mention
-            | Self::Image => Audience::Both,
+            | Self::Image
+            | Self::CommandNote => Audience::Both,
             Self::Error => Audience::Owner,
             Self::ContinuationNote => Audience::Model,
         }
@@ -235,6 +242,11 @@ pub enum PartContent {
         /// What the image is; its bytes come from `read_image`.
         image: ImageView,
     },
+    /// The request of a turn that the end of background commands started.
+    CommandNote {
+        /// The ends that woke the agent.
+        note: CommandNoteView,
+    },
     /// A kind of part that this version does not know.
     Unknown {
         /// The kind's name.
@@ -266,6 +278,7 @@ pub struct PartView {
 mod tests {
     use super::{Audience, PartContent, PartKind, PartState};
     use crate::images::{ImageFormat, ImageView};
+    use crate::tools::{BackgroundEnding, CommandEndView, CommandNoteView};
 
     #[test]
     fn kinds_round_trip_through_their_names() {
@@ -329,6 +342,41 @@ mod tests {
                     "width": 800,
                     "height": 600,
                     "bytes": 12345
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn a_command_note_is_for_both_and_names_the_ends() {
+        let note = PartContent::CommandNote {
+            note: CommandNoteView {
+                ends: vec![CommandEndView {
+                    number: 3,
+                    command: "cargo test".to_owned(),
+                    ending: BackgroundEnding::Exited,
+                    exit_code: Some(101),
+                    signal: None,
+                    unread: 40,
+                }],
+            },
+        };
+
+        assert_eq!(PartKind::CommandNote.audience(), Audience::Both);
+        assert_eq!(PartKind::parse("command_note"), Some(PartKind::CommandNote));
+        assert_eq!(
+            serde_json::to_value(&note).unwrap(),
+            serde_json::json!({
+                "kind": "command_note",
+                "note": {
+                    "ends": [{
+                        "number": 3,
+                        "command": "cargo test",
+                        "ending": "exited",
+                        "exitCode": 101,
+                        "signal": null,
+                        "unread": 40
+                    }]
                 }
             })
         );

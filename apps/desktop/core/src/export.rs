@@ -193,6 +193,7 @@ fn unavailable_record(
         archives: Vec::new(),
         children: Vec::new(),
         warnings: vec![warning],
+        background_commands: Vec::new(),
     }
 }
 

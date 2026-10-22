@@ -1,14 +1,36 @@
 // Messages for the codes and states of the plugins feature (ADR-0019): the
-// commands' errors and why a plugin could not start. The UI shows the
-// catalog's message for a code and never the core's description; a plugin
-// names its own start failures.
-import type { PluginsError, PluginView } from '#lib/generated/bindings.js';
+// commands' errors, why a plugin could not start, and what turning a plugin
+// off does to its work. The UI shows the catalog's message for a code and
+// never the core's description; a plugin names its own start failures and
+// words its own work, and the core words the work that a plugin handed it.
+import type { PluginsError, PluginView, WorkItem } from '#lib/generated/bindings.js';
 import { m } from '#lib/paraglide/messages.js';
 import { findPlugin } from '#lib/state/plugin-catalog.js';
 import type { Failure } from '#lib/types/calls.js';
 
 /** The ID of the Plugins settings section, which the states of plugins that are off link to. */
 export const PLUGINS_SETTINGS_SECTION = 'plugins.settings';
+
+/** What the codes of the core's items of a plugin's work start with; a plugin's own codes never do. */
+const CORE_WORK_PREFIX = 'core.';
+
+/** The core's item of the commands that a plugin's tools started in the background (ADR-0041, decision 11). */
+const BACKGROUND_COMMANDS_WORK = 'core.background_commands';
+
+/**
+ * What turning a plugin off does to its work in progress: the plugin's own
+ * sentence for its items, then the core's for the work that the plugin's
+ * entries handed the core, or `null` when nothing is in progress.
+ */
+export function pluginOffQuestion(id: string, items: readonly WorkItem[]): string | null {
+  const own = items.filter((item) => !item.code.startsWith(CORE_WORK_PREFIX));
+  const commands = items.find((item) => item.code === BACKGROUND_COMMANDS_WORK)?.count ?? 0;
+  const sentences = [
+    findPlugin(id)?.offQuestion(own) ?? null,
+    commands === 0 ? null : m.plugins_off_background_commands({ count: commands }),
+  ].filter((sentence) => sentence !== null);
+  return sentences.length === 0 ? null : sentences.join(' ');
+}
 
 /**
  * Whether a command failed because the plugin of what it acts on is off, so
@@ -70,6 +92,9 @@ export function pluginStartFailureMessage(id: string, code: string): string {
 /** What a service of Mannie gives a plugin that uses it, in the owner's words. */
 export function pluginServiceLabel(name: string): string {
   switch (name) {
+    case 'background-commands': {
+      return m.plugins_use_service_background_commands();
+    }
     case 'credentials': {
       return m.plugins_use_service_credentials();
     }

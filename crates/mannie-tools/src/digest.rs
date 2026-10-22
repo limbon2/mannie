@@ -5,6 +5,13 @@
 use mannie_types::tools::Access;
 use sha2::{Digest, Sha256};
 
+/// What the JSON of a command's access in the foreground ends with: its last
+/// field, `background`, false. The digest leaves it out, so a command in the
+/// foreground keeps the digest that it had before commands ran in the
+/// background (ADR-0041, decision 2). Inside a JSON string every quote is
+/// escaped, so the sequence can only be the field itself.
+const FOREGROUND_FIELD: &[u8] = b",\"background\":false}";
+
 /// The digest of an operation: the SHA-256 of its accesses in canonical JSON,
 /// in hexadecimal. A replaced file, a swapped folder or a changed folder
 /// content changes it.
@@ -16,7 +23,23 @@ use sha2::{Digest, Sha256};
 pub fn digest(accesses: &[Access]) -> String {
     let json = serde_json::to_vec(accesses)
         .expect("accesses hold only strings, booleans and numbers, which always serialize");
-    hexadecimal(&Sha256::digest(&json))
+    hexadecimal(&Sha256::digest(canonical(&json)))
+}
+
+/// The JSON of accesses without the field of a command in the foreground.
+fn canonical(json: &[u8]) -> Vec<u8> {
+    let mut kept = Vec::with_capacity(json.len());
+    let mut rest = json;
+    while let Some(at) = rest
+        .windows(FOREGROUND_FIELD.len())
+        .position(|window| window == FOREGROUND_FIELD)
+    {
+        kept.extend_from_slice(&rest[..at]);
+        kept.push(b'}');
+        rest = &rest[at + FOREGROUND_FIELD.len()..];
+    }
+    kept.extend_from_slice(rest);
+    kept
 }
 
 /// The revision of a file's bytes: `sha256:` and the hexadecimal digest.
@@ -41,6 +64,7 @@ fn hex_digit(value: u8) -> char {
 #[cfg(test)]
 mod tests {
     use mannie_types::tools::{Access, AccessMode};
+    use sha2::Digest as _;
 
     use super::{digest, revision};
 
@@ -69,6 +93,38 @@ mod tests {
         assert_ne!(
             digest(&[with_state("2049:12", Some("HEAD 1a"))]),
             digest(&[write("2049:12")])
+        );
+    }
+
+    fn command(text: &str, background: bool) -> Access {
+        Access::Command {
+            command: text.to_owned(),
+            shell: "/bin/sh".to_owned(),
+            working_directory: "/work".to_owned(),
+            background,
+        }
+    }
+
+    /// The SHA-256 of `json`, in hexadecimal.
+    fn sha256(json: &str) -> String {
+        super::hexadecimal(&sha2::Sha256::digest(json.as_bytes()))
+    }
+
+    #[test]
+    fn a_command_in_the_foreground_keeps_the_digest_of_an_access_without_the_mode() {
+        let before =
+            r#"[{"kind":"command","command":"ls","shell":"/bin/sh","workingDirectory":"/work"}]"#;
+        let tricky = r#"[{"kind":"command","command":"echo ,\"background\":false}","shell":"/bin/sh","workingDirectory":"/work"}]"#;
+
+        assert_eq!(digest(&[command("ls", false)]), sha256(before));
+        assert_ne!(
+            digest(&[command("ls", true)]),
+            digest(&[command("ls", false)])
+        );
+        // The field's text inside a command is escaped, and stays.
+        assert_eq!(
+            digest(&[command(r#"echo ,"background":false}"#, false)]),
+            sha256(tricky)
         );
     }
 

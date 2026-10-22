@@ -658,6 +658,7 @@ async fn start(
             allow_changes_in_workspace: task.allow_changes,
             command_environment: Vec::new(),
             full_access_for_new_conversations: false,
+            wake_on_command_end: true,
         })
         .await
         .expect("the settings are valid");

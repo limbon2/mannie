@@ -142,6 +142,25 @@ required-features = ["testing"]
 name = "plugin_paths"
 required-features = ["testing"]
 
+# Background commands through the runtime: reads, notes, Stop, task ends,
+# deletion, quitting, the limit and grants in both modes (ADR-0041).
+[[test]]
+name = "background_commands"
+required-features = ["testing"]
+
+# Killing the process while a background command runs leaves none of it
+# running after the next start.
+[[test]]
+name = "background_crash"
+required-features = ["testing"]
+
+# Commands that a plugin's tool starts on a remote host in the background and
+# hands the core: tickets, reads, stops, ends on the host, the limit, the
+# plugin going off and quitting (ADR-0041, decision 11).
+[[test]]
+name = "remote_background"
+required-features = ["testing"]
+
 # The service `processes`, which runs the installed git (ADR-0038).
 [[test]]
 name = "processes"
@@ -169,6 +188,9 @@ mannie-store = { workspace = true }
 # ADR-0014).
 mannie-tools = { workspace = true }
 mannie-types = { workspace = true }
+# The patterns that end the waits of `read_command_output`, which the tools
+# compile (ADR-0041).
+regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 # The hash of the text that a checkpoint covers, and the digest of an image.
@@ -184,7 +206,8 @@ uuid = { workspace = true }
 mannie-provider = { workspace = true, features = ["testing"] }
 proptest = { workspace = true }
 tempfile = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
+# test-util lets the waits of background commands run on a paused clock.
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync", "test-util", "time"] }
 tracing-subscriber = { workspace = true }
 
 [features]

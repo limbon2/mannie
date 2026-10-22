@@ -35,12 +35,21 @@ pub(crate) struct Reservation<'a> {
 
 impl Drop for Reservation<'_> {
     fn drop(&mut self) {
-        let mut busy = lock(&self.runtime.inner.busy);
-        if matches!(
-            busy.get(&self.conversation),
-            Some(Busy::Starting | Busy::Compacting)
-        ) {
-            busy.remove(&self.conversation);
+        let released = {
+            let mut busy = lock(&self.runtime.inner.busy);
+            let reserved = matches!(
+                busy.get(&self.conversation),
+                Some(Busy::Starting | Busy::Compacting)
+            );
+            if reserved {
+                busy.remove(&self.conversation);
+            }
+            reserved
+        };
+        // A command that let the conversation go may leave it to a wake-up
+        // (ADR-0041).
+        if released {
+            self.runtime.conversation_free(&self.conversation);
         }
     }
 }
@@ -110,7 +119,10 @@ impl Runtime {
 
     /// The profile a conversation uses: its own, or the default when it has
     /// none or its own was deleted.
-    async fn profile_for(&self, chosen: Option<&ProfileId>) -> Result<StoredProfile, ChatError> {
+    pub(crate) async fn profile_for(
+        &self,
+        chosen: Option<&ProfileId>,
+    ) -> Result<StoredProfile, ChatError> {
         if let Some(id) = chosen {
             let profile = self
                 .inner
@@ -130,7 +142,7 @@ impl Runtime {
             .ok_or(ChatError::NoProfile)
     }
 
-    fn new_run(&self, profile: &StoredProfile) -> NewRun {
+    pub(crate) fn new_run(&self, profile: &StoredProfile) -> NewRun {
         NewRun {
             id: self.inner.ids.run(),
             agent: CONVERSATION_AGENT.to_owned(),
@@ -140,7 +152,7 @@ impl Runtime {
     }
 
     /// Hands a reserved conversation over to a new run.
-    fn start_reserved(
+    pub(crate) fn start_reserved(
         &self,
         reservation: Reservation<'_>,
         turn: &mannie_types::ids::TurnId,
@@ -275,6 +287,8 @@ impl Runtime {
             .map_err(store_failure)?
             .ok_or(ChatError::ConversationNotFound)?;
         refuse_task_conversation(&summary)?;
+        // The owner's message ends the pause that their Stop began.
+        self.inner.wake_ups.resume(&input.conversation_id);
         let profile = self.profile_for(summary.profile_id.as_ref()).await?;
         let mentions = if mentions.is_empty() {
             Vec::new()
@@ -291,9 +305,13 @@ impl Runtime {
             self.resolve_mentions(&context, &mentions, budget).await?
         };
         let images = self.resolve_images(&image_refs).await?;
+        let opening = self
+            .opening_note(&input.conversation_id)
+            .await
+            .map_err(store_failure)?;
         let turn_id = self.inner.ids.turn();
         let run = self.new_run(&profile);
-        let change = Change::StartTurn {
+        let mut changes = vec![Change::StartTurn {
             turn_id: turn_id.clone(),
             user_part_id: self.inner.ids.part(),
             text: input.text,
@@ -301,13 +319,28 @@ impl Runtime {
             task: None,
             mentions,
             images,
-        };
+        }];
+        // The conversation's background commands reach the model with the
+        // message, and the ends that the note tells are told in the same
+        // transaction (ADR-0041).
+        if let Some(opening) = opening {
+            changes.push(Change::AddRequestNote {
+                turn_id: turn_id.clone(),
+                part_id: self.inner.ids.part(),
+                text: opening.text,
+            });
+            if !opening.told.is_empty() {
+                changes.push(Change::TellBackgroundEnds {
+                    numbers: opening.told,
+                });
+            }
+        }
         self.inner
             .hubs
             .apply(
                 &self.inner.store,
                 &input.conversation_id,
-                vec![change],
+                changes,
                 Durability::Full,
             )
             .await
@@ -393,6 +426,9 @@ impl Runtime {
         };
         // A full mailbox already holds a command that ends the run.
         let _delivered = mailbox.try_send(crate::actor::Command::Stop);
+        // No background command's end wakes the conversation until the
+        // owner's next message (ADR-0041).
+        self.inner.wake_ups.pause(conversation);
         let waited = tokio::time::timeout(
             self.inner.config.stop_timeout,
             ended.wait_for(|ended| *ended),
@@ -454,7 +490,7 @@ impl Runtime {
 
     /// Deletes a conversation with everything in it, its children's task
     /// conversations too. An active reply is stopped first, which stops its
-    /// children.
+    /// children, and the background commands of each end with it.
     pub async fn delete_conversation(
         &self,
         conversation: &ConversationId,
@@ -487,6 +523,9 @@ impl Runtime {
         if !deleted {
             return Err(ChatError::ConversationNotFound);
         }
+        let mut forgotten = vec![conversation.clone()];
+        forgotten.extend(children.iter().cloned());
+        self.forget_background_commands(&forgotten).await;
         self.inner.hubs.deleted(conversation).await;
         for child in &children {
             self.inner.hubs.ended_task_conversation(child).await;

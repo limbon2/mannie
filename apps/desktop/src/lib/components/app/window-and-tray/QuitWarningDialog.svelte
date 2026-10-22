@@ -8,10 +8,12 @@
   import { windowRequests } from '#lib/state/window-requests.svelte.js';
   import { windowFailureMessage } from '#lib/utils/window-messages.js';
 
-  // Quitting while replies are being written, from the window in quit mode
-  // or from the tray's menu (docs/features/window-and-tray.md, behavior).
-  // Cancel keeps everything running.
-  let { activeRuns }: { activeRuns: number } = $props();
+  // Quitting while replies are being written or background commands run,
+  // from the window in quit mode or from the tray's menu (docs/features/
+  // window-and-tray.md, behavior). Cancel keeps everything running.
+  let { activeRuns, backgroundCommands }: { activeRuns: number; backgroundCommands: number } = $props();
+
+  const title = $derived(activeRuns > 0 ? m.window_quit_warning_title() : m.window_quit_warning_title_commands());
 </script>
 
 <AlertDialog.Root
@@ -26,8 +28,15 @@
 >
   <AlertDialog.Content>
     <AlertDialog.Header>
-      <AlertDialog.Title>{m.window_quit_warning_title()}</AlertDialog.Title>
-      <AlertDialog.Description>{m.window_active_runs({ count: activeRuns })}</AlertDialog.Description>
+      <AlertDialog.Title>{title}</AlertDialog.Title>
+      <AlertDialog.Description class="flex flex-col gap-2">
+        {#if activeRuns > 0}
+          <span>{m.window_active_runs({ count: activeRuns })}</span>
+        {/if}
+        {#if backgroundCommands > 0}
+          <span>{m.window_background_commands({ count: backgroundCommands })}</span>
+        {/if}
+      </AlertDialog.Description>
     </AlertDialog.Header>
     {#if windowRequests.failure !== null}
       <Alert.Root variant="destructive">

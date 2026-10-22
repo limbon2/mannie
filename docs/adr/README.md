@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                           |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Living index                                                                                                                                                                              |
-| Last updated | 2026-10-20                                                                                                                                                                                |
+| Last updated | 2026-10-21                                                                                                                                                                                |
 | Related      | [ADR-0001](0001-record-architecture-decisions.md), [Template](0000-template.md), [Decisions](../roadmap/milestones.md#5-decisions), [Validations](../roadmap/milestones.md#4-validations) |
 
 [ADR-0001](0001-record-architecture-decisions.md) describes the process, and new ADRs start from the [template](0000-template.md).
@@ -58,3 +58,4 @@ Each ADR has exactly one of these statuses:
 | [0038](0038-let-plugins-run-installed-programs-in-the-owners-projects.md) | Let plugins run installed programs in the owner's projects under the master's policy          | Accepted (D37)         | M9         |
 | [0039](0039-let-plugins-describe-their-tool-calls-in-the-transcript.md)   | Let plugins describe their tool calls in the transcript                                       | Accepted (D37)         | M9         |
 | [0040](0040-export-complete-conversation-records.md)                      | Let the owner export complete conversation records                                            | Accepted (D38)         | M10        |
+| [0041](0041-let-agents-run-commands-in-the-background.md)                 | Let agents run commands in the background, and wake an idle agent when one ends               | Accepted (D40)         | M11        |

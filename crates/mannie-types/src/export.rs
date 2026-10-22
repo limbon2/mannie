@@ -7,6 +7,7 @@ use crate::clock::UtcMillis;
 use crate::ids::{ArchiveId, ConversationId, PartId, RunId};
 use crate::images::ImageFormat;
 use crate::run::RunView;
+use crate::tools::BackgroundCommandView;
 use crate::transcript::{Checkpoint, ConversationSummary, TurnView};
 
 /// The complete-record encoding understood by this version.
@@ -38,6 +39,11 @@ pub struct ConversationRecord {
     pub archives: Vec<RecordArchive>,
     /// The children to collect separately, in task-number order.
     pub children: Vec<ConversationSummary>,
+    /// The conversation's background commands, oldest first, each with the
+    /// part of the call that started it (ADR-0041). A record of a version
+    /// before them has none.
+    #[serde(default)]
+    pub background_commands: Vec<BackgroundCommandView>,
     /// Saved references whose content is unavailable.
     pub warnings: Vec<ExportWarning>,
 }

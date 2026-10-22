@@ -14,6 +14,9 @@
 //! closes its channel, as the timeout does. Not every server honors signals
 //! (OpenSSH does since 7.9), so the result of a timeout says that processes
 //! may still run.
+//!
+//! The tool `start_ssh_command` (`background.rs`) shares the checks, the
+//! access, the channel and the guard.
 
 use std::time::{Duration, Instant};
 
@@ -47,10 +50,10 @@ const DEFAULT_TIMEOUT_SECONDS: u32 = 60;
 const MAX_TIMEOUT_SECONDS: u32 = 600;
 
 /// How long a command gets to end after TERM before KILL.
-const KILL_GRACE: Duration = Duration::from_millis(500);
+pub(crate) const KILL_GRACE: Duration = Duration::from_millis(500);
 
 /// How long the plugin waits for the channel to close after KILL.
-const CLOSE_GRACE: Duration = Duration::from_secs(2);
+pub(crate) const CLOSE_GRACE: Duration = Duration::from_secs(2);
 
 /// The arguments of `run_ssh_command`. The field documentation is what the
 /// model reads about each argument.
@@ -111,22 +114,38 @@ impl Tool for RunSshCommand {
 fn check(hosts: &Hosts, arguments: &str) -> Result<Checked, ToolRefusal> {
     let arguments: Arguments = serde_json::from_str(arguments)
         .map_err(|error| ToolRefusal::new(texts::invalid_arguments(&error.to_string())))?;
-    if arguments.command.trim().is_empty() {
-        return Err(ToolRefusal::new(texts::BLANK_COMMAND));
-    }
-    if arguments.command.len() > MAX_COMMAND_BYTES {
-        return Err(ToolRefusal::new(texts::LONG_COMMAND));
-    }
-    if arguments.command.contains('\0') {
-        return Err(ToolRefusal::new(texts::NUL_IN_COMMAND));
-    }
+    check_command(&arguments.command)?;
     let timeout_seconds = arguments.timeout_seconds.unwrap_or(DEFAULT_TIMEOUT_SECONDS);
     if !(1..=MAX_TIMEOUT_SECONDS).contains(&timeout_seconds) {
         return Err(ToolRefusal::new(texts::TIMEOUT_OUT_OF_RANGE));
     }
-    let Some(host) = hosts.by_name(&arguments.host) else {
+    Ok(Checked {
+        host: ready_host(hosts, &arguments.host)?,
+        command: arguments.command,
+        timeout_seconds,
+    })
+}
+
+/// Checks a command's text: not blank, within its size and without NUL,
+/// which SSH cannot carry.
+pub(crate) fn check_command(command: &str) -> Result<(), ToolRefusal> {
+    if command.trim().is_empty() {
+        return Err(ToolRefusal::new(texts::BLANK_COMMAND));
+    }
+    if command.len() > MAX_COMMAND_BYTES {
+        return Err(ToolRefusal::new(texts::LONG_COMMAND));
+    }
+    if command.contains('\0') {
+        return Err(ToolRefusal::new(texts::NUL_IN_COMMAND));
+    }
+    Ok(())
+}
+
+/// The host with this name, when it can run commands.
+pub(crate) fn ready_host(hosts: &Hosts, name: &str) -> Result<HostRecord, ToolRefusal> {
+    let Some(host) = hosts.by_name(name) else {
         return Err(ToolRefusal::new(texts::unknown_host(
-            &arguments.host,
+            name,
             &hosts.records(),
         )));
     };
@@ -140,27 +159,29 @@ fn check(hosts: &Hosts, arguments: &str) -> Result<Checked, ToolRefusal> {
             return Err(ToolRefusal::new(texts::password_missing(&host.name)));
         }
     }
-    Ok(Checked {
-        host,
-        command: arguments.command,
-        timeout_seconds,
-    })
+    Ok(host)
 }
 
 /// The command on the host, as the core's policy decides on it.
 fn access(host: &HostRecord, command: &str) -> ToolAccess {
+    ToolAccess::RemoteCommand(remote_access(host, command))
+}
+
+/// The command on the host, with the host's ID as the target, its name as
+/// the label, its endpoint and the fingerprint of its trusted key.
+pub(crate) fn remote_access(host: &HostRecord, command: &str) -> RemoteCommandAccess {
     let identity = host
         .key
         .as_ref()
         .map(|key| key.fingerprint.clone())
         .unwrap_or_default();
-    ToolAccess::RemoteCommand(RemoteCommandAccess::new(
+    RemoteCommandAccess::new(
         host.id.clone(),
         host.name.clone(),
         host.endpoint(),
         identity,
         command.to_owned(),
-    ))
+    )
 }
 
 /// Runs an authorized call.
@@ -190,18 +211,10 @@ async fn run(hosts: &Hosts, execution: &ToolExecution) -> ToolResult {
     if let Err(error) = writer.eof().await {
         tracing::debug!(%error, "the end of a command's input did not reach the host");
     }
-    let mut running = Running {
-        writer: Some(writer),
-    };
+    let mut running = Running::new(writer);
     let watched = watch(&mut reader, &mut running, checked.timeout_seconds).await;
     let Some(watched) = watched else {
-        // The host refused to start the command, so there is nothing to
-        // end: the channel only closes.
-        if let Some(writer) = running.writer.take()
-            && let Err(error) = writer.close().await
-        {
-            tracing::debug!(%error, "the channel of a refused command was closed already");
-        }
+        running.close_refused().await;
         return ToolResult::new(texts::not_run(texts::EXEC_REFUSED));
     };
     let password = connected.password.expose();
@@ -228,7 +241,7 @@ async fn run(hosts: &Hosts, execution: &ToolExecution) -> ToolResult {
 /// before and fails to open a channel may have been closed by the host
 /// meanwhile, such as while the computer slept, so it is replaced once:
 /// nothing has run at that point.
-async fn open_channel(
+pub(crate) async fn open_channel(
     hosts: &Hosts,
     host: &HostRecord,
 ) -> Result<(Connected, russh::Channel<Msg>), &'static str> {
@@ -259,7 +272,7 @@ async fn open_channel(
 }
 
 /// Why a call did not reach the host's shell.
-fn reason(error: SshError) -> &'static str {
+pub(crate) fn reason(error: SshError) -> &'static str {
     match error {
         SshError::HostNotFound => texts::HOST_REMOVED,
         SshError::Unreachable => texts::UNREACHABLE,
@@ -281,8 +294,32 @@ fn reason(error: SshError) -> &'static str {
 /// A command that runs on a host. Dropping it before the command ended,
 /// as the core does when the owner stops the reply, asks the host to end
 /// the command and closes its channel.
-struct Running {
+pub(crate) struct Running {
     writer: Option<ChannelWriteHalf<Msg>>,
+}
+
+impl Running {
+    /// The command whose channel `writer` writes to.
+    pub(crate) fn new(writer: ChannelWriteHalf<Msg>) -> Self {
+        Self {
+            writer: Some(writer),
+        }
+    }
+
+    /// Takes the channel, which is then no longer the guard's to end.
+    pub(crate) fn take(&mut self) -> Option<ChannelWriteHalf<Msg>> {
+        self.writer.take()
+    }
+
+    /// Closes the channel of a command that the host refused to start, so
+    /// there is nothing to end.
+    pub(crate) async fn close_refused(&mut self) {
+        if let Some(writer) = self.writer.take()
+            && let Err(error) = writer.close().await
+        {
+            tracing::debug!(%error, "the channel of a refused command was closed already");
+        }
+    }
 }
 
 impl Drop for Running {
@@ -414,7 +451,7 @@ async fn drain(reader: &mut ChannelReadHalf, watched: &mut Watched, grace: Durat
 }
 
 /// A signal's name as SSH sends it, such as `TERM`.
-fn signal_text(signal: &Sig) -> String {
+pub(crate) fn signal_text(signal: &Sig) -> String {
     let name = match signal {
         Sig::ABRT => "ABRT",
         Sig::ALRM => "ALRM",

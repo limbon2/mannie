@@ -7,6 +7,8 @@
 | Deciders | Owner                                                                                                                                                                                                          |
 | Related  | [ADR-0002](0002-grow-through-extension-points.md), [ADR-0013](0013-journal-every-side-effect.md), [ADR-0034](0034-build-plugins-on-a-plugin-sdk.md), [Conversation export](../features/conversation-export.md) |
 
+Later changes: [ADR-0041](0041-let-agents-run-commands-in-the-background.md) refines decision 1: a conversation's record also lists its background commands with their ends.
+
 ## Context
 
 - The owner requested a Markdown export of the current conversation, complete tool and task inputs, resolved mention text, images, archives, checkpoints and child conversations. Offline workers must produce explicit omissions without preventing the rest of the export.

@@ -4,7 +4,7 @@
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Building                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | Milestone    | M2                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| Last updated | 2026-10-20                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Last updated | 2026-10-21                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | Part of      | [System tools](README.md)                                                                                                                                                                                                                                                                                                                                                                                                               |
 | Related      | [ADR-0013](../../adr/0013-journal-every-side-effect.md), [ADR-0012](../../adr/0012-run-agents-as-durable-actors.md), [ADR-0036](../../adr/0036-let-plugins-run-commands-on-remote-hosts.md), [ADR-0038](../../adr/0038-let-plugins-run-installed-programs-in-the-owners-projects.md), [Tools](../../architecture/tools.md), [Security](../../architecture/security.md), [Domain model](../../architecture/domain-model.md#5-operations) |
 
@@ -39,11 +39,11 @@ flowchart TD
 ### Accesses
 
 - A path access names the canonical path, its mode (read, write, create or delete), whether the target exists, and the identity of the target or of its nearest existing folder: the volume serial number and file index on Windows, the device and inode on Linux. A recursive delete adds the number of files and folders it removes.
-- A command access names the command's text, the shell's path and the canonical working directory.
-- A remote command access names the plugin, the plugin's key for the host, the host's name, the endpoint, the host's identity, such as the fingerprint of its pinned key, and the command's text.
+- A command access names the command's text, the shell's path, the canonical working directory, and whether the command runs in the background ([background commands](background-commands.md)), false for every access that existed.
+- A remote command access names the plugin, the plugin's key for the host, the host's name, the endpoint, the host's identity, such as the fingerprint of its pinned key, the command's text, and whether the command runs in the background, false for every access that existed.
 - A plugin's path access is a path access with an optional state that the plugin read of the place, such as a repository's HEAD and the stamp of its index.
 - A program access names the plugin, the program's name in its manifest and its resolved path, the arguments that the manifest fixes and the plugin's own, the canonical working directory, the run's effects and an optional state. The effects are an endpoint that the run reaches, programs that the folder's files or configuration name and the run starts, such as hooks, work that it discards, and commits that a remote-tracking branch holds and the run rewrites.
-- The digest of an operation is the SHA-256 of its accesses in canonical JSON. A replaced file, a swapped folder or a changed folder content therefore changes the digest.
+- The digest of an operation is the SHA-256 of its accesses in canonical JSON, without `background` while it is false, so a command in the foreground keeps the digest that it had before commands ran in the background. A replaced file, a swapped folder or a changed folder content therefore changes the digest.
 
 ### The journal
 
@@ -87,15 +87,15 @@ Full access is the owner's standing decision that a conversation's operations ru
 
 - "Allow for…" offers three scopes. "This conversation" creates grants that last until the conversation is deleted or the owner revokes them. "This project", offered in a project's conversation, creates grants that every conversation of the project uses until the project is removed or the owner revokes them. "Every conversation" creates grants that every conversation uses until the owner revokes them.
 - A path grant covers one mode in one folder and everything below it: the folder of a file, or the folder itself for a folder.
-- A command grant covers the same command text in the same working directory.
-- A remote command grant covers the same command text on the same plugin's host, reached at the same endpoint. The host's name is shown and not compared, so renaming the host keeps the grant.
+- A command grant covers the same command text in the same working directory. A grant given from the approval of a command in the background covers the command in both modes, and one given from a command in the foreground covers it only in the foreground (D40).
+- A remote command grant covers the same command text on the same plugin's host, reached at the same endpoint. The host's name is shown and not compared, so renaming the host keeps the grant. Its mode counts as a command grant's does.
 - A program grant covers runs of the same plugin and program path with the same arguments in the same working directory, whose effects the run that it was given for had. An effect counts by its key: an endpoint by itself, a program that the folder names, such as a hook, by its name and its source and not by its content, so a hook whose content changed keeps its grant ([decision D37](../../roadmap/milestones.md#5-decisions)), and discarded or rewritten work by its kind.
 - The core computes a grant from the operation's accesses, and the approval shows what it would cover. When one operation's accesses would give several grants and one covers another, the request offers only the wider one. The owner sees and revokes the grants that apply to a conversation in a dialog, and the grants for projects and for every conversation in the Tools settings.
 - An approval that touches Mannie's data or log folders offers no grant, so those folders keep asking.
 
 ### Rules
 
-- A rule allows commands that start with its words, in every conversation. It may be limited to a folder, which the working directory must be in.
+- A rule allows commands that start with its words, in every conversation. It may be limited to a folder, which the working directory must be in. A rule saved from the approval of a command in the background covers both modes, and one saved from a command in the foreground covers only the foreground, also on a remote host (D40).
 - Words are split at unquoted spaces. A command that contains `;`, `&`, `|`, `$`, a backtick, parentheses, braces, `<`, `>`, a line break or an unbalanced quote never matches a rule or a grant, and its approval offers only "Allow once" and "Deny".
 - The owner saves a rule from an approval. The dialog shows the command's words, the owner chooses how many of the leading words the rule keeps and whether it is limited to the working directory, and the core builds the rule from the command it holds. The settings list the rules, and the owner deletes them there.
 - A rule from a command on a remote host always applies only on that host and endpoint, and the dialog names the host in place of the folder. These rules are stored apart, so a rule of this machine never matches a command on a remote host, and the reverse. On a remote host, whose shell Mannie does not know, a backslash also keeps a command from matching a rule or a grant.
@@ -120,7 +120,7 @@ At startup, before any command is accepted, the runtime finishes every tool call
 | `running`                                   | `canceled`             | Not run                        |
 | `executing`                                 | `uncertain`            | It may have taken effect       |
 
-The statuses are stored before the runs end as interrupted, so a crash during the recovery never leads to an operation running again. An uncertain operation is reported to the model and to the owner and never repeated automatically. An operation of a plugin's tool that the owner stopped, or whose plugin went off, is uncertain as well, and its part says which of the two happened. On Linux, the recovery then ends what is left of an uncertain command's process tree ([commands](commands.md#crash-recovery)).
+The statuses are stored before the runs end as interrupted, so a crash during the recovery never leads to an operation running again. An uncertain operation is reported to the model and to the owner and never repeated automatically. An operation of a plugin's tool that the owner stopped, or whose plugin went off, is uncertain as well, and its part says which of the two happened. On Linux, the recovery then ends what is left of an uncertain command's process tree ([commands](commands.md#crash-recovery)). Background commands recover from their own records, also when no run was active ([background commands](background-commands.md#recovery)).
 
 ### Contracts
 
@@ -137,6 +137,7 @@ The settings section `tools` holds:
 | `allow_changes_in_workspace`        | False by default                                                                                                                                        |
 | `command_environment`               | At most 50 variable names passed to commands besides the built-in ones. Names that look like secrets are refused ([commands](commands.md#environment)). |
 | `full_access_for_new_conversations` | False by default. A new conversation starts in full access when it is true                                                                              |
+| `wake_on_command_end`               | True by default, also for settings stored before it existed. A background command's own end wakes an idle agent ([wake-ups](wake-ups.md))               |
 
 ### Data
 
@@ -146,6 +147,7 @@ The settings section `tools` holds:
 - Migration `0021` adds `full_access` to `runtime_conversations`, off for every conversation that existed.
 - Migration `0014` creates `tools_shared_grants`: the project, or none for every conversation, the scope and the time. The project is a foreign key to `runtime_projects` with `ON DELETE CASCADE`, so removing a project deletes its grants.
 - Migration `0030` creates `tools_remote_rules`: the plugin, its key for the host, the endpoint, the host's name, the words and the time, with one rule for the same words on the same host and endpoint.
+- A command grant's scope keeps `background` in its JSON, absent for every grant that existed, and migration `0033` adds `background` to `tools_rules` and `tools_remote_rules`, false for every row that existed, so grants and rules from before keep asking before a command runs in the background.
 - Migration `0031` creates `tools_program_rules`: the plugin, the program's name and path, the words, the optional folder, the keys of the effects that the rule covers and the time, with one rule for the same words, folder and effects of the same plugin's program.
 
 ### Threat notes

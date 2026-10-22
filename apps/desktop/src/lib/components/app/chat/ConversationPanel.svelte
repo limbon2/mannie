@@ -123,7 +123,11 @@
   {:else}
     {#if summary !== null}
       <div class="flex shrink-0 justify-end gap-1 border-b px-3 py-1.5">
-        <ConversationControlOutlet conversation={summary} turns={transcript.turns} />
+        <ConversationControlOutlet
+          backgroundCommands={transcript.backgroundCommands}
+          conversation={summary}
+          turns={transcript.turns}
+        />
       </div>
     {/if}
     {#if conversation.status === 'ended'}

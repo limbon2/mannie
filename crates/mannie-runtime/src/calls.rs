@@ -50,6 +50,26 @@ const KEPT_RESULTS: usize = 3;
 /// The tool that moves a general conversation into a project.
 const MOVE_TO_PROJECT: &str = "move_to_project";
 
+/// The tool that starts a command in the background.
+const START_COMMAND: &str = "start_command";
+
+/// The tools that read and stop the commands that a run started in the
+/// background, which a run is offered only with a tool that starts them
+/// (ADR-0041).
+const COMMAND_FOLLOW_UPS: [&str; 2] = ["read_command_output", "stop_command"];
+
+/// A run's tools without the follow-ups of background commands when none of
+/// its tools starts one.
+fn with_follow_ups_only_with_starts(tools: Vec<Arc<dyn Tool>>) -> Vec<Arc<dyn Tool>> {
+    if tools.iter().any(|tool| tool.name() == START_COMMAND) {
+        return tools;
+    }
+    tools
+        .into_iter()
+        .filter(|tool| !COMMAND_FOLLOW_UPS.contains(&tool.name()))
+        .collect()
+}
+
 /// The most bytes of the machine's instructions that a run of an assigned
 /// task reads; the rest is left out.
 const MAX_MACHINE_INSTRUCTIONS_BYTES: usize = 64 * 1024;
@@ -303,12 +323,14 @@ impl Runtime {
                 (Vec::new(), Vec::new())
             };
         let tools: Vec<Arc<dyn Tool>> = if profile.use_tools {
-            agent
-                .tools
-                .iter()
-                .filter_map(|name| self.inner.tools.registry.get(name))
-                .chain(adapters)
-                .collect()
+            with_follow_ups_only_with_starts(
+                agent
+                    .tools
+                    .iter()
+                    .filter_map(|name| self.inner.tools.registry.get(name))
+                    .chain(adapters)
+                    .collect(),
+            )
         } else {
             Vec::new()
         };
@@ -473,12 +495,14 @@ impl Runtime {
         let mode = ceiling.mode.narrowed_by(narrower);
         if mode == CeilingMode::ReadOnly {
             // A read-only task is offered only the tools that read, so the
-            // model rarely meets a refusal (ADR-0028, decision 5).
+            // model rarely meets a refusal (ADR-0028, decision 5). It starts
+            // no background command, so it reads none either (ADR-0041).
             let (tools, definitions): (Vec<_>, Vec<_>) = setup
                 .tools
                 .into_iter()
                 .zip(setup.definitions)
                 .filter(|(tool, _definition)| tool.class() == PermissionClass::ReadOnly)
+                .filter(|(tool, _definition)| !COMMAND_FOLLOW_UPS.contains(&tool.name()))
                 .unzip();
             setup.tools = tools;
             setup.definitions = definitions;

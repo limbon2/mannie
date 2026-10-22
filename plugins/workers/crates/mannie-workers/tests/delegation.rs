@@ -520,6 +520,7 @@ async fn full_access_delegation(worker: WorkerOptions) -> (DelegationHarness, Pa
             allow_changes_in_workspace: false,
             command_environment: Vec::new(),
             full_access_for_new_conversations: true,
+            wake_on_command_end: true,
         })
         .await
         .unwrap();

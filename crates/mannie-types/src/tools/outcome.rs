@@ -7,6 +7,8 @@ use specta::Type;
 
 use crate::ids::ArchiveId;
 
+use super::background::{BackgroundEnding, BackgroundLimit};
+
 /// The kind of a file system entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
@@ -240,6 +242,22 @@ pub enum ToolFailure {
         /// The plugin's ID.
         plugin: String,
     },
+    /// The conversation has no background command with this number
+    /// (ADR-0041).
+    #[error("there is no background command {number}")]
+    CommandNotFound {
+        /// The number that the call named.
+        number: u32,
+    },
+    /// As many background commands run as a limit allows, so no other one
+    /// starts (ADR-0041).
+    #[error("{limit} background commands run already, the most for the {scope:?}")]
+    TooManyBackgroundCommands {
+        /// Which limit the start reached.
+        scope: BackgroundLimit,
+        /// The limit.
+        limit: u32,
+    },
 }
 
 impl ToolFailure {
@@ -275,6 +293,8 @@ impl ToolFailure {
             Self::SpawnFailed { .. } => "tool.spawn_failed",
             Self::IoError { .. } => "tool.io_error",
             Self::PluginInvalid { .. } => "tool.plugin_invalid",
+            Self::CommandNotFound { .. } => "tool.command_not_found",
+            Self::TooManyBackgroundCommands { .. } => "tool.too_many_background_commands",
         }
     }
 }
@@ -399,6 +419,37 @@ pub enum ToolOutcome {
         exit_code: Option<i32>,
         /// How long it ran, in milliseconds.
         duration_ms: u32,
+    },
+    /// `start_command` started a command in the background (ADR-0041).
+    CommandStarted {
+        /// Its number in the conversation.
+        number: u32,
+        /// Its text, cut as a background command's view cuts it.
+        command: String,
+    },
+    /// `read_command_output` read lines of a background command.
+    CommandOutputRead {
+        /// The command's number.
+        number: u32,
+        /// The first line shown, from 1, or 0 when no line was.
+        first_line: u32,
+        /// The last line shown, or 0 when no line was.
+        last_line: u32,
+        /// The lines that the command wrote so far.
+        total_lines: u32,
+        /// How it ended, or `None` while it runs.
+        ending: Option<BackgroundEnding>,
+        /// Its exit code, when it ended with one.
+        exit_code: Option<i32>,
+    },
+    /// `stop_command` ended a background command, or found it ended.
+    CommandStopped {
+        /// The command's number.
+        number: u32,
+        /// How it ended.
+        ending: BackgroundEnding,
+        /// Its exit code, when it ended with one.
+        exit_code: Option<i32>,
     },
     /// `read_tool_output` read lines of an archived output.
     OutputRead {

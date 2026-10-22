@@ -15,19 +15,24 @@
 //! - `ignore-signals` waits and ignores signals until its channel closes;
 //! - `crash` ends with the signal SEGV and a core dump;
 //! - `refuse` is refused before it starts;
+//! - `drip <n>` prints n numbered lines, one every 50 ms, then waits until
+//!   a signal ends it, as `journalctl -f` does;
+//! - `count <n>` prints n numbered lines, one every 50 ms, then exits 0;
+//! - `drip-password` prints the account's password cut across two writes,
+//!   50 ms apart, then waits until a signal ends it;
 //! - anything else prints `ran: <command>` and exits 0.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use russh::keys::ssh_encoding::bytes::Bytes;
 use russh::keys::{Algorithm, HashAlg, PrivateKey, PublicKey};
-use russh::server::{self, Auth, ChannelOpenHandle, Msg, Session};
+use russh::server::{self, Auth, ChannelOpenHandle, Handle, Msg, Session};
 use russh::{Channel, ChannelId, MethodKind, MethodSet, Preferred, Sig};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
@@ -206,6 +211,7 @@ async fn accept(
             seen: Arc::clone(&seen),
             options,
             waiting: HashMap::new(),
+            ended: HashMap::new(),
         };
         tokio::spawn(async move {
             if let Ok(session) = server::run_stream(current, stream, connection).await {
@@ -226,11 +232,49 @@ enum Waiting {
     Forever,
 }
 
+/// How long a command that writes over time waits between its writes.
+const WRITE_PAUSE: Duration = Duration::from_millis(50);
+
 /// One client's connection.
 struct Connection {
     seen: Arc<Seen>,
     options: Options,
     waiting: HashMap<ChannelId, Waiting>,
+    /// Set for each command that writes over time once its channel ended,
+    /// so it writes no more.
+    ended: HashMap<ChannelId, Arc<AtomicBool>>,
+}
+
+/// What a command that writes over time does after its writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AfterWrites {
+    /// It waits until a signal ends it.
+    Wait,
+    /// It exits 0.
+    Exit,
+}
+
+/// Writes `writes`, one every [`WRITE_PAUSE`], until the channel ends, and
+/// then exits when `after` says so.
+async fn write_over_time(
+    handle: Handle,
+    channel: ChannelId,
+    writes: Vec<String>,
+    after: AfterWrites,
+    ended: Arc<AtomicBool>,
+) {
+    for text in writes {
+        tokio::time::sleep(WRITE_PAUSE).await;
+        if ended.load(Ordering::SeqCst) || handle.data(channel, Bytes::from(text)).await.is_err() {
+            return;
+        }
+    }
+    if after == AfterWrites::Exit && !ended.swap(true, Ordering::SeqCst) {
+        // A channel that the client closed meanwhile takes none of them.
+        let _status = handle.exit_status_request(channel, 0).await;
+        let _eof = handle.eof(channel).await;
+        let _closed = handle.close(channel).await;
+    }
 }
 
 impl Connection {
@@ -285,6 +329,21 @@ impl Connection {
             return Ok(());
         }
         session.channel_success(channel)?;
+        if let Some((writes, after)) = writes_over_time(&command) {
+            if after == AfterWrites::Wait {
+                self.waiting.insert(channel, Waiting::UntilSignal);
+            }
+            let ended = Arc::new(AtomicBool::new(false));
+            self.ended.insert(channel, Arc::clone(&ended));
+            tokio::spawn(write_over_time(
+                session.handle(),
+                channel,
+                writes,
+                after,
+                ended,
+            ));
+            return Ok(());
+        }
         match command.as_str() {
             "sleep" => {
                 self.waiting.insert(channel, Waiting::UntilSignal);
@@ -327,12 +386,34 @@ impl Connection {
         lock(&self.seen.signals).push(signal_name(&signal));
         if self.waiting.get(&channel) == Some(&Waiting::UntilSignal) {
             self.waiting.remove(&channel);
+            if let Some(ended) = self.ended.remove(&channel) {
+                ended.store(true, Ordering::SeqCst);
+            }
             session.exit_signal_request(channel, signal, false, "ended", "en")?;
             session.eof(channel)?;
             session.close(channel)?;
         }
         Ok(())
     }
+}
+
+/// The writes of a command that writes over time, and what it does after
+/// them, or `None` for another command.
+fn writes_over_time(command: &str) -> Option<(Vec<String>, AfterWrites)> {
+    let numbered = |count: &str| -> Vec<String> {
+        let count: usize = count.parse().unwrap_or(0);
+        (1..=count).map(|line| format!("line {line}\n")).collect()
+    };
+    if command == "drip-password" {
+        let (start, end) = PASSWORD.split_at(7);
+        let writes = vec![format!("the password is {start}"), format!("{end}\n")];
+        return Some((writes, AfterWrites::Wait));
+    }
+    if let Some(count) = command.strip_prefix("drip ") {
+        return Some((numbered(count), AfterWrites::Wait));
+    }
+    let count = command.strip_prefix("count ")?;
+    Some((numbered(count), AfterWrites::Exit))
 }
 
 /// What `echo`, `lines` and any other command print.
@@ -406,6 +487,9 @@ impl server::Handler for Connection {
         _session: &mut Session,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
         self.waiting.remove(&channel);
+        if let Some(ended) = self.ended.remove(&channel) {
+            ended.store(true, Ordering::SeqCst);
+        }
         std::future::ready(Ok(()))
     }
 }

@@ -128,7 +128,11 @@
           <ProfileMenu conversation={summary} />
         {/if}
         <div class="ms-auto flex items-center gap-1">
-          <ConversationControlOutlet conversation={summary} turns={transcript.turns} />
+          <ConversationControlOutlet
+            backgroundCommands={transcript.backgroundCommands}
+            conversation={summary}
+            turns={transcript.turns}
+          />
           <ContextMeter checkpoint={transcript.checkpoint} context={transcript.context} conversationId={id} />
           {#if !isChild}
             <ConversationMenu conversation={summary} />

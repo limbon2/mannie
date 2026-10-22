@@ -10,6 +10,7 @@
 //! assigned (ADR-0028).
 
 mod child;
+mod commands;
 mod operations;
 mod remote;
 mod tasks;
@@ -232,6 +233,9 @@ pub(crate) struct RunActor {
     /// The token counts of every call of the run together.
     usage: Option<Usage>,
     notes: u32,
+    /// How often the reply continued to tell the model of background
+    /// commands that ended as it would have ended (ADR-0041).
+    end_notes: u32,
     compacted_after_overflow: bool,
     /// Whether the server reported a shorter request than a call sent.
     prompt_cut: bool,
@@ -347,6 +351,7 @@ impl Runtime {
             tool_calls: 0,
             usage: None,
             notes: 0,
+            end_notes: 0,
             compacted_after_overflow: false,
             prompt_cut: false,
             tasks: TaskLane::default(),
@@ -371,13 +376,19 @@ impl Runtime {
         mailbox
     }
 
-    /// Removes a run from the busy map, if it is still there.
+    /// Removes a run from the busy map, if it is still there, and leaves
+    /// the free conversation to a wake-up that is due (ADR-0041).
     fn release_run(&self, conversation: &ConversationId, run: &RunId) {
-        let mut busy = lock(&self.inner.busy);
-        let is_this_run =
-            matches!(busy.get(conversation), Some(Busy::Running(handle)) if handle.run_id == *run);
-        if is_this_run {
-            busy.remove(conversation);
+        let released = {
+            let mut busy = lock(&self.inner.busy);
+            let is_this_run = matches!(busy.get(conversation), Some(Busy::Running(handle)) if handle.run_id == *run);
+            if is_this_run {
+                busy.remove(conversation);
+            }
+            is_this_run
+        };
+        if released {
+            self.conversation_free(conversation);
         }
     }
 
@@ -587,6 +598,9 @@ impl RunActor {
             }
             if self.confirmation_due(finish) {
                 self.confirm().await?;
+                return Ok(AfterStep::Continue);
+            }
+            if self.note_ends_before_the_end(setup, finish).await? {
                 return Ok(AfterStep::Continue);
             }
             return self.end_of_reply().await;
@@ -1185,6 +1199,11 @@ impl RunActor {
     async fn end(mut self, result: Result<FinishReason, Ending>) {
         // A run ends only after its children ended (ADR-0024, decision 9).
         self.end_children(&result).await;
+        // A task's background commands end with its run, before its ending
+        // (ADR-0041, decision 9).
+        if self.child.is_some() {
+            self.runtime.end_task_commands(&self.conversation).await;
+        }
         let (state, part_state, failure, finish) = match result {
             Ok(finish) => (RunState::Completed, PartState::Complete, None, Some(finish)),
             Err(Ending::Failed(failure)) => {

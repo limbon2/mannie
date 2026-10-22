@@ -243,6 +243,7 @@ async fn a_host_rule_lets_a_command_run_in_autonomous_mode() {
             words: vec!["echo".to_owned()],
             folder: None,
             created_at: mannie_types::clock::UtcMillis::EPOCH,
+            background: false,
         }],
         ..WorkerOptions::default()
     })

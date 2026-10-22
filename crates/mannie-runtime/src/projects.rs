@@ -167,6 +167,13 @@ impl Runtime {
                 .await
                 .map_err(store_failure)?
                 .ok_or(ChatError::ProjectNotFound)?;
+            let forgotten: Vec<ConversationId> = deletion
+                .conversations
+                .iter()
+                .chain(&deletion.task_conversations)
+                .cloned()
+                .collect();
+            self.forget_background_commands(&forgotten).await;
             for conversation in &deletion.conversations {
                 self.inner.hubs.deleted(conversation).await;
             }
