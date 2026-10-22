@@ -2,7 +2,6 @@
   import SquareTerminalIcon from '@lucide/svelte/icons/square-terminal';
 
   import { Badge } from '#lib/components/ui/badge/index.js';
-  import { Button } from '#lib/components/ui/button/index.js';
   import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
   import type { BackgroundCommandView } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
@@ -17,30 +16,27 @@
     runningFirst,
   } from '#lib/utils/tools-background.js';
 
-  // The background commands' button in a conversation's toolbar (ADR-0041;
-  // docs/features/system-tools/background-commands.md, interface): it says
-  // how many commands run, and its menu lists the running commands, then the
+  // The background commands' submenu in the conversation's menu (ADR-0041,
+  // ADR-0042; docs/features/system-tools/background-commands.md, interface):
+  // it says how many commands run, and lists the running commands, then the
   // ended ones, with their states. Choosing one opens its output in a side
   // panel. A worker task's commands show their states only, since their
-  // output stays on the worker. Without commands, the toolbar shows nothing
-  // of it.
+  // output stays on the worker. Without commands, the menu shows nothing of
+  // it.
   interface CommandGroup {
     readonly commands: readonly BackgroundCommandView[];
     readonly heading: string;
     readonly id: string;
   }
 
-  let { backgroundCommands = [], conversation }: ConversationControlProps = $props();
+  let { backgroundCommands = [], conversation, opener }: ConversationControlProps = $props();
 
   const numbers = new Intl.NumberFormat();
 
   let open = $state(false);
-  let trigger = $state<HTMLElement | null>(null);
-  /** Whether the latest choice opened a panel, whose heading then keeps the focus that the menu would give back. */
-  let openedPanel = false;
 
   const split = $derived(runningFirst(backgroundCommands));
-  /** The menu's groups that have commands: the ones that run, then the ones that ended. */
+  /** The submenu's groups that have commands: the ones that run, then the ones that ended. */
   const groups: CommandGroup[] = $derived(
     [
       { commands: split.running, heading: m.tools_background_control_running(), id: 'running' },
@@ -52,38 +48,26 @@
       ? m.tools_background_control_label()
       : m.tools_background_control_label_running({ count: split.running.length }),
   );
-  // Only an open menu reads the clock, so a closed one starts no timer.
+  // Only an open submenu reads the clock, so a closed one starts no timer.
   const now = $derived(open ? secondClock.now : 0);
 
   function openOutput(command: BackgroundCommandView): void {
-    openedPanel = true;
     const label = { isContent: true, text: commandLabel(command) };
     const argument = commandPanelArgument(conversation.id, command.number);
-    void sidePanels.open(COMMAND_OUTPUT_PANEL, argument, { label, opener: trigger });
-  }
-
-  function keepPanelFocus(event: Event): void {
-    if (openedPanel) {
-      event.preventDefault();
-      openedPanel = false;
-    }
+    void sidePanels.open(COMMAND_OUTPUT_PANEL, argument, { label, opener });
   }
 </script>
 
 {#if backgroundCommands.length > 0}
-  <DropdownMenu.Root bind:open>
-    <DropdownMenu.Trigger bind:ref={trigger}>
-      {#snippet child({ props })}
-        <Button {...props} aria-label={name} data-background-commands="" size="sm" variant="ghost">
-          <SquareTerminalIcon data-icon="inline-start" />
-          {m.tools_background_control_label()}
-          {#if split.running.length > 0}
-            <Badge variant="secondary">{numbers.format(split.running.length)}</Badge>
-          {/if}
-        </Button>
-      {/snippet}
-    </DropdownMenu.Trigger>
-    <DropdownMenu.Content class="w-80" align="end" onCloseAutoFocus={keepPanelFocus}>
+  <DropdownMenu.Sub bind:open>
+    <DropdownMenu.SubTrigger aria-label={name} data-background-commands="">
+      <SquareTerminalIcon />
+      <span class="flex-1">{m.tools_background_control_label()}</span>
+      {#if split.running.length > 0}
+        <Badge variant="secondary">{numbers.format(split.running.length)}</Badge>
+      {/if}
+    </DropdownMenu.SubTrigger>
+    <DropdownMenu.SubContent class="w-80">
       {#each groups as group, index (group.id)}
         {#if index > 0}
           <DropdownMenu.Separator />
@@ -102,6 +86,6 @@
           {/each}
         </DropdownMenu.Group>
       {/each}
-    </DropdownMenu.Content>
-  </DropdownMenu.Root>
+    </DropdownMenu.SubContent>
+  </DropdownMenu.Sub>
 {/if}

@@ -431,6 +431,7 @@ impl Tool for PluginToolAdapter {
             accesses,
             stop,
             part_id,
+            activity,
             ..
         } = execution;
         let limit = context.result_limit;
@@ -442,6 +443,7 @@ impl Tool for PluginToolAdapter {
                 &self.plugin,
                 &context.conversation_id,
                 &part_id,
+                activity.as_deref(),
                 &accesses,
             )
         });

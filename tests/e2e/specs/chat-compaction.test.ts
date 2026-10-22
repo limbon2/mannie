@@ -5,7 +5,7 @@
 // a conversation at any time, but never its latest turn.
 import {
   addProfile,
-  chooseConversationAction,
+  chooseContextAction,
   clickWithText,
   send,
   startNewConversation,
@@ -109,7 +109,7 @@ describe('context budget and compaction', () => {
     await waitForCompleteReply();
     const summariesBefore = summaryRequests(provider).length;
 
-    await chooseConversationAction('Compact now');
+    await chooseContextAction('Compact now');
 
     await waitForShownText(
       $('main [data-slot="alert"]'),
@@ -124,7 +124,7 @@ describe('context budget and compaction', () => {
     await waitForCompleteReply();
     const summariesBefore = summaryRequests(provider).length;
 
-    await chooseConversationAction('Compact now');
+    await chooseContextAction('Compact now');
 
     await browser.waitUntil(() => summaryRequests(provider).length > summariesBefore, {
       timeoutMsg: 'the conversation was not compacted',

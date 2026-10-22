@@ -6,8 +6,18 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ### Added
 
-- Agents run commands in the background, such as servers, watchers, `journalctl -f` and long test runs (ADR-0041): `start_command` returns at once, `read_command_output` reads the new output later or waits for a line, and `stop_command` ends the command with everything it started. A command keeps running after the reply until it ends, it is stopped, its conversation is deleted, its task ends or Mannie quits; the conversation's "Commands" control lists the commands with their output in a side panel and Stop, and a command that ends on its own wakes an idle agent, which a Tools setting turns off.
+- Agents run commands in the background, such as servers, watchers, `journalctl -f` and long test runs (ADR-0041): `start_command` returns at once, `read_command_output` reads the new output later or waits for a line, and `stop_command` ends the command with everything it started. A command keeps running after the reply until it ends, it is stopped, its conversation is deleted, its task ends or Mannie quits; the submenu "Commands" of the conversation's menu lists the commands by what their calls said they do, such as "Command 2: Running test ticks", with their output in a side panel that has Stop, and a command that ends on its own wakes an idle agent, which a Tools setting turns off.
 - A plugin's tool may hand the core a command that it starts on a remote host in the background, through the service `background-commands`, and the core follows, reads and ends it as it does a local one (ADR-0041).
+
+### Changed
+
+- A conversation's toolbar keeps the profile menu and the Git plugin's branch, and moves "Child agents", "Commands" and the export into a menu behind a button with vertical dots, which counts running commands and working child agents (ADR-0042). Full access and the context meter move into the message box, which becomes one framed field with its buttons in a row below the text. The toolbar's own menu of Rename, Compact now and Delete is gone, since the conversation list renames and deletes and the context meter compacts.
+- Dialogs no longer blur the window behind them, which made slower machines stutter; the window behind is only dimmed.
+- The output panel of a background command shows "Follow new lines" on the row of the command's state.
+
+### Fixed
+
+- A dialog taller than the window scrolls, so that its last fields and its buttons can be reached.
 
 ## 0.5.0 - 2026-10-21
 

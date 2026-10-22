@@ -2,7 +2,6 @@
   import BotIcon from '@lucide/svelte/icons/bot';
 
   import { Badge } from '#lib/components/ui/badge/index.js';
-  import { Button } from '#lib/components/ui/button/index.js';
   import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
   import type { TaskView } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
@@ -12,30 +11,26 @@
   import { taskStateLabel } from '#lib/utils/child-agents-messages.js';
   import { childAgentsOf, isTaskActive } from '#lib/utils/task-parts.js';
 
-  // The child agents' button in a conversation's toolbar (ADR-0026;
-  // docs/features/child-agents/child-agent-activity.md): it says how many
-  // child agents work, and its menu lists the conversation's child agents
+  // The child agents' submenu in the conversation's menu (ADR-0026,
+  // ADR-0042; docs/features/child-agents/child-agent-activity.md): it says
+  // how many child agents work, and lists the conversation's child agents
   // with their states. Choosing one opens its conversation in a side panel,
-  // as its card's "Open conversation" does. Without child agents, the
-  // toolbar shows nothing of it.
+  // as its card's "Open conversation" does. Without child agents, the menu
+  // shows nothing of it.
   interface ChildAgentGroup {
     readonly heading: string;
     readonly id: string;
     readonly tasks: readonly TaskView[];
   }
 
-  let { turns }: ConversationControlProps = $props();
+  let { opener, turns }: ConversationControlProps = $props();
 
   const numbers = new Intl.NumberFormat();
-
-  let trigger = $state<HTMLElement | null>(null);
-  /** Whether the latest choice opened a panel, whose heading then keeps the focus that the menu would give back. */
-  let openedPanel = false;
 
   const children = $derived(childAgentsOf(turns));
   const working = $derived(children.filter((task) => isTaskActive(task.state)));
   const ended = $derived(children.filter((task) => !isTaskActive(task.state)));
-  /** The menu's groups that have child agents: the ones that work, then the ones that ended. */
+  /** The submenu's groups that have child agents: the ones that work, then the ones that ended. */
   const groups: ChildAgentGroup[] = $derived(
     [
       { heading: m.child_agents_control_working(), id: 'working', tasks: working },
@@ -53,33 +48,21 @@
   }
 
   function openConversation(task: TaskView): void {
-    openedPanel = true;
     const label = { isContent: true, text: tabLabel(task) };
-    void sidePanels.open(CONVERSATION_PANEL, task.conversationId, { label, opener: trigger });
-  }
-
-  function keepPanelFocus(event: Event): void {
-    if (openedPanel) {
-      event.preventDefault();
-      openedPanel = false;
-    }
+    void sidePanels.open(CONVERSATION_PANEL, task.conversationId, { label, opener });
   }
 </script>
 
 {#if children.length > 0}
-  <DropdownMenu.Root>
-    <DropdownMenu.Trigger bind:ref={trigger}>
-      {#snippet child({ props })}
-        <Button {...props} aria-label={name} data-child-agents="" size="sm" variant="ghost">
-          <BotIcon data-icon="inline-start" />
-          {m.child_agents_control_label()}
-          {#if working.length > 0}
-            <Badge variant="secondary">{numbers.format(working.length)}</Badge>
-          {/if}
-        </Button>
-      {/snippet}
-    </DropdownMenu.Trigger>
-    <DropdownMenu.Content class="w-80" align="end" onCloseAutoFocus={keepPanelFocus}>
+  <DropdownMenu.Sub>
+    <DropdownMenu.SubTrigger aria-label={name} data-child-agents="">
+      <BotIcon />
+      <span class="flex-1">{m.child_agents_control_label()}</span>
+      {#if working.length > 0}
+        <Badge variant="secondary">{numbers.format(working.length)}</Badge>
+      {/if}
+    </DropdownMenu.SubTrigger>
+    <DropdownMenu.SubContent class="w-80">
       {#each groups as group, index (group.id)}
         {#if index > 0}
           <DropdownMenu.Separator />
@@ -94,6 +77,6 @@
           {/each}
         </DropdownMenu.Group>
       {/each}
-    </DropdownMenu.Content>
-  </DropdownMenu.Root>
+    </DropdownMenu.SubContent>
+  </DropdownMenu.Sub>
 {/if}

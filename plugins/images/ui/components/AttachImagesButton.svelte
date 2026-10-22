@@ -26,11 +26,12 @@
     {#snippet child({ props })}
       <Button
         {...props}
+        class="rounded-full"
         aria-label={m.images_attach()}
         data-attach-images
         size="icon"
         type="button"
-        variant="outline"
+        variant="ghost"
         onclick={() => void pick()}
       >
         <ImagePlusIcon />

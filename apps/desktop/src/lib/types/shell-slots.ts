@@ -144,8 +144,15 @@ export interface ConversationControlProps {
    * of a version before them passes none.
    */
   readonly backgroundCommands?: readonly BackgroundCommandView[];
-  /** The conversation whose toolbar shows the control. */
+  /** The conversation that the control belongs to. */
   readonly conversation: ConversationSummary;
+  /**
+   * Where the focus returns when a side panel or a dialog that the control
+   * opened closes (ADR-0042, decision 5): the menu's button for a control of
+   * the conversation's menu, whose own entry is gone once the menu closes.
+   * Without it, the control passes its own button.
+   */
+  readonly opener?: HTMLElement | null;
   /**
    * The turns that the conversation view has loaded, oldest first, as the
    * transcript shows them. The control only reads them.
@@ -154,9 +161,18 @@ export interface ConversationControlProps {
 }
 
 /**
- * A control in a conversation's toolbar (ADR-0026): a feature's compact
- * button or menu, before the context meter. It renders nothing when it has
- * nothing to offer, and it never takes the focus by itself.
+ * Where a conversation control shows (ADR-0042): `toolbar`, a compact button
+ * or menu in the conversation's toolbar; `menu`, entries of the
+ * conversation's menu at the toolbar's end, built from the dropdown menu's
+ * items and submenus; `message-box`, a compact button in the row below the
+ * message box's text.
+ */
+export type ConversationControlPlace = 'menu' | 'message-box' | 'toolbar';
+
+/**
+ * A control of a conversation (ADR-0026, ADR-0042): a feature's button,
+ * menu or menu entries, in the place that it names. It renders nothing when
+ * it has nothing to offer, and it never takes the focus by itself.
  */
 export interface ConversationControl {
   /** The control. */
@@ -165,6 +181,14 @@ export interface ConversationControl {
   readonly id: string;
   /** Controls are sorted by this number, lowest first. */
   readonly order: number;
+  /** Where the control shows; `toolbar` when it names no place. */
+  readonly place?: ConversationControlPlace;
+  /**
+   * How many of a menu control's things work, such as its running commands,
+   * which the menu's button adds up in a badge, so that running work shows
+   * while the menu is closed (ADR-0042, decision 3).
+   */
+  readonly running?: (props: ConversationControlProps) => number;
 }
 
 /** What a part renderer receives. */

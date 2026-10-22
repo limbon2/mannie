@@ -119,6 +119,20 @@ describe('composeShell', () => {
       'child-agents.control',
       'export.conversation',
     ]);
+    // Full access sits in the message box, and the rest in the conversation's
+    // menu, whose button counts running commands and working child agents
+    // (ADR-0042).
+    expect(slots.conversationControls.entries.map((control) => [control.id, control.place])).toEqual([
+      ['tools.full-access', 'message-box'],
+      ['tools.background-commands', 'menu'],
+      ['child-agents.control', 'menu'],
+      ['export.conversation', 'menu'],
+    ]);
+    expect(
+      slots.conversationControls.entries
+        .filter((control) => control.running !== undefined)
+        .map((control) => control.id),
+    ).toEqual(['tools.background-commands', 'child-agents.control']);
     expect(slots.overlays.entries.map((overlay) => overlay.id)).toEqual([
       'shell.link-confirmation',
       'chat.dialogs',

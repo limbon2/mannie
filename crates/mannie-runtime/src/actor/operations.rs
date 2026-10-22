@@ -388,6 +388,7 @@ impl RunActor {
             stop: stop.clone(),
             process: Some(process_sender),
             part_id: Some(call.part_id.clone()),
+            activity: call.document.activity.clone(),
         });
         let abort = execution_guard.as_ref().map(|guard| guard.abort.clone());
         let watched = self

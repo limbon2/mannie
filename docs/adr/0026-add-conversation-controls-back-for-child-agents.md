@@ -7,7 +7,7 @@
 | Deciders | Owner                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | Related  | [ADR-0002](0002-grow-through-extension-points.md), [ADR-0020](0020-complete-the-ui-shell-slots.md), [ADR-0022](0022-add-conversation-controls-to-the-shell.md), [ADR-0023](0023-organize-conversations-into-projects.md), [ADR-0025](0025-add-side-panels-to-the-shell.md), [Extension points](../architecture/extension-points.md#37-ui-shell-slots), [Child agents](../features/child-agents/README.md), [Conversation view](../features/chat/conversation-view.md) |
 
-Later changes: [ADR-0041](0041-let-agents-run-commands-in-the-background.md) refines decision 2: a control also receives the conversation's background commands.
+Later changes: [ADR-0041](0041-let-agents-run-commands-in-the-background.md) refines decision 2: a control also receives the conversation's background commands. [ADR-0042](0042-place-conversation-controls-in-a-menu-and-the-message-box.md) refines decisions 3 and 4: a control names its place, the toolbar, the conversation's menu or the message box, and a control of the menu renders menu entries.
 
 ## Context
 

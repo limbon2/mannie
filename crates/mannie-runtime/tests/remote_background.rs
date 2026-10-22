@@ -386,6 +386,8 @@ async fn a_plugin_s_command_runs_past_its_call_and_reads_and_stops_like_a_local_
     let command = &transcript.background_commands[&1];
     assert!(command.is_running());
     assert_eq!(command.command, "journalctl -f");
+    // The call's activity names the command, as it names a local one.
+    assert_eq!(command.activity.as_deref(), Some("Starting"));
     assert_eq!(
         command.source,
         BackgroundSource::Remote {

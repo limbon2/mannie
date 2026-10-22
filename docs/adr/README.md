@@ -59,3 +59,4 @@ Each ADR has exactly one of these statuses:
 | [0039](0039-let-plugins-describe-their-tool-calls-in-the-transcript.md)   | Let plugins describe their tool calls in the transcript                                       | Accepted (D37)         | M9         |
 | [0040](0040-export-complete-conversation-records.md)                      | Let the owner export complete conversation records                                            | Accepted (D38)         | M10        |
 | [0041](0041-let-agents-run-commands-in-the-background.md)                 | Let agents run commands in the background, and wake an idle agent when one ends               | Accepted (D40)         | M11        |
+| [0042](0042-place-conversation-controls-in-a-menu-and-the-message-box.md) | Place conversation controls in a menu and in the message box                                  | Accepted (D41)         | None       |

@@ -359,15 +359,18 @@ struct Reported {
     signal: Option<String>,
 }
 
-/// The record of a command that just started.
+/// The record of a command that just started, named by its start call's
+/// activity.
 fn started_document(
     command: String,
+    activity: Option<String>,
     source: BackgroundSource,
     process: Option<ProcessRecord>,
     started_at: UtcMillis,
 ) -> BackgroundCommandDocument {
     BackgroundCommandDocument {
         command,
+        activity,
         source,
         process,
         started_at,
@@ -507,6 +510,7 @@ impl Runtime {
         let StartRequest {
             conversation,
             part_id,
+            activity,
             spec,
             process: journal,
         } = request;
@@ -524,6 +528,7 @@ impl Runtime {
         }
         let document = started_document(
             spec.text.clone(),
+            activity,
             BackgroundSource::Local {
                 shell: spec.shell.to_string_lossy().into_owned(),
                 working_directory: spec.working_directory.to_string_lossy().into_owned(),

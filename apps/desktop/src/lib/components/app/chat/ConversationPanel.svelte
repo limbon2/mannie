@@ -3,6 +3,7 @@
   import MessageSquareOffIcon from '@lucide/svelte/icons/message-square-off';
   import { onMount, untrack } from 'svelte';
 
+  import ConversationActionsMenu from '#lib/components/app/shell/ConversationActionsMenu.svelte';
   import ConversationControlOutlet from '#lib/components/app/shell/ConversationControlOutlet.svelte';
   import PluginOffState from '#lib/components/app/shell/PluginOffState.svelte';
   import * as Alert from '#lib/components/ui/alert/index.js';
@@ -122,8 +123,13 @@
     {/if}
   {:else}
     {#if summary !== null}
-      <div class="flex shrink-0 justify-end gap-1 border-b px-3 py-1.5">
+      <div class="flex shrink-0 items-center justify-end gap-1 border-b px-3 py-1.5">
         <ConversationControlOutlet
+          backgroundCommands={transcript.backgroundCommands}
+          conversation={summary}
+          turns={transcript.turns}
+        />
+        <ConversationActionsMenu
           backgroundCommands={transcript.backgroundCommands}
           conversation={summary}
           turns={transcript.turns}

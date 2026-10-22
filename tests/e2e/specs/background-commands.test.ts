@@ -1,9 +1,9 @@
 // Background commands in the conversation view (docs/features/system-tools/
 // background-commands.md and wake-ups.md, acceptance): a command started in
-// the background keeps running after its reply, the conversation's control
-// "Commands" counts it and opens its output in a side panel that shows lines
-// as they arrive, Stop in the panel ends it, the call's card shows its
-// state, and a command that ends on its own after the reply wakes the agent,
+// the background keeps running after its reply, the button of the
+// conversation's menu and its submenu "Commands" count it, the submenu opens
+// its output in a side panel that shows lines as they arrive, Stop in the
+// panel ends it, the call's card shows its state, and a command that ends on its own after the reply wakes the agent,
 // whose row names it. In the pseudo-locale, they show only catalog text
 // beside the commands and their output. The fixture provider's tools
 // scenario calls the tools that each message names.
@@ -17,7 +17,11 @@ import {
   callMessage,
   clickInLatestTurn,
   clickWithText,
+  CONVERSATION_ACTIONS,
+  CONVERSATION_MENU,
+  CONVERSATION_SUBMENU,
   LATEST_MAIN_TURN,
+  openConversationSubmenu,
   projectRow,
   send,
   waitForCompleteReply,
@@ -45,7 +49,7 @@ const TICKING = IS_WINDOWS
 /** A command that ends on its own three seconds after it started. */
 const ENDS_SOON = IS_WINDOWS ? 'Start-Sleep -Seconds 3; Write-Output built' : 'sleep 3; echo built';
 
-/** The conversation's control "Commands". */
+/** The submenu "Commands" of the conversation's menu. */
 const CONTROL = '[data-background-commands]';
 
 /** The output panel of a command. */
@@ -84,19 +88,26 @@ describe('background commands', () => {
   it('keeps a command running after its reply, counts it in the toolbar and shows its output as it arrives', async () => {
     await startInBackground(TICKING);
 
-    const control = await $(CONTROL);
-    await control.waitForDisplayed();
-    await waitForShownText(control, expect.stringContaining('1'));
-    await control.click();
+    // The menu's button counts the running command while the menu is closed.
+    const actions = await $(CONVERSATION_ACTIONS);
+    await actions.waitForDisplayed();
+    await waitForShownText(actions, expect.stringContaining('1'));
+    await openConversationSubmenu(CONTROL);
+    await waitForShownText($(`${CONVERSATION_MENU} ${CONTROL}`), expect.stringContaining('1'));
     await waitForAnimations();
     expect(await axeViolations()).toEqual([]);
-    // The menu lists the running command first, with its number and its state.
-    const item = await $('[role="menuitem"]');
-    await waitForShownText(item, expect.stringContaining('Command 1:'));
+    // The submenu lists the running command first, with its number, what its
+    // call said it does and its state.
+    const item = await $(`${CONVERSATION_SUBMENU} [role="menuitem"]`);
+    await waitForShownText(item, expect.stringContaining('Command 1: Starting in the background'));
     await item.click();
 
     const panel = await $(PANEL);
     await panel.waitForDisplayed();
+    // The panel's heading names the command the same way, and the panel
+    // still shows the command's text.
+    await waitForShownText('[data-side-panels] h2', 'Command 1: Starting in the background');
+    await waitForShownText(panel, expect.stringContaining('tick'));
     await waitForShownText($(`${PANEL} [role="log"]`), expect.stringContaining('tick 3'));
     await waitForShownText(panel, expect.stringContaining('Running for'));
     await waitForAnimations();
@@ -110,8 +121,8 @@ describe('background commands', () => {
     await waitForShownText($(PANEL), expect.stringContaining('Show full output'));
     await $('[data-side-panel-close]').click();
     await waitForShownText($(LATEST_MAIN_TURN), expect.stringContaining('Stopped by you'));
-    // The control shows no count once nothing runs.
-    await expect($(`${CONTROL} [data-slot="badge"]`)).not.toBeExisting();
+    // The menu's button shows no count once nothing runs.
+    await expect($(`${CONVERSATION_ACTIONS} [data-slot="badge"]`)).not.toBeExisting();
   });
 
   it('wakes the agent when a command ends on its own after the reply', async () => {
@@ -125,25 +136,23 @@ describe('background commands', () => {
     expect(await axeViolations()).toEqual([]);
   });
 
-  it('shows only catalog text in the control, its menu, the output panel and the wake-up row in the pseudo-locale', async () => {
+  it('shows only catalog text in the menu, its submenu, the output panel and the wake-up row in the pseudo-locale', async () => {
     // The selectors use structure only, because every catalog string is
     // pseudo-localized.
     await switchToPseudoLocale();
     await leaveSettings();
     await projectRow(project).$('[data-conversation] a').click();
-    const control = await $(CONTROL);
-    await control.waitForDisplayed();
+    await $(CONVERSATION_ACTIONS).waitForDisplayed();
     await $('main [data-command-note]').waitForDisplayed();
     await waitForAnimations();
     expect(await uncataloguedText()).toEqual([]);
 
-    await control.click();
-    await $('[data-slot="dropdown-menu-content"]').waitForDisplayed();
+    await openConversationSubmenu(CONTROL);
     await waitForAnimations();
     expect(await uncataloguedText()).toEqual([]);
 
     // Both commands ended; the first one listed opens its output.
-    const [first] = await $$('[role="menuitem"]');
+    const [first] = await $$(`${CONVERSATION_SUBMENU} [role="menuitem"]`);
     await first?.click();
     await $(PANEL).waitForDisplayed();
     await waitForAnimations();

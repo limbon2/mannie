@@ -15,6 +15,8 @@ import {
   clickWithText,
   COMPOSER,
   LATEST_MAIN_TURN,
+  openConversationRowMenu,
+  openConversationSubmenu,
   projectToggle,
   sendMessage,
   startNewConversation,
@@ -42,8 +44,8 @@ async function overflowsHorizontally(): Promise<boolean> {
 }
 
 /**
- * Opens the menu of the toolbar's trigger at `index`: the profile, the
- * context or the conversation's actions.
+ * Opens the menu of the trigger at `index` in the conversation's toolbar and
+ * message box: the profile, the conversation's actions or the context.
  */
 async function openToolbarMenu(index: number): Promise<void> {
   await waitForPointerInput();
@@ -107,8 +109,10 @@ describe('the chat and window views in the pseudo-locale', () => {
   });
 
   it('shows only catalog text in the rename and delete dialogs', async () => {
-    for (const item of [0, 2]) {
-      await openToolbarMenu(2);
+    // The conversation list's menu renames and deletes the conversation.
+    for (const item of [0, 1]) {
+      await openConversationRowMenu();
+      await waitForAnimations();
       const items = await $$('[data-slot="dropdown-menu-item"]');
       await items[item]?.click();
       await $('[role="dialog"], [role="alertdialog"]').waitForDisplayed();
@@ -175,10 +179,8 @@ describe('the chat and window views in the pseudo-locale', () => {
     expect(await overflowsHorizontally()).toBe(false);
     expect(await axeViolations()).toEqual([]);
 
-    // The toolbar's button lists the conversation's child agents.
-    await waitForPointerInput();
-    await $('main [data-child-agents]').click();
-    await $('[data-slot="dropdown-menu-content"]').waitForDisplayed();
+    // The conversation's menu lists the conversation's child agents in a submenu.
+    await openConversationSubmenu('[data-child-agents]');
     await waitForAnimations();
     expect(await uncataloguedText()).toEqual([]);
     await closeOverlays();

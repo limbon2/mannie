@@ -107,6 +107,7 @@
         "number": 1,
         "partId": "0199e0f2-0000-7000-a000-000000000008",
         "command": "tail -f /var/log/build.log",
+        "activity": "Following the build log",
         "source": {
           "kind": "local",
           "shell": "/bin/sh",

@@ -1,11 +1,11 @@
 <script lang="ts">
-  import SendIcon from '@lucide/svelte/icons/send';
+  import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
   import SquareIcon from '@lucide/svelte/icons/square';
-  import { untrack } from 'svelte';
+  import { type Snippet, untrack } from 'svelte';
   import type { Attachment } from 'svelte/attachments';
 
   import { Button } from '#lib/components/ui/button/index.js';
-  import { Textarea } from '#lib/components/ui/textarea/index.js';
+  import * as InputGroup from '#lib/components/ui/input-group/index.js';
   import * as Tooltip from '#lib/components/ui/tooltip/index.js';
   import type { ImageRef, MentionPlace, MentionRef } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
@@ -21,13 +21,20 @@
   import MentionPicker from './MentionPicker.svelte';
 
   // The message box (docs/features/chat/conversation-view.md, the message
-  // box): Enter sends, Shift+Enter starts a new line, and Escape stops the
-  // reply while the box has the focus. The text stays when sending fails.
-  // "@" opens the list of what the message can mention, whose keys come first
-  // while it shows (docs/features/chat/mentions.md). Image sources add their
-  // buttons before the text, and take the files of a paste or a drop
-  // (ADR-0033, decision 7); the images stay too when sending fails.
+  // box): one framed field with the text on top and a row of buttons below
+  // it (ADR-0042, decision 7). Enter sends, Shift+Enter starts a new line,
+  // and Escape stops the reply while the box has the focus. The text stays
+  // when sending fails. "@" opens the list of what the message can mention,
+  // whose keys come first while it shows (docs/features/chat/mentions.md).
+  // Image sources add their buttons at the start of the row, and take the
+  // files of a paste or a drop (ADR-0033, decision 7); the images stay too
+  // when sending fails.
   interface Props {
+    /**
+     * The controls of the row after the image sources' buttons, such as the
+     * conversation's full access (ADR-0042, decision 4).
+     */
+    controls?: Snippet;
     /** Whether the box takes no message, such as without a provider profile. */
     disabled?: boolean;
     /** Where the message is written, which decides what it can mention (ADR-0032). */
@@ -38,6 +45,8 @@
     onStop?: () => Promise<void>;
     /** Whether a reply is being written, which the button then stops. */
     replying?: boolean;
+    /** What the row shows before Send, such as the conversation's context meter. */
+    status?: Snippet;
     /**
      * Whether the box takes the focus once it is enabled, as the box of a
      * conversation that the first message of a new conversation just opened.
@@ -45,7 +54,16 @@
     takeFocus?: boolean;
   }
 
-  let { disabled = false, mentionPlace, onSend, onStop, replying = false, takeFocus = false }: Props = $props();
+  let {
+    controls,
+    disabled = false,
+    mentionPlace,
+    onSend,
+    onStop,
+    replying = false,
+    status,
+    takeFocus = false,
+  }: Props = $props();
 
   const slots = getShellSlots();
   const uid = $props.id();
@@ -275,7 +293,7 @@
 
 <form
   class={[
-    'relative flex flex-col gap-2 border-t bg-background p-3',
+    'relative mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 pt-2 pb-3',
     dragDepth > 0 && 'outline-2 -outline-offset-4 outline-primary outline-dashed',
   ]}
   data-composer
@@ -291,12 +309,15 @@
   {#if dragDepth > 0}
     <p class="text-sm text-primary" role="status">{m.chat_image_drop_hint()}</p>
   {/if}
-  <div class="flex items-end gap-2">
-    {#each sources as source (source.id)}
-      <source.button disabled={disabled || sending} target={images} />
-    {/each}
-    <Textarea
-      class="max-h-48 min-h-10 resize-none"
+  <!--
+    The field never dims as a whole: a disabled text or Send dims itself, so
+    the row's other controls, such as the context meter, keep their contrast.
+  -->
+  <InputGroup.Root
+    class="rounded-3xl has-disabled:bg-transparent has-disabled:opacity-100 dark:has-disabled:bg-input/30"
+  >
+    <InputGroup.Textarea
+      class="max-h-48 min-h-12 px-4 pt-3"
       {@attach takeFocusWhenEnabled}
       aria-activedescendant={activeOption}
       aria-autocomplete="list"
@@ -315,24 +336,46 @@
       onkeyup={follow}
       onpaste={handlePaste}
     />
-    {#if replying}
-      <Button type="button" variant="outline" onclick={() => void onStop?.()}>
-        <SquareIcon data-icon="inline-start" />
-        {m.chat_stop()}
-      </Button>
-    {:else}
-      <Tooltip.Root>
-        <Tooltip.Trigger disabled={!canSend} type="submit">
-          {#snippet child({ props })}
-            <Button {...props} aria-label={m.chat_send()} size="icon">
-              <SendIcon />
-            </Button>
-          {/snippet}
-        </Tooltip.Trigger>
-        <Tooltip.Content>{m.chat_send()}</Tooltip.Content>
-      </Tooltip.Root>
-    {/if}
-  </div>
+    <InputGroup.Addon class="flex-wrap px-3 pb-3 text-foreground" align="block-end">
+      {#each sources as source (source.id)}
+        <source.button disabled={disabled || sending} target={images} />
+      {/each}
+      {@render controls?.()}
+      <div class="ms-auto flex items-center gap-2">
+        {@render status?.()}
+        {#if replying}
+          <Tooltip.Root>
+            <Tooltip.Trigger>
+              {#snippet child({ props })}
+                <Button
+                  {...props}
+                  class="rounded-full"
+                  aria-label={m.chat_stop()}
+                  size="icon"
+                  type="button"
+                  onclick={() => void onStop?.()}
+                >
+                  <SquareIcon class="fill-current" />
+                </Button>
+              {/snippet}
+            </Tooltip.Trigger>
+            <Tooltip.Content>{m.chat_stop()}</Tooltip.Content>
+          </Tooltip.Root>
+        {:else}
+          <Tooltip.Root>
+            <Tooltip.Trigger disabled={!canSend} type="submit">
+              {#snippet child({ props })}
+                <Button {...props} class="rounded-full" aria-label={m.chat_send()} size="icon">
+                  <ArrowUpIcon />
+                </Button>
+              {/snippet}
+            </Tooltip.Trigger>
+            <Tooltip.Content>{m.chat_send()}</Tooltip.Content>
+          </Tooltip.Root>
+        {/if}
+      </div>
+    </InputGroup.Addon>
+  </InputGroup.Root>
   <AttachedImages {images} />
   {#if mentioned.length > 0}
     <MentionChips mentions={mentioned} />
@@ -346,5 +389,5 @@
       )}
     </p>
   {/if}
-  <p id="composer-hint" class="text-xs text-muted-foreground">{m.chat_composer_hint()}</p>
+  <p id="composer-hint" class="text-center text-xs text-muted-foreground">{m.chat_composer_hint()}</p>
 </form>

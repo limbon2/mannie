@@ -28,6 +28,8 @@ pub struct StartRequest {
     pub conversation: ConversationId,
     /// The part of the call that starts it.
     pub part_id: PartId,
+    /// The call's activity, which names the command.
+    pub activity: Option<String>,
     /// The command, its shell, its working directory and its environment.
     pub spec: BackgroundSpec,
     /// Receives the shell's process as soon as it runs, so the call's

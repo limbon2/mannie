@@ -527,6 +527,7 @@ mod record_tests {
             number: 2,
             part_id: PartId::parse("0199e0f2-0000-7000-8000-000000000002").unwrap(),
             command: "npm run dev".to_owned(),
+            activity: None,
             source: mannie_types::tools::BackgroundSource::Local {
                 shell: "/bin/sh".to_owned(),
                 working_directory: "/work".to_owned(),

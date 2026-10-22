@@ -24,6 +24,7 @@ import type {
 export type { MentionSummary } from '#lib/generated/bindings.js';
 export type {
   ConversationControl,
+  ConversationControlPlace,
   ConversationControlProps,
   ImageSourceButtonProps,
   ImageSourceKind,

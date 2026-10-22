@@ -65,6 +65,18 @@
   "shell_side_panel_unknown_title": "This panel cannot be shown",
   "shell_side_panel_unknown_description": "This version of Mannie has no panel of the kind {kind}.",
   "shell_command_close_side_panel": "Close the side panel",
+  "shell_conversation_actions": "Conversation actions",
+  "shell_conversation_actions_running": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Conversation actions, 1 running",
+        "countPlural=other": "Conversation actions, {count: number} running"
+      }
+    }
+  ],
+  "shell_conversation_actions_empty": "No actions for this conversation",
   "markdown_copy": "Copy",
   "markdown_copy_succeeded": "Copied.",
   "markdown_copy_failed": "Copying failed. Select the code and copy it yourself.",

@@ -11,6 +11,7 @@ import {
   COMPOSER,
   latestTurnParts,
   listedConversations,
+  OPEN_CONVERSATION_ROW,
   send,
   sendMessage,
   startNewConversation,
@@ -208,10 +209,10 @@ describe('chat', () => {
   });
 
   it('renames a conversation from the keyboard alone', async () => {
-    // As if the owner had tabbed to the conversation's menu.
-    await browser.execute(() => {
-      document.querySelector<HTMLButtonElement>('main button[aria-label^="More actions for"]')?.focus();
-    });
+    // As if the owner had tabbed to the open conversation's menu in the sidebar.
+    await browser.execute((row: string) => {
+      document.querySelector<HTMLButtonElement>(`${row} [data-conversation-menu]`)?.focus();
+    }, OPEN_CONVERSATION_ROW);
     await browser.keys(Key.Enter);
     await $('[data-slot="dropdown-menu-content"]').waitForDisplayed();
     // The first item, Rename, has the focus when the menu opens from the keyboard.

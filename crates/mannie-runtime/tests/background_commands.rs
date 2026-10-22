@@ -265,6 +265,8 @@ async fn a_command_outlives_its_reply_and_reads_return_its_new_lines() {
         }
     );
     assert!(transcript.background_commands[&1].is_running());
+    // A call without an activity leaves the command to be named by its text.
+    assert_eq!(transcript.background_commands[&1].activity, None);
     assert_eq!(setup.harness.runtime.running_background_count(), 1);
     let requests = model.reply_requests();
     assert!(
@@ -332,6 +334,39 @@ async fn a_command_outlives_its_reply_and_reads_return_its_new_lines() {
         .unwrap();
     assert_eq!(archive.name, "output");
     assert_eq!(archive.content, "first\nready on 5173\n");
+    setup.harness.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_command_is_named_by_the_activity_of_its_start_call() {
+    let setup = Setup::new().await;
+    let model = &setup.harness.model;
+    let arguments = json!({ "activity": "Running the test ticks", "command": long_running() });
+    model.push_reply(tool_calls(&[(
+        "call_1",
+        "start_command",
+        &arguments.to_string(),
+    )]));
+    model.push_reply(reply("The ticks run."));
+
+    let (conversation, run) = setup.start("Run the ticks").await;
+    let transcript = setup.harness.wait_for_run(&conversation, &run).await;
+
+    let command = &transcript.background_commands[&1];
+    assert_eq!(command.activity.as_deref(), Some("Running the test ticks"));
+    assert_eq!(command.command, long_running());
+    // The record keeps it, so the name outlives a restart.
+    let stored = setup
+        .harness
+        .store
+        .background_command(&conversation, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stored.document.activity.as_deref(),
+        Some("Running the test ticks")
+    );
     setup.harness.runtime.shutdown().await;
 }
 

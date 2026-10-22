@@ -77,6 +77,7 @@ impl TypedTool for StartCommand {
             accesses,
             process,
             part_id,
+            activity,
             ..
         } = execution;
         async move {
@@ -111,6 +112,7 @@ impl TypedTool for StartCommand {
             let request = StartRequest {
                 conversation: context.conversation_id.clone(),
                 part_id,
+                activity,
                 spec: BackgroundSpec {
                     shell: PathBuf::from(shell),
                     text: input.command.clone(),

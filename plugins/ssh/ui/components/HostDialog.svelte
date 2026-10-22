@@ -29,6 +29,11 @@
   const request = $derived(sshActions.edit);
   const isNew = $derived(request?.host === null);
   const refused = $derived(refusedField(request?.failure ?? null));
+  /** The password's help: editing first says that an empty field keeps the stored password. */
+  const passwordHelp = $derived.by(() => {
+    const redaction = m.ssh_field_password_description({ count: MIN_REDACTED_PASSWORD_BYTES });
+    return isNew ? redaction : `${m.ssh_field_password_keep()} ${redaction}`;
+  });
 
   /** The dialog opens in the Name field, which its help button precedes in the page. */
   function focusName(event: Event): void {
@@ -138,10 +143,13 @@
             />
           </Field.Field>
           <Field.Field data-invalid={refused === 'password' || undefined}>
-            <Field.Label for="ssh-host-password">{m.ssh_field_password()}</Field.Label>
+            <div class="flex items-center gap-1">
+              <Field.Label for="ssh-host-password">{m.ssh_field_password()}</Field.Label>
+              <FieldHelp id="ssh-host-password-help" field={m.ssh_field_password()} text={passwordHelp} />
+            </div>
             <Input
               id="ssh-host-password"
-              aria-describedby="ssh-host-password-description"
+              aria-describedby="ssh-host-password-help"
               aria-invalid={refused === 'password'}
               autocomplete="off"
               disabled={request.saving}
@@ -149,25 +157,21 @@
               type="password"
               bind:value={request.password}
             />
-            <Field.Description id="ssh-host-password-description">
-              {#if !isNew}
-                {m.ssh_field_password_keep()}
-              {/if}
-              {m.ssh_field_password_description({ count: MIN_REDACTED_PASSWORD_BYTES })}
-            </Field.Description>
           </Field.Field>
           <Field.Field data-invalid={refused === 'note' || undefined}>
-            <Field.Label for="ssh-host-note">{m.ssh_field_note()}</Field.Label>
+            <div class="flex items-center gap-1">
+              <Field.Label for="ssh-host-note">{m.ssh_field_note()}</Field.Label>
+              <FieldHelp id="ssh-host-note-help" field={m.ssh_field_note()} text={m.ssh_field_note_description()} />
+            </div>
             <Textarea
               id="ssh-host-note"
               class="max-h-40"
-              aria-describedby="ssh-host-note-description"
+              aria-describedby="ssh-host-note-help"
               aria-invalid={refused === 'note'}
               disabled={request.saving}
               maxlength={MAX_NOTE_CHARS}
               bind:value={request.note}
             />
-            <Field.Description id="ssh-host-note-description">{m.ssh_field_note_description()}</Field.Description>
           </Field.Field>
         </Field.Group>
         <div role="status">

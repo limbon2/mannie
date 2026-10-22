@@ -68,10 +68,56 @@ export async function clickWithText(selector: string, text: string): Promise<voi
   );
 }
 
-/** Opens the open conversation's menu in the toolbar and chooses an item. */
-export async function chooseConversationAction(label: string): Promise<void> {
+/** The open conversation's row in the sidebar. */
+export const OPEN_CONVERSATION_ROW = '[data-conversation]:has(a[aria-current="page"])';
+
+/** Opens the open conversation's menu in the sidebar, Rename and Delete, and waits until it shows. */
+export async function openConversationRowMenu(): Promise<void> {
   await waitForPointerInput();
-  await $('main button[aria-label^="More actions for"]').click();
+  const row = $(OPEN_CONVERSATION_ROW);
+  // The menu's button shows while the pointer is on the row.
+  await row.moveTo();
+  await row.$('[data-conversation-menu]').click();
+  await $('[data-slot="dropdown-menu-content"]').waitForDisplayed();
+}
+
+/** Opens the open conversation's menu in the sidebar and chooses an item. */
+export async function chooseConversationAction(label: string): Promise<void> {
+  await openConversationRowMenu();
+  await clickWithText('[data-slot="dropdown-menu-item"]', label);
+}
+
+/**
+ * The button of the main view's conversation menu at the end of its toolbar,
+ * which counts running work (ADR-0042). A conversation in a side panel has a
+ * menu of its own.
+ */
+export const CONVERSATION_ACTIONS = '#shell-main-pane [data-conversation-actions]';
+
+/** The open conversation's menu. */
+export const CONVERSATION_MENU = '[data-slot="dropdown-menu-content"]';
+
+/** The submenu of the conversation's menu that is open. */
+export const CONVERSATION_SUBMENU = '[data-slot="dropdown-menu-sub-content"]';
+
+/** Opens the open conversation's menu and waits until it shows. */
+export async function openConversationActions(): Promise<void> {
+  await waitForPointerInput();
+  await $(CONVERSATION_ACTIONS).click();
+  await $(CONVERSATION_MENU).waitForDisplayed();
+}
+
+/** Opens the open conversation's menu, then its submenu whose trigger matches `trigger`, and waits until it shows. */
+export async function openConversationSubmenu(trigger: string): Promise<void> {
+  await openConversationActions();
+  await $(`${CONVERSATION_MENU} ${trigger}`).click();
+  await $(CONVERSATION_SUBMENU).waitForDisplayed();
+}
+
+/** Opens the open conversation's context meter and chooses an item of its menu, such as "Compact now". */
+export async function chooseContextAction(label: string): Promise<void> {
+  await waitForPointerInput();
+  await $('#shell-main-pane [data-context-meter]').click();
   await clickWithText('[data-slot="dropdown-menu-item"]', label);
 }
 

@@ -20,6 +20,7 @@ use crate::runtime::{Change, LOCAL_SOURCE, NewArchive};
 fn running(text: &str) -> BackgroundCommandDocument {
     BackgroundCommandDocument {
         command: text.to_owned(),
+        activity: None,
         source: BackgroundSource::Local {
             shell: "/bin/sh".to_owned(),
             working_directory: "/work".to_owned(),
