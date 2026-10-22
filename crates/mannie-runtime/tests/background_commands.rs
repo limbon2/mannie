@@ -224,6 +224,14 @@ fn notes(request: &ModelRequest) -> Vec<String> {
         .collect()
 }
 
+fn assert_archived_output(content: &str, prefix: &str, lines: impl Into<u64>) {
+    assert!(content.starts_with(prefix), "{content}");
+    assert_eq!(
+        u64::try_from(content.lines().count()).unwrap(),
+        lines.into()
+    );
+}
+
 #[tokio::test]
 async fn a_command_outlives_its_reply_and_reads_return_its_new_lines() {
     let setup = Setup::new().await;
@@ -338,15 +346,7 @@ async fn a_command_outlives_its_reply_and_reads_return_its_new_lines() {
         .unwrap()
         .unwrap();
     assert_eq!(archive.name, "output");
-    assert!(
-        archive.content.starts_with("first\nready on 5173\n"),
-        "{}",
-        archive.content
-    );
-    assert_eq!(
-        u32::try_from(archive.content.lines().count()).unwrap(),
-        ended.lines
-    );
+    assert_archived_output(&archive.content, "first\nready on 5173\n", ended.lines);
     setup.harness.runtime.shutdown().await;
 }
 
@@ -597,12 +597,8 @@ async fn quitting_interrupts_commands_keeps_their_output_and_the_next_reply_tell
         .unwrap()
         .unwrap();
     // Keep the command's output and any termination diagnostic from its shell.
-    assert!(
-        archive.content.starts_with("first\n"),
-        "{}",
-        archive.content
-    );
-    let archived_lines = archive.content.lines().count();
+    let archived_lines = stored.document.lines;
+    assert_archived_output(&archive.content, "first\n", archived_lines);
     assert_eq!(harness.runtime.running_background_count(), 0);
 
     setup.harness.model.push_reply(tool_calls(&[(
