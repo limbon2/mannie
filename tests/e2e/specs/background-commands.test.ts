@@ -108,7 +108,11 @@ describe('background commands', () => {
     // still shows the command's text.
     await waitForShownText('[data-side-panels] h2', 'Command 1: Starting in the background');
     await waitForShownText(panel, expect.stringContaining('tick'));
-    await waitForShownText($(`${PANEL} [role="log"]`), expect.stringContaining('tick 3'));
+    // The command starts before a cold PowerShell has initialized its modules.
+    // Wait for the first line before checking that more output arrives.
+    const output = await $(`${PANEL} [role="log"]`);
+    await output.waitForDisplayed({ timeout: 30_000 });
+    await waitForShownText(output, expect.stringContaining('tick 3'));
     await waitForShownText(panel, expect.stringContaining('Running for'));
     await waitForAnimations();
     expect(await axeViolations()).toEqual([]);
