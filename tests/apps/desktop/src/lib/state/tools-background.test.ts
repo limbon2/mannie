@@ -44,6 +44,7 @@ describe('withUpdate', () => {
   it('changes nothing for the command and its end', () => {
     const entries: OutputEntry[] = [{ kind: 'line', number: 1, text: 'a' }];
     const command = {
+      activity: null,
       archiveId: null,
       bytes: 0,
       command: 'make',

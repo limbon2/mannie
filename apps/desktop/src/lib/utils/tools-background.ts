@@ -1,7 +1,8 @@
 // What the owner reads about background commands (docs/features/
 // system-tools/background-commands.md, interface): a command's state, where
 // it runs, the label of its output's panel, and the row of a wake-up. A
-// command's text is content, shown as the model wrote it.
+// command's text and its start call's activity are content, shown as the
+// model wrote them.
 import type {
   ArchiveRef,
   BackgroundCommandView,
@@ -96,9 +97,14 @@ export function commandPlace(command: BackgroundCommandView): string {
     : m.tools_background_place_remote({ endpoint: source.endpoint, host: source.label });
 }
 
-/** The label of a command's output panel and of its row in the toolbar's menu. */
+/**
+ * The label of a command's output panel and of its row in the toolbar's
+ * menu: its number and what its start call said it does, or the first line
+ * of its text when the call said nothing.
+ */
 export function commandLabel(command: BackgroundCommandView): string {
-  return m.tools_background_tab_label({ command: firstLine(command.command), number: String(command.number) });
+  const name = command.activity ?? firstLine(command.command);
+  return m.tools_background_tab_label({ command: name, number: String(command.number) });
 }
 
 /** The argument of a command's output panel: its conversation and its number. */

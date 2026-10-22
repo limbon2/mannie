@@ -263,6 +263,7 @@ mod tests {
             number: 1,
             part_id: PartId::parse("0199e0f2-0000-7000-8000-000000000001").unwrap(),
             command: "make".to_owned(),
+            activity: None,
             source: BackgroundSource::Local {
                 shell: "/bin/sh".to_owned(),
                 working_directory: "/work".to_owned(),

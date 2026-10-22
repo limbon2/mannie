@@ -106,17 +106,24 @@
       <div class="flex flex-col gap-2">
         <AccessText label={m.tools_access_command()} text={command.command} />
         <p class="text-sm break-all text-muted-foreground" data-content dir="auto">{commandPlace(command)}</p>
-        <div class="flex flex-wrap items-center gap-3">
-          <p class="text-sm font-medium">{stateLabel}</p>
-          {#if running && !command.onWorker}
-            <Button disabled={view.stopping} size="sm" variant="outline" onclick={() => void view.stop()}>
-              {view.stopping ? m.tools_background_stopping() : m.tools_background_stop()}
-            </Button>
-          {/if}
-          {#if archive !== null}
-            <Button size="sm" variant="outline" onclick={showFullOutput}>{m.tools_background_show_full_output()}</Button
-            >
-          {/if}
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div class="flex flex-wrap items-center gap-3">
+            <p class="text-sm font-medium">{stateLabel}</p>
+            {#if running && !command.onWorker}
+              <Button disabled={view.stopping} size="sm" variant="outline" onclick={() => void view.stop()}>
+                {view.stopping ? m.tools_background_stopping() : m.tools_background_stop()}
+              </Button>
+            {/if}
+            {#if archive !== null}
+              <Button size="sm" variant="outline" onclick={showFullOutput}>
+                {m.tools_background_show_full_output()}
+              </Button>
+            {/if}
+          </div>
+          <div class="flex items-center gap-2">
+            <Switch id="{id}-follow" bind:checked={follow} />
+            <Label for="{id}-follow">{m.tools_background_follow()}</Label>
+          </div>
         </div>
         {#if view.stopFailure !== null}
           <p class="text-sm text-destructive" role="alert">{toolsFailureMessage(view.stopFailure)}</p>
@@ -124,10 +131,6 @@
         {#if command.onWorker}
           <p class="text-sm text-muted-foreground">{m.tools_background_on_worker()}</p>
         {/if}
-      </div>
-      <div class="flex items-center gap-2">
-        <Switch id="{id}-follow" bind:checked={follow} />
-        <Label for="{id}-follow">{m.tools_background_follow()}</Label>
       </div>
       {#if lost}
         <p class="text-sm text-muted-foreground">{m.tools_background_output_lost()}</p>

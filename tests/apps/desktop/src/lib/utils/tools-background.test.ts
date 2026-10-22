@@ -20,6 +20,7 @@ const CONVERSATION = '0199e0f2-0000-7000-8000-000000000001';
 
 function command(number: number, changes: Partial<BackgroundCommandView> = {}): BackgroundCommandView {
   return {
+    activity: null,
     archiveId: null,
     bytes: 0,
     command: 'npm run dev\n--port 5173',
@@ -91,7 +92,15 @@ describe('places and labels', () => {
     expect(remote).toContain('deploy@build-box.lan:22');
   });
 
-  it('labels a command by its number and its first line', () => {
+  it('labels a command by its number and what its start call said it does', () => {
+    const label = commandLabel(command(4, { activity: 'Running the dev server' }));
+
+    expect(label).toContain('4');
+    expect(label).toContain('Running the dev server');
+    expect(label).not.toContain('npm run dev');
+  });
+
+  it('labels a command whose start call said nothing by its first line', () => {
     const label = commandLabel(command(4));
 
     expect(label).toContain('4');

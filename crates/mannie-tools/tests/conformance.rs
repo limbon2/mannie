@@ -119,6 +119,7 @@ impl Harness {
             stop,
             process: None,
             part_id: Some(PartId::parse(CALL_PART).unwrap()),
+            activity: None,
         })
         .await
     }
@@ -1906,6 +1907,7 @@ fn command_view(ending: Option<BackgroundEnding>, exit_code: Option<i32>) -> Bac
         number: 3,
         part_id: PartId::parse(CALL_PART).unwrap(),
         command: "npm run dev".to_owned(),
+        activity: None,
         source: BackgroundSource::Local {
             shell: "/bin/sh".to_owned(),
             working_directory: "/work/app".to_owned(),

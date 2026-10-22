@@ -113,6 +113,10 @@ pub struct BackgroundCommandView {
     pub part_id: PartId,
     /// Its text, cut at [`MAX_VIEW_COMMAND_CHARS`] characters.
     pub command: String,
+    /// What the model said its start call does, in a few words, by which
+    /// the interface names it; `None` when the call said nothing, as before
+    /// calls said it. The model wrote it, so it is content.
+    pub activity: Option<String>,
     /// Where it runs.
     pub source: BackgroundSource,
     /// When it started.
@@ -179,6 +183,11 @@ pub struct CommandEndView {
 pub struct BackgroundCommandDocument {
     /// The command's whole text.
     pub command: String,
+    /// The activity of its start call, cleaned for display, when the call
+    /// had one (docs/features/system-tools/tool-calls.md, the activity of a
+    /// call).
+    #[serde(default)]
+    pub activity: Option<String>,
     /// Where it runs.
     pub source: BackgroundSource,
     /// The shell's process, for the recovery after a crash; `None` for a
@@ -233,6 +242,7 @@ impl BackgroundCommandDocument {
             number,
             part_id,
             command: self.command.chars().take(MAX_VIEW_COMMAND_CHARS).collect(),
+            activity: self.activity.clone(),
             source: self.source.clone(),
             started_at: self.started_at,
             ending: self.ending,
@@ -290,6 +300,7 @@ mod tests {
             PartId::parse("0199e0f2-0000-7000-8000-000000000001").unwrap(),
         );
         assert!(view.is_running());
+        assert_eq!(view.activity, None);
         assert_eq!(view.started_at, UtcMillis::from_millis(1_000));
         assert_eq!(
             view.source,
@@ -301,9 +312,10 @@ mod tests {
     }
 
     #[test]
-    fn a_view_cuts_a_long_command() {
+    fn a_view_cuts_a_long_command_and_keeps_its_activity() {
         let document = BackgroundCommandDocument {
             command: "x".repeat(super::MAX_VIEW_COMMAND_CHARS + 10),
+            activity: Some("Following the build log".to_owned()),
             source: BackgroundSource::Remote {
                 plugin: "ssh".to_owned(),
                 label: "build-box".to_owned(),
@@ -331,6 +343,7 @@ mod tests {
         );
 
         assert_eq!(view.command.chars().count(), super::MAX_VIEW_COMMAND_CHARS);
+        assert_eq!(view.activity.as_deref(), Some("Following the build log"));
         assert!(!view.is_running());
         assert_eq!(view.lines, 3);
     }

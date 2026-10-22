@@ -4,7 +4,7 @@
 | ------------ | ---------------------------------------------------------------------------------------------------------------------- |
 | Status       | Building                                                                                                               |
 | Milestone    | M10                                                                                                                    |
-| Last updated | 2026-10-21                                                                                                             |
+| Last updated | 2026-10-22                                                                                                             |
 | Related      | [Chat](chat/README.md), [ADR-0040](../adr/0040-export-complete-conversation-records.md), [Feature protocol](README.md) |
 
 ## Intent
@@ -13,7 +13,7 @@ The owner wants to export a conversation as Markdown, including its full current
 
 ## Behavior
 
-- The conversation toolbar and command palette offer "Export conversation…", including in a side panel. The native folder picker chooses the destination parent. Canceling creates nothing.
+- The conversation's menu and the command palette offer "Export conversation…", including in a side panel ([ADR-0042](../adr/0042-place-conversation-controls-in-a-menu-and-the-message-box.md)). The native folder picker chooses the destination parent. Canceling creates nothing.
 - Each export creates a new folder. It holds `conversation.md`, child documents under `tasks/`, stored images under `images/`, and archived output files under `outputs/`. Links between these files are relative.
 - The documents include metadata, capture times and sequences, messages, stored reasoning, reply and call states, complete tool and task inputs, authorization decisions, results, resolved mention snapshots and checkpoint summaries. They exclude discarded and superseded attempts, except earlier tool activity retained in the current transcript.
 - Active conversations continue. Their unfinished content is labeled as it was captured. Each worker record has its own capture time and sequence.

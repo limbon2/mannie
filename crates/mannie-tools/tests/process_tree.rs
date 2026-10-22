@@ -122,6 +122,7 @@ impl Harness {
             stop: stop.clone(),
             process: None,
             part_id: None,
+            activity: None,
         });
         let stopper = async {
             if end == End::Stop {

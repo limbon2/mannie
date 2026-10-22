@@ -37,7 +37,7 @@
 <DropdownMenu.Root>
   <DropdownMenu.Trigger>
     {#snippet child({ props })}
-      <Button {...props} aria-label={label} size="sm" variant="ghost">
+      <Button {...props} aria-label={label} data-context-meter="" size="sm" variant="ghost">
         <Meter.Root
           class="h-1.5 w-16 overflow-hidden rounded-full bg-muted"
           aria-hidden="true"

@@ -46,12 +46,14 @@ const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_SIGNAL_CHARS: usize = 32;
 
 /// What a ticket lets the call of a plugin's tool start: the command of the
-/// call's authorized access, under the call's part.
+/// call's authorized access, under the call's part, named by the call's
+/// activity.
 #[derive(Debug, Clone)]
 pub(super) struct Ticket {
     plugin: String,
     conversation: ConversationId,
     part_id: PartId,
+    activity: Option<String>,
     label: String,
     endpoint: String,
     command: String,
@@ -282,12 +284,14 @@ impl Runtime {
 
     /// Issues the ticket of a call of a plugin's tool whose authorized
     /// accesses hold a remote command in the background, or `None` when
-    /// they hold none. The call holds the guard while it executes.
+    /// they hold none. The call's activity names the command. The call holds
+    /// the guard while it executes.
     pub(crate) fn issue_background_ticket(
         &self,
         plugin: &str,
         conversation: &ConversationId,
         part_id: &PartId,
+        activity: Option<&str>,
         accesses: &[Access],
     ) -> Option<TicketGuard> {
         let (label, endpoint, command) = accesses.iter().find_map(|access| match access {
@@ -305,6 +309,7 @@ impl Runtime {
             plugin: plugin.to_owned(),
             conversation: conversation.clone(),
             part_id: part_id.clone(),
+            activity: activity.map(str::to_owned),
             label: label.clone(),
             endpoint: endpoint.clone(),
             command: command.clone(),
@@ -351,6 +356,7 @@ impl Runtime {
         let Ticket {
             conversation,
             part_id,
+            activity,
             label,
             endpoint,
             command: text,
@@ -361,7 +367,7 @@ impl Runtime {
             label,
             endpoint,
         };
-        let document = started_document(text, source, None, self.inner.clock.now());
+        let document = started_document(text, activity, source, None, self.inner.clock.now());
         let stored = self
             .store_start(&conversation, number, &part_id, plugin, &document)
             .await;

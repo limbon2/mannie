@@ -4,7 +4,12 @@ The files in this folder come from the pinned shadcn-svelte CLI and are not edit
 
 ## Patches
 
-None.
+| File                                                                                                     | Change                                                                                      | Reason                                                                                                                                                                           |
+| -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dialog/dialog-content.svelte`, `alert-dialog/alert-dialog-content.svelte`                               | Adds `max-h-[calc(100%_-_2rem)]` and `overflow-y-auto` to the content.                      | A dialog taller than the window, such as the SSH host dialog in a short window, ran past its edges, so its last fields and buttons could not be reached. The dialog now scrolls. |
+| `dialog/dialog-overlay.svelte`, `alert-dialog/alert-dialog-overlay.svelte`, `sheet/sheet-overlay.svelte` | Removes `supports-backdrop-filter:backdrop-blur-xs`, and keeps the overlay's `bg-black/10`. | Blurring the window behind a dialog makes slower machines stutter while the dialog is open. The overlay still dims the window.                                                   |
+
+The content components render their overlays themselves, so a dialog cannot pass the overlay a class. The height belongs to every dialog, the plugins' included, so it sits in the component instead of in each dialog that uses it.
 
 ## Built-in English and other gaps the app works around
 

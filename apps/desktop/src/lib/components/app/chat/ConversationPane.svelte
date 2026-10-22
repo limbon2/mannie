@@ -3,6 +3,7 @@
   import MessageSquareOffIcon from '@lucide/svelte/icons/message-square-off';
   import { onMount, untrack } from 'svelte';
 
+  import ConversationActionsMenu from '#lib/components/app/shell/ConversationActionsMenu.svelte';
   import ConversationControlOutlet from '#lib/components/app/shell/ConversationControlOutlet.svelte';
   import PluginOffState from '#lib/components/app/shell/PluginOffState.svelte';
   import * as Alert from '#lib/components/ui/alert/index.js';
@@ -25,17 +26,20 @@
 
   import Composer from './Composer.svelte';
   import ContextMeter from './ContextMeter.svelte';
-  import ConversationMenu from './ConversationMenu.svelte';
   import NoProfileNotice from './NoProfileNotice.svelte';
   import ProfileMenu from './ProfileMenu.svelte';
   import ReadOnlyFooter from './ReadOnlyFooter.svelte';
   import Transcript from './Transcript.svelte';
 
   // One conversation: its toolbar, its transcript and the message box
-  // (docs/features/chat/conversation-view.md). The view creates a new pane for
-  // each conversation, so the ID never changes during a pane's life. A child
-  // agent's conversation shows read-only: its parent gives it work, and the
-  // core refuses the owner's commands on it but Stop.
+  // (docs/features/chat/conversation-view.md). The toolbar holds the profile
+  // menu, the controls of the toolbar and the conversation's menu; the
+  // message box holds the controls of its place and the context meter
+  // (ADR-0042). The view creates a new pane for each conversation, so the ID
+  // never changes during a pane's life. A child agent's conversation shows
+  // read-only: its parent gives it work, and the core refuses the owner's
+  // commands on it but Stop. It has no message box, so its toolbar keeps the
+  // context meter.
   let { id }: { id: string } = $props();
 
   const conversation = new OpenConversation(untrack(() => id));
@@ -133,10 +137,14 @@
             conversation={summary}
             turns={transcript.turns}
           />
-          <ContextMeter checkpoint={transcript.checkpoint} context={transcript.context} conversationId={id} />
-          {#if !isChild}
-            <ConversationMenu conversation={summary} />
+          {#if isChild}
+            <ContextMeter checkpoint={transcript.checkpoint} context={transcript.context} conversationId={id} />
           {/if}
+          <ConversationActionsMenu
+            backgroundCommands={transcript.backgroundCommands}
+            conversation={summary}
+            turns={transcript.turns}
+          />
         </div>
       </div>
     {/if}
@@ -184,6 +192,22 @@
       takeFocus={takesFocus}
       onSend={send}
       onStop={stop}
-    />
+    >
+      {#snippet controls()}
+        {#if summary !== null}
+          <ConversationControlOutlet
+            backgroundCommands={transcript.backgroundCommands}
+            conversation={summary}
+            place="message-box"
+            turns={transcript.turns}
+          />
+        {/if}
+      {/snippet}
+      {#snippet status()}
+        {#if summary !== null}
+          <ContextMeter checkpoint={transcript.checkpoint} context={transcript.context} conversationId={id} />
+        {/if}
+      {/snippet}
+    </Composer>
   {/if}
 </div>

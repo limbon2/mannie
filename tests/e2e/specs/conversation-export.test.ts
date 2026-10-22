@@ -16,6 +16,12 @@ import {
   waitForShownText,
 } from '../support/page.ts';
 
+/** The button of the conversation's menu in the main view, which holds the export (ADR-0042). */
+const ACTIONS = 'main [data-conversation-actions]';
+
+/** The export's item in an open conversation menu. */
+const EXPORT_ITEM = '[data-slot="dropdown-menu-content"] [data-export-conversation]';
+
 /** Open a seeded conversation without depending on a provider or credentials. */
 async function openConversation(id: string): Promise<void> {
   const url = new URL(await browser.getUrl());
@@ -23,7 +29,15 @@ async function openConversation(id: string): Promise<void> {
   url.search = new URLSearchParams({ conversation: id, view: 'chat' }).toString();
   await browser.url(url.toString());
   await waitForApp();
-  await $('[data-export-conversation]').waitForClickable();
+  await $(ACTIONS).waitForClickable();
+}
+
+/** Chooses "Export conversation…" in the conversation menu whose button matches `actions`. */
+async function chooseExport(actions = ACTIONS): Promise<void> {
+  await $(actions).click();
+  const item = $(EXPORT_ITEM);
+  await item.waitForClickable();
+  await item.click();
 }
 
 async function savedFolder(): Promise<string> {
@@ -67,15 +81,23 @@ describe('conversation export', () => {
 
   it('cancels without creating an export folder', async () => {
     await setFolderChoice(null);
-    await $('[data-export-conversation]').click();
-    await $('[data-export-conversation]').waitForEnabled();
+    await chooseExport();
+    // The menu offers the export again once the canceled one ended.
+    await $(ACTIONS).click();
+    await browser.waitUntil(async () => (await $(EXPORT_ITEM).getAttribute('data-disabled')) === null, {
+      timeoutMsg: 'the export did not end after the folder choice was canceled',
+    });
+    await browser.keys(Key.Escape);
     expect(readdirSync(destination)).toEqual([]);
     await expect($('[data-export-destination]')).not.toBeExisting();
   });
 
   it('exports all persisted turns and supports keyboard access in both themes', async () => {
     await setFolderChoice(destination);
-    await browser.execute(() => document.querySelector<HTMLElement>('[data-export-conversation]')?.focus());
+    await browser.execute((actions: string) => document.querySelector<HTMLElement>(actions)?.focus(), ACTIONS);
+    await browser.keys(Key.Enter);
+    // The menu opens from the keyboard with its first item, the export, focused.
+    await $(EXPORT_ITEM).waitForDisplayed();
     await browser.keys(Key.Enter);
     const folder = await savedFolder();
     const markdown = readFileSync(join(folder, 'conversation.md'), 'utf8');
@@ -105,7 +127,7 @@ describe('conversation export', () => {
 
   it('reports an unwritable destination and retries through a new native choice', async () => {
     await setFolderChoice(join(destination, 'missing-parent'));
-    await $('[data-export-conversation]').click();
+    await chooseExport();
     await $('[role="dialog"] [data-slot="alert"]').waitForDisplayed();
     await waitForShownText('[role="dialog"]', expect.stringContaining('could not be written'));
     await setFolderChoice(destination);
@@ -121,9 +143,12 @@ describe('conversation export', () => {
     url.searchParams.set('shown-panel', `chat.conversation:${other}`);
     await browser.url(url.toString());
     await waitForApp();
+    const panelActions = '[data-side-panels] [data-conversation-actions]';
+    await $(panelActions).waitForClickable();
+    await setFolderChoice(destination);
+    await $(panelActions).click();
     const action = $(`[data-export-conversation="${other}"]`);
     await action.waitForClickable();
-    await setFolderChoice(destination);
     await action.click();
     const folder = await savedFolder();
     expect(readFileSync(join(folder, 'conversation.md'), 'utf8').match(/^## Turn /gm)).toHaveLength(3);
@@ -135,7 +160,7 @@ describe('conversation export', () => {
     await switchToPseudoLocale();
     await openConversation(conversation);
     await setFolderChoice(destination);
-    await $('[data-export-conversation]').click();
+    await chooseExport();
     await savedFolder();
     expect(await uncataloguedText()).toEqual([]);
     expect(await axeViolations()).toEqual([]);

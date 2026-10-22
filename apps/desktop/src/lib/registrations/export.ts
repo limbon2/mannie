@@ -5,9 +5,17 @@ import { exportActions } from '#lib/state/export-actions.svelte.js';
 import type { ShellSlots } from '#lib/state/shell-slots.svelte.js';
 import { openConversationId } from '#lib/utils/chat-urls.js';
 
-/** Export adds controls through the shell, including in conversation side panels. */
+/**
+ * Export adds its item to the conversation's menu through the shell, also in
+ * conversation side panels (ADR-0042).
+ */
 export function registerExport(slots: ShellSlots): void {
-  slots.conversationControls.register({ component: ExportControl, id: 'export.conversation', order: 30 });
+  slots.conversationControls.register({
+    component: ExportControl,
+    id: 'export.conversation',
+    order: 30,
+    place: 'menu',
+  });
   slots.overlays.register({ component: ExportDialog, id: 'export.result' });
   slots.commands.register({
     available: () => {

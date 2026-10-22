@@ -305,6 +305,7 @@ describe('applyUpdate', () => {
 describe('background commands', () => {
   function command(number: number, ending: BackgroundCommandView['ending']): BackgroundCommandView {
     return {
+      activity: null,
       archiveId: null,
       bytes: 0,
       command: 'npm run dev',

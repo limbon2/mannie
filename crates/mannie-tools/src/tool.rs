@@ -153,6 +153,10 @@ pub struct Execution {
     /// The part of the call, which a command that runs in the background
     /// keeps as its start (ADR-0041).
     pub part_id: Option<PartId>,
+    /// The call's activity, cleaned for display, which a command that runs
+    /// in the background keeps as its name. The model wrote it, so nothing
+    /// that authorizes the call reads it.
+    pub activity: Option<String>,
 }
 
 /// A tool in the registry (docs/architecture/extension-points.md, tool
@@ -205,6 +209,8 @@ pub(crate) struct TypedExecution<I> {
     pub(crate) process: Option<oneshot::Sender<ProcessRecord>>,
     /// The part of the call.
     pub(crate) part_id: Option<PartId>,
+    /// The call's activity.
+    pub(crate) activity: Option<String>,
 }
 
 /// A tool with typed arguments, which [`Registered`] turns into a [`Tool`].
@@ -329,6 +335,7 @@ impl<T: TypedTool> Tool for Registered<T> {
                 #[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
                 process: execution.process,
                 part_id: execution.part_id,
+                activity: execution.activity,
             };
             T::execute(typed).await.unwrap_or_else(failed)
         }

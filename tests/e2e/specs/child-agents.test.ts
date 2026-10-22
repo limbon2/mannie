@@ -20,13 +20,16 @@ import {
   callMessage,
   clickInLatestTurn,
   clickWithText,
+  CONVERSATION_ACTIONS,
+  CONVERSATION_MENU,
+  CONVERSATION_SUBMENU,
   LATEST_MAIN_TURN,
   listedConversations,
+  openConversationSubmenu,
   send,
   sendLines,
   startConversationIn,
   waitForCompleteReply,
-  waitForPointerInput,
   waitForToolStatus,
 } from '../support/chat.ts';
 import { deleteProviderProfiles } from '../support/harness.ts';
@@ -51,11 +54,11 @@ const SHOWN_TAB = `${PANELS} [role="tab"][aria-selected="true"]`;
 /** The handle between the main view and the side panels. */
 const RESIZE_HANDLE = '[data-slot="resizable-handle"]';
 
-/** The child agents' button in the main view's conversation toolbar. */
-const CHILD_AGENTS_BUTTON = 'main [data-child-agents]';
+/** The child agents' submenu in the conversation's menu. */
+const CHILD_AGENTS = '[data-child-agents]';
 
-/** The items of an open menu. */
-const MENU_ITEMS = '[data-slot="dropdown-menu-content"] [data-slot="dropdown-menu-item"]';
+/** The items of the open submenu. */
+const MENU_ITEMS = `${CONVERSATION_SUBMENU} [data-slot="dropdown-menu-item"]`;
 
 /** Where PaneForge keeps the sizes of the shell's panes: its prefix and the shell's `autoSaveId`. */
 const SAVED_LAYOUT_KEY = 'paneforge:mannie.shell.side-panels';
@@ -351,8 +354,9 @@ describe('child agents', () => {
     await waitForTaskState(2, 'accepted');
     await waitForShownText($(card(2)), expect.stringContaining('Waiting for a free slot'));
     await waitForShownText($('main'), expect.stringContaining('Waiting for 2 child agents…'));
-    // The toolbar counts the child agents that work, also the one that waits for its slot.
-    await expect($(CHILD_AGENTS_BUTTON)).toHaveAttribute('aria-label', 'Child agents, 2 working');
+    // The button of the conversation's menu counts the child agents that
+    // work, also the one that waits for its slot.
+    await expect($(CONVERSATION_ACTIONS)).toHaveAttribute('aria-label', 'Conversation actions, 2 running');
 
     await clickInCard(1, 'stop');
 
@@ -403,13 +407,11 @@ describe('child agents', () => {
     await $(PANELS).waitForExist({ reverse: true });
   });
 
-  it('lists the conversation’s child agents in its toolbar, and opens one from there', async () => {
-    const button = $(CHILD_AGENTS_BUTTON);
+  it('lists the conversation’s child agents in its menu, and opens one from there', async () => {
     // Both children were stopped, so none works now.
-    await expect(button).toHaveAttribute('aria-label', 'Child agents');
-    await waitForPointerInput();
-    await button.click();
-    await $('[data-slot="dropdown-menu-content"]').waitForDisplayed();
+    await expect($(CONVERSATION_ACTIONS)).toHaveAttribute('aria-label', 'Conversation actions');
+    await openConversationSubmenu(CHILD_AGENTS);
+    await expect($(`${CONVERSATION_MENU} ${CHILD_AGENTS}`)).toHaveAttribute('aria-label', 'Child agents');
 
     const items = await $$(MENU_ITEMS).map(async (item) => shownText(item));
     expect(items).toHaveLength(2);
@@ -424,11 +426,11 @@ describe('child agents', () => {
     await $(`${PANELS} [role="tabpanel"]:not([hidden]) article`).waitForDisplayed({ timeout: 10_000 });
     expect(await focusedElement()).toEqual({ label: 'Task 2: Watch the second', tag: 'h2' });
 
-    // Closing the panel gives the focus back to the toolbar's button.
+    // Closing the panel gives the focus back to the button of the conversation's menu.
     await $('[data-side-panel-close]').click();
 
     await $(PANELS).waitForExist({ reverse: true });
-    expect(await focusedElement()).toEqual({ label: 'Child agents', tag: 'button' });
+    expect(await focusedElement()).toEqual({ label: 'Conversation actions', tag: 'button' });
   });
 
   it('keeps the limit of child agents after a reload, and goes back to the default', async () => {

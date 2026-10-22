@@ -4,7 +4,7 @@
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Building                                                                                                                                                                                                                                                                                                       |
 | Milestone    | M2                                                                                                                                                                                                                                                                                                             |
-| Last updated | 2026-10-21                                                                                                                                                                                                                                                                                                     |
+| Last updated | 2026-10-22                                                                                                                                                                                                                                                                                                     |
 | Part of      | [System tools](README.md)                                                                                                                                                                                                                                                                                      |
 | Related      | [ADR-0020](../../adr/0020-complete-the-ui-shell-slots.md), [ADR-0023](../../adr/0023-organize-conversations-into-projects.md), [ADR-0019](../../adr/0019-keep-visible-text-in-message-catalogs.md), [Conversation view](../chat/conversation-view.md), [Operations and approvals](operations-and-approvals.md) |
 
@@ -25,7 +25,7 @@ A part renderer for `tool_call` shows each call as one row in the reply, in the 
 - Activities, paths, commands, arguments, file contents and output are content: they render as plain text inside elements marked `data-content`, never as Markdown or HTML. An activity renders in its own direction, isolated from the text around it. A block that scrolls takes the keyboard focus, so it scrolls from the keyboard.
 - Consecutive rows sit closer together than the other parts of a reply, so a run of tool calls reads as one list.
 - For a command or another archived output, "Show full output" or "Show full error output" opens a dialog that loads the output 500 lines at a time through `read_tool_output`, with "Load more".
-- The calls of background commands show their command's state, and the conversation's toolbar and a side panel show the commands and their output ([background commands](background-commands.md#interface)).
+- The calls of background commands show their command's state, and the conversation's menu and a side panel show the commands and their output ([background commands](background-commands.md#interface)).
 
 ### Approval requests
 
@@ -52,7 +52,7 @@ A dialog lists the grants that apply to the conversation, such as "Changes in D:
 
 ### Full access
 
-- A conversation's toolbar has the button "Full access" ([ADR-0029](../../adr/0029-let-the-owner-give-conversations-and-hosts-full-access.md)), a toggle button whose pressed state screen readers hear. While full access is on, it shows in the destructive color.
+- A conversation's message box has the button "Full access" in the row below its text ([ADR-0029](../../adr/0029-let-the-owner-give-conversations-and-hosts-full-access.md), [ADR-0042](../../adr/0042-place-conversation-controls-in-a-menu-and-the-message-box.md)), a toggle button whose pressed state screen readers hear. While full access is on, it shows in the destructive color.
 - Turning it on asks first, in a dialog: "Turn on full access?", what will run without asking, Mannie's own files and the requests of worker tasks included, and the risk that text the model reads makes it run commands; "Turn on full access" and "Cancel". Turning it off happens at once; when that fails, a dialog says so, with "Try again" and "Close".
 - The conversation list marks a conversation in full access with an open lock labeled "Full access".
 - The details of a call that full access allowed say "Full access allowed this.", or "The worker's full access allowed this." for a worker in that mode.

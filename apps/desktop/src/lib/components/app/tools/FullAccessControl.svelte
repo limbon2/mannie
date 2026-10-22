@@ -6,11 +6,11 @@
   import { toolsActions } from '#lib/state/tools-actions.svelte.js';
   import type { ConversationControlProps } from '#lib/types/shell-slots.js';
 
-  // The switch of a conversation's full access in its toolbar (ADR-0029;
-  // docs/features/system-tools/tool-activity.md, full access). While full
-  // access is on, the button shows in the destructive color, so the owner
-  // sees that nothing asks. Turning it on asks first. A task conversation
-  // follows its parent and has no switch.
+  // The switch of a conversation's full access in its message box (ADR-0029,
+  // ADR-0042; docs/features/system-tools/tool-activity.md, full access).
+  // While full access is on, the button shows in the destructive color, so
+  // the owner sees that nothing asks. Turning it on asks first. A task
+  // conversation follows its parent and has no switch.
   let { conversation }: ConversationControlProps = $props();
 
   const isTask = $derived(conversation.task !== null);
