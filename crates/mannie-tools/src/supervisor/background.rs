@@ -161,16 +161,22 @@ fn spawn_contained(
 
 impl Drop for BackgroundProcess {
     fn drop(&mut self) {
-        for reader in &self.readers {
-            reader.abort();
-        }
         #[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
         if let Some((mut contained, mut child)) = self.parts.take()
             && let Ok(runtime) = tokio::runtime::Handle::try_current()
         {
+            // Closing the readers first can kill the Unix wrapper with SIGPIPE
+            // when it reports a terminated child, losing its remaining tree.
+            let readers = std::mem::take(&mut self.readers);
             runtime.spawn(async move {
                 contained.end(&mut child, false).await;
+                for reader in readers {
+                    reader.abort();
+                }
             });
+        }
+        for reader in &self.readers {
+            reader.abort();
         }
     }
 }
