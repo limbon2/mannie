@@ -23,7 +23,7 @@ use mannie_runtime::{Runtime, RuntimeConfig, SubscriptionLimits};
 use mannie_store::Store;
 use mannie_types::chat::{SendMessage, StartConversation, SubscribeConversation};
 use mannie_types::ids::{ConversationId, RunId};
-use mannie_types::run::{FinishReason, RunFailure};
+use mannie_types::run::{FinishReason, RunFailure, RunState};
 use mannie_types::transcript::{ConversationUpdate, SubscriptionEnd};
 use proptest::prelude::*;
 use tokio::sync::watch;
@@ -88,6 +88,15 @@ fn streamed(plan: &TurnPlan) -> Vec<Step> {
         if *delay > 0 {
             steps.push(Step::Delay(Duration::from_millis(u64::from(*delay))));
         }
+    }
+    // A blank reply requests another call, which would consume the next
+    // turn's script rather than follow this test's finite plan.
+    if plan
+        .deltas
+        .iter()
+        .all(|(text, _delay)| text.trim().is_empty())
+    {
+        steps.push(Step::Event(ProviderEvent::TextDelta("reply".to_owned())));
     }
     steps
 }
@@ -257,7 +266,12 @@ async fn follow(
             } else {
                 tokio::select! {
                     update = subscription.next() => update,
-                    _changed = finished.changed() => continue,
+                    changed = finished.changed() => {
+                        if changed.is_err() {
+                            return Err("the conversation driver closed without its final sequence number".to_owned());
+                        }
+                        continue;
+                    },
                 }
             };
             let Some(update) = update else {
@@ -370,6 +384,74 @@ proptest! {
     ) {
         run_case(turns, subscribers)?;
     }
+}
+
+#[tokio::test]
+async fn a_subscriber_reports_a_driver_that_closed_before_ending() {
+    let harness = Harness::with_options(HarnessOptions::default()).await;
+    harness.model.push_reply(reply("done"));
+    let started = harness
+        .runtime
+        .start_conversation(StartConversation::new("Turn 0"))
+        .await
+        .unwrap();
+    harness
+        .wait_for_run(&started.conversation_id, &started.run_id)
+        .await;
+    let (sender, finished) = watch::channel(None);
+    drop(sender);
+    let plan = SubscriberPlan {
+        start_delay_ms: 0,
+        from_first_event: true,
+        reconnect_after: 1,
+        reconnects: 0,
+        pace_ms: 0,
+    };
+
+    let failure = follow(
+        harness.runtime.clone(),
+        started.conversation_id,
+        plan,
+        finished,
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(
+        failure,
+        "the conversation driver closed without its final sequence number"
+    );
+    harness.runtime.shutdown().await;
+}
+
+#[test]
+fn blank_deltas_do_not_consume_the_next_turns_script() {
+    let turns = vec![
+        TurnPlan {
+            deltas: vec![(" ".to_owned(), 0)],
+            outcome: Outcome::Completes,
+        },
+        TurnPlan {
+            deltas: vec![("next".to_owned(), 0)],
+            outcome: Outcome::FailsThenRetried,
+        },
+    ];
+    let subscribers = vec![SubscriberPlan {
+        start_delay_ms: 0,
+        from_first_event: true,
+        reconnect_after: 1,
+        reconnects: 1,
+        pace_ms: 0,
+    }];
+
+    let seen = run_case(turns, subscribers).unwrap();
+    let states: Vec<_> = seen[0]
+        .transcript
+        .turns
+        .values()
+        .map(|turn| turn.run.as_ref().unwrap().state)
+        .collect();
+    assert_eq!(states, vec![RunState::Completed, RunState::Completed]);
 }
 
 #[test]

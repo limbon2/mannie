@@ -42,6 +42,7 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - Preserve shell termination output in background-command lifecycle tests, wait for plugin startup by elapsed time instead of a yield count, and compile the background supervisor without Unix async warnings.
 - Keep background-command output readers open until process cleanup ends, so a Unix shell reporting a terminated child cannot exit early and leave processes running.
 - Wait for the first rendered background-command output in the desktop test, so a cold Windows shell can initialize before the existing streaming assertions begin.
+- Keep subscription stress-test replies nonblank so they follow their scripted turns, and report a closed test driver instead of spinning until the test times out.
 
 - A dialog taller than the window scrolls, so that its last fields and its buttons can be reached.
 - Reserve the test pool for the one-second parent-stop check so concurrent tests cannot consume its deadline.
