@@ -98,6 +98,9 @@ export function runFailureMessage(failure: RunFailure): string {
     case 'server_error': {
       return m.chat_failure_server_error({ status: String(failure.status) });
     }
+    case 'summary_cut': {
+      return m.chat_failure_summary_cut();
+    }
     case 'timed_out': {
       return m.chat_failure_timed_out();
     }

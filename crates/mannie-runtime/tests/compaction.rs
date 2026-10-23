@@ -11,12 +11,15 @@
 // treat the helpers below as test code.
 #![cfg(test)]
 
-use mannie_provider::{Content, known_models};
+use mannie_provider::testing::Step;
+use mannie_provider::{Content, ProviderEvent, known_models};
 use mannie_runtime::testing::{Harness, HarnessOptions, estimate, reply};
 use mannie_runtime::texts;
-use mannie_types::chat::{MAX_MESSAGE_BYTES, SendMessage, StartConversation};
+use mannie_types::chat::{
+    ChatError, CheckpointRef, MAX_MESSAGE_BYTES, SendMessage, StartConversation,
+};
 use mannie_types::provider::context_budget;
-use mannie_types::run::RunState;
+use mannie_types::run::{FinishReason, RunFailure, RunState};
 use mannie_types::transcript::PartContent;
 
 const TURNS: usize = 9;
@@ -193,7 +196,7 @@ async fn the_owner_can_compact_by_hand_and_read_the_checkpoint() {
     let checkpoints = harness.store.checkpoints(&conversation).await.unwrap();
     let checkpoint = harness
         .runtime
-        .checkpoint(mannie_types::chat::CheckpointRef {
+        .checkpoint(CheckpointRef {
             conversation_id: conversation.clone(),
             checkpoint_id: checkpoints[0].id.clone(),
         })
@@ -206,10 +209,7 @@ async fn the_owner_can_compact_by_hand_and_read_the_checkpoint() {
         .unwrap();
     harness.wait_for_run(&conversation, &third.run_id).await;
 
-    assert_eq!(
-        too_early.unwrap_err(),
-        mannie_types::chat::ChatError::NothingToCompact
-    );
+    assert_eq!(too_early.unwrap_err(), ChatError::NothingToCompact);
     assert_eq!(checkpoints.len(), 1);
     assert_eq!(
         checkpoints[0].covers_through_turn, 0,
@@ -237,4 +237,56 @@ async fn the_owner_can_compact_by_hand_and_read_the_checkpoint() {
             "Second"
         ))
     );
+}
+
+#[tokio::test]
+async fn a_summary_cut_at_the_output_limit_is_not_kept() {
+    let harness = Harness::start().await;
+    for reply_text in ["One", "Two"] {
+        harness.model.push_reply(reply(reply_text));
+    }
+    // A model that reasons first may spend the whole limit and stop in the
+    // middle of its summary.
+    harness.model.push_summary(vec![
+        Step::Event(ProviderEvent::ReasoningDelta("Let me think.".to_owned())),
+        Step::Event(ProviderEvent::TextDelta("Goal: the owner".to_owned())),
+        Step::Event(ProviderEvent::Finished(FinishReason::OutputLimit)),
+    ]);
+    let started = harness
+        .runtime
+        .start_conversation(StartConversation::new("First"))
+        .await
+        .unwrap();
+    let conversation = started.conversation_id.clone();
+    harness.wait_for_run(&conversation, &started.run_id).await;
+    let second = harness
+        .runtime
+        .send_message(SendMessage::new(conversation.clone(), "Second"))
+        .await
+        .unwrap();
+    harness.wait_for_run(&conversation, &second.run_id).await;
+
+    let cut = harness.runtime.compact_conversation(&conversation).await;
+    let after_cut = harness.store.checkpoints(&conversation).await.unwrap();
+    let whole = harness.runtime.compact_conversation(&conversation).await;
+    let checkpoints = harness.store.checkpoints(&conversation).await.unwrap();
+
+    assert_eq!(
+        cut.unwrap_err(),
+        ChatError::CompactionFailed {
+            failure: RunFailure::SummaryCut
+        }
+    );
+    assert!(after_cut.is_empty(), "{after_cut:?}");
+    assert_eq!(whole, Ok(()));
+    assert_eq!(checkpoints.len(), 1);
+    let checkpoint = harness
+        .runtime
+        .checkpoint(CheckpointRef {
+            conversation_id: conversation.clone(),
+            checkpoint_id: checkpoints[0].id.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(checkpoint.summary, "Summary 1.");
 }

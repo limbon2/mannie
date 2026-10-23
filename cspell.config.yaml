@@ -30,6 +30,7 @@ words:
   - cmark
   - Crockford
   - cssparser
+  - ctutils
   - cyclonedx
   - dbus
   - DMABUF

@@ -756,7 +756,7 @@ fn start_call(call_id: &str, status: ToolCallStatus) -> ToolCallDocument {
 fn task_parts_read_as_calls_with_their_results() {
     let reported = TaskPartDocument {
         task: Some(assigned(1, false, TaskState::Reported)),
-        output: Some(texts::task_reported(1, "Found it.")),
+        output: Some(texts::task_reported(1, texts::THE_CHILD, "Found it.")),
         ..TaskPartDocument::default()
     };
     // A start in the background stays open while the task runs.
@@ -822,7 +822,10 @@ fn task_parts_read_as_calls_with_their_results() {
     assert_eq!(
         request.messages[2..],
         [
-            tool_result("start_1", &texts::task_reported(1, "Found it.")),
+            tool_result(
+                "start_1",
+                &texts::task_reported(1, texts::THE_CHILD, "Found it.")
+            ),
             tool_result("start_2", &texts::task_started_in_background(2, "explore")),
             tool_result("follow_1", &texts::task_still_running(2)),
             tool_result("start_4", &texts::task_interrupted(4, texts::THE_CHILD)),

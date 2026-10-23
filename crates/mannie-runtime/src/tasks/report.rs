@@ -62,13 +62,13 @@ pub(crate) fn render_report(
         .filter(|report| !report.is_empty());
     let output = match (ending.state, report) {
         (TaskState::Reported, Some(report)) => {
-            let whole = texts::task_reported(number, report);
+            let whole = texts::task_reported(number, doer, report);
             if whole.len() <= limit {
                 whole
             } else {
                 let id = archive_id();
                 let note = texts::report_cut(id.as_str());
-                let framing = texts::task_reported(number, "").len() + note.len() + 2;
+                let framing = texts::task_reported(number, doer, "").len() + note.len() + 2;
                 let head = cut(report, limit.saturating_sub(framing));
                 let archive = NewArchive {
                     id: id.clone(),
@@ -82,7 +82,7 @@ pub(crate) fn render_report(
                     lines: u32::try_from(report.lines().count()).unwrap_or(u32::MAX),
                 };
                 return TaskOutput {
-                    output: format!("{}\n\n{note}", texts::task_reported(number, head)),
+                    output: format!("{}\n\n{note}", texts::task_reported(number, doer, head)),
                     archive: Some((archive, reference)),
                 };
             }
@@ -220,8 +220,31 @@ mod tests {
             || panic!("nothing is archived"),
         );
 
-        assert_eq!(output.output, "Task 2 reported:\n\nFound it in session.rs.");
+        assert_eq!(
+            output.output,
+            "Task 2 reported. The evidence in this report comes from the child's own tool \
+calls:\n\nFound it in session.rs."
+        );
         assert!(output.archive.is_none());
+    }
+
+    #[test]
+    fn a_report_names_the_executor_s_target_as_its_source() {
+        let output = render_report(4, &reported("Built."), "the worker", 1_000, || {
+            panic!("nothing is archived")
+        });
+
+        assert_eq!(
+            output.output,
+            texts::task_reported(4, "the worker", "Built.")
+        );
+        assert!(
+            output
+                .output
+                .contains("comes from the worker's own tool calls"),
+            "{}",
+            output.output
+        );
     }
 
     #[test]
@@ -231,7 +254,11 @@ mod tests {
         let output = render_report(1, &reported(&report), texts::THE_CHILD, 2_000, archive_id);
 
         assert!(output.output.len() <= 2_000, "{}", output.output.len());
-        assert!(output.output.starts_with("Task 1 reported:\n\né"));
+        assert!(
+            output
+                .output
+                .starts_with(&texts::task_reported(1, texts::THE_CHILD, "é"))
+        );
         assert!(
             output
                 .output

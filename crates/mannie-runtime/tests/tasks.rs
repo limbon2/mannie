@@ -298,7 +298,7 @@ async fn a_task_returns_the_childs_confirmed_report() {
     assert!(parent[0].instructions.contains(texts::TASKS_GUIDANCE));
     assert_eq!(
         result(&parent[1], "call_1"),
-        texts::task_reported(1, "notes.txt says hello.")
+        texts::task_reported(1, texts::THE_CHILD, "notes.txt says hello.")
     );
     // The child's conversation is a task conversation, which the list leaves
     // out.
@@ -596,8 +596,8 @@ async fn background_tasks_report_through_wait_for_tasks() {
         result(&parent[2], "call_3"),
         format!(
             "{}\n\n{}",
-            texts::task_reported(1, "Report A."),
-            texts::task_reported(2, "Report B.")
+            texts::task_reported(1, texts::THE_CHILD, "Report A."),
+            texts::task_reported(2, texts::THE_CHILD, "Report B.")
         )
     );
     // A report that was read is returned again; an unknown number says so.
@@ -605,7 +605,7 @@ async fn background_tasks_report_through_wait_for_tasks() {
         result(&parent[3], "call_4"),
         format!(
             "{}\n\n{}",
-            texts::task_reported(2, "Report B."),
+            texts::task_reported(2, texts::THE_CHILD, "Report B."),
             texts::no_such_task(9)
         )
     );
@@ -723,7 +723,7 @@ async fn a_follow_up_continues_the_childs_conversation_with_its_agent() {
     let parent = setup.harness.model.requests_for("OWNER:");
     assert_eq!(
         result(&parent[2], "call_2"),
-        texts::task_reported(1, "Report 2: 12 lines.")
+        texts::task_reported(1, texts::THE_CHILD, "Report 2: 12 lines.")
     );
     let [first, second] = transcript.tasks(0).try_into().unwrap();
     assert_eq!(first.conversation_id, second.conversation_id);

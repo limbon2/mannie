@@ -454,7 +454,7 @@ async fn retry_starts_no_child(
     let request = model.requests_for("OWNER:").pop().unwrap();
     let (_parent, task_state, _child, _command) = kill.recovered();
     let expected = match task_state {
-        TaskState::Reported => texts::task_reported(1, "Report: marked once."),
+        TaskState::Reported => texts::task_reported(1, texts::THE_CHILD, "Report: marked once."),
         _ => texts::task_interrupted(1, texts::THE_CHILD),
     };
     assert_eq!(results(&request), [expected], "{label}");

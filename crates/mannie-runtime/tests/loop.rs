@@ -567,6 +567,42 @@ async fn a_context_overflow_compacts_once_and_a_second_one_fails() {
 }
 
 #[tokio::test]
+async fn a_summary_cut_at_the_output_limit_fails_the_reply_and_writes_no_checkpoint() {
+    let harness = Harness::start().await;
+    harness.model.push_reply(reply("One"));
+    harness
+        .model
+        .push_reply(failure(ProviderError::ContextOverflow));
+    harness.model.push_summary(vec![
+        Step::Event(ProviderEvent::TextDelta("Goal: the owner wants".to_owned())),
+        Step::Event(ProviderEvent::Finished(FinishReason::OutputLimit)),
+    ]);
+
+    let started = start(&harness, "First").await;
+    harness
+        .wait_for_run(&started.conversation_id, &started.run_id)
+        .await;
+    let sent = harness
+        .runtime
+        .send_message(SendMessage::new(started.conversation_id.clone(), "Second"))
+        .await
+        .unwrap();
+    let transcript = harness
+        .wait_for_run(&started.conversation_id, &sent.run_id)
+        .await;
+
+    assert_eq!(transcript.run_state(&sent.run_id), Some(RunState::Failed));
+    assert_eq!(failure_of(&transcript, 1), Some(RunFailure::SummaryCut));
+    assert_eq!(harness.model.summary_requests().len(), 1);
+    let checkpoints = harness
+        .store
+        .checkpoints(&started.conversation_id)
+        .await
+        .unwrap();
+    assert!(checkpoints.is_empty(), "{checkpoints:?}");
+}
+
+#[tokio::test]
 async fn an_overflow_with_nothing_to_compact_fails_as_too_large() {
     let harness = Harness::start().await;
     harness
