@@ -4,6 +4,10 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+### Security
+
+- ctutils 0.4.5, which fixes the advisory RUSTSEC-2026-0385 in the constant-time masks and `u128` comparisons that the Secret Service credential store reaches through its hashes.
+
 ## 0.5.0 - 2026-10-22
 
 ### Added
