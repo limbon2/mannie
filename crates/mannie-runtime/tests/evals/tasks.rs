@@ -108,6 +108,7 @@ pub(crate) fn all() -> Vec<Task> {
         move_into_a_named_project(),
         children_read_in_parallel(),
         fix_through_a_general_child(),
+        research_through_an_explore_child(),
         background_counts_then_wait(),
         server_in_the_background(),
         tests_in_the_background_while_reading(),
@@ -794,6 +795,88 @@ fn fix_through_a_general_child() -> Task {
         "calc.py",
         "def add(a, b):\n    return a - b\n\n\ndef multiply(a, b):\n    return a * b\n",
     )
+}
+
+/// The tool calls that the guidance on tasks allows for checking one report
+/// (docs/features/child-agents/tasks.md, the text the model sees).
+const CHECKS_PER_REPORT: usize = 2;
+
+/// The oracle child's report on the timeout, in the sections that the
+/// confirmation asks for, with the lines that its reads showed.
+const TIMEOUT_REPORT: &str = "Status: done\n\
+Answer: In production, the HTTP client uses a request timeout of 45 seconds, which \
+config/production.toml sets.\n\
+Established:\n\
+- config/production.toml:2 sets request_timeout_seconds = 45.\n\
+- src/settings.py:7 reads config/{environment}.toml over config/defaults.toml, whose line 2 \
+sets 30.\n\
+- deploy/service.env:1 sets ENVIRONMENT=production.\n\
+- src/client.py:6 passes settings[\"http\"][\"request_timeout_seconds\"] to the client.";
+
+/// An answer that takes a few reads, which the model gives to a child and
+/// should not read again once the report backs every step with a line.
+fn research_through_an_explore_child() -> Task {
+    Task::new(
+        "research_through_an_explore_child",
+        "Use an explore child agent to find out which request timeout the HTTP client uses in production and which file sets it. Then tell me the value and the file.",
+        |outcome| {
+            outcome.reported_tasks("explore", 1)?;
+            outcome.reply_mentions("45")?;
+            outcome.reply_mentions("production.toml")?;
+            outcome.few_repeated_reads(CHECKS_PER_REPORT)
+        },
+        |view| {
+            if view.is_child() {
+                if view.confirming() {
+                    return answer(TIMEOUT_REPORT);
+                }
+                return match view.steps() {
+                    0 => call(
+                        "search_text",
+                        &json!({ "query": "request_timeout_seconds" }),
+                    ),
+                    1 => call("read_file", &json!({ "path": "src/settings.py" })),
+                    2 => call("read_file", &json!({ "path": "deploy/service.env" })),
+                    _ => answer("I found the timeout."),
+                };
+            }
+            // The answer passes the report on without reading again what the
+            // child read.
+            match view.steps() {
+                0 => call(
+                    "start_task",
+                    &start_task(
+                        "Find the production timeout",
+                        "explore",
+                        "Find out which request timeout the HTTP client in src/client.py uses in production, and which file sets it. Report the value and the file, with the lines that show them.",
+                        false,
+                    ),
+                ),
+                _ => answer(&view.results().join(" ")),
+            }
+        },
+    )
+    .file(
+        "src/client.py",
+        "from settings import load\n\n\ndef make_client(environment):\n    settings = load(environment)\n    return HttpClient(timeout=settings[\"http\"][\"request_timeout_seconds\"])\n",
+    )
+    .file(
+        "src/settings.py",
+        "import tomllib\n\n\ndef load(environment):\n    with open(\"config/defaults.toml\", \"rb\") as file:\n        settings = tomllib.load(file)\n    with open(f\"config/{environment}.toml\", \"rb\") as file:\n        override = tomllib.load(file)\n    for section, values in override.items():\n        settings.setdefault(section, {}).update(values)\n    return settings\n",
+    )
+    .file(
+        "config/defaults.toml",
+        "[http]\nrequest_timeout_seconds = 30\nretries = 3\n",
+    )
+    .file(
+        "config/production.toml",
+        "[http]\nrequest_timeout_seconds = 45\n",
+    )
+    .file(
+        "config/staging.toml",
+        "[http]\nrequest_timeout_seconds = 10\n",
+    )
+    .file("deploy/service.env", "ENVIRONMENT=production\n")
 }
 
 /// The commands that run a script of the workspace, on Windows a `.cmd`

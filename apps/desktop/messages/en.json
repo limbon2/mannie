@@ -361,6 +361,7 @@
   "chat_failure_server_error": "The server failed with status {status}. Try again later.",
   "chat_failure_context_overflow": "The conversation is longer than the model's context, even after summarizing. Start a new conversation or use a model with a larger context window.",
   "chat_failure_request_too_large": "The latest message alone does not fit into the model's context. Shorten it, or use a model with a larger context window.",
+  "chat_failure_summary_cut": "The summary of the earlier conversation was cut off at the profile's output limit, so Mannie did not keep it. Raise the output limit in the provider settings, then retry.",
   "chat_failure_bad_request": "The server refused the request with status {status}. Check the profile's model, limits and reasoning effort.",
   "chat_failure_content_filtered": "The provider's content filter refused the request or the reply.",
   "chat_failure_connection_failed": "The server could not be reached. Check the base URL and the network connection.",

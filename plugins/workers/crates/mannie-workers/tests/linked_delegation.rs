@@ -33,6 +33,7 @@ use mannie_workers_testing::master::{
 };
 use mannie_workers_testing::worker::{LinkedWorker, LinkedWorkerOptions, Relay};
 
+use mannie_workers::texts as worker_texts;
 use mannie_workers::view::WorkerStatus;
 use serde_json::json;
 
@@ -104,7 +105,11 @@ async fn a_task_delegated_over_the_link_reports_and_its_lease_leaves_no_trace() 
     );
     assert_eq!(
         last_tool_result(&master),
-        texts::task_reported(1, "Report: the marker is written.")
+        texts::task_reported(
+            1,
+            worker_texts::THE_WORKER,
+            "Report: the marker is written."
+        )
     );
     assert_eq!(std::fs::read_to_string(&marker).unwrap(), "built\n");
     assert_eq!(

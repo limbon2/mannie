@@ -23,8 +23,8 @@ use mannie_plugin_sdk::services::service_info;
 use mannie_provider::testing::Step;
 use mannie_provider::{Content, ModelRequest, Role};
 use mannie_runtime::testing::{
-    FAKE_EXECUTOR_KIND, FAKE_EXECUTOR_TOOL, FakeExecutor, Harness, HarnessOptions, add_plugin,
-    credentials, executor_host, reply, tool_calls,
+    FAKE_EXECUTOR_KIND, FAKE_EXECUTOR_NOUN, FAKE_EXECUTOR_TOOL, FakeExecutor, Harness,
+    HarnessOptions, add_plugin, credentials, executor_host, reply, tool_calls,
 };
 use mannie_runtime::texts;
 use mannie_types::chat::{SendMessage, SetConversationProfile, StartConversation};
@@ -380,7 +380,7 @@ async fn the_executor_host_reads_and_changes_only_tasks_of_its_kind() {
     let requests = setup.harness.model.requests_for("OWNER:");
     assert_eq!(
         result(&requests[1], "call_1"),
-        texts::task_reported(1, "Built.")
+        texts::task_reported(1, FAKE_EXECUTOR_NOUN, "Built.")
     );
     let [shown] = transcript.tasks(0).try_into().unwrap();
     assert_eq!(shown.state, TaskState::Reported);
@@ -457,7 +457,7 @@ async fn a_plugin_cannot_publish_another_kinds_task_state() {
     let requests = setup.harness.model.requests_for("OWNER:");
     assert_eq!(
         result(&requests[1], "call_1"),
-        texts::task_reported(1, "Built.")
+        texts::task_reported(1, FAKE_EXECUTOR_NOUN, "Built.")
     );
     let stored = setup
         .harness

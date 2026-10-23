@@ -228,6 +228,10 @@ pub enum RunFailure {
     /// The latest request alone does not fit into the context budget.
     #[error("the latest request alone does not fit into the context budget")]
     RequestTooLarge,
+    /// The model's summary of earlier turns reached the output limit before it
+    /// ended, so it became no checkpoint.
+    #[error("the summary of the earlier conversation reached the output limit")]
+    SummaryCut,
     /// The server refused the request as malformed.
     #[error("the server refused the request with status {status}")]
     BadRequest {
@@ -293,6 +297,7 @@ impl RunFailure {
             Self::ServerError { .. } => "run.server_error",
             Self::ContextOverflow => "run.context_overflow",
             Self::RequestTooLarge => "run.request_too_large",
+            Self::SummaryCut => "run.summary_cut",
             Self::BadRequest { .. } => "run.bad_request",
             Self::ContentFiltered => "run.content_filtered",
             Self::ConnectionFailed => "run.connection_failed",

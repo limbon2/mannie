@@ -4,7 +4,7 @@
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Building                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | Milestone    | M3                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| Last updated | 2026-10-22                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Last updated | 2026-10-23                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | Related      | [ADR-0015](../../adr/0015-run-an-agent-runtime-on-every-machine.md), [ADR-0024](../../adr/0024-run-child-agent-tasks-in-the-parent-run.md), [ADR-0025](../../adr/0025-add-side-panels-to-the-shell.md), [Orchestration](../../architecture/orchestration.md), [Agent runtime](../../architecture/agent-runtime.md), [System tools](../system-tools/README.md), [Chat](../chat/README.md), [Workers](../../../plugins/workers/docs/README.md) |
 
 ## Intent
@@ -20,7 +20,7 @@ The owner wants the conversation agent to split larger work into focused tasks f
 - Parallel work: up to 4 children run at once by default, and the owner can set the limit from 1 to 16. Further tasks wait for a free slot.
 - Background tasks: the parent can let a child work in the background and continue. It reads the report later, and its own reply does not finish while background tasks are still running.
 - Follow-ups: the parent can send a follow-up task to a child whose task ended. The child keeps its context.
-- Reports: before a child reports, it confirms that it has finished. Only the report enters the parent's context.
+- Reports: before a child reports, it confirms that it has finished, and it writes the report in sections that keep its evidence apart from what it did not check. Only the report enters the parent's context. The parent treats what a report backs with evidence as established, and checks only what its next step depends on.
 - Visibility: each child appears in the parent's reply as a card with its state and what it is doing. "Open conversation" shows the child's whole conversation in a side panel beside the parent's conversation. A submenu of the conversation's menu lists its child agents, says how many work, and opens a child's conversation the same way, and the menu's button counts the working ones ([ADR-0042](../../adr/0042-place-conversation-controls-in-a-menu-and-the-message-box.md)). Several open conversations show as tabs, and they close when the owner opens another conversation.
 - Stopping: stopping the parent's reply stops its children, and the owner can also stop a single child from its card or its panel.
 - Limits: children cannot start children of their own, and per-reply budgets limit how many tasks a reply can start.
@@ -53,6 +53,11 @@ None.
   - Reports reach the parent's model only as results of the task tools. When a reply wants to end while reports are unread, a note of Mannie's own, without their text, asks the model to read them.
   - A child keeps its slot while it waits for an approval.
   - At most 8 side panels are open at once; opening another closes the oldest.
+- 2026-10-23: the owner decided, after reviewing research on agents that redo the work of their child agents:
+  - The guidance on tasks bounds the checks of a report. A fact that a report backs with a path and line, or with a command and its result, is established; the parent checks only the files that a task changed and the claims that the report did not verify, with at most two tool calls for each report, and asks with `follow_up_task` for missing evidence.
+  - A child writes its report in sections: status, answer, established findings with their evidence, what it did not verify, changes, what is left open and its assumptions.
+  - The result of a report says that the report's evidence comes from the child's own tool calls.
+  - The evaluations count the parent's reads and searches that repeat a child's.
 
 ## Parts
 

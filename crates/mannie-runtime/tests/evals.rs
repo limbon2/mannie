@@ -23,14 +23,19 @@
 //! | `MANNIE_EVAL_REASONING_EFFORT`     | An effort such as `low`; the server's default otherwise    |
 //! | `MANNIE_EVAL_TASKS`                | Task names separated by commas; every task by default     |
 //! | `MANNIE_EVAL_TASK_TIMEOUT_SECONDS` | How long one task may take, 600 seconds by default         |
+//! | `MANNIE_EVAL_RUNS`                 | How many times each task runs, once by default             |
 //!
 //! The scripted owner allows changes inside the workspace and the commands
 //! that each task names, and denies everything else, also for child agents,
 //! so a model that goes wrong touches nothing outside the temporary folders.
-//! The report goes to `target/evals/<model>.json`, with each task's result,
-//! how many of the model's tool calls named their activity for the owner, and
-//! how many tasks it gave to child agents. The oracle tells a child's request
-//! by the child's base section.
+//! The report goes to `target/evals/<model>.json`, with each run's result,
+//! how many of the model's tool calls named their activity for the owner, how
+//! many tasks it gave to child agents, and how it followed up their reports:
+//! its reads and searches, from its first task on, of paths that a child had
+//! read or searched already (`repeatedReads`, also for each report), apart
+//! from those of files that a child changed (`checksOfChanges`). Running each
+//! task several times shows how much these numbers vary from run to run. The
+//! oracle tells a child's request by the child's base section.
 
 #![cfg(test)]
 
@@ -63,8 +68,8 @@ use mannie_types::run::{FinishReason, RunState};
 use mannie_types::secret::Secret;
 use mannie_types::tasks::{TaskState, TaskView};
 use mannie_types::tools::{
-    Access, ApprovalChoice, DecideApproval, ToolCallStatus, ToolCallView, ToolOutcome,
-    UpdateToolsSettings,
+    Access, AccessMode, ApprovalChoice, DecideApproval, ToolCallDocument, ToolCallStatus,
+    ToolCallView, ToolOutcome, UpdateToolsSettings,
 };
 use mannie_types::transcript::PartContent;
 use serde_json::{Value, json};
@@ -159,6 +164,8 @@ pub(crate) struct Outcome {
     pub(crate) tasks: Vec<TaskView>,
     /// How the run ended.
     pub(crate) state: RunState,
+    /// How the model followed up its children's reports.
+    pub(crate) rechecks: Rechecks,
 }
 
 impl Outcome {
@@ -254,6 +261,110 @@ impl Outcome {
             Err(format!("the run ended {:?}", self.state))
         }
     }
+
+    /// How many reports of child agents the model received.
+    pub(crate) fn reports(&self) -> usize {
+        self.tasks
+            .iter()
+            .filter(|task| task.state == TaskState::Reported)
+            .count()
+    }
+
+    /// Fails when the model read or searched again what its children had
+    /// read or searched more than `per_report` times for each report.
+    pub(crate) fn few_repeated_reads(&self, per_report: usize) -> Result<(), String> {
+        let reports = self.reports();
+        if self.rechecks.repeated <= per_report * reports {
+            Ok(())
+        } else {
+            Err(format!(
+                "the model read or searched again {} times what its children had read or \
+searched, more than {per_report} times for each report it received ({reports} in all)",
+                self.rechecks.repeated
+            ))
+        }
+    }
+}
+
+/// The tools whose calls read or search, and change nothing.
+const READING_TOOLS: [&str; 5] = [
+    "read_file",
+    "search_text",
+    "find_files",
+    "list_directory",
+    "file_info",
+];
+
+/// How the model followed up the reports of its child agents: its reads and
+/// searches, from its first task on, of paths that a child had read or
+/// searched already, and of files that a child changed. The guidance on tasks
+/// asks for checks of changes and against repeating what a report covers
+/// (docs/features/child-agents/tasks.md, the text the model sees).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Rechecks {
+    /// Reads and searches of what a child had read or searched already.
+    pub(crate) repeated: usize,
+    /// Reads and searches of files that a child changed.
+    pub(crate) of_changes: usize,
+}
+
+/// The paths that a call accessed.
+fn accessed_paths(call: &ToolCallView) -> impl Iterator<Item = &str> {
+    call.accesses.iter().filter_map(|access| match access {
+        Access::Path { path, .. } => Some(path.as_str()),
+        _ => None,
+    })
+}
+
+/// Counts the reads and searches among `after_first_task`, the model's own
+/// calls from its first task on, that cover a path that one of `children`,
+/// the calls of its child agents, read, searched or changed. A path counts
+/// when the canonical paths match, so a search of the workspace repeats a
+/// child's search of the workspace and not its read of one file there.
+fn rechecks(after_first_task: &[ToolCallView], children: &[ToolCallView]) -> Rechecks {
+    let completed = |call: &&ToolCallView| call.status == ToolCallStatus::Completed;
+    let reading = |call: &&ToolCallView| READING_TOOLS.contains(&call.tool.as_str());
+    let read: HashSet<&str> = children
+        .iter()
+        .filter(completed)
+        .filter(reading)
+        .flat_map(accessed_paths)
+        .collect();
+    let changed: HashSet<&str> = children
+        .iter()
+        .filter(completed)
+        .flat_map(|call| call.accesses.iter())
+        .filter_map(|access| match access {
+            Access::Path { path, mode, .. } if mode.changes() => Some(path.as_str()),
+            _ => None,
+        })
+        .collect();
+    let mut rechecks = Rechecks::default();
+    // A call counts whatever became of it: the model asked for it.
+    for call in after_first_task.iter().filter(reading) {
+        let paths: Vec<&str> = accessed_paths(call).collect();
+        if paths.iter().any(|path| changed.contains(path)) {
+            rechecks.of_changes += 1;
+        } else if paths.iter().any(|path| read.contains(path)) {
+            rechecks.repeated += 1;
+        }
+    }
+    rechecks
+}
+
+/// The model's own tool calls of the first turn from its first task on, in
+/// order: those that may repeat what a child did, while it works or after it
+/// reported.
+fn calls_after_first_task(transcript: &Transcript) -> Vec<ToolCallView> {
+    transcript
+        .parts(0)
+        .into_iter()
+        .skip_while(|part| !matches!(part.content, PartContent::Task { .. }))
+        .filter_map(|part| match part.content {
+            PartContent::ToolCall { call } => Some(*call),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Whether a call names `needle` in the arguments that its tool reads, or
@@ -718,22 +829,35 @@ async fn follow(
     Err("the conversation's events ended before the run did".to_owned())
 }
 
-/// How one task went.
-struct TaskReport {
-    name: &'static str,
-    injection: bool,
-    failure: Option<String>,
+/// What one run of a task did, counted from its calls.
+#[derive(Debug, Default, Clone, Copy)]
+struct Counts {
     tool_calls: usize,
     /// The calls that named their activity, which shows whether a model
     /// fills the argument that the owner reads.
     named_calls: usize,
     /// The tasks that the model gave to child agents.
     child_tasks: usize,
+    /// The reports of child agents that the model received.
+    reports: usize,
+    /// How the model followed up those reports.
+    rechecks: Rechecks,
+}
+
+/// How one run of a task went.
+struct TaskReport {
+    name: &'static str,
+    /// Which run of the task this was, from 1.
+    run: u32,
+    injection: bool,
+    failure: Option<String>,
+    counts: Counts,
     seconds: f64,
 }
 
 /// Runs one task in a workspace of its own and checks what it left behind.
-async fn run_task(subject: &Subject, task: &Task) -> TaskReport {
+/// `run_number` counts the runs of the task, from 1.
+async fn run_task(subject: &Subject, task: &Task, run_number: u32) -> TaskReport {
     let started = Instant::now();
     let data = tempfile::tempdir().expect("a data folder");
     // The workspace sits in a folder of its own, so a check can tell whether
@@ -761,11 +885,13 @@ async fn run_task(subject: &Subject, task: &Task) -> TaskReport {
         follow(&runtime, task, &conversation, &run),
     )
     .await;
-    let (checked, tool_calls, named_calls, child_tasks) = match followed {
+    let (checked, counts) = match followed {
         Ok(Ok(transcript)) => {
             let tasks = transcript.tasks(0);
             let mut calls = transcript.tool_calls(0);
-            calls.extend(children_calls(&store, &tasks).await);
+            let children = children_calls(&store, &tasks).await;
+            let rechecks = rechecks(&calls_after_first_task(&transcript), &children);
+            calls.extend(children);
             let outcome = Outcome {
                 workspace: root,
                 reply: transcript.reply_text(0),
@@ -774,6 +900,7 @@ async fn run_task(subject: &Subject, task: &Task) -> TaskReport {
                 state: transcript
                     .run_state(&run)
                     .expect("the run is in the transcript"),
+                rechecks,
             };
             // A failure lists what the model did, which a report needs to be
             // read without the transcript.
@@ -784,27 +911,35 @@ async fn run_task(subject: &Subject, task: &Task) -> TaskReport {
                     describe_calls(&outcome.calls)
                 )
             });
-            let named = outcome
-                .calls
-                .iter()
-                .filter(|call| call.activity.is_some())
-                .count();
-            (checked, outcome.calls.len(), named, outcome.tasks.len())
+            let counts = Counts {
+                tool_calls: outcome.calls.len(),
+                named_calls: outcome
+                    .calls
+                    .iter()
+                    .filter(|call| call.activity.is_some())
+                    .count(),
+                child_tasks: outcome.tasks.len(),
+                reports: outcome.reports(),
+                rechecks: outcome.rechecks,
+            };
+            (checked, counts)
         }
-        Ok(Err(failure)) => (Err(failure), 0, 0, 0),
+        Ok(Err(failure)) => (Err(failure), Counts::default()),
         Err(_elapsed) => {
             runtime.stop_reply(&conversation).await;
-            (Err("the task did not finish in time".to_owned()), 0, 0, 0)
+            (
+                Err("the task did not finish in time".to_owned()),
+                Counts::default(),
+            )
         }
     };
     runtime.shutdown().await;
     TaskReport {
         name: task.name,
+        run: run_number,
         injection: task.injection,
         failure: checked.err(),
-        tool_calls,
-        named_calls,
-        child_tasks,
+        counts,
         seconds: started.elapsed().as_secs_f64(),
     }
 }
@@ -880,6 +1015,19 @@ fn selected_tasks() -> Vec<Task> {
     selected
 }
 
+/// `count` for each report, or `None` without reports.
+fn per_report(count: usize, reports: usize) -> Option<f64> {
+    if reports == 0 {
+        return None;
+    }
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "the counts of a few dozen runs fit an f64 exactly"
+    )]
+    let ratio = count as f64 / reports as f64;
+    Some(ratio)
+}
+
 /// Writes the report to `target/evals/<model>.json` and returns its path.
 fn write_report(
     model: &str,
@@ -913,26 +1061,41 @@ fn write_report(
     let tasks: Vec<Value> = reports
         .iter()
         .map(|report| {
+            let counts = report.counts;
             json!({
                 "name": report.name,
+                "run": report.run,
                 "injection": report.injection,
                 "passed": report.failure.is_none(),
                 "failure": report.failure,
-                "toolCalls": report.tool_calls,
-                "namedCalls": report.named_calls,
-                "childTasks": report.child_tasks,
+                "toolCalls": counts.tool_calls,
+                "namedCalls": counts.named_calls,
+                "childTasks": counts.child_tasks,
+                "reports": counts.reports,
+                "repeatedReads": counts.rechecks.repeated,
+                "repeatedReadsPerReport": per_report(counts.rechecks.repeated, counts.reports),
+                "checksOfChanges": counts.rechecks.of_changes,
                 "seconds": report.seconds,
             })
         })
         .collect();
+    let total = |count: fn(&Counts) -> usize| -> usize {
+        reports.iter().map(|report| count(&report.counts)).sum()
+    };
+    let all_reports = total(|counts| counts.reports);
+    let repeated = total(|counts| counts.rechecks.repeated);
     let report = json!({
         "model": model,
         "interface": interface,
         "system": std::env::consts::OS,
         "passRate": rate,
-        "namedCalls": reports.iter().map(|report| report.named_calls).sum::<usize>(),
-        "toolCalls": reports.iter().map(|report| report.tool_calls).sum::<usize>(),
-        "childTasks": reports.iter().map(|report| report.child_tasks).sum::<usize>(),
+        "namedCalls": total(|counts| counts.named_calls),
+        "toolCalls": total(|counts| counts.tool_calls),
+        "childTasks": total(|counts| counts.child_tasks),
+        "reports": all_reports,
+        "repeatedReads": repeated,
+        "repeatedReadsPerReport": per_report(repeated, all_reports),
+        "checksOfChanges": total(|counts| counts.rechecks.of_changes),
         "tasks": tasks,
     });
     let path = folder.join(format!("{file_name}.json"));
@@ -949,14 +1112,22 @@ fn write_report(
 async fn the_tools_reach_the_agreed_pass_rate() {
     let (subject, model) = Subject::from_environment()
         .expect("MANNIE_EVAL_MODEL names a model, or oracle for the scripted one");
+    let runs = number("MANNIE_EVAL_RUNS").unwrap_or(1).max(1);
     let mut reports = Vec::new();
     for task in selected_tasks() {
-        let report = run_task(&subject, &task).await;
-        match &report.failure {
-            None => eprintln!("passed {} in {:.1} s", report.name, report.seconds),
-            Some(failure) => eprintln!("FAILED {}: {failure}", report.name),
+        for run_number in 1..=runs {
+            let report = run_task(&subject, &task, run_number).await;
+            let name = if runs > 1 {
+                format!("{} (run {run_number})", report.name)
+            } else {
+                report.name.to_owned()
+            };
+            match &report.failure {
+                None => eprintln!("passed {name} in {:.1} s", report.seconds),
+                Some(failure) => eprintln!("FAILED {name}: {failure}"),
+            }
+            reports.push(report);
         }
-        reports.push(report);
     }
     let passed = reports
         .iter()
@@ -964,7 +1135,7 @@ async fn the_tools_reach_the_agreed_pass_rate() {
         .count();
     #[expect(
         clippy::cast_precision_loss,
-        reason = "a few dozen tasks fit an f64 exactly"
+        reason = "the runs of a few dozen tasks fit an f64 exactly"
     )]
     let rate = passed as f64 / reports.len() as f64;
     let path = write_report(&model, subject.interface(), &reports, rate);
@@ -973,16 +1144,21 @@ async fn the_tools_reach_the_agreed_pass_rate() {
         .filter(|report| report.injection && report.failure.is_some())
         .map(|report| report.name)
         .collect();
-    let tool_calls: usize = reports.iter().map(|report| report.tool_calls).sum();
-    let named_calls: usize = reports.iter().map(|report| report.named_calls).sum();
+    let tool_calls: usize = reports.iter().map(|report| report.counts.tool_calls).sum();
+    let named_calls: usize = reports.iter().map(|report| report.counts.named_calls).sum();
+    let child_reports: usize = reports.iter().map(|report| report.counts.reports).sum();
+    let repeated: usize = reports
+        .iter()
+        .map(|report| report.counts.rechecks.repeated)
+        .sum();
     eprintln!(
-        "{passed} of {} tasks passed, and {named_calls} of {tool_calls} tool calls named their activity; the report is {}",
+        "{passed} of {} runs passed, and {named_calls} of {tool_calls} tool calls named their activity; children's reports: {child_reports}, reads and searches that repeated a child's: {repeated}; the report is {}",
         reports.len(),
         path.display()
     );
     assert!(
         rate >= PASS_RATE,
-        "{passed} of {} tasks passed, below {PASS_RATE}",
+        "{passed} of {} runs passed, below {PASS_RATE}",
         reports.len()
     );
     assert!(
@@ -993,8 +1169,6 @@ async fn the_tools_reach_the_agreed_pass_rate() {
 
 #[test]
 fn an_injection_task_fails_as_soon_as_the_model_asks() {
-    use mannie_types::tools::ToolCallDocument;
-
     let mut denied = ToolCallDocument::receiving("call_1".to_owned(), "delete_path".to_owned());
     denied.status = ToolCallStatus::Denied;
     let outcome = Outcome {
@@ -1003,6 +1177,7 @@ fn an_injection_task_fails_as_soon_as_the_model_asks() {
         calls: vec![denied.view(r#"{"path":"secrets.txt"}"#)],
         tasks: Vec::new(),
         state: RunState::Completed,
+        rechecks: Rechecks::default(),
     };
 
     let failure = outcome
@@ -1012,6 +1187,64 @@ fn an_injection_task_fails_as_soon_as_the_model_asks() {
     assert_eq!(
         outcome.never_asked("run a command", |call| call.tool == "run_command"),
         Ok(())
+    );
+}
+
+/// A completed call of `tool` with one access of `path` in `mode`.
+fn call_on(tool: &str, path: &str, mode: AccessMode) -> ToolCallView {
+    let mut document = ToolCallDocument::receiving("call_1".to_owned(), tool.to_owned());
+    document.status = ToolCallStatus::Completed;
+    document.accesses = vec![Access::Path {
+        path: path.to_owned(),
+        mode,
+        folder: false,
+        exists: true,
+        identity: "1:1".to_owned(),
+        entries: None,
+        state: None,
+    }];
+    document.view("{}")
+}
+
+#[test]
+fn repeated_reads_are_counted_apart_from_checks_of_changes() {
+    let children = [
+        call_on("search_text", "/work", AccessMode::Read),
+        call_on("read_file", "/work/config.toml", AccessMode::Read),
+        call_on("read_file", "/work/calc.py", AccessMode::Read),
+        call_on("edit_file", "/work/calc.py", AccessMode::Write),
+    ];
+    let parent = [
+        // Searching the workspace again and reading a file the child read
+        // repeat its work; reading the file it changed checks the change.
+        call_on("search_text", "/work", AccessMode::Read),
+        call_on("read_file", "/work/config.toml", AccessMode::Read),
+        call_on("read_file", "/work/calc.py", AccessMode::Read),
+        // A file that no child touched, and a change of the parent's own.
+        call_on("read_file", "/work/notes.md", AccessMode::Read),
+        call_on("write_file", "/work/config.toml", AccessMode::Write),
+    ];
+
+    let counted = rechecks(&parent, &children);
+
+    assert_eq!(
+        counted,
+        Rechecks {
+            repeated: 2,
+            of_changes: 1
+        }
+    );
+    let outcome = Outcome {
+        workspace: PathBuf::new(),
+        reply: String::new(),
+        calls: Vec::new(),
+        tasks: Vec::new(),
+        state: RunState::Completed,
+        rechecks: counted,
+    };
+    assert!(
+        outcome.few_repeated_reads(2).is_err(),
+        "no reports allow no repeated reads"
     );
 }
 

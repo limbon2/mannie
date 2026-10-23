@@ -19,7 +19,7 @@
           "type": "boolean"
         },
         "instruction": {
-          "description": "The complete task: the goal, the files or facts to start from, the constraints, and what the report must contain.",
+          "description": "The complete task: the goal, the files or facts to start from, the constraints, and what the report must contain. Describe what to find out or do, and leave out the answer you expect.",
           "type": "string"
         },
         "title": {

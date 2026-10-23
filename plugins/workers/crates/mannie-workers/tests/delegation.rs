@@ -238,7 +238,7 @@ async fn a_foreground_delegation_returns_the_workers_report() {
     let requests = setup.master.model.reply_requests();
     assert_eq!(
         result(&requests[1], "call_1"),
-        texts::task_reported(1, "Report: the tests pass.")
+        texts::task_reported(1, worker_texts::THE_WORKER, "Report: the tests pass.")
     );
     let worker_requests = setup.worker.model.reply_requests();
     assert_eq!(
@@ -388,7 +388,11 @@ async fn a_background_delegation_shares_the_numbers_and_reports_through_a_wait()
     );
     assert_eq!(
         result(parent[2], "call_3"),
-        texts::task_reported(2, "Report: built in the background.")
+        texts::task_reported(
+            2,
+            worker_texts::THE_WORKER,
+            "Report: built in the background."
+        )
     );
     assert_eq!(transcript.reply_text(0), "Both done.");
 }
@@ -825,7 +829,11 @@ async fn quitting_leaves_a_worker_task_running_and_a_wait_takes_it_up_after_a_re
     );
     assert_eq!(
         result(last, "call_2"),
-        texts::task_reported(1, "Report: built after the restart.")
+        texts::task_reported(
+            1,
+            worker_texts::THE_WORKER,
+            "Report: built after the restart."
+        )
     );
 }
 
@@ -1209,7 +1217,11 @@ async fn turning_workers_off_lets_a_running_task_go_and_turning_it_on_reads_its_
     );
     assert_eq!(
         result(&after, "call_3"),
-        texts::task_reported(1, "Report: built while Workers was off.")
+        texts::task_reported(
+            1,
+            worker_texts::THE_WORKER,
+            "Report: built while Workers was off."
+        )
     );
     until_master_row(&setup, &task, TaskState::Reported).await;
 }

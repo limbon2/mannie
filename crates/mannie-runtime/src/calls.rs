@@ -24,7 +24,7 @@ use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{ConversationId, PartId, ProfileId, ProjectId};
 use mannie_types::projects::ProjectView;
 use mannie_types::provider::{ApiInterface, ReasoningEffort, context_budget};
-use mannie_types::run::RunFailure;
+use mannie_types::run::{FinishReason, RunFailure};
 use mannie_types::secret::Secret;
 use mannie_types::tools::ToolCallStatus;
 use mannie_types::transcript::PartKind;
@@ -809,7 +809,7 @@ impl Runtime {
             let ended = loop {
                 match stream.next().await {
                     Some(Ok(ProviderEvent::TextDelta(delta))) => text.push_str(&delta),
-                    Some(Ok(ProviderEvent::Finished(_))) => break Ok(()),
+                    Some(Ok(ProviderEvent::Finished(finish))) => break Ok(finish),
                     Some(Ok(_)) => {}
                     Some(Err(error)) => break Err(error),
                     None => {
@@ -821,7 +821,15 @@ impl Runtime {
                 }
             };
             match ended {
-                Ok(()) => return Ok(text.trim().to_owned()),
+                // A summary cut at the output limit lost its end, where the
+                // latest of what it covers and the next steps go, and a model
+                // that reasons may have spent the limit before it wrote
+                // anything. It never becomes a checkpoint.
+                Ok(FinishReason::OutputLimit) => {
+                    tracing::warn!("a summary reached the output limit; no checkpoint is written");
+                    return Err(CallError::Failed(RunFailure::SummaryCut));
+                }
+                Ok(_finish) => return Ok(text.trim().to_owned()),
                 Err(ProviderError::Transient { cause, retry_after }) => {
                     match policy.decide(tries, retry_after, self.random()) {
                         RetryDecision::After(delay) => tokio::time::sleep(delay).await,

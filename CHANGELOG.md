@@ -4,6 +4,19 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+### Added
+
+- The evaluations count, for each report of a child agent, the parent's reads and searches that repeat what a child read or searched, apart from its checks of files that a child changed. A new task fails when the parent repeats more than two of them for its report, and `MANNIE_EVAL_RUNS` runs each task several times.
+
+### Changed
+
+- Child agents write their reports in sections: status, answer, established findings with their evidence, what they did not verify, changes, what is left open and their assumptions. A report's result says that its evidence comes from the child's own tool calls, and the guidance on tasks treats what a report backs with evidence as established, with at most two tool calls to check one report, on the files that a task changed and the claims that it did not verify.
+- Checkpoints are written under fixed headings: the goal, what is done with what shows it, established facts with their sources, decisions, what nobody verified, open questions and the next steps.
+
+### Fixed
+
+- A summary that reaches the output limit no longer becomes a checkpoint: the compaction fails with `summary_cut`, which asks the owner to raise the profile's output limit.
+
 ### Security
 
 - ctutils 0.4.5, which fixes the advisory RUSTSEC-2026-0385 in the constant-time masks and `u128` comparisons that the Secret Service credential store reaches through its hashes.

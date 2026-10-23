@@ -191,7 +191,7 @@ async fn a_registered_executors_task_returns_its_report_as_the_result() {
     assert!(parent[0].instructions.contains(FAKE_EXECUTOR_SECTION));
     assert_eq!(
         result(&parent[1], "call_1"),
-        texts::task_reported(1, "Built and tested.")
+        texts::task_reported(1, FAKE_EXECUTOR_NOUN, "Built and tested.")
     );
     let [task] = transcript.tasks(0).try_into().unwrap();
     assert_eq!(task.state, TaskState::Reported);
@@ -342,7 +342,7 @@ async fn a_background_task_reports_through_wait_for_tasks() {
     );
     assert_eq!(
         result(&parent[2], "call_2"),
-        texts::task_reported(1, "Built.")
+        texts::task_reported(1, FAKE_EXECUTOR_NOUN, "Built.")
     );
 }
 
@@ -385,7 +385,7 @@ async fn a_follow_up_goes_to_the_target_of_the_earlier_task() {
     let parent = setup.harness.model.requests_for("OWNER:");
     assert_eq!(
         result(&parent[2], "call_2"),
-        texts::task_reported(1, "Tested.")
+        texts::task_reported(1, FAKE_EXECUTOR_NOUN, "Tested.")
     );
 }
 
@@ -447,7 +447,7 @@ async fn stopping_the_reply_cancels_the_task_and_lets_it_go_until_a_wait_takes_i
     let requests = setup.harness.model.requests_for("OWNER:");
     assert_eq!(
         result(requests.last().unwrap(), "call_2"),
-        texts::task_reported(1, "Built late.")
+        texts::task_reported(1, FAKE_EXECUTOR_NOUN, "Built late.")
     );
 }
 
@@ -579,7 +579,7 @@ async fn turning_the_plugin_off_lets_a_running_task_go_and_a_later_wait_takes_it
     let requests = setup.harness.model.requests_for("OWNER:");
     assert_eq!(
         result(requests.last().unwrap(), "call_2"),
-        texts::task_reported(1, "Built.")
+        texts::task_reported(1, FAKE_EXECUTOR_NOUN, "Built.")
     );
 }
 
@@ -834,7 +834,7 @@ async fn ending_another_executors_task_changes_neither_its_row_nor_its_board() {
     let parent = setup.harness.model.requests_for("OWNER:");
     assert_eq!(
         result(&parent[1], "call_1"),
-        texts::task_reported(1, "Built.")
+        texts::task_reported(1, FAKE_EXECUTOR_NOUN, "Built.")
     );
     let [task] = transcript.tasks(0).try_into().unwrap();
     assert_eq!(task.state, TaskState::Reported);
