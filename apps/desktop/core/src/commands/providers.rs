@@ -1,13 +1,15 @@
-//! Commands of provider profiles (docs/features/chat/providers.md, contracts).
-//! The runtime checks every field and keeps credentials in the credential
-//! store; the webview sends a credential once and never receives it back.
+//! Commands of provider profiles (docs/features/chat/providers.md, contracts)
+//! and of search profiles (ADR-0047). The runtime checks every field and
+//! keeps credentials in the credential store; the webview sends a credential
+//! once and never receives it back.
 
 use mannie_provider::known_model;
 use mannie_runtime::Runtime;
 use mannie_types::ipc::CommandError;
 use mannie_types::provider::{
-    CreateProviderProfile, MAX_MODEL_CHARACTERS, ModelDefaults, ModelDefaultsRef, ProfileRef,
-    ProviderProfile, ProviderProfileError, ProviderTestReport, UpdateProviderProfile,
+    CreateProviderProfile, CreateSearchProfile, MAX_MODEL_CHARACTERS, ModelDefaults,
+    ModelDefaultsRef, ProfileRef, ProviderProfile, ProviderProfileError, ProviderTestReport,
+    SearchProfile, SearchTestReport, UpdateProviderProfile, UpdateSearchProfile,
 };
 use tauri::State;
 
@@ -107,6 +109,70 @@ pub(crate) async fn test_provider_profile(
         .test_profile(&input.id)
         .await
         .map_err(refused("test_provider_profile"))
+}
+
+/// Every search profile, the oldest first.
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn list_search_profiles(
+    core: State<'_, Core>,
+) -> Result<Vec<SearchProfile>, CommandError<ProviderProfileError>> {
+    runtime(&core)?
+        .list_search_profiles()
+        .await
+        .map_err(refused("list_search_profiles"))
+}
+
+/// Adds a search profile.
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn create_search_profile(
+    core: State<'_, Core>,
+    input: CreateSearchProfile,
+) -> Result<SearchProfile, CommandError<ProviderProfileError>> {
+    runtime(&core)?
+        .create_search_profile(input)
+        .await
+        .map_err(refused("create_search_profile"))
+}
+
+/// Changes a search profile, and keeps, replaces or removes its credential.
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn update_search_profile(
+    core: State<'_, Core>,
+    input: UpdateSearchProfile,
+) -> Result<SearchProfile, CommandError<ProviderProfileError>> {
+    runtime(&core)?
+        .update_search_profile(&input.id, input.draft, input.credential)
+        .await
+        .map_err(refused("update_search_profile"))
+}
+
+/// Deletes a search profile and its credential.
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn delete_search_profile(
+    core: State<'_, Core>,
+    input: ProfileRef,
+) -> Result<(), CommandError<ProviderProfileError>> {
+    runtime(&core)?
+        .delete_search_profile(&input.id)
+        .await
+        .map_err(refused("delete_search_profile"))
+}
+
+/// Runs the test of a search profile.
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn test_search_profile(
+    core: State<'_, Core>,
+    input: ProfileRef,
+) -> Result<SearchTestReport, CommandError<ProviderProfileError>> {
+    runtime(&core)?
+        .test_search_profile(&input.id)
+        .await
+        .map_err(refused("test_search_profile"))
 }
 
 /// The known limits of a model, as defaults for a profile's fields. `None`

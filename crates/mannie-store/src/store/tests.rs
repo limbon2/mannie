@@ -193,8 +193,8 @@ async fn a_new_database_gets_the_whole_schema_in_wal_mode_without_a_backup() {
         records(&fixture.database()),
         [
             ("exports".to_owned(), 1),
-            ("provider".to_owned(), 1),
-            ("runtime".to_owned(), 22),
+            ("provider".to_owned(), 2),
+            ("runtime".to_owned(), 24),
             ("settings".to_owned(), 1),
             ("tools".to_owned(), 6),
         ]
@@ -363,8 +363,8 @@ async fn a_database_of_0_2_0_gets_the_version_of_each_module() {
         records(&fixture.database()),
         [
             ("exports".to_owned(), 1),
-            ("provider".to_owned(), 1),
-            ("runtime".to_owned(), 22),
+            ("provider".to_owned(), 2),
+            ("runtime".to_owned(), 24),
             ("settings".to_owned(), 1),
             ("tools".to_owned(), 6),
         ]
@@ -1587,8 +1587,8 @@ async fn rules_of_0_4_0_cover_only_the_foreground_after_the_upgrade() {
         records(&fixture.database()),
         [
             ("exports".to_owned(), 1),
-            ("provider".to_owned(), 1),
-            ("runtime".to_owned(), 22),
+            ("provider".to_owned(), 2),
+            ("runtime".to_owned(), 24),
             ("settings".to_owned(), 1),
             ("tools".to_owned(), 6),
         ]

@@ -62,7 +62,9 @@ impl HostOptions {
     }
 
     /// The same host with `provider` beside the runtime's and the store's,
-    /// such as a fake of a service that only the desktop app provides.
+    /// such as a fake of a service that only the desktop app provides, or in
+    /// place of the core's provider of the same service, such as the fake of
+    /// the models of search profiles, whose servers a test does not run.
     #[must_use]
     pub fn with_provider(mut self, provider: Arc<dyn ServiceProvider>) -> Self {
         self.providers.push(provider);
@@ -98,7 +100,10 @@ impl HostedPlugin {
         let core = Harness::with_options(core).await;
         let mut providers = core.runtime.service_providers();
         providers.extend(mannie_store::service_providers(&core.store));
-        providers.extend(options.providers);
+        for provider in options.providers {
+            providers.retain(|existing| existing.name() != provider.name());
+            providers.push(provider);
+        }
         let host = PluginHost::new(PluginHostDeps {
             store: core.store.clone(),
             plugins,

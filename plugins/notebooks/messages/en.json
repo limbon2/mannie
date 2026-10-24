@@ -1,0 +1,257 @@
+{
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "notebooks_plugin_name": "Notebooks",
+  "notebooks_plugin_description": "Notebooks of documents, whose passages that apply to a message reach the chats that use them.",
+  "notebooks_start_failed_storage": "The Notebooks plugin could not read its notebooks. Turn it off and on again.",
+  "notebooks_off_question": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "A source is being read or indexed. Its indexing continues when Notebooks is turned on again.",
+        "countPlural=other": "{count: number} sources are being read or indexed. Their indexing continues when Notebooks is turned on again."
+      }
+    }
+  ],
+  "notebooks_navigation_label": "Notebooks",
+  "notebooks_view_title": "Notebooks",
+  "notebooks_command_group": "Notebooks",
+  "notebooks_command_new_notebook": "New notebook…",
+  "notebooks_new_notebook": "New notebook",
+  "notebooks_loading": "Loading the notebooks…",
+  "notebooks_list_failed_title": "The notebooks could not be loaded",
+  "notebooks_try_again": "Try again",
+  "notebooks_cancel": "Cancel",
+  "notebooks_close": "Close",
+  "notebooks_dismiss": "Dismiss",
+  "notebooks_empty_title": "No notebooks yet",
+  "notebooks_empty_description": "A notebook holds documents and has chats of its own, which answer from them.",
+  "notebooks_new_chat": "New chat",
+  "notebooks_open_latest": "Open the latest notebook",
+  "notebooks_notebook_menu": "Actions for {name}",
+  "notebooks_rename": "Rename…",
+  "notebooks_delete": "Delete…",
+  "notebooks_notebook_loading": "Loading the notebook…",
+  "notebooks_notebook_failed_title": "The notebook could not be loaded",
+  "notebooks_notebook_missing_title": "This notebook no longer exists",
+  "notebooks_notebook_missing_description": "It may have been deleted.",
+  "notebooks_drop_hint": "Drop the files to add them to the sources.",
+  "notebooks_waiting_title": "Choose an embedding model",
+  "notebooks_waiting_description": "Sources wait to be indexed until the Notebooks settings name an embedding model.",
+  "notebooks_open_settings": "Open the Notebooks settings",
+  "notebooks_sources_heading": "Sources",
+  "notebooks_sources_label": "Sources of {name}",
+  "notebooks_add_sources": "Add sources…",
+  "notebooks_paste_text": "Paste text…",
+  "notebooks_dialog_filter": "Documents",
+  "notebooks_adding_files": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Adding a file…",
+        "countPlural=other": "Adding {count: number} files…"
+      }
+    }
+  ],
+  "notebooks_add_failed_title": "The files were not added",
+  "notebooks_refused_title": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "A file was not added",
+        "countPlural=other": "{count: number} files were not added"
+      }
+    }
+  ],
+  "notebooks_sources_empty_title": "No sources yet",
+  "notebooks_sources_empty_description": "Add PDF, Markdown or text files, drop them here, or paste a text.",
+  "notebooks_source_kind_pdf": "PDF",
+  "notebooks_source_kind_markdown": "Markdown",
+  "notebooks_source_kind_text": "Text",
+  "notebooks_source_pages": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "1 page",
+        "countPlural=other": "{count: number} pages"
+      }
+    }
+  ],
+  "notebooks_source_passages": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "1 passage",
+        "countPlural=other": "{count: number} passages"
+      }
+    }
+  ],
+  "notebooks_source_state_reading": "Reading",
+  "notebooks_source_state_waiting": "Waiting for an embedding model",
+  "notebooks_source_state_indexing": "Indexing",
+  "notebooks_source_state_paused": "Paused",
+  "notebooks_source_state_ready": "Ready",
+  "notebooks_source_state_failed": "Failed",
+  "notebooks_source_progress": "{embedded} of {total} passages",
+  "notebooks_source_paused_description": "{reason} Mannie tries again in a few minutes.",
+  "notebooks_source_included": "Use in answers",
+  "notebooks_source_retry": "Try again",
+  "notebooks_source_open": "Show the text",
+  "notebooks_source_remove": "Remove…",
+  "notebooks_source_menu": "Actions for {name}",
+  "notebooks_panel_title": "Notebooks",
+  "notebooks_panel_toggle": "Show the chats of {name}",
+  "notebooks_panel_empty": "No notebooks yet",
+  "notebooks_panel_failed": "The notebooks could not be loaded.",
+  "notebooks_viewer_title": "Source",
+  "notebooks_viewer_description": "The text of a source of a notebook, page by page or section by section.",
+  "notebooks_viewer_loading": "Loading the source…",
+  "notebooks_viewer_failed_title": "The source could not be loaded",
+  "notebooks_viewer_missing_title": "This source no longer exists",
+  "notebooks_viewer_missing_description": "It was removed from its notebook.",
+  "notebooks_viewer_empty": "This source has no text.",
+  "notebooks_viewer_text_label": "The source's text",
+  "notebooks_viewer_pages": "Pages {first} to {last} of {total}",
+  "notebooks_viewer_sections": "Sections {first} to {last} of {total}",
+  "notebooks_viewer_earlier": "Earlier",
+  "notebooks_viewer_later": "Later",
+  "notebooks_page": "Page {page: number}",
+  "notebooks_passage_missing": "The passage is no longer in this source.",
+  "notebooks_context_noun": "Notebook",
+  "notebooks_context_gathering": "Searching notebooks…",
+  "notebooks_context_found": [
+    {
+      "declarations": ["input count", "input labels", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Searched {labels}: 1 passage",
+        "countPlural=other": "Searched {labels}: {count: number} passages"
+      }
+    }
+  ],
+  "notebooks_open_source": "Open source",
+  "notebooks_mention_group": "Notebooks",
+  "notebooks_mention_notebook": "Notebook",
+  "notebooks_mention_attached": "Attached to this chat",
+  "notebooks_tool_list": "Listed the sources of the attached notebooks",
+  "notebooks_tool_search": "Searched the notebooks for \"{query}\"",
+  "notebooks_tool_search_found": [
+    {
+      "declarations": ["input count", "input query", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Found 1 passage for \"{query}\"",
+        "countPlural=other": "Found {count: number} passages for \"{query}\""
+      }
+    }
+  ],
+  "notebooks_tool_read": "Read {source}",
+  "notebooks_tool_read_page": "Read {source}, page {page: number}",
+  "notebooks_tool_read_pages": "Read {source}, pages {first: number} to {last: number}",
+  "notebooks_tool_read_heading": "Read {source}, {heading}",
+  "notebooks_tool_failure_page_not_found": "The source has no text from that page on.",
+  "notebooks_tool_failure_passage_not_found": "The source has no such passage.",
+  "notebooks_tool_failure_section_not_found": "The source has no such section.",
+  "notebooks_tool_failure_no_text": "The source holds no text yet.",
+  "notebooks_context_failure_notebook_not_found": "The notebook was deleted.",
+  "notebooks_context_failure_no_embedding_profile": "The Notebooks settings name no embedding model.",
+  "notebooks_context_failure_nothing_indexed": "None of its sources is ready and used in answers.",
+  "notebooks_context_failure_storage_failed": "The Notebooks plugin could not read its passages.",
+  "notebooks_context_failure_server_unreachable": "The embedding or rerank server could not be reached.",
+  "notebooks_context_failure_server_error": "The embedding or rerank server failed.",
+  "notebooks_context_failure_input_too_long": "The message is longer than the embedding model takes.",
+  "notebooks_name_label": "Name",
+  "notebooks_create_title": "New notebook",
+  "notebooks_create_description": "No other notebook may have the same name.",
+  "notebooks_create_confirm": "Create",
+  "notebooks_rename_title": "Rename the notebook",
+  "notebooks_rename_description": "No other notebook may have the new name.",
+  "notebooks_rename_confirm": "Rename",
+  "notebooks_delete_title": "Delete {name}?",
+  "notebooks_delete_description": "Its sources, their text and their passages are deleted.",
+  "notebooks_delete_own_chats": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Its chat is deleted with it.",
+        "countPlural=other": "Its {count: number} chats are deleted with it."
+      }
+    }
+  ],
+  "notebooks_delete_using_chats": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Another chat uses it. That chat keeps its messages and no longer searches the notebook.",
+        "countPlural=other": "{count: number} other chats use it. They keep their messages and no longer search the notebook."
+      }
+    }
+  ],
+  "notebooks_delete_confirm": "Delete",
+  "notebooks_deleting": "Deleting the notebook…",
+  "notebooks_delete_failed_title": "The notebook was not deleted",
+  "notebooks_delete_chat_failed": "A chat of the notebook was not deleted, so the notebook stays. {reason}",
+  "notebooks_detach_failed_title": "A chat still has the notebook attached",
+  "notebooks_paste_title": "Paste text",
+  "notebooks_paste_description": "The text becomes a source of {name}.",
+  "notebooks_paste_title_label": "Title",
+  "notebooks_paste_text_label": "Text",
+  "notebooks_paste_confirm": "Add text",
+  "notebooks_pasting": "Adding the text…",
+  "notebooks_paste_failed_title": "The text was not added",
+  "notebooks_remove_title": "Remove {name}?",
+  "notebooks_remove_description": "Its text and its passages are deleted. Chats keep the passages that they already got.",
+  "notebooks_remove_confirm": "Remove",
+  "notebooks_removing": "Removing the source…",
+  "notebooks_remove_failed_title": "The source was not removed",
+  "notebooks_settings_title": "Notebooks",
+  "notebooks_settings_description": "The models that search notebooks, and how many passages a message gets.",
+  "notebooks_settings_loading": "Loading the settings…",
+  "notebooks_settings_failed_title": "The settings could not be loaded",
+  "notebooks_settings_no_profiles_title": "No embedding models yet",
+  "notebooks_settings_no_profiles_description": "Add an embedding model in the Providers settings: the server that serves it and the model's name.",
+  "notebooks_settings_open_providers": "Open the Providers settings",
+  "notebooks_settings_none": "None",
+  "notebooks_settings_profile_option": "{name} ({model})",
+  "notebooks_settings_embedding_label": "Embedding model",
+  "notebooks_settings_embedding_description": "Turns passages and messages into vectors. Another model indexes every source again.",
+  "notebooks_settings_rerank_label": "Reranker",
+  "notebooks_settings_rerank_description": "Scores the best passages of each search against the message. Without a reranker, each message gets the best passages of the search, whether they apply or not.",
+  "notebooks_settings_passages_label": "Most passages per message",
+  "notebooks_settings_passages_description": "From {fewest} to {most}.",
+  "notebooks_settings_invalid_passages": "Enter a whole number from {fewest} to {most}.",
+  "notebooks_settings_save": "Save",
+  "notebooks_settings_saving": "Saving…",
+  "notebooks_settings_saved": "Saved.",
+  "notebooks_settings_save_failed_title": "The settings were not saved",
+  "notebooks_error_notebook_not_found": "The notebook no longer exists.",
+  "notebooks_error_source_not_found": "The source no longer exists.",
+  "notebooks_error_name_taken": "Another notebook has this name. Choose another one.",
+  "notebooks_error_upload_broken": "The file's upload broke off. Drop the file again.",
+  "notebooks_error_profile_not_found": "The chosen search profile no longer exists. Choose another one.",
+  "notebooks_error_passage_not_found": "The passage no longer exists, since its source was removed.",
+  "notebooks_error_nothing_to_retry": "Only a source whose indexing failed can be tried again.",
+  "notebooks_error_dialog_failed": "The file dialog could not be opened. Try again.",
+  "notebooks_error_profiles_unavailable": "The search profiles could not be read. Try again.",
+  "notebooks_error_storage_failed": "The Notebooks plugin could not read or save its data. Try again.",
+  "notebooks_refusal_duplicate": "The notebook holds this file already.",
+  "notebooks_refusal_unsupported_type": "Only PDF, Markdown and text files can be added.",
+  "notebooks_refusal_unreadable": "The file could not be read.",
+  "notebooks_failure_no_text": "This PDF has no text. It may be a scan.",
+  "notebooks_failure_encrypted": "This PDF is encrypted, so its text cannot be read.",
+  "notebooks_failure_unreadable": "The file could not be read. It may be damaged.",
+  "notebooks_failure_not_utf8": "The text is neither UTF-8 nor UTF-16.",
+  "notebooks_failure_interrupted": "Mannie stopped while it read the file. Remove the source and add the file again.",
+  "notebooks_failure_server_unreachable": "The embedding server could not be reached.",
+  "notebooks_failure_server_error": "The embedding server failed.",
+  "notebooks_failure_input_too_long": "A passage is longer than the embedding model takes.",
+  "notebooks_failure_no_embedding_profile": "The embedding model's search profile is gone. Choose another one in the Notebooks settings.",
+  "notebooks_failure_storage_failed": "The Notebooks plugin could not save the source.",
+  "notebooks_failure_other": "The source could not be indexed."
+}

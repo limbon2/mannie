@@ -30,13 +30,14 @@ mod writer;
 
 pub use error::{DatabaseError, ModuleProblem, StoreError};
 pub use plugin_store::{PluginModule, service_providers};
+pub use provider::search::{SearchProfileFields, StoredSearchProfile};
 pub use provider::{ProfileFields, ProfileStoreError, StoredProfile};
 pub use runtime::{
     AddedProject, Applied, Change, ConversationList, EventsAfter, ExecutorTaskProfile, KeptRun,
-    LOCAL_SOURCE, ModelImage, ModelPart, ModelTurn, NewArchive, NewCheckpoint, NewConversation,
-    NewExecutorTask, NewImage, NewMention, NewPart, NewRun, NewTask, NewToolImage, OutboxEntry,
-    ProjectDeletion, ProviderItem, Recovered, RecoveredCommand, RuntimeStoreError, StoredArchive,
-    StoredBackgroundCommand, StoredCheckpoint, StoredChild, StoredImage, StoredTask,
+    LOCAL_SOURCE, ModelImage, ModelPart, ModelTurn, NewArchive, NewCheckpoint, NewContext,
+    NewConversation, NewExecutorTask, NewImage, NewMention, NewPart, NewRun, NewTask, NewToolImage,
+    OutboxEntry, ProjectDeletion, ProviderItem, Recovered, RecoveredCommand, RuntimeStoreError,
+    StoredArchive, StoredBackgroundCommand, StoredCheckpoint, StoredChild, StoredImage, StoredTask,
     StoredToolImage, TaskEnding, TaskExecution, TaskOrigin, UncertainCall,
 };
 pub use settings::SettingsStoreError;
@@ -64,6 +65,7 @@ pub(crate) fn all_statements() -> impl Iterator<Item = &'static str> {
         .iter()
         .chain(exports::STATEMENTS)
         .chain(provider::STATEMENTS)
+        .chain(provider::search::STATEMENTS)
         .chain(tools::STATEMENTS)
         .copied()
         .chain(runtime::statements())

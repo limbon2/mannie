@@ -1,7 +1,23 @@
 // Labels of the provider settings (docs/features/chat/providers.md): the API
-// interfaces, the servers and the reasoning efforts, from the catalog.
-import type { ApiInterface, ReasoningEffort, ServerKind } from '#lib/generated/bindings.js';
+// interfaces, the servers, the reasoning efforts and the kinds of search
+// profiles (ADR-0047), from the catalog.
+import type { ApiInterface, ReasoningEffort, SearchKind, ServerKind } from '#lib/generated/bindings.js';
 import { m } from '#lib/paraglide/messages.js';
+
+/** The kinds of search profiles, in the order the settings offer them. */
+export const SEARCH_KINDS: readonly SearchKind[] = ['embeddings', 'rerank'];
+
+/** The label of a kind of search profile. */
+export function searchKindLabel(kind: SearchKind): string {
+  switch (kind) {
+    case 'embeddings': {
+      return m.chat_search_kind_embeddings();
+    }
+    case 'rerank': {
+      return m.chat_search_kind_rerank();
+    }
+  }
+}
 
 /** Every reasoning effort, in the order the settings offer them. */
 export const REASONING_EFFORTS: readonly ReasoningEffort[] = [

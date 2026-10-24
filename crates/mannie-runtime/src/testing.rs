@@ -30,6 +30,7 @@ use mannie_plugin_sdk::points::tools::ToolSpec;
 use mannie_plugin_sdk::services::background_commands::BackgroundCommandsApi;
 use mannie_plugin_sdk::services::credentials::CredentialsApi;
 use mannie_plugin_sdk::services::executor_host::ExecutorHostApi;
+use mannie_plugin_sdk::services::models::ModelsApi;
 use mannie_provider::testing::Step;
 use mannie_provider::{
     Content, EventStream, HttpClient, ModelRequest, Provider, ProviderError, ProviderEvent,
@@ -1405,6 +1406,18 @@ pub fn background_commands(runtime: &Runtime, plugin: &str) -> Arc<dyn Backgroun
     runtime.bound_background_commands(plugin.as_str())
 }
 
+/// The models of search profiles that the runtime binds to a plugin, as its
+/// provider binds the service `models` when the plugin host starts a plugin
+/// that declares it (ADR-0047), without a manifest.
+///
+/// # Panics
+///
+/// When `plugin` is not a plugin ID, which fails the test.
+pub fn models(runtime: &Runtime, plugin: &str) -> Arc<dyn ModelsApi> {
+    let plugin = PluginId::parse(plugin).expect("the test names a plugin ID");
+    runtime.bound_models(plugin.as_str())
+}
+
 /// The kind of the [`FakeExecutor`].
 pub const FAKE_EXECUTOR_KIND: &str = "fake";
 
@@ -1754,14 +1767,16 @@ fn append_text(content: &mut PartContent, delta: &str) {
         | PartContent::Reasoning { text } => {
             text.push_str(delta);
         }
-        // A call's arguments arrive with the part's next update, and a
-        // mention or an image is complete when its turn starts.
+        // A call's arguments arrive with the part's next update, a mention
+        // or an image is complete when its turn starts, and a part of context
+        // when it is stored.
         PartContent::ToolCall { .. }
         | PartContent::Task { .. }
         | PartContent::Error { .. }
         | PartContent::Mention { .. }
         | PartContent::Image { .. }
         | PartContent::CommandNote { .. }
+        | PartContent::Context { .. }
         | PartContent::Unknown { .. } => {}
     }
 }
@@ -1823,13 +1838,11 @@ impl Transcript {
                     if turn.id == run.turn_id {
                         turn.run = Some(run.clone());
                         // A retry replaces every part but the owner's message
-                        // and the parts of runs that made tool calls.
-                        turn.parts.retain(|position, part| {
-                            let kept = part
-                                .run_id
-                                .as_ref()
-                                .is_some_and(|run| kept_run_ids.contains(run));
-                            *position == 0 || kept
+                        // with its parts and the parts of runs that made tool
+                        // calls.
+                        turn.parts.retain(|_position, part| match &part.run_id {
+                            None => true,
+                            Some(run) => kept_run_ids.contains(run),
                         });
                     }
                 }
@@ -1849,11 +1862,13 @@ impl Transcript {
             | ConversationEvent::PartUpdated { part }
             | ConversationEvent::PartFinished { part } => {
                 for turn in self.turns.values_mut() {
-                    let belongs = turn.id == part.turn_id
-                        && turn
-                            .run
-                            .as_ref()
-                            .is_some_and(|run| part.run_id.as_ref() == Some(&run.id));
+                    // A part of the owner's message, such as its context
+                    // (ADR-0046), belongs to its turn whatever run is current.
+                    let of_current_run = match &part.run_id {
+                        None => true,
+                        Some(run_id) => turn.run.as_ref().is_some_and(|run| run.id == *run_id),
+                    };
+                    let belongs = turn.id == part.turn_id && of_current_run;
                     if !belongs {
                         continue;
                     }

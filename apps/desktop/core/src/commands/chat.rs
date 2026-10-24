@@ -10,6 +10,7 @@ use mannie_types::chat::{
     StartedConversation, StartedReply, StopOutcome, SubscribeConversation, Unsubscribe,
     UpdateChatSettings,
 };
+use mannie_types::context::ChangeAttachment;
 use mannie_types::images::{ImageData, ReadImage};
 use mannie_types::ipc::{ChannelBatch, CommandError};
 use mannie_types::mentions::{
@@ -169,6 +170,34 @@ pub(crate) async fn list_mention_providers(
         .list_mention_providers(input)
         .await
         .map_err(refused("list_mention_providers"))
+}
+
+/// Attaches a context provider's key, such as a notebook, to a conversation
+/// (ADR-0046, decision 1), once the provider described it.
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn attach_context(
+    core: State<'_, Core>,
+    input: ChangeAttachment,
+) -> Result<(), CommandError<ChatError>> {
+    runtime(&core)?
+        .attach_context(input)
+        .await
+        .map_err(refused("attach_context"))
+}
+
+/// Detaches a key from a conversation, also while its provider's plugin is
+/// off.
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn detach_context(
+    core: State<'_, Core>,
+    input: ChangeAttachment,
+) -> Result<(), CommandError<ChatError>> {
+    runtime(&core)?
+        .detach_context(input)
+        .await
+        .map_err(refused("detach_context"))
 }
 
 /// The thumbnail or the full image of an image part (ADR-0033, decision 4),

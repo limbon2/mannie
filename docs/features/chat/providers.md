@@ -1,12 +1,12 @@
 # Providers
 
-|              |                                                                                                                                                                                                                                                                             |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status       | Building                                                                                                                                                                                                                                                                    |
-| Milestone    | M1                                                                                                                                                                                                                                                                          |
-| Last updated | 2026-10-24                                                                                                                                                                                                                                                                  |
-| Part of      | [Chat](README.md)                                                                                                                                                                                                                                                           |
-| Related      | [ADR-0011](../../adr/0011-own-the-provider-adapters.md), [ADR-0010](../../adr/0010-keep-provider-credentials-on-the-master.md), [Agent runtime](../../architecture/agent-runtime.md#4-model-calls), [Security](../../architecture/security.md#7-rules-for-handling-secrets) |
+|              |                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status       | Building                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Milestone    | M1                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Last updated | 2026-10-24                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Part of      | [Chat](README.md)                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Related      | [ADR-0011](../../adr/0011-own-the-provider-adapters.md), [ADR-0010](../../adr/0010-keep-provider-credentials-on-the-master.md), [ADR-0047](../../adr/0047-serve-embeddings-and-reranking-through-provider-profiles.md), [Agent runtime](../../architecture/agent-runtime.md#4-model-calls), [Security](../../architecture/security.md#7-rules-for-handling-secrets), [Notebooks](../../../plugins/notebooks/docs/README.md) |
 
 ## Design
 
@@ -85,14 +85,37 @@ The server is identified by the base URL's host for OpenAI and OpenRouter, and b
 
 Ollama serves a model with the context size of its `num_ctx` setting, which is smaller than most models' windows unless the owner raises it, and cuts longer requests without an error. A profile for Ollama should therefore use `num_ctx` as its context window. The provider test cannot read `num_ctx`, so the silent-truncation check above is the safety net.
 
+### Search profiles
+
+A search profile names one embedding or rerank model on one server, for the features that search the owner's documents, such as the plugin Notebooks ([ADR-0047](../../adr/0047-serve-embeddings-and-reranking-through-provider-profiles.md)). The Providers settings list them below the chat profiles, as "Embedding and rerank models", and they never appear among the chat profiles. Nothing of a server or a model is built in: the owner names the server, the model and the texts before queries and documents, wherever the model runs.
+
+| Field                     | Rule                                                                                                                                          |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Name                      | 1 to 100 characters after trimming, unique among search profiles regardless of case                                                           |
+| Kind                      | Embeddings, through the server's `/embeddings`, or Rerank, through its `/rerank`                                                              |
+| Base URL                  | As for chat profiles. Mannie appends `/embeddings`, `/rerank` or `/models`.                                                                   |
+| Model                     | As for chat profiles                                                                                                                          |
+| Credential                | Optional, stored and sent as a chat profile's credential                                                                                      |
+| Text before each query    | Only for an embedding profile: at most 1,000 characters, kept exactly, which Mannie puts before every query, as instruction-aware models want |
+| Text before each document | Only for an embedding profile: at most 1,000 characters, which Mannie puts before every document; another text embeds every document again    |
+
+- The credential's entry, its transport and its handling are those of chat profiles ([credentials](#credentials)). Each profile has a configuration revision that increases when its kind, base URL, model, credential or a text changes.
+- The vectors of an embedding profile carry a key, a hash of its model and its text before documents, so a new server or credential keeps them, and another model or text indexes the documents again.
+- The test of a search profile checks the credential, the server and the model as the provider test does, then embeds a short text and reports the vectors' dimensions, or scores a passage that answers a question and one that does not, reports both scores and warns when the unrelated one scores higher.
+- The adapters make one request and read one response: `POST {base}/embeddings` with `model`, `input` as a list and `encoding_format: "float"`, which returns a vector for each input by its index, all of one dimension; and `POST {base}/rerank` with `model`, `query`, `documents` and `top_n`, which returns `results` with a `relevance_score` for each document by its index, as Jina, Cohere, llama.cpp's server and vLLM answer, or Text Embeddings Inference's array of `index` and `score`. Scores outside 0 to 1 are logits, which a sigmoid turns into probabilities. A call holds at most 64 texts of at most 32 KiB, and its answer at most 16 MiB within 120 s. Errors fall into the classes of the chat adapters, and redirects are refused.
+- Plugins reach search profiles through the sensitive service `models`: they list the profiles of a kind by their IDs, names and models, embed texts as queries or as documents, which gets the profile's text before them, rerank documents against a query, and follow the changes of profiles. The core tries a transient failure again as it does for replies. A plugin never sees a server, a credential or a text before queries or documents, and its failures are `models.profile_not_found`, `models.wrong_kind`, `models.invalid_inputs`, `models.unreachable`, `models.refused` with the failure's code, `models.input_too_long`, `models.invalid_response`, `models.credential_unavailable` and `models.unavailable`.
+
 ### Contracts
 
 - Commands (`apps/desktop/core/src/commands/providers.rs`): `list_provider_profiles`, `create_provider_profile`, `update_provider_profile` (the credential is kept, replaced or removed), `delete_provider_profile`, `set_default_provider_profile`, `test_provider_profile`, and `get_model_defaults` for the known limits of a model name.
-- Errors use the `ProviderProfileError` codes, such as `name_taken`, `invalid_base_url`, `insecure_credential_transport`, `invalid_limits`, `credential_store_unavailable` (with its reason), `profile_in_use` and `not_found`. Failures of a reply use the run failure codes in [conversations](conversations.md#errors).
+- Commands of search profiles: `list_search_profiles`, `create_search_profile`, `update_search_profile`, `delete_search_profile` and `test_search_profile`.
+- Errors use the `ProviderProfileError` codes, such as `name_taken`, `invalid_base_url`, `insecure_credential_transport`, `invalid_limits`, `invalid_prefix` (with its limit), `credential_store_unavailable` (with its reason), `profile_in_use` and `not_found`. Failures of a reply use the run failure codes in [conversations](conversations.md#errors).
 
 ### Data
 
 `provider_profiles` (migration `0006`): the profile's fields, the credential entry's name, whether it is the default (at most one row), the configuration revision, and a versioned JSON document with the limits, the reasoning effort and what the provider test found out about the server.
+
+`provider_search_profiles` (migration `0035`): a search profile's fields, the credential entry's name, the configuration revision, and a versioned JSON document with the texts before queries and documents and what the test found out about the server.
 
 ### Recorded fixtures (V8)
 
@@ -103,7 +126,7 @@ Ollama serves a model with the context size of its `num_ctx` setting, which is s
 
 ### Message keys
 
-Settings and errors of providers use keys under `chat_providers_` and `chat_error_`.
+Settings and errors of providers use keys under `chat_providers_` and `chat_error_`, and those of search profiles keys under `chat_search_`.
 
 ### Threat notes
 
@@ -124,5 +147,6 @@ Settings and errors of providers use keys under `chat_providers_` and `chat_erro
 - The SSE parser yields the same events for any split of a stream into chunks, and never panics on arbitrary bytes (property tests).
 - Every row of the error classification has a test, including `Retry-After` in seconds and as a date, and `insufficient_quota`.
 - Creating, editing, testing, deleting and choosing the default profile work from the provider settings page (end-to-end tests against the mock provider).
+- The search adapters send and read the shapes above, classify refusals as the chat adapters do and turn logits into probabilities (`crates/mannie-provider/tests/search.rs`); search profiles keep the rules of fields, credentials and transport, and their test reports dimensions and scores (`crates/mannie-runtime/tests/search_profiles.rs`); and search profiles are added from the provider settings page (the plugin Notebooks' end-to-end test against the mock provider's `/embeddings` and `/rerank`).
 - A planted credential appears in no log, database or crash file after the end-to-end scenario, and never in a recorded fixture.
 - The dependency graph contains ring as the only crypto provider and no OpenSSL or aws-lc (`task lint:deps`).

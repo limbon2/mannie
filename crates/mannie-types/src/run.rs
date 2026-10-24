@@ -123,6 +123,13 @@ pub enum RunActivity {
     /// task, without a model slot (plugins/workers/docs/
     /// credential-leases.md).
     WaitingForLease,
+    /// Asking the context providers of the conversation's attachments for
+    /// what applies to the owner's message, without a model slot
+    /// (ADR-0046).
+    GatheringContext {
+        /// The providers that are asked, in the order of the attachments.
+        providers: Vec<String>,
+    },
 }
 
 /// How many of the tasks that a run waits for an executor runs.

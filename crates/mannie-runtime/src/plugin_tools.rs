@@ -15,8 +15,10 @@
 //! another, and refuses what breaks the SDK's rules before anything runs.
 //!
 //! The adapter also decides where a tool is offered, from its offering and
-//! the conversation's workspace, and keeps the data and the failure code of
-//! a result for the call's card, which the model never reads (ADR-0039).
+//! the conversation's workspace or attachments, passes a tool offered where
+//! its plugin's attachments are their keys (ADR-0052), and keeps the data
+//! and the failure code of a result for the call's card, which the model
+//! never reads (ADR-0039).
 //!
 //! A call whose authorized accesses hold a remote command in the background
 //! gets a ticket in its execution, which lets it hand the core that one
@@ -29,8 +31,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
 use mannie_plugin_sdk::contributions::{Contributions, ExtensionPoint};
-use mannie_plugin_sdk::host::{ContributionRefusal, ID_TAKEN, INVALID_NAME, RESERVED_ARGUMENT};
-use mannie_plugin_sdk::ids::PluginId;
+use mannie_plugin_sdk::host::{
+    ContributionRefusal, ID_NOT_OWNED, ID_TAKEN, INVALID_NAME, RESERVED_ARGUMENT,
+};
+use mannie_plugin_sdk::ids::{PluginId, owned_by};
 use mannie_plugin_sdk::points::executors::Executors;
 use mannie_plugin_sdk::points::tool_sources::{MAX_SOURCE_TOOLS, check_published};
 use mannie_plugin_sdk::points::tools::{
@@ -44,6 +48,7 @@ use mannie_tools::{
     Prepared, Tool, ToolContext, ToolRegistry, plugin_path_access, stopped, takes_activity,
     workspace_folder,
 };
+use mannie_types::context::Attachment;
 use mannie_types::ids::ArchiveId;
 use mannie_types::tools::{
     Access, AccessMode, MAX_ARGUMENTS_BYTES, MAX_EFFECT_ITEMS, ProgramEffect, ToolFailure,
@@ -237,6 +242,8 @@ pub(crate) fn kept_published(
             Some(refusal.to_string())
         } else if marker_breaks {
             Some("its marker is not the name of one entry".to_owned())
+        } else if !offering_is_owned(plugin.as_str(), &tool.offering) {
+            Some("it is offered where another plugin's attachments are".to_owned())
         } else if taken.contains(&name) {
             Some("another tool has its name".to_owned())
         } else if kept.len() >= MAX_SOURCE_TOOLS {
@@ -287,6 +294,7 @@ impl Runtime {
     pub(crate) fn check_tools(
         &self,
         snapshot: &Snapshot,
+        plugin: &PluginId,
         contributions: &Contributions,
     ) -> Result<(), ContributionRefusal> {
         let plugin_tools: Vec<&str> = snapshot
@@ -309,6 +317,7 @@ impl Runtime {
         let executor_tools: Vec<&str> = executor_tools.iter().map(String::as_str).collect();
         check_plugin_tools(
             &self.inner.tools.registry,
+            plugin.as_str(),
             &plugin_tools,
             &executor_tools,
             contributions.entries::<Tools>(),
@@ -321,10 +330,13 @@ impl Runtime {
 /// tools or task tools, of `plugin_tools` (the tools of the plugins that are
 /// on), of `executor_tools` (the tools that the executors offer, the
 /// plugin's own executor included) or of another of the plugin's own tools
-/// (the rule `Global`), and a schema with the argument that every call
-/// carries for the owner, which the registry refuses for the core's tools.
+/// (the rule `Global`), a schema with the argument that every call carries
+/// for the owner, which the registry refuses for the core's tools, a marker
+/// that is not one entry's name, and an offering where the attachments of a
+/// context provider that `plugin` does not own are (ADR-0052).
 pub(crate) fn check_plugin_tools<'a>(
     registry: &ToolRegistry,
+    plugin: &str,
     plugin_tools: &[&str],
     executor_tools: &[&str],
     tools: impl IntoIterator<Item = &'a PluginTool>,
@@ -373,9 +385,47 @@ pub(crate) fn check_plugin_tools<'a>(
                 ),
             ));
         }
+        if let ToolOffering::WhereAttached(provider) = &entry.offering
+            && !owned_by(plugin, provider)
+        {
+            return Err(ContributionRefusal::new(
+                Tools::NAME,
+                ID_NOT_OWNED,
+                format!(
+                    "the tool {name} is offered where the attachments of {provider:?} are, a context provider that the plugin {plugin} does not own"
+                ),
+            ));
+        }
         names.push(name);
     }
     Ok(())
+}
+
+/// Whether an offering names only what `plugin` owns: a tool is offered
+/// where its own plugin's attachments are, never another's (ADR-0052).
+fn offering_is_owned(plugin: &str, offering: &ToolOffering) -> bool {
+    match offering {
+        ToolOffering::WhereAttached(provider) => owned_by(plugin, provider),
+        ToolOffering::Always | ToolOffering::InWorkspace | ToolOffering::WhereWorkspaceHolds(_) => {
+            true
+        }
+    }
+}
+
+/// The keys that a call of a tool with `offering` reaches: those of the
+/// attachments of its provider, in the order of attaching, or none for a
+/// tool offered another way (ADR-0052).
+fn reached_keys(offering: &ToolOffering, attachments: &[Attachment]) -> Vec<String> {
+    match offering {
+        ToolOffering::WhereAttached(provider) => attachments
+            .iter()
+            .filter(|attachment| attachment.provider == *provider)
+            .map(|attachment| attachment.key.clone())
+            .collect(),
+        ToolOffering::Always | ToolOffering::InWorkspace | ToolOffering::WhereWorkspaceHolds(_) => {
+            Vec::new()
+        }
+    }
 }
 
 /// Whether a marker names one entry of a folder: 1 to 64 characters without
@@ -392,7 +442,8 @@ fn is_valid_marker(marker: &str) -> bool {
 }
 
 /// Whether a tool with `offering` is offered where `availability` says: a
-/// conversation's workspace is its project's folder (ADR-0038, decision 2).
+/// conversation's workspace is its project's folder (ADR-0038, decision 2),
+/// and its attachments are a child's parent's for a child (ADR-0052).
 /// `markers` keeps what a run found for each workspace.
 fn is_offered(
     offering: &ToolOffering,
@@ -402,6 +453,10 @@ fn is_offered(
     match offering {
         ToolOffering::Always => true,
         ToolOffering::InWorkspace => availability.project.is_some(),
+        ToolOffering::WhereAttached(provider) => availability
+            .attachments
+            .iter()
+            .any(|attachment| attachment.provider == *provider),
         ToolOffering::WhereWorkspaceHolds(marker) => {
             let Some(project) = availability.project else {
                 return false;
@@ -508,7 +563,9 @@ impl Tool for PluginToolAdapter {
         arguments: String,
     ) -> BoxFuture<'static, Result<Prepared, PrepareError>> {
         let preparing = self.tool.prepare(
-            ToolCall::new(arguments, context.conversation_id).with_workspace(context.workspace),
+            ToolCall::new(arguments, context.conversation_id)
+                .with_workspace(context.workspace)
+                .with_attachments(reached_keys(&self.offering, &context.attachments)),
         );
         let plugin = self.plugin.clone();
         let effect = self.effect;
@@ -562,7 +619,8 @@ impl Tool for PluginToolAdapter {
             .with_authorized(sdk_accesses(&accesses))
             .with_result_limit(u32::try_from(limit).unwrap_or(u32::MAX))
             .with_archive_ids(reserved.clone())
-            .with_workspace(context.workspace);
+            .with_workspace(context.workspace)
+            .with_attachments(reached_keys(&self.offering, &context.attachments));
         if let Some(guard) = &ticket {
             tool_execution = tool_execution.with_background(guard.ticket());
         }
@@ -1128,6 +1186,7 @@ mod tests {
     };
     use mannie_tools::{Availability, Done, PrepareError, ToolRegistry};
     use mannie_types::clock::UtcMillis;
+    use mannie_types::context::Attachment;
     use mannie_types::ids::{ArchiveId, ProjectId};
     use mannie_types::projects::ProjectView;
     use mannie_types::tools::{
@@ -1136,12 +1195,12 @@ mod tests {
     };
     use serde_json::{Value, json};
 
-    use mannie_plugin_sdk::host::{ID_TAKEN, INVALID_NAME, RESERVED_ARGUMENT};
+    use mannie_plugin_sdk::host::{ID_NOT_OWNED, ID_TAKEN, INVALID_NAME, RESERVED_ARGUMENT};
 
     use super::{
         ResolvedProgram, card_data, check_plugin_tools, holds_marker, holds_password, is_offered,
-        is_valid_marker, kept_archives, kept_code, offered_to, offers, refused, sdk_accesses,
-        within_limit,
+        is_valid_marker, kept_archives, kept_code, offered_to, offering_is_owned, offers,
+        reached_keys, refused, sdk_accesses, within_limit,
     };
     use crate::agents::{AgentDefinition, CONVERSATION, EXPLORE, GENERAL};
     use crate::texts;
@@ -1498,10 +1557,7 @@ mod tests {
         fs::create_dir(repository.join(MARKER)).unwrap();
         let in_repository = project_at(&repository.join("app"));
         let outside = project_at(&other);
-        let general = Availability {
-            project: None,
-            projects: &[],
-        };
+        let general = Availability::of_projects(None, &[]);
         let marked = ToolOffering::WhereWorkspaceHolds(MARKER.to_owned());
         // What one run found for each workspace.
         let found = Mutex::new(HashMap::new());
@@ -1512,34 +1568,22 @@ mod tests {
         assert!(is_offered(
             &ToolOffering::InWorkspace,
             &fresh(),
-            &Availability {
-                project: Some(&outside),
-                projects: &[],
-            }
+            &Availability::of_projects(Some(&outside), &[])
         ));
         assert!(is_offered(
             &marked,
             &found,
-            &Availability {
-                project: Some(&in_repository),
-                projects: &[],
-            }
+            &Availability::of_projects(Some(&in_repository), &[])
         ));
         assert!(!is_offered(
             &marked,
             &found,
-            &Availability {
-                project: Some(&outside),
-                projects: &[],
-            }
+            &Availability::of_projects(Some(&outside), &[])
         ));
         assert!(!is_offered(&marked, &found, &general));
         // A run keeps what it found for a workspace; the next run looks again.
         fs::create_dir(other.join(MARKER)).unwrap();
-        let in_other = Availability {
-            project: Some(&outside),
-            projects: &[],
-        };
+        let in_other = Availability::of_projects(Some(&outside), &[]);
         assert!(!is_offered(&marked, &found, &in_other));
         assert!(is_offered(&marked, &fresh(), &in_other));
     }
@@ -2046,14 +2090,20 @@ mod tests {
         // The point and the code of the check's refusal, and whether its
         // detail names the refused tool.
         let check = |tools: &[PluginTool]| {
-            check_plugin_tools(&registry, &["echo_text"], &["delegate_task"], tools)
-                .err()
-                .map(|refusal| {
-                    let named = tools
-                        .iter()
-                        .any(|tool| refusal.detail.contains(tool.spec.name.as_str()));
-                    (refusal.point, refusal.code, named)
-                })
+            check_plugin_tools(
+                &registry,
+                "notes",
+                &["echo_text"],
+                &["delegate_task"],
+                tools,
+            )
+            .err()
+            .map(|refusal| {
+                let named = tools
+                    .iter()
+                    .any(|tool| refusal.detail.contains(tool.spec.name.as_str()));
+                (refusal.point, refusal.code, named)
+            })
         };
         let duplicate = |_name: &str| Some(("tools", ID_TAKEN, true));
 
@@ -2094,6 +2144,62 @@ mod tests {
                 .offered_where(ToolOffering::WhereWorkspaceHolds(".git".to_owned()))]),
             None
         );
+        for own in ["notes", "notes.pages"] {
+            assert_eq!(
+                check(&[
+                    tool("notes_find").offered_where(ToolOffering::WhereAttached(own.to_owned()))
+                ]),
+                None,
+                "{own}"
+            );
+        }
+        for foreign in ["wiki", "notesx", ""] {
+            assert_eq!(
+                check(&[tool("notes_find")
+                    .offered_where(ToolOffering::WhereAttached(foreign.to_owned()))]),
+                Some(("tools", ID_NOT_OWNED, true)),
+                "{foreign}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_tool_where_attachments_are_is_offered_with_its_provider_s_keys_only() {
+        let attachment = |provider: &str, key: &str| Attachment {
+            provider: provider.to_owned(),
+            key: key.to_owned(),
+            label: key.to_uppercase(),
+        };
+        let attached = [
+            attachment("notebooks", "n1"),
+            attachment("wiki", "w1"),
+            attachment("notebooks", "n2"),
+        ];
+        let offering = ToolOffering::WhereAttached("notebooks".to_owned());
+        let with = Availability {
+            attachments: &attached,
+            ..Availability::of_projects(None, &[])
+        };
+        let without = Availability {
+            attachments: &attached[1..2],
+            ..Availability::of_projects(None, &[])
+        };
+        let markers = Mutex::new(HashMap::new());
+
+        assert!(is_offered(&offering, &markers, &with));
+        assert!(!is_offered(&offering, &markers, &without));
+        assert!(!is_offered(
+            &offering,
+            &markers,
+            &Availability::of_projects(None, &[])
+        ));
+        assert_eq!(reached_keys(&offering, &attached), ["n1", "n2"]);
+        assert_eq!(
+            reached_keys(&ToolOffering::Always, &attached),
+            Vec::<String>::new()
+        );
+        assert!(offering_is_owned("notebooks", &offering));
+        assert!(!offering_is_owned("wiki", &offering));
     }
 
     #[test]

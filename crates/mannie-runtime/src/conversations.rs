@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use mannie_store::{
-    Change, Durability, NewConversation, NewRun, ProfileStoreError, RuntimeStoreError,
+    Change, Durability, NewConversation, NewMention, NewRun, ProfileStoreError, RuntimeStoreError,
     SettingsStoreError, StoredProfile,
 };
 use mannie_types::chat::{
@@ -13,9 +13,10 @@ use mannie_types::chat::{
     StartedConversation, StartedReply, StopOutcome, SubscribeConversation, UpdateChatSettings,
     check_message, check_title, title_from_message,
 };
-use mannie_types::ids::{ConversationId, ProfileId};
+use mannie_types::context::{Attachment, AttachmentRef};
+use mannie_types::ids::{ConversationId, ProfileId, ProjectId};
 use mannie_types::images::check_images;
-use mannie_types::mentions::check_mentions;
+use mannie_types::mentions::{MentionRef, check_mentions};
 use mannie_types::provider::context_budget;
 use mannie_types::transcript::{Checkpoint, ConversationSummary};
 
@@ -60,6 +61,9 @@ pub(crate) fn store_failure(error: RuntimeStoreError) -> ChatError {
         RuntimeStoreError::RunActive => ChatError::RunActive,
         RuntimeStoreError::NothingToRetry => ChatError::NothingToRetry,
         RuntimeStoreError::ProjectNotFound => ChatError::ProjectNotFound,
+        RuntimeStoreError::TooManyAttachments => ChatError::TooManyAttachments {
+            max: u32::try_from(mannie_types::context::MAX_ATTACHMENTS).unwrap_or(u32::MAX),
+        },
         other => {
             tracing::error!(error = %other, error.code = other.code(), "a conversation could not be read or saved");
             ChatError::StorageFailed
@@ -70,7 +74,7 @@ pub(crate) fn store_failure(error: RuntimeStoreError) -> ChatError {
 /// Refuses the owner's commands on a task conversation, whose turns its
 /// parent's agent writes (ADR-0024, decision 3). Stop works on any
 /// conversation.
-fn refuse_task_conversation(summary: &ConversationSummary) -> Result<(), ChatError> {
+pub(crate) fn refuse_task_conversation(summary: &ConversationSummary) -> Result<(), ChatError> {
     if summary.task.is_some() {
         return Err(ChatError::TaskConversation);
     }
@@ -171,15 +175,56 @@ impl Runtime {
         drop(reservation);
     }
 
+    /// Refuses a new conversation in a project that is being removed, as if
+    /// the project were gone.
+    fn refuse_project_being_removed(&self, project: Option<&ProjectId>) -> Result<(), ChatError> {
+        if project.is_some_and(|project| self.is_being_removed(project)) {
+            return Err(ChatError::ProjectNotFound);
+        }
+        Ok(())
+    }
+
+    /// The attachments that a new conversation starts with: its home first
+    /// and once, the others that it names, and those that its first message
+    /// names with "@" (ADR-0050, ADR-0051), each with the label that its
+    /// provider describes, and the mentions that the message stores for the
+    /// named ones. The providers check the keys before anything is stored, so
+    /// a key that a provider refuses leaves the message in the message box.
+    async fn starting_attachments(
+        &self,
+        home: Option<&AttachmentRef>,
+        attachments: Vec<AttachmentRef>,
+        attaching: &[MentionRef],
+    ) -> Result<(Vec<Attachment>, Vec<NewMention>), ChatError> {
+        let starting: Vec<AttachmentRef> = home
+            .into_iter()
+            .cloned()
+            .chain(
+                attachments
+                    .into_iter()
+                    .filter(|attachment| Some(attachment) != home),
+            )
+            .collect();
+        let mut described = self.describe_attachments(starting).await?;
+        let (named, named_mentions) = self.attach_mentioned(attaching).await?;
+        described.extend(named);
+        Ok((described, named_mentions))
+    }
+
     /// Creates a conversation with the owner's first message and starts the
-    /// reply. A conversation in a project works in the project's folder.
+    /// reply. A conversation in a project works in the project's folder, and
+    /// one that belongs to an attachment starts with it attached first and
+    /// never has a project (ADR-0051).
     pub async fn start_conversation(
         &self,
         input: StartConversation,
     ) -> Result<StartedConversation, ChatError> {
         self.refuse_when_quitting()?;
         check_message(&input.text, !input.images.is_empty())?;
-        let mentions = check_mentions(input.mentions)?;
+        if input.home.is_some() && input.project_id.is_some() {
+            return Err(ChatError::HomeConversation);
+        }
+        let (attaching, mentions) = self.split_attaching(check_mentions(input.mentions)?);
         let image_refs = check_images(input.images)?;
         let profile = match &input.profile_id {
             Some(id) => self
@@ -191,14 +236,12 @@ impl Runtime {
                 .ok_or(ChatError::ProfileNotFound)?,
             None => self.profile_for(None).await?,
         };
-        if input
-            .project_id
-            .as_ref()
-            .is_some_and(|project| self.is_being_removed(project))
-        {
-            return Err(ChatError::ProjectNotFound);
-        }
+        self.refuse_project_being_removed(input.project_id.as_ref())?;
         let full_access = self.full_access_for_new_conversations().await;
+        let home = input.home;
+        let (attachments, named_mentions) = self
+            .starting_attachments(home.as_ref(), input.attachments, &attaching)
+            .await?;
         let conversation_id = self.inner.ids.conversation();
         let reservation = self.reserve(&conversation_id, Busy::Starting)?;
         let mentions = if mentions.is_empty() {
@@ -219,6 +262,8 @@ impl Runtime {
             let budget = context_budget(profile.context_window, profile.output_limit);
             self.resolve_mentions(&context, &mentions, budget).await?
         };
+        let mut mentions = mentions;
+        mentions.extend(named_mentions);
         let images = self.resolve_images(&image_refs).await?;
         // A first message with only images takes its title from the first
         // image's name (ADR-0033, decision 1).
@@ -237,6 +282,7 @@ impl Runtime {
                 profile_id: input.profile_id,
                 project_id: input.project_id,
                 task: None,
+                home,
             },
         }];
         // In the same transaction, so the reply's first call already follows
@@ -244,6 +290,13 @@ impl Runtime {
         if full_access {
             changes.push(Change::SetFullAccess { enabled: true });
         }
+        // Before the turn, so the run that answers it gathers what they give
+        // (ADR-0046, decision 3; ADR-0050).
+        changes.extend(
+            attachments
+                .into_iter()
+                .map(|attachment| Change::Attach { attachment }),
+        );
         changes.push(Change::StartTurn {
             turn_id: turn_id.clone(),
             user_part_id: self.inner.ids.part(),
@@ -272,11 +325,13 @@ impl Runtime {
         })
     }
 
-    /// Adds the owner's message to a conversation and starts the reply.
+    /// Adds the owner's message to a conversation and starts the reply. A
+    /// mention whose provider gives context attaches what it names, and the
+    /// message gathers from it (ADR-0050).
     pub async fn send_message(&self, input: SendMessage) -> Result<StartedReply, ChatError> {
         self.refuse_when_quitting()?;
         check_message(&input.text, !input.images.is_empty())?;
-        let mentions = check_mentions(input.mentions)?;
+        let (attaching, mentions) = self.split_attaching(check_mentions(input.mentions)?);
         let image_refs = check_images(input.images)?;
         let reservation = self.reserve(&input.conversation_id, Busy::Starting)?;
         let summary = self
@@ -304,6 +359,9 @@ impl Runtime {
             let budget = context_budget(profile.context_window, profile.output_limit);
             self.resolve_mentions(&context, &mentions, budget).await?
         };
+        let (named, named_mentions) = self.attach_mentioned(&attaching).await?;
+        let mut mentions = mentions;
+        mentions.extend(named_mentions);
         let images = self.resolve_images(&image_refs).await?;
         let opening = self
             .opening_note(&input.conversation_id)
@@ -311,7 +369,12 @@ impl Runtime {
             .map_err(store_failure)?;
         let turn_id = self.inner.ids.turn();
         let run = self.new_run(&profile);
-        let mut changes = vec![Change::StartTurn {
+        // Before the turn, so the run that answers it gathers from them.
+        let mut changes: Vec<Change> = named
+            .into_iter()
+            .map(|attachment| Change::Attach { attachment })
+            .collect();
+        changes.push(Change::StartTurn {
             turn_id: turn_id.clone(),
             user_part_id: self.inner.ids.part(),
             text: input.text,
@@ -319,7 +382,7 @@ impl Runtime {
             task: None,
             mentions,
             images,
-        }];
+        });
         // The conversation's background commands reach the model with the
         // message, and the ends that the note tells are told in the same
         // transaction (ADR-0041).

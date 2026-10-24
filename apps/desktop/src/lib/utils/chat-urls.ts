@@ -6,6 +6,8 @@ import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 import { page } from '$app/state';
 
+import { conversationDraft } from '#lib/state/conversation-draft.svelte.js';
+
 import { VIEW_PARAMETER } from './views.js';
 
 /** The ID of the chat view. */
@@ -46,8 +48,13 @@ export async function openConversation(id: string): Promise<void> {
   await goto(`${resolve('/')}?${conversationQuery(id)}`);
 }
 
-/** Shows the view of a new conversation, in a project or a general one. */
+/**
+ * Shows the view of a new conversation, in a project or a general one. It is
+ * one of the Chat's, so the draft lets go of a home that a plugin gave it
+ * (ADR-0051).
+ */
 export async function startNewConversation(projectId: string | null = null): Promise<void> {
+  conversationDraft.leaveHome();
   // eslint-disable-next-line svelte/no-navigation-without-resolve -- the path is resolve('/'); only the search parameters change, which resolve() does not take
   await goto(`${resolve('/')}?${newConversationQuery(projectId)}`);
 }

@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
+use mannie_types::context::Attachment;
 use mannie_types::ids::{ConversationId, ProjectId};
 use mannie_types::projects::{ProjectView, folder_name};
 
@@ -91,6 +92,25 @@ pub struct Availability<'a> {
     pub project: Option<&'a ProjectView>,
     /// Every project of the owner.
     pub projects: &'a [ProjectView],
+    /// The conversation's attachments, or those of the conversation that
+    /// gave a child its task, which decide the plugins' tools that are
+    /// offered where attachments are (ADR-0052).
+    pub attachments: &'a [Attachment],
+    /// Whether the conversation belongs to an attachment, which keeps it out
+    /// of every project (ADR-0051).
+    pub has_home: bool,
+}
+
+impl<'a> Availability<'a> {
+    /// The availability of a conversation without attachments or a home.
+    pub fn of_projects(project: Option<&'a ProjectView>, projects: &'a [ProjectView]) -> Self {
+        Self {
+            project,
+            projects,
+            attachments: &[],
+            has_home: false,
+        }
+    }
 }
 
 /// Whether the owner's request names a project: the project's name or its

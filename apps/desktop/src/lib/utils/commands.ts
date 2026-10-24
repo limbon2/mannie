@@ -1,8 +1,24 @@
 // The command palette's list: the available commands, grouped under their
-// group's heading (ADR-0020, decision 2).
-import type { ShellCommand } from '#lib/types/shell-slots.js';
+// group's heading (ADR-0020, decision 2), and a command for each entry of the
+// activity bar (ADR-0045, decision 4).
+import { m } from '#lib/paraglide/messages.js';
+import type { NavigationEntry, ShellCommand } from '#lib/types/shell-slots.js';
 
 import { sortedByOrder } from './order.js';
+
+/** A command for each entry of the activity bar, which selects the entry, in the entries' order. */
+export function navigationCommands(
+  entries: readonly NavigationEntry[],
+  select: (entry: NavigationEntry) => void,
+): ShellCommand[] {
+  return entries.map((entry) => ({
+    group: m.shell_command_group_views,
+    id: `shell.show.${entry.id}`,
+    label: () => m.shell_command_show_view({ view: entry.label() }),
+    order: entry.order,
+    run: () => select(entry),
+  }));
+}
 
 /** The commands of one heading, in their order. */
 export interface CommandGroup {

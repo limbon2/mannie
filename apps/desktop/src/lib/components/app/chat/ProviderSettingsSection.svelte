@@ -22,10 +22,12 @@
 
   import ProviderProfileDialog from './ProviderProfileDialog.svelte';
   import ProviderTestDialog from './ProviderTestDialog.svelte';
+  import SearchProfilesList from './SearchProfilesList.svelte';
 
   // The provider profiles (docs/features/chat/conversation-view.md, settings
   // sections): each with its model and interface, which one is the default,
-  // and Edit, Test, Make default and Delete.
+  // and Edit, Test, Make default and Delete; below them, the search profiles
+  // of embedding and rerank models (ADR-0047).
   let editorOpen = $state(false);
   let editor = $state<ProviderProfileForm | null>(null);
   let testOpen = $state(false);
@@ -161,6 +163,7 @@
     <Alert.Description>{profileFailureMessage(actionFailure)}</Alert.Description>
   </Alert.Root>
 {/if}
+<SearchProfilesList />
 
 <ProviderProfileDialog form={editor} bind:open={editorOpen} />
 <ProviderTestDialog run={testRun} bind:open={testOpen} />

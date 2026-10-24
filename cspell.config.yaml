@@ -27,14 +27,17 @@ words:
   - checksummed
   - choco
   - chrono
+  - chunker
   - CIMD
   - clippy
+  - cmap
   - cmark
   - Crockford
   - cssparser
   - ctutils
   - cyclonedx
   - dbus
+  - Delinea
   - DMABUF
   - doctests
   - dumpable
@@ -58,6 +61,8 @@ words:
   - inlang
   - IPTC
   - jexec
+  - Jina
+  - Jina's
   - journalctl
   - journaled
   - keepalive
@@ -80,7 +85,11 @@ words:
   - lld
   - LOCALAPPDATA
   - lockfiles
+  - logit
+  - logits
   - LOGNAME
+  - lopdf
+  - lopdf's
   - Mannie
   - Mannie's
   - mebibytes
@@ -98,6 +107,7 @@ words:
   - Paraglide
   - PATHEXT
   - pathspecs
+  - PDFium
   - pgpass
   - pidfds
   - pinentry
@@ -112,6 +122,7 @@ words:
   - protox
   - pypirc
   - QUIC
+  - Qwen
   - receivepack
   - redb
   - redirections
@@ -120,6 +131,13 @@ words:
   - remarkrc
   - reparented
   - reqwest
+  - rerank
+  - reranked
+  - reranker
+  - reranker's
+  - rerankers
+  - reranking
+  - reranks
   - RLIMIT
   - rmcp
   - rusqlite
@@ -132,10 +150,12 @@ words:
   - sccache
   - schemars
   - serde
+  - setext
   - setsid
   - SIGSTOP
   - Slint
   - smol
+  - spatials
   - specta
   - sqlx
   - Streamable
@@ -156,6 +176,7 @@ words:
   - uploadpack
   - USERDOMAIN
   - USERPROFILE
+  - WALLIX
   - WCAG
   - winapi
   - windir

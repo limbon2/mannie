@@ -10,6 +10,7 @@ use std::sync::Arc;
 use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
 use mannie_store::Store;
+use mannie_types::context::Attachment;
 use mannie_types::ids::{ArchiveId, ConversationId, PartId};
 use mannie_types::images::ImageBytes;
 use mannie_types::tools::{Access, ProcessRecord, ToolFailure, ToolOutcome};
@@ -61,6 +62,10 @@ pub struct ToolContext {
     /// The machine's background commands, which the runtime keeps
     /// (ADR-0041).
     pub background: Arc<dyn BackgroundCommands>,
+    /// The conversation's attachments, or those of the conversation that
+    /// gave a child its task, whose keys a plugin's tool that is offered
+    /// where they are reaches (ADR-0052).
+    pub attachments: Arc<[Attachment]>,
 }
 
 impl fmt::Debug for ToolContext {

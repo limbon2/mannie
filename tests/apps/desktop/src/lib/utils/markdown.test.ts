@@ -21,6 +21,7 @@ const ORIGIN = 'http://127.0.0.1:9';
 const ALLOWED_KINDS = new Set([
   'blockquote',
   'break',
+  'citation',
   'code',
   'delete',
   'emphasis',
@@ -56,6 +57,7 @@ function allNodes(nodes: readonly RenderNode[]): RenderNode[] {
         return [node, ...[node.head, ...node.body].flat().flatMap((cell) => allNodes(cell))];
       }
       case 'break':
+      case 'citation':
       case 'code':
       case 'image':
       case 'inline_code':
@@ -85,6 +87,31 @@ function nodesOf(rendered: RenderedMarkdown): RenderNode[] {
 }
 
 describe('parseMarkdown', () => {
+  it('makes cite links citations with their labels, and leaves other links and markers alone (ADR-0049)', () => {
+    const rendered = parseMarkdown(
+      [
+        'Light bends [Optics.pdf p. 3](cite:notebooks/s1:0) and waves [**Waves** › Energy](cite:notebooks/s2:4).',
+        '',
+        'Not `[x](cite:notebooks/s1:0)`, [5](https://example.com), [1], [bad](cite:notebooks) or [](cite:notebooks/s3:1).',
+      ].join('\n'),
+    );
+
+    const nodes = nodesOf(rendered);
+    const citations = nodes.filter((node) => node.kind === 'citation');
+    expect(citations).toEqual([
+      { key: 's1:0', kind: 'citation', label: 'Optics.pdf p. 3', provider: 'notebooks' },
+      { key: 's2:4', kind: 'citation', label: 'Waves › Energy', provider: 'notebooks' },
+      { key: 's3:1', kind: 'citation', label: 's3:1', provider: 'notebooks' },
+    ]);
+    const texts = nodes.flatMap((node) => (node.kind === 'text' ? [node.value] : []));
+    expect(texts.some((text) => text.includes('[1]'))).toBe(true);
+    expect(nodes.find((node) => node.kind === 'inline_code')).toEqual({
+      kind: 'inline_code',
+      value: '[x](cite:notebooks/s1:0)',
+    });
+    expect(linkUrls(nodes)).toEqual(['https://example.com', 'cite:notebooks']);
+  });
+
   it('turns Markdown into the render tree', () => {
     const rendered = parseMarkdown(
       [

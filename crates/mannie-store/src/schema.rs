@@ -225,18 +225,38 @@ const RUNTIME: StoreModule = StoreModule {
             description: "create the table of the images of tool results",
             sql: include_str!("runtime/migrations/0034_create_tool_images.sql"),
         },
+        Migration {
+            version: 23,
+            legacy_version: None,
+            description: "create the table of the attachments of conversations",
+            sql: include_str!("runtime/migrations/0036_create_conversation_attachments.sql"),
+        },
+        Migration {
+            version: 24,
+            legacy_version: None,
+            description: "add the homes of conversations",
+            sql: include_str!("runtime/migrations/0037_add_conversation_homes.sql"),
+        },
     ]),
     confined: false,
 };
 
 const PROVIDER: StoreModule = StoreModule {
     name: "provider",
-    migrations: Cow::Borrowed(&[Migration {
-        version: 1,
-        legacy_version: Some(6),
-        description: "create the provider profiles table",
-        sql: include_str!("provider/migrations/0006_create_profiles.sql"),
-    }]),
+    migrations: Cow::Borrowed(&[
+        Migration {
+            version: 1,
+            legacy_version: Some(6),
+            description: "create the provider profiles table",
+            sql: include_str!("provider/migrations/0006_create_profiles.sql"),
+        },
+        Migration {
+            version: 2,
+            legacy_version: None,
+            description: "create the search profiles table",
+            sql: include_str!("provider/migrations/0035_create_search_profiles.sql"),
+        },
+    ]),
     confined: false,
 };
 

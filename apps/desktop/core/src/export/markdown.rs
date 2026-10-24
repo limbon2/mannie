@@ -251,6 +251,16 @@ fn metadata(record: &ConversationRecord, labels: &Labels) -> Result<String, Expo
             task.parent_id.as_str(),
         )?;
     }
+    // What the conversation has attached, by the labels that the owner saw
+    // (ADR-0046, decision 1).
+    for attachment in &record.conversation.attachments {
+        field(
+            &mut output,
+            labels,
+            "export_document_attachment",
+            &attachment.label,
+        )?;
+    }
     if record.conversation.has_active_run {
         let _written = writeln!(output, "\n{}\n", labels.get("export_document_active")?);
     }
@@ -313,6 +323,7 @@ fn render_part(
         "mention" => "mention",
         "image" => "image",
         "command_note" => "command_note",
+        "context" => "context",
         "error" => "error",
         _ => "unknown",
     };
@@ -499,6 +510,8 @@ mod record_tests {
                 project_id: None,
                 workspace: None,
                 task: None,
+                attachments: Vec::new(),
+                home: None,
                 created_at: UtcMillis::EPOCH,
                 updated_at: UtcMillis::EPOCH,
             },

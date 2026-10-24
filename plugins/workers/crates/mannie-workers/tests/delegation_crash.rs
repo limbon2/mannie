@@ -102,6 +102,7 @@ async fn crash_after_the_part(store: &Store, profile: &ProfileId) -> (Crashed, P
                         profile_id: None,
                         project_id: None,
                         task: None,
+                        home: None,
                     },
                 },
                 Change::StartTurn {
@@ -194,6 +195,7 @@ async fn crash_after_the_rows_naming(
                     agent: WORKER_AGENT.to_owned(),
                     executor: Some(the_worker()),
                 }),
+                home: None,
             }),
             part_id: part,
             kind: WORKERS_KIND.to_owned(),

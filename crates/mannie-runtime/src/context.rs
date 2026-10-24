@@ -16,7 +16,7 @@ use mannie_types::tools::{Interruption, NotRunReason, Refusal, ToolCallDocument,
 use mannie_types::transcript::PartKind;
 
 use crate::agents::Requester;
-use crate::{tasks, texts};
+use crate::{attachments, tasks, texts};
 
 /// The most characters of a call's arguments that a model without tools
 /// reads in the text that stands in for the call.
@@ -52,6 +52,38 @@ pub(crate) struct RequestShape<'a> {
     /// The images of the newest results that the request sends; every other
     /// image of a result is a line in its result (ADR-0044, decision 5).
     pub(crate) tool_images: &'a SentImages,
+    /// The parts `context` whose excerpts the request sends in full; every
+    /// other one is a line (ADR-0046, decision 4).
+    pub(crate) full_context: &'a HashSet<PartId>,
+}
+
+/// How many of the newest owner messages with excerpts send them in full.
+const MAX_FULL_CONTEXT_MESSAGES: usize = 2;
+
+/// The parts `context` of the newest owner messages whose parts hold
+/// excerpts, at most [`MAX_FULL_CONTEXT_MESSAGES`] of them, as ADR-0044
+/// sends the newest images: every request sends again what the context
+/// holds, so older excerpts become lines.
+pub(crate) fn chosen_context(turns: &[ModelTurn]) -> HashSet<PartId> {
+    let holds_items = |part: &ModelPart| {
+        part.kind == Some(PartKind::Context)
+            && part
+                .context
+                .as_ref()
+                .is_some_and(|context| !context.items.is_empty())
+    };
+    turns
+        .iter()
+        .rev()
+        .filter(|turn| turn.parts.iter().any(holds_items))
+        .take(MAX_FULL_CONTEXT_MESSAGES)
+        .flat_map(|turn| {
+            turn.parts
+                .iter()
+                .filter(|part| part.kind == Some(PartKind::Context))
+                .map(|part| part.id.clone())
+        })
+        .collect()
 }
 
 /// The images of results that a request sends, by the call's part, with
@@ -125,6 +157,8 @@ fn append_turn(messages: &mut Vec<Message>, turn: &ModelTurn, shape: RequestShap
     // The model call that made the latest tool call, so that calls of the
     // next step get an assistant message of their own after the results.
     let mut calling_attempt: Option<u32> = None;
+    // Whether the heading of the message's excerpts came already.
+    let mut excerpts_headed = false;
     for part in &turn.parts {
         if let Some(run) = &part.run_id
             && current_run != Some(run)
@@ -168,6 +202,14 @@ fn append_turn(messages: &mut Vec<Message>, turn: &ModelTurn, shape: RequestShap
             // stands in other turns (ADR-0041).
             Some(PartKind::CommandNote) => {
                 messages.push(Message::text(Role::User, part.text.clone()));
+            }
+            // What the attachments gave for the owner's message follows the
+            // message's own parts, in the same message (ADR-0046, decision
+            // 4).
+            Some(PartKind::Context) => {
+                let full = shape.full_context.contains(&part.id);
+                let text = context_for_model(part, full, &mut excerpts_headed);
+                join_owner_message(messages, &text);
             }
             // The images follow the text and the mentions, in the same
             // message, and the model never reads their names (ADR-0033,
@@ -234,6 +276,23 @@ fn append_turn(messages: &mut Vec<Message>, turn: &ModelTurn, shape: RequestShap
         end_run(messages, &mut reply, Some(kept.state));
     }
     end_run(messages, &mut reply, turn.run_state);
+}
+
+/// What the model reads of a part `context`: its excerpts in full, under the
+/// heading of the message's excerpts before the first of them, or a line.
+fn context_for_model(part: &ModelPart, full: bool, headed: &mut bool) -> String {
+    let Some(context) = &part.context else {
+        return texts::CONTEXT_MISSING.to_owned();
+    };
+    if !full {
+        return attachments::context_line(context);
+    }
+    let text = attachments::context_text(context);
+    if context.items.is_empty() || *headed {
+        return text;
+    }
+    *headed = true;
+    format!("{}\n\n{text}", texts::CONTEXT_HEADING)
 }
 
 /// Ends the parts of one run: its reply, and a marker when it was stopped or

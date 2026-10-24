@@ -64,6 +64,7 @@ impl Harness {
             system: Arc::new(SystemFacts::detect()),
             projects: ProjectFacts::none(),
             background: mannie_tools::no_background_commands(),
+            attachments: Arc::from(Vec::new()),
         };
         Self {
             _folder: folder,
@@ -1830,22 +1831,21 @@ fn move_to_project_is_offered_only_to_a_general_conversation_while_projects_exis
     let project = mannie_project("/projects/mannie".to_owned());
     let projects = [project.clone()];
 
-    assert!(tool.offered(&Availability {
-        project: None,
-        projects: &projects,
-    }));
+    assert!(tool.offered(&Availability::of_projects(None, &projects)));
+    // A conversation that belongs to an attachment, such as a notebook's
+    // chat, never moves (ADR-0051).
     assert!(!tool.offered(&Availability {
-        project: None,
-        projects: &[],
+        has_home: true,
+        ..Availability::of_projects(None, &projects)
     }));
-    assert!(!tool.offered(&Availability {
-        project: Some(&project),
-        projects: &projects,
-    }));
-    assert!(registry.get("read_file").unwrap().offered(&Availability {
-        project: Some(&project),
-        projects: &[],
-    }));
+    assert!(!tool.offered(&Availability::of_projects(None, &[])));
+    assert!(!tool.offered(&Availability::of_projects(Some(&project), &projects)));
+    assert!(
+        registry
+            .get("read_file")
+            .unwrap()
+            .offered(&Availability::of_projects(Some(&project), &[]))
+    );
 }
 
 // Commands in the background (docs/features/system-tools/

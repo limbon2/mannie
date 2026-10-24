@@ -1,9 +1,10 @@
 <script lang="ts">
   import * as Command from '#lib/components/ui/command/index.js';
   import { m } from '#lib/paraglide/messages.js';
+  import { activities } from '#lib/state/activities.svelte.js';
   import { getShellSlots } from '#lib/state/shell-slots.svelte.js';
   import type { ShellCommand } from '#lib/types/shell-slots.js';
-  import { groupCommands } from '#lib/utils/commands.js';
+  import { groupCommands, navigationCommands } from '#lib/utils/commands.js';
 
   let { open = $bindable(false) }: { open?: boolean } = $props();
 
@@ -15,8 +16,12 @@
   const listId = `${uid}-list`;
 
   // Read while the palette is open, so that a command's availability follows
-  // the state it depends on.
-  const groups = $derived(open ? groupCommands(slots.commands.entries) : []);
+  // the state it depends on. The entries of the activity bar come first.
+  const groups = $derived(open ? groupCommands([...viewCommands(), ...slots.commands.entries]) : []);
+
+  function viewCommands(): ShellCommand[] {
+    return navigationCommands(activities.entries, (entry) => void activities.select(entry));
+  }
 
   function run(command: ShellCommand): void {
     open = false;

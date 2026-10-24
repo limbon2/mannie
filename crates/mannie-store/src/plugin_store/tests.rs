@@ -51,6 +51,21 @@ impl Fixture {
         self.directory.path().join("mannie.sqlite")
     }
 
+    /// Whether a file of the store, the database or its write-ahead log,
+    /// holds the bytes.
+    fn files_contain(&self, needle: &[u8]) -> bool {
+        std::fs::read_dir(self.directory.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.is_file())
+            .any(|path| {
+                std::fs::read(&path)
+                    .unwrap()
+                    .windows(needle.len())
+                    .any(|window| window == needle)
+            })
+    }
+
     fn open(&self, modules: impl IntoIterator<Item = PluginModule>) -> Result<Store, OpenError> {
         let clock: Arc<dyn Clock> = Arc::new(SystemClock);
         let options = StoreOptions::new(self.directory.path().join("backups"), clock)
@@ -88,6 +103,33 @@ fn insert(id: &str, slug: &str, size: i64) -> Statement {
 async fn count(notes: &Arc<dyn ModuleStoreApi>) -> i64 {
     let rows = notes.query(Statement::new(COUNT)).await.unwrap();
     rows[0].get::<i64>(0).unwrap()
+}
+
+#[tokio::test]
+async fn an_erasing_write_leaves_what_it_deleted_in_none_of_the_store_s_files() {
+    const PLANTED: &[u8] = b"planted-note-text-7c3f9e";
+    let (fixture, _store, notes) = notes();
+    let planted = std::str::from_utf8(PLANTED).unwrap();
+    notes
+        .write(
+            WriteBatch::new().push(insert("a", planted, 1), Expect::Changes(1)),
+            Durability::Full,
+        )
+        .await
+        .unwrap();
+    let stored = fixture.files_contain(PLANTED);
+
+    notes
+        .write(
+            WriteBatch::new().push(Statement::new(DELETE).bind("a"), Expect::Changes(1)),
+            Durability::Erase,
+        )
+        .await
+        .unwrap();
+
+    assert!(stored);
+    assert_eq!(count(&notes).await, 0);
+    assert!(!fixture.files_contain(PLANTED));
 }
 
 #[tokio::test]

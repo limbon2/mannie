@@ -198,6 +198,7 @@ describe('pluginChangelogs', () => {
         { name: 'SSH', path: 'plugins/ssh/CHANGELOG.md' },
         { name: 'Git', path: 'plugins/git/CHANGELOG.md' },
         { name: 'MCP', path: 'plugins/mcp/CHANGELOG.md' },
+        { name: 'Notebooks', path: 'plugins/notebooks/CHANGELOG.md' },
       ],
     );
     for (const changelog of changelogs) {

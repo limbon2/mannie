@@ -19,6 +19,12 @@ required-features = ["testing"]
 name = "transport"
 required-features = ["testing"]
 
+# The adapters of search profiles over real HTTP: requests, answers, refusals
+# and the test of a search profile (ADR-0047).
+[[test]]
+name = "search"
+required-features = ["testing"]
+
 # A credential that a server repeats never reaches the log; its own binary,
 # because tracing caches enabled callsites for the whole process.
 [[test]]

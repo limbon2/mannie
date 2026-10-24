@@ -3,6 +3,7 @@
 //! events here, so a subscriber sees the same event either way.
 
 use mannie_types::clock::UtcMillis;
+use mannie_types::context::{Attachment, AttachmentRef, ContextView};
 use mannie_types::ids::{
     CheckpointId, ConversationId, PartId, ProfileId, ProjectId, RunId, TurnId,
 };
@@ -37,7 +38,11 @@ macro_rules! summary_columns {
          AND json_extract(r.activity, '$.kind') = 'awaiting_approval'), \
          c.workspace, c.project_id, c.parent_conversation_id, c.task_number, c.task_agent, \
          c.task_executor_kind, c.task_executor_target, c.task_executor_name, \
-         c.task_executor_noun, c.full_access"
+         c.task_executor_noun, c.full_access, \
+         (SELECT json_group_array(json_object('provider', a.provider, 'key', a.attachment_key, \
+         'label', a.label) ORDER BY a.position) \
+         FROM runtime_conversation_attachments a WHERE a.conversation_id = c.id), \
+         c.home_provider, c.home_key"
     };
 }
 pub(crate) use summary_columns;
@@ -93,6 +98,9 @@ pub(crate) struct PartDocument {
     /// The ends that a command note tells (ADR-0041).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) command_note: Option<CommandNoteView>,
+    /// What a context provider gave for the owner's message (ADR-0046).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) context: Option<ContextView>,
 }
 
 /// The document of an image part.
@@ -402,6 +410,15 @@ impl PartRow {
                     note: document.command_note.unwrap_or_default(),
                 }
             }
+            Some(PartKind::Context) => {
+                let document: PartDocument = from_json(&self.document, "part document")?;
+                match document.context {
+                    Some(context) => PartContent::Context { context },
+                    None => PartContent::Unknown {
+                        name: self.kind.clone(),
+                    },
+                }
+            }
             None => PartContent::Unknown {
                 name: self.kind.clone(),
             },
@@ -481,6 +498,11 @@ pub(crate) struct RawSummary {
     task_executor_name: Option<String>,
     task_executor_noun: Option<String>,
     full_access: bool,
+    /// The attachments as a JSON array, in the order the owner attached
+    /// them.
+    attachments: String,
+    home_provider: Option<String>,
+    home_key: Option<String>,
 }
 
 /// Reads the columns of [`summary_columns`].
@@ -504,6 +526,9 @@ pub(crate) fn summary_from_row(row: &Row<'_>) -> rusqlite::Result<RawSummary> {
         task_executor_name: row.get(15)?,
         task_executor_noun: row.get(16)?,
         full_access: row.get(17)?,
+        attachments: row.get(18)?,
+        home_provider: row.get(19)?,
+        home_key: row.get(20)?,
     })
 }
 
@@ -527,6 +552,7 @@ impl RawSummary {
             }),
             None => None,
         };
+        let attachments: Vec<Attachment> = from_json(&self.attachments, "attachments")?;
         Ok(ConversationSummary {
             id: parse_id(&self.id, ConversationId::parse)?,
             title: self.title,
@@ -546,6 +572,11 @@ impl RawSummary {
                 .transpose()?,
             workspace: self.workspace,
             task,
+            attachments,
+            home: self
+                .home_provider
+                .zip(self.home_key)
+                .map(|(provider, key)| AttachmentRef { provider, key }),
             created_at: millis(self.created_at),
             updated_at: millis(self.updated_at),
         })

@@ -247,7 +247,7 @@ async fn open(
 /// A provider's message as the log may show it: without the credential, in
 /// case the server repeats it (security architecture, rules for handling
 /// secrets).
-fn loggable(message: Option<&str>, credential: Option<&Secret>) -> Option<String> {
+pub(crate) fn loggable(message: Option<&str>, credential: Option<&Secret>) -> Option<String> {
     let message = message?;
     let secret = credential
         .map(Secret::expose)
@@ -259,7 +259,10 @@ fn loggable(message: Option<&str>, credential: Option<&Secret>) -> Option<String
 }
 
 /// Reads at most the first 64 KiB of an error body.
-async fn read_error_body(response: reqwest::Response, wait: std::time::Duration) -> Vec<u8> {
+pub(crate) async fn read_error_body(
+    response: reqwest::Response,
+    wait: std::time::Duration,
+) -> Vec<u8> {
     let mut body = Vec::new();
     let mut chunks = response.bytes_stream();
     let reading = async {

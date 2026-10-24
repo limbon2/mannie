@@ -7,6 +7,8 @@
 | Deciders | Owner                                                                                                                                                       |
 | Related  | [ADR-0015](0015-run-an-agent-runtime-on-every-machine.md), [ADR-0016](0016-link-machines-over-pinned-mtls-grpc.md), [Security](../architecture/security.md) |
 
+Later changes: [ADR-0047](0047-serve-embeddings-and-reranking-through-provider-profiles.md) refines decisions 1, 3 and 4: the credentials of search profiles are stored, referenced and held as the credentials of chat profiles.
+
 ## Context
 
 Verified 2026-10-13:

@@ -10,6 +10,7 @@
 pub mod ceiling;
 pub mod chat;
 pub mod clock;
+pub mod context;
 pub mod export;
 pub mod ids;
 pub mod images;

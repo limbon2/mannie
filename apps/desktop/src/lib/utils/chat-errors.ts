@@ -7,12 +7,14 @@ import type {
   CredentialStoreProblem,
   PathRefusal,
   RunFailure,
+  SearchCheckKind,
   SkipReason,
 } from '#lib/generated/bindings.js';
 import { m } from '#lib/paraglide/messages.js';
 import { pluginName } from '#lib/state/plugin-catalog.js';
 import type { ChatFailure, ProfileFailure } from '#lib/types/chat.js';
 import type { ImageSourceKind } from '#lib/types/shell-slots.js';
+import { contextRefusal, type FindContextKind } from '#lib/utils/context-kinds.js';
 import { type FindMentionKind, mentionRefusal } from '#lib/utils/mention-kinds.js';
 
 /** Finds the image source with an ID, as the slot of image sources knows it. */
@@ -112,13 +114,15 @@ export function runFailureMessage(failure: RunFailure): string {
 
 /**
  * What to tell the owner about a chat command that failed. `findMentionKind`
- * words a mention's refusal through its kind (ADR-0032), and
- * `findImageSource` an image's refusal through its source (ADR-0033).
+ * words a mention's refusal through its kind (ADR-0032), `findImageSource` an
+ * image's refusal through its source (ADR-0033), and `findContextKind` an
+ * attachment's refusal through its kind of context (ADR-0046).
  */
 export function chatFailureMessage(
   failure: ChatFailure,
   findMentionKind?: FindMentionKind,
   findImageSource?: FindImageSource,
+  findContextKind?: FindContextKind,
 ): string {
   if (failure.kind === 'ipc') {
     return m.shell_error_ipc_failed();
@@ -133,6 +137,12 @@ export function chatFailureMessage(
     }
     case 'compaction_failed': {
       return m.chat_error_compaction_failed({ cause: runFailureMessage(error.failure) });
+    }
+    case 'context_refused': {
+      return m.chat_error_context_refused({ reason: contextRefusal(findContextKind?.(error.provider), error.reason) });
+    }
+    case 'context_unavailable': {
+      return m.chat_error_context_unavailable();
     }
     case 'conversation_not_found': {
       return m.chat_error_conversation_not_found();
@@ -222,6 +232,12 @@ export function chatFailureMessage(
     case 'task_conversation': {
       return m.chat_error_task_conversation();
     }
+    case 'home_conversation': {
+      return m.chat_error_home_conversation();
+    }
+    case 'home_attachment': {
+      return m.chat_error_home_attachment();
+    }
     case 'task_target_unreachable': {
       return m.chat_error_task_target_unreachable({ target: error.target });
     }
@@ -232,6 +248,9 @@ export function chatFailureMessage(
     }
     case 'title_empty': {
       return m.chat_error_title_empty();
+    }
+    case 'too_many_attachments': {
+      return m.chat_error_too_many_attachments({ max: error.max });
     }
     case 'too_many_images': {
       return m.chat_error_too_many_images({ max: error.max });
@@ -340,6 +359,9 @@ export function profileFailureMessage(failure: ProfileFailure): string {
     case 'invalid_name': {
       return m.chat_providers_error_invalid_name();
     }
+    case 'invalid_prefix': {
+      return m.chat_providers_error_invalid_prefix({ max: formatCount(error.maxCharacters) });
+    }
     case 'name_taken': {
       return m.chat_providers_error_name_taken();
     }
@@ -402,6 +424,30 @@ export function checkNoteMessage(note: CheckNote): string {
     }
     case 'no_usage_reported': {
       return m.chat_providers_note_no_usage_reported();
+    }
+    case 'unexpected_order': {
+      return m.chat_providers_note_unexpected_order();
+    }
+  }
+}
+
+/** The label of a check of a search profile's test (ADR-0047). */
+export function searchCheckLabel(check: SearchCheckKind): string {
+  switch (check) {
+    case 'credential': {
+      return m.chat_providers_check_credential();
+    }
+    case 'embed': {
+      return m.chat_search_check_embed();
+    }
+    case 'model': {
+      return m.chat_providers_check_model();
+    }
+    case 'rerank': {
+      return m.chat_search_check_rerank();
+    }
+    case 'server': {
+      return m.chat_providers_check_server();
     }
   }
 }

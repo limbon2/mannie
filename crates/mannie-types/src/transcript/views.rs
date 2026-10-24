@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::clock::UtcMillis;
+use crate::context::{Attachment, AttachmentRef};
 use crate::ids::{CheckpointId, ConversationId, ProfileId, ProjectId, TurnId};
 use crate::run::RunView;
 use crate::tasks::TaskConversation;
@@ -70,6 +71,18 @@ pub struct ConversationSummary {
     /// parent's agent writes; `None` for the owner's conversations
     /// (docs/features/child-agents/tasks.md, task conversations).
     pub task: Option<TaskConversation>,
+    /// What the conversation has attached, such as notebooks, in the order
+    /// the owner attached them (ADR-0046). A summary of a version before
+    /// them reads as none, and a summary without any leaves the field out,
+    /// so the documents of the Workers link stay as they were.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<Attachment>,
+    /// The attachment that the conversation belongs to, such as the notebook
+    /// of a notebook's chat, which its plugin lists instead of the Chat list
+    /// and which cannot be detached (ADR-0051). A summary without one leaves
+    /// the field out, so the documents of the Workers link stay as they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<AttachmentRef>,
     /// When it was created.
     pub created_at: UtcMillis,
     /// When it last changed. The list shows the most recent first.

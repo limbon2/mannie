@@ -8,6 +8,7 @@ import ScrollTextIcon from '@lucide/svelte/icons/scroll-text';
 import ServerIcon from '@lucide/svelte/icons/server';
 
 import ChatDialogs from '#lib/components/app/chat/ChatDialogs.svelte';
+import ContextPart from '#lib/components/app/chat/ContextPart.svelte';
 import ConversationListPanel from '#lib/components/app/chat/ConversationListPanel.svelte';
 import ConversationPanel from '#lib/components/app/chat/ConversationPanel.svelte';
 import ConversationView from '#lib/components/app/chat/ConversationView.svelte';
@@ -49,6 +50,16 @@ function openSummary(): ReturnType<typeof conversationList.find> {
 
 /** Registers the chat feature. */
 export function registerChat(slots: ShellSlots): void {
+  // The first entry of the activity bar, so the sidebar panels that name no
+  // entry, the projects and the conversations among them, are chat's
+  // (ADR-0045, decision 2).
+  slots.navigation.register({
+    icon: MessagesSquareIcon,
+    id: CHAT_VIEW,
+    label: m.chat_navigation_label,
+    order: 0,
+    view: CHAT_VIEW,
+  });
   slots.views.register({
     component: ConversationView,
     id: CHAT_VIEW,
@@ -70,6 +81,7 @@ export function registerChat(slots: ShellSlots): void {
   slots.partRenderers.register({ component: ErrorPart, id: 'error' });
   slots.partRenderers.register({ component: MentionPart, id: 'mention' });
   slots.partRenderers.register({ component: ImagePart, id: 'image' });
+  slots.partRenderers.register({ component: ContextPart, id: 'context' });
   slots.mentionKinds.register({
     group: m.chat_mention_files_group,
     icon: fileMentionIcon,

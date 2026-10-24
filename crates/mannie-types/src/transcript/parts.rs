@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::clock::UtcMillis;
+use crate::context::ContextView;
 use crate::ids::{PartId, RunId, TurnId};
 use crate::images::ImageView;
 use crate::mentions::MentionView;
@@ -43,11 +44,14 @@ pub enum PartKind {
     /// Mannie's note, which the model reads and the owner sees as a row
     /// (ADR-0041).
     CommandNote,
+    /// What a context provider gave for the owner's message, from the
+    /// conversation's attachments (ADR-0046).
+    Context,
 }
 
 impl PartKind {
     /// Every kind this version knows.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::UserText,
         Self::Text,
         Self::Reasoning,
@@ -58,6 +62,7 @@ impl PartKind {
         Self::Mention,
         Self::Image,
         Self::CommandNote,
+        Self::Context,
     ];
 
     /// The kind's name as the store and the UI know it.
@@ -73,6 +78,7 @@ impl PartKind {
             Self::Mention => "mention",
             Self::Image => "image",
             Self::CommandNote => "command_note",
+            Self::Context => "context",
         }
     }
 
@@ -98,7 +104,8 @@ impl PartKind {
             | Self::Task
             | Self::Mention
             | Self::Image
-            | Self::CommandNote => Audience::Both,
+            | Self::CommandNote
+            | Self::Context => Audience::Both,
             Self::Error => Audience::Owner,
             Self::ContinuationNote => Audience::Model,
         }
@@ -246,6 +253,11 @@ pub enum PartContent {
     CommandNote {
         /// The ends that woke the agent.
         note: CommandNoteView,
+    },
+    /// What a context provider gave for the owner's message.
+    Context {
+        /// The provider, its attachments and its items or its failure.
+        context: ContextView,
     },
     /// A kind of part that this version does not know.
     Unknown {

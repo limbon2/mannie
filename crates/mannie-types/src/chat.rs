@@ -5,6 +5,7 @@
 use serde::{Deserialize, Deserializer, Serialize};
 use specta::Type;
 
+use crate::context::AttachmentRef;
 use crate::ids::{CheckpointId, ConversationId, ProfileId, ProjectId, RunId, TurnId};
 use crate::images::ImageRef;
 use crate::mentions::MentionRef;
@@ -182,11 +183,20 @@ pub struct StartConversation {
     /// (ADR-0033).
     #[serde(default)]
     pub images: Vec<ImageRef>,
+    /// What the conversation starts with attached, such as a notebook, in
+    /// the order the owner attached them (ADR-0046).
+    #[serde(default)]
+    pub attachments: Vec<AttachmentRef>,
+    /// The attachment that the conversation belongs to, such as the notebook
+    /// of a notebook's chat, which it starts with attached first (ADR-0051).
+    /// A conversation with a home has no project.
+    #[serde(default)]
+    pub home: Option<AttachmentRef>,
 }
 
 impl StartConversation {
     /// The first message of a general conversation with the default profile,
-    /// with no mentions and no images.
+    /// with no mentions, no images, nothing attached and no home.
     pub fn new(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
@@ -194,7 +204,16 @@ impl StartConversation {
             project_id: None,
             mentions: Vec::new(),
             images: Vec::new(),
+            attachments: Vec::new(),
+            home: None,
         }
+    }
+
+    /// Sets the attachment that the conversation belongs to.
+    #[must_use]
+    pub fn with_home(mut self, home: Option<AttachmentRef>) -> Self {
+        self.home = home;
+        self
     }
 
     /// Sets the project the conversation starts in, or `None` for a general
@@ -216,6 +235,14 @@ impl StartConversation {
     #[must_use]
     pub fn with_images(mut self, images: Vec<ImageRef>) -> Self {
         self.images = images;
+        self
+    }
+
+    /// Sets what the conversation starts with attached, in the order the
+    /// owner attached them.
+    #[must_use]
+    pub fn with_attachments(mut self, attachments: Vec<AttachmentRef>) -> Self {
+        self.attachments = attachments;
         self
     }
 }
@@ -582,6 +609,35 @@ pub enum ChatError {
     /// conversation was deleted.
     #[error("the image does not exist")]
     ImageNotFound,
+    /// The conversation holds as many attachments as Mannie keeps (ADR-0046).
+    #[error("a conversation has at most {max} attachments")]
+    TooManyAttachments {
+        /// The limit.
+        max: u32,
+    },
+    /// An attachment's context provider is not there, for example because
+    /// its plugin is off (ADR-0046).
+    #[error("the context of {provider} is not available")]
+    ContextUnavailable {
+        /// The provider's ID.
+        provider: String,
+    },
+    /// An attachment's context provider refused its key.
+    #[error("{provider} refused an attachment: {reason}")]
+    ContextRefused {
+        /// The provider's ID.
+        provider: String,
+        /// The provider's code for why, such as `notebook_not_found`, or
+        /// `invalid_key` from the core's checks.
+        reason: String,
+    },
+    /// The conversation belongs to an attachment, such as a notebook, so it
+    /// has no project and cannot move into one (ADR-0051).
+    #[error("a conversation that belongs to an attachment has no project")]
+    HomeConversation,
+    /// The attachment is the conversation's home, which stays attached.
+    #[error("the attachment that the conversation belongs to cannot be detached")]
+    HomeAttachment,
 }
 
 impl ChatError {
@@ -627,6 +683,11 @@ impl ChatError {
             Self::ImageUnavailable { .. } => "chat.image_unavailable",
             Self::ImageRefused { .. } => "chat.image_refused",
             Self::ImageNotFound => "chat.image_not_found",
+            Self::TooManyAttachments { .. } => "chat.too_many_attachments",
+            Self::ContextUnavailable { .. } => "chat.context_unavailable",
+            Self::ContextRefused { .. } => "chat.context_refused",
+            Self::HomeConversation => "chat.home_conversation",
+            Self::HomeAttachment => "chat.home_attachment",
         }
     }
 }
@@ -637,6 +698,7 @@ mod tests {
         ChatError, ChatSettings, MAX_INSTRUCTIONS_CHARACTERS, MAX_MESSAGE_BYTES, SendMessage,
         StartConversation, UpdateChatSettings, check_message, check_title, title_from_message,
     };
+    use crate::context::AttachmentRef;
     use crate::ids::{ConversationId, ProjectId};
     use crate::images::ImageRef;
     use crate::mentions::MentionRef;
@@ -676,6 +738,8 @@ mod tests {
                 project_id: None,
                 mentions: Vec::new(),
                 images: Vec::new(),
+                attachments: Vec::new(),
+                home: None,
             }
         );
         assert_eq!(
@@ -731,7 +795,8 @@ mod tests {
             "profileId": null,
             "projectId": PROJECT,
             "mentions": [{ "provider": "files", "key": "notes.txt" }],
-            "images": [{ "source": "images", "key": "one" }]
+            "images": [{ "source": "images", "key": "one" }],
+            "attachments": [{ "provider": "notebooks", "key": "n1" }]
         }))
         .unwrap();
         assert_eq!(
@@ -740,6 +805,10 @@ mod tests {
                 .with_project(Some(project()))
                 .with_mentions(vec![file_mention("notes.txt")])
                 .with_images(vec![shelf_image("one")])
+                .with_attachments(vec![AttachmentRef {
+                    provider: "notebooks".to_owned(),
+                    key: "n1".to_owned(),
+                }])
         );
 
         let message: SendMessage = serde_json::from_value(serde_json::json!({

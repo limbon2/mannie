@@ -43,6 +43,8 @@ fn a_worker_reads_its_host_and_never_the_owners_instructions() {
             allowed_folders: &folders,
             instructions: Some("Never restart nginx."),
         }),
+        // A worker's tasks gather no context of attachments (ADR-0046).
+        sources: None,
     };
 
     let assembled = registry.assemble(&context);

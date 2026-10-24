@@ -101,6 +101,7 @@ fn task_conversation(given: &Given, executor: &TaskExecutorRef) -> NewConversati
             agent: "remote".to_owned(),
             executor: Some(executor.clone()),
         }),
+        home: None,
     }
 }
 
@@ -236,6 +237,7 @@ async fn assigned(fixture: &Fixture) -> (ConversationId, RunId, TaskId) {
                         profile_id: Some(Fixture::profile_id()),
                         project_id: None,
                         task: None,
+                        home: None,
                     },
                 },
                 Change::StartTurn {
@@ -747,6 +749,7 @@ async fn a_task_needs_the_part_or_the_assignment_that_started_it() {
                         profile_id: Some(Fixture::profile_id()),
                         project_id: None,
                         task: None,
+                        home: None,
                     },
                 },
                 Change::StartTurn {

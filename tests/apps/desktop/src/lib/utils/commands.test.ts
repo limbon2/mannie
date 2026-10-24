@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ShellCommand } from '../../../../../../apps/desktop/src/lib/types/shell-slots.js';
-import { groupCommands, isAvailable } from '../../../../../../apps/desktop/src/lib/utils/commands.js';
+import type { NavigationEntry, ShellCommand } from '../../../../../../apps/desktop/src/lib/types/shell-slots.js';
+import {
+  groupCommands,
+  isAvailable,
+  navigationCommands,
+} from '../../../../../../apps/desktop/src/lib/utils/commands.js';
 
 function command(id: string, group: string, order: number, available?: () => boolean): ShellCommand {
   return { available, group: () => group, id, label: () => id, order, run: vi.fn() };
@@ -28,6 +32,24 @@ describe('groupCommands', () => {
     const groups = groupCommands([command('compact', 'Conversation', 0, () => false)]);
 
     expect(groups).toEqual([]);
+  });
+});
+
+describe('navigationCommands', () => {
+  it('gives each entry of the activity bar a command under Views that selects it', () => {
+    const entries: NavigationEntry[] = [
+      { icon: () => ({}), id: 'chat', label: () => 'Chat', order: 0, view: 'chat' },
+      { icon: () => ({}), id: 'notebooks', label: () => 'Notebooks', order: 20, view: 'notebooks' },
+    ];
+    const select = vi.fn();
+
+    const commands = navigationCommands(entries, select);
+    commands[1]?.run();
+
+    expect(commands.map((entry) => entry.id)).toEqual(['shell.show.chat', 'shell.show.notebooks']);
+    expect(commands.map((entry) => entry.label())).toEqual(['Show Chat', 'Show Notebooks']);
+    expect(commands[0]?.group()).toBe('Views');
+    expect(select).toHaveBeenCalledWith(entries[1]);
   });
 });
 

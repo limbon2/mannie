@@ -61,6 +61,19 @@
     return kind?.waiting(count) ?? m.chat_status_waiting_for_any_tasks({ count });
   }
 
+  /**
+   * What a reply gathers before its first call (ADR-0046, decision 3): in the
+   * words of the kind of context while one provider gathers, and in generic
+   * words for several.
+   */
+  function gatheringLine(providers: readonly string[]): string {
+    if (providers.length !== 1) {
+      return m.chat_status_gathering_context();
+    }
+    const [provider] = providers;
+    return slots.contextKinds.find(provider)?.gathering() ?? m.chat_status_gathering_context();
+  }
+
   /** The kind of every task that a reply waits for, when they all have one. */
   function soleKind(count: number, kinds: readonly TaskKindCount[]): TaskKindCount | undefined {
     if (kinds.length !== 1) {
@@ -81,6 +94,9 @@
       }
       case 'compacting': {
         return { busy: true, retryable: false, text: m.chat_status_compacting() };
+      }
+      case 'gathering_context': {
+        return { busy: true, retryable: false, text: gatheringLine(activity.providers) };
       }
       case 'preparing': {
         return { busy: true, retryable: false, text: m.chat_status_preparing() };

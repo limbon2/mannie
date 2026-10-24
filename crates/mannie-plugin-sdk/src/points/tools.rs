@@ -20,8 +20,9 @@
 //! policy.
 //!
 //! A call learns the conversation's workspace, and a tool says where it is
-//! offered ([`ToolOffering`]). A result may carry data and a failure code for
-//! the call's card in the transcript, which the model never reads
+//! offered ([`ToolOffering`]). A tool offered where its plugin's attachments
+//! are learns their keys (ADR-0052). A result may carry data and a failure
+//! code for the call's card in the transcript, which the model never reads
 //! (ADR-0039).
 //!
 //! A tool's name follows the rule `Global`: it is unique among the core's
@@ -446,6 +447,11 @@ pub enum ToolOffering {
     /// this name, such as `.git` for a repository. The name is one entry,
     /// without a separator.
     WhereWorkspaceHolds(String),
+    /// Only in a conversation that holds attachments of the context provider
+    /// with this ID, which must be the plugin's own; for a child agent, in
+    /// the conversation that gave it its task. Its calls carry the keys of
+    /// those attachments (ADR-0052).
+    WhereAttached(String),
 }
 
 /// The agents whose runs are offered a plugin's tool, when their profiles
@@ -537,17 +543,24 @@ pub struct ToolCall {
     /// none for a general conversation (ADR-0038, decision 1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace: Option<PathBuf>,
+    /// For a tool offered where attachments are, the keys of the attachments
+    /// of its context provider in the conversation, or in the one that gave a
+    /// child its task, in the order of attaching. A tool reaches only what
+    /// they name; a tool offered another way gets none (ADR-0052).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<String>,
 }
 
 impl ToolCall {
-    /// A call with its arguments, without a workspace. Only the core builds
-    /// one.
+    /// A call with its arguments, without a workspace or attachments. Only
+    /// the core builds one.
     #[cfg(feature = "host")]
     pub fn new(arguments: String, conversation_id: ConversationId) -> Self {
         Self {
             arguments,
             conversation_id,
             workspace: None,
+            attachments: Vec::new(),
         }
     }
 
@@ -556,6 +569,14 @@ impl ToolCall {
     #[must_use]
     pub fn with_workspace(mut self, workspace: Option<PathBuf>) -> Self {
         self.workspace = workspace;
+        self
+    }
+
+    /// The same call, with the keys of the attachments that the tool reaches.
+    #[cfg(feature = "host")]
+    #[must_use]
+    pub fn with_attachments(mut self, attachments: Vec<String>) -> Self {
+        self.attachments = attachments;
         self
     }
 }
@@ -613,12 +634,16 @@ pub struct ToolExecution {
     /// accesses hold one (ADR-0041, decision 11).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background: Option<BackgroundTicket>,
+    /// The keys of the attachments that the tool reaches, as the call's
+    /// preparation had them ([`ToolCall::attachments`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<String>,
 }
 
 impl ToolExecution {
     /// An execution of a call with its arguments, with nothing authorized,
-    /// the largest result limit, no archives and no workspace. Only the core
-    /// builds one.
+    /// the largest result limit, no archives, no workspace and no
+    /// attachments. Only the core builds one.
     #[cfg(feature = "host")]
     pub fn new(arguments: String, conversation_id: ConversationId) -> Self {
         Self {
@@ -629,6 +654,7 @@ impl ToolExecution {
             archive_ids: Vec::new(),
             workspace: None,
             background: None,
+            attachments: Vec::new(),
         }
     }
 
@@ -637,6 +663,15 @@ impl ToolExecution {
     #[must_use]
     pub fn with_workspace(mut self, workspace: Option<PathBuf>) -> Self {
         self.workspace = workspace;
+        self
+    }
+
+    /// The same execution, with the keys of the attachments that the tool
+    /// reaches.
+    #[cfg(feature = "host")]
+    #[must_use]
+    pub fn with_attachments(mut self, attachments: Vec<String>) -> Self {
+        self.attachments = attachments;
         self
     }
 

@@ -3,6 +3,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use mannie_types::clock::{Clock, ManualClock, UtcMillis};
+use mannie_types::context::{
+    AttachedKey, Attachment, AttachmentRef, ContextItemView, ContextLocation, ContextView,
+    MAX_ATTACHMENTS,
+};
 use mannie_types::ids::{
     CheckpointId, ConversationId, PartId, ProfileId, ProjectId, RunId, TurnId,
 };
@@ -15,8 +19,8 @@ use mannie_types::transcript::{
 };
 
 use super::{
-    Applied, Change, EventsAfter, NewCheckpoint, NewConversation, NewImage, NewMention, NewPart,
-    NewRun, ProviderItem, RuntimeStoreError, StoredImage,
+    Applied, Change, EventsAfter, NewCheckpoint, NewContext, NewConversation, NewImage, NewMention,
+    NewPart, NewRun, ProviderItem, RuntimeStoreError, StoredImage,
 };
 use crate::{Durability, Store, StoreOptions};
 
@@ -121,6 +125,7 @@ impl Fixture {
                             profile_id: None,
                             project_id: None,
                             task: None,
+                            home: None,
                         },
                     },
                     Change::StartTurn {
@@ -157,6 +162,7 @@ impl Fixture {
                     profile_id: None,
                     project_id: Some(project.clone()),
                     task: None,
+                    home: None,
                 },
             }],
         )
@@ -343,6 +349,9 @@ fn text_of(content: &PartContent) -> String {
         PartContent::Mention { mention } => format!("@{}", mention.label),
         PartContent::Image { image } => format!("image {}", image.name),
         PartContent::CommandNote { note } => format!("ends {}", note.ends.len()),
+        PartContent::Context { context } => {
+            format!("context {} {}", context.provider, context.items.len())
+        }
         PartContent::Unknown { name } => name.clone(),
     }
 }
@@ -387,6 +396,7 @@ async fn start_with_images(fixture: &Fixture, images: Vec<NewImage>) -> (Convers
                         profile_id: None,
                         project_id: None,
                         task: None,
+                        home: None,
                     },
                 },
                 Change::StartTurn {
@@ -577,6 +587,7 @@ async fn a_turn_keeps_its_mentions_after_the_owner_s_text() {
                         profile_id: None,
                         project_id: None,
                         task: None,
+                        home: None,
                     },
                 },
                 Change::StartTurn {
@@ -651,6 +662,241 @@ async fn a_turn_keeps_its_mentions_after_the_owner_s_text() {
     assert_eq!(
         fixture.store.turn_request(&turn).await.unwrap().as_deref(),
         Some("Compare @a.rs with @b.png")
+    );
+}
+
+fn notebook(key: &str, label: &str) -> Attachment {
+    Attachment {
+        provider: "notebooks".to_owned(),
+        key: key.to_owned(),
+        label: label.to_owned(),
+    }
+}
+
+#[tokio::test]
+async fn attachments_keep_their_order_and_take_new_labels() {
+    let fixture = Fixture::new();
+    let (conversation, _, _, _) = fixture.start("Hello").await;
+
+    let attached = fixture
+        .apply(
+            &conversation,
+            vec![
+                Change::Attach {
+                    attachment: notebook("n1", "Physics"),
+                },
+                Change::Attach {
+                    attachment: notebook("n2", "Chemistry"),
+                },
+                Change::Attach {
+                    attachment: notebook("n1", "Physics notes"),
+                },
+            ],
+        )
+        .await;
+    let detached = fixture
+        .apply(
+            &conversation,
+            vec![Change::Detach {
+                attachment: AttachmentRef {
+                    provider: "notebooks".to_owned(),
+                    key: "n2".to_owned(),
+                },
+            }],
+        )
+        .await;
+    let unknown = fixture
+        .apply(
+            &conversation,
+            vec![Change::Detach {
+                attachment: AttachmentRef {
+                    provider: "notebooks".to_owned(),
+                    key: "n9".to_owned(),
+                },
+            }],
+        )
+        .await;
+
+    let summary = attached.summary.unwrap();
+    assert_eq!(
+        summary.attachments,
+        [notebook("n1", "Physics notes"), notebook("n2", "Chemistry")]
+    );
+    assert!(matches!(
+        attached.events.last(),
+        Some((_, ConversationEvent::ConversationChanged { .. }))
+    ));
+    assert_eq!(
+        detached.summary.unwrap().attachments,
+        [notebook("n1", "Physics notes")]
+    );
+    assert_eq!(unknown.events, Vec::new());
+    assert_eq!(unknown.summary, None);
+}
+
+#[tokio::test]
+async fn a_conversation_holds_at_most_eight_attachments_which_go_with_it() {
+    let fixture = Fixture::new();
+    let (conversation, _, _, _) = fixture.start("Hello").await;
+    let eight: Vec<Change> = (0..MAX_ATTACHMENTS)
+        .map(|index| Change::Attach {
+            attachment: notebook(&format!("n{index}"), &format!("planted-label-5d1e{index}")),
+        })
+        .collect();
+    fixture.apply(&conversation, eight).await;
+
+    let ninth = fixture
+        .store
+        .apply(
+            &conversation,
+            vec![Change::Attach {
+                attachment: notebook("n9", "One too many"),
+            }],
+            Durability::Full,
+        )
+        .await;
+    let relabeled = fixture
+        .apply(
+            &conversation,
+            vec![Change::Attach {
+                attachment: notebook("n0", "planted-label-5d1e0"),
+            }],
+        )
+        .await;
+    assert!(matches!(ninth, Err(RuntimeStoreError::TooManyAttachments)));
+    assert_eq!(
+        relabeled.summary.unwrap().attachments.len(),
+        MAX_ATTACHMENTS
+    );
+    assert!(fixture.files_contain_bytes(b"planted-label-5d1e7"));
+
+    assert!(
+        fixture
+            .store
+            .delete_conversation(&conversation)
+            .await
+            .unwrap()
+    );
+
+    assert!(
+        !fixture.files_contain_bytes(b"planted-label-5d1e7"),
+        "the attachments are gone from every file"
+    );
+}
+
+fn context_part(fixture: &Fixture, title: &str) -> NewContext {
+    let view = ContextView {
+        provider: "notebooks".to_owned(),
+        attachments: vec![AttachedKey {
+            key: "n1".to_owned(),
+            label: "Physics".to_owned(),
+        }],
+        items: vec![ContextItemView {
+            number: 1,
+            key: "s1:0".to_owned(),
+            title: title.to_owned(),
+            location: Some(ContextLocation::Page { number: 3 }),
+            text: "Light bends.".to_owned(),
+        }],
+        failure: None,
+    };
+    NewContext {
+        part_id: fixture.part_id(),
+        text: format!("[1] {title}, page 3\nLight bends."),
+        view,
+    }
+}
+
+#[tokio::test]
+async fn context_joins_the_owner_s_message_while_its_run_is_active() {
+    let fixture = Fixture::new();
+    let (conversation, turn, run, _) = fixture.start("Why does light bend?").await;
+    let first = context_part(&fixture, "Optics.pdf");
+    let view = first.view.clone();
+
+    let added = fixture
+        .apply(
+            &conversation,
+            vec![Change::AddContext {
+                run_id: run.clone(),
+                turn_id: turn.clone(),
+                parts: vec![first],
+            }],
+        )
+        .await;
+    let ended = fixture
+        .apply(
+            &conversation,
+            vec![Change::EndRun {
+                run_id: run.clone(),
+                state: RunState::Completed,
+                outcome: RunOutcome::default(),
+                task: None,
+            }],
+        )
+        .await;
+    let late = fixture
+        .store
+        .apply(
+            &conversation,
+            vec![Change::AddContext {
+                run_id: run.clone(),
+                turn_id: turn.clone(),
+                parts: vec![context_part(&fixture, "Late.pdf")],
+            }],
+            Durability::Full,
+        )
+        .await;
+
+    let [(_, ConversationEvent::PartFinished { part })] = added.events.as_slice() else {
+        panic!("{:?}", added.events);
+    };
+    assert_eq!((part.run_id.as_ref(), part.position), (None, 1));
+    assert_eq!(
+        part.content,
+        PartContent::Context {
+            context: view.clone()
+        }
+    );
+    assert_ne!(ended.events.len(), 0);
+    assert!(matches!(late, Err(RuntimeStoreError::RunNotActive { .. })));
+    let snapshot = fixture
+        .store
+        .snapshot(&conversation, 50, 400)
+        .await
+        .unwrap()
+        .unwrap();
+    let shown: Vec<String> = snapshot.turns[0]
+        .parts
+        .iter()
+        .map(|part| text_of(&part.content))
+        .collect();
+    assert_eq!(shown[..2], ["Why does light bend?", "context notebooks 1"]);
+    let model_turns = fixture
+        .store
+        .model_turns(&conversation, None)
+        .await
+        .unwrap();
+    let read: Vec<(Option<PartKind>, Option<&ContextView>)> = model_turns[0]
+        .parts
+        .iter()
+        .map(|part| (part.kind, part.context.as_ref()))
+        .collect();
+    assert_eq!(
+        read,
+        [
+            (Some(PartKind::UserText), None),
+            (Some(PartKind::Context), Some(&view))
+        ]
+    );
+    assert_eq!(
+        model_turns[0].parts[1].text,
+        "[1] Optics.pdf, page 3\nLight bends."
+    );
+    // The policy reads the owner's words, never the gathered context.
+    assert_eq!(
+        fixture.store.turn_request(&turn).await.unwrap().as_deref(),
+        Some("Why does light bend?")
     );
 }
 
@@ -1848,6 +2094,7 @@ async fn a_conversation_in_a_project_works_in_its_folder_and_shows_a_waiting_app
                         profile_id: None,
                         project_id: Some(project.clone()),
                         task: None,
+                        home: None,
                     },
                 },
                 Change::StartTurn {
@@ -1955,6 +2202,63 @@ async fn a_general_conversation_moves_into_a_project_once() {
 }
 
 #[tokio::test]
+async fn a_conversation_with_a_home_keeps_it_and_never_joins_a_project() {
+    let fixture = Fixture::new();
+    let project = fixture.project("/work/first").await;
+    let home = AttachmentRef {
+        provider: "notebooks".to_owned(),
+        key: "n1".to_owned(),
+    };
+    let new_conversation = |id: &ConversationId, project_id: Option<ProjectId>| NewConversation {
+        id: id.clone(),
+        title: "A notebook's chat".to_owned(),
+        profile_id: None,
+        project_id,
+        task: None,
+        home: Some(home.clone()),
+    };
+    let conversation = fixture.conversation_id();
+    let in_project = fixture.conversation_id();
+
+    let created = fixture
+        .apply(
+            &conversation,
+            vec![Change::CreateConversation {
+                conversation: new_conversation(&conversation, None),
+            }],
+        )
+        .await;
+    let moved = fixture
+        .store
+        .apply(
+            &conversation,
+            vec![Change::SetProject {
+                project_id: project.clone(),
+            }],
+            Durability::Full,
+        )
+        .await;
+    let refused = fixture
+        .store
+        .apply(
+            &in_project,
+            vec![Change::CreateConversation {
+                conversation: new_conversation(&in_project, Some(project)),
+            }],
+            Durability::Full,
+        )
+        .await;
+
+    assert_eq!(created.summary.unwrap().home.as_ref(), Some(&home));
+    assert!(moved.is_err(), "{moved:?}");
+    assert!(refused.is_err(), "{refused:?}");
+    let listed = fixture.store.list_conversations().await.unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].home.as_ref(), Some(&home));
+    assert_eq!(listed[0].project_id, None);
+}
+
+#[tokio::test]
 async fn a_conversation_cannot_start_in_a_project_that_does_not_exist() {
     let fixture = Fixture::new();
     let conversation = fixture.conversation_id();
@@ -1970,6 +2274,7 @@ async fn a_conversation_cannot_start_in_a_project_that_does_not_exist() {
                     profile_id: None,
                     project_id: Some(ProjectId::parse(&fixture.uuid()).unwrap()),
                     task: None,
+                    home: None,
                 },
             }],
             Durability::Full,

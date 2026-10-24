@@ -41,6 +41,7 @@ impl Fixture {
                         profile_id: None,
                         project_id: None,
                         task: None,
+                        home: None,
                     },
                 }],
                 Durability::Full,

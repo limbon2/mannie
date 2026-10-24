@@ -19,6 +19,7 @@ mod actor;
 mod agents;
 mod approvals;
 mod assigned;
+mod attachments;
 mod background;
 mod budget;
 mod calls;
@@ -41,6 +42,7 @@ mod processes;
 mod profiles;
 mod projects;
 mod retry;
+mod search_profiles;
 mod tasks;
 #[cfg(feature = "testing")]
 pub mod testing;
@@ -96,6 +98,7 @@ use crate::local_servers::{LocalServersProvider, Servers};
 use crate::plugin_executions::PluginExecutions;
 use crate::plugins::Registry;
 use crate::processes::{ProcessesProvider, Programs};
+use crate::search_profiles::ModelsProvider;
 use crate::tasks::ChildSlots;
 use crate::wake_ups::WakeUps;
 
@@ -193,6 +196,10 @@ pub struct RuntimeConfig {
     /// idle conversation, so ends that come together share one wake-up
     /// (ADR-0041).
     pub wake_up_delay: Duration,
+    /// How long a run waits for one context provider's items before it keeps
+    /// the failure `timed_out` (ADR-0046, decision 3): the SDK's
+    /// `GATHER_TIMEOUT`, which tests shorten.
+    pub gather_timeout: Duration,
 }
 
 impl Default for RuntimeConfig {
@@ -207,6 +214,7 @@ impl Default for RuntimeConfig {
             executor_cancel_timeout: Duration::from_secs(10),
             random_seed: None,
             wake_up_delay: Duration::from_secs(2),
+            gather_timeout: mannie_plugin_sdk::points::context::GATHER_TIMEOUT,
         }
     }
 }
@@ -259,6 +267,9 @@ struct Inner {
     background: CommandRegistry,
     /// The servers that plugins started (ADR-0043, decision 5).
     local_servers: Servers,
+    /// The IDs of search profiles that changed or were deleted, for the
+    /// plugins that follow them through the service `models` (ADR-0047).
+    search_changes: tokio::sync::broadcast::Sender<String>,
     /// What wake-ups know of the conversations (ADR-0041).
     wake_ups: WakeUps,
     hubs: Hubs,
@@ -308,6 +319,10 @@ struct RunHandle {
     mailbox: mpsc::Sender<Command>,
     ended: watch::Receiver<bool>,
 }
+
+/// How many changes of search profiles wait for a follower that is behind,
+/// which then hears of the newest ones (ADR-0047).
+const SEARCH_CHANGES_CAPACITY: usize = 64;
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     // Every critical section only reads or replaces map entries, so the data
@@ -394,6 +409,7 @@ impl Runtime {
             approvals: Mutex::default(),
             background: CommandRegistry::default(),
             local_servers: Servers::default(),
+            search_changes: tokio::sync::broadcast::channel(SEARCH_CHANGES_CAPACITY).0,
             wake_ups: WakeUps::default(),
             hubs: Hubs::default(),
             busy: Mutex::default(),
@@ -414,8 +430,9 @@ impl Runtime {
     /// The providers of the services that the runtime owns, which the plugin
     /// host binds to each plugin that declares them (ADR-0034, decision 5):
     /// the executor host and credentials, each bound to the executor kind
-    /// that equals the plugin's ID, and the installed programs, bound to the
-    /// programs of the plugin's manifest (ADR-0038, decision 7).
+    /// that equals the plugin's ID, the installed programs, bound to the
+    /// programs of the plugin's manifest (ADR-0038, decision 7), and the
+    /// models of the owner's search profiles (ADR-0047).
     pub fn service_providers(&self) -> Vec<Arc<dyn ServiceProvider>> {
         vec![
             Arc::new(ExecutorHostProvider::new(self)),
@@ -423,6 +440,7 @@ impl Runtime {
             Arc::new(ProcessesProvider::new(self)),
             Arc::new(BackgroundCommandsProvider::new(self)),
             Arc::new(LocalServersProvider::new(self)),
+            Arc::new(ModelsProvider::new(self)),
         ]
     }
 

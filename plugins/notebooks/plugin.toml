@@ -1,0 +1,29 @@
+#:schema ../../crates/mannie-plugin-sdk/plugin.schema.json
+# The Notebooks plugin (plugins/notebooks/docs/README.md): notebooks of the
+# owner's documents, whose passages that apply to a message reach the
+# conversations that attach them (ADR-0046), found with the owner's embedding
+# and rerank models (ADR-0047).
+
+id = "notebooks"
+sdk = 1
+# After Workers, Images, SSH, Git and MCP, on the Plugins page too.
+order = 60
+
+[rust]
+entry = "mannie-notebooks"
+
+[services]
+# The system's file dialog, whose chosen documents Notebooks reads once by
+# their handles (ADR-0034, decision 6).
+file-dialog = 1
+# The embedding and rerank models of the owner's search profiles, which get
+# the text of the documents and of the owner's messages (ADR-0047).
+models = 1
+# The tables of the notebooks, their sources, their text and their vectors.
+store = 1
+
+[crates]
+# Only Notebooks parses PDFs, which come from outside Mannie (T-64): no crate
+# outside this folder may depend on the parser (plugins/notebooks/docs/adr/
+# 0001-extract-documents-with-pdf-extract-and-a-markdown-scanner.md).
+exclusive = ["pdf-extract", "lopdf"]

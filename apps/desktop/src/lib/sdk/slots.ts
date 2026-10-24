@@ -5,6 +5,7 @@
 // (`state/shell-slots.svelte.ts`), which the type checks hold to this
 // record, plus the component that shows its entries.
 import type {
+  ContextKind,
   ConversationControl,
   ImageSourceKind,
   MentionKind,
@@ -20,12 +21,24 @@ import type {
   ToolKind,
 } from '#lib/types/shell-slots.js';
 
-// What the model got of a sent mention, which a mention kind words.
-export type { MentionSummary } from '#lib/generated/bindings.js';
+// What the model got of a sent mention, which a mention kind words; the
+// attachments of a conversation and the items of a context provider, which a
+// context kind words and opens (ADR-0046).
 export type {
+  Attachment,
+  AttachmentRef,
+  ContextItemView,
+  ContextLocation,
+  MentionSummary,
+} from '#lib/generated/bindings.js';
+export type {
+  ContextKind,
+  ContextOpen,
   ConversationControl,
   ConversationControlPlace,
   ConversationControlProps,
+  ConversationDraft,
+  DraftControlProps,
   ImageSourceButtonProps,
   ImageSourceKind,
   ImageTarget,
@@ -52,6 +65,7 @@ export type {
 /** Every slot of the shell by its name, with the type of its entries. */
 export interface SlotCatalog {
   readonly commands: ShellCommand;
+  readonly contextKinds: ContextKind;
   readonly conversationControls: ConversationControl;
   readonly imageSources: ImageSourceKind;
   readonly mentionKinds: MentionKind;

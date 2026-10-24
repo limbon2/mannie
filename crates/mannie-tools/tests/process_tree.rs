@@ -84,6 +84,7 @@ impl Harness {
             system: Arc::new(SystemFacts::detect()),
             projects: ProjectFacts::none(),
             background: mannie_tools::no_background_commands(),
+            attachments: Arc::from(Vec::new()),
         };
         Self {
             _folder: folder,

@@ -65,7 +65,7 @@ where
         .unwrap_or(Err(VaultError::Unavailable(CredentialStoreProblem::Other)))
 }
 
-fn vault_failure(error: VaultError) -> ProviderProfileError {
+pub(crate) fn vault_failure(error: VaultError) -> ProviderProfileError {
     let reason = match error {
         VaultError::Unavailable(problem) => problem,
         VaultError::Missing => CredentialStoreProblem::Other,
@@ -73,7 +73,7 @@ fn vault_failure(error: VaultError) -> ProviderProfileError {
     ProviderProfileError::CredentialStoreUnavailable { reason }
 }
 
-fn store_failure(error: &ProfileStoreError) -> ProviderProfileError {
+pub(crate) fn store_failure(error: &ProfileStoreError) -> ProviderProfileError {
     match error {
         ProfileStoreError::NameTaken => ProviderProfileError::NameTaken,
         ProfileStoreError::NotFound => ProviderProfileError::NotFound,
@@ -85,7 +85,8 @@ fn store_failure(error: &ProfileStoreError) -> ProviderProfileError {
 }
 
 /// The name of a profile's credential entry for one configuration revision.
-fn credential_reference(profile: &ProfileId, revision: u32) -> String {
+/// Chat and search profiles share the form, and their IDs never collide.
+pub(crate) fn credential_reference(profile: &ProfileId, revision: u32) -> String {
     format!("provider/{profile}/{revision}")
 }
 
@@ -325,7 +326,7 @@ impl Runtime {
 
     /// Deletes a credential that no profile uses any more. A failure is
     /// logged; the entry is left behind in the credential store.
-    async fn forget_credential(&self, reference: String) {
+    pub(crate) async fn forget_credential(&self, reference: String) {
         let deleted = in_vault(&self.inner.vault, move |vault| vault.delete(&reference)).await;
         match deleted {
             Ok(()) | Err(VaultError::Missing) => {}
