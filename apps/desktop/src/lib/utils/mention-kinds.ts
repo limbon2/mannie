@@ -5,7 +5,7 @@
 import AtSignIcon from '@lucide/svelte/icons/at-sign';
 import type { Component } from 'svelte';
 
-import type { MentionGroup, MentionSummary } from '#lib/generated/bindings.js';
+import type { MentionSummary } from '#lib/generated/bindings.js';
 import { m } from '#lib/paraglide/messages.js';
 import type { MentionKind } from '#lib/types/shell-slots.js';
 
@@ -45,9 +45,13 @@ export function mentionSummary(kind: MentionKind | undefined, summary: MentionSu
   return kind?.summary(summary) ?? null;
 }
 
-/** The groups of the list, sorted by the order of their kinds. Groups that no kind places come last, as the core sent them. */
-export function sortMentionGroups(groups: readonly MentionGroup[], findKind: FindMentionKind): MentionGroup[] {
-  const placed = groups.map((group, index) => ({ group, index, order: findKind(group.provider)?.order ?? UNPLACED }));
+/** The providers of the list's groups, sorted by the order of their kinds. Providers that no kind places come last, as the core sent them. */
+export function sortMentionProviders(providers: readonly string[], findKind: FindMentionKind): string[] {
+  const placed = providers.map((provider, index) => ({
+    index,
+    order: findKind(provider)?.order ?? UNPLACED,
+    provider,
+  }));
   placed.sort((left, right) => left.order - right.order || left.index - right.index);
-  return placed.map((entry) => entry.group);
+  return placed.map((entry) => entry.provider);
 }

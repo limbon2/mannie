@@ -8,6 +8,11 @@
 //! the rest breadth first, so a large ignored folder such as `node_modules`
 //! never crowds out the project's own files. `.git` is listed, but nothing
 //! inside it, and links are listed without being followed.
+//!
+//! The owner types a query key by key, so the index ranks its entries once,
+//! when it is built, by everything but how they match. A query then reads
+//! them in that order and keeps the first matches of each tier, without
+//! sorting every match of a short query.
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashSet};
@@ -21,6 +26,9 @@ pub const MAX_INDEX_ENTRIES: usize = 100_000;
 
 /// The folder whose contents an index never lists.
 const GIT_FOLDER: &str = ".git";
+
+/// How many tiers [`tier`] sorts matches into.
+const TIERS: usize = 5;
 
 /// An entry of the index.
 #[derive(Debug, Clone)]
@@ -43,6 +51,7 @@ struct Entry {
 /// The files and folders below a workspace, as the "@" list searches them.
 #[derive(Debug, Clone, Default)]
 pub struct MentionIndex {
+    /// The entries, ranked by [`Entry::rank`].
     entries: Vec<Entry>,
     incomplete: bool,
 }
@@ -117,6 +126,7 @@ impl MentionIndex {
             };
             if index.entries.len() == cap {
                 index.incomplete = true;
+                index.rank();
                 return index;
             }
             let folder = entry.file_type().is_some_and(|kind| kind.is_dir());
@@ -162,7 +172,15 @@ impl MentionIndex {
             }
             index.push(next.relative, next.folder, true);
         }
+        index.rank();
         index
+    }
+
+    /// Sorts the entries by [`Entry::rank`], which [`suggest`](Self::suggest)
+    /// reads them in.
+    fn rank(&mut self) {
+        self.entries
+            .sort_unstable_by(|left, right| left.rank().cmp(&right.rank()));
     }
 
     fn push(&mut self, path: String, folder: bool, ignored: bool) {
@@ -184,31 +202,36 @@ impl MentionIndex {
     }
 
     /// The entries that match what the owner typed after "@", best first, at
-    /// most `limit` of them. Names compare without regard to case.
+    /// most `limit` of them: by [`tier`], then by [`Entry::rank`]. Names
+    /// compare without regard to case.
     pub fn suggest(&self, query: &str, limit: usize) -> IndexMatches {
         let query = normalize_query(query);
-        let mut ranked: Vec<(Rank<'_>, &Entry)> = self
-            .entries
-            .iter()
-            .filter_map(|entry| {
-                tier(entry, &query).map(|tier| {
-                    let rank = Rank {
-                        tier,
-                        ignored: entry.ignored,
-                        depth: entry.depth,
-                        length: entry.path.len(),
-                        path: &entry.path,
-                    };
-                    (rank, entry)
-                })
-            })
-            .collect();
-        ranked.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+        let mut tiers: [Vec<&Entry>; TIERS] = Default::default();
+        // The entries come in the order of their rank, so the first matches
+        // of a tier are its best ones, and a tier keeps at most `limit`. Once
+        // the tiers above a tier hold `limit` matches, none of its matches
+        // can be listed, so its checks, the slowest ones, stop.
+        let mut worst = TIERS - 1;
+        for entry in &self.entries {
+            if tiers[0].len() >= limit {
+                break;
+            }
+            let Some(found) = tier(entry, &query, worst) else {
+                continue;
+            };
+            if tiers[found].len() < limit {
+                tiers[found].push(entry);
+            }
+            while worst > 0 && tiers[..worst].iter().map(Vec::len).sum::<usize>() >= limit {
+                worst -= 1;
+            }
+        }
         IndexMatches {
-            matches: ranked
+            matches: tiers
                 .into_iter()
+                .flatten()
                 .take(limit)
-                .map(|(_rank, entry)| IndexMatch {
+                .map(|entry| IndexMatch {
                     path: entry.path.clone(),
                     folder: entry.folder,
                 })
@@ -228,15 +251,13 @@ impl MentionIndex {
     }
 }
 
-/// How well an entry matches, best first: the tier, then entries that are not
-/// ignored, then fewer names deep, then shorter, then by path.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct Rank<'a> {
-    tier: u8,
-    ignored: bool,
-    depth: usize,
-    length: usize,
-    path: &'a str,
+impl Entry {
+    /// How an entry ranks among those that match a query equally well:
+    /// entries that are not ignored first, then fewer names deep, then
+    /// shorter, then by path.
+    fn rank(&self) -> (bool, usize, usize, &str) {
+        (self.ignored, self.depth, self.path.len(), &self.path)
+    }
 }
 
 /// The query in lower case, with `/` between names and without a leading
@@ -251,7 +272,8 @@ fn normalize_query(query: &str) -> String {
     query.strip_prefix("./").map(str::to_owned).unwrap_or(query)
 }
 
-/// How an entry matches the query, from 0 for the best, or `None`:
+/// How an entry matches the query, from 0 for the best, or `None` when it
+/// matches no tier up to `worst`:
 ///
 /// 0. the name or the path is the query;
 /// 1. the name or the path starts with it;
@@ -261,7 +283,7 @@ fn normalize_query(query: &str) -> String {
 ///
 /// An empty query matches every entry equally, so the shallowest come first.
 /// A query that ends in `/` names a folder and matches what is inside it.
-fn tier(entry: &Entry, query: &str) -> Option<u8> {
+fn tier(entry: &Entry, query: &str, worst: usize) -> Option<usize> {
     if query.is_empty() {
         return Some(0);
     }
@@ -274,19 +296,13 @@ fn tier(entry: &Entry, query: &str) -> Option<u8> {
     let bare_query = query.trim_end_matches('/');
     let bare_name = name.trim_end_matches('/');
     let bare_path = lower.trim_end_matches('/');
-    if bare_name == bare_query || bare_path == bare_query {
-        Some(0)
-    } else if lower.starts_with(query) || name.starts_with(query) {
-        Some(1)
-    } else if name.contains(query) {
-        Some(2)
-    } else if lower.contains(query) {
-        Some(3)
-    } else if holds_in_order(lower, query) {
-        Some(4)
-    } else {
-        None
-    }
+    (0..=worst).find(|tier| match tier {
+        0 => bare_name == bare_query || bare_path == bare_query,
+        1 => lower.starts_with(query) || name.starts_with(query),
+        2 => name.contains(query),
+        3 => lower.contains(query),
+        _ => holds_in_order(lower, query),
+    })
 }
 
 /// Whether `text` holds the characters of `query` in their order.
@@ -351,7 +367,7 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use super::{IndexMatch, MentionIndex};
+    use super::{IndexMatch, MentionIndex, TIERS, normalize_query, tier};
 
     fn paths(index: &MentionIndex, query: &str) -> Vec<String> {
         index
@@ -469,6 +485,81 @@ mod tests {
         assert_eq!(paths(&index, "dcsadr")[0], "docs/adr/");
         assert_eq!(paths(&index, "DOCS")[0], "docs/");
         assert_eq!(paths(&index, "zzz"), Vec::<String>::new());
+    }
+
+    /// The matches of every entry, sorted as a whole: the order that
+    /// [`MentionIndex::suggest`] keeps without sorting.
+    fn sorted_matches(index: &MentionIndex, query: &str, limit: usize) -> Vec<String> {
+        let query = normalize_query(query);
+        let mut ranked: Vec<_> = index
+            .entries
+            .iter()
+            .filter_map(|entry| tier(entry, &query, TIERS - 1).map(|found| (found, entry.rank())))
+            .collect();
+        ranked.sort_unstable();
+        ranked
+            .into_iter()
+            .take(limit)
+            .map(|(_tier, (_ignored, _depth, _length, path))| path.to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn a_query_lists_the_best_matches_of_every_tier_in_the_order_of_a_full_sort() {
+        let names = ["src", "docs", "adr", "readme", "target", "Read Me"];
+        let files = [
+            "main.rs",
+            "README.md",
+            "readme-old.md",
+            "lib.rs",
+            "notes on reading.md",
+        ];
+        let mut index = MentionIndex::default();
+        for first in names {
+            let ignored = first == "target";
+            index.push(first.to_owned(), true, ignored);
+            for second in names {
+                index.push(format!("{first}/{second}"), true, ignored);
+                for file in files {
+                    index.push(format!("{first}/{second}/{file}"), false, ignored);
+                }
+            }
+            for file in files {
+                index.push(format!("{first}/{file}"), false, ignored);
+            }
+        }
+        index.rank();
+        let queries = [
+            "",
+            "r",
+            "re",
+            "read",
+            "readme.md",
+            "README",
+            "src/",
+            "./docs/adr/",
+            "main",
+            "mn",
+            "s/m",
+            "read me",
+            "zz",
+        ];
+
+        for query in queries {
+            for limit in [0, 1, 3, 50, 10_000] {
+                let listed: Vec<String> = index
+                    .suggest(query, limit)
+                    .matches
+                    .into_iter()
+                    .map(|found| found.path)
+                    .collect();
+                assert_eq!(
+                    listed,
+                    sorted_matches(&index, query, limit),
+                    "{query:?}, {limit}"
+                );
+            }
+        }
     }
 
     #[test]

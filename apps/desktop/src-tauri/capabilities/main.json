@@ -29,6 +29,7 @@
     "allow-get-window-settings",
     "allow-list-command-rules",
     "allow-list-conversation-grants",
+    "allow-list-mention-providers",
     "allow-list-program-rules",
     "allow-list-provider-profiles",
     "allow-list-remote-command-rules",

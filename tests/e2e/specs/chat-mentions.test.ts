@@ -2,8 +2,9 @@
 // "@" lists a project's files and folders, hidden and ignored ones included,
 // a file that may hold secrets shows a warning, the keyboard goes into a
 // folder and inserts a file, the message's chips and the transcript show the
-// mentions, the model's request holds their text, Escape closes the list
-// before it stops a reply, and a general conversation lists nothing.
+// mentions, the model's request holds their text, a name with a space is
+// found as the owner types it, Escape closes the list before it stops a
+// reply, and a general conversation lists nothing.
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -115,6 +116,7 @@ describe('mentions', () => {
     mkdirSync(join(folder, 'build'), { recursive: true });
     writeFileSync(join(folder, 'src', 'main.rs'), 'fn main() { println!("orbit"); }\n');
     writeFileSync(join(folder, 'docs', 'guide.md'), '# Guide\n');
+    writeFileSync(join(folder, 'docs', 'release plan.md'), '# Release plan\n');
     writeFileSync(join(folder, '.env'), 'TOKEN=e2e\n');
     writeFileSync(join(folder, '.gitignore'), 'build/\n');
     writeFileSync(join(folder, 'build', 'out.log'), 'built\n');
@@ -132,7 +134,8 @@ describe('mentions', () => {
 
   it('lists the project’s files with hidden and ignored ones, and warns about a file that may hold secrets', async () => {
     await type('@');
-    await waitForOption('.env');
+    // Ignored entries come last, so they show once the list shows them all.
+    await waitForOption('build/');
 
     expect(await optionLabels()).toEqual(expect.arrayContaining(['.env', '.gitignore', 'build/', 'docs/', 'src/']));
     expect(await warns('.env')).toBe(true);
@@ -173,6 +176,17 @@ describe('mentions', () => {
     expect(owner).toContain('The owner mentioned the file docs/guide.md.');
     expect(owner).toContain('fn main() { println!("orbit"); }');
     expect(await chipLabels()).toEqual([]);
+  });
+
+  it('finds a name with a space as the owner types it, and inserts it in quotes', async () => {
+    await type('Plan from @release pl');
+    await waitForOption('docs/release plan.md');
+    await browser.keys(Key.Enter);
+
+    expect(await $(COMPOSER).getValue()).toBe('Plan from @"docs/release plan.md" ');
+    expect(await listShows()).toBe(false);
+    expect(await chipLabels()).toEqual(['docs/release plan.md']);
+    await clear();
   });
 
   it('closes the list with Escape before Escape stops a reply', async () => {

@@ -9,24 +9,33 @@
 //! the conversation (ADR-0038, decision 10). A read that would ask gives the
 //! model a note instead of the content. The keys come from the webview, so
 //! each is checked again before git runs (ADR-0004).
+//!
+//! The list asks on every key the owner types, and reading the repository
+//! runs git several times, `git status` included, which takes seconds in a
+//! large work tree. So the provider reads what the list offers once for a
+//! place, keeps it for [`LISTING_LIFETIME`] and matches each query against
+//! it. Queries that arrive while it is read wait for that one reading.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant};
 
 use mannie_plugin_sdk::BoxFuture;
-use mannie_plugin_sdk::contracts::{MentionEntry, MentionSummary};
+use mannie_plugin_sdk::contracts::{ConversationId, MentionEntry, MentionSummary, ProjectId};
 use mannie_plugin_sdk::points::mentions::{
     MentionContent, MentionContext, MentionProvider, ProviderSuggestions, RenderedMention,
 };
 use mannie_plugin_sdk::services::processes::ReadPlace;
+use tokio::sync::OnceCell;
 
 use crate::arguments::{check_branch, is_object_id};
 use crate::failure::GitFailure;
 use crate::git::Git;
 use crate::layout::Layout;
 use crate::parse::diff::parse_numstat;
-use crate::parse::log::{LOG_FORMAT, parse_log};
+use crate::parse::log::{Commit, LOG_FORMAT, parse_log};
 use crate::texts;
 use crate::tools::Reading;
 use crate::tools::diff::{PATCH_OPTIONS, stat_line};
@@ -58,16 +67,76 @@ const BRANCH_COMMITS: u32 = 50;
 /// repository: the core's offering of the tools looks as far up.
 const MAX_MARKER_DEPTH: usize = 32;
 
+/// How long a reading of what the list offers answers its queries.
+const LISTING_LIFETIME: Duration = Duration::from_secs(10);
+
+/// The most places whose readings are kept.
+const MAX_LISTINGS: usize = 8;
+
 /// The commits, branches and changes of the repository, as "@" lists them.
 #[derive(Debug)]
 pub(crate) struct GitMentions {
     git: Git,
+    listings: Mutex<Vec<KeptListing>>,
+    lifetime: Duration,
 }
 
 impl GitMentions {
     pub(crate) fn new(git: Git) -> Self {
-        Self { git }
+        Self::keeping_listings_for(git, LISTING_LIFETIME)
     }
+
+    /// The provider, whose readings answer for `lifetime`.
+    fn keeping_listings_for(git: Git, lifetime: Duration) -> Self {
+        Self {
+            git,
+            listings: Mutex::new(Vec::new()),
+            lifetime,
+        }
+    }
+}
+
+/// What the list offers of a repository, read once for the queries that
+/// follow.
+#[derive(Debug)]
+struct Listing {
+    /// Whether the work tree or the index has changes.
+    has_changes: bool,
+    /// The local branches, the newest first.
+    branches: Vec<String>,
+    /// The newest commits of HEAD.
+    commits: Vec<Commit>,
+}
+
+/// The place that a reading was made for: the workspace, and what decides
+/// the policy of its runs there. Another conversation, or the same one
+/// after its full access changed, reads again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ListingPlace {
+    workspace: PathBuf,
+    conversation: Option<ConversationId>,
+    project: Option<ProjectId>,
+    full_access: bool,
+}
+
+impl ListingPlace {
+    fn of(context: &MentionContext) -> Option<Self> {
+        Some(Self {
+            workspace: context.workspace()?.to_path_buf(),
+            conversation: context.conversation().cloned(),
+            project: context.project().cloned(),
+            full_access: context.full_access(),
+        })
+    }
+}
+
+/// A place's reading, which the first query reads and the others wait for.
+/// A reading that fails is not kept, so the next query reads again.
+#[derive(Debug)]
+struct KeptListing {
+    place: ListingPlace,
+    since: Instant,
+    listing: Arc<OnceCell<Listing>>,
 }
 
 /// Whether `folder`, or a folder above it, holds `.git`, without following
@@ -81,7 +150,7 @@ pub(crate) fn in_repository(folder: &Path) -> bool {
 
 /// The place whose policy checks a mention's reads of `folders`: the
 /// conversation, or the project of a message that starts one.
-fn read_place(context: &MentionContext, folders: Vec<std::path::PathBuf>) -> Option<ReadPlace> {
+fn read_place(context: &MentionContext, folders: Vec<PathBuf>) -> Option<ReadPlace> {
     if let Some(conversation) = context.conversation() {
         return Some(ReadPlace::Conversation {
             conversation: conversation.clone(),
@@ -146,11 +215,7 @@ impl MentionProvider for GitMentions {
         limit: usize,
     ) -> BoxFuture<'a, Result<ProviderSuggestions, String>> {
         Box::pin(async move {
-            let reading = self
-                .reading(context, 0)
-                .await
-                .map_err(|failure| failure.code().to_owned())?;
-            suggestions(&reading, query, limit)
+            self.listed(context, query, limit)
                 .await
                 .map_err(|failure| failure.code().to_owned())
         })
@@ -194,62 +259,112 @@ impl GitMentions {
         let checks = read_place(context, layout.read_folders());
         Reading::open(&self.git, layout, room, checks).await
     }
+
+    /// The entries of the place's reading that match `query`.
+    async fn listed(
+        &self,
+        context: &MentionContext,
+        query: &str,
+        limit: usize,
+    ) -> Result<ProviderSuggestions, GitFailure> {
+        let kept = self.kept_listing(context)?;
+        let listing = kept.get_or_try_init(|| self.read_listing(context)).await?;
+        Ok(suggestions(listing, query, limit))
+    }
+
+    /// The reading of the place, read in the last [`LISTING_LIFETIME`] or
+    /// still to read. Readings past their lifetime are dropped, and the
+    /// oldest one once [`MAX_LISTINGS`] are kept.
+    fn kept_listing(&self, context: &MentionContext) -> Result<Arc<OnceCell<Listing>>, GitFailure> {
+        let place = ListingPlace::of(context).ok_or_else(|| GitFailure::NotARepository {
+            folder: String::new(),
+        })?;
+        let mut listings = lock(&self.listings);
+        listings.retain(|kept| kept.since.elapsed() < self.lifetime);
+        if let Some(kept) = listings.iter().find(|kept| kept.place == place) {
+            return Ok(Arc::clone(&kept.listing));
+        }
+        if listings.len() >= MAX_LISTINGS {
+            listings.remove(0);
+        }
+        let listing = Arc::new(OnceCell::new());
+        listings.push(KeptListing {
+            place,
+            since: Instant::now(),
+            listing: Arc::clone(&listing),
+        });
+        Ok(listing)
+    }
+
+    /// Reads what the list offers: whether there are changes, the local
+    /// branches and the newest commits of HEAD.
+    async fn read_listing(&self, context: &MentionContext) -> Result<Listing, GitFailure> {
+        let reading = self.reading(context, 0).await?;
+        let status = read_status(&reading).await?;
+        let branches = reading
+            .git
+            .output(reading.run([
+                "for-each-ref",
+                "--sort=-committerdate",
+                "--format=%(refname:short)",
+                "refs/heads",
+            ]))
+            .await?;
+        let log = reading
+            .git
+            .run(reading.run([
+                "log".to_owned(),
+                "-z".to_owned(),
+                LOG_FORMAT.to_owned(),
+                format!("--max-count={LISTED_COMMITS}"),
+                "HEAD".to_owned(),
+            ]))
+            .await?;
+        // A branch without commits has no log.
+        let commits = if log.succeeded() {
+            parse_log(&log.output).map_err(|error| GitFailure::failed(&error.to_string()))?
+        } else {
+            Vec::new()
+        };
+        Ok(Listing {
+            has_changes: !status.entries.is_empty(),
+            branches: branches
+                .text()
+                .lines()
+                .filter(|name| is_branch_name(name))
+                .map(str::to_owned)
+                .collect(),
+            commits,
+        })
+    }
 }
 
-/// The entries that match `query`: the uncommitted changes, then the
-/// branches, then the commits of HEAD, each matched by its name, subject or
-/// hash without regard to case.
-async fn suggestions(
-    reading: &Reading,
-    query: &str,
-    limit: usize,
-) -> Result<ProviderSuggestions, GitFailure> {
+fn lock(listings: &Mutex<Vec<KeptListing>>) -> MutexGuard<'_, Vec<KeptListing>> {
+    listings.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The entries of a listing that match `query`: the uncommitted changes,
+/// then the branches, then the commits of HEAD, each matched by its name,
+/// subject or hash without regard to case.
+fn suggestions(listing: &Listing, query: &str, limit: usize) -> ProviderSuggestions {
     let query = query.trim().to_lowercase();
     let mut entries = Vec::new();
     let mentions_changes = "uncommitted changes".contains(&query) || query.is_empty();
-    if mentions_changes {
-        let status = read_status(reading).await?;
-        if !status.entries.is_empty() {
-            entries.push(entry(
-                &Named::Changes,
-                "Uncommitted changes",
-                "@changes",
-                CHANGES,
-            ));
-        }
+    if listing.has_changes && mentions_changes {
+        entries.push(entry(
+            &Named::Changes,
+            "Uncommitted changes",
+            "@changes",
+            CHANGES,
+        ));
     }
-    let branches = reading
-        .git
-        .output(reading.run([
-            "for-each-ref",
-            "--sort=-committerdate",
-            "--format=%(refname:short)",
-            "refs/heads",
-        ]))
-        .await?;
-    for name in branches.text().lines().filter(|name| is_branch_name(name)) {
+    for name in &listing.branches {
         if name.to_lowercase().contains(&query) {
-            let named = Named::Branch(name.to_owned());
+            let named = Named::Branch(name.clone());
             entries.push(entry(&named, name, &format!("@{name}"), BRANCH));
         }
     }
-    let log = reading
-        .git
-        .run(reading.run([
-            "log".to_owned(),
-            "-z".to_owned(),
-            LOG_FORMAT.to_owned(),
-            format!("--max-count={LISTED_COMMITS}"),
-            "HEAD".to_owned(),
-        ]))
-        .await?;
-    // A branch without commits has no log.
-    let commits = if log.succeeded() {
-        parse_log(&log.output).map_err(|error| GitFailure::failed(&error.to_string()))?
-    } else {
-        Vec::new()
-    };
-    for commit in commits {
+    for commit in &listing.commits {
         let matches =
             commit.subject.to_lowercase().contains(&query) || commit.oid.starts_with(&query);
         if matches {
@@ -265,7 +380,7 @@ async fn suggestions(
     }
     let incomplete = entries.len() > limit;
     entries.truncate(limit);
-    Ok(ProviderSuggestions::new(entries, incomplete))
+    ProviderSuggestions::new(entries, incomplete)
 }
 
 fn entry(named: &Named, label: &str, token: &str, variant: &str) -> MentionEntry {
@@ -517,6 +632,7 @@ fn cut(text: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::time::Duration;
 
     use mannie_git_testing::{HostGit, TestRepository};
     use mannie_plugin_sdk::BoxFuture;
@@ -528,6 +644,12 @@ mod tests {
 
     use super::{GitMentions, Named, cut, is_branch_name};
     use crate::git::Git;
+
+    /// The conversation of [`context`].
+    const CONVERSATION: &str = "0199e0f2-0000-7000-8000-000000000003";
+
+    /// Another conversation of the same project.
+    const OTHER_CONVERSATION: &str = "0199e0f2-0000-7000-8000-000000000004";
 
     /// The core's check of reads, which these tests do not reach: the
     /// provider checks its runs through the service instead.
@@ -541,14 +663,37 @@ mod tests {
     }
 
     fn context(repository: &TestRepository) -> MentionContext {
-        let conversation = ConversationId::parse("0199e0f2-0000-7000-8000-000000000003").unwrap();
+        context_of(repository, CONVERSATION)
+    }
+
+    fn context_of(repository: &TestRepository, conversation: &str) -> MentionContext {
         MentionContext::new(
-            Some(conversation),
+            Some(ConversationId::parse(conversation).unwrap()),
             None,
             Some(repository.path().to_path_buf()),
             false,
             Arc::new(AllowEverything),
         )
+    }
+
+    /// How many times the provider ran `git status`, once for each reading.
+    fn readings(host: &HostGit) -> usize {
+        host.runs()
+            .iter()
+            .filter(|run| run.arguments.iter().any(|argument| argument == "status"))
+            .count()
+    }
+
+    /// The labels of the entries that `query` gets.
+    async fn labels(provider: &GitMentions, context: &MentionContext, query: &str) -> Vec<String> {
+        provider
+            .suggest(context, query, 10)
+            .await
+            .unwrap()
+            .entries
+            .into_iter()
+            .map(|entry| entry.label)
+            .collect()
     }
 
     fn repository() -> TestRepository {
@@ -596,6 +741,54 @@ mod tests {
                 "{run:?}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn typing_a_query_reads_the_repository_once_for_each_place() {
+        let repository = repository();
+        let host = Arc::new(HostGit::new());
+        let provider = GitMentions::new(Git::new(Arc::<HostGit>::clone(&host)));
+        let context = context(&repository);
+
+        for query in ["", "a", "ad", "add", "add the"] {
+            labels(&provider, &context, query).await;
+        }
+        let once = readings(&host);
+        repository.write("c.txt", "checked\n");
+        repository.commit("Add the checker");
+        let kept = labels(&provider, &context, "checker").await;
+        let elsewhere = labels(
+            &provider,
+            &context_of(&repository, OTHER_CONVERSATION),
+            "checker",
+        )
+        .await;
+
+        assert_eq!(once, 1);
+        assert_eq!(readings(&host), 2);
+        assert!(kept.is_empty(), "{kept:?}");
+        assert_eq!(elsewhere.len(), 1);
+        assert!(elsewhere[0].ends_with(" Add the checker"), "{elsewhere:?}");
+    }
+
+    #[tokio::test]
+    async fn a_reading_past_its_lifetime_is_read_again() {
+        let repository = repository();
+        let host = Arc::new(HostGit::new());
+        let provider = GitMentions::keeping_listings_for(
+            Git::new(Arc::<HostGit>::clone(&host)),
+            Duration::ZERO,
+        );
+        let context = context(&repository);
+
+        let before = labels(&provider, &context, "checker").await;
+        repository.write("c.txt", "checked\n");
+        repository.commit("Add the checker");
+        let after = labels(&provider, &context, "checker").await;
+
+        assert!(before.is_empty(), "{before:?}");
+        assert_eq!(after.len(), 1);
+        assert_eq!(readings(&host), 2);
     }
 
     #[tokio::test]

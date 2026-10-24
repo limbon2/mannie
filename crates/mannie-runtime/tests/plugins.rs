@@ -520,10 +520,10 @@ async fn reached(harness: &Harness, marker: &str) -> Vec<&'static str> {
     let tools = tool_names(request);
     let suggestions = harness
         .runtime
-        .suggest_mentions(SuggestMentions {
-            place: MentionPlace::NewConversation { project_id: None },
-            query: String::new(),
-        })
+        .suggest_mentions(SuggestMentions::new(
+            MentionPlace::NewConversation { project_id: None },
+            "",
+        ))
         .await
         .unwrap();
     let with_image = format!("{marker} IMAGE:");

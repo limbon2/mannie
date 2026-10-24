@@ -10,7 +10,7 @@
   import type { ImageRef, MentionPlace, MentionRef } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
   import { MessageImages } from '#lib/state/message-images.svelte.js';
-  import { type MentionChoice, MessageMentions } from '#lib/state/message-mentions.svelte.js';
+  import { type MentionChoice, type MentionOption, MessageMentions } from '#lib/state/message-mentions.svelte.js';
   import { getShellSlots } from '#lib/state/shell-slots.svelte.js';
   import type { ChatFailure } from '#lib/types/chat.js';
   import { chatFailureMessage } from '#lib/utils/chat-errors.js';
@@ -92,7 +92,7 @@
   const canSend = $derived(hasContent && !images.preparing && !disabled && !sending && !replying);
   const takesFiles = $derived(sources.length > 0 && !disabled);
   const mentioned = $derived(mentions.inText(text));
-  const listShowsEntries = $derived(mentions.open && mentions.choices.length > 0);
+  const listShowsEntries = $derived(mentions.open && mentions.options.length > 0);
   const hasActiveOption = $derived(listShowsEntries && mentions.active !== undefined);
   const activeOption = $derived(hasActiveOption ? optionId(mentions.highlighted) : undefined);
 
@@ -120,10 +120,19 @@
     box.setSelectionRange(inserted.caret, inserted.caret);
   }
 
-  async function chooseWhenAnswered(): Promise<void> {
-    const choice = await mentions.whenAnswered();
-    if (choice !== undefined) {
-      choose(choice);
+  /** Takes an option of the list: inserts an entry, or shows the rest of a kind's entries. */
+  function take(option: MentionOption): void {
+    if (option.type === 'entry') {
+      choose(option.choice);
+    } else {
+      mentions.expand(option.provider);
+    }
+  }
+
+  async function takeWhenAnswered(): Promise<void> {
+    const option = await mentions.whenAnswered();
+    if (option !== undefined) {
+      take(option);
     }
   }
 
@@ -216,15 +225,15 @@
       mentions.dismiss();
       return true;
     }
-    // An Enter or Tab before the answer for what the owner typed chooses
-    // from that answer, never from an earlier one.
-    const choosesEntry = !event.shiftKey && (event.key === 'Enter' || event.key === 'Tab');
-    if (choosesEntry && !mentions.settled) {
-      void chooseWhenAnswered();
+    // An Enter or Tab before the answers for what the owner typed chooses
+    // from those answers, never from earlier ones.
+    const takesOption = !event.shiftKey && (event.key === 'Enter' || event.key === 'Tab');
+    if (takesOption && !mentions.settled) {
+      void takeWhenAnswered();
       return true;
     }
-    const choice = mentions.active;
-    if (choice === undefined) {
+    const option = mentions.active;
+    if (option === undefined) {
       return false;
     }
     switch (event.key) {
@@ -241,7 +250,7 @@
         if (event.shiftKey) {
           return false;
         }
-        choose(choice);
+        take(option);
         return true;
       }
       default: {
@@ -304,7 +313,7 @@
   onsubmit={handleSubmit}
 >
   {#if mentions.open}
-    <MentionPicker {listId} {mentions} {optionId} onChoose={choose} />
+    <MentionPicker {listId} {mentions} {optionId} onTake={take} />
   {/if}
   {#if dragDepth > 0}
     <p class="text-sm text-primary" role="status">{m.chat_image_drop_hint()}</p>

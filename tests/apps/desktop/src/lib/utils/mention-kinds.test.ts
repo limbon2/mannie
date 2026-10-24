@@ -3,7 +3,6 @@
 import type { Component } from 'svelte';
 import { describe, expect, it } from 'vitest';
 
-import type { MentionGroup } from '../../../../../../apps/desktop/src/lib/generated/bindings.js';
 import type { MentionKind } from '../../../../../../apps/desktop/src/lib/types/shell-slots.js';
 import {
   mentionGroupHeading,
@@ -12,7 +11,7 @@ import {
   mentionSummary,
   mentionVariantName,
   mentionWarning,
-  sortMentionGroups,
+  sortMentionProviders,
 } from '../../../../../../apps/desktop/src/lib/utils/mention-kinds.js';
 
 /** A stand-in for an icon component. */
@@ -28,10 +27,6 @@ const NOTES: MentionKind = {
   variantName: () => 'Note',
   warning: () => 'private',
 };
-
-function group(provider: string): MentionGroup {
-  return { entries: [], failure: null, incomplete: false, provider };
-}
 
 describe('the words of a mention', () => {
   it('come from the kind', () => {
@@ -54,17 +49,15 @@ describe('the words of a mention', () => {
   });
 });
 
-describe('sortMentionGroups', () => {
-  it('orders the groups by their kinds, and groups without a kind last in their order', () => {
+describe('sortMentionProviders', () => {
+  it('orders the providers by their kinds, and providers without a kind last in their order', () => {
     const kinds = new Map([
       ['files', { ...NOTES, id: 'files', order: 0 }],
       ['notes', NOTES],
     ]);
 
-    const sorted = sortMentionGroups([group('stray'), group('notes'), group('other'), group('files')], (provider) =>
-      kinds.get(provider),
-    );
+    const sorted = sortMentionProviders(['stray', 'notes', 'other', 'files'], (provider) => kinds.get(provider));
 
-    expect(sorted.map((entry) => entry.provider)).toEqual(['files', 'notes', 'stray', 'other']);
+    expect(sorted).toEqual(['files', 'notes', 'stray', 'other']);
   });
 });

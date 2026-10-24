@@ -2,14 +2,22 @@
 //! workspace (ADR-0032, decision 9; docs/features/chat/mentions.md, files and
 //! folders). It reads only what the policy allows the model to read without
 //! asking, and gives the model a note for the rest.
+//!
+//! The list searches an index of the workspace, whose walk takes seconds in a
+//! large project. Queries that arrive while it is built wait for that one
+//! build, and an index older than [`INDEX_LIFETIME`] still answers at once
+//! while a new one is built in the background, so only the first query in a
+//! workspace waits for a walk.
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use futures_util::FutureExt;
-use futures_util::future::BoxFuture;
+use futures_util::future::{BoxFuture, Shared};
 use mannie_plugin_sdk::points::mentions::{MentionContent, ProviderSuggestions, RenderedMention};
 use mannie_tools::{
     FileMention, FolderMention, IndexMatch, MentionIndex, MentionPathError, MentionReadFailure,
@@ -24,8 +32,8 @@ use crate::texts;
 /// The ID of the core's provider of files and folders.
 pub const FILES: &str = "files";
 
-/// How long the index of a workspace serves queries before it is built again,
-/// so that typing a query walks the folder once.
+/// How long the index of a workspace answers before a query builds it again
+/// in the background, so that typing a query walks the folder once.
 const INDEX_LIFETIME: Duration = Duration::from_secs(15);
 
 /// The most workspaces whose indexes are kept.
@@ -45,17 +53,53 @@ const NO_WORKSPACE: &str = "no_workspace";
 /// The failure of a list whose workspace cannot be read.
 const FOLDER_UNREADABLE: &str = "folder_unreadable";
 
+/// Walks a workspace into an index, or gives `None` for a folder that is not
+/// there.
+type Walk = fn(&Path) -> Option<MentionIndex>;
+
+/// A walk that runs, which every query that waits for it shares.
+type Building = Shared<BoxFuture<'static, Result<Arc<MentionIndex>, String>>>;
+
 /// The core's provider of the files and folders of a workspace.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct FileMentions {
-    indexes: Mutex<Vec<CachedIndex>>,
+    /// Shared with the walks, which keep their index when they end.
+    indexes: Arc<Mutex<Vec<Workspace>>>,
+    walk: Walk,
+    /// The number of the next walk.
+    walks: AtomicU64,
 }
 
-#[derive(Debug)]
-struct CachedIndex {
+/// The index of one workspace.
+struct Workspace {
     root: PathBuf,
-    built: Instant,
-    index: Arc<MentionIndex>,
+    /// The latest index, with the moment its walk started.
+    built: Option<(Instant, Arc<MentionIndex>)>,
+    /// The walk that runs, if one does, with its number, so that a walk
+    /// that ends after its workspace was dropped and asked for again keeps
+    /// nothing.
+    building: Option<(u64, Building)>,
+    /// When a query last asked for the index, which decides the workspace
+    /// whose index is dropped first.
+    used: Instant,
+}
+
+impl fmt::Debug for Workspace {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Workspace")
+            .field("root", &self.root)
+            .field("built", &self.built.as_ref().map(|(at, _index)| at))
+            .field("building", &self.building.is_some())
+            .field("used", &self.used)
+            .finish()
+    }
+}
+
+impl Default for FileMentions {
+    fn default() -> Self {
+        Self::walking(|folder| folder.is_dir().then(|| MentionIndex::build(folder)))
+    }
 }
 
 impl FileMentions {
@@ -64,43 +108,131 @@ impl FileMentions {
         Self::default()
     }
 
-    /// The index of a workspace: the one built in the last 15 seconds, or a
-    /// new one.
-    async fn index(&self, root: &Path) -> Result<Arc<MentionIndex>, String> {
-        if let Some(index) = self.cached(root) {
-            return Ok(index);
+    /// The provider, which indexes a workspace with `walk`.
+    fn walking(walk: Walk) -> Self {
+        Self {
+            indexes: Arc::new(Mutex::new(Vec::new())),
+            walk,
+            walks: AtomicU64::new(0),
         }
-        let folder = root.to_path_buf();
-        let built = tokio::task::spawn_blocking(move || {
-            folder.is_dir().then(|| MentionIndex::build(&folder))
-        })
-        .await
-        .map_err(|_failed| FOLDER_UNREADABLE.to_owned())?
-        .ok_or_else(|| FOLDER_UNREADABLE.to_owned())?;
-        let index = Arc::new(built);
-        self.keep(root, Arc::clone(&index));
-        Ok(index)
     }
 
-    fn cached(&self, root: &Path) -> Option<Arc<MentionIndex>> {
-        let indexes = self.indexes.lock().unwrap_or_else(PoisonError::into_inner);
-        indexes
-            .iter()
-            .find(|cached| cached.root == root && cached.built.elapsed() < INDEX_LIFETIME)
-            .map(|cached| Arc::clone(&cached.index))
+    /// The index of a workspace. A query waits only when there is none yet,
+    /// and then for the walk that runs, if one does.
+    async fn index(&self, root: &Path) -> Result<Arc<MentionIndex>, String> {
+        let building = {
+            let mut indexes = lock(&self.indexes);
+            let workspace = workspace(&mut indexes, root);
+            if let Some((at, index)) = &workspace.built {
+                let index = Arc::clone(index);
+                if at.elapsed() >= INDEX_LIFETIME && workspace.building.is_none() {
+                    workspace.building = Some(self.start_walk(root));
+                }
+                return Ok(index);
+            }
+            let (_number, building) = workspace
+                .building
+                .get_or_insert_with(|| self.start_walk(root));
+            building.clone()
+        };
+        building.await
     }
 
-    fn keep(&self, root: &Path, index: Arc<MentionIndex>) {
-        let mut indexes = self.indexes.lock().unwrap_or_else(PoisonError::into_inner);
-        indexes.retain(|cached| cached.root != root && cached.built.elapsed() < INDEX_LIFETIME);
-        indexes.push(CachedIndex {
-            root: root.to_path_buf(),
-            built: Instant::now(),
-            index,
+    /// Starts walking a workspace in a task of its own, which keeps the index
+    /// when it ends, also after every query that waited for it has gone.
+    fn start_walk(&self, root: &Path) -> (u64, Building) {
+        let number = self.walks.fetch_add(1, Ordering::Relaxed);
+        let indexes = Arc::clone(&self.indexes);
+        let root = root.to_path_buf();
+        let walk = self.walk;
+        let task = tokio::spawn(async move {
+            let started = Instant::now();
+            let folder = root.clone();
+            let walked = tokio::task::spawn_blocking(move || walk(&folder)).await;
+            let outcome = match walked {
+                Ok(Some(index)) => Ok(Arc::new(index)),
+                Ok(None) | Err(_) => Err(FOLDER_UNREADABLE.to_owned()),
+            };
+            keep(&indexes, &root, number, started, &outcome);
+            outcome
         });
-        let surplus = indexes.len().saturating_sub(MAX_INDEXES);
-        indexes.drain(..surplus);
+        let building = async move {
+            task.await
+                .unwrap_or_else(|_failed| Err(FOLDER_UNREADABLE.to_owned()))
+        }
+        .boxed()
+        .shared();
+        (number, building)
     }
+
+    /// Waits for the walk of a workspace that runs, if one does.
+    #[cfg(test)]
+    async fn walked(&self, root: &Path) {
+        let building = lock(&self.indexes)
+            .iter()
+            .find(|workspace| workspace.root == root)
+            .and_then(|workspace| workspace.building.clone());
+        if let Some((_number, building)) = building {
+            let _outcome = building.await;
+        }
+    }
+}
+
+fn lock(indexes: &Mutex<Vec<Workspace>>) -> MutexGuard<'_, Vec<Workspace>> {
+    indexes.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The workspace of `root`, marked as used.
+fn workspace<'a>(indexes: &'a mut Vec<Workspace>, root: &Path) -> &'a mut Workspace {
+    let now = Instant::now();
+    let found = indexes.iter().position(|workspace| workspace.root == root);
+    let position = found.unwrap_or_else(|| add_workspace(indexes, root, now));
+    let workspace = &mut indexes[position];
+    workspace.used = now;
+    workspace
+}
+
+/// Adds the workspace of `root` without an index, in place of the workspace
+/// used longest ago once [`MAX_INDEXES`] are kept, and gives its position.
+fn add_workspace(indexes: &mut Vec<Workspace>, root: &Path, now: Instant) -> usize {
+    if indexes.len() >= MAX_INDEXES
+        && let Some(oldest) = (0..indexes.len()).min_by_key(|&index| indexes[index].used)
+    {
+        indexes.swap_remove(oldest);
+    }
+    indexes.push(Workspace {
+        root: root.to_path_buf(),
+        built: None,
+        building: None,
+        used: now,
+    });
+    indexes.len() - 1
+}
+
+/// Keeps what the walk `number` of `root` gave. A folder that could not be
+/// walked drops its index, so that the list says so instead of listing what
+/// was.
+fn keep(
+    indexes: &Mutex<Vec<Workspace>>,
+    root: &Path,
+    number: u64,
+    started: Instant,
+    outcome: &Result<Arc<MentionIndex>, String>,
+) {
+    let mut indexes = lock(indexes);
+    let found = indexes.iter_mut().find(|workspace| {
+        let is_root = workspace.root == root;
+        is_root && matches!(workspace.building, Some((running, _)) if running == number)
+    });
+    // A workspace whose index was dropped while the walk ran keeps nothing.
+    let Some(workspace) = found else {
+        return;
+    };
+    workspace.building = None;
+    workspace.built = outcome
+        .as_ref()
+        .ok()
+        .map(|index| (started, Arc::clone(index)));
 }
 
 impl MentionProvider for FileMentions {
