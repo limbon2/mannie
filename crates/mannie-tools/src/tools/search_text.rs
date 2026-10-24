@@ -246,6 +246,7 @@ fn search(context: &ToolContext, input: &Input, stop: &StopSignal) -> Result<Don
         },
         output,
         archives: Vec::new(),
+        images: Vec::new(),
     })
 }
 

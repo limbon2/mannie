@@ -31,6 +31,7 @@ mod hub;
 mod ids;
 mod images;
 mod instructions;
+mod local_servers;
 mod mentions;
 mod plugin_executions;
 mod plugin_tools;
@@ -44,6 +45,7 @@ mod tasks;
 #[cfg(feature = "testing")]
 pub mod testing;
 pub mod texts;
+mod tool_images;
 mod tools;
 #[cfg(feature = "validation")]
 mod validation;
@@ -90,6 +92,7 @@ use crate::background::{BackgroundCommandsProvider, CommandRegistry};
 use crate::executors::{CredentialsProvider, ExecutorFollows, ExecutorHostProvider};
 use crate::hub::Hubs;
 use crate::ids::IdGenerator;
+use crate::local_servers::{LocalServersProvider, Servers};
 use crate::plugin_executions::PluginExecutions;
 use crate::plugins::Registry;
 use crate::processes::{ProcessesProvider, Programs};
@@ -254,6 +257,8 @@ struct Inner {
     approvals: Mutex<HashMap<ConversationId, Pending>>,
     /// The commands that run in the background on this machine (ADR-0041).
     background: CommandRegistry,
+    /// The servers that plugins started (ADR-0043, decision 5).
+    local_servers: Servers,
     /// What wake-ups know of the conversations (ADR-0041).
     wake_ups: WakeUps,
     hubs: Hubs,
@@ -388,6 +393,7 @@ impl Runtime {
             assigning: tokio::sync::Mutex::new(()),
             approvals: Mutex::default(),
             background: CommandRegistry::default(),
+            local_servers: Servers::default(),
             wake_ups: WakeUps::default(),
             hubs: Hubs::default(),
             busy: Mutex::default(),
@@ -416,6 +422,7 @@ impl Runtime {
             Arc::new(CredentialsProvider::new(self)),
             Arc::new(ProcessesProvider::new(self)),
             Arc::new(BackgroundCommandsProvider::new(self)),
+            Arc::new(LocalServersProvider::new(self)),
         ]
     }
 
@@ -465,6 +472,7 @@ impl Runtime {
         // After the runs, so no start is under way, and before the hubs, so
         // the ends reach the subscribers.
         self.end_background_commands().await;
+        self.end_local_servers().await;
         self.inner.hubs.shut_down().await;
         self.inner.assigned.shut_down();
         if let Err(error) = self.inner.store.flush().await {

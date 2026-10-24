@@ -93,6 +93,13 @@ required-features = ["testing"]
 name = "plugins"
 required-features = ["testing"]
 
+# Tool sources (ADR-0043): sets that replace one another, a run that keeps
+# what it started with, tools left out alone, tools that give way to static
+# ones, and the room of a request.
+[[test]]
+name = "tool_sources"
+required-features = ["testing"]
+
 # Mentions (ADR-0032): the suggestions, the core's files and folders, the
 # checks of a message's references, the budget that they share, and a fake
 # plugin's provider.
@@ -172,6 +179,23 @@ required-features = ["testing"]
 name = "plugin_programs"
 required-features = ["testing"]
 
+# Plugins' calls of a tool server's tools: their accesses, grants and full
+# access (ADR-0043).
+[[test]]
+name = "external_tools"
+required-features = ["testing"]
+
+# The images of plugins' tool results: their checks, their cleaning and the
+# images that a request sends (ADR-0044).
+[[test]]
+name = "plugin_images"
+required-features = ["testing"]
+
+# Local servers that plugins start, and their ends (ADR-0043, decision 5).
+[[test]]
+name = "local_servers"
+required-features = ["testing"]
+
 [dependencies]
 # The bytes of a stored image as `read_image` returns them (ADR-0033).
 base64 = { workspace = true }
@@ -200,6 +224,10 @@ tempfile = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 tracing = { workspace = true }
+# A tool server's URL in a plugin's access, read as HTTP clients read it, so
+# a credential in its user information or its query is found however the URL
+# spells it (ADR-0043, decision 6).
+url = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::clock::UtcMillis;
-use crate::ids::{ArchiveId, ConversationId, GrantId, ProjectId, RuleId};
+use crate::ids::{ArchiveId, ConversationId, GrantId, PartId, ProjectId, RuleId};
 
 use super::approval::{GrantScope, RemoteTarget};
 use super::background::BackgroundCommandView;
@@ -165,6 +165,19 @@ pub struct ReadToolOutput {
     pub limit: u32,
 }
 
+/// The argument of `read_tool_image`: an image of a tool call's result
+/// (ADR-0044, decision 7).
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadToolImage {
+    /// The conversation the call belongs to.
+    pub conversation_id: ConversationId,
+    /// The call's part.
+    pub part_id: PartId,
+    /// The image's position among the result's images.
+    pub position: u32,
+}
+
 /// The argument of `stop_background_command`: the owner's Stop of a
 /// background command, also of a child's task conversation (ADR-0041).
 #[derive(Debug, Clone, Deserialize, Type)]
@@ -282,6 +295,10 @@ pub enum ToolsError {
     /// The archived output does not exist in this conversation.
     #[error("the archived output does not exist")]
     OutputNotFound,
+    /// The tool call has no image at this position in this conversation
+    /// (ADR-0044).
+    #[error("the image does not exist")]
+    ImageNotFound,
     /// An environment variable's name is not valid.
     #[error("{name:?} is not a valid name of an environment variable")]
     EnvironmentNameInvalid {
@@ -363,6 +380,7 @@ impl ToolsError {
             Self::RuleNotFound => "tools.rule_not_found",
             Self::GrantNotFound => "tools.grant_not_found",
             Self::OutputNotFound => "tools.output_not_found",
+            Self::ImageNotFound => "tools.image_not_found",
             Self::EnvironmentNameInvalid { .. } => "tools.environment_name_invalid",
             Self::EnvironmentNameSecret { .. } => "tools.environment_name_secret",
             Self::TooManyEnvironmentNames { .. } => "tools.too_many_environment_names",

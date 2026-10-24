@@ -198,6 +198,7 @@ fn model_request(manifest: &RequestManifest) -> ModelRequest {
                 content.push(Content::ToolResult {
                     call_id: result.call_id.clone(),
                     output: result.output.clone(),
+                    images: Vec::new(),
                 });
             }
             Message { role, content }
@@ -210,6 +211,7 @@ fn model_request(manifest: &RequestManifest) -> ModelRequest {
             name: tool.name.clone(),
             description: tool.description.clone(),
             parameters: tool.parameters.clone(),
+            strict: true,
         })
         .collect();
     let tool_choice = match manifest.tool_choice.as_deref() {

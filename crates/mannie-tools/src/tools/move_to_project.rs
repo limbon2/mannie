@@ -102,6 +102,7 @@ impl TypedTool for MoveToProject {
                     folder: moved.folder,
                 },
                 archives: Vec::new(),
+                images: Vec::new(),
             })
         }
         .boxed()

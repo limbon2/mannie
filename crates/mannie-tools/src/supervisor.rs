@@ -15,6 +15,7 @@ mod freebsd;
 #[cfg(target_os = "linux")]
 mod linux;
 mod live;
+mod server;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod unix;
 #[cfg(windows)]
@@ -44,6 +45,7 @@ use capture::{ByteStream, Stream};
 
 pub use background::{BackgroundProcess, BackgroundSpec};
 pub use live::{ArchivedLog, LiveLog, LogLines, LogMark, MAX_LINE_BYTES};
+pub use server::{ServerInput, ServerProcess, ServerSpec, ServerStream};
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use unix as platform;

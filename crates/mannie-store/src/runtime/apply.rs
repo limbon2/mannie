@@ -17,8 +17,8 @@ use super::rows::{
 };
 use super::{
     Applied, Change, DOCUMENT_VERSION, NewArchive, NewCheckpoint, NewConversation, NewImage,
-    NewMention, NewPart, NewRun, NewTask, ProviderItem, RuntimeStoreError, TaskEnding, archives,
-    background, images, tasks,
+    NewMention, NewPart, NewRun, NewTask, NewToolImage, ProviderItem, RuntimeStoreError,
+    TaskEnding, archives, background, images, tasks, tool_images,
 };
 use crate::writer::TransactError;
 use crate::{Durability, Store};
@@ -360,6 +360,7 @@ impl Batch<'_> {
                 part_id,
                 text,
             } => self.add_request_note(&turn_id, &part_id, &text),
+            Change::AddToolImages { part_id, images } => self.add_tool_images(&part_id, &images),
         }
     }
 
@@ -885,6 +886,36 @@ impl Batch<'_> {
             Some(part_id.as_str()),
             &EventBody::empty(),
         )?;
+        Ok(())
+    }
+
+    /// Stores the images of a tool call's result with its part, which must be
+    /// a tool call of this conversation that has not finished.
+    fn add_tool_images(
+        &mut self,
+        part_id: &PartId,
+        images: &[NewToolImage],
+    ) -> Result<(), RuntimeStoreError> {
+        self.require_streaming(part_id)?;
+        let kind: Option<String> = self
+            .transaction
+            .prepare_cached(SELECT_PART_KIND)?
+            .query_row([part_id.as_str(), self.conversation], |row| row.get(0))
+            .optional()?;
+        if kind.as_deref() != Some(PartKind::ToolCall.as_str()) {
+            return Err(RuntimeStoreError::NotAToolCall {
+                part: part_id.clone(),
+            });
+        }
+        for image in images {
+            tool_images::insert(
+                self.transaction,
+                self.conversation,
+                part_id.as_str(),
+                image,
+                self.now,
+            )?;
+        }
         Ok(())
     }
 

@@ -6,6 +6,7 @@ use specta::Type;
 
 use crate::ids::ProjectId;
 
+use super::external::{ToolHint, ToolServerEndpoint};
 use super::program::ProgramEffect;
 
 /// How an operation uses a path.
@@ -153,6 +154,35 @@ pub enum Access {
         /// while the owner decided goes back to the policy.
         state: Option<String>,
     },
+    /// A call of a tool that a tool server offers, such as an MCP server
+    /// that the owner registered with a plugin (ADR-0043, decision 4). The
+    /// plugin names the server and the call, and the core adds the plugin,
+    /// so no plugin speaks for another.
+    ExternalTool {
+        /// The plugin that reaches the server.
+        plugin: String,
+        /// The plugin's key for the server, which stays while the server
+        /// exists.
+        target: String,
+        /// The server's name, as the owner gave it.
+        label: String,
+        /// Where the server runs.
+        endpoint: ToolServerEndpoint,
+        /// The tool, as the server names it, or `read_resource` for a read
+        /// of one of the server's resources.
+        tool: String,
+        /// The tool's title, as the server gives it, for display only.
+        title: Option<String>,
+        /// The call's arguments as JSON with sorted keys, or the URI of the
+        /// resource that a read reads.
+        arguments: String,
+        /// Whether a call's view cut the arguments to its limit. An access
+        /// that the policy decides on is never cut.
+        #[serde(default)]
+        arguments_cut: bool,
+        /// What the server says of the tool, sorted, for display only.
+        hints: Vec<ToolHint>,
+    },
 }
 
 impl Access {
@@ -165,7 +195,8 @@ impl Access {
             Self::Command { .. }
             | Self::Project { .. }
             | Self::RemoteCommand { .. }
-            | Self::Program { .. } => true,
+            | Self::Program { .. }
+            | Self::ExternalTool { .. } => true,
         }
     }
 }

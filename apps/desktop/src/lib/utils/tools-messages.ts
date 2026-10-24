@@ -17,6 +17,8 @@ import type {
   ProgramEffectKey,
   Refusal,
   ToolFailure,
+  ToolHint,
+  ToolServerEndpoint,
 } from '#lib/generated/bindings.js';
 import { m } from '#lib/paraglide/messages.js';
 import { pluginName } from '#lib/state/plugin-catalog.js';
@@ -106,6 +108,9 @@ export function toolsFailureMessage(failure: ToolsFailure): string {
     }
     case 'grant_not_possible': {
       return m.tools_error_grant_not_possible();
+    }
+    case 'image_not_found': {
+      return m.tools_error_image_not_found();
     }
     case 'not_in_a_project': {
       return m.tools_error_not_in_a_project();
@@ -291,6 +296,9 @@ export function refusalMessage(refusal: Refusal): string {
     case 'no_programs_on_host': {
       return m.tools_refusal_no_programs_on_host();
     }
+    case 'no_external_tools': {
+      return m.tools_refusal_no_external_tools();
+    }
     case 'no_projects_on_host': {
       return m.tools_refusal_no_projects_on_host();
     }
@@ -311,6 +319,9 @@ export function approvalReasonMessage(reason: ApprovalReason): string {
     }
     case 'command': {
       return m.tools_reason_command();
+    }
+    case 'external_tool': {
+      return m.tools_reason_external_tool();
     }
     case 'host_asks': {
       return m.tools_reason_host_asks();
@@ -540,10 +551,59 @@ export function effectKeysText(keys: readonly ProgramEffectKey[]): string {
   return new Intl.ListFormat(undefined, { type: 'conjunction' }).format(keys.map((key) => effectKeyPhrase(key)));
 }
 
+/** Where a tool server runs, as one line: its program with its arguments, or its URL (ADR-0043). */
+export function toolServerEndpointText(endpoint: ToolServerEndpoint): string {
+  switch (endpoint.kind) {
+    case 'program': {
+      return programRunText([endpoint.program, ...endpoint.arguments]);
+    }
+    case 'url': {
+      return endpoint.url;
+    }
+  }
+}
+
+/** What a tool server says of one of its tools, as a phrase that follows "this tool". */
+function toolHintPhrase(hint: ToolHint): string {
+  switch (hint) {
+    case 'destructive': {
+      return m.tools_hint_destructive();
+    }
+    case 'idempotent': {
+      return m.tools_hint_idempotent();
+    }
+    case 'open_world': {
+      return m.tools_hint_open_world();
+    }
+    case 'read_only': {
+      return m.tools_hint_read_only();
+    }
+  }
+}
+
+/**
+ * What a tool server says of a tool, as one sentence that calls it the
+ * server's claim. Nothing that allows a call reads the hints (ADR-0043,
+ * decision 4).
+ */
+export function toolHintsMessage(hints: readonly ToolHint[]): string {
+  const phrases = hints.map((hint) => toolHintPhrase(hint));
+  return m.tools_access_external_hints({
+    hints: new Intl.ListFormat(undefined, { type: 'conjunction' }).format(phrases),
+  });
+}
+
 /** What a grant allows, such as "Changing files in D:\Projects\app". */
 export function grantScopeMessage(scope: GrantScope): string {
   if (scope.kind === 'command') {
     return m.tools_grant_command({ command: scope.command, folder: scope.workingDirectory });
+  }
+  if (scope.kind === 'external_tool') {
+    return m.tools_grant_external_tool({
+      endpoint: toolServerEndpointText(scope.endpoint),
+      server: scope.label,
+      tool: scope.tool,
+    });
   }
   if (scope.kind === 'remote_command') {
     return m.tools_grant_remote_command({ command: scope.command, endpoint: scope.endpoint, host: scope.label });

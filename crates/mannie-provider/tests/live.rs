@@ -13,7 +13,7 @@
 //! | `MANNIE_LIVE_REASONING_EFFORT`   | An effort such as `low`, for the reasoning scenarios           |
 //! | `MANNIE_LIVE_CONTEXT_WINDOW`     | The model's context window, for the overflow scenario          |
 //! | `MANNIE_LIVE_SERVER_VERSION`     | The server's version, for the fixtures' manifests              |
-//! | `MANNIE_LIVE_IMAGES`             | `1` when the model reads images, for the image scenario        |
+//! | `MANNIE_LIVE_IMAGES`             | `1` when the model reads images, for the image scenarios       |
 //! | `MANNIE_RECORD_FIXTURES`         | `1` writes each scenario as a recorded fixture                 |
 //!
 //! Recording never writes a file that contains the credential.
@@ -102,6 +102,10 @@ impl Live {
     }
 }
 
+/// The most tools that a run offers in one request
+/// (crates/mannie-runtime/src/calls.rs, `MAX_REQUEST_TOOLS`).
+const MANY_TOOLS: usize = 128;
+
 /// The tool of the tool scenarios, as the provider test offers it.
 fn status_tool() -> ToolDefinition {
     ToolDefinition {
@@ -115,6 +119,7 @@ fn status_tool() -> ToolDefinition {
             "required": ["status"],
             "additionalProperties": false,
         }),
+        strict: true,
     }
 }
 
@@ -323,7 +328,9 @@ fn manifest_message(message: &Message) -> Value {
                 name,
                 arguments,
             } => calls.push(json!({ "callId": call_id, "name": name, "arguments": arguments })),
-            Content::ToolResult { call_id, output } => {
+            Content::ToolResult {
+                call_id, output, ..
+            } => {
                 results.push(json!({ "callId": call_id, "output": output }));
             }
         }
@@ -575,6 +582,7 @@ impl Runner {
                         call_id,
                         output: "The status was received. Now reply with the single word: done"
                             .to_owned(),
+                        images: Vec::new(),
                     }],
                 },
             ],
@@ -615,6 +623,124 @@ impl Runner {
         assert!(!answer.text().trim().is_empty(), "image: no answer");
     }
 
+    /// A tool's result with an image, in the placement that the interface
+    /// takes: an output array on the Responses API, and a message of the
+    /// owner's role after the tool messages on Chat Completions (ADR-0044,
+    /// decision 6; M12 spike S6).
+    async fn check_tool_image(&self) {
+        let live = &self.live;
+        let call_id = "call_live_image".to_owned();
+        let image = ImageInput {
+            format: ImageFormat::Png,
+            width: 64,
+            height: 64,
+            data: ImageBytes::from(solid_png(64, 64, [30, 160, 40])),
+        };
+        let replay = ModelRequest {
+            messages: vec![
+                Message::text(Role::User, TOOL_PROMPT),
+                Message {
+                    role: Role::Assistant,
+                    content: vec![Content::ToolCall {
+                        call_id: call_id.clone(),
+                        name: "report_status".to_owned(),
+                        arguments: r#"{"status":"ready"}"#.to_owned(),
+                    }],
+                },
+                Message {
+                    role: Role::Tool,
+                    content: vec![Content::ToolResult {
+                        call_id,
+                        output: "The status light is in the image. Reply with its main color, \
+                                 in one word."
+                            .to_owned(),
+                        images: vec![image],
+                    }],
+                },
+            ],
+            tools: vec![status_tool()],
+            ..live.request("", 2_048, live.effort)
+        };
+        let answer = self
+            .scenario("tool_image", live.credential.clone(), replay)
+            .await;
+        assert_eq!(answer.error, None, "tool image");
+        assert!(!answer.text().trim().is_empty(), "tool image: no answer");
+    }
+
+    /// A tool whose schema is loose, as a tool server writes one: optional
+    /// properties without `null`, a free-form object and no
+    /// `additionalProperties`, which strict mode would refuse (ADR-0043,
+    /// decision 3; M12 spike S9).
+    async fn check_loose_tool(&self) {
+        let live = &self.live;
+        let tool = ToolDefinition {
+            name: "list_issues".to_owned(),
+            description: "Lists the issues of a repository.".to_owned(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "owner": { "type": "string", "description": "The repository's owner." },
+                    "repository": { "type": "string", "description": "The repository's name." },
+                    "labels": { "type": "array", "items": { "type": "string" } },
+                    "filters": { "type": "object", "description": "Any other filters." },
+                },
+                "required": ["owner", "repository"],
+            }),
+            strict: false,
+        };
+        let request = ModelRequest {
+            messages: vec![Message::text(
+                Role::User,
+                "Call the list_issues tool for the repository project of the owner example.",
+            )],
+            tools: vec![tool],
+            ..live.request("", 2_048, ReasoningEffort::ServerDefault)
+        };
+        let call = self
+            .scenario("loose_tool", live.credential.clone(), request)
+            .await;
+        assert_eq!(call.error, None, "loose tool");
+        let (_call_id, name, _arguments) = call.tool_call().expect("the model called the tool");
+        assert_eq!(name, "list_issues", "loose tool");
+    }
+
+    /// A request with as many tools as a run offers at most, which the
+    /// server must take; a server whose context the definitions overflow
+    /// says so instead (ADR-0043, decision 2; M12 spike S7).
+    async fn check_many_tools(&self) {
+        let live = &self.live;
+        let tools = (0..MANY_TOOLS)
+            .map(|index| ToolDefinition {
+                name: format!("tool_{index:03}"),
+                description: "Does nothing.".to_owned(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": { "note": { "type": "string" } },
+                    "required": ["note"],
+                    "additionalProperties": false,
+                }),
+                strict: true,
+            })
+            .collect();
+        let request = ModelRequest {
+            messages: vec![Message::text(
+                Role::User,
+                "Reply with the single word: ready",
+            )],
+            tools,
+            ..live.request("", 2_048, ReasoningEffort::ServerDefault)
+        };
+        let answer = self
+            .scenario("many_tools", live.credential.clone(), request)
+            .await;
+        assert!(
+            matches!(answer.error, None | Some(ProviderError::ContextOverflow)),
+            "many tools: {:?}",
+            answer.error
+        );
+    }
+
     async fn check_model_list(&self) {
         let listed = list_models(
             &self.client,
@@ -642,8 +768,11 @@ async fn the_live_server_behaves_as_the_fixtures_say() {
     runner.check_reasoning().await;
     runner.check_overflow().await;
     runner.check_tools().await;
+    runner.check_loose_tool().await;
+    runner.check_many_tools().await;
     runner.check_model_list().await;
     if runner.live.images {
         runner.check_image().await;
+        runner.check_tool_image().await;
     }
 }

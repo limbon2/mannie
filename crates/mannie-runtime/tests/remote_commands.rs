@@ -139,7 +139,7 @@ impl Tool for RemoteShell {
             .iter()
             .filter_map(|access| match access {
                 ToolAccess::RemoteCommand(remote) => Some(remote.command.clone()),
-                ToolAccess::Path(_) | ToolAccess::Program(_) => None,
+                ToolAccess::Path(_) | ToolAccess::Program(_) | ToolAccess::ExternalTool(_) => None,
             })
             .collect::<Vec<_>>()
             .join(" ");

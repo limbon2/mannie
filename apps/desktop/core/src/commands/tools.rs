@@ -5,11 +5,12 @@
 
 use mannie_runtime::Runtime;
 use mannie_types::chat::ConversationRef;
+use mannie_types::images::ImageData;
 use mannie_types::ipc::{ChannelBatch, CommandError};
 use mannie_types::tools::{
     BackgroundCommandView, CommandOutputUpdate, CommandRule, ConversationGrant, DecideApproval,
-    GrantRef, ProgramRule, ProgramRuleRef, ReadToolOutput, RemoteCommandRule, RemoteRuleRef,
-    RuleRef, SetFullAccess, SharedGrant, SharedGrantRef, StopBackgroundCommand,
+    GrantRef, ProgramRule, ProgramRuleRef, ReadToolImage, ReadToolOutput, RemoteCommandRule,
+    RemoteRuleRef, RuleRef, SetFullAccess, SharedGrant, SharedGrantRef, StopBackgroundCommand,
     SubscribeCommandOutput, ToolOutputPage, ToolsError, ToolsSettings, UpdateToolsSettings,
 };
 use mannie_types::transcript::SubscriptionId;
@@ -242,6 +243,21 @@ pub(crate) async fn read_tool_output(
         .tool_output(input)
         .await
         .map_err(refused("read_tool_output"))
+}
+
+/// An image of a tool call's result, as the model saw it (ADR-0044,
+/// decision 7).
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn read_tool_image(
+    core: State<'_, Core>,
+    input: ReadToolImage,
+) -> Result<ImageData, CommandError<ToolsError>> {
+    runtime(&core)
+        .map_err(refused("read_tool_image"))?
+        .read_tool_image(input)
+        .await
+        .map_err(refused("read_tool_image"))
 }
 
 /// Stops a background command at the owner's request, also one of a child's

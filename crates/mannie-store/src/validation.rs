@@ -106,6 +106,7 @@ fn seeded_call(call_id: String) -> ToolCallDocument {
             },
             output,
             archives: Vec::new(),
+            images: Vec::new(),
         }),
         ..ToolCallDocument::receiving(call_id, "read_file".to_owned())
     }

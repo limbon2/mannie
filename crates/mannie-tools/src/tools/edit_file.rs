@@ -118,6 +118,7 @@ fn edit(target: &Access, input: &Input) -> Result<Done, ToolFailure> {
             replacements: count(input.edits.len()),
         },
         archives: Vec::new(),
+        images: Vec::new(),
     })
 }
 

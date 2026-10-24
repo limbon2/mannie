@@ -371,6 +371,7 @@ fn tool_calls_count_and_hash_their_results_and_reach_summaries() {
                 outcome: ToolOutcome::Unknown,
                 output: output.to_owned(),
                 archives: Vec::new(),
+                images: Vec::new(),
             }),
             ..ToolCallDocument::receiving("call_1".to_owned(), "read_file".to_owned())
         }),

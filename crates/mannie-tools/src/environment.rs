@@ -6,11 +6,14 @@
 //!
 //! An installed program that a plugin runs receives the same variables, the
 //! names that its plugin's manifest inherits when Mannie's environment has
-//! them, and the variables that the plugin sets (ADR-0038, decision 7).
+//! them, and the variables that the plugin sets (ADR-0038, decision 7). A
+//! local server receives them with its own variables and secrets, which the
+//! owner gave that server alone (ADR-0043, decisions 5 and 6).
 
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 
+use mannie_types::secret::Secret;
 use mannie_types::tools::{EnvName, ToolsError, is_loader_name};
 
 /// The variables that every command receives on Windows. `PSModulePath` is
@@ -160,6 +163,46 @@ impl CommandEnvironment {
     }
 }
 
+impl CommandEnvironment {
+    /// The environment of a local server: these variables, then the
+    /// server's own variables and its secrets, which replace a variable of
+    /// the same name. A server's variable may look like a secret, since the
+    /// owner gave it to this server alone (ADR-0043, decision 6), but a name
+    /// that is not a variable's, that loads libraries into programs or that
+    /// belongs to the allow list is refused, and so is a value with NUL.
+    pub fn for_server(
+        &self,
+        plain: &[(String, String)],
+        secrets: &[(String, &Secret)],
+    ) -> Result<Vec<(OsString, OsString)>, ProgramEnvironmentError> {
+        let given = plain
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str()))
+            .chain(
+                secrets
+                    .iter()
+                    .map(|(name, secret)| (name.as_str(), secret.expose())),
+            );
+        let mut variables = self.variables.clone();
+        for (name, value) in given {
+            check_server_name(name)?;
+            if is_allowed(OsStr::new(name), &[]) {
+                return Err(ProgramEnvironmentError::Reserved {
+                    name: name.to_owned(),
+                });
+            }
+            if value.contains('\0') {
+                return Err(ProgramEnvironmentError::Value {
+                    name: name.to_owned(),
+                });
+            }
+            variables.retain(|(present, _)| !same_os_name(present, OsStr::new(name)));
+            variables.push((OsString::from(name), OsString::from(value)));
+        }
+        Ok(variables)
+    }
+}
+
 /// Why the environment of an installed program could not be built.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ProgramEnvironmentError {
@@ -193,6 +236,43 @@ pub enum ProgramEnvironmentError {
         /// The name.
         name: String,
     },
+}
+
+impl ProgramEnvironmentError {
+    /// The name of the variable that was refused.
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Invalid { name }
+            | Self::Secret { name }
+            | Self::Loader { name }
+            | Self::Reserved { name }
+            | Self::Value { name } => name,
+        }
+    }
+}
+
+/// Checks a name of a server's environment: a letter or an underscore, then
+/// letters, digits, underscores or parentheses, as the owner's names are,
+/// without the refusal of a secret's name, and never a name that loads
+/// libraries.
+fn check_server_name(name: &str) -> Result<(), ProgramEnvironmentError> {
+    let mut characters = name.chars();
+    let starts_well = characters
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_');
+    let continues_well =
+        characters.all(|character| character.is_ascii_alphanumeric() || "_()".contains(character));
+    if !(starts_well && continues_well && name.len() <= 128) {
+        return Err(ProgramEnvironmentError::Invalid {
+            name: name.chars().take(64).collect(),
+        });
+    }
+    if is_loader_name(name) {
+        return Err(ProgramEnvironmentError::Loader {
+            name: name.to_owned(),
+        });
+    }
+    Ok(())
 }
 
 /// Checks a name of a program's environment with the rules of the names that
@@ -251,15 +331,80 @@ fn is_allowed(name: &OsStr, extra: &[EnvName]) -> bool {
 mod tests {
     use std::ffi::OsString;
 
+    use mannie_types::secret::Secret;
     use mannie_types::tools::EnvName;
 
-    use super::CommandEnvironment;
+    use super::{CommandEnvironment, ProgramEnvironmentError};
 
     fn variables(pairs: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
         pairs
             .iter()
             .map(|(name, value)| (OsString::from(name), OsString::from(value)))
             .collect()
+    }
+
+    #[test]
+    fn a_server_receives_its_variables_and_secrets_beside_the_commands_environment() {
+        let added = [EnvName::parse("CARGO_HOME").unwrap()];
+        let environment = CommandEnvironment::new(
+            &added,
+            variables(&[("PATH", "/usr/bin"), ("CARGO_HOME", "/cargo")]),
+        );
+        let token = Secret::new("ghp_planted".to_owned());
+
+        let server = environment
+            .for_server(
+                &[
+                    ("GITHUB_HOST".to_owned(), "github.com".to_owned()),
+                    ("CARGO_HOME".to_owned(), "/other".to_owned()),
+                ],
+                &[("GITHUB_TOKEN".to_owned(), &token)],
+            )
+            .unwrap();
+
+        assert_eq!(
+            server,
+            variables(&[
+                ("PATH", "/usr/bin"),
+                ("GITHUB_HOST", "github.com"),
+                ("CARGO_HOME", "/other"),
+                ("GITHUB_TOKEN", "ghp_planted"),
+            ])
+        );
+    }
+
+    #[test]
+    fn a_servers_variable_never_loads_libraries_or_replaces_the_allow_list() {
+        let environment = CommandEnvironment::new(&[], variables(&[("PATH", "/usr/bin")]));
+        let refusal = |name: &str, value: &str| {
+            environment
+                .for_server(&[(name.to_owned(), value.to_owned())], &[])
+                .unwrap_err()
+        };
+
+        assert_eq!(
+            refusal("LD_PRELOAD", "/tmp/a.so"),
+            ProgramEnvironmentError::Loader {
+                name: "LD_PRELOAD".to_owned()
+            }
+        );
+        assert_eq!(
+            refusal("PATH", "/tmp"),
+            ProgramEnvironmentError::Reserved {
+                name: "PATH".to_owned()
+            }
+        );
+        assert_eq!(
+            refusal("NOT A NAME", "x").name(),
+            "NOT A NAME",
+            "an invalid name is named back"
+        );
+        assert_eq!(
+            refusal("TOKEN", "a\0b"),
+            ProgramEnvironmentError::Value {
+                name: "TOKEN".to_owned()
+            }
+        );
     }
 
     #[test]

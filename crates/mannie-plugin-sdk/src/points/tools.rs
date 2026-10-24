@@ -34,7 +34,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::BoxFuture;
-use crate::contracts::{AccessMode, ArchiveId, ConversationId, ProgramEffect};
+use crate::contracts::{
+    AccessMode, ArchiveId, ConversationId, ImageBytes, ProgramEffect, ToolHint, ToolServerEndpoint,
+};
 use crate::contributions::{ExtensionPoint, IdRule};
 use crate::services::background_commands::BackgroundTicket;
 
@@ -87,10 +89,17 @@ pub struct ToolSpec {
     /// The JSON Schema of the arguments. It has no argument named
     /// `activity`, which the core adds to every call for the owner.
     pub parameters: serde_json::Value,
+    /// Whether the schema is strict: every property required and no other
+    /// allowed, so a server that enforces strict tools may hold the model to
+    /// it. A schema that the plugin did not write, such as a tool server's,
+    /// is not, and goes as it is (ADR-0043, decision 3).
+    #[serde(default = "strict_by_default", skip_serializing_if = "is_strict")]
+    pub strict: bool,
 }
 
 impl ToolSpec {
-    /// The spec of a tool, with the JSON Schema of its arguments.
+    /// The spec of a tool, with the JSON Schema of its arguments, which the
+    /// plugin made strict.
     pub fn new(
         name: impl Into<String>,
         description: impl Into<String>,
@@ -100,18 +109,59 @@ impl ToolSpec {
             name: name.into(),
             description: description.into(),
             parameters,
+            strict: true,
         }
     }
+
+    /// The same spec, whose schema is not strict.
+    #[must_use]
+    pub fn with_loose_schema(mut self) -> Self {
+        self.strict = false;
+        self
+    }
+}
+
+/// The most characters of a plugin tool's name. The providers' interfaces
+/// accept names of lower-case letters, digits and underscores up to this
+/// length.
+pub const MAX_TOOL_NAME_CHARS: usize = 64;
+
+/// Whether `name` can name a plugin's tool: a lower-case letter, then
+/// lower-case letters, digits and underscores, up to
+/// [`MAX_TOOL_NAME_CHARS`] characters.
+pub fn is_tool_name(name: &str) -> bool {
+    let mut characters = name.chars();
+    let starts_with_letter = characters
+        .next()
+        .is_some_and(|first| first.is_ascii_lowercase());
+    starts_with_letter
+        && name.len() <= MAX_TOOL_NAME_CHARS
+        && characters.all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_'
+        })
+}
+
+const fn strict_by_default() -> bool {
+    true
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if passes the field by reference"
+)]
+const fn is_strict(strict: &bool) -> bool {
+    *strict
 }
 
 /// What a call of a plugin's tool touches, on which the core's policy
 /// decides.
 ///
 /// SDK 1 began without accesses (decision 6). ADR-0036 adds the first, a
-/// command on a remote host, and ADR-0038 a path and a run of an installed
-/// program; an access to other remote services comes with the SDK change
-/// that maps it onto the core's accesses. The enum stays exhaustive, because
-/// plugins produce its values and the core matches them.
+/// command on a remote host, ADR-0038 a path and a run of an installed
+/// program, and ADR-0043 a call of a tool server's tool; an access to other
+/// remote services comes with the SDK change that maps it onto the core's
+/// accesses. The enum stays exhaustive, because plugins produce its values
+/// and the core matches them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ToolAccess {
@@ -124,6 +174,77 @@ pub enum ToolAccess {
     /// A run of an installed program with an effect beyond the workspace,
     /// such as git running a repository's hooks (ADR-0038, decision 5).
     Program(ProgramAccess),
+    /// A call of a tool that a tool server offers, such as a tool of an MCP
+    /// server that the owner registered with the plugin (ADR-0043,
+    /// decision 4).
+    ExternalTool(ExternalToolAccess),
+}
+
+/// A call of a tool server's tool, as a plugin's tool prepares it. The core
+/// adds the plugin, so a plugin never speaks for another, and decides on
+/// every field: a grant covers the same tool of the same server at the same
+/// endpoint with any arguments, and a server whose endpoint changed between
+/// the approval and the execution sends the call back to the policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct ExternalToolAccess {
+    /// The plugin's key for the server, which stays while the server exists
+    /// and is never reused for another.
+    pub target: String,
+    /// The server's name, as the owner gave it.
+    pub label: String,
+    /// Where the server runs, without any credential.
+    pub endpoint: ToolServerEndpoint,
+    /// The tool, as the server names it, or `read_resource` for a read of
+    /// one of its resources.
+    pub tool: String,
+    /// The tool's title, as the server gives it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// The call's arguments, as JSON with sorted keys, or the URI of the
+    /// resource that a read reads.
+    pub arguments: String,
+    /// What the server says of the tool, which the owner sees and nothing
+    /// decides on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hints: Vec<ToolHint>,
+}
+
+impl ExternalToolAccess {
+    /// A call of `tool` with `arguments` on a server. The five values are
+    /// easy to swap, so callers pass named locals.
+    pub fn new(
+        target: String,
+        label: String,
+        endpoint: ToolServerEndpoint,
+        tool: String,
+        arguments: String,
+    ) -> Self {
+        Self {
+            target,
+            label,
+            endpoint,
+            tool,
+            title: None,
+            arguments,
+            hints: Vec::new(),
+        }
+    }
+
+    /// The same call, with the tool's title.
+    #[must_use]
+    pub fn with_title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    /// The same call, with what the server says of the tool.
+    #[must_use]
+    pub fn with_hints(mut self, hints: Vec<ToolHint>) -> Self {
+        self.hints = hints;
+        self
+    }
 }
 
 /// A run of an installed program that the plugin's manifest declares under
@@ -609,6 +730,12 @@ pub struct ToolResult {
     /// underscores.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure: Option<String>,
+    /// The images that reach the model with the output, such as a
+    /// screenshot (ADR-0044). The core keeps the first
+    /// [`MAX_TOOL_IMAGES`](crate::contracts::MAX_TOOL_IMAGES) of them, and
+    /// the output ends with a line for each one that it leaves out.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<ToolImage>,
 }
 
 impl ToolResult {
@@ -619,7 +746,15 @@ impl ToolResult {
             archives: Vec::new(),
             data: None,
             failure: None,
+            images: Vec::new(),
         }
+    }
+
+    /// The same result, with the images that reach the model.
+    #[must_use]
+    pub fn with_images(mut self, images: Vec<ToolImage>) -> Self {
+        self.images = images;
+        self
     }
 
     /// The same result, with the outputs that did not fit.
@@ -641,6 +776,55 @@ impl ToolResult {
     pub fn with_failure(mut self, code: impl Into<String>) -> Self {
         self.failure = Some(code.into());
         self
+    }
+}
+
+/// An image of a call's result: the bytes of a PNG or JPEG file, which cross
+/// JSON as base64 (ADR-0044). The core reads the image's format and size from
+/// the file's header, removes the file's metadata, and leaves out an image
+/// of another format, one past
+/// [`MAX_TOOL_IMAGE_BYTES`](crate::contracts::MAX_TOOL_IMAGE_BYTES) or
+/// [`MAX_TOOL_IMAGE_SIDE`](crate::contracts::MAX_TOOL_IMAGE_SIDE), and a
+/// damaged one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct ToolImage {
+    /// The file.
+    #[serde(with = "base64_bytes")]
+    pub data: ImageBytes,
+}
+
+impl ToolImage {
+    /// An image from the bytes of its file.
+    pub fn new(data: impl Into<ImageBytes>) -> Self {
+        Self { data: data.into() }
+    }
+}
+
+/// Bytes as base64 text in JSON, as MCP and `data:` URLs carry images.
+mod base64_bytes {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::STANDARD;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    use crate::contracts::ImageBytes;
+
+    pub(super) fn serialize<S: Serializer>(
+        bytes: &ImageBytes,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&STANDARD.encode(bytes.as_slice()))
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<ImageBytes, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        STANDARD
+            .decode(text)
+            .map(ImageBytes::from)
+            .map_err(serde::de::Error::custom)
     }
 }
 
@@ -679,8 +863,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        AgentSelector, PluginTool, Tool, ToolAccess, ToolCall, ToolEffect, ToolExecution,
-        ToolRefusal, ToolResult, ToolSpec,
+        AgentSelector, MAX_TOOL_NAME_CHARS, PluginTool, Tool, ToolAccess, ToolCall, ToolEffect,
+        ToolExecution, ToolRefusal, ToolResult, ToolSpec, is_tool_name,
     };
     use crate::BoxFuture;
 
@@ -749,6 +933,56 @@ mod tests {
         assert_eq!(acts.effect, ToolEffect::SideEffects);
         assert_eq!(acts.spec, reads.spec);
         assert_eq!(acts.offered_to, reads.offered_to);
+    }
+
+    #[test]
+    fn a_spec_is_strict_unless_its_plugin_says_that_its_schema_is_loose() {
+        let strict = ToolSpec::new("notes_find", "Finds notes.", json!({ "type": "object" }));
+        let loose = strict.clone().with_loose_schema();
+
+        assert!(strict.strict);
+        assert!(!loose.strict);
+        // A strict spec writes the JSON of SDK 1 as it was, and a spec
+        // without the field reads as strict.
+        assert!(
+            serde_json::to_value(&strict)
+                .unwrap()
+                .get("strict")
+                .is_none()
+        );
+        assert_eq!(
+            serde_json::to_value(&loose).unwrap()["strict"],
+            json!(false)
+        );
+        let read: ToolSpec = serde_json::from_value(json!({
+            "name": "notes_find",
+            "description": "Finds notes.",
+            "parameters": { "type": "object" },
+        }))
+        .unwrap();
+        assert_eq!(read, strict);
+    }
+
+    #[test]
+    fn a_name_is_lower_case_snake_case_of_at_most_64_characters() {
+        let longest = format!("n{}", "o".repeat(MAX_TOOL_NAME_CHARS - 1));
+        for valid in ["notes", "notes_find", "n2", "a_b_c_", &longest] {
+            assert!(is_tool_name(valid), "{valid}");
+        }
+        let too_long = format!("{longest}o");
+        for invalid in [
+            "",
+            "_notes",
+            "2notes",
+            "Notes",
+            "notes-find",
+            "notes.find",
+            "notes find",
+            "nötes",
+            &too_long,
+        ] {
+            assert!(!is_tool_name(invalid), "{invalid}");
+        }
     }
 
     #[test]

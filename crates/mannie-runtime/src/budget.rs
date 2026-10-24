@@ -4,6 +4,7 @@
 //! decision 7).
 
 use mannie_provider::{Content, Message, ModelRequest, ToolDefinition};
+use mannie_types::images::MAX_IMAGE_SIDE;
 use mannie_types::transcript::ContextUsage;
 use serde::{Deserialize, Serialize};
 
@@ -34,6 +35,21 @@ pub(crate) fn estimate_image(width: u32, height: u32) -> u32 {
         .saturating_add(MESSAGE_OVERHEAD)
 }
 
+/// The estimated tokens of an image of a tool's result, which providers read
+/// scaled down to [`MAX_IMAGE_SIDE`] pixels on its longer side (ADR-0044,
+/// decision 7). The owner's images are stored within that size already.
+pub(crate) fn estimate_scaled_image(width: u32, height: u32) -> u32 {
+    let longer = width.max(height);
+    if longer <= MAX_IMAGE_SIDE {
+        return estimate_image(width, height);
+    }
+    let scaled = |side: u32| {
+        let side = u64::from(side) * u64::from(MAX_IMAGE_SIDE) / u64::from(longer);
+        u32::try_from(side).unwrap_or(MAX_IMAGE_SIDE).max(1)
+    };
+    estimate_image(scaled(width), scaled(height))
+}
+
 /// The bytes of a context budget in tokens, the inverse of the estimate of
 /// two tokens for every five bytes.
 pub(crate) fn budget_bytes(tokens: u32) -> usize {
@@ -55,9 +71,18 @@ pub(crate) fn estimate_message(message: &Message) -> u32 {
                 .saturating_add(estimate_text(name))
                 .saturating_add(estimate_text(arguments))
                 .saturating_add(MESSAGE_OVERHEAD),
-            Content::ToolResult { call_id, output } => estimate_text(call_id)
-                .saturating_add(estimate_text(output))
-                .saturating_add(MESSAGE_OVERHEAD),
+            Content::ToolResult {
+                call_id,
+                output,
+                images,
+            } => images.iter().fold(
+                estimate_text(call_id)
+                    .saturating_add(estimate_text(output))
+                    .saturating_add(MESSAGE_OVERHEAD),
+                |tokens, image| {
+                    tokens.saturating_add(estimate_scaled_image(image.width, image.height))
+                },
+            ),
             Content::Image(image) => estimate_image(image.width, image.height),
         })
         .fold(MESSAGE_OVERHEAD, u32::saturating_add)
@@ -174,7 +199,10 @@ mod tests {
     use mannie_provider::{Content, Message, ModelRequest, Role, ToolChoice, ToolDefinition};
     use mannie_types::provider::ReasoningEffort;
 
-    use super::{Ledger, estimate_image, estimate_message, estimate_request, estimate_text};
+    use super::{
+        Ledger, estimate_image, estimate_message, estimate_request, estimate_scaled_image,
+        estimate_text,
+    };
 
     #[test]
     fn an_image_counts_its_pixels_never_its_bytes() {
@@ -192,6 +220,40 @@ mod tests {
         assert_eq!(estimate_image(2_048, 1_536), 4_195 + 4);
         assert_eq!(estimate_image(1, 1), 1 + 4);
         assert_eq!(estimate_message(&message), 4 + 4_195 + 4);
+    }
+
+    #[test]
+    fn an_image_of_a_result_counts_as_the_provider_reads_it_scaled_down() {
+        let image = |width, height| mannie_provider::ImageInput {
+            format: mannie_types::images::ImageFormat::Png,
+            width,
+            height,
+            data: mannie_types::images::ImageBytes::from(vec![0; 16]),
+        };
+        let result = Message {
+            role: Role::Tool,
+            content: vec![Content::ToolResult {
+                call_id: "call_1".to_owned(),
+                output: "Shot.".to_owned(),
+                images: vec![image(4_096, 3_072), image(800, 600)],
+            }],
+        };
+
+        // 4096 by 3072 reads as 2048 by 1536.
+        assert_eq!(
+            estimate_scaled_image(4_096, 3_072),
+            estimate_image(2_048, 1_536)
+        );
+        assert_eq!(estimate_scaled_image(800, 600), estimate_image(800, 600));
+        assert_eq!(estimate_scaled_image(4_096, 1), estimate_image(2_048, 1));
+        assert_eq!(
+            estimate_message(&result),
+            4 + estimate_text("call_1")
+                + estimate_text("Shot.")
+                + 4
+                + estimate_image(2_048, 1_536)
+                + estimate_image(800, 600)
+        );
     }
 
     #[test]
@@ -236,6 +298,7 @@ mod tests {
                 name: "read_file".to_owned(),
                 description: "Reads lines of a text file.".to_owned(),
                 parameters: serde_json::json!({ "type": "object", "properties": {} }),
+                strict: true,
             }],
             messages: vec![
                 Message {
@@ -251,6 +314,7 @@ mod tests {
                     content: vec![Content::ToolResult {
                         call_id: "call_1".to_owned(),
                         output: "x".repeat(1_000),
+                        images: Vec::new(),
                     }],
                 },
             ],

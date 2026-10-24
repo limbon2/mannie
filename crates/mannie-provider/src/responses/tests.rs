@@ -9,6 +9,7 @@ use serde_json::json;
 use super::{ResponsesTranslator, request_body};
 use crate::provider::{
     Content, ImageInput, Message, ModelRequest, ProviderError, ProviderEvent, Role, ToolChoice,
+    ToolDefinition,
 };
 use crate::quirks::quirks_for;
 use crate::sse::SseEvent;
@@ -168,6 +169,77 @@ fn images_follow_the_text_of_their_message_as_data_urls() {
     );
 }
 
+/// A step that called two tools, of which the first returned an image.
+fn step_with_a_result_image() -> Vec<Message> {
+    let call = |id: &str| Content::ToolCall {
+        call_id: id.to_owned(),
+        name: "mcp_browser_screenshot".to_owned(),
+        arguments: "{}".to_owned(),
+    };
+    vec![
+        Message::text(Role::User, "Show me the page"),
+        Message {
+            role: Role::Assistant,
+            content: vec![call("call_1"), call("call_2")],
+        },
+        Message {
+            role: Role::Tool,
+            content: vec![Content::ToolResult {
+                call_id: "call_1".to_owned(),
+                output: "The page.".to_owned(),
+                images: vec![ImageInput {
+                    format: ImageFormat::Png,
+                    width: 4,
+                    height: 3,
+                    data: ImageBytes::from(vec![1]),
+                }],
+            }],
+        },
+        Message {
+            role: Role::Tool,
+            content: vec![Content::ToolResult {
+                call_id: "call_2".to_owned(),
+                output: "No image.".to_owned(),
+                images: Vec::new(),
+            }],
+        },
+    ]
+}
+
+#[test]
+fn a_result_with_images_sends_them_beside_its_text_in_the_output() {
+    let request = ModelRequest {
+        model: "gpt-4.1".to_owned(),
+        instructions: String::new(),
+        messages: step_with_a_result_image(),
+        max_output_tokens: 100,
+        reasoning_effort: ReasoningEffort::ServerDefault,
+        tools: Vec::new(),
+        tool_choice: ToolChoice::Auto,
+    };
+
+    let body = request_body(
+        &request,
+        &quirks_for(ApiInterface::Responses, Some(ServerKind::OpenAi)),
+    );
+
+    assert_eq!(
+        body["input"][3],
+        json!({
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": [
+                { "type": "input_text", "text": "The page." },
+                { "type": "input_image", "image_url": "data:image/png;base64,AQ==" }
+            ]
+        })
+    );
+    assert_eq!(
+        body["input"][4],
+        json!({ "type": "function_call_output", "call_id": "call_2", "output": "No image." })
+    );
+}
+
 #[test]
 fn an_image_shows_only_the_number_of_its_bytes_when_debugged() {
     let image = ImageInput {
@@ -303,4 +375,35 @@ fn reasoning_items_without_encrypted_content_are_not_kept() {
     );
 
     assert_eq!(events, []);
+}
+
+#[test]
+fn a_loose_tool_goes_without_strict_mode_beside_strict_ones() {
+    let tool = |name: &str, strict: bool| ToolDefinition {
+        name: name.to_owned(),
+        description: "A tool.".to_owned(),
+        parameters: json!({ "type": "object", "properties": {} }),
+        strict,
+    };
+    let request = ModelRequest {
+        model: "gpt-6-luna".to_owned(),
+        instructions: String::new(),
+        messages: vec![Message::text(Role::User, "Hello")],
+        max_output_tokens: 100,
+        reasoning_effort: ReasoningEffort::ServerDefault,
+        tools: vec![
+            tool("read_file", true),
+            tool("mcp_github_list_issues", false),
+        ],
+        tool_choice: ToolChoice::Auto,
+    };
+
+    let openai = request_body(
+        &request,
+        &quirks_for(ApiInterface::Responses, Some(ServerKind::OpenAi)),
+    );
+
+    assert_eq!(openai["tools"][0]["strict"], json!(true));
+    assert_eq!(openai["tools"][1]["strict"], json!(false));
+    assert_eq!(openai["tools"][1]["name"], json!("mcp_github_list_issues"));
 }

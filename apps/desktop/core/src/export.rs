@@ -190,6 +190,7 @@ fn unavailable_record(
         turns: Vec::new(),
         checkpoints: Vec::new(),
         images: Vec::new(),
+        tool_images: Vec::new(),
         archives: Vec::new(),
         children: Vec::new(),
         warnings: vec![warning],

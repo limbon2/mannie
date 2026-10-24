@@ -13,6 +13,7 @@ mod approval;
 mod background;
 mod call;
 mod commands;
+mod external;
 mod outcome;
 mod program;
 mod settings;
@@ -33,17 +34,19 @@ pub use call::{
 };
 pub use commands::{
     CommandOutputUpdate, CommandRule, ConversationGrant, GrantRef, MAX_OUTPUT_PAGE_LINES,
-    MAX_OUTPUT_VIEW_LINES, ProgramRule, ProgramRuleRef, ReadToolOutput, RemoteCommandRule,
-    RemoteRuleRef, RuleRef, SetFullAccess, SharedGrant, SharedGrantRef, StopBackgroundCommand,
-    SubscribeCommandOutput, ToolOutputPage, ToolsError,
+    MAX_OUTPUT_VIEW_LINES, ProgramRule, ProgramRuleRef, ReadToolImage, ReadToolOutput,
+    RemoteCommandRule, RemoteRuleRef, RuleRef, SetFullAccess, SharedGrant, SharedGrantRef,
+    StopBackgroundCommand, SubscribeCommandOutput, ToolOutputPage, ToolsError,
 };
+pub use external::{ToolHint, ToolServerEndpoint};
 pub use outcome::{
-    ArchiveRef, CommandEnding, EntryKind, PathRefusal, ToolFailure, ToolOutcome, ToolResult,
+    ArchiveRef, CommandEnding, EntryKind, MAX_TOOL_IMAGE_BYTES, MAX_TOOL_IMAGE_SIDE,
+    MAX_TOOL_IMAGES, PathRefusal, ToolFailure, ToolImageRef, ToolOutcome, ToolResult,
 };
 pub use program::{
     DiscardedWork, MAX_EFFECT_ITEMS, ProgramEffect, ProgramEffectKey, ProgramTarget, effect_keys,
 };
 pub use settings::{
     EnvName, LOADER_NAME_PREFIXES, MAX_ENVIRONMENT_NAMES, SECRET_NAME_PARTS, ToolsSettings,
-    UpdateToolsSettings, is_loader_name,
+    UpdateToolsSettings, is_loader_name, looks_like_secret,
 };

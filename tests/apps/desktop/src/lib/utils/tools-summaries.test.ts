@@ -284,6 +284,25 @@ describe('callSummary', () => {
 
     expect(callSummary(prepared)).toBe('Start journalctl -f on build-box in the background');
   });
+
+  it("names a plugin's call of a tool server's tool by the tool and the server, once prepared", () => {
+    const access = {
+      arguments: '{"title":"Crash"}',
+      endpoint: { kind: 'url' as const, url: 'https://mcp.example.com/mcp' },
+      hints: [],
+      kind: 'external_tool' as const,
+      label: 'Issues',
+      plugin: 'mcp',
+      target: '0199e0f2-0000-7000-8000-0000000000cc',
+      title: 'Create an issue',
+      tool: 'create_issue',
+    };
+    const written = call('mcp_issues_create_issue', { title: 'Crash' });
+    const prepared = call('mcp_issues_create_issue', { title: 'Crash' }, { accesses: [access] });
+
+    expect(callSummary(written)).toContain('mcp_issues_create_issue');
+    expect(callSummary(prepared)).toBe('Call create_issue on Issues');
+  });
 });
 
 describe('callStatus', () => {

@@ -82,13 +82,40 @@ enum Wire<'a> {
 /// One element of a text message, in order.
 enum WirePart<'a> {
     Text(&'a str),
+    /// A text of the adapter's own, which names the call whose images follow.
+    Label(String),
     Image(&'a ImageInput),
+}
+
+/// The text that names the call whose result's images follow, in the
+/// message of the owner's role that carries the images of a step's results:
+/// a tool message holds only text (ADR-0044, decision 6).
+fn images_of(call_id: &str) -> String {
+    format!("The images of the result of the tool call {call_id}:")
+}
+
+/// Adds the images of a step's results as one message of the owner's role,
+/// after the step's last result, and empties them.
+fn flush_result_images<'a>(wire: &mut Vec<Wire<'a>>, images: &mut Vec<WirePart<'a>>) {
+    if images.is_empty() {
+        return;
+    }
+    wire.push(Wire::Text {
+        role: Role::User,
+        parts: std::mem::take(images),
+    });
 }
 
 /// The messages of a request in the shape Chat Completions takes.
 fn wire_messages(request: &ModelRequest) -> Vec<Wire<'_>> {
     let mut wire: Vec<Wire<'_>> = Vec::new();
+    // The results of a step come one message each, right after the call
+    // that made them, so their images wait until the step's last result.
+    let mut result_images: Vec<WirePart<'_>> = Vec::new();
     for message in &request.messages {
+        if message.role != Role::Tool {
+            flush_result_images(&mut wire, &mut result_images);
+        }
         let mut parts = Vec::new();
         let mut calls = Vec::new();
         for content in &message.content {
@@ -108,10 +135,20 @@ fn wire_messages(request: &ModelRequest) -> Vec<Wire<'_>> {
                 })),
                 // Each result is a message of its own, and is never merged or
                 // dropped: a call without its result is refused.
-                Content::ToolResult { call_id, output } => wire.push(Wire::Result {
-                    call_id: call_id.clone(),
-                    output: output.clone(),
-                }),
+                Content::ToolResult {
+                    call_id,
+                    output,
+                    images,
+                } => {
+                    wire.push(Wire::Result {
+                        call_id: call_id.clone(),
+                        output: output.clone(),
+                    });
+                    if !images.is_empty() {
+                        result_images.push(WirePart::Label(images_of(call_id)));
+                        result_images.extend(images.iter().map(WirePart::Image));
+                    }
+                }
             }
         }
         if !calls.is_empty() {
@@ -140,6 +177,7 @@ fn wire_messages(request: &ModelRequest) -> Vec<Wire<'_>> {
             }),
         }
     }
+    flush_result_images(&mut wire, &mut result_images);
     wire
 }
 
@@ -149,6 +187,7 @@ fn joined_text(parts: &[WirePart<'_>]) -> String {
         .iter()
         .filter_map(|part| match part {
             WirePart::Text(text) => Some(*text),
+            WirePart::Label(text) => Some(text.as_str()),
             WirePart::Image(_) => None,
         })
         .collect();
@@ -168,6 +207,7 @@ fn wire_content(parts: &[WirePart<'_>]) -> Value {
     for part in parts {
         match part {
             WirePart::Text(text) => texts.push(text),
+            WirePart::Label(text) => texts.push(text.as_str()),
             WirePart::Image(image) => {
                 push_text(&mut content, &mut texts);
                 content.push(json!({
@@ -251,7 +291,7 @@ pub(crate) fn request_body(request: &ModelRequest, quirks: &Quirks) -> Value {
                 function.insert("name".to_owned(), json!(tool.name));
                 function.insert("description".to_owned(), json!(tool.description));
                 function.insert("parameters".to_owned(), tool.parameters.clone());
-                if quirks.tools.strict {
+                if quirks.tools.strict && tool.strict {
                     function.insert("strict".to_owned(), json!(true));
                 }
                 json!({ "type": "function", "function": function })

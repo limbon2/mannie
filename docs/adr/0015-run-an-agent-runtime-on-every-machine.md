@@ -7,7 +7,7 @@
 | Deciders | Owner                                                                                                                                                                                                                    |
 | Related  | [Orchestration](../architecture/orchestration.md), [ADR-0010](0010-keep-provider-credentials-on-the-master.md), [ADR-0016](0016-link-machines-over-pinned-mtls-grpc.md), [Workers](../../plugins/workers/docs/README.md) |
 
-Later changes: [ADR-0036](0036-let-plugins-run-commands-on-remote-hosts.md) supersedes decision 2 in part: an agent's tools also act on a remote host that the owner registered with a plugin, through a remote-command access that the master's policy authorizes. The master still never runs tools on a worker's host.
+Later changes: [ADR-0036](0036-let-plugins-run-commands-on-remote-hosts.md) supersedes decision 2 in part: an agent's tools also act on a remote host that the owner registered with a plugin, through a remote-command access that the master's policy authorizes. The master still never runs tools on a worker's host. [ADR-0043](0043-let-plugins-offer-the-tools-of-tool-servers.md) refines decision 2: an agent's tool also acts where a tool server that the owner registered acts, through an external-tool access that the master's policy authorizes.
 
 ## Context
 

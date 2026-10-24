@@ -1,16 +1,19 @@
 //! The commands of the system tools feature that need the runtime
 //! (docs/features/system-tools/operations-and-approvals.md, contracts): the
-//! tools settings, the rules and grants, and archived outputs. Approvals are
-//! in `approvals.rs`; a conversation's workspace is its project's folder
-//! (`projects.rs`).
+//! tools settings, the rules and grants, archived outputs and the images of
+//! results. Approvals are in `approvals.rs`; a conversation's workspace is
+//! its project's folder (`projects.rs`).
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use mannie_store::{Change, Durability, RuntimeStoreError, SettingsStoreError, ToolsStoreError};
 use mannie_tools::output_page;
 use mannie_types::ids::ConversationId;
+use mannie_types::images::ImageData;
 use mannie_types::tools::{
-    CommandRule, ConversationGrant, GrantRef, ProgramRule, ProgramRuleRef, ReadToolOutput,
-    RemoteCommandRule, RemoteRuleRef, RuleRef, SetFullAccess, SharedGrant, SharedGrantRef,
-    ToolOutputPage, ToolsError, ToolsSettings, UpdateToolsSettings,
+    CommandRule, ConversationGrant, GrantRef, ProgramRule, ProgramRuleRef, ReadToolImage,
+    ReadToolOutput, RemoteCommandRule, RemoteRuleRef, RuleRef, SetFullAccess, SharedGrant,
+    SharedGrantRef, ToolOutputPage, ToolsError, ToolsSettings, UpdateToolsSettings,
 };
 
 use crate::Runtime;
@@ -259,5 +262,22 @@ impl Runtime {
             .map_err(runtime_store_failure)?
             .ok_or(ToolsError::OutputNotFound)?;
         Ok(output_page(&archive, input.first_line, input.limit))
+    }
+
+    /// The bytes of an image of a tool call's result, for the call's details
+    /// (ADR-0044, decision 7). A worker's tools return no images, so a task
+    /// on another machine has none to read.
+    pub async fn read_tool_image(&self, input: ReadToolImage) -> Result<ImageData, ToolsError> {
+        let (format, data) = self
+            .inner
+            .store
+            .tool_image(&input.conversation_id, &input.part_id, input.position)
+            .await
+            .map_err(runtime_store_failure)?
+            .ok_or(ToolsError::ImageNotFound)?;
+        Ok(ImageData {
+            format,
+            data: BASE64.encode(data.as_slice()),
+        })
     }
 }

@@ -91,6 +91,17 @@ export class Slot<T extends SlotEntry> {
     return this.#shows(registered) ? registered.entry : undefined;
   }
 
+  /** The entries that the plugin `plugin` registered and that show, in the order they were registered. */
+  entriesOf(plugin: string): readonly T[] {
+    return this.#registered
+      .filter((registered) => {
+        const isTheirs = registered.plugin === plugin;
+        const shows = this.#shows(registered);
+        return isTheirs && shows;
+      })
+      .map((registered) => registered.entry);
+  }
+
   /**
    * The plugin of the entry with this ID while the plugin is off and the
    * entry does not show, so that an address of it can say so; otherwise

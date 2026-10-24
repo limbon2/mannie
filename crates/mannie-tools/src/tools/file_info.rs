@@ -98,6 +98,7 @@ fn describe(context: &ToolContext, input: &Input) -> Result<Done, ToolFailure> {
         outcome: ToolOutcome::Described { path, entry: kind },
         output,
         archives: Vec::new(),
+        images: Vec::new(),
     })
 }
 

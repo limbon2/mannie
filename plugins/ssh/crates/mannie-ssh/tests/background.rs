@@ -109,6 +109,7 @@ fn result(request: &ModelRequest, call_id: &str) -> String {
             Content::ToolResult {
                 call_id: id,
                 output,
+                ..
             } if id == call_id => Some(output.clone()),
             _ => None,
         })

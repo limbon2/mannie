@@ -1,12 +1,12 @@
 # Tools and results
 
-|              |                                                                                                                                                                                                                                                            |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status       | Building                                                                                                                                                                                                                                                   |
-| Milestone    | M2                                                                                                                                                                                                                                                         |
-| Last updated | 2026-10-21                                                                                                                                                                                                                                                 |
-| Part of      | [System tools](README.md)                                                                                                                                                                                                                                  |
-| Related      | [Tools](../../architecture/tools.md), [ADR-0013](../../adr/0013-journal-every-side-effect.md), [Operations and approvals](operations-and-approvals.md), [Commands](commands.md), [Agent runtime](../../architecture/agent-runtime.md#7-context-management) |
+|              |                                                                                                                                                                                                                                                                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Status       | Building                                                                                                                                                                                                                                                                                                                             |
+| Milestone    | M2                                                                                                                                                                                                                                                                                                                                   |
+| Last updated | 2026-10-24                                                                                                                                                                                                                                                                                                                           |
+| Part of      | [System tools](README.md)                                                                                                                                                                                                                                                                                                            |
+| Related      | [Tools](../../architecture/tools.md), [ADR-0013](../../adr/0013-journal-every-side-effect.md), [Operations and approvals](operations-and-approvals.md), [Commands](commands.md), [ADR-0044](../../adr/0044-let-tool-results-carry-images-to-the-model.md), [Agent runtime](../../architecture/agent-runtime.md#7-context-management) |
 
 ## Design
 
@@ -43,6 +43,7 @@ Arguments without a default are required. A path is absolute or relative to the 
 
 - Each tool's arguments are a Rust type with `serde` and `schemars`. Unknown fields are refused, and the type is checked before anything else happens. Empty arguments, and `null`, read as an empty object.
 - The schemas sent to the model are self-contained, without references or a `$schema` keyword, and they work in strict mode: every property is listed as required, optional ones accept `null`, and no other properties are allowed. Mannie still accepts an optional property that a model leaves out. Keywords that strict mode refuses, such as `format`, `pattern` and the limits of numbers and lengths, are left out; the tool checks those itself.
+- A plugin's tool may send a schema that it did not write, such as a tool server's, as a loose schema: the adapters send it without `strict`, and the plugin checks the arguments that it receives ([ADR-0043](../../adr/0043-let-plugins-offer-the-tools-of-tool-servers.md), decision 3).
 - Every schema that a model receives also has the argument `activity`, which the runtime adds and takes out again before the tool reads the arguments ([tool calls](tool-calls.md#the-activity-of-a-call)). No tool may have an argument of that name.
 - Arguments are at most 1 MiB, which is the size of one event of a provider's stream.
 
@@ -79,6 +80,7 @@ Arguments without a default are required. A path is absolute or relative to the 
 - A rendering fits in the result limit: 64 KiB, or a quarter of the context budget when that is smaller, but never less than 4 KiB. Tools that page end a page at the limit and say where the next page starts.
 - Command output keeps a head and a tail within the limit, and its whole captured output is archived ([commands](commands.md#output)).
 - An archived output is stored with its tool call and deleted with its conversation. The model reads it in pages of lines with `read_tool_output` and its reference, and the owner opens it from the tool call. A line longer than a page shows its beginning, marked as cut like a long line of `read_file`, and the next page starts with the next line.
+- A plugin's tool may return up to 4 images with its result: PNG or JPEG files of at most 5 MiB, 4096 pixels on a side and 16.8 million pixels, which the core reads from their headers without decoding. The core leaves out an image beyond the limits and says so in the result, removes the images' metadata by their structure, such as a photo's EXIF location, keeps only the orientation of a photo that its EXIF turns, and stores them with the call ([ADR-0044](../../adr/0044-let-tool-results-carry-images-to-the-model.md)).
 
 ### The descriptions the model sees
 

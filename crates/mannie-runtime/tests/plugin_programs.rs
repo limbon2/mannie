@@ -292,7 +292,9 @@ fn program_of(execution: &ToolExecution) -> ProgramAccess {
         .iter()
         .find_map(|access| match access {
             ToolAccess::Program(run) => Some(run.clone()),
-            ToolAccess::Path(_) | ToolAccess::RemoteCommand(_) => None,
+            ToolAccess::Path(_) | ToolAccess::RemoteCommand(_) | ToolAccess::ExternalTool(_) => {
+                None
+            }
         })
         .expect("the execution names its program's run")
 }

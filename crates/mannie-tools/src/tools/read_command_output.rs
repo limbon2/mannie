@@ -197,6 +197,7 @@ fn render(context: &ToolContext, number: u32, from_line: Option<u64>, read: &Com
         },
         output: format!("{header}{body}{notes}"),
         archives: Vec::new(),
+        images: Vec::new(),
     }
 }
 

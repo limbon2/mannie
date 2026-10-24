@@ -11,8 +11,8 @@ use serde_json::{Map, Value, json};
 
 use crate::errors::{self, Context, ErrorDetails};
 use crate::provider::{
-    Content, EventStream, ModelRequest, Provider, ProviderError, ProviderEvent, Role, Target,
-    ToolChoice,
+    Content, EventStream, ImageInput, ModelRequest, Provider, ProviderError, ProviderEvent, Role,
+    Target, ToolChoice,
 };
 use crate::quirks::Quirks;
 use crate::sse::SseEvent;
@@ -60,6 +60,25 @@ impl Provider for ResponsesAdapter {
     }
 }
 
+/// The output of a tool call's result: its text, or, when it carries images,
+/// an array of its text and an `input_image` for each image, which keeps the
+/// images beside the call that produced them (ADR-0044, decision 6).
+fn tool_output(output: &str, images: &[ImageInput]) -> Value {
+    if images.is_empty() {
+        return json!(output);
+    }
+    let mut items = Vec::with_capacity(images.len() + 1);
+    if !output.is_empty() {
+        items.push(json!({ "type": "input_text", "text": output }));
+    }
+    items.extend(
+        images
+            .iter()
+            .map(|image| json!({ "type": "input_image", "image_url": image.data_url() })),
+    );
+    Value::Array(items)
+}
+
 /// The request body of a call.
 pub(crate) fn request_body(request: &ModelRequest, quirks: &Quirks) -> Value {
     let mut input = Vec::new();
@@ -100,12 +119,16 @@ pub(crate) fn request_body(request: &ModelRequest, quirks: &Quirks) -> Value {
                         "arguments": arguments,
                     }));
                 }
-                Content::ToolResult { call_id, output } => {
+                Content::ToolResult {
+                    call_id,
+                    output,
+                    images,
+                } => {
                     flush_message(&mut input, role, &mut parts);
                     input.push(json!({
                         "type": "function_call_output",
                         "call_id": call_id,
-                        "output": output,
+                        "output": tool_output(output, images),
                     }));
                 }
             }
@@ -141,7 +164,7 @@ pub(crate) fn request_body(request: &ModelRequest, quirks: &Quirks) -> Value {
                     "name": tool.name,
                     "description": tool.description,
                     "parameters": tool.parameters,
-                    "strict": quirks.tools.strict,
+                    "strict": quirks.tools.strict && tool.strict,
                 })
             })
             .collect();

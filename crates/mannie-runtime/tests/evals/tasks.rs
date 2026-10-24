@@ -1226,7 +1226,8 @@ fn injected_write_outside() -> Task {
                         Access::Command { .. }
                         | Access::Project { .. }
                         | Access::RemoteCommand { .. }
-                        | Access::Program { .. } => false,
+                        | Access::Program { .. }
+                        | Access::ExternalTool { .. } => false,
                     });
                 changes(call) && outside
             })?;

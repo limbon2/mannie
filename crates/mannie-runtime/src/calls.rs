@@ -10,8 +10,8 @@ use futures_util::StreamExt;
 use mannie_plugin_sdk::points::executors::{Executors, TaskExecutor};
 use mannie_plugin_sdk::points::tools::ToolSpec;
 use mannie_provider::{
-    ModelRequest, Provider, ProviderError, ProviderEvent, Target, ToolChoice, ToolDefinition,
-    check_base_url, quirks_for,
+    ImageInput, ModelRequest, Provider, ProviderError, ProviderEvent, Target, ToolChoice,
+    ToolDefinition, check_base_url, quirks_for,
 };
 use mannie_store::{
     Change, Durability, ModelTurn, NewCheckpoint, RuntimeStoreError, StoredCheckpoint,
@@ -33,7 +33,7 @@ use crate::agents::{AgentDefinition, Requester};
 use crate::assigned::{AssignedRun, lease_reference};
 use crate::budget::{Ledger, estimate_request, usage};
 use crate::compaction::{self, ContextSize, Trigger};
-use crate::context::{RequestShape, build_request};
+use crate::context::{RequestShape, SentImages, build_request};
 use crate::instructions::{
     InstructionContext, InstructionSection, MachineContext, ToolEnvironment, plugin_sections,
 };
@@ -73,6 +73,12 @@ fn with_follow_ups_only_with_starts(tools: Vec<Arc<dyn Tool>>) -> Vec<Arc<dyn To
 /// The most bytes of the machine's instructions that a run of an assigned
 /// task reads; the rest is left out.
 const MAX_MACHINE_INSTRUCTIONS_BYTES: usize = 64 * 1024;
+
+/// The most tools that one request offers: the most functions that OpenAI's
+/// interfaces take. A run that would offer more leaves out the tools that the
+/// plugins' sources published, so every other tool fits (ADR-0043,
+/// decision 2).
+const MAX_REQUEST_TOOLS: usize = 128;
 
 /// Why a call could not be prepared or made.
 #[derive(Debug)]
@@ -155,6 +161,39 @@ struct ExecutorOffer {
     sections: Vec<InstructionSection>,
 }
 
+/// The plugins' tools of a run that fit in a request beside `others` tools:
+/// every static tool, and the published ones in their order until the room
+/// is full. The rest are left out, which the log records (ADR-0043,
+/// decision 2).
+fn within_request_room(
+    offered: Vec<(OfferedPluginTool, Arc<dyn Tool>)>,
+    others: usize,
+) -> Vec<(OfferedPluginTool, Arc<dyn Tool>)> {
+    let fixed = offered.iter().filter(|(tool, _)| !tool.published).count();
+    let room = MAX_REQUEST_TOOLS.saturating_sub(others + fixed);
+    let mut published = 0;
+    let mut left_out = 0;
+    let mut kept = Vec::with_capacity(offered.len());
+    for (tool, adapter) in offered {
+        if tool.published {
+            if published == room {
+                left_out += 1;
+                continue;
+            }
+            published += 1;
+        }
+        kept.push((tool, adapter));
+    }
+    if left_out > 0 {
+        tracing::warn!(
+            left_out,
+            max = MAX_REQUEST_TOOLS,
+            "a run leaves out published tools that do not fit in a request"
+        );
+    }
+    kept
+}
+
 /// The definition that the model gets of an executor's tool. The runtime
 /// adds the activity argument here, as it does for every other tool, so an
 /// executor's spec leaves it out (docs/features/system-tools/tool-calls.md,
@@ -162,6 +201,7 @@ struct ExecutorOffer {
 fn executor_definition(spec: ToolSpec) -> ToolDefinition {
     ToolDefinition {
         parameters: with_activity(&spec.parameters),
+        strict: spec.strict,
         name: spec.name,
         description: spec.description,
     }
@@ -314,14 +354,11 @@ impl Runtime {
             tracing::error!(error.code = error.code(), "a stored base URL is not valid");
             RunFailure::Internal
         })?;
-        // The plugins' tools join the core's that the agent names, each for
-        // the agents that its selector offers it to (ADR-0034, decision 6).
-        let (plugin_tools, adapters): (Vec<OfferedPluginTool>, Vec<Arc<dyn Tool>>) =
-            if profile.use_tools {
-                offered_tools(&snapshot, &agent, self).into_iter().unzip()
-            } else {
-                (Vec::new(), Vec::new())
-            };
+        let (plugin_tools, adapters) = if profile.use_tools {
+            self.plugin_tools_for(&snapshot, &agent)
+        } else {
+            (Vec::new(), Vec::new())
+        };
         let tools: Vec<Arc<dyn Tool>> = if profile.use_tools {
             with_follow_ups_only_with_starts(
                 agent
@@ -342,6 +379,7 @@ impl Runtime {
                 // Every call names itself for the owner (docs/features/
                 // system-tools/tool-calls.md, the activity of a call).
                 parameters: with_activity(tool.parameters()),
+                strict: tool.strict(),
             })
             .collect();
         let child_agents = self.child_agent_names(&snapshot);
@@ -394,6 +432,26 @@ impl Runtime {
             plugin_tools,
             plugin_sections,
         })
+    }
+
+    /// The plugins' tools that join the core's that the agent names, each
+    /// for the agents that its selector offers it to (ADR-0034, decision 6),
+    /// within the room of a request beside the core's tools, the task tools
+    /// and the executors' tools, which join later (ADR-0043, decision 2).
+    fn plugin_tools_for(
+        &self,
+        snapshot: &Snapshot,
+        agent: &AgentDefinition,
+    ) -> (Vec<OfferedPluginTool>, Vec<Arc<dyn Tool>>) {
+        let core = agent
+            .tools
+            .iter()
+            .filter(|name| self.inner.tools.registry.get(name).is_some())
+            .count();
+        let others = core + tasks::TASK_TOOLS.len() + snapshot.items::<Executors>().len();
+        within_request_room(offered_tools(snapshot, agent, self), others)
+            .into_iter()
+            .unzip()
     }
 
     /// The tools of the plugins' executors that join the task tools of a run
@@ -607,7 +665,27 @@ impl Runtime {
             .inner
             .instructions
             .assemble_with(&context, &setup.plugin_sections);
-        let request = call_request(setup, options, &instructions, &definitions, &turns);
+        let left_out = if options.leave_out_results {
+            older_results(&turns)
+        } else {
+            HashSet::new()
+        };
+        // A model without tools reads the images of results as lines, so a
+        // request without tools reads none of their bytes.
+        let tool_images = if definitions.is_empty() {
+            SentImages::new()
+        } else {
+            self.sent_tool_images(conversation, &turns, &left_out)
+                .await?
+        };
+        let shape = Shaping {
+            options,
+            instructions: &instructions,
+            definitions: &definitions,
+            left_out: &left_out,
+            tool_images: &tool_images,
+        };
+        let request = call_request(setup, &shape, &turns);
         let estimate = estimate_request(&request);
         let ledger = Ledger::parse(
             self.inner
@@ -629,6 +707,52 @@ impl Runtime {
             turns,
             ledger,
         })
+    }
+
+    /// The images of the newest results that a request sends, read from the
+    /// store (ADR-0044, decision 5).
+    async fn sent_tool_images(
+        &self,
+        conversation: &ConversationId,
+        turns: &[ModelTurn],
+        left_out: &HashSet<PartId>,
+    ) -> Result<SentImages, CallError> {
+        let chosen = chosen_tool_images(turns, left_out);
+        if chosen.is_empty() {
+            return Ok(SentImages::new());
+        }
+        let parts: Vec<PartId> = chosen
+            .iter()
+            .map(|(part, _positions)| part.clone())
+            .collect();
+        let stored = self.inner.store.tool_images(conversation, &parts).await?;
+        let mut sent = SentImages::new();
+        for (part, images) in stored {
+            let Some((_part, positions)) =
+                chosen.iter().find(|(chosen, _positions)| *chosen == part)
+            else {
+                continue;
+            };
+            let kept: Vec<(u32, ImageInput)> = images
+                .into_iter()
+                .filter(|image| positions.contains(&image.position))
+                .map(|image| {
+                    (
+                        image.position,
+                        ImageInput {
+                            format: image.format,
+                            width: image.width,
+                            height: image.height,
+                            data: image.data,
+                        },
+                    )
+                })
+                .collect();
+            if !kept.is_empty() {
+                sent.insert(part, kept);
+            }
+        }
+        Ok(sent)
     }
 
     /// For a run of an assigned task, what it works under, as the sections
@@ -880,29 +1004,32 @@ async fn read_machine_instructions(path: Option<PathBuf>) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
-/// The request of a call: its instructions, the tools that it offers and the
-/// turns that the model reads, with the older results of the latest turn
-/// left out when the context runs low.
-fn call_request(
-    setup: &Setup,
+/// What a call's request is built from, besides its run's setup and the
+/// turns.
+struct Shaping<'a> {
     options: CallOptions,
-    instructions: &str,
-    definitions: &[ToolDefinition],
-    turns: &[ModelTurn],
-) -> ModelRequest {
-    let left_out = if options.leave_out_results {
-        older_results(turns)
-    } else {
-        HashSet::new()
-    };
+    instructions: &'a str,
+    definitions: &'a [ToolDefinition],
+    /// The older results of the latest turn, left out when the context runs
+    /// low.
+    left_out: &'a HashSet<PartId>,
+    /// The images of the newest results that the request sends.
+    tool_images: &'a SentImages,
+}
+
+/// The request of a call: its instructions, the tools that it offers and the
+/// turns that the model reads, with the results and the images that the
+/// shaping leaves out.
+fn call_request(setup: &Setup, shaping: &Shaping<'_>, turns: &[ModelTurn]) -> ModelRequest {
+    let options = shaping.options;
     let shape = RequestShape {
-        instructions,
+        instructions: shaping.instructions,
         model: &setup.model,
         interface: setup.interface,
         binding: &setup.binding,
         max_output_tokens: setup.output_limit,
         reasoning_effort: setup.reasoning_effort,
-        tools: definitions,
+        tools: shaping.definitions,
         tool_choice: if options.tools_used_up {
             ToolChoice::None
         } else {
@@ -910,10 +1037,51 @@ fn call_request(
         },
         note: (options.tools_used_up && setup.uses_tools())
             .then(|| texts::tool_budget_used(setup.requester())),
-        left_out: &left_out,
+        left_out: shaping.left_out,
         requester: setup.requester(),
+        tool_images: shaping.tool_images,
     };
     build_request(shape, turns)
+}
+
+/// The most results whose images a request sends, and the most images in all
+/// (ADR-0044, decision 5). Every request sends again what the context holds,
+/// so older images become lines instead of being sent again and again.
+const MAX_SENT_IMAGE_RESULTS: usize = 3;
+const MAX_SENT_TOOL_IMAGES: usize = 8;
+
+/// Which images of results a request sends, by part and position: those of
+/// the newest tool calls whose results hold images and that the context
+/// keeps whole, until [`MAX_SENT_IMAGE_RESULTS`] results or
+/// [`MAX_SENT_TOOL_IMAGES`] images.
+fn chosen_tool_images(turns: &[ModelTurn], left_out: &HashSet<PartId>) -> Vec<(PartId, Vec<u32>)> {
+    let mut chosen = Vec::new();
+    let mut room = MAX_SENT_TOOL_IMAGES;
+    let newest_first = turns.iter().rev().flat_map(|turn| turn.parts.iter().rev());
+    for part in newest_first {
+        if chosen.len() == MAX_SENT_IMAGE_RESULTS || room == 0 {
+            break;
+        }
+        if part.kind != Some(PartKind::ToolCall) || left_out.contains(&part.id) {
+            continue;
+        }
+        let images = part
+            .tool_call
+            .as_ref()
+            .and_then(|call| call.result.as_ref())
+            .map_or(&[][..], |result| result.images.as_slice());
+        if images.is_empty() {
+            continue;
+        }
+        let positions: Vec<u32> = images
+            .iter()
+            .take(room)
+            .map(|image| image.position)
+            .collect();
+        room -= positions.len();
+        chosen.push((part.id.clone(), positions));
+    }
+    chosen
 }
 
 /// The calls of the latest turn whose results can be left out: every

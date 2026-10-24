@@ -11,7 +11,7 @@ use mannie_types::ids::ProjectId;
 use mannie_types::tools::{
     Access, AccessMode, ApprovalReason, ApprovalRequest, CommandRule, Decision, GrantScope,
     ProgramEffectKey, ProgramRule, ProgramTarget, Refusal, RemoteCommandRule, RemoteTarget,
-    RuleProposal, ToolsError, effect_keys,
+    RuleProposal, ToolServerEndpoint, ToolsError, effect_keys,
 };
 
 use crate::ceiling::Ceiling;
@@ -103,9 +103,11 @@ pub enum Verdict {
 /// 6. a move into a project that the owner's request names is allowed;
 /// 7. everything else asks.
 ///
-/// Commands, here or on a remote host, and runs of installed programs are
-/// never allowed by the workspace, a command with a metacharacter is never
-/// allowed by a grant or a rule, and a move is never granted.
+/// Commands, here or on a remote host, runs of installed programs and calls
+/// of a tool server's tools are never allowed by the workspace, a command
+/// with a metacharacter is never allowed by a grant or a rule, a call of a
+/// tool server's tool is never allowed by a rule, and a move is never
+/// granted.
 ///
 /// On a worker, its ceiling decides in place of the workspace and the rules
 /// ([`decide_under_ceiling`]): an access that the ceiling forbids refuses the
@@ -261,10 +263,12 @@ fn decide_under_ceiling(
         }
         Access::Project { .. } => Err(Hold::Refuse(Refusal::NoProjectsOnHost)),
         // A worker runs no plugins, so no tool of its own reaches a remote
-        // host or runs a plugin's program; the refusals keep every access
-        // answered (ADR-0036, ADR-0038).
+        // host, runs a plugin's program or calls a tool server's tool; the
+        // refusals keep every access answered (ADR-0036, ADR-0038,
+        // ADR-0043).
         Access::RemoteCommand { .. } => Err(Hold::Refuse(Refusal::NoRemoteCommands)),
         Access::Program { .. } => Err(Hold::Refuse(Refusal::NoProgramsOnHost)),
+        Access::ExternalTool { .. } => Err(Hold::Refuse(Refusal::NoExternalTools)),
     }
 }
 
@@ -362,7 +366,32 @@ fn decide_access(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decision,
             Err(ApprovalReason::RemoteCommand)
         }
         Access::Program { .. } => decide_program(access, inputs),
+        Access::ExternalTool { .. } => decide_external_tool(access, inputs),
     }
+}
+
+/// What allows a call of a tool server's tool, or why it asks: a grant that
+/// covers the same tool of the same server with any arguments. A tool server
+/// acts where it runs, so neither the workspace nor Mannie's own folders
+/// apply (ADR-0043, decision 4).
+fn decide_external_tool(
+    access: &Access,
+    inputs: &PolicyInputs<'_>,
+) -> Result<Decision, ApprovalReason> {
+    let Access::ExternalTool {
+        plugin,
+        target,
+        endpoint,
+        tool,
+        ..
+    } = access
+    else {
+        return Err(ApprovalReason::ExternalTool);
+    };
+    granted(&inputs.grants, |grant| {
+        covers_external_tool(grant, plugin, target, endpoint, tool)
+    })
+    .ok_or(ApprovalReason::ExternalTool)
 }
 
 /// What allows a run of an installed program, or why it asks: a grant or a
@@ -526,7 +555,8 @@ fn covers_path(grant: &GrantScope, path: &Path, mode: AccessMode) -> bool {
         } => *granted == mode && is_inside(path, Path::new(folder)),
         GrantScope::Command { .. }
         | GrantScope::RemoteCommand { .. }
-        | GrantScope::Program { .. } => false,
+        | GrantScope::Program { .. }
+        | GrantScope::ExternalTool { .. } => false,
     }
 }
 
@@ -549,9 +579,10 @@ fn covers_command(grant: &GrantScope, command: &str, directory: &Path, backgroun
                 && is_same_path(directory, Path::new(working_directory))
                 && covers_mode(*granted_background, background)
         }
-        GrantScope::Path { .. } | GrantScope::RemoteCommand { .. } | GrantScope::Program { .. } => {
-            false
-        }
+        GrantScope::Path { .. }
+        | GrantScope::RemoteCommand { .. }
+        | GrantScope::Program { .. }
+        | GrantScope::ExternalTool { .. } => false,
     }
 }
 
@@ -578,7 +609,40 @@ fn covers_remote_command(
                 && granted == command
                 && covers_mode(*granted_background, background)
         }
-        GrantScope::Path { .. } | GrantScope::Command { .. } | GrantScope::Program { .. } => false,
+        GrantScope::Path { .. }
+        | GrantScope::Command { .. }
+        | GrantScope::Program { .. }
+        | GrantScope::ExternalTool { .. } => false,
+    }
+}
+
+/// Whether a grant covers a call of a tool server's tool: the same tool of
+/// the same server at the same endpoint, whatever the call's arguments
+/// (ADR-0043, decision 4).
+fn covers_external_tool(
+    grant: &GrantScope,
+    plugin: &str,
+    target: &str,
+    endpoint: &ToolServerEndpoint,
+    tool: &str,
+) -> bool {
+    match grant {
+        GrantScope::ExternalTool {
+            plugin: granted_plugin,
+            target: granted_target,
+            endpoint: granted_endpoint,
+            tool: granted_tool,
+            ..
+        } => {
+            granted_plugin == plugin
+                && granted_target == target
+                && granted_endpoint == endpoint
+                && granted_tool == tool
+        }
+        GrantScope::Path { .. }
+        | GrantScope::Command { .. }
+        | GrantScope::RemoteCommand { .. }
+        | GrantScope::Program { .. } => false,
     }
 }
 
@@ -606,9 +670,10 @@ fn covers_program(grant: &GrantScope, run: &RunKey<'_>) -> bool {
                 )
                 && covers_effects(effects, &run.effects)
         }
-        GrantScope::Path { .. } | GrantScope::Command { .. } | GrantScope::RemoteCommand { .. } => {
-            false
-        }
+        GrantScope::Path { .. }
+        | GrantScope::Command { .. }
+        | GrantScope::RemoteCommand { .. }
+        | GrantScope::ExternalTool { .. } => false,
     }
 }
 
@@ -690,6 +755,20 @@ fn grant_scope(access: &Access) -> Option<GrantScope> {
                 background: *background,
             })
         }
+        Access::ExternalTool {
+            plugin,
+            target,
+            label,
+            endpoint,
+            tool,
+            ..
+        } => Some(GrantScope::ExternalTool {
+            plugin: plugin.clone(),
+            target: target.clone(),
+            label: label.clone(),
+            endpoint: endpoint.clone(),
+            tool: tool.clone(),
+        }),
         Access::Program { .. } => {
             let run = RunKey::of(access)?;
             Some(GrantScope::Program {
@@ -782,6 +861,27 @@ fn scope_covers(wider: &GrantScope, narrower: &GrantScope) -> bool {
                 && arguments == narrower_arguments
                 && is_same_path(Path::new(narrower_directory), Path::new(working_directory))
                 && covers_effects(effects, narrower_effects)
+        }
+        (
+            GrantScope::ExternalTool {
+                plugin,
+                target,
+                endpoint,
+                tool,
+                ..
+            },
+            GrantScope::ExternalTool {
+                plugin: narrower_plugin,
+                target: narrower_target,
+                endpoint: narrower_endpoint,
+                tool: narrower_tool,
+                ..
+            },
+        ) => {
+            plugin == narrower_plugin
+                && target == narrower_target
+                && endpoint == narrower_endpoint
+                && tool == narrower_tool
         }
         _ => false,
     }

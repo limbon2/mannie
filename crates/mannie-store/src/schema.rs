@@ -219,6 +219,12 @@ const RUNTIME: StoreModule = StoreModule {
             description: "create the table of background commands",
             sql: include_str!("runtime/migrations/0032_create_background_commands.sql"),
         },
+        Migration {
+            version: 22,
+            legacy_version: None,
+            description: "create the table of the images of tool results",
+            sql: include_str!("runtime/migrations/0034_create_tool_images.sql"),
+        },
     ]),
     confined: false,
 };

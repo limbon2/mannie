@@ -127,6 +127,7 @@ fn delete(target: &Access) -> Result<Done, ToolFailure> {
             folders,
         },
         archives: Vec::new(),
+        images: Vec::new(),
     })
 }
 

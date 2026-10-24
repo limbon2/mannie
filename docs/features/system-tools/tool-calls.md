@@ -1,33 +1,34 @@
 # Tool calls
 
-|              |                                                                                                                                                                                                                                                                                                                  |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status       | Building                                                                                                                                                                                                                                                                                                         |
-| Milestone    | M2                                                                                                                                                                                                                                                                                                               |
-| Last updated | 2026-10-21                                                                                                                                                                                                                                                                                                       |
-| Part of      | [System tools](README.md)                                                                                                                                                                                                                                                                                        |
-| Related      | [ADR-0011](../../adr/0011-own-the-provider-adapters.md), [ADR-0012](../../adr/0012-run-agents-as-durable-actors.md), [Agent runtime](../../architecture/agent-runtime.md), [Providers](../chat/providers.md), [Conversations](../chat/conversations.md), [Operations and approvals](operations-and-approvals.md) |
+|              |                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status       | Building                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Milestone    | M2                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Last updated | 2026-10-24                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Part of      | [System tools](README.md)                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Related      | [ADR-0011](../../adr/0011-own-the-provider-adapters.md), [ADR-0012](../../adr/0012-run-agents-as-durable-actors.md), [ADR-0043](../../adr/0043-let-plugins-offer-the-tools-of-tool-servers.md), [ADR-0044](../../adr/0044-let-tool-results-carry-images-to-the-model.md), [Agent runtime](../../architecture/agent-runtime.md), [Providers](../chat/providers.md), [Conversations](../chat/conversations.md), [Operations and approvals](operations-and-approvals.md) |
 
 ## Design
 
 ### The provider contract
 
-- A model request carries tool definitions (name, description and the schema of the arguments) and a tool choice: `auto`, or `none` when the model must answer without tools. Messages carry the model's tool calls (call ID, name and arguments) and their results, in messages of a tool role.
+- A model request carries tool definitions (name, description, the schema of the arguments and whether the schema is strict) and a tool choice: `auto`, or `none` when the model must answer without tools. Messages carry the model's tool calls (call ID, name and arguments) and their results, in messages of a tool role.
+- A request carries at most 128 tool definitions, the most that OpenAI's interfaces take. A run that would offer more leaves out the tools that plugins' tool sources published, with a log line ([ADR-0043](../../adr/0043-let-plugins-offer-the-tools-of-tool-servers.md), decision 2).
 - The adapters report `ToolCallStarted` with the call ID and the name as soon as the provider names the tool, and `ToolCall` with the complete arguments once the call is complete. Arguments do not stream to the runtime.
 - Each adapter checks the calls ([ADR-0011](../../adr/0011-own-the-provider-adapters.md), decision 4): a call needs a name, its arguments are at most 1 MiB, and a missing or repeated call ID is replaced by one that Mannie generates. A call that the output limit cut off never arrives as complete.
 
 ### Adapters
 
-- Responses: tools are function tools. Mannie reads `function_call` output items: the item's addition starts the call and its completion ends it. Earlier calls go back as `function_call` input items, without their item ID, followed by their `function_call_output` items. Encrypted reasoning of the same binding goes back before the calls that followed it, as the API requires when tools are used with `store: false`.
-- Chat Completions: `tools` and `tool_choice`. Mannie collects `delta.tool_calls` by their index. An earlier call goes back as an assistant message with `tool_calls` and empty text content, followed by one `tool` message per call. Tool messages are never merged with others and never dropped for being empty.
+- Responses: tools are function tools. Mannie reads `function_call` output items: the item's addition starts the call and its completion ends it. Earlier calls go back as `function_call` input items, without their item ID, followed by their `function_call_output` items. A result with images goes back as an output array of its text and an `input_image` for each image ([ADR-0044](../../adr/0044-let-tool-results-carry-images-to-the-model.md), decision 6). Encrypted reasoning of the same binding goes back before the calls that followed it, as the API requires when tools are used with `store: false`.
+- Chat Completions: `tools` and `tool_choice`. Mannie collects `delta.tool_calls` by their index. An earlier call goes back as an assistant message with `tool_calls` and empty text content, followed by one `tool` message per call. Tool messages are never merged with others and never dropped for being empty. They carry text only, so the images of a step's results follow them in one user message, each introduced by the call that it came from.
 - A server that refuses tools fails the reply with the cause `tools_unsupported`, which points to the profile's "Use tools" switch. The adapters recognize vLLM without its tool options, Ollama models without a tool template and OpenRouter endpoints without tool support.
 
 ### Quirk profiles
 
-| Quirk              | Effect                                                                                                                                                                         |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Tool calls in text | A `<tool_call>` block with a JSON object of `name` and `arguments`, written in the text or the reasoning, becomes a tool call. It applies only when the request offered tools. |
-| Strict schemas     | `strict: true` is sent with each tool, whose schema then requires every property. OpenAI's servers get it.                                                                     |
+| Quirk              | Effect                                                                                                                                                                                              |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tool calls in text | A `<tool_call>` block with a JSON object of `name` and `arguments`, written in the text or the reasoning, becomes a tool call. It applies only when the request offered tools.                      |
+| Strict schemas     | `strict: true` is sent with each tool whose schema is strict, which then requires every property. OpenAI's servers get it. A tool with a loose schema, such as a tool server's, is sent without it. |
 
 As with the quirks of [providers](../chat/providers.md#quirk-profiles), a quirk is trusted only when a recorded fixture shows the behavior.
 
@@ -67,7 +68,7 @@ The notes count against the limit of continuation notes, and the conditions on t
 One part of kind `tool_call` holds each call:
 
 - Its text is the arguments as the model wrote them, stored when the call is complete.
-- Its document holds the call ID, the tool's name, the call's activity, the status, the approval request, the result and, for commands, the shell's process record.
+- Its document holds the call ID, the tool's name, the call's activity, the status, the approval request, the result with the images that it names and, for commands, the shell's process record.
 - The part stays open while Mannie handles the call. Each change of its document is stored with full durability, in the same transaction as the event `part_updated`, which carries the whole part. The part finishes with its result, and from then on it is final.
 
 | Status              | Meaning                                                                          |
@@ -102,7 +103,8 @@ A retry of a reply that made tool calls keeps that reply's run: its parts stay f
 
 - A finished call reaches the model as the call and its result, always as a pair. A call whose arguments were not valid JSON goes back with `{}` as its arguments.
 - Each model call of a reply becomes an assistant message of its own, with its text and its calls, followed by the results of those calls. A part records the model call that wrote it, so two steps that made calls without text between them stay two steps, and the model never reads its sequential calls as one step of parallel calls.
-- The estimate of a request counts the tool definitions and each call's text and result.
+- The estimate of a request counts the tool definitions and each call's text and result, and each image of a result as the provider reads it, scaled down to 2048 pixels on its longer side.
+- The images of the 3 newest results that hold images reach the model with their results, at most 8 in all. Every other image, also in a result that the context leaves out, in compaction and for a profile without tools, reads as a line with its format and its size.
 - Compaction writes each call in one line, and the checkpoint's hash covers calls and results. The hash of the other parts is the same as before, so checkpoints written before system tools stay valid.
 - Inside the turn being answered, when the context still needs more than 80% of the budget after older turns were compacted, the oldest results except the latest three are replaced in the model's context by a note that carries their archive reference. The transcript keeps them.
 
@@ -143,12 +145,14 @@ Each tool's description and the rendering of its results are in [tools and resul
 - `RunActivity` gains `awaiting_approval` and `running_tool`, each with the part.
 - The run failure `tools_unsupported` and the provider check `tools`.
 - The profile's `use_tools`.
+- The tool definition's `strict`, true unless a tool's schema is loose ([ADR-0043](../../adr/0043-let-plugins-offer-the-tools-of-tool-servers.md), decision 3).
+- The images of a result, which the result names by position with their formats and sizes, and the command `read_tool_image`, which reads one by its part and position ([ADR-0044](../../adr/0044-let-tool-results-carry-images-to-the-model.md)).
 - The system tools of [background commands](background-commands.md), with their outcomes, failures and notes ([wake-ups](wake-ups.md)).
 - The system tool `move_to_project` ([projects](../chat/projects.md#moving-a-conversation-into-a-project)), with the outcome `moved_to_project`, the access kind `project`, the approval reason `move_to_project`, the decision `owner_named_project` and the failures `project_not_found` and `already_in_project`.
 
 ### Data
 
-Migration `0007` adds `kept` to `runtime_runs`. The part's document is a versioned JSON document, so `tool_call` parts need no new table.
+Migration `0007` adds `kept` to `runtime_runs`. The part's document is a versioned JSON document, so `tool_call` parts need no new table. Migration `0034` creates `runtime_tool_images`: the part, the position, the conversation, the format, the width, the height, the bytes and the time, deleted with the part and with the conversation. The views that the UI receives never carry the bytes.
 
 ### Threat notes
 

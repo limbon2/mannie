@@ -7,6 +7,7 @@ pub mod background_commands;
 pub mod credentials;
 pub mod executor_host;
 pub mod file_dialog;
+pub mod local_servers;
 pub mod processes;
 pub mod secrets;
 pub mod store;
@@ -21,6 +22,7 @@ pub const SERVICES: &[ServiceInfo] = &[
     ServiceInfo::of::<credentials::Credentials>(),
     ServiceInfo::of::<executor_host::ExecutorHost>(),
     ServiceInfo::of::<file_dialog::FileDialog>(),
+    ServiceInfo::of::<local_servers::LocalServers>(),
     ServiceInfo::of::<processes::Processes>(),
     ServiceInfo::of::<secrets::Secrets>(),
     ServiceInfo::of::<store::Store>(),
@@ -44,6 +46,7 @@ mod tests {
     use crate::services::credentials::Credentials;
     use crate::services::executor_host::ExecutorHost;
     use crate::services::file_dialog::FileDialog;
+    use crate::services::local_servers::LocalServers;
     use crate::services::processes::Processes;
     use crate::services::secrets::Secrets;
     use crate::services::store::Store;
@@ -64,6 +67,7 @@ mod tests {
                 ("credentials", 1, true),
                 ("executor-host", 1, false),
                 ("file-dialog", 1, false),
+                ("local-servers", 1, true),
                 ("processes", 1, true),
                 ("secrets", 1, true),
                 ("store", 1, false)
@@ -78,6 +82,7 @@ mod tests {
             ServiceInfo::of::<Credentials>(),
             ServiceInfo::of::<ExecutorHost>(),
             ServiceInfo::of::<FileDialog>(),
+            ServiceInfo::of::<LocalServers>(),
             ServiceInfo::of::<Processes>(),
             ServiceInfo::of::<Secrets>(),
             ServiceInfo::of::<Store>(),

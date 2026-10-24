@@ -3,7 +3,8 @@
 //! module that owns the point consumes them, so the runtime's `images.rs`
 //! consumes image sources, its `mentions.rs` mention providers, its
 //! `agents.rs` agent specs, its `instructions.rs` sections, its
-//! `executors.rs` task executors and its `plugin_tools.rs` tools.
+//! `executors.rs` task executors and its `plugin_tools.rs` tools and tool
+//! sources.
 //!
 //! SDK 1 moves today's points in their current shapes (decision 3). Where a
 //! shape breaks the protocol rules, `tests/protocol.rs` lists the module as a
@@ -14,6 +15,7 @@ pub mod executors;
 pub mod images;
 pub mod mentions;
 pub mod sections;
+pub mod tool_sources;
 pub mod tools;
 
 use crate::contributions::PointInfo;
@@ -28,6 +30,7 @@ pub const ALL: &[PointInfo] = &[
     PointInfo::of::<executors::Executors>(),
     PointInfo::of::<mentions::Mentions>(),
     PointInfo::of::<images::ImageSources>(),
+    PointInfo::of::<tool_sources::ToolSources>(),
 ];
 
 #[cfg(test)]
@@ -55,6 +58,7 @@ mod tests {
                 ("executors", 1, IdRule::PluginKind),
                 ("mentions", 1, IdRule::Owned),
                 ("image-sources", 1, IdRule::Owned),
+                ("tool-sources", 1, IdRule::Owned),
             ]
         );
     }

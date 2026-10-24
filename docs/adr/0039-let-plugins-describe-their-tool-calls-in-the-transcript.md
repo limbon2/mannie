@@ -7,6 +7,8 @@
 | Deciders | Owner                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | Related  | [ADR-0006](0006-use-shadcn-svelte-through-its-cli.md), [ADR-0013](0013-journal-every-side-effect.md), [ADR-0020](0020-complete-the-ui-shell-slots.md), [ADR-0021](0021-render-model-output-as-markdown-with-micromark.md), [ADR-0034](0034-build-plugins-on-a-plugin-sdk.md), [ADR-0038](0038-let-plugins-run-installed-programs-in-the-owners-projects.md), [Extension points](../architecture/extension-points.md#37-ui-shell-slots) |
 
+Later changes: [ADR-0043](0043-let-plugins-offer-the-tools-of-tool-servers.md) refines decision 1: one tool kind may describe every tool of its plugin that has no entry of its own.
+
 ## Context
 
 - The owner wants git tool calls to read well in the transcript: a summary that says what happened, and the diff, the commits or the conflicts that the call returned, laid out for reading ([decision D37](../roadmap/milestones.md#5-decisions)).

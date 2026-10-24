@@ -369,6 +369,20 @@ fn render_part(
             labels.get("export_document_task")?
         );
     }
+    asset_links(output, record, part, &document, labels, prefix)
+}
+
+/// The links of a part's assets: the image of an owner's image part, the
+/// images of a tool call's result and the complete outputs that it archived,
+/// relative to the document, which `prefix` leads from to the export's root.
+fn asset_links(
+    output: &mut String,
+    record: &ConversationRecord,
+    part: &RecordPart,
+    document: &serde_json::Value,
+    labels: &Labels,
+    prefix: &str,
+) -> Result<(), ExportError> {
     if let Some(image) = record.images.iter().find(|image| image.part_id == part.id) {
         let name = document
             .pointer("/image/view/name")
@@ -379,6 +393,21 @@ fn render_part(
             "![{}]({prefix}images/{}.{})\n",
             escape(name),
             image.part_id,
+            image.format.as_str()
+        );
+    }
+    for image in record
+        .tool_images
+        .iter()
+        .filter(|image| image.part_id == part.id)
+    {
+        let _written = writeln!(
+            output,
+            "![{} {}]({prefix}images/{}-{}.{})\n",
+            labels.get("export_document_tool_image")?,
+            image.position.saturating_add(1),
+            image.part_id,
+            image.position,
             image.format.as_str()
         );
     }
@@ -446,7 +475,9 @@ mod tests {
 #[cfg(test)]
 mod record_tests {
     use super::*;
-    use mannie_types::export::{RECORD_VERSION, RecordImage, RecordPart, RecordTurn};
+    use mannie_types::export::{
+        RECORD_VERSION, RecordImage, RecordPart, RecordToolImage, RecordTurn,
+    };
     use mannie_types::ids::{ConversationId, PartId, TurnId};
     use mannie_types::images::ImageFormat;
     use mannie_types::transcript::{ConversationSummary, TitleSource, TurnView};
@@ -503,6 +534,7 @@ mod record_tests {
             children: Vec::new(),
             warnings: Vec::new(),
             background_commands: Vec::new(),
+            tool_images: Vec::new(),
         }
     }
 
@@ -556,9 +588,47 @@ mod record_tests {
         assert!(root.contains("```text\nnpm run dev\n```"));
     }
 
+    /// The record with a tool call whose result holds an image at position 1.
+    fn with_tool_image() -> ConversationRecord {
+        let mut record = record();
+        let call = PartId::parse("0199e0f2-0000-7000-8000-000000000004").unwrap();
+        record.turns[0].parts.push(RecordPart {
+            id: call.clone(),
+            kind: "tool_call".to_owned(),
+            state: "complete".to_owned(),
+            run_id: None,
+            position: 1,
+            text: "{}".to_owned(),
+            document: "{}".to_owned(),
+            created_at: UtcMillis::EPOCH,
+        });
+        record.tool_images = vec![RecordToolImage {
+            part_id: call,
+            position: 1,
+            format: ImageFormat::Jpeg,
+            data: b"saved-tool-image".to_vec(),
+        }];
+        record
+    }
+
+    #[test]
+    fn a_tool_call_links_the_images_of_its_result() {
+        let record = with_tool_image();
+        let labels = Labels::load().unwrap();
+
+        let root = document(&record, &labels, true).unwrap();
+        let child = document(&record, &labels, false).unwrap();
+
+        assert!(
+            root.contains("![Result image 2](images/0199e0f2-0000-7000-8000-000000000004-1.jpeg)"),
+            "{root}"
+        );
+        assert!(child.contains("](../images/0199e0f2-0000-7000-8000-000000000004-1.jpeg)"));
+    }
+
     #[test]
     fn renderer_and_writer_preserve_stored_asset_bytes() {
-        let record = record();
+        let record = with_tool_image();
         let parent = tempfile::tempdir().unwrap();
         let mut folder =
             crate::export::folder::Folder::create(parent.path().join("export"), "incomplete")
@@ -568,5 +638,9 @@ mod record_tests {
             .path()
             .join("images/0199e0f2-0000-7000-8000-000000000002.png");
         assert_eq!(std::fs::read(image).unwrap(), b"saved-image");
+        let tool_image = folder
+            .path()
+            .join("images/0199e0f2-0000-7000-8000-000000000004-1.jpeg");
+        assert_eq!(std::fs::read(tool_image).unwrap(), b"saved-tool-image");
     }
 }

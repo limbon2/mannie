@@ -104,6 +104,9 @@ export function pluginServiceLabel(name: string): string {
     case 'file-dialog': {
       return m.plugins_use_service_file_dialog();
     }
+    case 'local-servers': {
+      return m.plugins_use_service_local_servers();
+    }
     case 'processes': {
       return m.plugins_use_service_processes();
     }

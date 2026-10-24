@@ -1355,6 +1355,7 @@ dependencies = [
 name = "mannie-plugin-sdk"
 version = "0.5.0"
 dependencies = [
+ "base64 0.22.1",
  "futures-util",
  "mannie-types",
  "schemars",
@@ -1423,6 +1424,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "url",
  "uuid",
 ]
 
@@ -1505,6 +1507,7 @@ dependencies = [
  "serde",
  "specta",
  "thiserror",
+ "url",
  "zeroize",
 ]
 

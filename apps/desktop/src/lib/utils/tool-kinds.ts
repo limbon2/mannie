@@ -13,6 +13,23 @@ import { callArguments } from './tools-summaries.js';
 /** Finds the tool kind that the plugin `plugin` registered for its tool `tool`. */
 export type FindToolKind = (tool: string, plugin: string) => ToolKind | undefined;
 
+/** The tool kinds as the transcript looks them up: by a plugin's tool, and all of a plugin's. */
+export interface ToolKinds {
+  /** The kinds that the plugin registered, while the plugin is on. */
+  readonly entriesOf: (plugin: string) => readonly ToolKind[];
+  /** The kind that the plugin registered for this tool, while the plugin is on. */
+  readonly findOf: (tool: string, plugin: string) => ToolKind | undefined;
+}
+
+/**
+ * The tool kind of a plugin's tool: the one that the plugin registered for
+ * the tool, or else the one that it registered for every tool without an
+ * entry of its own (ADR-0043, decision 9).
+ */
+export function findToolKind(kinds: ToolKinds, tool: string, plugin: string): ToolKind | undefined {
+  return kinds.findOf(tool, plugin) ?? kinds.entriesOf(plugin).find((kind) => kind.everyTool === true);
+}
+
 type Fields = Readonly<Record<string, unknown>>;
 
 /** The argument that the core adds to every call for the owner, which no tool reads. */

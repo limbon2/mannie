@@ -9,11 +9,12 @@ use mannie_types::provider::{ApiInterface, ReasoningEffort};
 use mannie_types::run::RunState;
 use mannie_types::tasks::{AwaitedTask, TaskDocument, TaskPartDocument, TaskRefusal, TaskState};
 use mannie_types::tools::{
-    ArchiveRef, NotRunReason, ToolCallDocument, ToolCallStatus, ToolOutcome, ToolResult,
+    ArchiveRef, NotRunReason, ToolCallDocument, ToolCallStatus, ToolImageRef, ToolOutcome,
+    ToolResult,
 };
 use mannie_types::transcript::{PartKind, PartState};
 
-use super::{RequestShape, build_request};
+use super::{RequestShape, SentImages, build_request};
 use crate::agents::Requester;
 use crate::texts;
 
@@ -69,6 +70,7 @@ fn completed(call_id: &str, output: &str) -> ToolCallDocument {
             outcome: ToolOutcome::Unknown,
             output: output.to_owned(),
             archives: Vec::new(),
+            images: Vec::new(),
         }),
         ..document(call_id, ToolCallStatus::Completed)
     }
@@ -90,10 +92,13 @@ static TOOLS: LazyLock<Vec<ToolDefinition>> = LazyLock::new(|| {
         name: "read_file".to_owned(),
         description: "Reads a file.".to_owned(),
         parameters: serde_json::json!({ "type": "object" }),
+        strict: true,
     }]
 });
 
 static NOTHING_LEFT_OUT: LazyLock<HashSet<PartId>> = LazyLock::new(HashSet::new);
+
+static NO_IMAGES: LazyLock<SentImages> = LazyLock::new(SentImages::new);
 
 fn shape(interface: ApiInterface) -> RequestShape<'static> {
     RequestShape {
@@ -108,6 +113,7 @@ fn shape(interface: ApiInterface) -> RequestShape<'static> {
         note: None,
         left_out: &NOTHING_LEFT_OUT,
         requester: Requester::Owner,
+        tool_images: &NO_IMAGES,
     }
 }
 
@@ -132,6 +138,7 @@ fn tool_result(call_id: &str, output: &str) -> Message {
         content: vec![Content::ToolResult {
             call_id: call_id.to_owned(),
             output: output.to_owned(),
+            images: Vec::new(),
         }],
     }
 }
@@ -611,6 +618,111 @@ fn a_model_without_tools_reads_earlier_calls_as_text() {
         ]
     );
     assert_eq!(request.tools, Vec::new());
+}
+
+/// The document of a call that completed with a screenshot at position 0
+/// and a chart at position 2.
+fn with_images(call_id: &str) -> ToolCallDocument {
+    let mut document = completed(call_id, "Two images.");
+    if let Some(result) = &mut document.result {
+        result.images = vec![
+            ToolImageRef {
+                position: 0,
+                format: ImageFormat::Png,
+                width: 1280,
+                height: 720,
+                bytes: 90_000,
+            },
+            ToolImageRef {
+                position: 2,
+                format: ImageFormat::Jpeg,
+                width: 640,
+                height: 480,
+                bytes: 30_000,
+            },
+        ];
+    }
+    document
+}
+
+fn sent_image(byte: u8) -> ImageInput {
+    ImageInput {
+        format: ImageFormat::Png,
+        width: 1280,
+        height: 720,
+        data: ImageBytes::from(vec![byte; 4]),
+    }
+}
+
+#[test]
+fn a_result_carries_its_sent_images_and_names_the_others_in_a_line() {
+    let turns = [turn(
+        0,
+        Some(RunState::Running),
+        vec![
+            part(1, Some(PartKind::UserText), "Show me"),
+            call(2, "{}", with_images("call_1")),
+        ],
+    )];
+    let sent = SentImages::from([(part_id(2), vec![(0, sent_image(7))])]);
+
+    let request = build_request(
+        RequestShape {
+            tool_images: &sent,
+            ..with_tools(ApiInterface::Responses)
+        },
+        &turns,
+    );
+
+    assert_eq!(
+        request.messages[2],
+        Message {
+            role: Role::Tool,
+            content: vec![Content::ToolResult {
+                call_id: "call_1".to_owned(),
+                output: format!(
+                    "Two images.\n{}",
+                    texts::tool_image_not_sent(3, ImageFormat::Jpeg, 640, 480)
+                ),
+                images: vec![sent_image(7)],
+            }],
+        }
+    );
+}
+
+#[test]
+fn a_model_without_tools_reads_every_image_of_a_result_as_a_line() {
+    let turns = [turn(
+        0,
+        Some(RunState::Completed),
+        vec![
+            part(1, Some(PartKind::UserText), "Show me"),
+            call(2, "{}", with_images("call_1")),
+        ],
+    )];
+    let sent = SentImages::from([(part_id(2), vec![(0, sent_image(7))])]);
+
+    let request = build_request(
+        RequestShape {
+            tool_images: &sent,
+            ..shape(ApiInterface::ChatCompletions)
+        },
+        &turns,
+    );
+
+    let expected = format!(
+        "Two images.\n{}\n{}",
+        texts::tool_image_not_sent(1, ImageFormat::Png, 1280, 720),
+        texts::tool_image_not_sent(3, ImageFormat::Jpeg, 640, 480)
+    );
+    assert_eq!(
+        request.messages[1].content,
+        [Content::Text(texts::tool_call_as_text(
+            "read_file",
+            "{}",
+            &expected
+        ))]
+    );
 }
 
 #[test]

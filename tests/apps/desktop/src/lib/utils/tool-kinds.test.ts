@@ -8,6 +8,7 @@ import type { ToolCallView, ToolResult } from '../../../../../../apps/desktop/sr
 import type { ToolKind } from '../../../../../../apps/desktop/src/lib/types/shell-slots.js';
 import {
   callToolKind,
+  findToolKind,
   pluginFailure,
   pluginFailureMessage,
   toolKindCall,
@@ -42,6 +43,34 @@ const KIND: ToolKind = {
   id: 'git_merge',
   summary: () => 'Merged feature',
 };
+
+describe('findToolKind', () => {
+  const EVERY: ToolKind = { ...KIND, everyTool: true, id: 'mcp_tools', summary: () => null };
+  const OWN: ToolKind = { ...KIND, id: 'mcp_read_resource' };
+  const owners = new Map<ToolKind, string>([
+    [KIND, 'git'],
+    [OWN, 'mcp'],
+  ]);
+  const kinds = {
+    entriesOf: (plugin: string): readonly ToolKind[] => (plugin === 'mcp' ? [OWN, EVERY] : [KIND]),
+    findOf: (tool: string, plugin: string): ToolKind | undefined =>
+      [KIND, OWN].find((kind) => {
+        const isTool = kind.id === tool;
+        const isTheirs = owners.get(kind) === plugin;
+        return isTool && isTheirs;
+      }),
+  };
+
+  it('finds a tool’s own kind first, then the plugin’s kind for every tool', () => {
+    expect(findToolKind(kinds, 'mcp_read_resource', 'mcp')).toBe(OWN);
+    expect(findToolKind(kinds, 'mcp_github_create_issue', 'mcp')).toBe(EVERY);
+  });
+
+  it('finds no kind for every tool of a plugin that registered none', () => {
+    expect(findToolKind(kinds, 'git_merge', 'git')).toBe(KIND);
+    expect(findToolKind(kinds, 'git_rebase', 'git')).toBeUndefined();
+  });
+});
 
 describe('callToolKind', () => {
   it('asks for the kind of the call’s own plugin, and finds none for the core’s calls', () => {

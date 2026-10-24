@@ -129,6 +129,7 @@ fn copy(source: &Access, destination: &Access) -> Result<Done, ToolFailure> {
             files,
         },
         archives: Vec::new(),
+        images: Vec::new(),
     })
 }
 

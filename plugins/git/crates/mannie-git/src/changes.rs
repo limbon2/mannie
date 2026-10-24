@@ -489,7 +489,7 @@ fn normalized(access: &ToolAccess) -> ToolAccess {
             }
             ToolAccess::Program(normal)
         }
-        ToolAccess::RemoteCommand(_) => access.clone(),
+        ToolAccess::RemoteCommand(_) | ToolAccess::ExternalTool(_) => access.clone(),
     }
 }
 
@@ -540,7 +540,9 @@ pub(crate) mod testing {
                 .flatten()
                 .filter_map(|access| match access {
                     ToolAccess::Program(run) => Some(run.effects.clone()),
-                    ToolAccess::Path(_) | ToolAccess::RemoteCommand(_) => None,
+                    ToolAccess::Path(_)
+                    | ToolAccess::RemoteCommand(_)
+                    | ToolAccess::ExternalTool(_) => None,
                 })
                 .flatten()
                 .collect()

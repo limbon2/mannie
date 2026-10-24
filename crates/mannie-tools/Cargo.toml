@@ -25,7 +25,9 @@ sha2 = { workspace = true }
 thiserror = { workspace = true }
 # The times of files, in the results that the model reads.
 time = { workspace = true }
-tokio = { workspace = true, features = ["io-util", "macros", "process", "rt", "sync", "time"] }
+# `net` holds the pipe of a local server's input on Unix (ADR-0043, decision
+# 5).
+tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
 

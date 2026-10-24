@@ -720,14 +720,20 @@ impl PluginHost {
             declared,
             bound,
         );
-        let started = listed.plugin.start(context).await.map_err(|failure| {
-            tracing::warn!(
-                plugin = id,
-                code = failure.code(),
-                "a plugin could not start"
-            );
-            failure.code().to_owned()
-        })?;
+        let started = match listed.plugin.start(context).await {
+            Ok(started) => started,
+            Err(failure) => {
+                tracing::warn!(
+                    plugin = id,
+                    code = failure.code(),
+                    "a plugin could not start"
+                );
+                // A start that failed may have begun what the services hold
+                // for the plugin, such as a local server.
+                self.release(&listed.id).await;
+                return Err(failure.code().to_owned());
+            }
+        };
         let instance = started.instance;
         let handlers = started.handlers;
         if let Err(refusal) =
@@ -741,9 +747,23 @@ impl PluginHost {
                 "the core refused a plugin's contributions"
             );
             instance.stop().await;
+            self.release(&listed.id).await;
             return Err(CONTRIBUTIONS_REFUSED.to_owned());
         }
         Ok((instance, handlers))
+    }
+
+    /// Lets every provider release what it holds for a plugin that stopped
+    /// or did not start, so nothing that the plugin began outlives it
+    /// (ADR-0043, decision 5).
+    async fn release(&self, plugin: &PluginId) {
+        futures_util::future::join_all(
+            self.inner
+                .providers
+                .iter()
+                .map(|provider| provider.release(plugin)),
+        )
+        .await;
     }
 
     /// Takes a plugin's contributions out of the core's consumers, so no run
@@ -763,6 +783,7 @@ impl PluginHost {
         if let Some(instance) = instance {
             instance.stop().await;
         }
+        self.release(&entry.listed.id).await;
         tracing::info!(plugin = id, "a plugin stopped");
         self.change_view(id, |view| view.state = PluginState::Off);
     }

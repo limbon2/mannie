@@ -13,7 +13,13 @@
   import { toolsActions } from '#lib/state/tools-actions.svelte.js';
   import type { PartRendererProps } from '#lib/types/shell-slots.js';
   import { failedForPluginOff } from '#lib/utils/plugins-messages.js';
-  import { callToolKind, pluginFailure, pluginFailureMessage, toolKindCall } from '#lib/utils/tool-kinds.js';
+  import {
+    callToolKind,
+    findToolKind,
+    pluginFailure,
+    pluginFailureMessage,
+    toolKindCall,
+  } from '#lib/utils/tool-kinds.js';
   import { commandState, isRunning, startedCommand } from '#lib/utils/tools-background.js';
   import {
     notRunMessage,
@@ -48,7 +54,7 @@
 
   const call: ToolCallView | null = $derived(part.content.kind === 'tool_call' ? part.content.call : null);
   const kind = $derived(
-    call === null ? undefined : callToolKind(call, (tool, plugin) => slots.toolKinds.findOf(tool, plugin)),
+    call === null ? undefined : callToolKind(call, (tool, plugin) => findToolKind(slots.toolKinds, tool, plugin)),
   );
   const runsCommand = $derived(
     call?.tool === RUN_COMMAND && (call.status === 'executing' || call.status === 'running'),
@@ -167,7 +173,7 @@
         {#if started !== undefined}
           <BackgroundCommandActions command={started} {conversationId} />
         {/if}
-        <ToolCallDetails {call} {conversationId} {kind} />
+        <ToolCallDetails {call} {conversationId} {kind} partId={part.id} />
       </Collapsible.Content>
     </Collapsible.Root>
     {#if decisionFailure !== null}

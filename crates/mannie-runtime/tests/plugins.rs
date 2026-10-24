@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use futures_util::FutureExt;
+use futures_util::{FutureExt, StreamExt};
 use mannie_plugin_sdk::BoxFuture;
 use mannie_plugin_sdk::contracts::{ImageBytes, ImageFormat, MentionEntry, MentionSummary};
 use mannie_plugin_sdk::contributions::{Contributions, ExtensionPoint, IdRule, PointInfo};
@@ -35,6 +35,7 @@ use mannie_plugin_sdk::points::mentions::{
 use mannie_plugin_sdk::points::sections::{
     Section, SectionBody, SectionContext, SectionSource, Sections,
 };
+use mannie_plugin_sdk::points::tool_sources::{PluginToolSource, ToolSet, ToolSource, ToolSources};
 use mannie_plugin_sdk::points::tools::{
     AgentSelector, PluginTool, Tool, ToolAccess, ToolCall, ToolExecution, ToolRefusal, ToolResult,
     ToolSpec, Tools,
@@ -74,6 +75,9 @@ const NOTES: &str = "fake.notes";
 
 /// The image source of the plugin of every point.
 const SHOTS: &str = "fake.shots";
+
+/// The tool that the source of the plugin of every point publishes.
+const PUBLISHED: &str = "fake_published";
 
 /// The schema of a tool's arguments: one text.
 fn text_argument() -> Value {
@@ -171,6 +175,25 @@ fn with_schema(name: &str, parameters: Value, offered_to: AgentSelector) -> Plug
         }),
         offered_to,
     )
+}
+
+/// A tool whose schema its plugin did not write, such as a tool server's,
+/// which the core sends without strict mode (ADR-0043, decision 3).
+#[derive(Debug)]
+struct Loose(Answering);
+
+impl Tool for Loose {
+    fn spec(&self) -> ToolSpec {
+        self.0.spec().with_loose_schema()
+    }
+
+    fn prepare(&self, call: ToolCall) -> BoxFuture<'static, Result<Vec<ToolAccess>, ToolRefusal>> {
+        self.0.prepare(call)
+    }
+
+    fn execute(&self, execution: ToolExecution) -> BoxFuture<'static, ToolResult> {
+        self.0.execute(execution)
+    }
 }
 
 /// A tool that refuses the arguments of every call, and notes whether it
@@ -390,13 +413,32 @@ fn executor() -> Arc<dyn TaskExecutor> {
     FakeExecutor::new()
 }
 
-/// The contributions of a plugin to every point of SDK 1, with the image
+/// A tool source that publishes one set and keeps it, since a stream that
+/// ends empties its source (ADR-0043, decision 2).
+#[derive(Debug)]
+struct OneSet(Vec<PluginTool>);
+
+impl ToolSource for OneSet {
+    fn sets(&self) -> futures_util::stream::BoxStream<'static, ToolSet> {
+        let set = ToolSet::new(self.0.clone());
+        futures_util::stream::once(async move { set })
+            .chain(futures_util::stream::pending())
+            .boxed()
+    }
+}
+
+/// The contributions of a plugin to every point of the SDK, with the image
 /// source `source`. The plugin's ID is the fake executor's kind.
 fn every_point(source: &'static str) -> Contributions {
+    let published = named(PUBLISHED, AgentSelector::Conversations);
     contributions()
         .add::<Executors>(executor())
         .add::<Mentions>(notes(NOTES))
         .add::<ImageSources>(shots(source))
+        .add::<ToolSources>(PluginToolSource::new(
+            FAKE_EXECUTOR_KIND,
+            Arc::new(OneSet(vec![published])),
+        ))
 }
 
 /// A section's source that tells the model what the runtime told it of the
@@ -486,6 +528,7 @@ fn result(request: &ModelRequest, call_id: &str) -> String {
             Content::ToolResult {
                 call_id: id,
                 output,
+                ..
             } if id == call_id => Some(output.clone()),
             _ => None,
         })
@@ -570,6 +613,7 @@ async fn reached(harness: &Harness, marker: &str) -> Vec<&'static str> {
                 .any(|group| group.provider == NOTES),
         ),
         (ImageSources::NAME, images),
+        (ToolSources::NAME, tools.contains(&PUBLISHED.to_owned())),
     ];
     offered
         .into_iter()
@@ -1097,6 +1141,47 @@ async fn each_agent_selector_offers_the_tool_to_its_agents() {
     assert_eq!(
         offered("HELPER:"),
         ["for_child_agents", "for_every_agent", "for_the_helper"]
+    );
+}
+
+#[tokio::test]
+async fn a_plugin_tool_with_a_loose_schema_reaches_the_model_without_strict_mode() {
+    let harness = harness().await;
+    let loose = Loose(Answering {
+        name: "notes_loose".to_owned(),
+        parameters: json!({ "type": "object" }),
+        output: "loose".to_owned(),
+    });
+    add_plugin(
+        &harness.runtime,
+        PLUGIN,
+        Contributions::new()
+            .add::<Tools>(named("notes_strict", AgentSelector::Conversations))
+            .add::<Tools>(PluginTool::new(
+                Arc::new(loose),
+                AgentSelector::Conversations,
+            )),
+    )
+    .unwrap();
+    harness.model.push_reply(reply("Hello."));
+
+    let (conversation, run) = start(&harness, "OWNER: hello").await;
+    harness.wait_for_run(&conversation, &run).await;
+
+    let request = &harness.model.requests_for("OWNER:")[0];
+    let strict = |name: &str| {
+        request
+            .tools
+            .iter()
+            .find(|tool| tool.name == name)
+            .map(|tool| tool.strict)
+    };
+    assert_eq!(strict("notes_strict"), Some(true));
+    assert_eq!(strict("notes_loose"), Some(false));
+    assert_eq!(
+        strict("read_file"),
+        Some(true),
+        "the core's tools stay strict"
     );
 }
 

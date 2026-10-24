@@ -61,13 +61,16 @@ pub enum Content {
         call_id: String,
         /// The result as the model reads it.
         output: String,
+        /// The images that the result carries, which each adapter sends in
+        /// the placement that its interface takes (ADR-0044, decision 6).
+        images: Vec<ImageInput>,
     },
     /// An image of the owner's message (ADR-0033, decision 5).
     Image(ImageInput),
 }
 
-/// An image that a message holds. The adapters send it inline, as a `data:`
-/// URL.
+/// An image that a message or a tool's result holds. The adapters send it
+/// inline, as a `data:` URL.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImageInput {
     /// The format of the bytes.
@@ -119,6 +122,11 @@ pub struct ToolDefinition {
     pub description: String,
     /// The JSON Schema of its arguments: an object.
     pub parameters: serde_json::Value,
+    /// Whether the schema is strict, every property required and no other
+    /// allowed, so a server with strict tools may hold the model to it. A
+    /// schema from elsewhere, such as a tool server's, is not (ADR-0043,
+    /// decision 3).
+    pub strict: bool,
 }
 
 /// Whether the model may call tools in this call.

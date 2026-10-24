@@ -1,0 +1,41 @@
+#:schema ../../crates/mannie-plugin-sdk/plugin.schema.json
+# The MCP plugin (ADR-0043; plugins/mcp/docs/README.md): tool servers of the
+# Model Context Protocol that the owner registers by hand, local programs and
+# remote URLs, whose tools and resources agents use under the master's policy
+# and journal.
+
+id = "mcp"
+sdk = 1
+# After Workers, Images, SSH and Git, on the Plugins page too.
+order = 50
+
+[rust]
+entry = "mannie-mcp"
+
+[services]
+# The programs of the local servers, which the core finds, starts, contains
+# and ends (ADR-0043, decision 4).
+local-servers = 1
+# The secret variables and headers of the servers, and their OAuth
+# credentials, in the credential store.
+secrets = 1
+# The tables of the servers and of the tools that they listed.
+store = 1
+
+[secrets]
+# The secrets of each server, stored as `mcp/<family>/<server ID>-<part>`:
+# its secret variables, its secret headers and its OAuth credentials, each a
+# text split into parts that the credential store takes (ADR-0043, decision
+# 6).
+keyed = ["variable", "header", "oauth"]
+
+[crates]
+# Only the MCP plugin speaks MCP and OAuth: no crate outside this folder may
+# depend on rmcp or oauth2 (plugins/mcp/docs/adr/0001-speak-mcp-through-rmcp-
+# in-both-protocol-eras.md).
+exclusive = ["rmcp", "oauth2"]
+
+# The direct native calls of the plugin's library crates (ADR-0035, decision
+# 6). The SDK has no network service (ADR-0043, decision 7).
+[native]
+sockets = "The client speaks Streamable HTTP to each remote server that the owner registered, and OAuth to the authorization servers that its metadata names, when the plugin starts, when the owner adds, changes, restarts or signs in to a server, and when an authorized call runs. A sign-in listens on a loopback port for the browser's redirect."

@@ -1,13 +1,24 @@
 //! What a tool call produced: a typed outcome for the UI, the rendering that
-//! the model reads, and the archived outputs
-//! (docs/features/system-tools/tools-and-results.md).
+//! the model reads, the archived outputs and the images that reach the model
+//! (docs/features/system-tools/tools-and-results.md; ADR-0044).
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use crate::ids::ArchiveId;
+use crate::images::ImageFormat;
 
 use super::background::{BackgroundEnding, BackgroundLimit};
+
+/// The most images of one result that reach the model (ADR-0044, decision 1).
+pub const MAX_TOOL_IMAGES: usize = 4;
+
+/// The largest image of a result, in bytes.
+pub const MAX_TOOL_IMAGE_BYTES: usize = 5 * 1024 * 1024;
+
+/// The longest side of an image of a result, in pixels, which also keeps an
+/// image within 16.8 million pixels.
+pub const MAX_TOOL_IMAGE_SIDE: u32 = 4096;
 
 /// The kind of a file system entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
@@ -509,6 +520,24 @@ pub struct ArchiveRef {
     pub lines: u32,
 }
 
+/// An image of a result that reached the model, whose bytes the store keeps
+/// by the call's part and the image's position (ADR-0044, decision 3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolImageRef {
+    /// Its position among the images that the tool returned, from 0. The
+    /// positions of images that were left out are missing.
+    pub position: u32,
+    /// The format of the stored bytes.
+    pub format: ImageFormat,
+    /// The width in pixels.
+    pub width: u32,
+    /// The height in pixels.
+    pub height: u32,
+    /// The size of the stored bytes.
+    pub bytes: u32,
+}
+
 /// The result of a finished tool call.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -520,11 +549,62 @@ pub struct ToolResult {
     /// The outputs archived because they did not fit.
     #[serde(default)]
     pub archives: Vec<ArchiveRef>,
+    /// The images that reach the model with the output (ADR-0044). A
+    /// document written before them has none, and a reader of an earlier
+    /// version ignores them.
+    #[serde(default)]
+    pub images: Vec<ToolImageRef>,
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{PathRefusal, ToolFailure, ToolOutcome};
+    use super::{PathRefusal, ToolFailure, ToolImageRef, ToolOutcome, ToolResult};
+    use crate::images::ImageFormat;
+
+    #[test]
+    fn a_result_names_its_images_and_one_from_before_them_has_none() {
+        let plain = ToolResult {
+            outcome: ToolOutcome::Unknown,
+            output: "Done.".to_owned(),
+            archives: Vec::new(),
+            images: Vec::new(),
+        };
+        let with_image = ToolResult {
+            images: vec![ToolImageRef {
+                position: 1,
+                format: ImageFormat::Png,
+                width: 1280,
+                height: 720,
+                bytes: 48_000,
+            }],
+            ..plain.clone()
+        };
+
+        assert_eq!(
+            serde_json::from_value::<ToolResult>(serde_json::json!({
+                "outcome": { "kind": "unknown" },
+                "output": "Done.",
+                "archives": []
+            }))
+            .unwrap(),
+            plain
+        );
+        assert_eq!(
+            serde_json::to_value(&with_image).unwrap()["images"],
+            serde_json::json!([{
+                "position": 1,
+                "format": "png",
+                "width": 1280,
+                "height": 720,
+                "bytes": 48_000
+            }])
+        );
+        assert_eq!(
+            serde_json::from_value::<ToolResult>(serde_json::to_value(&with_image).unwrap())
+                .unwrap(),
+            with_image
+        );
+    }
 
     #[test]
     fn failures_serialize_with_their_code_and_arguments() {
