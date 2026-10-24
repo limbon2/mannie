@@ -7,6 +7,7 @@ use specta::Type;
 use crate::ids::{ConversationId, PartId, ProjectId};
 
 use super::access::AccessMode;
+use super::external::ToolServerEndpoint;
 use super::program::{ProgramEffectKey, ProgramTarget};
 
 /// Why the policy asks the owner about an operation.
@@ -39,6 +40,8 @@ pub enum ApprovalReason {
     /// A run of an installed program with an effect beyond the workspace,
     /// which no rule or grant allows (ADR-0038).
     Program,
+    /// A call of a tool server's tool, which no grant allows (ADR-0043).
+    ExternalTool,
 }
 
 /// What a grant covers.
@@ -105,6 +108,20 @@ pub enum GrantScope {
         working_directory: String,
         /// The keys of the effects that the grant covers, sorted.
         effects: Vec<ProgramEffectKey>,
+    },
+    /// Calls of the same tool of the same tool server, at the same endpoint,
+    /// with any arguments (ADR-0043, decision 4).
+    ExternalTool {
+        /// The plugin that reaches the server.
+        plugin: String,
+        /// The plugin's key for the server.
+        target: String,
+        /// The server's name when the owner allowed it, for display only.
+        label: String,
+        /// Where the server runs.
+        endpoint: ToolServerEndpoint,
+        /// The tool, as the server names it.
+        tool: String,
     },
 }
 

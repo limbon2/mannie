@@ -46,6 +46,15 @@ pub trait ServiceProvider: Send + Sync + fmt::Debug + 'static {
     /// the service to this plugin refuses, and the plugin fails to start
     /// with `service_unavailable`.
     fn bind(&self, binding: &PluginBinding<'_>) -> Result<BoundService, BindRefusal>;
+
+    /// Releases what the service holds for a plugin, once the plugin stopped
+    /// or its start failed, such as the local servers that it started, which
+    /// end with it (ADR-0043, decision 5). The host calls it for every
+    /// provider. A provider that holds nothing for a plugin keeps this
+    /// default, which does nothing.
+    fn release(&self, _plugin: &PluginId) -> BoxFuture<'static, ()> {
+        Box::pin(std::future::ready(()))
+    }
 }
 
 /// The plugin that a provider binds a service to.

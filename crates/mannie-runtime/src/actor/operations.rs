@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
-use mannie_store::{Change, Durability, NewArchive};
+use mannie_store::{Change, Durability, NewArchive, NewToolImage};
 use mannie_tools::{
     Ceiling, CommandEnvironment, Done, Execution, Grants, PermissionClass, PolicyInputs,
     PrepareError, ProjectFacts, SavedRule, StopReason, StopSignal, Tool, ToolContext, Verdict,
@@ -25,7 +25,7 @@ use mannie_types::run::{RunActivity, RunFailure};
 use mannie_types::tools::{
     Access, ApprovalChoice, ApprovalRequest, ArchiveRef, CommandRule, Decision, GrantScope,
     Interruption, NotRunReason, ProcessRecord, ProgramRule, Refusal, RemoteCommandRule,
-    ToolCallStatus, ToolOutcome, ToolResult, ToolsSettings,
+    ToolCallStatus, ToolImageRef, ToolOutcome, ToolResult, ToolsSettings,
 };
 use tokio::sync::oneshot;
 
@@ -36,6 +36,7 @@ use crate::budget::budget_bytes;
 use crate::calls::Setup;
 use crate::policy::PolicyGrants;
 use crate::projects::Moves;
+use crate::tool_images;
 
 /// How a tool call ended, for the calls after it in the same step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -637,7 +638,7 @@ impl RunActor {
                 }))
             }
             Err(PrepareError::Failed(failure)) => Err(Unprepared::Failed(Done::failed(failure))),
-            Err(PrepareError::Ended(done)) => Err(Unprepared::Failed(done)),
+            Err(PrepareError::Ended(done)) => Err(Unprepared::Failed(*done)),
         })
     }
 
@@ -746,9 +747,25 @@ impl RunActor {
         Some((ceiling, machine.name.clone()))
     }
 
-    /// Stores a call's result and finishes its part. Archived outputs are
-    /// stored with it.
+    /// Stores a call's result and finishes its part. Archived outputs and the
+    /// images that reach the model are stored with it, the images checked and
+    /// without their metadata (ADR-0044).
     fn complete_call(&mut self, mut call: StepCall, done: Done) {
+        let offered = done.images.len();
+        let (output, images) = tool_images::clean_result(done.output, &done.images);
+        if images.len() < offered {
+            tracing::info!(run = %self.run, part = %call.part_id, offered, kept = images.len(), "images of a tool's result were left out");
+        }
+        let image_refs = images
+            .iter()
+            .map(|(position, image)| ToolImageRef {
+                position: *position,
+                format: image.format,
+                width: image.width,
+                height: image.height,
+                bytes: u32::try_from(image.data.len()).unwrap_or(u32::MAX),
+            })
+            .collect();
         let references = done
             .archives
             .iter()
@@ -771,8 +788,9 @@ impl RunActor {
         call.document.status = ToolCallStatus::Completed;
         call.document.result = Some(ToolResult {
             outcome: done.outcome,
-            output: done.output,
+            output,
             archives: references,
+            images: image_refs,
         });
         call.document.ended_at = Some(self.now());
         tracing::info!(run = %self.run, part = %call.part_id, tool = %call.document.tool, "a tool call completed");
@@ -781,6 +799,21 @@ impl RunActor {
             tool_call: call.document.clone(),
             archives,
         });
+        if !images.is_empty() {
+            self.pending.push(Change::AddToolImages {
+                part_id: call.part_id.clone(),
+                images: images
+                    .into_iter()
+                    .map(|(position, image)| NewToolImage {
+                        position,
+                        format: image.format,
+                        width: image.width,
+                        height: image.height,
+                        data: image.data,
+                    })
+                    .collect(),
+            });
+        }
         self.pending.push(Change::FinishPart {
             part_id: call.part_id,
             state: mannie_types::transcript::PartState::Complete,

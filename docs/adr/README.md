@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                           |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Living index                                                                                                                                                                              |
-| Last updated | 2026-10-21                                                                                                                                                                                |
+| Last updated | 2026-10-24                                                                                                                                                                                |
 | Related      | [ADR-0001](0001-record-architecture-decisions.md), [Template](0000-template.md), [Decisions](../roadmap/milestones.md#5-decisions), [Validations](../roadmap/milestones.md#4-validations) |
 
 [ADR-0001](0001-record-architecture-decisions.md) describes the process, and new ADRs start from the [template](0000-template.md).
@@ -60,3 +60,5 @@ Each ADR has exactly one of these statuses:
 | [0040](0040-export-complete-conversation-records.md)                      | Let the owner export complete conversation records                                            | Accepted (D38)         | M10        |
 | [0041](0041-let-agents-run-commands-in-the-background.md)                 | Let agents run commands in the background, and wake an idle agent when one ends               | Accepted (D40)         | M11        |
 | [0042](0042-place-conversation-controls-in-a-menu-and-the-message-box.md) | Place conversation controls in a menu and in the message box                                  | Accepted (D41)         | None       |
+| [0043](0043-let-plugins-offer-the-tools-of-tool-servers.md)               | Let plugins offer the tools of tool servers that the owner registered, such as MCP servers    | Accepted (D42)         | M12        |
+| [0044](0044-let-tool-results-carry-images-to-the-model.md)                | Let tool results carry images to the model                                                    | Accepted (D42)         | M12        |

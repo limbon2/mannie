@@ -7,6 +7,8 @@
 | Deciders | Owner                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | Related  | [ADR-0004](0004-keep-system-access-in-the-rust-core.md), [ADR-0013](0013-journal-every-side-effect.md), [ADR-0014](0014-contain-process-trees.md), [ADR-0029](0029-let-the-owner-give-conversations-and-hosts-full-access.md), [ADR-0034](0034-build-plugins-on-a-plugin-sdk.md), [ADR-0036](0036-let-plugins-run-commands-on-remote-hosts.md), [ADR-0039](0039-let-plugins-describe-their-tool-calls-in-the-transcript.md), [Tools](../architecture/tools.md), [Security](../architecture/security.md) |
 
+Later changes: [ADR-0043](0043-let-plugins-offer-the-tools-of-tool-servers.md) refines decisions 7 and 10: a local tool server is a program that the owner names, which may be a `.cmd` or `.bat` file on Windows and receives its own secret variables, while `processes` keeps its rules.
+
 ## Context
 
 - The owner wants agents to work with git through tools made for it: read and search history, commit and branch, resolve the conflicts of merges, rebases, cherry-picks and reverts, edit commits and reach remotes, instead of driving git through `run_command` ([decision D37](../roadmap/milestones.md#5-decisions)). The plugin Git runs the owner's installed git program, which its own first ADR records.

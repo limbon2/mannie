@@ -135,6 +135,12 @@ function accessRemoteCommand(
     : null;
 }
 
+/** The tool of a tool server that a plugin's call calls, with the server's name (ADR-0043). */
+function accessExternalTool(accesses: readonly Access[]): { server: string; tool: string } | null {
+  const access = accesses.find((candidate) => candidate.kind === 'external_tool');
+  return access?.kind === 'external_tool' ? { server: access.label, tool: access.tool } : null;
+}
+
 /** A folder's last name, such as `app` for `D:\Projects\app`, or the whole path for a root. */
 export function folderName(path: string): string {
   const trimmed = path.replace(/[\\/]+$/u, '');
@@ -289,14 +295,16 @@ function intentSummary(call: ToolCallView): string {
       return path === null ? toolLabel(call.tool) : m.tools_call_write_file({ path });
     }
     default: {
-      // A plugin's tool that runs a command on a remote host is named by its
-      // access, once prepared, whatever the plugin calls the tool.
+      // A plugin's tool that runs a command on a remote host or calls a tool
+      // server's tool is named by its access, once prepared, whatever the
+      // plugin calls the tool.
       const remote = accessRemoteCommand(call.accesses);
-      if (remote === null) {
-        return toolLabel(call.tool);
+      if (remote !== null) {
+        const words = { command: firstLine(remote.command), host: remote.host };
+        return remote.background ? m.tools_call_remote_command_background(words) : m.tools_call_remote_command(words);
       }
-      const words = { command: firstLine(remote.command), host: remote.host };
-      return remote.background ? m.tools_call_remote_command_background(words) : m.tools_call_remote_command(words);
+      const external = accessExternalTool(call.accesses);
+      return external === null ? toolLabel(call.tool) : m.tools_call_external_tool(external);
     }
   }
 }

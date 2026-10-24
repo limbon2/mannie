@@ -32,6 +32,7 @@ use super::CommandSpec;
 use super::freebsd as tree;
 #[cfg(target_os = "linux")]
 use super::linux as tree;
+use super::server::{ServerInput, ServerSpec};
 use crate::programs::ProgramRun;
 
 /// The wrapper that the shell runs. The command runs in a subshell, with
@@ -159,6 +160,45 @@ impl Contained {
         drop(input_read);
         let contained = Self::watch(&mut child, status_read, Some(input_write))?;
         Ok((contained, child))
+    }
+
+    /// Starts a local server's program with the program wrapper, as a run
+    /// of an installed program starts (ADR-0043, decision 5), and keeps the
+    /// pipe of its input open for as long as it runs: closing it ends the
+    /// server's input.
+    pub(super) fn spawn_server(spec: &ServerSpec) -> io::Result<(Self, Child, ServerInput)> {
+        let (status_read, status_write) = rustix::pipe::pipe_with(PipeFlags::CLOEXEC)?;
+        let (input_read, input_write) = rustix::pipe::pipe_with(PipeFlags::CLOEXEC)?;
+        let status_fd = status_write.as_raw_fd();
+        let input_fd = input_read.as_raw_fd();
+        let mut command = Command::new(Path::new(PROGRAM_SHELL));
+        command
+            .arg("-c")
+            .arg(PROGRAM_WRAPPER)
+            .arg("mannie")
+            .arg(&spec.program)
+            .args(&spec.arguments)
+            .current_dir(&spec.working_directory)
+            .env_clear()
+            .envs(spec.environment.iter().map(|(name, value)| (name, value)))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .process_group(0)
+            .kill_on_drop(true);
+        // SAFETY: as for a program's run: the closure runs in the child
+        // between fork and exec and makes only async-signal-safe system calls
+        // through rustix, which take no locks and allocate nothing.
+        unsafe {
+            command.pre_exec(move || prepare_program_child(status_fd, input_fd));
+        }
+        let mut child = command.spawn()?;
+        // The shell holds its copies as descriptors 3 and 4.
+        drop(status_write);
+        drop(input_read);
+        let contained = Self::watch(&mut child, status_read, None)?;
+        let input = tokio::net::unix::pipe::Sender::from_owned_fd(input_write)?;
+        Ok((contained, child, Box::new(input)))
     }
 
     /// The running shell, with the read of the status that it will report.

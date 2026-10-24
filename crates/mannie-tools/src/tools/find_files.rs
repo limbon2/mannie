@@ -131,5 +131,6 @@ fn find(context: &ToolContext, input: &Input, stop: &StopSignal) -> Result<Done,
         },
         output,
         archives: Vec::new(),
+        images: Vec::new(),
     })
 }

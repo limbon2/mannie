@@ -159,6 +159,107 @@ fn images_make_an_array_of_parts_in_their_order_and_text_stays_a_string() {
 }
 
 #[test]
+fn the_images_of_a_step_s_results_follow_its_last_result_in_a_message_of_the_owner() {
+    let call = |id: &str| Content::ToolCall {
+        call_id: id.to_owned(),
+        name: "mcp_browser_screenshot".to_owned(),
+        arguments: "{}".to_owned(),
+    };
+    let result = |id: &str, images: Vec<ImageInput>| Message {
+        role: Role::Tool,
+        content: vec![Content::ToolResult {
+            call_id: id.to_owned(),
+            output: format!("Result of {id}."),
+            images,
+        }],
+    };
+    let shot = |byte: u8| ImageInput {
+        format: ImageFormat::Png,
+        width: 2,
+        height: 1,
+        data: ImageBytes::from(vec![byte, byte]),
+    };
+    let body = request_body(
+        &with_messages(vec![
+            Message::text(Role::User, "Show me both pages"),
+            Message {
+                role: Role::Assistant,
+                content: vec![call("call_1"), call("call_2"), call("call_3")],
+            },
+            result("call_1", vec![shot(1)]),
+            result("call_2", Vec::new()),
+            result("call_3", vec![shot(2), shot(3)]),
+            Message::text(Role::User, "Which one is newer?"),
+        ]),
+        &quirks_for(ApiInterface::ChatCompletions, None),
+    );
+
+    let messages = body["messages"].as_array().unwrap();
+    let roles: Vec<&str> = messages
+        .iter()
+        .map(|message| message["role"].as_str().unwrap())
+        .collect();
+    assert_eq!(roles, ["user", "assistant", "tool", "tool", "tool", "user"]);
+    assert_eq!(messages[2]["content"], json!("Result of call_1."));
+    assert_eq!(
+        messages[5]["content"],
+        json!([
+            { "type": "text", "text": "The images of the result of the tool call call_1:" },
+            { "type": "image_url", "image_url": { "url": "data:image/png;base64,AQE=" } },
+            { "type": "text", "text": "The images of the result of the tool call call_3:" },
+            { "type": "image_url", "image_url": { "url": "data:image/png;base64,AgI=" } },
+            { "type": "image_url", "image_url": { "url": "data:image/png;base64,AwM=" } },
+            { "type": "text", "text": "Which one is newer?" }
+        ])
+    );
+}
+
+#[test]
+fn a_request_that_ends_with_results_ends_with_their_images() {
+    let body = request_body(
+        &with_messages(vec![
+            Message::text(Role::User, "Show me"),
+            Message {
+                role: Role::Assistant,
+                content: vec![Content::ToolCall {
+                    call_id: "call_1".to_owned(),
+                    name: "mcp_browser_screenshot".to_owned(),
+                    arguments: "{}".to_owned(),
+                }],
+            },
+            Message {
+                role: Role::Tool,
+                content: vec![Content::ToolResult {
+                    call_id: "call_1".to_owned(),
+                    output: String::new(),
+                    images: vec![ImageInput {
+                        format: ImageFormat::Jpeg,
+                        width: 2,
+                        height: 1,
+                        data: ImageBytes::from(vec![4]),
+                    }],
+                }],
+            },
+        ]),
+        &quirks_for(ApiInterface::ChatCompletions, None),
+    );
+
+    let messages = body["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 4);
+    assert_eq!(messages[2]["role"], json!("tool"));
+    assert_eq!(
+        messages[3],
+        json!({
+            "role": "user",
+            "content": [
+                { "type": "text", "text": "The images of the result of the tool call call_1:" },
+                { "type": "image_url", "image_url": { "url": "data:image/jpeg;base64,BA==" } }
+            ]
+        })
+    );
+}
+
+#[test]
 fn a_message_with_only_an_image_is_sent() {
     let body = request_body(
         &with_messages(vec![Message {
@@ -358,4 +459,32 @@ proptest! {
         prop_assert_eq!(got_reasoning, reasoning);
         prop_assert_eq!(got_answer, answer.trim_start());
     }
+}
+
+#[test]
+fn a_loose_tool_goes_without_strict_mode_beside_strict_ones() {
+    let tool = |name: &str, strict: bool| crate::provider::ToolDefinition {
+        name: name.to_owned(),
+        description: "A tool.".to_owned(),
+        parameters: json!({ "type": "object", "properties": {} }),
+        strict,
+    };
+    let mut request = request(ReasoningEffort::ServerDefault);
+    request.tools = vec![
+        tool("read_file", true),
+        tool("mcp_github_list_issues", false),
+    ];
+
+    let openai = request_body(
+        &request,
+        &quirks_for(ApiInterface::ChatCompletions, Some(ServerKind::OpenAi)),
+    );
+    let vllm = request_body(
+        &request,
+        &quirks_for(ApiInterface::ChatCompletions, Some(ServerKind::Vllm)),
+    );
+
+    assert_eq!(openai["tools"][0]["function"]["strict"], json!(true));
+    assert!(openai["tools"][1]["function"].get("strict").is_none());
+    assert!(vllm["tools"][0]["function"].get("strict").is_none());
 }

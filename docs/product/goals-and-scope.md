@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                           |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                                          |
-| Last updated | 2026-10-20                                                                                                                                                                                |
+| Last updated | 2026-10-24                                                                                                                                                                                |
 | Related      | [Vision](vision.md), [Feature protocol](../features/README.md), [Milestones](../roadmap/milestones.md), [Releasing](../engineering/releasing.md), [Security](../architecture/security.md) |
 
 ## 1. What Mannie is for
@@ -63,22 +63,22 @@ Every feature meets these requirements. The targets in §4.1 are checked by benc
 
 ### 4.3 Security
 
-| ID         | Requirement                                                                                                                                              |
-| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| NFR-SEC-01 | Provider credentials are stored only in the master's operating system credential store. Leased copies on workers exist only in memory.                   |
-| NFR-SEC-02 | No side effect happens without an allow decision from policy or from the owner.                                                                          |
-| NFR-SEC-03 | Model output, tool output and file contents shown in the UI cannot run script or load remote resources.                                                  |
-| NFR-SEC-04 | The master and each worker authenticate each other with pinned keys, and all link traffic is encrypted.                                                  |
-| NFR-SEC-05 | Secrets never appear in logs, databases, crash files, URLs, command arguments or child process environments. Tests check this with planted test secrets. |
+| ID         | Requirement                                                                                                                                                                                                                                                                                            |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| NFR-SEC-01 | Provider credentials are stored only in the master's operating system credential store. Leased copies on workers exist only in memory.                                                                                                                                                                 |
+| NFR-SEC-02 | No side effect happens without an allow decision from policy or from the owner.                                                                                                                                                                                                                        |
+| NFR-SEC-03 | Model output, tool output and file contents shown in the UI cannot run script or load remote resources.                                                                                                                                                                                                |
+| NFR-SEC-04 | The master and each worker authenticate each other with pinned keys, and all link traffic is encrypted.                                                                                                                                                                                                |
+| NFR-SEC-05 | Secrets never appear in logs, databases, crash files, URLs, command arguments or child process environments. Tests check this with planted test secrets. A tool server's own secret goes only into that server's environment or the requests to its URL ([D42](../roadmap/milestones.md#5-decisions)). |
 
 ### 4.4 Operability
 
-| ID         | Requirement                                                                                                         |
-| ---------- | ------------------------------------------------------------------------------------------------------------------- |
-| NFR-OPS-01 | Logs are structured, stay on the machine, rotate, and contain no secrets.                                           |
-| NFR-OPS-02 | Following the documentation, the owner installs a worker as a service in under 10 minutes on each supported system. |
-| NFR-OPS-03 | The master works with workers that are one minor version behind.                                                    |
-| NFR-OPS-04 | Mannie needs no network access other than to the providers, workers and remote hosts that the owner configured.     |
+| ID         | Requirement                                                                                                                                                                                           |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| NFR-OPS-01 | Logs are structured, stay on the machine, rotate, and contain no secrets.                                                                                                                             |
+| NFR-OPS-02 | Following the documentation, the owner installs a worker as a service in under 10 minutes on each supported system.                                                                                   |
+| NFR-OPS-03 | The master works with workers that are one minor version behind.                                                                                                                                      |
+| NFR-OPS-04 | Mannie needs no network access other than to the providers, workers, remote hosts and tool servers that the owner configured, and to the authorization servers that the tool servers' metadata names. |
 
 ### 4.5 Usability
 

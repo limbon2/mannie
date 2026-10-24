@@ -61,7 +61,8 @@ pub use paths::{FolderError, canonical_folder, is_inside as path_is_inside, work
 pub use policy::{Grants, PolicyInputs, SavedRule, Verdict, decide, saved_rule};
 pub use programs::{
     MAX_PROGRAM_INPUT_BYTES, MAX_PROGRAM_OUTPUT_BYTES, MAX_PROGRAM_TIMEOUT, PROGRAM_ERROR_BYTES,
-    ProgramEnding, ProgramNotFound, ProgramOutput, ProgramRun, find_program, run_program,
+    ProgramEnding, ProgramNotFound, ProgramOutput, ProgramRun, ServerProgram, ServerProgramError,
+    find_program, find_server_program, run_program,
 };
 pub use projects::{Availability, MoveFailure, ProjectFacts, ProjectMoves};
 pub use registry::{RegisterError, ToolRegistry, takes_activity};
@@ -70,7 +71,7 @@ pub use rules::{command_words, remote_command_words};
 pub use stop::{StopReason, StopSignal};
 pub use supervisor::{
     ArchivedLog, BackgroundProcess, BackgroundSpec, LiveLog, LogLines, LogMark, MAX_LINE_BYTES,
-    end_leftover_command,
+    ServerInput, ServerProcess, ServerSpec, ServerStream, end_leftover_command,
 };
 pub use system::{ShellFacts, SystemFacts};
 pub use tool::{

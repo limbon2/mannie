@@ -11,6 +11,7 @@ use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
 use mannie_store::Store;
 use mannie_types::ids::{ArchiveId, ConversationId, PartId};
+use mannie_types::images::ImageBytes;
 use mannie_types::tools::{Access, ProcessRecord, ToolFailure, ToolOutcome};
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
@@ -94,8 +95,9 @@ pub enum PrepareError {
     /// not exist. The failure is the call's result.
     Failed(ToolFailure),
     /// The call ends at once with this result, without running, such as a
-    /// plugin's refusal that carries a code for its card (ADR-0039).
-    Ended(Done),
+    /// plugin's refusal that carries a code for its card (ADR-0039). The
+    /// result is boxed, because it is far larger than the other reasons.
+    Ended(Box<Done>),
 }
 
 impl From<ToolFailure> for PrepareError {
@@ -134,6 +136,9 @@ pub struct Done {
     pub output: String,
     /// The outputs that did not fit.
     pub archives: Vec<ArchivedOutput>,
+    /// The files of the images that reach the model with the output, which
+    /// the runtime checks and cleans before it keeps them (ADR-0044).
+    pub images: Vec<ImageBytes>,
 }
 
 /// One execution of a call, after authorization.
@@ -172,6 +177,14 @@ pub trait Tool: Send + Sync + fmt::Debug {
 
     /// The JSON Schema of the arguments.
     fn parameters(&self) -> &serde_json::Value;
+
+    /// Whether the schema is strict, so a server that enforces strict tools
+    /// may hold the model to it. The core's schemas are; a plugin's tool with
+    /// a schema from elsewhere, such as a tool server's, is not (ADR-0043,
+    /// decision 3).
+    fn strict(&self) -> bool {
+        true
+    }
 
     /// Whether the tool changes anything.
     fn class(&self) -> PermissionClass;
@@ -371,6 +384,7 @@ impl Done {
             output: texts::failure(&failure),
             outcome: ToolOutcome::Failed { failure },
             archives: Vec::new(),
+            images: Vec::new(),
         }
     }
 }

@@ -35,6 +35,10 @@ pub struct ConversationRecord {
     pub checkpoints: Vec<Checkpoint>,
     /// Full stored images of the included parts.
     pub images: Vec<RecordImage>,
+    /// The images of the results of the included tool calls (ADR-0044,
+    /// decision 7). A record of a version before them has none.
+    #[serde(default)]
+    pub tool_images: Vec<RecordToolImage>,
     /// Complete archived outputs of the included parts.
     pub archives: Vec<RecordArchive>,
     /// The children to collect separately, in task-number order.
@@ -93,6 +97,21 @@ pub struct RecordImage {
     /// The encoding of the stored bytes.
     pub format: ImageFormat,
     /// The stored bytes, rather than a thumbnail or a source-file reference.
+    pub data: Vec<u8>,
+}
+
+/// An image of an included tool call's result, in the full-record
+/// transport, which never crosses desktop IPC.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordToolImage {
+    /// The tool call's part.
+    pub part_id: PartId,
+    /// The image's position among the result's images.
+    pub position: u32,
+    /// The encoding of the stored bytes.
+    pub format: ImageFormat,
+    /// The stored bytes.
     pub data: Vec<u8>,
 }
 

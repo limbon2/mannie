@@ -3,7 +3,7 @@
 //! checkpoint replaces the turns it covers here, and the stored transcript
 //! never changes (ADR-0012, decision 8).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use mannie_provider::{
     Content, ImageInput, Message, ModelRequest, Role, ToolChoice, ToolDefinition,
@@ -49,7 +49,14 @@ pub(crate) struct RequestShape<'a> {
     pub(crate) left_out: &'a HashSet<PartId>,
     /// Whom the agent answers to, which decides how results address it.
     pub(crate) requester: Requester,
+    /// The images of the newest results that the request sends; every other
+    /// image of a result is a line in its result (ADR-0044, decision 5).
+    pub(crate) tool_images: &'a SentImages,
 }
+
+/// The images of results that a request sends, by the call's part, with
+/// their positions among the result's images.
+pub(crate) type SentImages = HashMap<PartId, Vec<(u32, ImageInput)>>;
 
 /// Builds the request for `turns`, the turns after the checkpoint, oldest
 /// first.
@@ -259,7 +266,17 @@ fn append_call(reply: &mut Reply, part: &ModelPart, shape: RequestShape<'_>) {
     let Some(call) = &part.tool_call else {
         return;
     };
-    let result = part_result(part, call, shape.left_out, shape.requester);
+    // A model without tools reads every image of a result as a line.
+    let sent: &[(u32, ImageInput)] = if shape.tools.is_empty() {
+        &[]
+    } else {
+        shape.tool_images.get(&part.id).map_or(&[], Vec::as_slice)
+    };
+    let result = with_unsent_images(
+        part_result(part, call, shape.left_out, shape.requester),
+        call,
+        sent,
+    );
     if shape.tools.is_empty() {
         let arguments: String = part.text.chars().take(MAX_TEXT_CALL_ARGUMENTS).collect();
         reply.content.push(Content::Text(texts::tool_call_as_text(
@@ -277,8 +294,42 @@ fn append_call(reply: &mut Reply, part: &ModelPart, shape: RequestShape<'_>) {
         content: vec![Content::ToolResult {
             call_id: call.call_id.clone(),
             output: result,
+            images: sent
+                .iter()
+                .map(|(_position, image)| image.clone())
+                .collect(),
         }],
     });
+}
+
+/// A call's result, followed by a line for each of its images that the
+/// request does not send (ADR-0044, decision 5).
+pub(crate) fn with_unsent_images(
+    mut result: String,
+    call: &ToolCallDocument,
+    sent: &[(u32, ImageInput)],
+) -> String {
+    let Some(stored) = &call.result else {
+        return result;
+    };
+    for image in &stored.images {
+        if sent
+            .iter()
+            .any(|(position, _image)| *position == image.position)
+        {
+            continue;
+        }
+        if !result.is_empty() {
+            result.push('\n');
+        }
+        result.push_str(&texts::tool_image_not_sent(
+            image.position.saturating_add(1),
+            image.format,
+            image.width,
+            image.height,
+        ));
+    }
+    result
 }
 
 /// The arguments as they go back to the provider: a JSON object, or `{}` for
@@ -364,6 +415,7 @@ fn not_run(reason: &NotRunReason, tool: &str) -> String {
             Refusal::NoProjectsOnHost => texts::NO_PROJECTS_ON_HOST.to_owned(),
             Refusal::NoRemoteCommands => texts::NO_REMOTE_COMMANDS.to_owned(),
             Refusal::NoProgramsOnHost => texts::NO_PROGRAMS_ON_HOST.to_owned(),
+            Refusal::NoExternalTools => texts::NO_EXTERNAL_TOOLS.to_owned(),
         },
         NotRunReason::PluginOff { plugin } => texts::tool_plugin_off(plugin),
     }

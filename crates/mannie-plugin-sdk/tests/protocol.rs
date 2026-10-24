@@ -10,7 +10,8 @@ use std::collections::BTreeSet;
 use mannie_plugin_sdk::context::{HostInfo, HostProfile};
 use mannie_plugin_sdk::contracts::{
     AccessMode, ArchiveId, CommandError, ImageFormat, MentionEntry, MentionSummary,
-    ProfileSnapshot, SubscriptionEnd, TaskExecutorRef, TaskState, WorkItem,
+    ProfileSnapshot, SubscriptionEnd, TaskExecutorRef, TaskState, ToolHint, ToolServerEndpoint,
+    WorkItem,
 };
 use mannie_plugin_sdk::error::StartFailure;
 use mannie_plugin_sdk::ids::PluginId;
@@ -23,8 +24,8 @@ use mannie_plugin_sdk::points::executors::{
 use mannie_plugin_sdk::points::mentions::{ProviderSuggestions, ReadVerdict, RenderedMention};
 use mannie_plugin_sdk::points::sections::SectionContext;
 use mannie_plugin_sdk::points::tools::{
-    AgentSelector, PathAccess, RemoteCommandAccess, ToolAccess, ToolArchive, ToolCall,
-    ToolExecution, ToolOffering, ToolRefusal, ToolResult, ToolSpec,
+    AgentSelector, ExternalToolAccess, PathAccess, RemoteCommandAccess, ToolAccess, ToolArchive,
+    ToolCall, ToolExecution, ToolImage, ToolOffering, ToolRefusal, ToolResult, ToolSpec,
 };
 use mannie_plugin_sdk::services::background_commands::{
     BackgroundError, BackgroundScope, BackgroundTicket, RemoteEnding, RemoteOutput, StartedCommand,
@@ -121,6 +122,14 @@ const KNOWN_EXCEPTIONS: &[KnownException] = &[
                  once, so it neither clones nor crosses JSON, and `ChosenFile` holds one; a \
                  boundary keeps the table on the host's side and carries the handles' numbers, \
                  and a filter and the errors cross JSON",
+    },
+    KnownException {
+        module: "services::local_servers",
+        reason: "a server's spec carries its secrets as `contracts::Secret`, which never \
+                 serializes, for the reason of `services::credentials`, and a running server \
+                 is a trait object whose output and errors the plugin takes once; a boundary \
+                 carries the spec's secrets in a transport of their own and proxies the \
+                 server, while its output, its end and its errors cross JSON",
     },
     KnownException {
         module: "services::secrets",
@@ -448,6 +457,115 @@ fn a_remote_command_crosses_json_with_its_kind_and_nothing_else_decodes_to_an_ac
         json!({ "kind": "path", "path": "/etc/hosts" }),
         json!({ "kind": "remote_command", "target": "a" }),
         json!(null),
+    ] {
+        let error = serde_json::from_value::<ToolAccess>(json.clone()).unwrap_err();
+        assert!(error.is_data(), "{json}: {error}");
+    }
+}
+
+#[test]
+fn a_result_carries_its_images_as_base64_and_one_without_leaves_them_out() {
+    let result = ToolResult::new("A screenshot of the page.")
+        .with_images(vec![ToolImage::new(b"\x89PNG\r\n\x1a\nimage".to_vec())]);
+    let json = json!({
+        "output": "A screenshot of the page.",
+        "images": [{ "data": "iVBORw0KGgppbWFnZQ==" }]
+    });
+
+    assert_eq!(serde_json::to_value(&result).unwrap(), json);
+    assert_eq!(serde_json::from_value::<ToolResult>(json).unwrap(), result);
+    assert_eq!(
+        serde_json::to_value(ToolResult::new("Done.")).unwrap(),
+        json!({ "output": "Done." })
+    );
+    let error = serde_json::from_value::<ToolResult>(json!({
+        "output": "Done.",
+        "images": [{ "data": "not base64!" }]
+    }))
+    .unwrap_err();
+    assert!(error.is_data(), "{error}");
+}
+
+#[test]
+fn a_tool_servers_call_crosses_json_with_its_endpoint_and_leaves_out_what_it_lacks() {
+    let plain = ToolAccess::ExternalTool(ExternalToolAccess::new(
+        "0199e0f2-0000-7000-8000-0000000000cc".to_owned(),
+        "Issues".to_owned(),
+        ToolServerEndpoint::Url {
+            url: "https://mcp.example.com/mcp".to_owned(),
+        },
+        "create_issue".to_owned(),
+        r#"{"title":"Crash"}"#.to_owned(),
+    ));
+    let described = ToolAccess::ExternalTool(
+        ExternalToolAccess::new(
+            "0199e0f2-0000-7000-8000-0000000000dd".to_owned(),
+            "Everything".to_owned(),
+            ToolServerEndpoint::Program {
+                program: "npx".to_owned(),
+                arguments: vec![
+                    "-y".to_owned(),
+                    "@modelcontextprotocol/server-everything".to_owned(),
+                ],
+            },
+            "echo".to_owned(),
+            "{}".to_owned(),
+        )
+        .with_title("Echo")
+        .with_hints(vec![ToolHint::ReadOnly, ToolHint::OpenWorld]),
+    );
+    let plain_json = json!({
+        "kind": "external_tool",
+        "target": "0199e0f2-0000-7000-8000-0000000000cc",
+        "label": "Issues",
+        "endpoint": { "kind": "url", "url": "https://mcp.example.com/mcp" },
+        "tool": "create_issue",
+        "arguments": "{\"title\":\"Crash\"}"
+    });
+    let described_json = json!({
+        "kind": "external_tool",
+        "target": "0199e0f2-0000-7000-8000-0000000000dd",
+        "label": "Everything",
+        "endpoint": {
+            "kind": "program",
+            "program": "npx",
+            "arguments": ["-y", "@modelcontextprotocol/server-everything"]
+        },
+        "tool": "echo",
+        "title": "Echo",
+        "arguments": "{}",
+        "hints": ["read_only", "open_world"]
+    });
+
+    assert_eq!(serde_json::to_value(&plain).unwrap(), plain_json);
+    assert_eq!(serde_json::to_value(&described).unwrap(), described_json);
+    assert_eq!(
+        serde_json::from_value::<ToolAccess>(plain_json).unwrap(),
+        plain
+    );
+    assert_eq!(
+        serde_json::from_value::<ToolAccess>(described_json).unwrap(),
+        described
+    );
+    for json in [
+        json!({ "kind": "external_tool", "target": "a", "label": "b", "tool": "c", "arguments": "{}" }),
+        json!({
+            "kind": "external_tool",
+            "target": "a",
+            "label": "b",
+            "endpoint": { "kind": "socket", "path": "/run/server.sock" },
+            "tool": "c",
+            "arguments": "{}"
+        }),
+        json!({
+            "kind": "external_tool",
+            "target": "a",
+            "label": "b",
+            "endpoint": { "kind": "url", "url": "https://mcp.example.com/mcp" },
+            "tool": "c",
+            "arguments": "{}",
+            "hints": ["harmless"]
+        }),
     ] {
         let error = serde_json::from_value::<ToolAccess>(json.clone()).unwrap_err();
         assert!(error.is_data(), "{json}: {error}");

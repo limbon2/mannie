@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 
 use crate::agents::Requester;
 use crate::budget::{estimate_image, estimate_message, estimate_text};
-use crate::context::part_result;
+use crate::context::{part_result, with_unsent_images};
 use crate::{tasks, texts};
 
 /// The most characters of a tool call's arguments, and of its result, that a
@@ -165,10 +165,16 @@ pub(crate) fn turns_estimate(turns: &[ModelTurn], requester: Requester) -> u32 {
 }
 
 /// What the model reads as the result of a call part: a tool call or a task.
+/// The summary's model reads no image of a result, only its size (ADR-0044,
+/// decision 5).
 fn call_result(part: &ModelPart, requester: Requester) -> Option<String> {
-    part.tool_call
-        .as_ref()
-        .map(|call| part_result(part, call, &HashSet::new(), requester))
+    part.tool_call.as_ref().map(|call| {
+        with_unsent_images(
+            part_result(part, call, &HashSet::new(), requester),
+            call,
+            &[],
+        )
+    })
 }
 
 /// The covered turns as the summary call reads them: the owner's lines and

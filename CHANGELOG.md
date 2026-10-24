@@ -6,6 +6,11 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ### Added
 
+- Plugins publish tools while they run, through the point `tool-sources`: each set replaces the source's tools, a run keeps the set that it started with, and a published tool gives way to any tool of the same name (ADR-0043).
+- A plugin's tool may call a tool server's tool as an external-tool access, which the owner allows once, for the conversation, for the project or for every conversation, covering the same tool of the same server at the same endpoint with any arguments; full access runs every call, a worker's ceiling refuses them, and the approval shows the server's hints as its claims (ADR-0043).
+- Plugins start the programs of local tool servers through the service `local-servers`, which finds the program on Mannie's `PATH`, runs it in the supervisor with the environment of commands and the server's own variables and secrets, and ends it when the plugin stops or Mannie quits (ADR-0043).
+- The images of tool results reach the model, PNG and JPEG without their metadata, at most 4 of a result, through the Responses API's tool outputs and a message after the tool results on Chat Completions; the call's details show them and the export keeps them (ADR-0044).
+- A plugin's tool may have a schema that is not strict, which the providers' strict mode leaves as it is, and a plugin's UI opens a link through the core's checks with `openLink` and describes every tool that it publishes with one tool kind (ADR-0043).
 - The evaluations count, for each report of a child agent, the parent's reads and searches that repeat what a child read or searched, apart from its checks of files that a child changed. A new task fails when the parent repeats more than two of them for its report, and `MANNIE_EVAL_RUNS` runs each task several times.
 
 ### Changed
@@ -18,6 +23,7 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 - The "@" list keeps up in large projects: queries that arrive while the project's folder is read share that one reading instead of each reading the folder again, an index older than 15 seconds answers at once while the folder is read again in the background, and a query no longer sorts every match.
 - A summary that reaches the output limit no longer becomes a checkpoint: the compaction fails with `summary_cut`, which asks the owner to raise the profile's output limit.
+- The styles that only a plugin's interface uses reach the app, such as the row of a host's name and port in SSH's host dialog: Tailwind read no file of the plugins' folders, because their source pattern named the folders instead of their files.
 
 ### Security
 

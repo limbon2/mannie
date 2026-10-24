@@ -129,6 +129,7 @@ impl TypedTool for StartCommand {
                 },
                 output: texts::command_started(started.number, &place),
                 archives: Vec::new(),
+                images: Vec::new(),
             })
         }
         .boxed()

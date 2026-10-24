@@ -11,6 +11,9 @@ publish.workspace = true
 serde = { workspace = true }
 specta = { workspace = true }
 thiserror = { workspace = true }
+# Where a credential may travel, which the provider profiles and plugins'
+# tool servers share, reads a parsed URL (ADR-0043, decision 8).
+url = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]

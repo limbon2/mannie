@@ -3,7 +3,7 @@
 
 use mannie_types::export::{
     ConversationRecord, ExportError, ExportWarning, RECORD_VERSION, RecordArchive, RecordImage,
-    RecordPart, RecordTurn,
+    RecordPart, RecordToolImage, RecordTurn,
 };
 use mannie_types::ids::{ArchiveId, ConversationId, PartId, RunId, TurnId};
 use mannie_types::images::ImageFormat;
@@ -21,6 +21,8 @@ const RETAINED_RUNS: &str = "SELECT id FROM runtime_runs WHERE turn_id = ?1 AND 
 const SEQUENCE: &str = "SELECT last_seq FROM runtime_conversations WHERE id = ?1";
 const CHECKPOINTS: &str = "SELECT id, summary FROM runtime_checkpoints WHERE conversation_id = ?1 ORDER BY created_at, id";
 const IMAGES: &str = "SELECT part_id, format, data FROM runtime_images WHERE conversation_id = ?1";
+const TOOL_IMAGES: &str = "SELECT part_id, position, format, data FROM runtime_tool_images \
+     WHERE conversation_id = ?1 ORDER BY part_id, position";
 const ARCHIVES: &str = "SELECT id, part_id, name, content FROM runtime_archives WHERE conversation_id = ?1 ORDER BY created_at, id";
 const CHILDREN: &str =
     "SELECT id FROM runtime_conversations WHERE parent_conversation_id = ?1 ORDER BY task_number";
@@ -33,6 +35,7 @@ pub(crate) const STATEMENTS: &[&str] = &[
     SEQUENCE,
     CHECKPOINTS,
     IMAGES,
+    TOOL_IMAGES,
     ARCHIVES,
     CHILDREN,
 ];
@@ -68,8 +71,9 @@ fn record_in(
     let turns = record_turns(connection, id)?;
     let checkpoints = record_checkpoints(connection, id)?;
     let (images, archives) = record_assets(connection, id, &turns)?;
+    let tool_images = record_tool_images(connection, id, &turns)?;
     let children = record_children(connection, id)?;
-    let warnings = missing_attachments(id, &turns, &images, &archives)?;
+    let warnings = missing_attachments(id, &turns, &images, &archives, &tool_images)?;
     let background_commands = background::commands(connection, id.as_str())?
         .iter()
         .map(StoredBackgroundCommand::view)
@@ -82,6 +86,7 @@ fn record_in(
         turns,
         checkpoints,
         images,
+        tool_images,
         archives,
         children,
         warnings,
@@ -236,6 +241,41 @@ fn record_assets(
     Ok((images, archives))
 }
 
+/// The images of the results of the included tool calls, by part and
+/// position (ADR-0044, decision 7).
+fn record_tool_images(
+    connection: &Connection,
+    id: &ConversationId,
+    turns: &[RecordTurn],
+) -> Result<Vec<RecordToolImage>, RuntimeStoreError> {
+    let mut images = Vec::new();
+    let mut select = connection.prepare_cached(TOOL_IMAGES)?;
+    let rows = select.query_map([id.as_str()], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, u32>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, Vec<u8>>(3)?,
+        ))
+    })?;
+    for row in rows {
+        let (part, position, format, data) = row?;
+        let included = turns
+            .iter()
+            .any(|turn| turn.parts.iter().any(|entry| entry.id.as_str() == part));
+        if included {
+            images.push(RecordToolImage {
+                part_id: parse_id(&part, PartId::parse)?,
+                position,
+                format: ImageFormat::parse(&format)
+                    .ok_or_else(|| RuntimeStoreError::invalid("unknown exported image format"))?,
+                data,
+            });
+        }
+    }
+    Ok(images)
+}
+
 fn record_children(
     connection: &Connection,
     id: &ConversationId,
@@ -258,6 +298,7 @@ fn missing_attachments(
     turns: &[RecordTurn],
     images: &[RecordImage],
     archives: &[RecordArchive],
+    tool_images: &[RecordToolImage],
 ) -> Result<Vec<ExportWarning>, RuntimeStoreError> {
     let mut warnings = Vec::new();
     for part in turns.iter().flat_map(|turn| &turn.parts) {
@@ -287,6 +328,23 @@ fn missing_attachments(
                         reason: ExportError::AttachmentMissing,
                     });
                 }
+            }
+        }
+        let named_images = document
+            .pointer("/toolCall/result/images")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten();
+        for position in named_images.filter_map(|image| image.get("position")?.as_u64()) {
+            let stored = tool_images
+                .iter()
+                .any(|image| image.part_id == part.id && u64::from(image.position) == position);
+            if !stored {
+                warnings.push(ExportWarning {
+                    conversation_id: id.clone(),
+                    reference: format!("{}#{position}", part.id),
+                    reason: ExportError::AttachmentMissing,
+                });
             }
         }
     }

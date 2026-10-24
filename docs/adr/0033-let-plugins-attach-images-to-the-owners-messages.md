@@ -7,7 +7,7 @@
 | Deciders | Owner                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | Related  | [ADR-0002](0002-grow-through-extension-points.md), [ADR-0004](0004-keep-system-access-in-the-rust-core.md), [ADR-0007](0007-generate-ipc-bindings-from-rust.md), [ADR-0011](0011-own-the-provider-adapters.md), [ADR-0020](0020-complete-the-ui-shell-slots.md), [ADR-0030](0030-split-mannie-into-a-core-and-plugins.md), [ADR-0032](0032-let-features-and-plugins-add-kinds-of-mentions.md), [Extension points](../architecture/extension-points.md), [Security](../architecture/security.md), [Images](../../plugins/images/docs/README.md) |
 
-Later changes: [ADR-0034](0034-build-plugins-on-a-plugin-sdk.md) refines decisions 2 and 10: the image source moves into the plugin SDK, and the file dialog is a host service that returns handles.
+Later changes: [ADR-0034](0034-build-plugins-on-a-plugin-sdk.md) refines decisions 2 and 10: the image source moves into the plugin SDK, and the file dialog is a host service that returns handles. [ADR-0044](0044-let-tool-results-carry-images-to-the-model.md) refines decisions 4 and 5: the images of tool results are stored apart from the owner's, without thumbnails, and their metadata is removed by structure.
 
 ## Context
 

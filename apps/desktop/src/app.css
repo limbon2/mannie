@@ -2,9 +2,11 @@
 @import "tw-animate-css";
 @import "shadcn-svelte/tailwind.css";
 
-/* The plugins' UI lives in their folders, outside the app's (ADR-0035, decision 7). */
-@source "../../../plugins/*/ui";
-@source "../../../tests/fixtures/plugins/*/ui";
+/* The plugins' UI lives in their folders, outside the app's (ADR-0035, decision 7).
+   Tailwind reads a pattern with a wildcard as a pattern of files, so the
+   patterns name the files: a pattern of the UI folders alone matched none. */
+@source "../../../plugins/*/ui/**/*.{svelte,ts}";
+@source "../../../tests/fixtures/plugins/*/ui/**/*.{svelte,ts}";
 
 @custom-variant dark (&:is(.dark *));
 

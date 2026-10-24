@@ -1476,6 +1476,7 @@ fn tool_call_lifecycle(
                 bytes: 5,
             },
             output: "Created /work/a.txt (5 bytes).".to_owned(),
+            images: Vec::new(),
             archives: vec![ArchiveRef {
                 id: archive_id.clone(),
                 name: "stdout".to_owned(),
@@ -2249,3 +2250,5 @@ mod executor_tasks;
 mod tasks;
 
 mod conversation_export;
+/// The tests of the images of tool results (ADR-0044).
+mod tool_images;

@@ -28,6 +28,7 @@ use mannie_plugin_sdk::ids::PluginId;
 use mannie_plugin_sdk::manifest::ManifestError;
 use mannie_plugin_sdk::plugin::{Instance, Plugin, PluginEntry, Started};
 use mannie_plugin_sdk::service::{BoundService, Service};
+use mannie_plugin_sdk::services::local_servers::LocalServers;
 use mannie_plugin_sdk::services::secrets::Secrets;
 use mannie_plugin_sdk::services::store::{
     Migration, Statement, Store as StoreService, StoreModule,
@@ -387,6 +388,35 @@ impl ServiceProvider for OddSecrets {
             ));
         }
         FakeSecrets::new().bind(binding)
+    }
+}
+
+/// A provider that records each plugin that it releases, of a service that
+/// no manifest of the tests declares.
+#[derive(Debug)]
+struct Releasing {
+    events: Events,
+}
+
+impl ServiceProvider for Releasing {
+    fn name(&self) -> &'static str {
+        LocalServers::NAME
+    }
+
+    fn major(&self) -> u16 {
+        LocalServers::MAJOR
+    }
+
+    fn bind(&self, binding: &PluginBinding<'_>) -> Result<BoundService, BindRefusal> {
+        Err(BindRefusal::new(
+            LocalServers::NAME,
+            format!("the test binds nothing to {}", binding.id),
+        ))
+    }
+
+    fn release(&self, plugin: &PluginId) -> BoxFuture<'static, ()> {
+        log_event(&self.events, format!("released {plugin}"));
+        Box::pin(std::future::ready(()))
     }
 }
 
@@ -965,6 +995,69 @@ async fn turning_off_removes_the_contributions_before_the_instance_stops() {
             "things removed notes",
             "notes stopped"
         ]
+    );
+}
+
+/// A host of `entries` whose providers release what they hold into the
+/// fixture's events.
+fn releasing_host(fixture: &Fixture, entries: Vec<PluginEntry>) -> PluginHost {
+    let list = PluginList::new(entries).unwrap();
+    let store = fixture.store(&list);
+    let mut deps = fixture.deps(&store, list);
+    deps.providers.push(Arc::new(Releasing {
+        events: Arc::clone(&fixture.events),
+    }));
+    PluginHost::new(deps).unwrap()
+}
+
+#[tokio::test]
+async fn turning_off_releases_what_the_services_hold_once_the_instance_stopped() {
+    let fixture = Fixture::new();
+    let plugin = Arc::new(fixture.plugin("notes"));
+    let host = releasing_host(&fixture, vec![entry(&plugin, 10, "")]);
+
+    host.set_enabled("notes", true).await.unwrap();
+    host.set_enabled("notes", false).await.unwrap();
+
+    let events = fixture.events();
+    let tail: Vec<&str> = events
+        .iter()
+        .rev()
+        .take(2)
+        .rev()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(tail, ["notes stopped", "released notes"]);
+}
+
+#[tokio::test]
+async fn a_start_that_fails_or_is_refused_releases_what_the_services_hold() {
+    let fixture = Fixture::new();
+    let failing = Arc::new(fixture.plugin("notes"));
+    failing.fail_next_starts(1);
+    let refused = Arc::new(
+        fixture
+            .plugin("drafts")
+            .contributing(|| Contributions::new().add::<Unclaimed>("later")),
+    );
+    let host = releasing_host(
+        &fixture,
+        vec![entry(&failing, 10, ""), entry(&refused, 20, "")],
+    );
+
+    host.set_enabled("notes", true).await.unwrap();
+    host.set_enabled("drafts", true).await.unwrap();
+
+    let events = fixture.events();
+    assert!(events.contains(&"released notes".to_owned()), "{events:?}");
+    let drafts: Vec<&str> = events
+        .iter()
+        .filter(|event| event.contains("drafts"))
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        drafts,
+        ["drafts started", "drafts stopped", "released drafts"]
     );
 }
 

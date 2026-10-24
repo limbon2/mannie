@@ -287,11 +287,16 @@ export interface ToolKindDetailsProps {
  * details below the core's accesses. The core uses an entry only for calls of
  * the plugin that registered it, and keeps the accesses, the approval and
  * the outputs that did not fit its own. Without an entry, such as while its
- * plugin is off, a call shows the core's generic texts.
+ * plugin is off, a call shows the core's generic texts. An entry with
+ * `everyTool` describes every tool of its plugin that has no entry of its
+ * own, such as the tools that the plugin publishes while it runs (ADR-0043,
+ * decision 9).
  */
 export interface ToolKind {
   /** What the call's data shows, below its accesses. It never inserts raw HTML. */
   readonly details?: Component<ToolKindDetailsProps>;
+  /** Whether the entry describes every tool of its plugin without an entry of its own; its `id` then names the entry only. */
+  readonly everyTool?: boolean;
   /** The sentence of one of the plugin's failure codes, or `null` for a code it does not know. */
   readonly failure: (code: string) => string | null;
   /** An icon from @lucide/svelte for the tool's calls. */

@@ -26,6 +26,8 @@ words:
   - bufbuild
   - checksummed
   - choco
+  - chrono
+  - CIMD
   - clippy
   - cmark
   - Crockford
@@ -48,11 +50,13 @@ words:
   - flate
   - fpid
   - fsmonitor
+  - getrandom
   - globset
   - HMAC
   - htpasswd
   - huntabyte
   - inlang
+  - IPTC
   - jexec
   - journalctl
   - journaled
@@ -81,6 +85,7 @@ words:
   - Mannie's
   - mebibytes
   - metacharacters
+  - modelcontextprotocol
   - msvc
   - netrc
   - nextest
@@ -96,6 +101,7 @@ words:
   - pgpass
   - pidfds
   - pinentry
+  - PKCE
   - prerender
   - prerendered
   - prerendering
@@ -115,6 +121,7 @@ words:
   - reparented
   - reqwest
   - RLIMIT
+  - rmcp
   - rusqlite
   - russh
   - rustix
@@ -131,6 +138,7 @@ words:
   - smol
   - specta
   - sqlx
+  - Streamable
   - strikethrough
   - subr
   - subreaper

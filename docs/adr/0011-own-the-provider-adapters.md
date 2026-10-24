@@ -7,6 +7,8 @@
 | Deciders | Owner                                                                                                                                                        |
 | Related  | [ADR-0012](0012-run-agents-as-durable-actors.md), [Agent runtime](../architecture/agent-runtime.md), [Technology stack](../architecture/technology-stack.md) |
 
+Later changes: [ADR-0044](0044-let-tool-results-carry-images-to-the-model.md) refines decision 1: the adapters send the images of tool results, in the placement that each interface takes.
+
 ## Context
 
 Verified 2026-10-13:

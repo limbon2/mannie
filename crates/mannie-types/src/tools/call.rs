@@ -9,14 +9,15 @@ use crate::clock::UtcMillis;
 
 use super::access::Access;
 use super::approval::{ApprovalRequest, Decision};
-use super::outcome::{ArchiveRef, ToolOutcome, ToolResult};
+use super::outcome::{ArchiveRef, ToolImageRef, ToolOutcome, ToolResult};
 
 /// The largest arguments of one tool call, in bytes: the size of one event of
 /// a provider's stream.
 pub const MAX_ARGUMENTS_BYTES: usize = 1024 * 1024;
 
-/// The most bytes of a call's arguments that the UI receives. Longer arguments
-/// arrive cut, which the view says.
+/// The most bytes of a call's arguments that the UI receives, and of the
+/// arguments of a call of a tool server's tool in its accesses. Longer
+/// arguments arrive cut, which the view says.
 pub const MAX_VIEW_ARGUMENTS_BYTES: usize = 16 * 1024;
 
 /// Where a tool call is in its life.
@@ -138,6 +139,9 @@ pub enum Refusal {
     /// A worker runs no plugin's installed programs, for the same reason
     /// (ADR-0038, decision 6).
     NoProgramsOnHost,
+    /// A worker calls no tool server's tools, for the same reason (ADR-0043,
+    /// decision 4).
+    NoExternalTools,
 }
 
 /// Why an operation that was executing ended without its result while the
@@ -249,6 +253,8 @@ where
         output: String,
         #[serde(default)]
         archives: Vec<ArchiveRef>,
+        #[serde(default)]
+        images: Vec<ToolImageRef>,
     }
 
     // Serde tries the variants in order, so anything that is not an outcome
@@ -271,6 +277,7 @@ where
         outcome,
         output: stored.output,
         archives: stored.archives,
+        images: stored.images,
     }))
 }
 
@@ -296,26 +303,20 @@ impl ToolCallDocument {
         }
     }
 
-    /// The view of the call for the UI, with its arguments cut to
-    /// [`MAX_VIEW_ARGUMENTS_BYTES`].
+    /// The view of the call for the UI, with its arguments, and those of a
+    /// call of a tool server's tool in its accesses, cut to
+    /// [`MAX_VIEW_ARGUMENTS_BYTES`]. The owner's decision names the digest
+    /// that the core computed from the whole accesses, so a cut view never
+    /// changes what an approval allows.
     pub fn view(&self, arguments: &str) -> ToolCallView {
-        let cut = arguments.len() > MAX_VIEW_ARGUMENTS_BYTES;
-        let shown = if cut {
-            let mut end = MAX_VIEW_ARGUMENTS_BYTES;
-            while !arguments.is_char_boundary(end) {
-                end -= 1;
-            }
-            &arguments[..end]
-        } else {
-            arguments
-        };
+        let (shown, cut) = cut_for_view(arguments);
         ToolCallView {
             tool: self.tool.clone(),
             activity: self.activity.clone(),
             arguments: shown.to_owned(),
             arguments_cut: cut,
             status: self.status,
-            accesses: self.accesses.clone(),
+            accesses: self.accesses.iter().map(view_access).collect(),
             request: self.request.clone(),
             decision: self.decision,
             started_at: self.started_at,
@@ -326,6 +327,39 @@ impl ToolCallDocument {
             plugin: self.plugin.clone(),
         }
     }
+}
+
+/// The start of a text within [`MAX_VIEW_ARGUMENTS_BYTES`], cut at a
+/// character, and whether it was cut.
+fn cut_for_view(text: &str) -> (&str, bool) {
+    if text.len() <= MAX_VIEW_ARGUMENTS_BYTES {
+        return (text, false);
+    }
+    let mut end = MAX_VIEW_ARGUMENTS_BYTES;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    (&text[..end], true)
+}
+
+/// An access as a call's view shows it: the arguments of a call of a tool
+/// server's tool, which reach up to [`MAX_ARGUMENTS_BYTES`], cut as the
+/// call's own are (ADR-0043, decision 4).
+fn view_access(access: &Access) -> Access {
+    let mut shown = access.clone();
+    if let Access::ExternalTool {
+        arguments,
+        arguments_cut,
+        ..
+    } = &mut shown
+    {
+        let (start, cut) = cut_for_view(arguments);
+        if cut {
+            *arguments = start.to_owned();
+            *arguments_cut = true;
+        }
+    }
+    shown
 }
 
 /// A tool call as the UI shows it.
@@ -371,6 +405,8 @@ pub struct ToolCallView {
 #[cfg(test)]
 mod tests {
     use super::{Interruption, MAX_VIEW_ARGUMENTS_BYTES, ToolCallDocument, ToolCallStatus};
+    use crate::tools::access::Access;
+    use crate::tools::external::ToolServerEndpoint;
     use crate::tools::outcome::ToolOutcome;
 
     #[test]
@@ -425,6 +461,46 @@ mod tests {
         assert!(view.arguments.len() <= MAX_VIEW_ARGUMENTS_BYTES);
         assert!(!short.arguments_cut);
         assert_eq!(short.arguments, "{}");
+    }
+
+    fn external(arguments: String) -> Access {
+        Access::ExternalTool {
+            plugin: "mcp".to_owned(),
+            target: "0199e0f2-0000-7000-8000-0000000000aa".to_owned(),
+            label: "GitHub".to_owned(),
+            endpoint: ToolServerEndpoint::Url {
+                url: "https://api.githubcopilot.com/mcp/".to_owned(),
+            },
+            tool: "create_issue".to_owned(),
+            title: None,
+            arguments,
+            arguments_cut: false,
+            hints: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn the_view_cuts_the_long_arguments_of_a_tool_servers_call_and_keeps_the_document_whole() {
+        let long = format!("{{\"body\":\"{}\"}}", "é".repeat(MAX_VIEW_ARGUMENTS_BYTES));
+        let mut document =
+            ToolCallDocument::receiving("call_1".to_owned(), "mcp_github".to_owned());
+        document.accesses = vec![external(long.clone()), external("{}".to_owned())];
+
+        let view = document.view("{}");
+
+        let Access::ExternalTool {
+            arguments,
+            arguments_cut,
+            ..
+        } = &view.accesses[0]
+        else {
+            panic!("not a tool server's call: {:?}", view.accesses[0]);
+        };
+        assert!(*arguments_cut);
+        assert!(arguments.len() <= MAX_VIEW_ARGUMENTS_BYTES);
+        assert!(long.starts_with(arguments.as_str()));
+        assert_eq!(view.accesses[1], external("{}".to_owned()));
+        assert_eq!(document.accesses[0], external(long));
     }
 
     #[test]
@@ -529,6 +605,13 @@ mod tests {
             },
             output: "Edited notes.md.".to_owned(),
             archives: Vec::new(),
+            images: vec![crate::tools::outcome::ToolImageRef {
+                position: 0,
+                format: crate::images::ImageFormat::Jpeg,
+                width: 640,
+                height: 480,
+                bytes: 30_000,
+            }],
         });
 
         let text = serde_json::to_string(&document).unwrap();

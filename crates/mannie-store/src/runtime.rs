@@ -18,6 +18,7 @@ mod reads;
 mod recovery;
 mod rows;
 mod tasks;
+mod tool_images;
 
 use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{
@@ -42,6 +43,7 @@ pub use projects::{AddedProject, ConversationList, ProjectDeletion};
 pub use reads::{EventsAfter, KeptRun, ModelImage, ModelPart, ModelTurn, StoredCheckpoint};
 pub use recovery::{Recovered, UncertainCall};
 pub use tasks::{ExecutorTaskProfile, NewExecutorTask, OutboxEntry};
+pub use tool_images::StoredToolImage;
 
 /// The version of the JSON documents this module writes.
 const DOCUMENT_VERSION: u32 = 1;
@@ -240,6 +242,22 @@ pub struct NewImage {
     pub thumbnail_format: ImageFormat,
     /// The thumbnail.
     pub thumbnail: ImageBytes,
+}
+
+/// An image of a tool call's result to store with the call's part
+/// (ADR-0044), already checked and without its metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewToolImage {
+    /// Its position among the images that the tool returned.
+    pub position: u32,
+    /// The format of the bytes.
+    pub format: ImageFormat,
+    /// The width in pixels.
+    pub width: u32,
+    /// The height in pixels.
+    pub height: u32,
+    /// The bytes.
+    pub data: ImageBytes,
 }
 
 /// An output of a tool call to archive with the call's part.
@@ -501,6 +519,15 @@ pub enum Change {
         /// The note.
         text: String,
     },
+    /// Stores the images of a tool call's result with its part, in the batch
+    /// that completes the call, after the update that names them
+    /// (ADR-0044, decision 3).
+    AddToolImages {
+        /// The tool call's part, which is still streaming.
+        part_id: PartId,
+        /// The images.
+        images: Vec<NewToolImage>,
+    },
 }
 
 /// The result of applying changes: the events to publish, and the sequence
@@ -634,6 +661,7 @@ pub(crate) fn statements() -> impl Iterator<Item = &'static str> {
         .chain(recovery::STATEMENTS)
         .chain(rows::STATEMENTS)
         .chain(tasks::STATEMENTS)
+        .chain(tool_images::STATEMENTS)
         .copied()
 }
 

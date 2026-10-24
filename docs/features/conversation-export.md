@@ -1,11 +1,11 @@
 # Conversation export
 
-|              |                                                                                                                        |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------- |
-| Status       | Building                                                                                                               |
-| Milestone    | M10                                                                                                                    |
-| Last updated | 2026-10-22                                                                                                             |
-| Related      | [Chat](chat/README.md), [ADR-0040](../adr/0040-export-complete-conversation-records.md), [Feature protocol](README.md) |
+|              |                                                                                                                                                                                               |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status       | Building                                                                                                                                                                                      |
+| Milestone    | M10                                                                                                                                                                                           |
+| Last updated | 2026-10-24                                                                                                                                                                                    |
+| Related      | [Chat](chat/README.md), [ADR-0040](../adr/0040-export-complete-conversation-records.md), [ADR-0044](../adr/0044-let-tool-results-carry-images-to-the-model.md), [Feature protocol](README.md) |
 
 ## Intent
 
@@ -40,6 +40,7 @@ None.
 - `export_conversation(ConversationRef)` opens the native picker in Rust and returns a typed canceled or saved result with its destination and warnings. Typed failures distinguish storage, missing conversations, dialogs and writes. The webview never supplies a destination or export body.
 - A versioned `ConversationRecord` is a full read contract, distinct from shortened transcript views. The store captures complete current parts, their saved documents, current and retained reply metadata, committed streaming deltas, checkpoints, images, archives and child summaries consistently. The runtime dispatches remote reads through the optional executor method of ADR-0040.
 - The record also lists the conversation's background commands with how each ended, and the Markdown names each command with the call that started it, whose archive holds its output ([ADR-0041](../adr/0041-let-agents-run-commands-in-the-background.md), [background commands](system-tools/background-commands.md)).
+- The record also holds the images of the conversation's tool results, and the Markdown links each one from its call as a "Result image" in `images/`, named by its part and its position ([ADR-0044](../adr/0044-let-tool-results-carry-images-to-the-model.md), decision 7).
 - The events link package advances to level 2 and gains a streaming complete-record read with chunks of at most 256 KiB. Existing level-1 reads remain available. Worker ownership checks and the authenticated link cover export reads as they cover transcript reads.
 - A dedicated store module journals export metadata. An executing record is durable before file creation; completion follows flushes; startup marks interrupted execution uncertain. No export repeats automatically.
 - The writer uses exclusive creation, an incomplete marker, validated ID filenames and escaped generated Markdown. Cleanup touches only paths created by the current export. Transcript content and filenames never authorize access. Unknown parts have a generic representation.
@@ -48,7 +49,7 @@ None.
 ## Acceptance
 
 - Full records include turns beyond view limits, complete inputs, resolved mentions, retained tool runs, checkpoints and committed streaming text, with discarded attempts excluded.
-- Images match stored bytes, archived outputs remain complete, relative links resolve, and Unicode and embedded Markdown fences remain readable.
+- Images, also those of tool results, match stored bytes, archived outputs remain complete, relative links resolve, and Unicode and embedded Markdown fences remain readable.
 - Worker reads pass authenticated loopback tests of large chunked records, ownership, disconnects, shutdown, unsupported peers and partial export warnings.
 - Native-picker cancellation writes nothing; collisions preserve existing files; injected write failures clean up owned files or retain the incomplete marker; startup recovery never retries writes.
 - End-to-end coverage checks main and side-panel export, keyboard access, focus, announcements, both themes, pseudo-localization and accessibility on Windows and Linux.

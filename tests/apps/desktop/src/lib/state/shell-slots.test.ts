@@ -96,6 +96,19 @@ describe('Slot', () => {
     expect(slot.findOf('git_status', 'git')).toBeUndefined();
   });
 
+  it('lists the entries of one plugin while it is on', () => {
+    const plugins = pluginsOn('mcp', 'git');
+    const slot = new Slot<Entry>('tool kinds', plugins.isOn);
+    slot.register({ id: 'mcp_tools', order: 0 }, 'mcp');
+    slot.register({ id: 'git_status', order: 1 }, 'git');
+    slot.register({ id: 'mcp_read_resource', order: 2 }, 'mcp');
+    slot.register({ id: 'read_file', order: 3 });
+
+    expect(slot.entriesOf('mcp').map((entry) => entry.id)).toEqual(['mcp_tools', 'mcp_read_resource']);
+    plugins.on.delete('mcp');
+    expect(slot.entriesOf('mcp')).toEqual([]);
+  });
+
   it('refuses an ID that an entry of a plugin that is off has', () => {
     const slot = new Slot<Entry>('commands', pluginsOn().isOn);
     slot.register({ id: 'workers.pair', order: 0 }, 'workers');

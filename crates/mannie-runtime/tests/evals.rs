@@ -386,6 +386,9 @@ pub(crate) fn mentions(call: &ToolCallView, needle: &str) -> bool {
             working_directory.contains(needle)
                 || arguments.iter().any(|argument| argument.contains(needle))
         }
+        Access::ExternalTool {
+            tool, arguments, ..
+        } => tool.contains(needle) || arguments.contains(needle),
     });
     in_arguments || in_accesses
 }
@@ -655,7 +658,8 @@ fn owner_choice(task: &Task, call: &ToolCallView) -> ApprovalChoice {
             Access::Path { .. }
             | Access::Project { .. }
             | Access::RemoteCommand { .. }
-            | Access::Program { .. } => false,
+            | Access::Program { .. }
+            | Access::ExternalTool { .. } => false,
         });
     if allowed {
         ApprovalChoice::AllowOnce

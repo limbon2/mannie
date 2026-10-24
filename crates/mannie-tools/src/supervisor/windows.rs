@@ -39,6 +39,7 @@ use windows_sys::Win32::System::Threading::{
 };
 
 use super::CommandSpec;
+use super::server::{ServerInput, ServerSpec};
 use crate::programs::ProgramRun;
 
 /// The script that Windows PowerShell runs. It reads the command's text from
@@ -141,6 +142,33 @@ impl Contained {
         let mut child = command.spawn()?;
         let contained = Self::contain(job, &mut child)?;
         Ok((contained, child))
+    }
+
+    /// Starts a local server's program in a new job, with its arguments
+    /// exactly and its input open (ADR-0043, decision 5). The standard
+    /// library starts a `.cmd` or `.bat` file through `cmd.exe`, quoting
+    /// each argument for it, and refuses an argument that `cmd.exe` would
+    /// read as code.
+    pub(super) fn spawn_server(spec: &ServerSpec) -> io::Result<(Self, Child, ServerInput)> {
+        let job = create_job()?;
+        let mut command = Command::new(&spec.program);
+        command
+            .args(&spec.arguments)
+            .creation_flags(CREATE_SUSPENDED | CREATE_NO_WINDOW)
+            .current_dir(&spec.working_directory)
+            .env_clear()
+            .envs(spec.environment.iter().map(|(name, value)| (name, value)))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        let mut child = command.spawn()?;
+        let contained = Self::contain(job, &mut child)?;
+        let input = child
+            .stdin
+            .take()
+            .ok_or_else(|| io::Error::other("the server has no standard input"))?;
+        Ok((contained, child, Box::new(input)))
     }
 
     /// Puts a suspended process into its job, and only then lets it run.

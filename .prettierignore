@@ -4,9 +4,11 @@
 # excludes them locally, which Prettier does not read.
 .claude/worktrees/
 
-# Sessions of the UI notes tool are its own exports. Their folder ignores
-# itself with a .gitignore of its own, which Prettier does not read either.
+# Sessions of the UI notes tool are its own exports, in the folder of each
+# of its versions. Their folder ignores itself with a .gitignore of its own,
+# which Prettier does not read either.
 .ui-notes/
+.notengham/
 
 # Lockfiles are written by their package managers.
 pnpm-lock.yaml

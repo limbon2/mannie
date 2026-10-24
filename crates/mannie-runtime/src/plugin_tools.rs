@@ -30,12 +30,14 @@ use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
 use mannie_plugin_sdk::contributions::{Contributions, ExtensionPoint};
 use mannie_plugin_sdk::host::{ContributionRefusal, ID_TAKEN, INVALID_NAME, RESERVED_ARGUMENT};
+use mannie_plugin_sdk::ids::PluginId;
 use mannie_plugin_sdk::points::executors::Executors;
+use mannie_plugin_sdk::points::tool_sources::{MAX_SOURCE_TOOLS, check_published};
 use mannie_plugin_sdk::points::tools::{
-    AgentSelector, MAX_FAILURE_CODE_CHARS, MAX_TOOL_ARCHIVE_BYTES, MAX_TOOL_ARCHIVES,
-    MAX_TOOL_DATA_BYTES, PathAccess, PluginTool, ProgramAccess, RemoteCommandAccess,
-    Tool as SdkTool, ToolAccess, ToolArchive, ToolCall, ToolEffect, ToolExecution, ToolOffering,
-    ToolSpec, Tools,
+    AgentSelector, ExternalToolAccess, MAX_FAILURE_CODE_CHARS, MAX_TOOL_ARCHIVE_BYTES,
+    MAX_TOOL_ARCHIVES, MAX_TOOL_DATA_BYTES, PathAccess, PluginTool, ProgramAccess,
+    RemoteCommandAccess, Tool as SdkTool, ToolAccess, ToolArchive, ToolCall, ToolEffect,
+    ToolExecution, ToolOffering, ToolSpec, Tools, is_tool_name,
 };
 use mannie_tools::{
     ArchivedOutput, Availability, Done, Execution, FolderError, PermissionClass, PrepareError,
@@ -45,18 +47,15 @@ use mannie_tools::{
 use mannie_types::ids::ArchiveId;
 use mannie_types::tools::{
     Access, AccessMode, MAX_ARGUMENTS_BYTES, MAX_EFFECT_ITEMS, ProgramEffect, ToolFailure,
-    ToolOutcome,
+    ToolHint, ToolOutcome, ToolServerEndpoint, looks_like_secret,
 };
+use url::Url;
 
 use crate::Runtime;
 use crate::agents::{AgentDefinition, EXPLORE_AGENT, Requester};
 use crate::plugins::Snapshot;
 use crate::tasks::TASK_TOOLS;
 use crate::texts;
-
-/// The most characters of a tool's name. The providers' interfaces accept
-/// names of lower-case letters, digits and underscores up to this length.
-const MAX_TOOL_NAME_CHARS: usize = 64;
 
 /// The most accesses that one call of a plugin's tool may return.
 const MAX_ACCESSES: usize = 16;
@@ -82,6 +81,13 @@ const MAX_PROGRAM_ARGUMENT_BYTES: usize = 32 * 1024;
 const MAX_EFFECTS: usize = 32;
 const MAX_EFFECT_TEXT_CHARS: usize = 1024;
 
+/// The most characters of a tool server's tool name and of a tool's title,
+/// and of a server's program and the bytes of its URL.
+const MAX_EXTERNAL_TOOL_CHARS: usize = 128;
+const MAX_EXTERNAL_TITLE_CHARS: usize = 256;
+const MAX_SERVER_PROGRAM_CHARS: usize = 1024;
+const MAX_SERVER_URL_BYTES: usize = 8 * 1024;
+
 /// The most characters of the entry whose presence offers a tool.
 const MAX_MARKER_CHARS: usize = 64;
 
@@ -104,39 +110,154 @@ pub(crate) struct OfferedPluginTool {
     pub(crate) plugin: String,
     /// The generation of the plugin's start.
     pub(crate) generation: u64,
+    /// Whether a source of the plugin published the tool while the plugin
+    /// ran (ADR-0043, decision 2), so a run that has no room for every tool
+    /// leaves it out first.
+    pub(crate) published: bool,
 }
 
 /// The plugins' tools of a snapshot that runs of `agent` are offered, those
 /// whose selectors name the agent, each with the adapter that the tool loop
-/// runs. The adapters find the installed programs of `runtime`.
+/// runs: the static tools first, then the tools that the plugins' sources
+/// published. A published tool whose name another tool took since the core
+/// kept it, such as a static tool of a plugin that started later, gives way
+/// (ADR-0043, decision 2). The adapters find the installed programs of
+/// `runtime`.
 pub(crate) fn offered_tools(
     snapshot: &Snapshot,
     agent: &AgentDefinition,
     runtime: &Runtime,
 ) -> Vec<(OfferedPluginTool, Arc<dyn Tool>)> {
-    snapshot
+    let mut offered = Vec::new();
+    for registered in snapshot.items::<Tools>() {
+        if offers(&registered.entry, agent) {
+            offered.push(adapted(
+                registered.plugin.as_str(),
+                registered.generation,
+                &registered.entry,
+                false,
+                runtime,
+            ));
+        }
+    }
+    let fixed = fixed_names(&runtime.inner.tools.registry, snapshot);
+    let mut seen: HashSet<&str> = HashSet::new();
+    for set in snapshot.published() {
+        for tool in set.tools.iter() {
+            let name = tool.spec.name.as_str();
+            if fixed.contains(name) || !seen.insert(name) {
+                continue;
+            }
+            if offers(tool, agent) {
+                offered.push(adapted(
+                    set.plugin.as_str(),
+                    set.generation,
+                    tool,
+                    true,
+                    runtime,
+                ));
+            }
+        }
+    }
+    offered
+}
+
+/// A plugin's tool as a run is offered it, with the adapter that the tool
+/// loop runs.
+fn adapted(
+    plugin: &str,
+    generation: u64,
+    entry: &PluginTool,
+    published: bool,
+    runtime: &Runtime,
+) -> (OfferedPluginTool, Arc<dyn Tool>) {
+    let offered = OfferedPluginTool {
+        name: entry.spec.name.clone(),
+        plugin: plugin.to_owned(),
+        generation,
+        published,
+    };
+    let adapter: Arc<dyn Tool> = Arc::new(PluginToolAdapter {
+        plugin: plugin.to_owned(),
+        tool: Arc::clone(&entry.tool),
+        spec: entry.spec.clone(),
+        effect: entry.effect,
+        offering: entry.offering.clone(),
+        markers: Mutex::new(HashMap::new()),
+        runtime: runtime.clone(),
+    });
+    (offered, adapter)
+}
+
+/// The names that a published tool gives way to: the core's tools, the task
+/// tools, the tools that the executors offer now, and the plugins' static
+/// tools.
+fn fixed_names(registry: &ToolRegistry, snapshot: &Snapshot) -> HashSet<String> {
+    let core = registry.tools().iter().map(|tool| tool.name().to_owned());
+    let tasks = TASK_TOOLS.iter().map(|name| (*name).to_owned());
+    let executors = snapshot
+        .items::<Executors>()
+        .iter()
+        .filter_map(|registered| registered.entry.tool())
+        .map(|spec| spec.name);
+    let statics = snapshot
         .items::<Tools>()
         .iter()
-        .filter(|registered| offers(&registered.entry, agent))
-        .map(|registered| {
-            let plugin = registered.plugin.as_str().to_owned();
-            let offered = OfferedPluginTool {
-                name: registered.entry.spec.name.clone(),
-                plugin: plugin.clone(),
-                generation: registered.generation,
-            };
-            let adapter: Arc<dyn Tool> = Arc::new(PluginToolAdapter {
-                plugin,
-                tool: Arc::clone(&registered.entry.tool),
-                spec: registered.entry.spec.clone(),
-                effect: registered.entry.effect,
-                offering: registered.entry.offering.clone(),
-                markers: Mutex::new(HashMap::new()),
-                runtime: runtime.clone(),
-            });
-            (offered, adapter)
-        })
-        .collect()
+        .map(|registered| registered.entry.spec.name.clone());
+    core.chain(tasks).chain(executors).chain(statics).collect()
+}
+
+/// The tools of a set that the source `source` of `plugin` published that
+/// the core keeps (ADR-0043, decision 2): each keeps the SDK's rules for a
+/// published tool, offers itself where a marker lies only by the name of one
+/// entry, and has a name that no fixed tool, tool of another source or
+/// earlier tool of the set has; a source keeps at most [`MAX_SOURCE_TOOLS`].
+/// The rest are left out, which the log records.
+pub(crate) fn kept_published(
+    registry: &ToolRegistry,
+    snapshot: &Snapshot,
+    plugin: &PluginId,
+    source: &str,
+    tools: Vec<PluginTool>,
+) -> Vec<PluginTool> {
+    let mut taken = fixed_names(registry, snapshot);
+    for set in snapshot.published() {
+        if set.plugin != *plugin || set.source != source {
+            taken.extend(set.tools.iter().map(|tool| tool.spec.name.clone()));
+        }
+    }
+    let mut kept: Vec<PluginTool> = Vec::new();
+    for tool in tools {
+        let name = tool.spec.name.clone();
+        let marker_breaks = matches!(
+            &tool.offering,
+            ToolOffering::WhereWorkspaceHolds(marker) if !is_valid_marker(marker)
+        );
+        let reason = if let Err(refusal) = check_published(plugin, &tool.spec) {
+            Some(refusal.to_string())
+        } else if marker_breaks {
+            Some("its marker is not the name of one entry".to_owned())
+        } else if taken.contains(&name) {
+            Some("another tool has its name".to_owned())
+        } else if kept.len() >= MAX_SOURCE_TOOLS {
+            Some(format!("the source keeps {MAX_SOURCE_TOOLS} tools already"))
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            tracing::warn!(
+                plugin = %plugin,
+                source,
+                tool = %name,
+                reason,
+                "left out a tool that a plugin's source published"
+            );
+        } else {
+            taken.insert(name);
+            kept.push(tool);
+        }
+    }
+    kept
 }
 
 /// Whether a plugin's tool is offered to the runs of `agent`: its selector
@@ -211,7 +332,7 @@ pub(crate) fn check_plugin_tools<'a>(
     let mut names: Vec<&str> = Vec::new();
     for entry in tools {
         let name = entry.spec.name.as_str();
-        if !is_valid_tool_name(name) {
+        if !is_tool_name(name) {
             return Err(ContributionRefusal::new(
                 Tools::NAME,
                 INVALID_NAME,
@@ -313,20 +434,6 @@ fn is_valid_code(code: &str) -> bool {
             .all(|character| character.is_ascii_lowercase() || character == '_')
 }
 
-/// Whether a name starts with a lower-case letter and goes on with
-/// lower-case letters, digits and underscores, up to 64 characters.
-fn is_valid_tool_name(name: &str) -> bool {
-    let mut characters = name.chars();
-    let starts_with_letter = characters
-        .next()
-        .is_some_and(|first| first.is_ascii_lowercase());
-    starts_with_letter
-        && name.len() <= MAX_TOOL_NAME_CHARS
-        && characters.all(|character| {
-            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_'
-        })
-}
-
 /// An output within `limit` bytes. A longer one is cut at a character and
 /// ends with a note that tells the model so.
 fn within_limit(mut output: String, limit: usize) -> String {
@@ -374,6 +481,10 @@ impl Tool for PluginToolAdapter {
 
     fn parameters(&self) -> &serde_json::Value {
         &self.spec.parameters
+    }
+
+    fn strict(&self) -> bool {
+        self.spec.strict
     }
 
     /// A tool that reads only its plugin's own data, or the owner's files,
@@ -468,10 +579,14 @@ impl Tool for PluginToolAdapter {
                     let archives = kept_archives(&plugin, &reserved, result.archives);
                     let data = card_data(&plugin, result.data);
                     let failure = result.failure.map(|code| kept_code(&plugin, code));
+                    // The run checks and cleans the images when it completes
+                    // the call, as it does every tool's (ADR-0044).
+                    let images = result.images.into_iter().map(|image| image.data).collect();
                     Done {
                         outcome: ToolOutcome::Plugin { plugin, data, failure },
                         output: within_limit(result.output, limit),
                         archives,
+                        images,
                     }
                 }
                 // The SDK cancels a call by dropping its future (ADR-0034,
@@ -573,8 +688,100 @@ fn core_accesses(
             }
             ToolAccess::Path(path) => path_access(plugin, path),
             ToolAccess::Program(run) => program_access(plugin, run, programs),
+            ToolAccess::ExternalTool(external) => {
+                external_access(plugin, external).ok_or_else(|| broken(plugin))
+            }
         })
         .collect()
+}
+
+/// The core's access of a call of a tool server's tool, with the plugin's
+/// ID, or `None` when a text is empty, too long or holds a control
+/// character, when the arguments are past their limit, or when the endpoint
+/// could carry a credential: a URL with user information or with a query
+/// parameter whose name looks like a secret's (ADR-0043, decision 7). The
+/// hints come sorted and once each.
+fn external_access(plugin: &str, external: ExternalToolAccess) -> Option<Access> {
+    let fits = |text: &str, max_chars: usize| {
+        !text.is_empty() && text.chars().count() <= max_chars && !text.chars().any(char::is_control)
+    };
+    let names_fit = fits(&external.target, MAX_TARGET_CHARS)
+        && fits(&external.label, MAX_LABEL_CHARS)
+        && fits(&external.tool, MAX_EXTERNAL_TOOL_CHARS)
+        && external
+            .title
+            .as_deref()
+            .is_none_or(|title| fits(title, MAX_EXTERNAL_TITLE_CHARS));
+    let arguments_fit =
+        external.arguments.len() <= MAX_ARGUMENTS_BYTES && !external.arguments.contains('\0');
+    let endpoint_fits = match &external.endpoint {
+        ToolServerEndpoint::Program { program, arguments } => {
+            let argument_bytes: usize = arguments.iter().map(String::len).sum();
+            fits(program, MAX_SERVER_PROGRAM_CHARS)
+                && arguments.len() <= MAX_PROGRAM_ARGUMENTS
+                && argument_bytes <= MAX_PROGRAM_ARGUMENT_BYTES
+                && !arguments.iter().any(|argument| argument.contains('\0'))
+        }
+        ToolServerEndpoint::Url { url } => is_server_url(url),
+    };
+    if !(names_fit && arguments_fit && endpoint_fits) {
+        return None;
+    }
+    let mut hints: Vec<ToolHint> = external.hints;
+    hints.sort_unstable();
+    hints.dedup();
+    Some(Access::ExternalTool {
+        plugin: plugin.to_owned(),
+        target: external.target,
+        label: external.label,
+        endpoint: external.endpoint,
+        tool: external.tool,
+        title: external.title,
+        arguments: external.arguments,
+        arguments_cut: false,
+        hints,
+    })
+}
+
+/// Whether a tool server's URL is one that an access may name: http or https
+/// within its limit, without white space or control characters, with a host,
+/// without user information, without a fragment, which no request sends, and
+/// without a query parameter whose name looks like a secret's. The URL is
+/// read as HTTP clients read it, with its query decoded, so no credential
+/// reaches an approval, the journal or a grant however the URL spells it.
+fn is_server_url(url: &str) -> bool {
+    let clean = url.len() <= MAX_SERVER_URL_BYTES
+        && !url
+            .chars()
+            .any(|character| character.is_control() || character.is_whitespace());
+    let Ok(parsed) = Url::parse(url) else {
+        return false;
+    };
+    let secret_in_query = parsed
+        .query_pairs()
+        .any(|(name, _value)| looks_like_secret(&camel_case_apart(&name)));
+    clean
+        && matches!(parsed.scheme(), "http" | "https")
+        && parsed.host().is_some()
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+        && parsed.fragment().is_none()
+        && !secret_in_query
+}
+
+/// A name with its camel-case words apart, such as `access_Token` for
+/// `accessToken`, so that a secret's word inside it stands alone.
+fn camel_case_apart(name: &str) -> String {
+    let mut apart = String::with_capacity(name.len() + 4);
+    let mut after_lower = false;
+    for character in name.chars() {
+        if after_lower && character.is_ascii_uppercase() {
+            apart.push('_');
+        }
+        after_lower = character.is_ascii_lowercase() || character.is_ascii_digit();
+        apart.push(character);
+    }
+    apart
 }
 
 /// The core's access of a run of an installed program, with the plugin, the
@@ -706,7 +913,7 @@ fn path_access(plugin: &str, path: PathAccess) -> Result<Access, PrepareError> {
 /// the call from running for its arguments.
 fn refused(plugin: &str, detail: String, code: Option<String>, limit: usize) -> PrepareError {
     match code {
-        Some(code) if is_valid_code(&code) => PrepareError::Ended(Done {
+        Some(code) if is_valid_code(&code) => PrepareError::Ended(Box::new(Done {
             outcome: ToolOutcome::Plugin {
                 plugin: plugin.to_owned(),
                 data: None,
@@ -714,7 +921,8 @@ fn refused(plugin: &str, detail: String, code: Option<String>, limit: usize) -> 
             },
             output: within_limit(detail, limit),
             archives: Vec::new(),
-        }),
+            images: Vec::new(),
+        })),
         Some(_) => {
             tracing::error!(
                 plugin,
@@ -840,6 +1048,29 @@ fn sdk_accesses(accesses: &[Access]) -> Vec<ToolAccess> {
                     None => access,
                 }))
             }
+            Access::ExternalTool {
+                target,
+                label,
+                endpoint,
+                tool,
+                title,
+                arguments,
+                hints,
+                ..
+            } => {
+                let access = ExternalToolAccess::new(
+                    target.clone(),
+                    label.clone(),
+                    endpoint.clone(),
+                    tool.clone(),
+                    arguments.clone(),
+                )
+                .with_hints(hints.clone());
+                Some(ToolAccess::ExternalTool(match title {
+                    Some(title) => access.with_title(title.clone()),
+                    None => access,
+                }))
+            }
             Access::Command { .. } | Access::Project { .. } => None,
         })
         .collect()
@@ -891,25 +1122,26 @@ mod tests {
     use futures_util::FutureExt;
     use mannie_plugin_sdk::BoxFuture;
     use mannie_plugin_sdk::points::tools::{
-        AgentSelector, MAX_TOOL_ARCHIVE_BYTES, MAX_TOOL_DATA_BYTES, PathAccess, PluginTool,
-        ProgramAccess, RemoteCommandAccess, Tool, ToolAccess, ToolArchive, ToolCall, ToolEffect,
-        ToolExecution, ToolOffering, ToolRefusal, ToolResult, ToolSpec,
+        AgentSelector, ExternalToolAccess, MAX_TOOL_ARCHIVE_BYTES, MAX_TOOL_DATA_BYTES, PathAccess,
+        PluginTool, ProgramAccess, RemoteCommandAccess, Tool, ToolAccess, ToolArchive, ToolCall,
+        ToolEffect, ToolExecution, ToolOffering, ToolRefusal, ToolResult, ToolSpec,
     };
     use mannie_tools::{Availability, Done, PrepareError, ToolRegistry};
     use mannie_types::clock::UtcMillis;
     use mannie_types::ids::{ArchiveId, ProjectId};
     use mannie_types::projects::ProjectView;
     use mannie_types::tools::{
-        Access, AccessMode, DiscardedWork, ProgramEffect, ToolFailure, ToolOutcome,
+        Access, AccessMode, DiscardedWork, ProgramEffect, ToolFailure, ToolHint, ToolOutcome,
+        ToolServerEndpoint,
     };
     use serde_json::{Value, json};
 
     use mannie_plugin_sdk::host::{ID_TAKEN, INVALID_NAME, RESERVED_ARGUMENT};
 
     use super::{
-        MAX_TOOL_NAME_CHARS, ResolvedProgram, card_data, check_plugin_tools, holds_marker,
-        holds_password, is_offered, is_valid_marker, is_valid_tool_name, kept_archives, kept_code,
-        offered_to, offers, refused, sdk_accesses, within_limit,
+        ResolvedProgram, card_data, check_plugin_tools, holds_marker, holds_password, is_offered,
+        is_valid_marker, kept_archives, kept_code, offered_to, offers, refused, sdk_accesses,
+        within_limit,
     };
     use crate::agents::{AgentDefinition, CONVERSATION, EXPLORE, GENERAL};
     use crate::texts;
@@ -1343,7 +1575,7 @@ mod tests {
                 Some("not_a_repository".to_owned()),
                 1000
             ),
-            PrepareError::Ended(Done {
+            PrepareError::Ended(Box::new(Done {
                 outcome: ToolOutcome::Plugin {
                     plugin: "shell".to_owned(),
                     data: None,
@@ -1351,7 +1583,8 @@ mod tests {
                 },
                 output: "This folder is not in a repository.".to_owned(),
                 archives: Vec::new(),
-            })
+                images: Vec::new(),
+            }))
         );
         for code in [None, Some("Not Valid".to_owned())] {
             assert_eq!(
@@ -1515,6 +1748,196 @@ mod tests {
         );
     }
 
+    fn server_url(url: &str) -> ToolServerEndpoint {
+        ToolServerEndpoint::Url {
+            url: url.to_owned(),
+        }
+    }
+
+    fn server_program(program: &str, arguments: &[&str]) -> ToolServerEndpoint {
+        ToolServerEndpoint::Program {
+            program: program.to_owned(),
+            arguments: arguments
+                .iter()
+                .map(|argument| (*argument).to_owned())
+                .collect(),
+        }
+    }
+
+    /// A call of a tool server's tool, as a plugin prepares it.
+    fn server_call(label: &str, endpoint: ToolServerEndpoint, tool: &str) -> ExternalToolAccess {
+        ExternalToolAccess::new(
+            "server-1".to_owned(),
+            label.to_owned(),
+            endpoint,
+            tool.to_owned(),
+            r#"{"title":"Crash"}"#.to_owned(),
+        )
+    }
+
+    #[test]
+    fn a_tool_servers_call_becomes_the_core_s_access_with_its_hints_sorted_once() {
+        let call = server_call(
+            "Issues",
+            server_url("https://mcp.example.com/mcp"),
+            "create_issue",
+        )
+        .with_title("Create an issue");
+        let prepared = call.clone().with_hints(vec![
+            ToolHint::OpenWorld,
+            ToolHint::ReadOnly,
+            ToolHint::OpenWorld,
+        ]);
+
+        let accesses = core_accesses(
+            "shell",
+            ToolEffect::SideEffects,
+            vec![ToolAccess::ExternalTool(prepared)],
+        )
+        .unwrap();
+
+        assert_eq!(
+            accesses,
+            vec![Access::ExternalTool {
+                plugin: "shell".to_owned(),
+                target: "server-1".to_owned(),
+                label: "Issues".to_owned(),
+                endpoint: server_url("https://mcp.example.com/mcp"),
+                tool: "create_issue".to_owned(),
+                title: Some("Create an issue".to_owned()),
+                arguments: r#"{"title":"Crash"}"#.to_owned(),
+                arguments_cut: false,
+                hints: vec![ToolHint::ReadOnly, ToolHint::OpenWorld],
+            }]
+        );
+        assert_eq!(
+            sdk_accesses(&accesses),
+            vec![ToolAccess::ExternalTool(
+                call.with_hints(vec![ToolHint::ReadOnly, ToolHint::OpenWorld])
+            )]
+        );
+    }
+
+    #[test]
+    fn a_tool_servers_call_that_breaks_the_rules_or_could_carry_a_credential_is_refused() {
+        let url = server_url("https://mcp.example.com/mcp");
+        let mut cut = server_call("Issues", url.clone(), "create_issue");
+        cut.arguments = "{\"title\":\"\0\"}".to_owned();
+        let calls = [
+            server_call("", url.clone(), "create_issue"),
+            server_call("Iss\u{7}ues", url.clone(), "create_issue"),
+            server_call("Issues", url.clone(), ""),
+            server_call("Issues", url.clone(), &"t".repeat(129)),
+            server_call("Issues", url.clone(), "create_issue").with_title("t".repeat(257)),
+            cut,
+            server_call("Issues", server_program("", &[]), "create_issue"),
+            server_call(
+                "Issues",
+                server_program("npx", &["-y", "a\0b"]),
+                "create_issue",
+            ),
+            server_call(
+                "Issues",
+                server_url("ftp://mcp.example.com/mcp"),
+                "create_issue",
+            ),
+            server_call("Issues", server_url("file:///tmp/server"), "create_issue"),
+            server_call("Issues", server_url("https://"), "create_issue"),
+            server_call("Issues", server_url("mcp.example.com/mcp"), "create_issue"),
+            server_call(
+                "Issues",
+                server_url("https://mcp.example.com/m cp"),
+                "create_issue",
+            ),
+            server_call(
+                "Issues",
+                server_url("https://deploy:hunter2@mcp.example.com/mcp"),
+                "create_issue",
+            ),
+            server_call(
+                "Issues",
+                server_url("https://deploy@mcp.example.com/mcp"),
+                "create_issue",
+            ),
+            server_call(
+                "Issues",
+                server_url("https://mcp.example.com/mcp?api_key=abc"),
+                "create_issue",
+            ),
+            server_call(
+                "Issues",
+                server_url("https://mcp.example.com/mcp?team=1&accessToken=abc"),
+                "create_issue",
+            ),
+            server_call(
+                "Issues",
+                server_url("https://mcp.example.com/mcp?client%5Fsecret=abc"),
+                "create_issue",
+            ),
+            server_call(
+                "Issues",
+                server_url("https://mcp.example.com/mcp#token=abc"),
+                "create_issue",
+            ),
+            server_call(
+                "Issues",
+                server_url(&format!("https://mcp.example.com/{}", "a".repeat(8 * 1024))),
+                "create_issue",
+            ),
+        ];
+        for call in calls {
+            assert_eq!(
+                core_accesses(
+                    "shell",
+                    ToolEffect::SideEffects,
+                    vec![ToolAccess::ExternalTool(call.clone())]
+                ),
+                Err(invalid()),
+                "{call:?}"
+            );
+        }
+        // A tool that reads only its own data hands the core no access.
+        assert_eq!(
+            core_accesses(
+                "shell",
+                ToolEffect::ReadsOwnData,
+                vec![ToolAccess::ExternalTool(server_call(
+                    "Issues",
+                    url,
+                    "create_issue"
+                ))]
+            ),
+            Err(invalid())
+        );
+    }
+
+    #[test]
+    fn a_tool_server_at_a_plain_url_or_a_program_is_accepted() {
+        let endpoints = [
+            server_url("https://mcp.example.com/mcp?version=2&keyboard=us"),
+            server_url("http://127.0.0.1:3000/mcp"),
+            server_url("https://[::1]:8443/mcp"),
+            server_program("npx", &["-y", "@modelcontextprotocol/server-everything"]),
+            server_program("C:\\Tools\\server.exe", &[]),
+        ];
+        for endpoint in endpoints {
+            let accesses = core_accesses(
+                "shell",
+                ToolEffect::SideEffects,
+                vec![ToolAccess::ExternalTool(server_call(
+                    "Issues",
+                    endpoint.clone(),
+                    "create_issue",
+                ))],
+            );
+            assert_eq!(
+                accesses.map(|accesses| accesses.len()),
+                Ok(1),
+                "{endpoint:?}"
+            );
+        }
+    }
+
     #[test]
     fn only_archives_under_reserved_ids_with_a_name_and_within_the_limit_are_kept() {
         let id = |number: u32| {
@@ -1615,28 +2038,6 @@ mod tests {
             offered(AgentSelector::Agents(Vec::new())),
             Vec::<&str>::new()
         );
-    }
-
-    #[test]
-    fn a_name_is_lower_case_snake_case_of_at_most_64_characters() {
-        let longest = format!("n{}", "o".repeat(MAX_TOOL_NAME_CHARS - 1));
-        for valid in ["notes", "notes_find", "n2", "a_b_c_", &longest] {
-            assert!(is_valid_tool_name(valid), "{valid}");
-        }
-        let too_long = format!("{longest}o");
-        for invalid in [
-            "",
-            "_notes",
-            "2notes",
-            "Notes",
-            "notes-find",
-            "notes.find",
-            "notes find",
-            "nötes",
-            &too_long,
-        ] {
-            assert!(!is_valid_tool_name(invalid), "{invalid}");
-        }
     }
 
     #[test]

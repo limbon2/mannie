@@ -29,6 +29,15 @@ pub const SECRET_NAME_PARTS: [&str; 8] = [
     "CREDENTIALS",
 ];
 
+/// Whether a name looks like a secret's: one of its words, between the
+/// characters that are not ASCII letters or digits, is one of
+/// [`SECRET_NAME_PARTS`] in any case, as in `GITHUB_TOKEN`, `apiKey` or
+/// `x-api-key`.
+pub fn looks_like_secret(name: &str) -> bool {
+    name.split(|character: char| !character.is_ascii_alphanumeric())
+        .any(|part| SECRET_NAME_PARTS.contains(&part.to_ascii_uppercase().as_str()))
+}
+
 /// The starts of the names of variables that make programs load libraries,
 /// such as `LD_PRELOAD` and `DYLD_INSERT_LIBRARIES`. An installed program
 /// that a plugin runs never receives one by the plugin's choice (ADR-0038,
@@ -66,10 +75,7 @@ impl EnvName {
         if !(starts_well && continues_well && has_valid_length) {
             return Err(invalid());
         }
-        let looks_secret = text
-            .split(['_', '(', ')'])
-            .any(|part| SECRET_NAME_PARTS.contains(&part.to_ascii_uppercase().as_str()));
-        if looks_secret {
+        if looks_like_secret(text) {
             return Err(ToolsError::EnvironmentNameSecret {
                 name: text.to_owned(),
             });

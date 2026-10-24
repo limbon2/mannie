@@ -1,8 +1,9 @@
 <script lang="ts">
   import FileOutputIcon from '@lucide/svelte/icons/file-output';
+  import ImageIcon from '@lucide/svelte/icons/image';
 
   import { Button } from '#lib/components/ui/button/index.js';
-  import type { ArchiveRef, ConversationId, ToolCallView } from '#lib/generated/bindings.js';
+  import type { ArchiveRef, ConversationId, PartId, ToolCallView, ToolImageRef } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
   import { toolsActions } from '#lib/state/tools-actions.svelte.js';
   import type { ToolKind } from '#lib/types/shell-slots.js';
@@ -10,26 +11,35 @@
   import { decisionMessage } from '#lib/utils/tools-messages.js';
 
   import ToolAccessList from './ToolAccessList.svelte';
+  import ToolImageDialog from './ToolImageDialog.svelte';
 
   // The details of a tool call (docs/features/system-tools/tool-activity.md,
   // tool calls in the reply): what it touches, the details that its tool
   // kind shows of a plugin's call (ADR-0039), its arguments as the model
   // wrote them, what allowed it, and the result the model read, with the
-  // outputs that did not fit. Everything the model or the system wrote is
-  // content, shown as plain text (T-3).
+  // outputs that did not fit and the images that the model saw (ADR-0044).
+  // Everything the model or the system wrote is content, shown as plain
+  // text (T-3).
   interface Props {
     call: ToolCallView;
     conversationId: ConversationId;
     /** The tool kind of a plugin's call, which its own plugin registered. */
     kind?: ToolKind | undefined;
+    /** The call's part, which holds the images of its result. */
+    partId: PartId;
   }
 
-  let { call, conversationId, kind }: Props = $props();
+  let { call, conversationId, kind, partId }: Props = $props();
 
   const id = $props.id();
 
+  /** The image that the viewer shows, once the owner opened one. */
+  let shownImage: ToolImageRef | null = $state(null);
+  let viewerOpen = $state(false);
+
   const shownArguments = $derived(formatArguments(call));
   const archives = $derived(call.result?.archives ?? []);
+  const images = $derived(call.result?.images ?? []);
   const KindDetails = $derived(kind?.details ?? null);
 
   /** The arguments, indented when they are complete JSON, and nothing for a call without any. */
@@ -47,6 +57,11 @@
     } catch {
       return text;
     }
+  }
+
+  function showImage(image: ToolImageRef): void {
+    shownImage = image;
+    viewerOpen = true;
   }
 
   function archiveLabel(archive: ArchiveRef): string {
@@ -107,6 +122,19 @@
         role="group"
         tabindex="0">{call.result.output}</pre>
     </div>
+    {#if images.length > 0}
+      <div class="flex flex-col gap-1.5" data-tool-images="">
+        <p class="text-xs font-medium text-muted-foreground">{m.tools_details_images()}</p>
+        <div class="flex flex-wrap gap-2">
+          {#each images as image (image.position)}
+            <Button size="sm" variant="outline" onclick={() => showImage(image)}>
+              <ImageIcon data-icon="inline-start" />
+              {m.tools_image_show({ number: image.position + 1 })}
+            </Button>
+          {/each}
+        </div>
+      </div>
+    {/if}
     {#if archives.length > 0}
       <div class="flex flex-wrap gap-2">
         {#each archives as archive (archive.id)}
@@ -119,3 +147,6 @@
     {/if}
   {/if}
 </div>
+{#if shownImage !== null}
+  <ToolImageDialog {conversationId} image={shownImage} {partId} bind:open={viewerOpen} />
+{/if}

@@ -1,0 +1,21 @@
+[
+  {
+    "code": "conversation_not_found"
+  },
+  {
+    "code": "checkpoint_not_found"
+  },
+  {
+    "code": "message_too_long",
+    "maxBytes": 65536
+  },
+  {
+    "code": "written_by_newer_version"
+  },
+  {
+    "code": "storage_failed"
+  },
+  {
+    "code": "shutting_down"
+  }
+]

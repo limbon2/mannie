@@ -4,7 +4,7 @@
 // plugin's UI imports this SDK, its own files and its generated files, and
 // nothing else (ADR-0035, decision 6). The other parts of the SDK are
 // `@mannie/plugin-sdk/<part>`: `slots`, `ipc`, `messages`, `format`,
-// `navigation`, `images`, `components`, `components/<name>` for the
+// `navigation`, `images`, `links`, `components`, `components/<name>` for the
 // installed shadcn-svelte components, `icons/<name>` and `testing`.
 import type { WorkItem } from '#lib/generated/bindings.js';
 

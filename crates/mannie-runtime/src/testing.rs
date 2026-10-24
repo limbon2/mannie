@@ -1342,6 +1342,18 @@ pub fn remove_plugin(runtime: &Runtime, plugin: &str) -> bool {
     registered
 }
 
+/// The names of the tools that the plugins' sources published last, as the
+/// runtime keeps them (ADR-0043, decision 2), in the order in which runs are
+/// offered them.
+pub fn published_tools(runtime: &Runtime) -> Vec<String> {
+    runtime
+        .contributions()
+        .published()
+        .iter()
+        .flat_map(|set| set.tools.iter().map(|tool| tool.spec.name.clone()))
+        .collect()
+}
+
 /// Turns a plugin off as the plugin host does: drops its contributions, then
 /// waits up to `grace` for the executions of its tools and aborts the rest
 /// (ADR-0034, decision 8). Returns whether the runtime held them.

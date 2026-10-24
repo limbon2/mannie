@@ -93,16 +93,19 @@ pub(crate) fn definitions(agents: &[&str]) -> Vec<ToolDefinition> {
             name: START_TASK.to_owned(),
             description: texts::START_TASK.to_owned(),
             parameters: with_activity(&start_parameters(agents)),
+            strict: true,
         },
         ToolDefinition {
             name: FOLLOW_UP_TASK.to_owned(),
             description: texts::FOLLOW_UP_TASK.to_owned(),
             parameters: with_activity(&follow_up_parameters()),
+            strict: true,
         },
         ToolDefinition {
             name: WAIT_FOR_TASKS.to_owned(),
             description: texts::WAIT_FOR_TASKS.to_owned(),
             parameters: with_activity(&wait_parameters()),
+            strict: true,
         },
     ]
 }

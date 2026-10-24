@@ -3,12 +3,19 @@
 //! which holds each entry as the SDK defines it, with the plugin that made it
 //! and the generation of the plugin's start.
 //!
-//! The runtime consumes all six points of SDK 1 through one consumer,
+//! The runtime consumes every point of the SDK through one consumer,
 //! [`RuntimeContributions`]. Each point's checks live in the module that owns
-//! the point: `plugin_tools.rs`, `agents.rs`, `instructions.rs`,
-//! `executors.rs`, `mentions.rs` and `images.rs`. The consumer checks again
-//! and adds under one write lock, and swaps one copy of the whole registry,
-//! so a [`Snapshot`] holds all of a plugin's contributions or none.
+//! the point: `plugin_tools.rs` for tools and tool sources, `agents.rs`,
+//! `instructions.rs`, `executors.rs`, `mentions.rs` and `images.rs`. The
+//! consumer checks again and adds under one write lock, and swaps one copy of
+//! the whole registry, so a [`Snapshot`] holds all of a plugin's
+//! contributions or none.
+//!
+//! A plugin's tool source publishes its tools while the plugin runs
+//! (ADR-0043, decision 2): a task drains the source's stream of sets, and
+//! each set replaces the source's tools in a new copy of the registry, so a
+//! run that starts later reads it and a run that started before keeps what
+//! it read.
 //!
 //! A run reads one snapshot when it starts, so the tools and the prompt that
 //! the model sees never change within a reply (ADR-0030, decision 8). A call
@@ -20,9 +27,10 @@ use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::Duration;
 
+use futures_util::{FutureExt, StreamExt};
 use mannie_plugin_sdk::BoxFuture;
 use mannie_plugin_sdk::contracts::WorkItem;
 use mannie_plugin_sdk::contributions::{Contributions, ExtensionPoint, PointInfo};
@@ -33,7 +41,8 @@ use mannie_plugin_sdk::points::executors::Executors;
 use mannie_plugin_sdk::points::images::ImageSources;
 use mannie_plugin_sdk::points::mentions::Mentions;
 use mannie_plugin_sdk::points::sections::Sections;
-use mannie_plugin_sdk::points::tools::Tools;
+use mannie_plugin_sdk::points::tool_sources::{PluginToolSource, ToolSet, ToolSources};
+use mannie_plugin_sdk::points::tools::{PluginTool, Tools};
 use mannie_plugin_sdk::services::background_commands::BACKGROUND_COMMANDS_WORK;
 
 use crate::Runtime;
@@ -41,7 +50,7 @@ use crate::executors::check_executors;
 use crate::images::check_image_sources;
 use crate::instructions::check_sections;
 use crate::plugin_executions::ExecutionGuard;
-use crate::plugin_tools::OfferedPluginTool;
+use crate::plugin_tools::{OfferedPluginTool, kept_published};
 
 /// An entry of a point, with the plugin that contributed it and the
 /// generation of the plugin's start.
@@ -109,6 +118,23 @@ struct Contents {
     /// The plugins whose contributions are registered, with the generation
     /// of their start, in the order in which they started.
     plugins: Vec<(PluginId, u64)>,
+    /// The tools that each source published last, in the order in which
+    /// their plugins started and their sources were contributed.
+    published: Vec<PublishedSet>,
+}
+
+/// The tools that one source of a plugin published last, as the core kept
+/// them (ADR-0043, decision 2).
+#[derive(Clone)]
+pub(crate) struct PublishedSet {
+    /// The plugin.
+    pub(crate) plugin: PluginId,
+    /// The generation of the plugin's start.
+    pub(crate) generation: u64,
+    /// The source's ID.
+    pub(crate) source: String,
+    /// The tools, in the order in which the source published them.
+    pub(crate) tools: Arc<[PluginTool]>,
 }
 
 impl Contents {
@@ -162,6 +188,12 @@ impl Contents {
                 .filter(|(registered, _generation)| registered != plugin)
                 .cloned()
                 .collect(),
+            published: self
+                .published
+                .iter()
+                .filter(|set| set.plugin != *plugin)
+                .cloned()
+                .collect(),
         }
     }
 
@@ -184,10 +216,23 @@ impl fmt::Debug for Contents {
             .filter(|(_name, entries)| !entries.is_empty())
             .collect();
         points.sort_by_key(|(name, _entries)| *name);
+        let published: Vec<(&str, &str, Vec<&str>)> = self
+            .published
+            .iter()
+            .map(|set| {
+                let names = set
+                    .tools
+                    .iter()
+                    .map(|tool| tool.spec.name.as_str())
+                    .collect();
+                (set.plugin.as_str(), set.source.as_str(), names)
+            })
+            .collect();
         formatter
             .debug_struct("Contents")
             .field("plugins", &self.plugins)
             .field("points", &points)
+            .field("published", &published)
             .finish()
     }
 }
@@ -199,6 +244,9 @@ pub(crate) struct Registry {
     current: RwLock<Arc<Contents>>,
     /// The last generation that a plugin's start got.
     generations: AtomicU64,
+    /// The tasks that drain the plugins' tool sources, by plugin, which
+    /// stopping the plugin aborts.
+    sources: Mutex<HashMap<PluginId, Vec<tokio::task::AbortHandle>>>,
 }
 
 impl Registry {
@@ -245,6 +293,12 @@ impl Snapshot {
     pub(crate) fn generation_of(&self, plugin: &str) -> Option<u64> {
         self.0.generation_of(plugin)
     }
+
+    /// The tools that the plugins' sources published last, in the order in
+    /// which their plugins started and their sources were contributed.
+    pub(crate) fn published(&self) -> &[PublishedSet] {
+        &self.0.published
+    }
 }
 
 /// The runtime's consumer of the six points of SDK 1.
@@ -254,13 +308,14 @@ struct RuntimeContributions {
 }
 
 /// The points that the runtime consumes.
-const RUNTIME_POINTS: [PointInfo; 6] = [
+const RUNTIME_POINTS: [PointInfo; 7] = [
     PointInfo::of::<Tools>(),
     PointInfo::of::<Agents>(),
     PointInfo::of::<Sections>(),
     PointInfo::of::<Executors>(),
     PointInfo::of::<Mentions>(),
     PointInfo::of::<ImageSources>(),
+    PointInfo::of::<ToolSources>(),
 ];
 
 impl ContributionConsumer for RuntimeContributions {
@@ -305,6 +360,7 @@ impl ContributionConsumer for RuntimeContributions {
         let executors = contributions.take::<Executors>();
         let mentions = contributions.take::<Mentions>();
         let images = contributions.take::<ImageSources>();
+        let sources = contributions.take::<ToolSources>();
         tracing::info!(
             plugin = %plugin,
             generation,
@@ -314,6 +370,7 @@ impl ContributionConsumer for RuntimeContributions {
             executors = executors.len(),
             mentions = mentions.len(),
             images = images.len(),
+            tool_sources = sources.len(),
             "a plugin's contributions were registered"
         );
         self.runtime.inner.agent_plugins.record(plugin, &agents);
@@ -324,8 +381,20 @@ impl ContributionConsumer for RuntimeContributions {
         next.push::<Executors>(plugin, generation, executors);
         next.push::<Mentions>(plugin, generation, mentions);
         next.push::<ImageSources>(plugin, generation, images);
+        // Each source starts empty, so its place in the order is fixed
+        // before its first set arrives.
+        next.published
+            .extend(sources.iter().map(|source| PublishedSet {
+                plugin: plugin.clone(),
+                generation,
+                source: source.id.clone(),
+                tools: Arc::from(Vec::new()),
+            }));
+        next.push::<ToolSources>(plugin, generation, sources.clone());
         next.plugins.push((plugin.clone(), generation));
         *current = Arc::new(next);
+        drop(current);
+        self.runtime.drain_sources(plugin, generation, sources);
         Ok(())
     }
 
@@ -414,11 +483,106 @@ impl Runtime {
         check_image_sources(snapshot, contributions)
     }
 
+    /// Takes each of a plugin's tool sources and drains its stream of sets
+    /// in a task of its own, until the stream ends or the plugin stops
+    /// (ADR-0043, decision 2). A stream that ends empties its source.
+    fn drain_sources(&self, plugin: &PluginId, generation: u64, sources: Vec<PluginToolSource>) {
+        if sources.is_empty() {
+            return;
+        }
+        let tasks = sources
+            .into_iter()
+            .filter_map(|source| {
+                let mut sets = source.source.sets();
+                // A set that is ready when the plugin starts, such as the
+                // tools that a plugin kept from before, reaches the runs that
+                // start right after the start.
+                match sets.next().now_or_never() {
+                    Some(Some(first)) => self.publish_tools(plugin, generation, &source.id, first),
+                    // The stream ended at once, and the source stays empty.
+                    Some(None) => return None,
+                    None => {}
+                }
+                let runtime = self.clone();
+                let plugin = plugin.clone();
+                let drain = tokio::spawn(async move {
+                    while let Some(set) = sets.next().await {
+                        runtime.publish_tools(&plugin, generation, &source.id, set);
+                    }
+                    runtime.publish_tools(&plugin, generation, &source.id, ToolSet::default());
+                });
+                Some(drain.abort_handle())
+            })
+            .collect();
+        let mut drains = self
+            .inner
+            .contributions
+            .sources
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        // A start leaves its tasks behind only when its contributions were
+        // never dropped, which the host's order of a stop rules out.
+        if let Some(stale) = drains.insert(plugin.clone(), tasks) {
+            stale.iter().for_each(tokio::task::AbortHandle::abort);
+        }
+    }
+
+    /// Replaces the tools that a plugin's source published, while the
+    /// plugin's start of `generation` is registered (ADR-0043, decision 2).
+    /// The core keeps each tool that passes its checks alone, and leaves the
+    /// rest out with a log line.
+    fn publish_tools(&self, plugin: &PluginId, generation: u64, source: &str, set: ToolSet) {
+        let registry = &self.inner.contributions;
+        let mut current = registry
+            .current
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
+        if current.generation_of(plugin.as_str()) != Some(generation) {
+            return;
+        }
+        let Some(index) = current
+            .published
+            .iter()
+            .position(|published| published.plugin == *plugin && published.source == source)
+        else {
+            return;
+        };
+        let before = Snapshot(Arc::clone(&current));
+        let kept = kept_published(
+            &self.inner.tools.registry,
+            &before,
+            plugin,
+            source,
+            set.tools,
+        );
+        tracing::info!(
+            plugin = %plugin,
+            source,
+            tools = kept.len(),
+            "a plugin's tool source published its tools"
+        );
+        let mut next = Contents::clone(&current);
+        next.published[index].tools = Arc::from(kept);
+        *current = Arc::new(next);
+    }
+
     /// Drops a plugin's contributions, as the plugin stops (ADR-0030,
     /// decision 6). Runs that started while they were registered keep them,
     /// and their calls into the plugin are refused; each run that follows a
     /// task of the plugin's executor lets the task go.
     fn drop_contributions(&self, plugin: &PluginId) {
+        // The plugin's sources publish nothing more.
+        let drains = self
+            .inner
+            .contributions
+            .sources
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(plugin);
+        drains
+            .iter()
+            .flatten()
+            .for_each(tokio::task::AbortHandle::abort);
         let dropped = {
             let mut current = self
                 .inner

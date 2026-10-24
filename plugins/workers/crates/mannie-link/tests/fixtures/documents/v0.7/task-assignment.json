@@ -1,0 +1,21 @@
+{
+  "taskId": "0199e0f2-0000-7000-a000-000000000001",
+  "conversationId": "0199e0f2-0000-7000-a000-000000000002",
+  "followUp": false,
+  "title": "Build the backend",
+  "instruction": "Write the marker, then report.",
+  "readOnly": false,
+  "profile": {
+    "id": "0199e0f2-0000-7000-a000-000000000005",
+    "configRevision": 1,
+    "interface": "chat_completions",
+    "baseUrl": "https://models.example.com/v1",
+    "model": "test-model",
+    "contextWindow": 128000,
+    "outputLimit": 16384,
+    "reasoningEffort": "server_default",
+    "server": null,
+    "useTools": true,
+    "hasCredential": true
+  }
+}

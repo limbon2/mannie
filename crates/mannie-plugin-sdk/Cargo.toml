@@ -19,6 +19,9 @@ required-features = ["manifest"]
 name = "protocol"
 
 [dependencies]
+# The bytes of the images of a tool's result, which cross JSON as base64
+# (ADR-0044; ADR-0034, decision 3).
+base64 = { workspace = true }
 # The futures and streams that the SDK's methods return, which own their data
 # and are cancelled by dropping them (ADR-0034, decision 3).
 futures-util = { workspace = true }

@@ -1,0 +1,45 @@
+[package]
+name = "mannie-mcp-testing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "MCP servers for the MCP plugin's tests, in the test's process over Streamable HTTP or as a program over stdio for the plugin's and the end-to-end tests. Never shipped."
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The challenge of PKCE that the fake authorization server checks.
+base64 = { workspace = true }
+# The body of the HTTP server's own answers, beside rmcp's.
+http-body-util = { workspace = true }
+# The HTTP server of the remote servers.
+hyper = { workspace = true, features = ["http1", "server"] }
+hyper-util = { workspace = true, features = ["service", "tokio"] }
+# The server of the current protocol era, over stdio and Streamable HTTP.
+rmcp = {
+  workspace = true,
+  features = [
+    "server",
+    "transport-io",
+    "transport-streamable-http-server",
+  ]
+}
+# The scripted server's messages and the tools' schemas.
+serde_json = { workspace = true }
+# The challenge of PKCE that the fake authorization server checks.
+sha2 = { workspace = true }
+tokio = {
+  workspace = true,
+  features = [
+    "io-std",
+    "io-util",
+    "macros",
+    "net",
+    "rt-multi-thread",
+    "sync",
+    "time",
+  ]
+}
+
+[lints]
+workspace = true

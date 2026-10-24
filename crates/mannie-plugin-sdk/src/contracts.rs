@@ -32,6 +32,11 @@ pub use mannie_types::images::{
 // A short text that a model wrote for the owner, such as a task's title, as
 // the owner reads it, cleaned as the core cleans its own.
 pub use mannie_types::labels::clean_label;
+// Where a credential may travel: over https, and over plain http only to
+// this machine or a private address, the rule of provider profiles, which a
+// plugin keeps for the secrets of the servers that it reaches (ADR-0043,
+// decision 8).
+pub use mannie_types::transport::{Url, credential_transport_allowed};
 // Mentions (ADR-0032): an entry of the "@" list, and the summary of what the
 // model got of a mention, which the UI words.
 pub use mannie_types::mentions::{MentionEntry, MentionSummary};
@@ -53,11 +58,16 @@ pub use mannie_types::tasks::{
 };
 // The owner's decisions and the archived outputs of a task conversation that
 // an executor serves, and their errors; how a plugin's tool uses a path
-// (ADR-0038, decision 4); and what a run of an installed program does beyond
-// the workspace (decision 5).
+// (ADR-0038, decision 4); what a run of an installed program does beyond the
+// workspace (decision 5); where a tool server runs and what it says of its
+// tools (ADR-0043, decision 4); the limits of the images of a tool's result
+// (ADR-0044, decision 1); and the rule that tells a secret's name, by which a
+// plugin keeps such a variable or header of a tool server secret (ADR-0043,
+// decision 6).
 pub use mannie_types::tools::{
-    AccessMode, ApprovalChoice, DecideApproval, DiscardedWork, MAX_EFFECT_ITEMS, ProgramEffect,
-    ReadToolOutput, ToolOutputPage, ToolsError,
+    AccessMode, ApprovalChoice, DecideApproval, DiscardedWork, MAX_EFFECT_ITEMS,
+    MAX_TOOL_IMAGE_BYTES, MAX_TOOL_IMAGE_SIDE, MAX_TOOL_IMAGES, ProgramEffect, ReadToolOutput,
+    ToolHint, ToolOutputPage, ToolServerEndpoint, ToolsError, looks_like_secret,
 };
 // What a task conversation that an executor serves shows: its checkpoints and
 // the updates of a subscription, and why the core ends a subscription, which

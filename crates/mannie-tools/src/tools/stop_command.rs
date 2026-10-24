@@ -73,6 +73,7 @@ impl TypedTool for StopCommand {
                 },
                 output,
                 archives: Vec::new(),
+                images: Vec::new(),
             })
         }
         .boxed()

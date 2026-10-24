@@ -105,7 +105,16 @@ describe('pluginStateMessage', () => {
 
 describe('pluginServiceLabel', () => {
   it('words each service of SDK 1 in a sentence of its own and names any other service', () => {
-    const services = ['background-commands', 'credentials', 'executor-host', 'file-dialog', 'secrets', 'store'];
+    const services = [
+      'background-commands',
+      'credentials',
+      'executor-host',
+      'file-dialog',
+      'local-servers',
+      'processes',
+      'secrets',
+      'store',
+    ];
 
     const labels = services.map((name) => pluginServiceLabel(name));
     const other = pluginServiceLabel('teleport');

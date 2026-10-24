@@ -70,6 +70,19 @@ impl Folder {
                 &image.data,
             )?;
         }
+        // The images of a tool call's result sit beside the owner's, named by
+        // the call's part and their position (ADR-0044, decision 7).
+        for image in &record.tool_images {
+            self.write(
+                &format!(
+                    "images/{}-{}.{}",
+                    image.part_id,
+                    image.position,
+                    image.format.as_str()
+                ),
+                &image.data,
+            )?;
+        }
         for archive in &record.archives {
             self.write(
                 &format!("outputs/{}.txt", archive.id),

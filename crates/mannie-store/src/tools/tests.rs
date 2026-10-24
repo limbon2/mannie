@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use mannie_types::clock::{Clock, ManualClock, UtcMillis};
 use mannie_types::ids::{ConversationId, GrantId, ProjectId, RuleId};
-use mannie_types::tools::{AccessMode, GrantScope, ProgramEffectKey, ProgramTarget, RemoteTarget};
+use mannie_types::tools::{
+    AccessMode, GrantScope, ProgramEffectKey, ProgramTarget, RemoteTarget, ToolServerEndpoint,
+};
 
 use super::ToolsStoreError;
 use crate::{Change, Durability, NewConversation, Store, StoreOptions};
@@ -411,6 +413,55 @@ async fn a_remote_grant_is_kept_with_its_host_and_endpoint() {
             .grants(&conversation)
             .await
             .unwrap()
+            .into_iter()
+            .map(|grant| grant.scope)
+            .collect::<Vec<_>>(),
+        vec![scope]
+    );
+}
+
+#[tokio::test]
+async fn a_grant_for_a_tool_servers_tool_is_kept_with_its_server_and_endpoint() {
+    let fixture = Fixture::new();
+    let conversation = fixture.conversation(1).await;
+    let scope = GrantScope::ExternalTool {
+        plugin: "mcp".to_owned(),
+        target: "0199e0f2-0000-7000-8000-0000000000cc".to_owned(),
+        label: "Everything".to_owned(),
+        endpoint: ToolServerEndpoint::Program {
+            program: "npx".to_owned(),
+            arguments: vec![
+                "-y".to_owned(),
+                "@modelcontextprotocol/server-everything".to_owned(),
+            ],
+        },
+        tool: "echo".to_owned(),
+    };
+
+    fixture
+        .store
+        .add_grants(&conversation, vec![(grant_id(1), scope.clone())])
+        .await
+        .unwrap();
+    let shared = fixture
+        .store
+        .add_shared_grants(None, vec![(grant_id(2), scope.clone())])
+        .await
+        .unwrap();
+
+    assert_eq!(
+        fixture
+            .store
+            .grants(&conversation)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|grant| grant.scope)
+            .collect::<Vec<_>>(),
+        vec![scope.clone()]
+    );
+    assert_eq!(
+        shared
             .into_iter()
             .map(|grant| grant.scope)
             .collect::<Vec<_>>(),

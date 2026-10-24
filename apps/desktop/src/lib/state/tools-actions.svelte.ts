@@ -14,9 +14,12 @@ import {
   type ProjectId,
   type RuleProposal,
   type SharedGrant,
+  type ToolsError,
 } from '#lib/generated/bindings.js';
+import type { Outcome } from '#lib/types/calls.js';
 import type { ToolsFailure } from '#lib/types/tools.js';
 import { call } from '#lib/utils/calls.js';
+import { imageDataUrl } from '#lib/utils/image-data.js';
 
 /** How many lines of an archived output one page loads. */
 const OUTPUT_PAGE_LINES = 500;
@@ -37,6 +40,19 @@ export async function revokeSharedGrant(grantId: GrantId): Promise<ToolsFailure 
     return null;
   }
   return outcome.failure;
+}
+
+/** Reads an image of a tool call's result as a `data:` URL (ADR-0044). */
+export async function loadToolImage(
+  conversationId: ConversationId,
+  partId: PartId,
+  position: number,
+): Promise<Outcome<string, ToolsError>> {
+  const outcome = await call(() => commands.readToolImage({ conversationId, partId, position }));
+  if (!outcome.ok) {
+    return outcome;
+  }
+  return { data: imageDataUrl(outcome.data.format, outcome.data.data), ok: true };
 }
 
 function isRequestGone(failure: ToolsFailure): boolean {

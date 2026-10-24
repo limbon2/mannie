@@ -1,0 +1,67 @@
+[package]
+name = "mannie-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The MCP plugin: tool servers of the Model Context Protocol that the owner registers, whose tools and resources agents use under the master's policy (ADR-0043)."
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The plugin's stores of rmcp's OAuth, whose traits are async-trait's.
+async-trait = { workspace = true }
+# The images and binary resources that servers send as base64.
+base64 = { workspace = true }
+# The streams of the channel follow_servers and of the tool source.
+futures-util = { workspace = true }
+mannie-plugin-sdk = { workspace = true }
+# The HTTP client of the remote servers and of OAuth: HTTP/1.1 and HTTP/2 over
+# rustls, the operating system's trust store through rustls-platform-verifier,
+# and the system's proxy settings.
+reqwest = { workspace = true, features = ["http2", "rustls-no-provider", "system-proxy"] }
+# The MCP client over the local servers' pipes and over Streamable HTTP, with
+# OAuth (plugins/mcp/docs/adr/0001-speak-mcp-through-rmcp-in-both-protocol-eras.md).
+rmcp = {
+  workspace = true,
+  features = [
+    "auth",
+    "client",
+    "reqwest-tls-no-provider",
+    "transport-async-rw",
+    "transport-streamable-http-client-reqwest",
+  ]
+}
+# ring as the process's crypto provider, which reqwest's rustls-no-provider
+# takes, as mannie-provider installs it.
+rustls = { workspace = true }
+serde = { workspace = true }
+# The arguments of the servers' tools, which the model writes as JSON, and the
+# servers' schemas.
+serde_json = { workspace = true }
+# The hash that ends a tool's name that does not fit.
+sha2 = { workspace = true }
+specta = { workspace = true }
+thiserror = { workspace = true }
+# The pipes between rmcp and a local server, the listener of a sign-in's
+# redirect, the timers of calls and restarts, and the lists that the
+# channels, the source and the section read.
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+tracing = { workspace = true }
+# The IDs of the servers.
+uuid = { workspace = true }
+
+[dev-dependencies]
+# The MCP servers that the tests connect to.
+mannie-mcp-testing = { workspace = true }
+# The plugin through the real host on the core's test runtime, and the
+# conformance check (ADR-0034, decision 1).
+mannie-plugin-harness = { workspace = true }
+# The tests parse the plugin's manifest as the host does, and keep the
+# secrets in the SDK's credential store in memory.
+mannie-plugin-sdk = { workspace = true, features = ["manifest", "testing"] }
+# The inputs and outputs of the plugin's calls, as JSON.
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+[lints]
+workspace = true

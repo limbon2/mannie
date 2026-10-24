@@ -34,10 +34,10 @@ pub use provider::{ProfileFields, ProfileStoreError, StoredProfile};
 pub use runtime::{
     AddedProject, Applied, Change, ConversationList, EventsAfter, ExecutorTaskProfile, KeptRun,
     LOCAL_SOURCE, ModelImage, ModelPart, ModelTurn, NewArchive, NewCheckpoint, NewConversation,
-    NewExecutorTask, NewImage, NewMention, NewPart, NewRun, NewTask, OutboxEntry, ProjectDeletion,
-    ProviderItem, Recovered, RecoveredCommand, RuntimeStoreError, StoredArchive,
-    StoredBackgroundCommand, StoredCheckpoint, StoredChild, StoredImage, StoredTask, TaskEnding,
-    TaskExecution, TaskOrigin, UncertainCall,
+    NewExecutorTask, NewImage, NewMention, NewPart, NewRun, NewTask, NewToolImage, OutboxEntry,
+    ProjectDeletion, ProviderItem, Recovered, RecoveredCommand, RuntimeStoreError, StoredArchive,
+    StoredBackgroundCommand, StoredCheckpoint, StoredChild, StoredImage, StoredTask,
+    StoredToolImage, TaskEnding, TaskExecution, TaskOrigin, UncertainCall,
 };
 pub use settings::SettingsStoreError;
 pub use store::{Store, StoreOptions};

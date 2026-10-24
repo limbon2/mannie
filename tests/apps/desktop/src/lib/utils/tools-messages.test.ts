@@ -14,6 +14,7 @@ import type {
   ProgramEffectKey,
   Refusal,
   ToolFailure,
+  ToolHint,
   ToolsError,
 } from '../../../../../../apps/desktop/src/lib/generated/bindings.js';
 import {
@@ -32,6 +33,8 @@ import {
   programRunText,
   refusalMessage,
   toolFailureMessage,
+  toolHintsMessage,
+  toolServerEndpointText,
   toolsFailureMessage,
   uncertainMessage,
 } from '../../../../../../apps/desktop/src/lib/utils/tools-messages.js';
@@ -47,6 +50,7 @@ const TOOLS_ERRORS: ToolsError[] = [
   { code: 'rule_not_found' },
   { code: 'grant_not_found' },
   { code: 'output_not_found' },
+  { code: 'image_not_found' },
   { code: 'background_command_not_found' },
   { code: 'environment_name_invalid', name: 'BAD=NAME' },
   { code: 'environment_name_secret', name: 'GITHUB_TOKEN' },
@@ -143,9 +147,25 @@ const GRANTS: GrantScope[] = [
     program: '/usr/bin/git',
     workingDirectory: 'D:\\Projects\\app',
   },
+  {
+    endpoint: { kind: 'url', url: 'https://mcp.example.com/mcp' },
+    kind: 'external_tool',
+    label: 'Issues',
+    plugin: 'mcp',
+    target: '0199e0f2-0000-7000-8000-0000000000cc',
+    tool: 'create_issue',
+  },
 ];
 
-const REFUSALS: Refusal[] = ['no_projects_on_host', 'no_remote_commands', 'no_programs_on_host', 'read_only_host'];
+const REFUSALS: Refusal[] = [
+  'no_projects_on_host',
+  'no_remote_commands',
+  'no_programs_on_host',
+  'no_external_tools',
+  'read_only_host',
+];
+
+const HINTS: ToolHint[] = ['read_only', 'destructive', 'idempotent', 'open_world'];
 
 const EFFECTS: ProgramEffect[] = [
   { effect: 'network', endpoint: 'https://example.com/repo.git' },
@@ -234,6 +254,7 @@ describe('tools messages', () => {
       'move_to_project',
       'remote_command',
       'program',
+      'external_tool',
     ];
     const decisions: Decision[] = [
       'workspace',
@@ -278,6 +299,43 @@ describe('tools messages', () => {
     expect(message).toContain('build-box');
     expect(message).toContain('deploy@build-box.lan:22');
     expect(message).not.toContain('0199e0f2');
+  });
+
+  it('name the tool, the server and where it runs of a grant of a tool server’s tool', () => {
+    const message = grantScopeMessage({
+      endpoint: { arguments: ['-y', '@modelcontextprotocol/server-everything'], kind: 'program', program: 'npx' },
+      kind: 'external_tool',
+      label: 'Everything',
+      plugin: 'mcp',
+      target: '0199e0f2-0000-7000-8000-0000000000dd',
+      tool: 'echo',
+    });
+
+    expect(message).toContain('echo');
+    expect(message).toContain('Everything');
+    expect(message).toContain('npx -y @modelcontextprotocol/server-everything');
+    expect(message).not.toContain('0199e0f2');
+  });
+
+  it('show where a tool server runs: its program with its words, or its URL', () => {
+    expect(toolServerEndpointText({ arguments: ['--root', 'D:\\My Files'], kind: 'program', program: 'server' })).toBe(
+      'server --root "D:\\\\My Files"',
+    );
+    expect(toolServerEndpointText({ kind: 'url', url: 'https://mcp.example.com/mcp' })).toBe(
+      'https://mcp.example.com/mcp',
+    );
+  });
+
+  it('describe every hint of a tool server as what the server says', () => {
+    const each = HINTS.map((hint) => toolHintsMessage([hint]));
+    const both = toolHintsMessage(['read_only', 'open_world']);
+
+    expectDistinct(each);
+    for (const message of each) {
+      expect(message).toMatch(/The server says/u);
+    }
+    expect(both).toContain('only reads');
+    expect(both).toContain('reaches beyond the server');
   });
 
   it('show a program run’s words with quotes only where a word needs them', () => {

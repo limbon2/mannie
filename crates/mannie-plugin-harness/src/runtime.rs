@@ -6,7 +6,8 @@
 pub use mannie_runtime::testing::{
     FakeModel, Harness, HarnessOptions, MemoryVault, SeenPart, Transcript, WorkerHarness,
     WorkerOptions, add_plugin, background_commands, credentials, executor_host, fast_config,
-    open_store_with, remove_plugin, reply, start_master, test_tools, tool_calls, turn_off_plugin,
+    open_store_with, published_tools, remove_plugin, reply, start_master, test_tools, tool_calls,
+    turn_off_plugin,
 };
 pub use mannie_runtime::{
     AgentRegistry, AssignError, CredentialVault, LeaseError, Runtime, RuntimeConfig, texts,

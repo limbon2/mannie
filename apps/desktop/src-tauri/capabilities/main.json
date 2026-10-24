@@ -39,6 +39,7 @@
     "allow-plugin-work",
     "allow-read-image",
     "allow-read-tool-output",
+    "allow-read-tool-image",
     "allow-remove-project",
     "allow-rename-conversation",
     "allow-rename-project",

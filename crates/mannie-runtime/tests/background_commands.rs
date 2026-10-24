@@ -188,7 +188,9 @@ fn results(request: &ModelRequest) -> Vec<(String, String)> {
         .filter(|message| message.role == Role::Tool)
         .flat_map(|message| &message.content)
         .filter_map(|content| match content {
-            Content::ToolResult { call_id, output } => Some((call_id.clone(), output.clone())),
+            Content::ToolResult {
+                call_id, output, ..
+            } => Some((call_id.clone(), output.clone())),
             _ => None,
         })
         .collect()

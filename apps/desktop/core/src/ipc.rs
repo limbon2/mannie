@@ -124,6 +124,7 @@ macro_rules! app_commands {
             tools::list_shared_grants,
             tools::revoke_shared_grant,
             tools::read_tool_output,
+            tools::read_tool_image,
             tools::stop_background_command,
             tools::subscribe_command_output,
             child_agents::get_child_agents_settings,

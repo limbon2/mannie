@@ -6,7 +6,7 @@ use mannie_types::ids::{ProjectId, RuleId};
 use mannie_types::tools::{
     Access, AccessMode, ApprovalReason, ApprovalRequest, CommandRule, Decision, DiscardedWork,
     EntryCount, GrantScope, ProgramEffect, ProgramRule, ProgramTarget, Refusal, RemoteCommandRule,
-    RemoteTarget, RuleProposal, ToolsError, effect_keys,
+    RemoteTarget, RuleProposal, ToolHint, ToolServerEndpoint, ToolsError, effect_keys,
 };
 
 use super::{Grants, PolicyInputs, SavedRule, Verdict, decide, saved_rule};
@@ -1695,4 +1695,188 @@ fn a_saved_program_rule_keeps_its_program_and_effects_and_may_be_limited_to_its_
         saved_rule(&proposal, 4, false),
         Err(ToolsError::RulePrefixInvalid)
     );
+}
+
+// Calls of a tool server's tools (ADR-0043, decision 4): never allowed by the
+// workspace; a grant covers the same tool of the same server at the same
+// endpoint with any arguments, and no rule is offered.
+
+const SERVER: &str = "0199e0f2-0000-7000-8000-0000000000cc";
+const OTHER_SERVER: &str = "0199e0f2-0000-7000-8000-0000000000dd";
+const SERVER_URL: &str = "https://mcp.example.com/mcp";
+
+fn server_url(url: &str) -> ToolServerEndpoint {
+    ToolServerEndpoint::Url {
+        url: url.to_owned(),
+    }
+}
+
+fn tool_call_on(target: &str, endpoint: ToolServerEndpoint, tool: &str, arguments: &str) -> Access {
+    Access::ExternalTool {
+        plugin: "mcp".to_owned(),
+        target: target.to_owned(),
+        label: "Issues".to_owned(),
+        endpoint,
+        tool: tool.to_owned(),
+        title: Some("Create an issue".to_owned()),
+        arguments: arguments.to_owned(),
+        arguments_cut: false,
+        hints: vec![ToolHint::OpenWorld],
+    }
+}
+
+fn tool_call(tool: &str, arguments: &str) -> Access {
+    tool_call_on(SERVER, server_url(SERVER_URL), tool, arguments)
+}
+
+fn tool_grant(tool: &str) -> GrantScope {
+    GrantScope::ExternalTool {
+        plugin: "mcp".to_owned(),
+        target: SERVER.to_owned(),
+        label: "Issues".to_owned(),
+        endpoint: server_url(SERVER_URL),
+        tool: tool.to_owned(),
+    }
+}
+
+#[test]
+fn a_tool_servers_call_asks_and_offers_a_grant_for_its_tool_and_no_rule() {
+    let mut inputs = Inputs::new();
+    inputs.allow_changes_in_workspace = true;
+    let accesses = [tool_call("create_issue", r#"{"title":"Crash"}"#)];
+
+    assert_eq!(
+        inputs.decide(&accesses),
+        ask(
+            &accesses,
+            &[ApprovalReason::ExternalTool],
+            vec![tool_grant("create_issue")],
+            None
+        )
+    );
+}
+
+#[test]
+fn a_grant_covers_the_same_tool_of_the_same_server_and_endpoint_with_any_arguments() {
+    let mut inputs = Inputs::new();
+    inputs.grants = vec![tool_grant("create_issue")];
+    let program = ToolServerEndpoint::Program {
+        program: "npx".to_owned(),
+        arguments: vec!["-y".to_owned(), "issues-server".to_owned()],
+    };
+
+    assert_eq!(
+        inputs.decide(&[tool_call("create_issue", r#"{"title":"Another"}"#)]),
+        Verdict::Allowed(Decision::Grant)
+    );
+    let mut other_plugin = tool_call("create_issue", "{}");
+    if let Access::ExternalTool { plugin, .. } = &mut other_plugin {
+        "other".clone_into(plugin);
+    }
+    for access in [
+        tool_call("delete_issue", "{}"),
+        tool_call_on(OTHER_SERVER, server_url(SERVER_URL), "create_issue", "{}"),
+        tool_call_on(
+            SERVER,
+            server_url("https://mcp.example.com/v2"),
+            "create_issue",
+            "{}",
+        ),
+        tool_call_on(SERVER, program, "create_issue", "{}"),
+        other_plugin,
+    ] {
+        assert!(
+            matches!(
+                inputs.decide(std::slice::from_ref(&access)),
+                Verdict::Ask(_)
+            ),
+            "{access:?}"
+        );
+    }
+
+    // The server's name, the tool's title and the server's hints are for
+    // display: they change nothing that a grant covers.
+    let mut renamed = tool_call("create_issue", "{}");
+    if let Access::ExternalTool {
+        label,
+        title,
+        hints,
+        ..
+    } = &mut renamed
+    {
+        "Tracker".clone_into(label);
+        *title = None;
+        *hints = vec![ToolHint::ReadOnly];
+    }
+    assert_eq!(inputs.decide(&[renamed]), Verdict::Allowed(Decision::Grant));
+
+    let mut shared = Inputs::new();
+    shared.project_grants = vec![tool_grant("create_issue")];
+    assert_eq!(
+        shared.decide(&[tool_call("create_issue", "{}")]),
+        Verdict::Allowed(Decision::ProjectGrant)
+    );
+    shared.project_grants = Vec::new();
+    shared.always_grants = vec![tool_grant("create_issue")];
+    assert_eq!(
+        shared.decide(&[tool_call("create_issue", "{}")]),
+        Verdict::Allowed(Decision::AlwaysGrant)
+    );
+}
+
+#[test]
+fn neither_the_workspace_nor_another_kind_of_grant_allows_a_tool_servers_call() {
+    let mut inputs = Inputs::new();
+    inputs.allow_changes_in_workspace = true;
+    inputs.rules = vec![rule(&["create_issue"], None)];
+    inputs.grants = vec![
+        path_grant(AccessMode::Write, "/work"),
+        command_grant("create_issue", "/work"),
+        remote_grant("create_issue"),
+    ];
+
+    assert!(matches!(
+        inputs.decide(&[tool_call("create_issue", "{}")]),
+        Verdict::Ask(_)
+    ));
+}
+
+#[test]
+fn full_access_allows_a_tool_servers_call() {
+    let mut inputs = Inputs::new();
+    inputs.full_access = true;
+
+    assert_eq!(
+        inputs.decide(&[tool_call("delete_repository", r#"{"name":"app"}"#)]),
+        Verdict::Allowed(Decision::FullAccess)
+    );
+}
+
+#[test]
+fn a_worker_refuses_a_tool_servers_call_in_every_mode() {
+    for mode in MODES.into_iter().chain([CeilingMode::FullAccess]) {
+        assert_eq!(
+            Inputs::worker(mode).decide(&[tool_call("create_issue", "{}")]),
+            Verdict::Refused(Refusal::NoExternalTools),
+            "{mode:?}"
+        );
+    }
+}
+
+#[test]
+fn a_tool_grant_covers_another_only_for_the_same_tool_of_the_same_server() {
+    let mut renamed = tool_grant("create_issue");
+    if let GrantScope::ExternalTool { label, .. } = &mut renamed {
+        "Tracker".clone_into(label);
+    }
+
+    assert!(super::scope_covers(&tool_grant("create_issue"), &renamed));
+    assert!(!super::scope_covers(
+        &tool_grant("create_issue"),
+        &tool_grant("delete_issue")
+    ));
+    assert!(!super::scope_covers(
+        &tool_grant("create_issue"),
+        &remote_grant("create_issue")
+    ));
 }

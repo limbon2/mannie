@@ -53,7 +53,8 @@ pub(crate) fn path_of(access: &Access) -> Result<(PathBuf, &str), ToolFailure> {
         Access::Command { .. }
         | Access::Project { .. }
         | Access::RemoteCommand { .. }
-        | Access::Program { .. } => Err(ToolFailure::PathChanged),
+        | Access::Program { .. }
+        | Access::ExternalTool { .. } => Err(ToolFailure::PathChanged),
     }
 }
 

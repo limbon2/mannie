@@ -45,6 +45,7 @@ fn test_tool() -> ToolDefinition {
             "required": ["status"],
             "additionalProperties": false,
         }),
+        strict: true,
     }
 }
 
@@ -413,6 +414,7 @@ async fn tools_check(
             content: vec![Content::ToolResult {
                 call_id,
                 output: TEST_TOOL_RESULT.to_owned(),
+                images: Vec::new(),
             }],
         },
     ];

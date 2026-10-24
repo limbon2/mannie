@@ -8,10 +8,14 @@ pub use mannie_types::tasks::{TASK_TITLE_ARGUMENT, task_still_running};
 
 use std::time::Duration;
 
-use mannie_types::tools::BackgroundEnding;
+use mannie_types::images::ImageFormat;
+use mannie_types::tools::{
+    BackgroundEnding, MAX_TOOL_IMAGE_BYTES, MAX_TOOL_IMAGE_SIDE, MAX_TOOL_IMAGES,
+};
 
 use crate::agents::Requester;
 use crate::instructions::ToolEnvironment;
+use crate::tool_images::LeftOut;
 
 /// The first instruction section of every agent.
 pub const BASE_INSTRUCTIONS: &str = "You are the assistant in Mannie, a desktop app, talking with its owner. \
@@ -170,6 +174,10 @@ pub const NO_REMOTE_COMMANDS: &str = "Not run: this host runs no commands on oth
 /// refused: a worker runs no plugin (ADR-0038).
 pub const NO_PROGRAMS_ON_HOST: &str = "Not run: this host runs no plugin's programs.";
 
+/// The result of a call of a tool server's tool that a worker refused: a
+/// worker runs no plugin (ADR-0043).
+pub const NO_EXTERNAL_TOOLS: &str = "Not run: this host calls no tool server's tools.";
+
 /// The result of a call beyond the reply's tool calls.
 pub const OVER_BUDGET: &str = "Not run: this reply has used all its tool calls.";
 
@@ -212,6 +220,53 @@ the archived output {} with read_tool_output.",
             archives.join(" and ")
         )
     }
+}
+
+/// The line of a result for one of its images that does not reach the model,
+/// with the image's number among the result's images, from 1, and why
+/// (ADR-0044, decision 1).
+pub(crate) fn tool_image_left_out(number: usize, left_out: LeftOut) -> String {
+    let why = match left_out {
+        LeftOut::Format => "it is neither a PNG nor a JPEG file".to_owned(),
+        LeftOut::TooLarge => format!(
+            "its file is larger than {} MiB",
+            MAX_TOOL_IMAGE_BYTES / (1024 * 1024)
+        ),
+        LeftOut::TooWide { width, height } => format!(
+            "it is {width}×{height} pixels, and a side may have at most {MAX_TOOL_IMAGE_SIDE}"
+        ),
+        LeftOut::Damaged => "its file is damaged".to_owned(),
+    };
+    format!("[Image {number} of this result was left out: {why}.]")
+}
+
+/// The line of a result whose images go past the most that one result
+/// carries, for its images from `first` to `last`, from 1.
+pub(crate) fn tool_images_past_limit(first: usize, last: usize) -> String {
+    let images = if first == last {
+        format!("Image {first} of this result was")
+    } else {
+        format!("Images {first} to {last} of this result were")
+    };
+    format!("[{images} left out: a result carries at most {MAX_TOOL_IMAGES} images.]")
+}
+
+/// The line that stands in for an image of a result that a request does not
+/// hold: one of an older result, of a result that the context leaves out, of
+/// a compaction or of a request without tools (ADR-0044, decision 5).
+pub(crate) fn tool_image_not_sent(
+    number: u32,
+    format: ImageFormat,
+    width: u32,
+    height: u32,
+) -> String {
+    let format = match format {
+        ImageFormat::Png => "PNG",
+        ImageFormat::Jpeg => "JPEG",
+    };
+    format!(
+        "[Image {number} of this result: a {format} image of {width}×{height} pixels, which this request does not show.]"
+    )
 }
 
 /// A tool call as text, for a model that is not given tools.
