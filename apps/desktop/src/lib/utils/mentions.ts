@@ -19,6 +19,12 @@ export interface MentionQuery {
   readonly end: number;
   /** What the owner typed after "@" and an opening quote, up to the caret. */
   readonly query: string;
+  /**
+   * Whether the query holds white space without quotes, as a name with a
+   * space does, such as "@build box", or as text after a token does, such as
+   * "@main.rs and". The list decides which one it is.
+   */
+  readonly spaced: boolean;
   /** Where the token's "@" is. */
   readonly start: number;
 }
@@ -45,7 +51,9 @@ function startsToken(text: string, index: number): boolean {
 /**
  * The token that the caret is in, or `null` outside one: "@" at the start of
  * the text or after white space or an opening bracket, then what the owner
- * typed up to the caret, without white space unless it follows `@"`.
+ * typed up to the caret on the same line. A token that follows `@"` ends at
+ * its closing quote, and one without quotes is `spaced` once it holds white
+ * space.
  */
 export function mentionQueryAt(text: string, caret: number): MentionQuery | null {
   const earliest = Math.max(0, caret - MAX_QUERY_LENGTH - 2);
@@ -63,19 +71,25 @@ export function mentionQueryAt(text: string, caret: number): MentionQuery | null
   return null;
 }
 
-/** The token whose "@" is at `at`, up to the caret, or `null` when it holds a break. */
+/**
+ * The token whose "@" is at `at`, up to the caret, or `null` when its closing
+ * quote lies before the caret, or when white space follows the "@" itself,
+ * as in "meet me @ noon".
+ */
 function queryFrom(text: string, at: number, caret: number): MentionQuery | null {
   const opensQuote = text.charAt(at + 1) === '"';
   const caretIsPastQuote = caret > at + 1;
   const quoted = opensQuote && caretIsPastQuote;
   const queryStart = quoted ? at + 2 : at + 1;
   const query = text.slice(queryStart, caret);
-  const breaks = quoted ? query.includes('"') : /\s/u.test(query);
-  if (breaks) {
+  const closed = quoted && query.includes('"');
+  const startsWithSpace = !quoted && /^\s/u.test(query);
+  if (closed || startsWithSpace) {
     return null;
   }
+  const spaced = !quoted && /\s/u.test(query);
   const end = quoted ? quotedEnd(text, caret) : unquotedEnd(text, caret);
-  return { end, query, start: at };
+  return { end, query, spaced, start: at };
 }
 
 /** Where a token without quotes ends: at the next white space, or the text's end. */

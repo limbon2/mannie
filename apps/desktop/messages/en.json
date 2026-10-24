@@ -190,6 +190,16 @@
     }
   ],
   "chat_mention_incomplete": "{group}: there is more than the list shows, so type more of the name.",
+  "chat_mention_show_more": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Show 1 more",
+        "countPlural=other": "Show {count: number} more"
+      }
+    }
+  ],
   "chat_mention_group_failure": "{group} could not be listed. {reason}",
   "chat_mention_group_other": "Other mentions",
   "chat_mention_variant_other": "Mention",

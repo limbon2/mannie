@@ -60,16 +60,57 @@ pub struct SuggestMentions {
     pub place: MentionPlace,
     /// What the owner typed after "@", up to the caret.
     pub query: String,
+    /// The one provider to ask, so that the list shows each kind as soon as
+    /// it answers, or `None` for every provider that the place offers.
+    #[serde(default)]
+    pub provider: Option<String>,
+}
+
+impl SuggestMentions {
+    /// Asks every provider that `place` offers about `query`.
+    pub fn new(place: MentionPlace, query: impl Into<String>) -> Self {
+        Self {
+            place,
+            query: query.into(),
+            provider: None,
+        }
+    }
+
+    /// Asks only the provider `provider`.
+    #[must_use]
+    pub fn with_provider(mut self, provider: impl Into<String>) -> Self {
+        self.provider = Some(provider.into());
+        self
+    }
 }
 
 /// The result of `suggest_mentions`: a group for each provider that is
-/// offered in the place, in the order in which they were registered. No group
-/// means that nothing can be mentioned there.
+/// offered in the place, in the order in which they were registered, or the
+/// one that was asked for. No group means that nothing can be mentioned
+/// there, or that the provider asked for is not offered.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct MentionSuggestions {
     /// The groups.
     pub groups: Vec<MentionGroup>,
+}
+
+/// The argument of `list_mention_providers`.
+#[derive(Debug, Clone, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ListMentionProviders {
+    /// Where the owner writes.
+    pub place: MentionPlace,
+}
+
+/// The result of `list_mention_providers`: the providers that the place
+/// offers, in the order of the groups of `suggest_mentions`. None means that
+/// nothing can be mentioned there.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct MentionProviders {
+    /// Their IDs.
+    pub providers: Vec<String>,
 }
 
 /// One provider's suggestions.
@@ -194,7 +235,7 @@ fn cut_id(id: &str) -> String {
 mod tests {
     use super::{
         INVALID_KEY, MAX_MENTION_KEY_BYTES, MAX_MENTIONS, MentionPlace, MentionRef, MentionSummary,
-        check_mentions,
+        SuggestMentions, check_mentions,
     };
     use crate::chat::ChatError;
     use crate::ids::ProjectId;
@@ -293,6 +334,28 @@ mod tests {
                 code: "unreadable".to_owned(),
                 values: std::collections::BTreeMap::new()
             }
+        );
+    }
+
+    #[test]
+    fn a_query_asks_every_provider_unless_it_names_one() {
+        let place = serde_json::json!({ "kind": "new_conversation", "projectId": null });
+
+        let every: SuggestMentions =
+            serde_json::from_value(serde_json::json!({ "place": place, "query": "ma" })).unwrap();
+        let one: SuggestMentions = serde_json::from_value(
+            serde_json::json!({ "place": place, "query": "ma", "provider": "git" }),
+        )
+        .unwrap();
+
+        assert_eq!((every.query.as_str(), every.provider), ("ma", None));
+        assert_eq!(one.provider.as_deref(), Some("git"));
+        assert_eq!(
+            SuggestMentions::new(MentionPlace::NewConversation { project_id: None }, "ma")
+                .with_provider("git")
+                .provider
+                .as_deref(),
+            Some("git")
         );
     }
 }

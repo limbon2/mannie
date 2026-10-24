@@ -77,6 +77,7 @@ macro_rules! app_commands {
             chat::start_conversation,
             chat::send_message,
             chat::suggest_mentions,
+            chat::list_mention_providers,
             chat::read_image,
             export::export_conversation,
             chat::stop_reply,

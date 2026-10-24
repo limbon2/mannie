@@ -233,6 +233,7 @@ const APP_COMMANDS: &[&str] = &[
     "get_window_settings",
     "list_command_rules",
     "list_conversation_grants",
+    "list_mention_providers",
     "list_program_rules",
     "list_provider_profiles",
     "list_remote_command_rules",

@@ -12,26 +12,32 @@ function queryAtEnd(text: string): string | null {
 
 describe('mentionQueryAt', () => {
   it('finds the token that the caret is in', () => {
-    expect(mentionQueryAt('Read @src/ma', 12)).toEqual({ end: 12, query: 'src/ma', start: 5 });
+    expect(mentionQueryAt('Read @src/ma', 12)).toEqual({ end: 12, query: 'src/ma', spaced: false, start: 5 });
     expect(queryAtEnd('@')).toBe('');
     expect(queryAtEnd('(see @docs')).toBe('docs');
     expect(queryAtEnd('line one\n@notes')).toBe('notes');
   });
 
   it('reaches to the end of the token after the caret', () => {
-    expect(mentionQueryAt('Read @src/main.rs now', 9)).toEqual({ end: 17, query: 'src', start: 5 });
+    expect(mentionQueryAt('Read @src/main.rs now', 9)).toEqual({ end: 17, query: 'src', spaced: false, start: 5 });
   });
 
   it('takes spaces after an opening quote', () => {
     expect(queryAtEnd('Read @"my notes/pl')).toBe('my notes/pl');
-    expect(mentionQueryAt('@"my notes/plan.md" and', 6)).toEqual({ end: 19, query: 'my n', start: 0 });
+    expect(mentionQueryAt('@"my notes/plan.md" and', 6)).toEqual({ end: 19, query: 'my n', spaced: false, start: 0 });
+  });
+
+  it('marks a query with white space and no quotes, which the list decides about', () => {
+    expect(mentionQueryAt('Ask @build b', 12)).toEqual({ end: 12, query: 'build b', spaced: true, start: 4 });
+    expect(mentionQueryAt('@build box now', 8)).toEqual({ end: 10, query: 'build b', spaced: true, start: 0 });
+    expect(mentionQueryAt('@src/main.rs and more', 21)?.spaced).toBe(true);
   });
 
   it('finds nothing outside a token', () => {
     expect(queryAtEnd('mail me@example.com')).toBeNull();
-    expect(queryAtEnd('@src/main.rs and more')).toBeNull();
     expect(queryAtEnd('@"closed" after')).toBeNull();
     expect(queryAtEnd('no mention here')).toBeNull();
+    expect(queryAtEnd('meet me @ noon')).toBeNull();
     expect(mentionQueryAt('@first\nsecond', 13)).toBeNull();
   });
 });

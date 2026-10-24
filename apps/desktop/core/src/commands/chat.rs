@@ -12,7 +12,9 @@ use mannie_types::chat::{
 };
 use mannie_types::images::{ImageData, ReadImage};
 use mannie_types::ipc::{ChannelBatch, CommandError};
-use mannie_types::mentions::{MentionSuggestions, SuggestMentions};
+use mannie_types::mentions::{
+    ListMentionProviders, MentionProviders, MentionSuggestions, SuggestMentions,
+};
 use mannie_types::transcript::{
     Checkpoint, ConversationListUpdate, ConversationUpdate, SubscriptionId,
 };
@@ -141,7 +143,8 @@ pub(crate) async fn send_message(
 }
 
 /// What the owner can mention after "@" in the message box (ADR-0032): a
-/// group for each kind of mention that the place offers.
+/// group for each kind of mention that the place offers, or for the one
+/// asked for.
 #[tauri::command]
 #[specta::specta]
 pub(crate) async fn suggest_mentions(
@@ -152,6 +155,20 @@ pub(crate) async fn suggest_mentions(
         .suggest_mentions(input)
         .await
         .map_err(refused("suggest_mentions"))
+}
+
+/// The kinds of mention that the place offers (ADR-0032), which the "@" list
+/// asks one by one, so that a slow kind holds back no other.
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn list_mention_providers(
+    core: State<'_, Core>,
+    input: ListMentionProviders,
+) -> Result<MentionProviders, CommandError<ChatError>> {
+    runtime(&core)?
+        .list_mention_providers(input)
+        .await
+        .map_err(refused("list_mention_providers"))
 }
 
 /// The thumbnail or the full image of an image part (ADR-0033, decision 4),

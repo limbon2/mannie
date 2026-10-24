@@ -1,11 +1,16 @@
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
+use futures_util::FutureExt;
+use futures_util::future::join_all;
 use mannie_plugin_sdk::points::mentions::RenderedMention;
+use mannie_tools::MentionIndex;
 use mannie_types::mentions::MentionEntry;
+use tokio::time::Instant;
 
-use super::FileMentions;
+use super::{Building, FileMentions, INDEX_LIFETIME, MAX_INDEXES, keep, lock};
 use crate::mentions::{MentionContext, MentionProvider};
 use crate::policy::PolicyGrants;
 
@@ -34,6 +39,14 @@ async fn entries(
     query: &str,
 ) -> Vec<MentionEntry> {
     provider.suggest(context, query, 50).await.unwrap().entries
+}
+
+async fn keys(provider: &FileMentions, context: &MentionContext, query: &str) -> Vec<String> {
+    entries(provider, context, query)
+        .await
+        .into_iter()
+        .map(|entry| entry.key)
+        .collect()
 }
 
 async fn rendered(provider: &FileMentions, context: &MentionContext, key: &str) -> RenderedMention {
@@ -104,6 +117,113 @@ async fn an_index_serves_the_queries_that_follow_it() {
         fresh.suggest(&place, "kept", 50).await.unwrap_err(),
         "folder_unreadable"
     );
+}
+
+/// How many times [`counted_walk`] walked.
+static COUNTED_WALKS: AtomicUsize = AtomicUsize::new(0);
+
+fn counted_walk(folder: &Path) -> Option<MentionIndex> {
+    COUNTED_WALKS.fetch_add(1, Ordering::SeqCst);
+    folder.is_dir().then(|| MentionIndex::build(folder))
+}
+
+#[tokio::test]
+async fn queries_that_arrive_while_a_workspace_is_walked_wait_for_that_walk() {
+    let (_folder, root) = workspace();
+    fs::write(root.join("a.txt"), "").unwrap();
+    let provider = FileMentions::walking(counted_walk);
+    let place = context(Some(&root), Vec::new(), false);
+
+    let answers = join_all((0..5).map(|_| provider.suggest(&place, "a.txt", 50))).await;
+
+    assert_eq!(COUNTED_WALKS.load(Ordering::SeqCst), 1);
+    for answer in answers {
+        assert_eq!(answer.unwrap().entries[0].key, "a.txt");
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_index_past_its_lifetime_answers_at_once_while_the_workspace_is_walked_again() {
+    let (_folder, root) = workspace();
+    fs::write(root.join("old.txt"), "").unwrap();
+    let provider = FileMentions::new();
+    let place = context(Some(&root), Vec::new(), false);
+
+    let first = keys(&provider, &place, "txt").await;
+    fs::remove_file(root.join("old.txt")).unwrap();
+    fs::write(root.join("new.txt"), "").unwrap();
+    tokio::time::advance(INDEX_LIFETIME / 2).await;
+    let within = keys(&provider, &place, "txt").await;
+    tokio::time::advance(INDEX_LIFETIME).await;
+    let past = keys(&provider, &place, "txt").await;
+    provider.walked(&root).await;
+    let walked = keys(&provider, &place, "txt").await;
+
+    assert_eq!(first, ["old.txt"]);
+    assert_eq!(within, ["old.txt"]);
+    assert_eq!(past, ["old.txt"]);
+    assert_eq!(walked, ["new.txt"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_workspace_that_can_no_longer_be_walked_drops_its_index() {
+    let (folder, root) = workspace();
+    fs::write(root.join("kept.txt"), "").unwrap();
+    let provider = FileMentions::new();
+    let place = context(Some(&root), Vec::new(), false);
+
+    let before = keys(&provider, &place, "kept").await;
+    drop(folder);
+    tokio::time::advance(INDEX_LIFETIME).await;
+    let past = keys(&provider, &place, "kept").await;
+    provider.walked(&root).await;
+    let after = provider.suggest(&place, "kept", 50).await;
+
+    assert_eq!(before, ["kept.txt"]);
+    assert_eq!(past, ["kept.txt"]);
+    assert_eq!(after.unwrap_err(), "folder_unreadable");
+}
+
+#[tokio::test]
+async fn a_walk_that_another_walk_of_its_workspace_replaced_keeps_nothing() {
+    let (_folder, root) = workspace();
+    fs::write(root.join("a.txt"), "").unwrap();
+    let provider = FileMentions::new();
+    keys(&provider, &context(Some(&root), Vec::new(), false), "a").await;
+    let replacing: Building = futures_util::future::pending().boxed().shared();
+    lock(&provider.indexes)[0].building = Some((7, replacing));
+
+    keep(
+        &provider.indexes,
+        &root,
+        0,
+        Instant::now(),
+        &Err("folder_unreadable".to_owned()),
+    );
+
+    let indexes = lock(&provider.indexes);
+    assert!(indexes[0].built.is_some());
+    assert!(matches!(indexes[0].building, Some((7, _))));
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_indexes_of_the_workspaces_used_longest_ago_are_dropped() {
+    let folders: Vec<(tempfile::TempDir, PathBuf)> =
+        (0..=MAX_INDEXES).map(|_number| workspace()).collect();
+    let provider = FileMentions::new();
+
+    for (_folder, root) in &folders {
+        fs::write(root.join("a.txt"), "").unwrap();
+        keys(&provider, &context(Some(root), Vec::new(), false), "a").await;
+        tokio::time::advance(std::time::Duration::from_millis(1)).await;
+    }
+
+    let kept: Vec<PathBuf> = lock(&provider.indexes)
+        .iter()
+        .map(|workspace| workspace.root.clone())
+        .collect();
+    assert_eq!(kept.len(), MAX_INDEXES);
+    assert!(!kept.contains(&folders[0].1), "{kept:?}");
 }
 
 #[tokio::test]

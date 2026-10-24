@@ -29,8 +29,8 @@ use mannie_tools::{
 use mannie_types::chat::ChatError;
 use mannie_types::ids::{ConversationId, ProjectId};
 use mannie_types::mentions::{
-    MAX_MENTION_QUERY_CHARACTERS, MAX_SUGGESTIONS, MentionGroup, MentionPlace, MentionRef,
-    MentionSuggestions, MentionView, SuggestMentions,
+    ListMentionProviders, MAX_MENTION_QUERY_CHARACTERS, MAX_SUGGESTIONS, MentionGroup,
+    MentionPlace, MentionProviders, MentionRef, MentionSuggestions, MentionView, SuggestMentions,
 };
 use mannie_types::tools::Access;
 use tokio::runtime::Handle;
@@ -362,18 +362,36 @@ impl Runtime {
         Ok(())
     }
 
+    /// The providers that the "@" list asks in a place, in the order of its
+    /// groups: the core's first, then those of the plugins that are on.
+    pub async fn list_mention_providers(
+        &self,
+        input: ListMentionProviders,
+    ) -> Result<MentionProviders, ChatError> {
+        let context = self.mention_context(&input.place).await?;
+        let providers = self
+            .mention_providers()
+            .into_iter()
+            .filter(|provider| provider.offered(&context))
+            .map(|provider| provider.id().to_owned())
+            .collect();
+        Ok(MentionProviders { providers })
+    }
+
     /// The suggestions of the "@" list: a group for each provider that is
     /// offered in the place, the core's first, then those of the plugins that
-    /// are on. A provider that fails lists nothing, with its code, and the
-    /// others still list theirs.
+    /// are on, or only the group of the provider asked for. A provider that
+    /// fails lists nothing, with its code, and the others still list theirs.
     pub async fn suggest_mentions(
         &self,
         input: SuggestMentions,
     ) -> Result<MentionSuggestions, ChatError> {
         let context = self.mention_context(&input.place).await?;
+        let asked = input.provider.as_deref();
         let providers: Vec<Arc<dyn MentionProvider>> = self
             .mention_providers()
             .into_iter()
+            .filter(|provider| asked.is_none_or(|id| provider.id() == id))
             .filter(|provider| provider.offered(&context))
             .collect();
         let matches_nothing = input.query.chars().count() > MAX_MENTION_QUERY_CHARACTERS;

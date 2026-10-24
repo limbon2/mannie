@@ -29,7 +29,9 @@ use mannie_types::chat::{
     ChatError, SendMessage, StartConversation, StartedConversation, StopOutcome,
 };
 use mannie_types::ids::{ConversationId, ProjectId};
-use mannie_types::mentions::{MentionPlace, MentionRef, MentionView, SuggestMentions};
+use mannie_types::mentions::{
+    ListMentionProviders, MentionPlace, MentionRef, MentionView, SuggestMentions,
+};
 use mannie_types::projects::ProjectView;
 use mannie_types::run::RunFailure;
 use mannie_types::tools::{SetFullAccess, ToolCallStatus};
@@ -89,15 +91,12 @@ impl Setup {
     }
 
     async fn suggest(&self, place: MentionPlace, query: &str) -> Vec<(String, Vec<String>)> {
-        let suggestions = self
-            .harness
-            .runtime
-            .suggest_mentions(SuggestMentions {
-                place,
-                query: query.to_owned(),
-            })
-            .await
-            .unwrap();
+        self.ask(SuggestMentions::new(place, query)).await
+    }
+
+    /// The keys of each group that `input` gets, by provider.
+    async fn ask(&self, input: SuggestMentions) -> Vec<(String, Vec<String>)> {
+        let suggestions = self.harness.runtime.suggest_mentions(input).await.unwrap();
         suggestions
             .groups
             .into_iter()
@@ -483,12 +482,12 @@ async fn suggestions_list_a_project_s_files_and_nothing_in_a_general_conversatio
     let missing = setup
         .harness
         .runtime
-        .suggest_mentions(SuggestMentions {
-            place: MentionPlace::NewConversation {
+        .suggest_mentions(SuggestMentions::new(
+            MentionPlace::NewConversation {
                 project_id: Some(ProjectId::parse("0199e0f2-0000-7000-8000-00000000abcd").unwrap()),
             },
-            query: String::new(),
-        })
+            "",
+        ))
         .await;
 
     assert_eq!(
@@ -759,6 +758,55 @@ async fn a_plugin_s_provider_is_offered_where_it_says_and_leaves_with_its_plugin
             provider: "fake".to_owned()
         }
     );
+}
+
+#[tokio::test]
+async fn the_list_can_ask_each_provider_that_a_place_offers_on_its_own() {
+    let setup = Setup::new().await;
+    let project = setup.project("app", &[("note.txt", "")]).await;
+    add_plugin(
+        &setup.harness.runtime,
+        "fake",
+        plugin(Notes::new(Offered::Everywhere, "The notes.")),
+    )
+    .unwrap();
+    let in_project = MentionPlace::NewConversation {
+        project_id: Some(project.id.clone()),
+    };
+    let general = MentionPlace::NewConversation { project_id: None };
+    let offered = |place: MentionPlace| {
+        setup
+            .harness
+            .runtime
+            .list_mention_providers(ListMentionProviders { place })
+    };
+
+    let in_project_offers = offered(in_project.clone()).await.unwrap();
+    let general_offers = offered(general.clone()).await.unwrap();
+    let files = setup
+        .ask(SuggestMentions::new(in_project.clone(), "no").with_provider("files"))
+        .await;
+    let notes = setup
+        .ask(SuggestMentions::new(in_project.clone(), "no").with_provider("fake"))
+        .await;
+    let not_offered = setup
+        .ask(SuggestMentions::new(general, "no").with_provider("files"))
+        .await;
+    let unknown = setup
+        .ask(SuggestMentions::new(in_project, "no").with_provider("nobody"))
+        .await;
+    let missing = offered(MentionPlace::NewConversation {
+        project_id: Some(ProjectId::parse("0199e0f2-0000-7000-8000-00000000abcd").unwrap()),
+    })
+    .await;
+
+    assert_eq!(in_project_offers.providers, ["files", "fake"]);
+    assert_eq!(general_offers.providers, ["fake"]);
+    assert_eq!(files, [("files".to_owned(), vec!["note.txt".to_owned()])]);
+    assert_eq!(notes, [("fake".to_owned(), vec!["note".to_owned()])]);
+    assert!(not_offered.is_empty(), "{not_offered:?}");
+    assert!(unknown.is_empty(), "{unknown:?}");
+    assert_eq!(missing, Err(ChatError::ProjectNotFound));
 }
 
 #[tokio::test]

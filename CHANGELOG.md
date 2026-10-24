@@ -10,11 +10,13 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ### Changed
 
+- The "@" list shows each kind of mention as soon as it answers, and while more than one kind shows entries, each shows its first 5 with "Show N more", so Git's and SSH's entries no longer sit below 50 files. A space no longer ends the query while an entry that the list shows holds it, so a name with spaces, such as a commit's subject or a path with a space, can be typed out.
 - Child agents write their reports in sections: status, answer, established findings with their evidence, what they did not verify, changes, what is left open and their assumptions. A report's result says that its evidence comes from the child's own tool calls, and the guidance on tasks treats what a report backs with evidence as established, with at most two tool calls to check one report, on the files that a task changed and the claims that it did not verify.
 - Checkpoints are written under fixed headings: the goal, what is done with what shows it, established facts with their sources, decisions, what nobody verified, open questions and the next steps.
 
 ### Fixed
 
+- The "@" list keeps up in large projects: queries that arrive while the project's folder is read share that one reading instead of each reading the folder again, an index older than 15 seconds answers at once while the folder is read again in the background, and a query no longer sorts every match.
 - A summary that reaches the output limit no longer becomes a checkpoint: the compaction fails with `summary_cut`, which asks the owner to raise the profile's output limit.
 
 ### Security
