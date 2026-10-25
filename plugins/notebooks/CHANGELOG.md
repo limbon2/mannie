@@ -10,4 +10,5 @@ Each change to the plugin adds one line under Unreleased, below its kind of chan
 
 ### Security
 
+- Accept the maintenance advisory RUSTSEC-2026-0192 for `ttf-parser`, which the pinned PDF library requires for font embedding that Notebooks never uses, with the owner's approval. Recheck when `pdf-extract` supports `lopdf` 0.44 or newer.
 - tokio 1.53.3, which fixes the advisory RUSTSEC-2026-0386 in the constructors of `AsyncFd` on Unix, which neither the plugin's crates nor their dependencies call.

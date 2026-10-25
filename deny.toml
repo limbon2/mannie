@@ -22,6 +22,9 @@ targets = [
 unmaintained = "all"
 yanked = "deny"
 ignore = [
+  # Approved by the owner on 2026-10-25. Only lopdf::FontData::new calls
+  # this parser; neither pdf-extract nor Notebooks calls that API.
+  { id = "RUSTSEC-2026-0192", reason = "ttf-parser 0.25.1 is unmaintained, with no known vulnerability; lopdf 0.42 uses it only to embed fonts, which Notebooks never calls. Recheck when pdf-extract supports lopdf 0.44 or newer" },
   { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained, with no known vulnerability. specta's macros use it at compile time only; look again when specta 2.0 is released" },
   { id = "RUSTSEC-2024-0370", reason = "proc-macro-error is unmaintained, with no known vulnerability. The GTK 0.18 bindings of Tauri on Linux use it at compile time only; look again when Tauri moves to newer gtk-rs" },
   # zbus 6 took these crates in, with no known vulnerability. zbus 5 talks to
