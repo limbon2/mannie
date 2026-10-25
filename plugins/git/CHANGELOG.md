@@ -7,3 +7,7 @@ Each change to the plugin adds one line under Unreleased, below its kind of chan
 ### Fixed
 
 - The "@" list reads the repository once for a conversation and matches what the owner types against that reading for 10 seconds, instead of running git, `git status` included, for every key.
+
+### Security
+
+- tokio 1.53.3, which fixes the advisory RUSTSEC-2026-0386 in the constructors of `AsyncFd` on Unix, which neither the plugin's crates nor their dependencies call.
