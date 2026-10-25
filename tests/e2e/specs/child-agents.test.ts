@@ -242,7 +242,9 @@ describe('child agents', () => {
 
     await clickInLatestTurn('Allow once');
 
-    expect(await waitForCompleteReply()).toContain(`${TOOLS_DONE} Last result: Task 1 reported:`);
+    expect(await waitForCompleteReply()).toContain(
+      `${TOOLS_DONE} Last result: Task 1 reported. The evidence in this report comes from the child's own tool calls:`,
+    );
     expect(readFileSync(join(workspace, 'summary.md'), 'utf8')).toBe('made by a child');
     await waitForTaskState(1, 'reported');
     await expect($('[data-slot="sidebar"] svg[aria-label="Waiting for your approval"]')).not.toBeExisting();
@@ -454,7 +456,9 @@ describe('child agents', () => {
     ]);
 
     const reply = await waitForCompleteReply();
-    expect(reply).toContain(`${TOOLS_DONE} Last result: Task 1 reported:`);
+    expect(reply).toContain(
+      `${TOOLS_DONE} Last result: Task 1 reported. The evidence in this report comes from the child's own tool calls:`,
+    );
     expect(reply).toContain('first line');
     await waitForTaskState(1, 'reported');
 

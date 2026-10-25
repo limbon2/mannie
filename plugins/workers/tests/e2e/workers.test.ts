@@ -249,7 +249,9 @@ describe('workers', () => {
 
     await clickInLatestTurn('Allow once');
 
-    expect(await waitForCompleteReply()).toContain(`${TOOLS_DONE} Last result: Task 1 reported:`);
+    expect(await waitForCompleteReply()).toContain(
+      `${TOOLS_DONE} Last result: Task 1 reported. The evidence in this report comes from the worker's own tool calls:`,
+    );
     await waitForTaskState(1, 'reported');
     expect(readFileSync(join(worker.allowed, 'notes.md'), 'utf8')).toBe('made on the worker');
   });

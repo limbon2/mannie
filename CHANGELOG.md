@@ -24,6 +24,7 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - The "@" list keeps up in large projects: queries that arrive while the project's folder is read share that one reading instead of each reading the folder again, an index older than 15 seconds answers at once while the folder is read again in the background, and a query no longer sorts every match.
 - A summary that reaches the output limit no longer becomes a checkpoint: the compaction fails with `summary_cut`, which asks the owner to raise the profile's output limit.
 - The styles that only a plugin's interface uses reach the app, such as the row of a host's name and port in SSH's host dialog: Tailwind read no file of the plugins' folders, because their source pattern named the folders instead of their files.
+- The end-to-end test of child agents expects a task report's result as the runtime now writes it, with the sentence that its evidence comes from the child's own tool calls.
 
 ### Security
 
