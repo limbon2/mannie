@@ -14,6 +14,7 @@
   import { setConversationContext } from '#lib/state/conversation-context.js';
   import type { OpenConversation } from '#lib/state/conversation.svelte.js';
   import { chatFailureMessage } from '#lib/utils/chat-errors.js';
+  import { citedItems, findCited } from '#lib/utils/citations.js';
   import { latestTurn } from '#lib/utils/conversation-reducer.js';
   import { followsAfterScroll } from '#lib/utils/transcript-follow.js';
 
@@ -37,6 +38,7 @@
     get backgroundCommands() {
       return conversation.transcript.backgroundCommands;
     },
+    cited: (provider, key) => findCited(cited, provider, key),
     get readOnly() {
       return readOnly;
     },
@@ -61,6 +63,8 @@
   let pointerHeld = false;
 
   const transcript = $derived(conversation.transcript);
+  /** The excerpts of the turns, which the replies cite by links (ADR-0049, decision 4). */
+  const cited = $derived(citedItems(transcript.turns));
   const latest = $derived(latestTurn(transcript));
   const checkpoint = $derived(transcript.checkpoint);
   /** The part that waits for the owner, such as a tool call or the card of a child whose call waits. */

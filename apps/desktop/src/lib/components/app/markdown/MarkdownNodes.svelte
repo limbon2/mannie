@@ -6,6 +6,7 @@
   import { m } from '#lib/paraglide/messages.js';
   import type { Alignment, RenderNode } from '#lib/utils/markdown.js';
 
+  import MarkdownCitation from './MarkdownCitation.svelte';
   import MarkdownCode from './MarkdownCode.svelte';
   import MarkdownImage from './MarkdownImage.svelte';
   import MarkdownLink from './MarkdownLink.svelte';
@@ -117,6 +118,8 @@
     <Separator class="my-3" />
   {:else if node.kind === 'break'}
     <br />
+  {:else if node.kind === 'citation'}
+    <MarkdownCitation key={node.key} label={node.label} provider={node.provider} />
   {:else if node.kind === 'link'}
     <MarkdownLink url={node.url}><MarkdownNodes nodes={node.children} /></MarkdownLink>
   {:else}

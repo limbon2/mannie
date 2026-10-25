@@ -1,0 +1,47 @@
+[package]
+name = "mannie-notebooks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The Notebooks plugin: notebooks of the owner's documents, their text and passages, the search of the passages that apply to a message, and the context provider that gives them to the conversations that attach a notebook (ADR-0046, ADR-0047)."
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The bytes of a dropped file, which cross IPC as text (ADR-0007).
+base64 = { workspace = true }
+# The streams of the channel and of the changes of search profiles.
+futures-util = { workspace = true }
+# The text of PDF, Markdown and text files, and their passages (plugin
+# ADR-0001).
+mannie-notebooks-documents = { workspace = true }
+# The plugin's definition, its services, the point of context providers and
+# the contract types that the plugin uses (ADR-0034, decisions 2 and 4).
+mannie-plugin-sdk = { workspace = true }
+serde = { workspace = true }
+# The locations of sections and the preferences, as JSON documents.
+serde_json = { workspace = true }
+# The digest that tells a file that the notebook holds already.
+sha2 = { workspace = true }
+# The plugin's IPC types, from which the desktop app generates bindings
+# (ADR-0007).
+specta = { workspace = true }
+thiserror = { workspace = true }
+# The indexer's task, its waits for work or a time, and the extraction on a
+# blocking thread.
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+tracing = { workspace = true }
+# The IDs of notebooks and sources.
+uuid = { workspace = true }
+
+[dev-dependencies]
+# The plugin through the real host on the core's test runtime, and the
+# conformance check (ADR-0034, decision 1).
+mannie-plugin-harness = { workspace = true }
+# The exported manifest, which the plugin's tests parse, and the file dialog
+# and the models in memory.
+mannie-plugin-sdk = { workspace = true, features = ["manifest", "testing"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
+
+[lints]
+workspace = true

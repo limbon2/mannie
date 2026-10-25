@@ -11,7 +11,7 @@
   import * as Empty from '#lib/components/ui/empty/index.js';
   import { Skeleton } from '#lib/components/ui/skeleton/index.js';
   import { Spinner } from '#lib/components/ui/spinner/index.js';
-  import { commands, type ImageRef, type MentionRef } from '#lib/generated/bindings.js';
+  import { type Attachment, commands, type ImageRef, type MentionRef } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
   import { chatActions } from '#lib/state/chat-actions.svelte.js';
   import { OpenConversation } from '#lib/state/conversation.svelte.js';
@@ -24,6 +24,7 @@
   import { startNewConversation } from '#lib/utils/chat-urls.js';
   import { hasActiveRun } from '#lib/utils/conversation-reducer.js';
 
+  import AttachmentChips from './AttachmentChips.svelte';
   import Composer from './Composer.svelte';
   import ContextMeter from './ContextMeter.svelte';
   import NoProfileNotice from './NoProfileNotice.svelte';
@@ -46,6 +47,10 @@
   /** Whether the message box takes the focus, because the first message of a new conversation opened this pane. */
   const takesFocus = takeComposerFocus(untrack(() => id));
 
+  /** Whether an attachment is being detached, and why the last detach failed (ADR-0046). */
+  let detaching = $state(false);
+  let detachFailure = $state<ChatFailure | null>(null);
+
   const transcript = $derived(conversation.transcript);
   const summary = $derived(transcript.conversation);
   const isChild = $derived(summary !== null && summary.task !== null);
@@ -60,9 +65,20 @@
   const offPlugin = $derived(pluginOffOf(conversation.failure));
   const pluginBackOn = $derived(offPlugin !== null && pluginStates.isOn(offPlugin));
 
+  /** What the conversation has attached (ADR-0046); a summary of a version before them has none. */
+  const attachments = $derived(summary?.attachments ?? []);
+
   async function send(text: string, mentions: MentionRef[], images: ImageRef[]): Promise<ChatFailure | null> {
     const outcome = await call(() => commands.sendMessage({ conversationId: id, images, mentions, text }));
     return outcome.ok ? null : outcome.failure;
+  }
+
+  async function detach(attachment: Attachment): Promise<void> {
+    detaching = true;
+    const { key, provider } = attachment;
+    const outcome = await call(() => commands.detachContext({ attachment: { key, provider }, conversationId: id }));
+    detaching = false;
+    detachFailure = outcome.ok ? null : outcome.failure;
   }
 
   async function stop(): Promise<void> {
@@ -206,6 +222,19 @@
       {#snippet status()}
         {#if summary !== null}
           <ContextMeter checkpoint={transcript.checkpoint} context={transcript.context} conversationId={id} />
+        {/if}
+      {/snippet}
+      {#snippet attached()}
+        {#if attachments.length > 0}
+          <AttachmentChips
+            {attachments}
+            disabled={detaching}
+            home={summary?.home ?? null}
+            ondetach={(attachment: Attachment) => void detach(attachment)}
+          />
+        {/if}
+        {#if detachFailure !== null}
+          <p class="text-sm text-destructive" role="alert">{chatFailureMessage(detachFailure)}</p>
         {/if}
       {/snippet}
     </Composer>

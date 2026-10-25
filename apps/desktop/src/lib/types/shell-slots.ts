@@ -4,6 +4,8 @@
 import type { Component } from 'svelte';
 
 import type {
+  Attachment,
+  AttachmentRef,
   BackgroundCommandView,
   ConversationId,
   ConversationSummary,
@@ -36,15 +38,18 @@ export interface ShellCommand {
   readonly run: () => void;
 }
 
-/** An entry in the sidebar that opens a view. */
+/**
+ * An entry of the activity bar (ADR-0045): selecting it shows its sidebar
+ * panels and its view at the address that the view last had under it.
+ */
 export interface NavigationEntry {
   /** An icon from @lucide/svelte. */
   readonly icon: Component;
-  /** Unique among navigation entries. */
+  /** Unique among navigation entries; sidebar panels name it as their `activity`. */
   readonly id: string;
-  /** The entry's label. */
+  /** The entry's label, which its button shows as a tooltip and names itself with. */
   readonly label: Message;
-  /** Entries are sorted by this number, lowest first. */
+  /** Entries are sorted by this number, lowest first, and the first one's panels take those that name none. */
   readonly order: number;
   /** The view the entry opens. */
   readonly view: string;
@@ -85,8 +90,13 @@ export interface ShellView {
   readonly titleIsContent?: () => boolean;
 }
 
-/** A panel of the sidebar, shown after the navigation entries. */
+/** A panel of the sidebar, shown while the activity bar selects its navigation entry (ADR-0045, decision 3). */
 export interface SidebarPanel {
+  /**
+   * The ID of the navigation entry that the panel belongs to. Without it, the
+   * panel belongs to the entry with the lowest order, which is Chat's.
+   */
+  readonly activity?: string;
   /** The panel's content. */
   readonly component: Component;
   /** Unique among sidebar panels. */
@@ -170,6 +180,29 @@ export interface ConversationControlProps {
 export type ConversationControlPlace = 'menu' | 'message-box' | 'toolbar';
 
 /**
+ * The conversation that the first message of the new conversation pane
+ * starts, as the controls of its message box change it (ADR-0046, decision
+ * 6). The core asks each attachment's provider again when the message is
+ * sent.
+ */
+export interface ConversationDraft {
+  /** Adds an attachment with the label that its plugin knows, or gives one that the draft holds that label. */
+  readonly attach: (attachment: Attachment) => void;
+  /** What the conversation starts with attached, in the order the owner attached them. */
+  readonly attachments: readonly Attachment[];
+  /** Removes an attachment; one that the draft does not hold changes nothing. */
+  readonly detach: (attachment: AttachmentRef) => void;
+  /** The project that the conversation starts in, or `null` for a general conversation. */
+  readonly projectId: string | null;
+}
+
+/** What the control of a new conversation's message box receives. */
+export interface DraftControlProps {
+  /** The conversation that the first message starts. */
+  readonly draft: ConversationDraft;
+}
+
+/**
  * A control of a conversation (ADR-0026, ADR-0042): a feature's button,
  * menu or menu entries, in the place that it names. It renders nothing when
  * it has nothing to offer, and it never takes the focus by itself.
@@ -177,6 +210,13 @@ export type ConversationControlPlace = 'menu' | 'message-box' | 'toolbar';
 export interface ConversationControl {
   /** The control. */
   readonly component: Component<ConversationControlProps>;
+  /**
+   * The control of a new conversation's message box, for a control of the
+   * message box: it changes what the first message starts, such as its
+   * attachments (ADR-0046, decision 6). Without it, the control shows only
+   * in conversations.
+   */
+  readonly draft?: Component<DraftControlProps>;
   /** Unique among conversation controls. */
   readonly id: string;
   /** Controls are sorted by this number, lowest first. */
@@ -259,6 +299,42 @@ export interface MentionKind {
   readonly variantName: (variant: string) => string | null;
   /** The words of a warning code, such as "may hold secrets", or `null` for a code it does not know. */
   readonly warning: (code: string) => string | null;
+}
+
+/** How a kind of context opens one of its items where it comes from (ADR-0046, decision 5; ADR-0049, decision 4). */
+export interface ContextOpen {
+  /** The button's label, such as "Open source". */
+  readonly label: Message;
+  /**
+   * Shows the item with this key where it comes from, such as a passage in
+   * its source. The key comes from a stored excerpt or from a cite link that
+   * the model wrote, so the plugin checks it.
+   */
+  readonly run: (key: string) => void;
+}
+
+/**
+ * A kind of context (ADR-0046, decision 6): how the chips of the message box,
+ * the parts of the transcript, the status line and the citations name the
+ * attachments and items of one context provider, and how its items open.
+ * Without an entry for a provider, such as while its plugin is off, they show
+ * generic texts, and its items open nowhere.
+ */
+export interface ContextKind {
+  /** The sentence of one of the provider's failure codes, or `null` for a code it does not know. */
+  readonly failure: (code: string) => string | null;
+  /** The row of a part with items, from its attachments' labels and the number of items, such as "Searched Physics: 5 passages". */
+  readonly found: (labels: readonly string[], count: number) => string;
+  /** The status line of a reply while the provider gathers, such as "Searching notebooks…". */
+  readonly gathering: Message;
+  /** An icon from @lucide/svelte for the provider's attachments and parts. */
+  readonly icon: Component;
+  /** The provider's ID. */
+  readonly id: string;
+  /** What one of the provider's attachments is, for screen readers, such as "Notebook". */
+  readonly noun: Message;
+  /** How an item opens, or nothing when the provider's items open nowhere. */
+  readonly open?: ContextOpen;
 }
 
 /** What a tool kind reads of one call of its plugin's tool (ADR-0039, decision 1). */

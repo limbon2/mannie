@@ -142,6 +142,7 @@ impl Fixture {
                                 agent: "explore".to_owned(),
                                 executor: None,
                             }),
+                            home: None,
                         },
                     },
                     Change::StartTurn {

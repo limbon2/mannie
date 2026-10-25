@@ -49,7 +49,7 @@
         </p>
         <Button size="sm" variant="outline" onclick={() => conversationList.retry()}>{m.chat_try_again()}</Button>
       </div>
-    {:else if conversationList.conversations.length === 0}
+    {:else if conversationList.chats.length === 0}
       <p class="px-2 text-xs text-muted-foreground">{m.chat_conversations_empty()}</p>
     {:else if general.length === 0}
       <p class="px-2 text-xs text-muted-foreground">{m.chat_conversations_outside_projects_empty()}</p>

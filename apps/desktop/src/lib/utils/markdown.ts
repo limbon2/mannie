@@ -9,6 +9,8 @@ import { fromMarkdown } from 'mdast-util-from-markdown';
 import { gfmFromMarkdown } from 'mdast-util-gfm';
 import { gfm } from 'micromark-extension-gfm';
 
+import { citeTarget } from './citations.js';
+
 /** Text longer than this, in UTF-8 bytes, renders as plain text. */
 export const MAX_MARKDOWN_BYTES = 200 * 1024;
 
@@ -41,6 +43,15 @@ export type TableCell = readonly RenderNode[];
 /** A node of Mannie's render tree. */
 export type RenderNode =
   | ParentNode
+  | {
+      /** The key of the item that the link names. */
+      readonly key: string;
+      readonly kind: 'citation';
+      /** The link's text, as the model wrote it, such as "Guide p. 3". */
+      readonly label: string;
+      /** The context provider of the item. */
+      readonly provider: string;
+    }
   | {
       readonly align: readonly Alignment[];
       readonly body: readonly (readonly TableCell[])[];
@@ -229,6 +240,7 @@ export function parseMarkdown(text: string): RenderedMarkdown {
 
 const INLINE_KINDS = new Set<RenderNode['kind']>([
   'break',
+  'citation',
   'delete',
   'emphasis',
   'image',
@@ -289,6 +301,42 @@ function deeper(context: Context): Context {
 
 function text(value: string): RenderNode {
   return { kind: 'text', value };
+}
+
+/** The text of nodes without their markup, as a link's label reads them. */
+function plainText(nodes: readonly RenderNode[]): string {
+  return nodes
+    .map((node) => {
+      switch (node.kind) {
+        case 'blockquote':
+        case 'delete':
+        case 'emphasis':
+        case 'heading':
+        case 'link':
+        case 'paragraph':
+        case 'strong': {
+          return plainText(node.children);
+        }
+        case 'citation': {
+          return node.label;
+        }
+        case 'image': {
+          return node.description;
+        }
+        case 'inline_code':
+        case 'text': {
+          return node.value;
+        }
+        case 'break':
+        case 'code':
+        case 'list':
+        case 'table':
+        case 'thematic_break': {
+          return '';
+        }
+      }
+    })
+    .join('');
 }
 
 /** The text a node was written as. */
@@ -388,8 +436,19 @@ function convert(node: Nodes | RootContent, context: Context): RenderNode[] {
   }
 }
 
+/**
+ * A link, or a cite link that names an excerpt of a context provider, such as
+ * `[Guide p. 3](cite:notebooks/<key>)`, which the renderer shows as a citation
+ * (ADR-0049, decision 4).
+ */
 function link(url: string, node: { children: readonly Nodes[] }, context: Context): RenderNode {
-  return { children: children(node, { ...context, inLink: true }), kind: 'link', url };
+  const inner = children(node, { ...context, inLink: true });
+  const target = citeTarget(url);
+  if (target === null) {
+    return { children: inner, kind: 'link', url };
+  }
+  const label = plainText(inner).trim();
+  return { key: target.key, kind: 'citation', label: label === '' ? target.key : label, provider: target.provider };
 }
 
 function image(url: string, description: string, context: Context): RenderNode {

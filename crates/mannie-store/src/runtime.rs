@@ -10,6 +10,7 @@
 
 mod apply;
 mod archives;
+mod attachments;
 mod background;
 mod export;
 mod images;
@@ -21,6 +22,7 @@ mod tasks;
 mod tool_images;
 
 use mannie_types::clock::UtcMillis;
+use mannie_types::context::{Attachment, AttachmentRef, ContextView};
 use mannie_types::ids::{
     ArchiveId, CheckpointId, ConversationId, PartId, ProfileId, ProjectId, RunId, TaskId, TurnId,
 };
@@ -62,6 +64,9 @@ pub struct NewConversation {
     pub project_id: Option<ProjectId>,
     /// What makes it a task conversation, or `None` for the owner's.
     pub task: Option<TaskOrigin>,
+    /// The attachment that it belongs to (ADR-0051), which the batch
+    /// attaches too, or `None`.
+    pub home: Option<AttachmentRef>,
 }
 
 /// The parent, number and agent of a task conversation
@@ -242,6 +247,20 @@ pub struct NewImage {
     pub thumbnail_format: ImageFormat,
     /// The thumbnail.
     pub thumbnail: ImageBytes,
+}
+
+/// What a context provider gave for the owner's message, which the run that
+/// answers it stores as an owner part after the message's own parts
+/// (ADR-0046, decision 3).
+#[derive(Debug, Clone)]
+pub struct NewContext {
+    /// The part.
+    pub part_id: PartId,
+    /// What the model reads of it in full, for the estimates and the
+    /// compaction.
+    pub text: String,
+    /// What the owner sees, from which the model's requests are built.
+    pub view: ContextView,
 }
 
 /// An image of a tool call's result to store with the call's part
@@ -528,6 +547,30 @@ pub enum Change {
         /// The images.
         images: Vec<NewToolImage>,
     },
+    /// The owner attached a context provider's key to the conversation, or
+    /// the provider gave an attachment a new label (ADR-0046). Refused when
+    /// the conversation holds as many attachments as Mannie keeps.
+    Attach {
+        /// The attachment, with the label that the provider gave it.
+        attachment: Attachment,
+    },
+    /// The owner detached a key from the conversation. A key that it does
+    /// not hold changes nothing.
+    Detach {
+        /// The attachment.
+        attachment: AttachmentRef,
+    },
+    /// What the providers of the conversation's attachments gave for the
+    /// owner's message joins the message, after its own parts, while the run
+    /// that answers it is active (ADR-0046, decision 3).
+    AddContext {
+        /// The run that gathered it.
+        run_id: RunId,
+        /// The run's turn.
+        turn_id: TurnId,
+        /// One part for each provider, in the order of the attachments.
+        parts: Vec<NewContext>,
+    },
 }
 
 /// The result of applying changes: the events to publish, and the sequence
@@ -595,6 +638,9 @@ pub enum RuntimeStoreError {
     /// The conversation already belongs to a project.
     #[error("the conversation already belongs to a project")]
     AlreadyInProject,
+    /// The conversation holds as many attachments as Mannie keeps.
+    #[error("the conversation holds as many attachments as Mannie keeps")]
+    TooManyAttachments,
     /// Stored data does not have the shape this version expects.
     #[error("stored data is not valid: {what}")]
     InvalidData {
@@ -624,6 +670,7 @@ impl RuntimeStoreError {
             Self::TaskActive => "runtime_store.task_active",
             Self::ProjectNotFound => "runtime_store.project_not_found",
             Self::AlreadyInProject => "runtime_store.already_in_project",
+            Self::TooManyAttachments => "runtime_store.too_many_attachments",
             Self::InvalidData { .. } => "runtime_store.invalid_data",
             Self::SequenceExhausted => "runtime_store.sequence_exhausted",
             Self::Store(error) => error.code(),
@@ -653,6 +700,7 @@ pub(crate) fn statements() -> impl Iterator<Item = &'static str> {
     apply::STATEMENTS
         .iter()
         .chain(archives::STATEMENTS)
+        .chain(attachments::STATEMENTS)
         .chain(background::STATEMENTS)
         .chain(export::STATEMENTS)
         .chain(images::STATEMENTS)

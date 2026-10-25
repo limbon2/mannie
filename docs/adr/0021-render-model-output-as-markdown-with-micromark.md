@@ -7,6 +7,8 @@
 | Deciders | Owner                                                                                                                                                                                                                                                                                        |
 | Related  | [ADR-0004](0004-keep-system-access-in-the-rust-core.md), [ADR-0017](0017-license-and-dependency-policy.md), [Desktop app](../architecture/desktop-app.md#5-rendering-untrusted-content), [Security](../architecture/security.md), [Conversation view](../features/chat/conversation-view.md) |
 
+Later changes: [ADR-0046](0046-let-plugins-attach-context-to-conversations.md) refines decision 2: a reply's markers of citations become a node of their own in the render tree.
+
 ## Context
 
 Verified 2026-10-14:

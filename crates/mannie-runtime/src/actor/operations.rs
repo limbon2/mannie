@@ -20,6 +20,7 @@ use mannie_tools::{
     decide, digest, result_limit, saved_rule,
 };
 use mannie_types::ceiling::CeilingMode;
+use mannie_types::context::Attachment;
 use mannie_types::ids::ProjectId;
 use mannie_types::run::{RunActivity, RunFailure};
 use mannie_types::tools::{
@@ -653,6 +654,12 @@ impl RunActor {
             .and_then(|summary| summary.workspace.as_ref())
             .map(PathBuf::from);
         let full_access = summary.as_ref().is_some_and(|summary| summary.full_access);
+        // A child's calls reach the attachments of the conversation that
+        // gave it its task (ADR-0052).
+        let attachments: Arc<[Attachment]> = summary.as_ref().map_or_else(
+            || Arc::from(Vec::new()),
+            |summary| Arc::from(summary.attachments.clone()),
+        );
         let project = summary.and_then(|summary| summary.project_id);
         let projects = inner.store.projects().await?;
         let PolicyGrants {
@@ -716,6 +723,7 @@ impl RunActor {
             background: Arc::new(BackgroundPort {
                 runtime: self.runtime.clone(),
             }),
+            attachments,
         };
         Ok(Surroundings {
             context,

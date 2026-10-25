@@ -18,6 +18,16 @@ interface ViewUrl {
   readonly searchParams: { get(name: string): string | null };
 }
 
+/**
+ * The search of a view's address with its parameters, with its `?`. The
+ * view's own parameter goes last, so that the parameters cannot name another
+ * view.
+ */
+export function viewSearch(view: string, parameters: Readonly<Record<string, string>> = {}): string {
+  const search = new URLSearchParams({ ...parameters, [VIEW_PARAMETER]: view });
+  return `?${search.toString()}`;
+}
+
 /** Chooses the view the URL asks for. */
 export function activeView(views: Slot<ShellView>, url: ViewUrl): ActiveView {
   const requested = url.searchParams.get(VIEW_PARAMETER);

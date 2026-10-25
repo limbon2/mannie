@@ -45,7 +45,10 @@ impl TypedTool for MoveToProject {
     /// Only a general conversation moves, and only while the owner has
     /// projects.
     fn offered(availability: &Availability<'_>) -> bool {
-        availability.project.is_none() && !availability.projects.is_empty()
+        // A conversation that belongs to an attachment, such as a notebook's
+        // chat, never moves into a project (ADR-0051).
+        let general = availability.project.is_none() && !availability.has_home;
+        general && !availability.projects.is_empty()
     }
 
     fn prepare(context: &ToolContext, input: &Input) -> Result<Vec<Access>, PrepareError> {

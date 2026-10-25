@@ -6,13 +6,19 @@
 // the app treats it as a server that it does not recognize. Every model calls
 // the tool of the provider test's Tools check when a request offers it, and
 // the tools scenario calls the tools that the owner's message lists
-// (docs/features/system-tools/tool-activity.md, tests).
+// (docs/features/system-tools/tool-activity.md, tests). It also serves
+// embeddings and reranking in the shapes that search profiles use (ADR-0047),
+// from the words of the texts, so that searches need no real model.
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 
 /** The scenarios, by model name. */
 export const MODELS = {
+  /** Answers with a sentence that copies the first cite link of the owner's latest message, as a model cites an excerpt (ADR-0049). */
+  cites: 'e2e-cites',
   /** Answers in several pieces with text that names the owner's message. */
   echo: 'e2e-echo',
+  /** Embeds each text as a vector of its words, through `/embeddings`. */
+  embeddings: 'e2e-embeddings',
   /** Answers with 32 KB of Markdown in pieces of about four bytes, 200 pieces a second. */
   fast: 'e2e-fast',
   /** Answers with the hostile Markdown that the test gave the server. */
@@ -27,6 +33,14 @@ export const MODELS = {
   rateLimited: 'e2e-rate-limited',
   /** Reasons before it answers. */
   reasoning: 'e2e-reasoning',
+  /** Scores each document by the share of the query's words that it holds, through `/rerank`. */
+  rerank: 'e2e-rerank',
+  /**
+   * Calls `search_notebooks` with the owner's latest message when the request
+   * offers it, then answers with a sentence that copies the first cite link of
+   * the tool's result (ADR-0052).
+   */
+  searches: 'e2e-searches',
   /** Answers with numbered words for about 20 seconds, for replies that run at the same time. */
   slow: 'e2e-slow',
   /** Answers with pieces that carry the time they were sent: `[t=<ms since the epoch>]`. */
@@ -78,6 +92,77 @@ export const TOOLS_DONE = 'Tools done.';
 
 /** The tool of the provider test's Tools check (crates/mannie-provider/src/probe.rs). */
 const PROBE_TOOL = 'report_status';
+
+/** What the replies of the cites and searches scenarios start with, before the cite link that they copy. */
+export const CITED_REPLY = 'The notes answer this';
+
+/** What the cites and searches scenarios answer when they read no cite link. */
+export const UNCITED_REPLY = 'The notes cite nothing.';
+
+/** The tool of the plugin Notebooks that the searches scenario calls. */
+const SEARCH_TOOL = 'search_notebooks';
+
+/** A cite link that Mannie wrote: a label and `cite:<provider>/<key>`, without the instructions' example key `…`. */
+const CITE_LINK = /\[[^\]\n]+\]\(cite:[a-z0-9_.-]+\/[^)\s…]+\)/u;
+
+/** The dimensions of the embedding scenario's vectors. */
+const EMBEDDING_DIMENSIONS = 64;
+
+/** The words of a text in lower case, as the search scenarios compare them. */
+function words(text: string): string[] {
+  return text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+}
+
+/** The FNV-1a hash of a word. */
+function wordHash(word: string): number {
+  let hash = 0x81_1c_9d_c5;
+  for (const character of word) {
+    hash ^= character.codePointAt(0) ?? 0;
+    hash = Math.imul(hash, 0x01_00_01_93) >>> 0;
+  }
+  return hash;
+}
+
+/** A text's vector: each word adds to the dimension of its hash, and the vector has a length of 1. */
+function embeddingOf(text: string): number[] {
+  const vector = Array.from({ length: EMBEDDING_DIMENSIONS }, () => 0);
+  for (const word of words(text)) {
+    const dimension = wordHash(word) % EMBEDDING_DIMENSIONS;
+    vector[dimension] = (vector[dimension] ?? 0) + 1;
+  }
+  const length = Math.hypot(...vector);
+  return length === 0 ? vector : vector.map((value) => value / length);
+}
+
+/** The share of the query's distinct words that a document holds, from 0 to 1. */
+function rerankScore(query: string, document: string): number {
+  const asked = new Set(words(query));
+  if (asked.size === 0) {
+    return 0;
+  }
+  const held = new Set(words(document));
+  const shared = [...asked].filter((word) => held.has(word)).length;
+  return shared / asked.size;
+}
+
+/** Answers `/embeddings` in OpenAI's shape, a vector for each input in its order. */
+function answerEmbeddings(response: ServerResponse, body: Record<string, unknown>): void {
+  const inputs = Array.isArray(body.input) ? body.input.map(String) : [String(body.input)];
+  const data = inputs.map((text, index) => ({ embedding: embeddingOf(text), index, object: 'embedding' }));
+  response.writeHead(200, { 'content-type': 'application/json' });
+  response.end(JSON.stringify({ data, model: body.model, object: 'list' }));
+}
+
+/** Answers `/rerank` in the shape of Jina and llama.cpp's server, the best score first. */
+function answerRerank(response: ServerResponse, body: Record<string, unknown>): void {
+  const query = String(body.query);
+  const documents = Array.isArray(body.documents) ? body.documents.map(String) : [];
+  const results = documents
+    .map((document, index) => ({ index, relevance_score: rerankScore(query, document) }))
+    .toSorted((first, second) => second.relevance_score - first.relevance_score);
+  response.writeHead(200, { 'content-type': 'application/json' });
+  response.end(JSON.stringify({ model: body.model, object: 'list', results }));
+}
 
 /** A tool call that a scenario makes. */
 interface ScriptedCall {
@@ -352,6 +437,12 @@ function toolSteps(body: Record<string, unknown>): number {
   return steps;
 }
 
+/** A sentence that copies the first cite link of a text, or says that there is none. */
+function citingReply(text: string): string {
+  const link = CITE_LINK.exec(text)?.[0];
+  return link === undefined ? UNCITED_REPLY : `${CITED_REPLY} ${link}.`;
+}
+
 /** The latest tool result that a request sends back, in either interface. */
 function latestToolResult(body: Record<string, unknown>): string {
   for (const entry of entriesAfterOwner(body).toReversed()) {
@@ -567,6 +658,25 @@ export async function startProviderServer(): Promise<ProviderServer> {
         writer.finish({ input, output: 12 });
         return;
       }
+      case MODELS.cites: {
+        const reply = citingReply(latestOwnerText(body));
+        writer.text(reply);
+        writer.finish({ input, output: tokens(reply) });
+        return;
+      }
+      case MODELS.searches: {
+        const searches = steps === 0 && offeredTools(body).includes(SEARCH_TOOL);
+        if (searches) {
+          const query = latestOwnerText(body);
+          const search = JSON.stringify({ limit: null, notebooks: null, query, sources: null });
+          callTools(writer, [{ arguments: search, name: SEARCH_TOOL }], input);
+          return;
+        }
+        const reply = citingReply(latestToolResult(body));
+        writer.text(reply);
+        writer.finish({ input, output: tokens(reply) });
+        return;
+      }
       case MODELS.tools: {
         // A long conversation of tools is compacted like any other.
         if (isSummaryRequest(body)) {
@@ -623,6 +733,17 @@ export async function startProviderServer(): Promise<ProviderServer> {
       }));
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify({ data, object: 'list' }));
+      return;
+    }
+    const isPost = request.method === 'POST' && body !== null;
+    const isEmbedding = path === '/v1/embeddings';
+    const isRerank = path === '/v1/rerank';
+    if (isPost && isEmbedding) {
+      answerEmbeddings(response, body);
+      return;
+    }
+    if (isPost && isRerank) {
+      answerRerank(response, body);
       return;
     }
     const api = interfaceOf(path);

@@ -20,14 +20,26 @@ describe('the shell', () => {
     await waitForApp();
   });
 
-  it('opens into the chat view, with the conversation list in the sidebar', async () => {
+  it('opens into the chat view, with the activity bar and the conversation list in the sidebar', async () => {
     await expect($('[data-slot="sidebar"]')).toBeDisplayed();
     await expect($('main#main textarea[aria-describedby="composer-hint"]')).toBeDisplayed();
-    // Without navigation entries, the sidebar shows no navigation group, only
-    // the chat feature's panels: the projects and the conversations (ADR-0020,
-    // ADR-0023).
+    // The activity bar selects Chat, whose sidebar shows the chat feature's
+    // panels, the projects and the conversations, and the bar's foot holds
+    // the command palette and the settings (ADR-0045, ADR-0023).
+    const bar = await browser.execute(() =>
+      [...document.querySelectorAll('[data-shell-sidebar="bar"] [data-sidebar="menu-button"]')].map((button) => ({
+        current: button.getAttribute('aria-current'),
+        text: button.textContent.trim(),
+      })),
+    );
+    expect(bar).toEqual([
+      { current: 'page', text: 'Chat' },
+      { current: null, text: 'Find a command' },
+      { current: null, text: 'Settings' },
+    ]);
+    await expect($('nav[aria-label="Views"]')).toBeDisplayed();
     const labels = await browser.execute(() =>
-      [...document.querySelectorAll('[data-slot="sidebar"] [data-slot="sidebar-group-label"]')].map((label) =>
+      [...document.querySelectorAll('[data-shell-sidebar="content"] [data-slot="sidebar-group-label"]')].map((label) =>
         label.textContent.trim(),
       ),
     );
@@ -87,7 +99,7 @@ describe('the shell', () => {
     await openSettings('window.behavior');
 
     const entries = await browser.execute(() =>
-      [...document.querySelectorAll('[data-slot="sidebar"] [data-sidebar="menu-button"]')].map((entry) =>
+      [...document.querySelectorAll('[data-shell-sidebar="content"] [data-sidebar="menu-button"]')].map((entry) =>
         entry.textContent.trim(),
       ),
     );
@@ -112,12 +124,27 @@ describe('the shell', () => {
     expect(await browser.execute(() => location.search)).toBe('?view=chat');
   });
 
-  it('shows and hides the sidebar with Ctrl+B', async () => {
+  it('shows and hides the sidebar with Ctrl+B, and keeps the activity bar', async () => {
     const sidebar = await $('[data-slot="sidebar"][data-state]');
     await expect(sidebar).toHaveAttribute('data-state', 'expanded');
     await browser.keys([Key.Ctrl, 'b']);
     await expect(sidebar).toHaveAttribute('data-state', 'collapsed');
+    // The content leaves the page, so the focus cannot reach it, and the bar stays.
+    await expect($('[data-shell-sidebar="content"]')).not.toBeDisplayed();
+    await expect($('nav[aria-label="Views"]')).toBeDisplayed();
+    expect(await axeViolations()).toEqual([]);
     await browser.keys([Key.Ctrl, 'b']);
     await expect(sidebar).toHaveAttribute('data-state', 'expanded');
+  });
+
+  it('shows each entry of the activity bar from the command palette', async () => {
+    await runCommand('Show Chat');
+    // The bar shows only icons, so the entry's label is its accessible name
+    // and its tooltip, which the visible text does not show.
+    const current = await browser.execute(
+      () => document.querySelector('[data-shell-sidebar="bar"] a[aria-current="page"]')?.textContent.trim() ?? null,
+    );
+    expect(current).toBe('Chat');
+    await expect($('main#main textarea[aria-describedby="composer-hint"]')).toBeDisplayed();
   });
 });

@@ -112,6 +112,23 @@ impl HttpClient {
     pub(crate) fn get(&self, url: Url, credential: Option<&Secret>) -> RequestBuilder {
         authorize(self.client.get(url), credential)
     }
+
+    /// A POST of JSON to `url` that expects JSON back, with the credential as
+    /// a bearer token, for the calls of search profiles (ADR-0047).
+    pub(crate) fn post_json(
+        &self,
+        url: Url,
+        credential: Option<&Secret>,
+        body: Vec<u8>,
+    ) -> RequestBuilder {
+        let request = self
+            .client
+            .post(url)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .header(reqwest::header::ACCEPT, "application/json")
+            .body(body);
+        authorize(request, credential)
+    }
 }
 
 /// Adds the credential as a bearer token, marked as sensitive so that the

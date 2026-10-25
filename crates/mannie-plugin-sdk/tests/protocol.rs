@@ -9,14 +9,15 @@ use std::collections::BTreeSet;
 
 use mannie_plugin_sdk::context::{HostInfo, HostProfile};
 use mannie_plugin_sdk::contracts::{
-    AccessMode, ArchiveId, CommandError, ImageFormat, MentionEntry, MentionSummary,
-    ProfileSnapshot, SubscriptionEnd, TaskExecutorRef, TaskState, ToolHint, ToolServerEndpoint,
-    WorkItem,
+    AccessMode, ArchiveId, CommandError, ContextLocation, ImageFormat, MentionEntry,
+    MentionSummary, ProfileSnapshot, SubscriptionEnd, TaskExecutorRef, TaskState, ToolHint,
+    ToolServerEndpoint, WorkItem,
 };
 use mannie_plugin_sdk::error::StartFailure;
 use mannie_plugin_sdk::ids::PluginId;
 use mannie_plugin_sdk::ipc::{ChannelMessage, HostRefusal, InputRefusal, PluginFailure};
 use mannie_plugin_sdk::points::agents::Requester;
+use mannie_plugin_sdk::points::context::{ContextItem, ContextRequest};
 use mannie_plugin_sdk::points::executors::{
     ExecutorRefusal, ExecutorSection, FollowUpPlan, PlanError, SubmitError, TaskPlan,
     TaskSubmission,
@@ -33,6 +34,7 @@ use mannie_plugin_sdk::services::background_commands::{
 use mannie_plugin_sdk::services::credentials::LendError;
 use mannie_plugin_sdk::services::executor_host::{ExecutorTask, HostFailure, OutboxItem};
 use mannie_plugin_sdk::services::file_dialog::{DialogError, FileFilter};
+use mannie_plugin_sdk::services::models::{InputKind, ModelsError, SearchModel, SearchModelKind};
 use mannie_plugin_sdk::services::secrets::SecretsError;
 use serde_json::json;
 
@@ -300,6 +302,53 @@ fn a_provider_s_suggestions_and_rendered_mention_cross_json_unchanged() {
         serde_json::from_value::<RenderedMention>(rendered_json).unwrap(),
         rendered
     );
+}
+
+#[test]
+fn a_context_request_and_its_items_cross_json_unchanged() {
+    let request_json = json!({
+        "conversationId": "0199e0f2-0000-7000-8000-000000000001",
+        "keys": ["n1", "n2"],
+        "message": "Why does light bend?",
+        "maxBytes": 16384,
+        "maxItems": 20
+    });
+    let item = ContextItem::new(
+        "s1:4".to_owned(),
+        "Optics.pdf".to_owned(),
+        Some(ContextLocation::Headings {
+            path: vec!["Waves".to_owned()],
+        }),
+        "Light bends.".to_owned(),
+    );
+
+    let request = serde_json::from_value::<ContextRequest>(request_json.clone()).unwrap();
+    let item_json = serde_json::to_value(&item).unwrap();
+
+    assert_eq!(request.keys, ["n1", "n2"]);
+    assert_eq!((request.max_bytes, request.max_items), (16_384, 20));
+    assert_eq!(serde_json::to_value(&request).unwrap(), request_json);
+    assert_eq!(
+        item_json,
+        json!({
+            "key": "s1:4",
+            "title": "Optics.pdf",
+            "location": { "kind": "headings", "path": ["Waves"] },
+            "text": "Light bends."
+        })
+    );
+    assert_eq!(
+        serde_json::from_value::<ContextItem>(item_json).unwrap(),
+        item
+    );
+    let error = serde_json::from_value::<ContextItem>(json!({
+        "key": "s1:4",
+        "title": "Optics.pdf",
+        "location": { "kind": "chapter", "number": 2 },
+        "text": "Light bends."
+    }))
+    .unwrap_err();
+    assert!(error.is_data(), "{error}");
 }
 
 #[test]
@@ -1085,6 +1134,69 @@ fn a_secrets_error_crosses_json_as_its_name() {
         assert_eq!(serde_json::from_str::<SecretsError>(json).unwrap(), error);
     }
     let error = serde_json::from_str::<SecretsError>(r#""locked""#).unwrap_err();
+    assert!(error.is_data(), "{error}");
+}
+
+#[test]
+fn a_search_model_and_the_kinds_of_a_call_cross_json_unchanged() {
+    let json = json!({
+        "id": "0199e0f2-0000-7000-8000-000000000001",
+        "name": "GPU box",
+        "model": "an-embedding-model",
+        "kind": "embeddings",
+        "vectorKey": "3f2a",
+    });
+
+    let model = serde_json::from_value::<SearchModel>(json.clone()).unwrap();
+
+    assert_eq!(
+        model,
+        SearchModel::new(
+            "0199e0f2-0000-7000-8000-000000000001",
+            "GPU box",
+            "an-embedding-model",
+            SearchModelKind::Embeddings,
+            "3f2a"
+        )
+    );
+    assert_eq!(serde_json::to_value(&model).unwrap(), json);
+    assert_eq!(
+        serde_json::to_value(SearchModelKind::Rerank).unwrap(),
+        json!("rerank")
+    );
+    assert_eq!(
+        serde_json::to_value(InputKind::Query).unwrap(),
+        json!("query")
+    );
+    assert_eq!(
+        serde_json::to_value(InputKind::Document).unwrap(),
+        json!("document")
+    );
+}
+
+#[test]
+fn a_models_error_crosses_json_as_its_code_and_fields() {
+    for (error, json) in [
+        (
+            ModelsError::ProfileNotFound,
+            json!({ "code": "profile_not_found" }),
+        ),
+        (ModelsError::Unreachable, json!({ "code": "unreachable" })),
+        (
+            ModelsError::Refused {
+                failure: "model_not_found".to_owned(),
+            },
+            json!({ "code": "refused", "failure": "model_not_found" }),
+        ),
+        (
+            ModelsError::InputTooLong,
+            json!({ "code": "input_too_long" }),
+        ),
+    ] {
+        assert_eq!(serde_json::to_value(&error).unwrap(), json);
+        assert_eq!(serde_json::from_value::<ModelsError>(json).unwrap(), error);
+    }
+    let error = serde_json::from_value::<ModelsError>(json!({ "code": "teleported" })).unwrap_err();
     assert!(error.is_data(), "{error}");
 }
 

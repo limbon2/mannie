@@ -19,6 +19,7 @@ use mannie_plugin_sdk::services::background_commands::BackgroundCommands;
 use mannie_plugin_sdk::services::credentials::{Credentials, LendError};
 use mannie_plugin_sdk::services::executor_host::{ExecutorHost, ExecutorTask, OutboxItem};
 use mannie_plugin_sdk::services::local_servers::LocalServers;
+use mannie_plugin_sdk::services::models::Models;
 use mannie_plugin_sdk::services::processes::Processes;
 use mannie_plugin_sdk::services::service_info;
 use mannie_provider::testing::Step;
@@ -223,7 +224,7 @@ fn fake_manifest() -> Manifest {
 }
 
 #[tokio::test]
-async fn the_runtimes_providers_bind_the_executor_host_credentials_processes_background_commands_and_local_servers_to_the_plugin()
+async fn the_runtimes_providers_bind_the_executor_host_credentials_processes_background_commands_local_servers_and_models_to_the_plugin()
  {
     let setup = Setup::new().await;
     let (_conversation, _run, submission) = setup.give_task().await;
@@ -242,15 +243,17 @@ async fn the_runtimes_providers_bind_the_executor_host_credentials_processes_bac
         processes_provider,
         commands_provider,
         servers_provider,
+        models_provider,
     ] = providers.as_slice()
     else {
-        panic!("the runtime provides five services: {provided:?}");
+        panic!("the runtime provides six services: {provided:?}");
     };
     let host = host_provider.bind(&binding).unwrap();
     let lender = credentials_provider.bind(&binding).unwrap();
     let programs = processes_provider.bind(&binding).unwrap();
     let commands = commands_provider.bind(&binding).unwrap();
     let servers = servers_provider.bind(&binding).unwrap();
+    let models = models_provider.bind(&binding).unwrap();
 
     assert_eq!(
         provided,
@@ -259,7 +262,8 @@ async fn the_runtimes_providers_bind_the_executor_host_credentials_processes_bac
             ("credentials", 1),
             ("processes", 1),
             ("background-commands", 1),
-            ("local-servers", 1)
+            ("local-servers", 1),
+            ("models", 1)
         ]
     );
     for (name, major) in provided {
@@ -275,6 +279,7 @@ async fn the_runtimes_providers_bind_the_executor_host_credentials_processes_bac
         "{commands:?}"
     );
     assert!(servers.get::<LocalServers>().is_some(), "{servers:?}");
+    assert!(models.get::<Models>().is_some(), "{models:?}");
     let active = host
         .get::<ExecutorHost>()
         .unwrap()

@@ -21,6 +21,7 @@ use mannie_tools::{Availability, PermissionClass, Tool, with_activity};
 use mannie_types::ceiling::CeilingMode;
 use mannie_types::chat::ChatSettings;
 use mannie_types::clock::UtcMillis;
+use mannie_types::context::{Attachment, AttachmentRef};
 use mannie_types::ids::{ConversationId, PartId, ProfileId, ProjectId};
 use mannie_types::projects::ProjectView;
 use mannie_types::provider::{ApiInterface, ReasoningEffort, context_budget};
@@ -33,9 +34,10 @@ use crate::agents::{AgentDefinition, Requester};
 use crate::assigned::{AssignedRun, lease_reference};
 use crate::budget::{Ledger, estimate_request, usage};
 use crate::compaction::{self, ContextSize, Trigger};
-use crate::context::{RequestShape, SentImages, build_request};
+use crate::context::{RequestShape, SentImages, build_request, chosen_context};
 use crate::instructions::{
-    InstructionContext, InstructionSection, MachineContext, ToolEnvironment, plugin_sections,
+    InstructionContext, InstructionSection, MachineContext, SourcesContext, ToolEnvironment,
+    plugin_sections,
 };
 use crate::plugin_tools::{OfferedPluginTool, offered_tools};
 use crate::plugins::Snapshot;
@@ -295,15 +297,47 @@ pub(crate) struct Prepared {
     pub(crate) ledger: Ledger,
 }
 
-/// What a run with tools learns of its conversation for one call.
+/// What a run learns of its conversation for one call.
 #[derive(Debug, Default)]
 struct ConversationFacts {
-    /// The conversation's project.
+    /// The conversation's project, for a run with tools.
     project_id: Option<ProjectId>,
-    /// The owner's projects, the oldest first.
+    /// The owner's projects, the oldest first, for a run with tools.
     projects: Vec<ProjectView>,
     /// Whether the conversation, or a child's parent, is in full access.
     full_access: bool,
+    /// The attachments of the conversation, or of a child's parent, which
+    /// the instructions outline and plugins' tools may be offered for
+    /// (ADR-0049, ADR-0052).
+    attachments: Vec<Attachment>,
+    /// The attachment that the conversation, or a child's parent, belongs to
+    /// (ADR-0051).
+    home: Option<AttachmentRef>,
+}
+
+/// What the instructions say of a conversation's attachments, owned for one
+/// call, which the section of sources borrows.
+#[derive(Debug, Default)]
+struct AttachedSources {
+    /// Whether the conversation holds attachments at all.
+    attached: bool,
+    /// What the attachments hold, as their providers outline it.
+    outline: String,
+    /// The label of the attachment that the conversation belongs to.
+    home: Option<String>,
+}
+
+impl AttachedSources {
+    /// The section of sources of the instructions, or `None` without
+    /// attachments. `excerpts` says whether a message of the request holds
+    /// excerpts.
+    fn context(&self, excerpts: bool) -> Option<SourcesContext<'_>> {
+        self.attached.then(|| SourcesContext {
+            home: self.home.as_deref(),
+            outline: &self.outline,
+            excerpts,
+        })
+    }
 }
 
 impl Runtime {
@@ -572,23 +606,33 @@ impl Runtime {
         Ok(setup)
     }
 
-    /// What a run with tools learns of `authority` for its next call: its
-    /// project, the owner's projects and whether it is in full access. A run
-    /// without tools learns none of it.
+    /// What a run learns of `authority` for its next call: its attachments
+    /// and home, and for a run with tools, its project, the owner's projects
+    /// and whether it is in full access.
     async fn conversation_facts(
         &self,
         authority: &ConversationId,
         setup: &Setup,
     ) -> Result<ConversationFacts, CallError> {
-        if !setup.uses_tools() {
-            return Ok(ConversationFacts::default());
-        }
         let summary = self.inner.store.conversation_summary(authority).await?;
+        let (attachments, home) = summary
+            .as_ref()
+            .map(|summary| (summary.attachments.clone(), summary.home.clone()))
+            .unwrap_or_default();
+        if !setup.uses_tools() {
+            return Ok(ConversationFacts {
+                attachments,
+                home,
+                ..ConversationFacts::default()
+            });
+        }
         let projects = self.inner.store.projects().await?;
         Ok(ConversationFacts {
             full_access: summary.as_ref().is_some_and(|summary| summary.full_access),
             project_id: summary.and_then(|summary| summary.project_id),
             projects,
+            attachments,
+            home,
         })
     }
 
@@ -620,16 +664,21 @@ impl Runtime {
             project_id,
             projects,
             full_access,
+            attachments,
+            home,
         } = self.conversation_facts(authority, setup).await?;
         let project = project_id
             .as_ref()
             .and_then(|id| projects.iter().find(|project| project.id == *id));
         // Which tools a call is offered depends on the conversation: a
         // general conversation can move into a project, one in a project
-        // cannot (docs/architecture/tools.md, availability).
+        // cannot (docs/architecture/tools.md, availability), and plugins'
+        // tools may need its attachments (ADR-0052).
         let availability = Availability {
             project,
             projects: &projects,
+            attachments: &attachments,
+            has_home: home.is_some(),
         };
         let definitions = setup.definitions_for(&availability);
         let offered: Vec<&str> = definitions
@@ -644,6 +693,8 @@ impl Runtime {
             &[]
         };
         let system = &self.inner.tools.system;
+        let full_context = chosen_context(&turns);
+        let attached = self.attached_sources(&attachments, home.as_ref()).await;
         let context = InstructionContext {
             agent: &setup.agent,
             owner_instructions: owner.as_str(),
@@ -660,6 +711,7 @@ impl Runtime {
             }),
             offers_tasks: setup.offers_tasks(),
             machine: self.machine_context(setup),
+            sources: attached.context(!full_context.is_empty()),
         };
         let instructions = self
             .inner
@@ -684,16 +736,11 @@ impl Runtime {
             definitions: &definitions,
             left_out: &left_out,
             tool_images: &tool_images,
+            full_context: &full_context,
         };
         let request = call_request(setup, &shape, &turns);
         let estimate = estimate_request(&request);
-        let ledger = Ledger::parse(
-            self.inner
-                .store
-                .context_ledger(conversation)
-                .await?
-                .as_deref(),
-        );
+        let ledger = self.ledger_of(conversation).await?;
         let checkpoint_id = checkpoint.as_ref().map(|checkpoint| checkpoint.id.as_str());
         let projected = ledger.project(&setup.binding, checkpoint_id, estimate);
         Ok(Prepared {
@@ -707,6 +754,39 @@ impl Runtime {
             turns,
             ledger,
         })
+    }
+
+    /// The ledger of a conversation's context sizes, as the store keeps it.
+    async fn ledger_of(&self, conversation: &ConversationId) -> Result<Ledger, CallError> {
+        let stored = self.inner.store.context_ledger(conversation).await?;
+        Ok(Ledger::parse(stored.as_deref()))
+    }
+
+    /// What the instructions say of a conversation's attachments: the
+    /// outlines of what they hold, which the model reads before it searches
+    /// them, and the label of its home (ADR-0049, decision 3).
+    async fn attached_sources(
+        &self,
+        attachments: &[Attachment],
+        home: Option<&AttachmentRef>,
+    ) -> AttachedSources {
+        if attachments.is_empty() {
+            return AttachedSources::default();
+        }
+        let outline = self.outline_attachments(attachments).await;
+        let home = home.and_then(|home| {
+            attachments
+                .iter()
+                .find(|attachment| {
+                    attachment.provider == home.provider && attachment.key == home.key
+                })
+                .map(|attachment| attachment.label.clone())
+        });
+        AttachedSources {
+            attached: true,
+            outline,
+            home,
+        }
     }
 
     /// The images of the newest results that a request sends, read from the
@@ -1015,6 +1095,8 @@ struct Shaping<'a> {
     left_out: &'a HashSet<PartId>,
     /// The images of the newest results that the request sends.
     tool_images: &'a SentImages,
+    /// The parts `context` whose excerpts the request sends in full.
+    full_context: &'a HashSet<PartId>,
 }
 
 /// The request of a call: its instructions, the tools that it offers and the
@@ -1040,6 +1122,7 @@ fn call_request(setup: &Setup, shaping: &Shaping<'_>, turns: &[ModelTurn]) -> Mo
         left_out: shaping.left_out,
         requester: setup.requester(),
         tool_images: shaping.tool_images,
+        full_context: shaping.full_context,
     };
     build_request(shape, turns)
 }

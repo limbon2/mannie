@@ -109,3 +109,17 @@ describe('moves in the conversation list', () => {
     expect(heard).toEqual([]);
   });
 });
+
+describe("the Chat's conversations", () => {
+  it('leave out the conversations that belong to a plugin’s item, which the plugin lists (ADR-0051)', () => {
+    const { list } = followedList();
+    const general = { ...summary(null, 'General'), id: '0199e0f2-0000-7000-8000-000000000002' };
+    const notebooksChat = { ...summary(null, 'A notebook’s chat'), home: { key: 'n1', provider: 'notebooks' } };
+
+    channel.deliver([{ ...SNAPSHOT, conversations: [general, notebooksChat] }]);
+
+    expect(list.conversations).toHaveLength(2);
+    expect(list.chats.map((conversation) => conversation.title)).toEqual(['General']);
+    expect(list.grouped.general.map((conversation) => conversation.title)).toEqual(['General']);
+  });
+});

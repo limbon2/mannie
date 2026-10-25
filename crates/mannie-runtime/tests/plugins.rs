@@ -27,6 +27,9 @@ use mannie_plugin_sdk::host::{
 use mannie_plugin_sdk::ids::PluginId;
 use mannie_plugin_sdk::points;
 use mannie_plugin_sdk::points::agents::{AgentBudgets, AgentSpec, Agents, Requester};
+use mannie_plugin_sdk::points::context::{
+    ContextItem, ContextProvider, ContextProviders, ContextRequest, PluginContextProvider,
+};
 use mannie_plugin_sdk::points::executors::{Executors, TaskExecutor};
 use mannie_plugin_sdk::points::images::{ImageSource, ImageSources, SourcedImage};
 use mannie_plugin_sdk::points::mentions::{
@@ -49,6 +52,7 @@ use mannie_runtime::testing::{
 use mannie_runtime::{GENERAL, texts};
 use mannie_tools::{MIN_RESULT_LIMIT_BYTES, RESULT_LIMIT_BYTES, result_limit};
 use mannie_types::chat::{ChatError, StartConversation};
+use mannie_types::context::{AttachmentRef, ChangeAttachment};
 use mannie_types::ids::{ConversationId, RunId};
 use mannie_types::images::ImageRef;
 use mannie_types::mentions::{MentionPlace, SuggestMentions};
@@ -78,6 +82,11 @@ const SHOTS: &str = "fake.shots";
 
 /// The tool that the source of the plugin of every point publishes.
 const PUBLISHED: &str = "fake_published";
+
+/// The context provider of the plugin of every point, and the one key that
+/// it knows.
+const SHELF: &str = "fake.shelf";
+const SHELF_KEY: &str = "books";
 
 /// The schema of a tool's arguments: one text.
 fn text_argument() -> Value {
@@ -427,6 +436,28 @@ impl ToolSource for OneSet {
     }
 }
 
+/// A context provider that knows one key and finds nothing in it.
+#[derive(Debug)]
+struct Shelf;
+
+impl ContextProvider for Shelf {
+    fn describe(&self, key: String) -> BoxFuture<'static, Result<String, String>> {
+        let label = if key == SHELF_KEY {
+            Ok("Books".to_owned())
+        } else {
+            Err("not_found".to_owned())
+        };
+        futures_util::future::ready(label).boxed()
+    }
+
+    fn gather(
+        &self,
+        _request: ContextRequest,
+    ) -> BoxFuture<'static, Result<Vec<ContextItem>, String>> {
+        futures_util::future::ready(Ok(Vec::new())).boxed()
+    }
+}
+
 /// The contributions of a plugin to every point of the SDK, with the image
 /// source `source`. The plugin's ID is the fake executor's kind.
 fn every_point(source: &'static str) -> Contributions {
@@ -439,6 +470,7 @@ fn every_point(source: &'static str) -> Contributions {
             FAKE_EXECUTOR_KIND,
             Arc::new(OneSet(vec![published])),
         ))
+        .add::<ContextProviders>(PluginContextProvider::new(SHELF, Arc::new(Shelf)))
 }
 
 /// A section's source that tells the model what the runtime told it of the
@@ -551,14 +583,34 @@ async fn until_requested(harness: &Harness, marker: &str) {
 /// The points of the fake plugin of [`every_point`] that the runtime offers
 /// now, in the order of the SDK's points: whether a run that starts gets the
 /// plugin's tool, its child agent, its section and its executor's tool with
-/// its section, whether the "@" list has a group of its mention provider, and
-/// whether a message can hold an image of its source. Each is read through
-/// runs, the "@" list and a message with an image, marked with `marker`.
+/// its section, whether the "@" list has a group of its mention provider,
+/// whether a message can hold an image of its source, and whether a
+/// conversation can attach a key of its context provider. Each is read
+/// through runs, the "@" list, a message with an image and an attachment,
+/// marked with `marker`.
 async fn reached(harness: &Harness, marker: &str) -> Vec<&'static str> {
     let first = format!("{marker}:");
     harness.model.push_reply_for(&first, reply("Hello."));
     let (conversation, run) = start(harness, &format!("{first} hello")).await;
     harness.wait_for_run(&conversation, &run).await;
+    let attached = harness
+        .runtime
+        .attach_context(ChangeAttachment {
+            conversation_id: conversation.clone(),
+            attachment: AttachmentRef {
+                provider: SHELF.to_owned(),
+                key: SHELF_KEY.to_owned(),
+            },
+        })
+        .await;
+    let context = match attached {
+        Ok(()) => true,
+        Err(ChatError::ContextUnavailable { provider }) => {
+            assert_eq!(provider, SHELF);
+            false
+        }
+        Err(other) => panic!("attaching a key failed: {other}"),
+    };
     let request = &harness.model.requests_for(&first)[0];
     let tools = tool_names(request);
     let suggestions = harness
@@ -614,6 +666,7 @@ async fn reached(harness: &Harness, marker: &str) -> Vec<&'static str> {
         ),
         (ImageSources::NAME, images),
         (ToolSources::NAME, tools.contains(&PUBLISHED.to_owned())),
+        (ContextProviders::NAME, context),
     ];
     offered
         .into_iter()
@@ -666,9 +719,9 @@ async fn a_refused_image_source_leaves_no_tool_agent_section_executor_or_mention
     )
     .unwrap_err();
     // The runtime's consumer checks its points in order and the image
-    // sources last, so its own refusal of a source whose ID another plugin
-    // has comes after the tool, the agent, the section, the executor and the
-    // mention provider passed. The coordinator would have refused the ID
+    // sources after the mention providers, so its own refusal of a source
+    // whose ID another plugin has comes after the tool, the agent, the
+    // section, the executor and the mention provider passed. The coordinator would have refused the ID
     // first, so the test hands the entries to the consumer as the coordinator
     // does after its checks.
     let checked = consumer.check(&fake, &every_point("other.shots"));

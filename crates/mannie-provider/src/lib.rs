@@ -1,5 +1,6 @@
 //! Mannie's provider adapters (ADR-0011): one streamed model call each,
-//! through the OpenAI Responses API or Chat Completions.
+//! through the OpenAI Responses API or Chat Completions, and the calls of
+//! embedding and rerank models of search profiles (ADR-0047).
 //!
 //! An adapter turns a [`ModelRequest`] into an HTTP request, streams the
 //! answer, and normalizes it into [`ProviderEvent`]s, classifying failures
@@ -22,6 +23,7 @@ mod provider;
 mod quirks;
 mod registry;
 mod responses;
+mod search;
 mod sse;
 mod stream;
 #[cfg(feature = "testing")]
@@ -42,4 +44,8 @@ pub use quirks::{EffortShape, OutputLimitField, Quirks, ToolQuirks, quirks_for};
 pub use registry::{DuplicateAdapter, ProviderRegistry};
 pub use reqwest::Url;
 pub use responses::ResponsesAdapter;
+pub use search::{
+    MAX_SEARCH_INPUT_BYTES, MAX_SEARCH_INPUTS, SearchTarget, SearchTestInput, embed, rerank,
+    test_search_profile,
+};
 pub use transport::{HttpClient, Timeouts, TransportError};

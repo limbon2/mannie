@@ -132,6 +132,7 @@ async fn seed(
                     profile_id: None,
                     project_id: None,
                     task: None,
+                    home: None,
                 },
             });
             created = true;

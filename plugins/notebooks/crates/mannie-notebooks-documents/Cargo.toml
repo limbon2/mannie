@@ -1,0 +1,17 @@
+[package]
+name = "mannie-notebooks-documents"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The text of the documents of the plugin Notebooks: PDF pages, Markdown sections and plain text, and their passages."
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The text of a PDF, page by page, and through its re-export of lopdf the
+# page count and the encryption before the text is read (plugin ADR-0001).
+pdf-extract = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

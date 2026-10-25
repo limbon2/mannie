@@ -11,6 +11,7 @@
 
 mod child;
 mod commands;
+mod gathering;
 mod operations;
 mod remote;
 mod tasks;
@@ -511,6 +512,11 @@ impl RunActor {
     async fn drive(&mut self) -> Result<FinishReason, Ending> {
         let (setup, permit) = self.begin().await?;
         let mut permit = Some(permit);
+        if let Some(due) = self.context_due().await? {
+            // The providers work without a model slot (ADR-0046, decision 3).
+            permit = None;
+            self.gather_context(&setup, due).await?;
+        }
         let mut tries = 0;
         loop {
             if permit.is_none() {

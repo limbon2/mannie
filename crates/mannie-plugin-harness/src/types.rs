@@ -5,12 +5,14 @@
 //! profiles, runs, the documents of tasks and tool calls, the owner's
 //! approvals with what they grant, the rules and full access of runs of
 //! installed programs, the archives of tool calls, the transcript's parts,
-//! and the suggestions and references of mentions.
+//! the suggestions and references of mentions, and the attachments of
+//! conversations with what their providers gave (ADR-0046).
 
 pub use mannie_types::chat::{
     SendMessage, StartConversation, StartedConversation, StopOutcome, SubscribeConversation,
 };
 pub use mannie_types::clock::{ManualClock, SystemClock};
+pub use mannie_types::context::{Attachment, AttachmentRef, ChangeAttachment, ContextView};
 pub use mannie_types::ids::{InvalidId, PartId, RuleId, RunId, TurnId};
 pub use mannie_types::images::{ImageRef, ImageSize, ReadImage};
 pub use mannie_types::mentions::{MentionPlace, MentionRef, MentionSuggestions, SuggestMentions};

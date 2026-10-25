@@ -2,13 +2,13 @@
 //! host (feature `testing`; ADR-0034, decision 5). Never enabled in the
 //! desktop app or the worker.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use tokio::sync::watch;
+use futures_util::StreamExt as _;
+use tokio::sync::{broadcast, watch};
 
-use crate::BoxFuture;
 use crate::contracts::Secret;
 use crate::host::{BindRefusal, PluginBinding, ServiceProvider};
 use crate::manifest::SecretsSection;
@@ -16,7 +16,11 @@ use crate::service::{BoundService, Service};
 use crate::services::file_dialog::{
     ChosenFile, DialogError, FileDialog, FileDialogApi, FileFilter, FileHandle, MAX_CHOSEN_FILES,
 };
+use crate::services::models::{
+    InputKind, Models, ModelsApi, ModelsError, SearchModel, SearchModelKind, inputs_fit,
+};
 use crate::services::secrets::{Secrets, SecretsApi, SecretsError};
+use crate::{BoxFuture, BoxStream};
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     // Every critical section only reads or replaces a value.
@@ -364,20 +368,283 @@ impl FileDialogApi for BoundDialog {
     }
 }
 
+/// The embedding profile of [`FakeModels`].
+pub const FAKE_EMBEDDING_PROFILE: &str = "fake-embeddings";
+
+/// The rerank profile of [`FakeModels`].
+pub const FAKE_RERANK_PROFILE: &str = "fake-rerank";
+
+/// The dimensions of the vectors of [`FakeModels`].
+pub const FAKE_DIMENSIONS: usize = 64;
+
+/// The lower-case words of a text: its runs of letters and digits.
+fn fake_words(text: &str) -> impl Iterator<Item = String> + '_ {
+    text.split(|character: char| !character.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_lowercase)
+}
+
+/// The vector of a text as [`FakeModels`] embeds it: how often each of its
+/// lower-case words occurs, by a hash of the word into [`FAKE_DIMENSIONS`]
+/// dimensions, scaled to a length of 1. Texts that share words are near.
+pub fn fake_vector(text: &str) -> Vec<f32> {
+    let mut vector = vec![0.0_f32; FAKE_DIMENSIONS];
+    for word in fake_words(text) {
+        // FNV-1a, which keeps the vectors the same in every run.
+        let hash = word.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+        });
+        let dimension = usize::try_from(hash % FAKE_DIMENSIONS as u64).unwrap_or(0);
+        vector[dimension] += 1.0;
+    }
+    let length = vector.iter().map(|value| value * value).sum::<f32>().sqrt();
+    if length > 0.0 {
+        for value in &mut vector {
+            *value /= length;
+        }
+    }
+    vector
+}
+
+/// The score of a passage as [`FakeModels`] reranks it: the share of the
+/// query's distinct words that the passage holds, from 0 to 1.
+pub fn fake_score(query: &str, passage: &str) -> f32 {
+    let asked: BTreeSet<String> = fake_words(query).collect();
+    if asked.is_empty() {
+        return 0.0;
+    }
+    let held: BTreeSet<String> = fake_words(passage).collect();
+    let shared = asked.intersection(&held).count();
+    // Word counts stay far below the 24 bits of an f32's mantissa.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "the counts of a test's words fit an f32 exactly"
+    )]
+    let share = shared as f32 / asked.len() as f32;
+    share
+}
+
+/// The models of the search profiles in memory, as the core's provider of
+/// `models` binds them to a plugin: the embedding profile
+/// [`FAKE_EMBEDDING_PROFILE`], whose vectors are [`fake_vector`]s, and the
+/// rerank profile [`FAKE_RERANK_PROFILE`], whose scores are
+/// [`fake_score`]s. A test makes the server unreachable, changes the key of
+/// the embedding's vectors or removes a profile, which the stream of changes
+/// tells, and reads the texts of each call.
+///
+/// Cloning is cheap; clones share everything.
+#[derive(Debug, Clone)]
+pub struct FakeModels {
+    inner: Arc<ModelsInner>,
+}
+
+#[derive(Debug)]
+struct ModelsInner {
+    profiles: Mutex<Vec<SearchModel>>,
+    unreachable: AtomicBool,
+    /// The texts of each embedding, with their kind, in order.
+    embedded: Mutex<Vec<(InputKind, Vec<String>)>>,
+    /// The query and the passages of each rerank, in order.
+    reranked: Mutex<Vec<(String, Vec<String>)>>,
+    changes: broadcast::Sender<String>,
+}
+
+impl Default for FakeModels {
+    fn default() -> Self {
+        let profiles = vec![
+            SearchModel::new(
+                FAKE_EMBEDDING_PROFILE,
+                "Embeddings",
+                "fake-embedding-model",
+                SearchModelKind::Embeddings,
+                "fake-vectors-1",
+            ),
+            SearchModel::new(
+                FAKE_RERANK_PROFILE,
+                "Reranker",
+                "fake-rerank-model",
+                SearchModelKind::Rerank,
+                "fake-scores-1",
+            ),
+        ];
+        let (changes, _receiver) = broadcast::channel(64);
+        Self {
+            inner: Arc::new(ModelsInner {
+                profiles: Mutex::new(profiles),
+                unreachable: AtomicBool::new(false),
+                embedded: Mutex::default(),
+                reranked: Mutex::default(),
+                changes,
+            }),
+        }
+    }
+}
+
+impl FakeModels {
+    /// The embedding profile and the rerank profile, reachable.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Makes every call fail as a server that cannot be reached, or work
+    /// again.
+    pub fn set_unreachable(&self, unreachable: bool) {
+        self.inner.unreachable.store(unreachable, Ordering::SeqCst);
+    }
+
+    /// Gives a profile's vectors a new key, as a change of its model does,
+    /// and tells the change.
+    pub fn set_vector_key(&self, profile: &str, key: &str) {
+        for model in lock(&self.inner.profiles).iter_mut() {
+            if model.id == profile {
+                key.clone_into(&mut model.vector_key);
+            }
+        }
+        self.tell(profile);
+    }
+
+    /// Deletes a profile, and tells the change.
+    pub fn remove_profile(&self, profile: &str) {
+        lock(&self.inner.profiles).retain(|model| model.id != profile);
+        self.tell(profile);
+    }
+
+    /// The texts of each embedding so far, with their kind, in order.
+    pub fn embedded(&self) -> Vec<(InputKind, Vec<String>)> {
+        lock(&self.inner.embedded).clone()
+    }
+
+    /// The query and the passages of each rerank so far, in order.
+    pub fn reranked(&self) -> Vec<(String, Vec<String>)> {
+        lock(&self.inner.reranked).clone()
+    }
+
+    fn tell(&self, profile: &str) {
+        // A test without a plugin that follows the changes has no receiver.
+        if self.inner.changes.send(profile.to_owned()).is_err() {
+            tracing::trace!("no plugin follows the changes of the fake models");
+        }
+    }
+
+    /// The profile with this ID, if it is of `kind`.
+    fn profile(&self, id: &str, kind: SearchModelKind) -> Result<(), ModelsError> {
+        if self.inner.unreachable.load(Ordering::SeqCst) {
+            return Err(ModelsError::Unreachable);
+        }
+        let profiles = lock(&self.inner.profiles);
+        let model = profiles
+            .iter()
+            .find(|model| model.id == id)
+            .ok_or(ModelsError::ProfileNotFound)?;
+        if model.kind != kind {
+            return Err(ModelsError::WrongKind);
+        }
+        Ok(())
+    }
+}
+
+impl ServiceProvider for FakeModels {
+    fn name(&self) -> &'static str {
+        Models::NAME
+    }
+
+    fn major(&self) -> u16 {
+        Models::MAJOR
+    }
+
+    fn bind(&self, _binding: &PluginBinding<'_>) -> Result<BoundService, BindRefusal> {
+        let api: Arc<dyn ModelsApi> = Arc::new(self.clone());
+        Ok(BoundService::new::<Models>(api))
+    }
+}
+
+impl ModelsApi for FakeModels {
+    fn search_profiles(
+        &self,
+        kind: SearchModelKind,
+    ) -> BoxFuture<'static, Result<Vec<SearchModel>, ModelsError>> {
+        let profiles = lock(&self.inner.profiles)
+            .iter()
+            .filter(|model| model.kind == kind)
+            .cloned()
+            .collect();
+        Box::pin(std::future::ready(Ok(profiles)))
+    }
+
+    fn embed(
+        &self,
+        profile: &str,
+        kind: InputKind,
+        inputs: Vec<String>,
+    ) -> BoxFuture<'static, Result<Vec<Vec<f32>>, ModelsError>> {
+        let embedded = self
+            .profile(profile, SearchModelKind::Embeddings)
+            .and_then(|()| {
+                if !inputs_fit(&inputs) {
+                    return Err(ModelsError::InvalidInputs);
+                }
+                let vectors = inputs.iter().map(|input| fake_vector(input)).collect();
+                lock(&self.inner.embedded).push((kind, inputs));
+                Ok(vectors)
+            });
+        Box::pin(std::future::ready(embedded))
+    }
+
+    fn rerank(
+        &self,
+        profile: &str,
+        query: String,
+        documents: Vec<String>,
+    ) -> BoxFuture<'static, Result<Vec<f32>, ModelsError>> {
+        let reranked = self
+            .profile(profile, SearchModelKind::Rerank)
+            .and_then(|()| {
+                if !inputs_fit(&documents) {
+                    return Err(ModelsError::InvalidInputs);
+                }
+                let scores = documents
+                    .iter()
+                    .map(|document| fake_score(&query, document))
+                    .collect();
+                lock(&self.inner.reranked).push((query, documents));
+                Ok(scores)
+            });
+        Box::pin(std::future::ready(reranked))
+    }
+
+    fn changes(&self) -> BoxStream<'static, String> {
+        futures_util::stream::unfold(self.inner.changes.subscribe(), |mut receiver| async move {
+            loop {
+                match receiver.recv().await {
+                    Ok(profile) => return Some((profile, receiver)),
+                    Err(broadcast::error::RecvError::Lagged(_missed)) => {}
+                    Err(broadcast::error::RecvError::Closed) => return None,
+                }
+            }
+        })
+        .boxed()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
     use futures_util::FutureExt;
 
-    use super::{FakeFile, FakeFileDialog, FakeSecrets};
+    use super::{
+        FAKE_EMBEDDING_PROFILE, FAKE_RERANK_PROFILE, FakeFile, FakeFileDialog, FakeModels,
+        FakeSecrets, fake_score, fake_vector,
+    };
     use crate::context::HostProfile;
     use crate::contracts::Secret;
     use crate::host::{PluginBinding, ServiceProvider};
     use crate::ids::PluginId;
     use crate::manifest::{CratesSection, Manifest, NativeSection, RustSection, SecretsSection};
     use crate::services::file_dialog::{DialogError, FileFilter, MAX_CHOSEN_FILES};
+    use crate::services::models::{InputKind, ModelsApi, ModelsError, SearchModelKind};
     use crate::services::secrets::{Secrets, SecretsApi, SecretsError};
+    use futures_util::StreamExt as _;
 
     fn manifest(id: &PluginId) -> Manifest {
         Manifest {
@@ -582,6 +849,88 @@ mod tests {
             dialog.read(newest.file, 10).now_or_never().unwrap(),
             Ok(vec![1])
         );
+    }
+
+    #[test]
+    fn the_fake_models_embed_words_near_each_other_and_score_shared_words() {
+        let models = FakeModels::new();
+        let near = |left: &[f32], right: &[f32]| -> f32 {
+            left.iter()
+                .zip(right)
+                .map(|(left, right)| left * right)
+                .sum()
+        };
+
+        let vectors = models
+            .embed(
+                FAKE_EMBEDDING_PROFILE,
+                InputKind::Document,
+                vec![
+                    "Light bends in water".to_owned(),
+                    "Bread needs flour".to_owned(),
+                ],
+            )
+            .now_or_never()
+            .unwrap()
+            .unwrap();
+        let query = fake_vector("why does light bend in water");
+        let scores = models
+            .rerank(
+                FAKE_RERANK_PROFILE,
+                "light water".to_owned(),
+                vec!["Light bends in water".to_owned(), "Bread".to_owned()],
+            )
+            .now_or_never()
+            .unwrap()
+            .unwrap();
+
+        assert!(near(&query, &vectors[0]) > near(&query, &vectors[1]));
+        assert_eq!(scores, [1.0, 0.0]);
+        assert!((fake_score("a b", "a c") - 0.5).abs() < f32::EPSILON);
+        assert_eq!(models.embedded().len(), 1);
+        assert_eq!(models.reranked()[0].0, "light water");
+    }
+
+    #[test]
+    fn the_fake_models_refuse_another_kind_an_unknown_profile_and_an_unreachable_server() {
+        let models = FakeModels::new();
+        let embed = |profile: &str| {
+            models
+                .embed(profile, InputKind::Query, vec!["light".to_owned()])
+                .now_or_never()
+                .unwrap()
+        };
+
+        let wrong = embed(FAKE_RERANK_PROFILE);
+        let unknown = embed("nobody");
+        let empty = models
+            .embed(FAKE_EMBEDDING_PROFILE, InputKind::Query, Vec::new())
+            .now_or_never()
+            .unwrap();
+        models.set_unreachable(true);
+        let unreachable = embed(FAKE_EMBEDDING_PROFILE);
+
+        assert_eq!(wrong, Err(ModelsError::WrongKind));
+        assert_eq!(unknown, Err(ModelsError::ProfileNotFound));
+        assert_eq!(empty, Err(ModelsError::InvalidInputs));
+        assert_eq!(unreachable, Err(ModelsError::Unreachable));
+    }
+
+    #[test]
+    fn a_change_of_the_fake_models_reaches_their_stream() {
+        let models = FakeModels::new();
+        let mut changes = models.changes();
+
+        models.set_vector_key(FAKE_EMBEDDING_PROFILE, "fake-vectors-2");
+        let told = changes.next().now_or_never().flatten();
+        let profiles = models
+            .search_profiles(SearchModelKind::Embeddings)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(told.as_deref(), Some(FAKE_EMBEDDING_PROFILE));
+        assert_eq!(profiles[0].vector_key, "fake-vectors-2");
     }
 
     #[test]

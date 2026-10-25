@@ -108,6 +108,7 @@ function appendText(part: PartView, text: string): void {
       return;
     }
     case 'command_note':
+    case 'context':
     case 'error':
     case 'image':
     case 'mention':

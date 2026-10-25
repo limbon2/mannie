@@ -6,7 +6,8 @@
 //! The runtime consumes every point of the SDK through one consumer,
 //! [`RuntimeContributions`]. Each point's checks live in the module that owns
 //! the point: `plugin_tools.rs` for tools and tool sources, `agents.rs`,
-//! `instructions.rs`, `executors.rs`, `mentions.rs` and `images.rs`. The
+//! `instructions.rs`, `executors.rs`, `mentions.rs`, `images.rs` and
+//! `attachments.rs`. The
 //! consumer checks again and adds under one write lock, and swaps one copy of
 //! the whole registry, so a [`Snapshot`] holds all of a plugin's
 //! contributions or none.
@@ -37,6 +38,7 @@ use mannie_plugin_sdk::contributions::{Contributions, ExtensionPoint, PointInfo}
 use mannie_plugin_sdk::host::{ContributionConsumer, ContributionRefusal, PLUGIN_REGISTERED};
 use mannie_plugin_sdk::ids::PluginId;
 use mannie_plugin_sdk::points::agents::Agents;
+use mannie_plugin_sdk::points::context::ContextProviders;
 use mannie_plugin_sdk::points::executors::Executors;
 use mannie_plugin_sdk::points::images::ImageSources;
 use mannie_plugin_sdk::points::mentions::Mentions;
@@ -46,6 +48,7 @@ use mannie_plugin_sdk::points::tools::{PluginTool, Tools};
 use mannie_plugin_sdk::services::background_commands::BACKGROUND_COMMANDS_WORK;
 
 use crate::Runtime;
+use crate::attachments::check_context_providers;
 use crate::executors::check_executors;
 use crate::images::check_image_sources;
 use crate::instructions::check_sections;
@@ -301,14 +304,14 @@ impl Snapshot {
     }
 }
 
-/// The runtime's consumer of the six points of SDK 1.
+/// The runtime's consumer of the points of SDK 1.
 #[derive(Debug)]
 struct RuntimeContributions {
     runtime: Runtime,
 }
 
 /// The points that the runtime consumes.
-const RUNTIME_POINTS: [PointInfo; 7] = [
+const RUNTIME_POINTS: [PointInfo; 8] = [
     PointInfo::of::<Tools>(),
     PointInfo::of::<Agents>(),
     PointInfo::of::<Sections>(),
@@ -316,6 +319,7 @@ const RUNTIME_POINTS: [PointInfo; 7] = [
     PointInfo::of::<Mentions>(),
     PointInfo::of::<ImageSources>(),
     PointInfo::of::<ToolSources>(),
+    PointInfo::of::<ContextProviders>(),
 ];
 
 impl ContributionConsumer for RuntimeContributions {
@@ -361,6 +365,7 @@ impl ContributionConsumer for RuntimeContributions {
         let mentions = contributions.take::<Mentions>();
         let images = contributions.take::<ImageSources>();
         let sources = contributions.take::<ToolSources>();
+        let context = contributions.take::<ContextProviders>();
         tracing::info!(
             plugin = %plugin,
             generation,
@@ -371,6 +376,7 @@ impl ContributionConsumer for RuntimeContributions {
             mentions = mentions.len(),
             images = images.len(),
             tool_sources = sources.len(),
+            context_providers = context.len(),
             "a plugin's contributions were registered"
         );
         self.runtime.inner.agent_plugins.record(plugin, &agents);
@@ -381,6 +387,7 @@ impl ContributionConsumer for RuntimeContributions {
         next.push::<Executors>(plugin, generation, executors);
         next.push::<Mentions>(plugin, generation, mentions);
         next.push::<ImageSources>(plugin, generation, images);
+        next.push::<ContextProviders>(plugin, generation, context);
         // Each source starts empty, so its place in the order is fixed
         // before its first set arrives.
         next.published
@@ -475,12 +482,13 @@ impl Runtime {
                 format!("the plugin {plugin} is registered already"),
             ));
         }
-        self.check_tools(snapshot, contributions)?;
+        self.check_tools(snapshot, plugin, contributions)?;
         self.check_agents(snapshot, contributions)?;
         check_sections(&self.inner.instructions, snapshot, contributions)?;
         check_executors(snapshot, contributions)?;
         self.check_mention_providers(snapshot, contributions)?;
-        check_image_sources(snapshot, contributions)
+        check_image_sources(snapshot, contributions)?;
+        check_context_providers(snapshot, contributions)
     }
 
     /// Takes each of a plugin's tool sources and drains its stream of sets

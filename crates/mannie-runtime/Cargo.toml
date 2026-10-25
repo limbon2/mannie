@@ -74,6 +74,10 @@ required-features = ["testing"]
 name = "profiles"
 required-features = ["testing"]
 
+[[test]]
+name = "search_profiles"
+required-features = ["testing"]
+
 # Tasks that another machine assigns: the agent that runs them, idempotent
 # assignments, follow-ups, credentials that come later, cancels, slots,
 # restarts and the watch.

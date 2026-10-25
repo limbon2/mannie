@@ -2,6 +2,7 @@
 //! per change, each with the conversation's next sequence number
 //! (ADR-0012, decisions 3 and 10).
 
+use mannie_types::context::{Attachment, AttachmentRef};
 use mannie_types::ids::{ConversationId, PartId, ProfileId, ProjectId, RunId, TurnId};
 use mannie_types::run::{RunActivity, RunOutcome, RunState};
 use mannie_types::tasks::{TaskPartDocument, TaskRefusal, TaskState};
@@ -16,9 +17,9 @@ use super::rows::{
     self, CheckpointDocument, EventBody, PartDocument, StoredRow, kinds, streaming_text, to_json,
 };
 use super::{
-    Applied, Change, DOCUMENT_VERSION, NewArchive, NewCheckpoint, NewConversation, NewImage,
-    NewMention, NewPart, NewRun, NewTask, NewToolImage, ProviderItem, RuntimeStoreError,
-    TaskEnding, archives, background, images, tasks, tool_images,
+    Applied, Change, DOCUMENT_VERSION, NewArchive, NewCheckpoint, NewContext, NewConversation,
+    NewImage, NewMention, NewPart, NewRun, NewTask, NewToolImage, ProviderItem, RuntimeStoreError,
+    TaskEnding, archives, attachments, background, images, tasks, tool_images,
 };
 use crate::writer::TransactError;
 use crate::{Durability, Store};
@@ -27,9 +28,10 @@ const SELECT_CONVERSATION_EXISTS: &str = "SELECT 1 FROM runtime_conversations WH
 const INSERT_CONVERSATION: &str = "INSERT INTO runtime_conversations \
      (id, title, title_source, profile_id, project_id, workspace, parent_conversation_id, \
      task_number, task_agent, task_executor_kind, task_executor_target, task_executor_name, \
-     task_executor_noun, created_at, updated_at) \
+     task_executor_noun, home_provider, home_key, created_at, updated_at) \
      VALUES (?1, ?2, 'first_message', ?3, ?5, \
-     (SELECT folder FROM runtime_projects WHERE id = ?5), ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?4, ?4)";
+     (SELECT folder FROM runtime_projects WHERE id = ?5), ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, \
+     ?4, ?4)";
 const SELECT_PROJECT_EXISTS: &str = "SELECT 1 FROM runtime_projects WHERE id = ?1";
 const SELECT_CONVERSATION_PROJECT: &str =
     "SELECT project_id FROM runtime_conversations WHERE id = ?1";
@@ -184,6 +186,7 @@ pub(super) fn insert_conversation(
     let project = conversation.project_id.as_ref().map(ProjectId::as_str);
     let task = conversation.task.as_ref();
     let executor = task.and_then(|origin| origin.executor.as_ref());
+    let home = conversation.home.as_ref();
     connection
         .prepare_cached(INSERT_CONVERSATION)?
         .execute(params![
@@ -198,7 +201,9 @@ pub(super) fn insert_conversation(
             executor.map(|executor| executor.kind.as_str()),
             executor.map(|executor| executor.target_id.as_str()),
             executor.map(|executor| executor.target_name.as_str()),
-            executor.map(|executor| executor.noun.as_str())
+            executor.map(|executor| executor.noun.as_str()),
+            home.map(|home| home.provider.as_str()),
+            home.map(|home| home.key.as_str())
         ])?;
     Ok(())
 }
@@ -361,7 +366,90 @@ impl Batch<'_> {
                 text,
             } => self.add_request_note(&turn_id, &part_id, &text),
             Change::AddToolImages { part_id, images } => self.add_tool_images(&part_id, &images),
+            Change::Attach { attachment } => self.attach(&attachment),
+            Change::Detach { attachment } => self.detach(&attachment),
+            Change::AddContext {
+                run_id,
+                turn_id,
+                parts,
+            } => self.add_context(&run_id, &turn_id, &parts),
         }
+    }
+
+    /// Attaches a key to the conversation and announces the conversation's
+    /// change.
+    fn attach(&mut self, attachment: &Attachment) -> Result<(), RuntimeStoreError> {
+        attachments::attach(self.transaction, self.conversation, attachment, self.now)?;
+        self.append(kinds::CONVERSATION_CHANGED, None, &EventBody::empty())?;
+        self.summary_changed = true;
+        Ok(())
+    }
+
+    /// Detaches a key from the conversation, and announces the change when
+    /// it held the key.
+    fn detach(&mut self, attachment: &AttachmentRef) -> Result<(), RuntimeStoreError> {
+        if attachments::detach(self.transaction, self.conversation, attachment)? {
+            self.append(kinds::CONVERSATION_CHANGED, None, &EventBody::empty())?;
+            self.summary_changed = true;
+        }
+        Ok(())
+    }
+
+    /// Adds what the providers gave as owner parts after the turn's other
+    /// parts, while the run that gathered it is active, and announces each.
+    fn add_context(
+        &mut self,
+        run_id: &RunId,
+        turn_id: &TurnId,
+        parts: &[NewContext],
+    ) -> Result<(), RuntimeStoreError> {
+        let turn: Option<String> = self
+            .transaction
+            .prepare_cached(SELECT_ACTIVE_RUN_TURN)?
+            .query_row(params![run_id.as_str(), self.conversation], |row| {
+                row.get(0)
+            })
+            .optional()?;
+        if turn.as_deref() != Some(turn_id.as_str()) {
+            return Err(RuntimeStoreError::RunNotActive {
+                run: run_id.clone(),
+            });
+        }
+        let kind = PartKind::Context;
+        for part in parts {
+            let position: i64 = self
+                .transaction
+                .prepare_cached(SELECT_NEXT_PART_POSITION)?
+                .query_row([turn_id.as_str()], |row| row.get(0))?;
+            let document = PartDocument {
+                context: Some(part.view.clone()),
+                ..PartDocument::default()
+            };
+            self.transaction
+                .prepare_cached(INSERT_PART)?
+                .execute(params![
+                    part.part_id.as_str(),
+                    self.conversation,
+                    turn_id.as_str(),
+                    Option::<&str>::None,
+                    Option::<u32>::None,
+                    position,
+                    kind.as_str(),
+                    kind.audience().as_str(),
+                    PartState::Complete.as_str(),
+                    part.text,
+                    DOCUMENT_VERSION,
+                    to_json(&document)?,
+                    self.now,
+                    self.now
+                ])?;
+            self.append(
+                kinds::PART_FINISHED,
+                Some(part.part_id.as_str()),
+                &EventBody::empty(),
+            )?;
+        }
+        Ok(())
     }
 
     /// Stores a part of a run and announces it with the event `kind`.
@@ -943,6 +1031,7 @@ impl Batch<'_> {
             mention: None,
             image: None,
             command_note: None,
+            context: None,
         };
         self.transaction
             .prepare_cached(UPDATE_PART_DOCUMENT)?
@@ -995,6 +1084,7 @@ impl Batch<'_> {
             mention: None,
             image: None,
             command_note: None,
+            context: None,
         };
         self.transaction
             .prepare_cached(UPDATE_PART_DOCUMENT)?
@@ -1203,6 +1293,7 @@ impl Batch<'_> {
             mention: None,
             image: None,
             command_note: None,
+            context: None,
         };
         let finished_at = (state != PartState::Streaming).then_some(self.now);
         self.transaction

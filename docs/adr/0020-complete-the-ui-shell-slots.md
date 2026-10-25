@@ -7,7 +7,7 @@
 | Deciders | Owner                                                                                                                                                                                                                                                                                                                                          |
 | Related  | [ADR-0002](0002-grow-through-extension-points.md), [ADR-0006](0006-use-shadcn-svelte-through-its-cli.md), [Extension points](../architecture/extension-points.md#37-ui-shell-slots), [Desktop app](../architecture/desktop-app.md#6-frontend-structure), [Chat](../features/chat/README.md), [Window and tray](../features/window-and-tray.md) |
 
-Later changes: [ADR-0039](0039-let-plugins-describe-their-tool-calls-in-the-transcript.md) refines decision 1: the slot of tool kinds lets a plugin describe its tool calls inside the core's `tool_call` renderer.
+Later changes: [ADR-0039](0039-let-plugins-describe-their-tool-calls-in-the-transcript.md) refines decision 1: the slot of tool kinds lets a plugin describe its tool calls inside the core's `tool_call` renderer. [ADR-0045](0045-switch-the-sidebar-between-views-with-an-activity-bar.md) refines decisions 1 and 6: navigation entries show in the activity bar, sidebar panels in the content sidebar of the entry that they name, and the settings sidebar takes the content sidebar's place while the activity bar stays.
 
 ## Context
 

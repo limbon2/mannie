@@ -12,6 +12,8 @@ use crate::error::StoreError;
 use crate::writer::TransactError;
 use crate::{Durability, Store};
 
+pub(crate) mod search;
+
 /// The version of the profile document this module writes.
 const DOCUMENT_VERSION: u32 = 1;
 

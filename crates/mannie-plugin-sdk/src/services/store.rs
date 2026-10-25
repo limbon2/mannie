@@ -424,6 +424,12 @@ pub enum Durability {
     Normal,
     /// Kept across a loss of power, for writes that the owner would miss.
     Full,
+    /// Kept as [`Full`](Self::Full) is, and what the batch deleted is gone
+    /// from every file of the store when it returns: the store overwrites
+    /// freed pages and empties its write-ahead log after the batch, as it
+    /// does when the owner deletes a conversation. For deletions of the
+    /// owner's content, such as a document's text (T-67); it takes longer.
+    Erase,
 }
 
 /// The queries of a plugin's module, which read its tables.

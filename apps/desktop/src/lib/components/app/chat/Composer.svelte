@@ -30,6 +30,8 @@
   // files of a paste or a drop (ADR-0033, decision 7); the images stay too
   // when sending fails.
   interface Props {
+    /** What the conversation has attached, below the box, such as notebooks (ADR-0046, decision 6). */
+    attached?: Snippet;
     /**
      * The controls of the row after the image sources' buttons, such as the
      * conversation's full access (ADR-0042, decision 4).
@@ -55,6 +57,7 @@
   }
 
   let {
+    attached,
     controls,
     disabled = false,
     mentionPlace,
@@ -389,12 +392,14 @@
   {#if mentioned.length > 0}
     <MentionChips mentions={mentioned} />
   {/if}
+  {@render attached?.()}
   {#if failure !== null}
     <p class="text-sm text-destructive" role="alert">
       {chatFailureMessage(
         failure,
         (provider) => slots.mentionKinds.find(provider),
         (source) => slots.imageSources.find(source),
+        (provider) => slots.contextKinds.find(provider),
       )}
     </p>
   {/if}

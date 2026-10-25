@@ -39,6 +39,7 @@ fn part(number: u32, kind: Option<PartKind>, text: &str) -> ModelPart {
         task: None,
         attempt: u32::from(kind != Some(PartKind::UserText)),
         image: None,
+        context: None,
     }
 }
 
@@ -100,6 +101,8 @@ static NOTHING_LEFT_OUT: LazyLock<HashSet<PartId>> = LazyLock::new(HashSet::new)
 
 static NO_IMAGES: LazyLock<SentImages> = LazyLock::new(SentImages::new);
 
+static NO_FULL_CONTEXT: LazyLock<HashSet<PartId>> = LazyLock::new(HashSet::new);
+
 fn shape(interface: ApiInterface) -> RequestShape<'static> {
     RequestShape {
         instructions: "System.",
@@ -114,6 +117,7 @@ fn shape(interface: ApiInterface) -> RequestShape<'static> {
         left_out: &NOTHING_LEFT_OUT,
         requester: Requester::Owner,
         tool_images: &NO_IMAGES,
+        full_context: &NO_FULL_CONTEXT,
     }
 }
 

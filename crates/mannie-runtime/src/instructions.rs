@@ -45,6 +45,22 @@ pub struct InstructionContext<'a> {
     /// For a run of an assigned task on a machine with a ceiling, what it
     /// works under.
     pub machine: Option<MachineContext<'a>>,
+    /// The sources of a conversation with attachments, or of the conversation
+    /// that gave a child its task (ADR-0049, decision 6), or `None`.
+    pub sources: Option<SourcesContext<'a>>,
+}
+
+/// What a conversation's attachments give its instructions (ADR-0049).
+#[derive(Debug, Clone, Copy)]
+pub struct SourcesContext<'a> {
+    /// The label of the attachment that the conversation belongs to, such as
+    /// a notebook's name (ADR-0051), or `None`.
+    pub home: Option<&'a str>,
+    /// What the attachments hold, as their providers outline it.
+    pub outline: &'a str,
+    /// Whether the request sends excerpts that the attachments gave for the
+    /// owner's messages.
+    pub excerpts: bool,
 }
 
 /// What a run of an assigned task works under, for the sections of its
@@ -211,11 +227,13 @@ pub struct InstructionRegistry {
 }
 
 /// Mannie's sections: the base instructions for whom the agent answers to,
-/// the agent's instructions, the guidance on tools and on tasks, the owner's
-/// instructions, where the tools work, and the checkpoint. The sections of
-/// tools appear only in runs with tools, and the guidance on tasks only in
-/// runs that are offered the task tools. The executors of plugins add their
-/// sections to the runs that are offered their tools (ADR-0031).
+/// the agent's instructions, the guidance on tools, on tasks and on sources,
+/// the owner's instructions, where the tools work, and the checkpoint. The
+/// sections of tools appear only in runs with tools, the guidance on tasks
+/// only in runs that are offered the task tools, and the guidance on sources
+/// only in conversations with attachments (ADR-0049). The executors of
+/// plugins add their sections to the runs that are offered their tools
+/// (ADR-0031).
 pub fn builtin_sections() -> Vec<InstructionSection> {
     vec![
         InstructionSection::new("base", 0, |context| {
@@ -242,6 +260,11 @@ pub fn builtin_sections() -> Vec<InstructionSection> {
             context
                 .offers_tasks
                 .then(|| texts::TASKS_GUIDANCE.to_owned())
+        }),
+        InstructionSection::new("context", 170, |context| {
+            context
+                .sources
+                .map(|sources| texts::sources_guidance(&sources))
         }),
         InstructionSection::new("owner", 200, |context| {
             non_empty(context.owner_instructions).map(|instructions| {
@@ -397,6 +420,7 @@ mod tests {
             tools: None,
             offers_tasks: false,
             machine: None,
+            sources: None,
         };
         let full = InstructionContext {
             agent: &CONVERSATION,
@@ -405,6 +429,7 @@ mod tests {
             tools: None,
             offers_tasks: false,
             machine: None,
+            sources: None,
         };
 
         assert_eq!(registry.assemble(&plain), texts::BASE_INSTRUCTIONS);
@@ -431,6 +456,7 @@ mod tests {
             tools: None,
             offers_tasks: false,
             machine: None,
+            sources: None,
         };
 
         let assembled = registry.assemble(&context);
@@ -462,6 +488,7 @@ mod tests {
             tools: Some(tools(true)),
             offers_tasks: true,
             machine: None,
+            sources: None,
         };
         let without_tools = InstructionContext {
             tools: None,
@@ -495,6 +522,7 @@ mod tests {
             tools: Some(tools(false)),
             offers_tasks: true,
             machine: None,
+            sources: None,
         };
         let child_in_full_access = InstructionContext {
             agent: &EXPLORE,
@@ -560,6 +588,7 @@ mod tests {
             }),
             offers_tasks: false,
             machine: None,
+            sources: None,
         };
 
         let assembled = registry.assemble(&context);
@@ -598,6 +627,7 @@ mod tests {
             tools: Some(tools),
             offers_tasks: true,
             machine: None,
+            sources: None,
         };
         let child = InstructionContext {
             agent: &EXPLORE,

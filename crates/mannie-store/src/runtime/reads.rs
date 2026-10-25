@@ -3,6 +3,7 @@
 //! transcript as the model reads it.
 
 use mannie_types::clock::UtcMillis;
+use mannie_types::context::ContextView;
 use mannie_types::ids::{CheckpointId, ConversationId, PartId, RunId, TurnId};
 use mannie_types::images::{ImageBytes, ImageFormat};
 use mannie_types::run::RunState;
@@ -76,6 +77,20 @@ const DELETE_CONVERSATION: &str = "DELETE FROM runtime_conversations WHERE id = 
 // decision 7; T-19).
 const SELECT_TURN_REQUEST: &str = "SELECT text FROM runtime_parts \
      WHERE turn_id = ?1 AND run_id IS NULL AND kind = 'user_text' ORDER BY position LIMIT 1";
+const SELECT_TURN_HOLDS_CONTEXT: &str = "SELECT EXISTS (SELECT 1 FROM runtime_parts \
+     WHERE turn_id = ?1 AND run_id IS NULL AND kind = 'context')";
+// The providers and keys of what the owner's message mentions, which name
+// the attachments that it gathers from (ADR-0049, decision 1).
+const SELECT_TURN_MENTION_KEYS: &str = "SELECT json_extract(document, '$.mention.provider'), \
+     json_extract(document, '$.mention.key') FROM runtime_parts \
+     WHERE turn_id = ?1 AND run_id IS NULL AND kind = 'mention' ORDER BY position";
+// The owner's messages of the turns before a turn, newest first, so that a
+// follow-up's search keeps its subject (ADR-0049, decision 2). Only the
+// owner's own text, as for the turn's request.
+const SELECT_EARLIER_REQUESTS: &str = "SELECT p.text FROM runtime_turns t \
+     JOIN runtime_turns this ON this.id = ?1 AND this.conversation_id = t.conversation_id \
+     JOIN runtime_parts p ON p.turn_id = t.id AND p.run_id IS NULL AND p.kind = 'user_text' \
+     WHERE t.position < this.position ORDER BY t.position DESC, p.position LIMIT ?2";
 const SELECT_TOOL_CALLS_BEFORE: &str = "SELECT COUNT(*) FROM runtime_parts p \
      JOIN runtime_parts c ON c.turn_id = p.turn_id \
      WHERE c.id = ?1 AND p.kind IN ('tool_call', 'task') AND p.position < c.position";
@@ -102,9 +117,16 @@ pub(crate) const STATEMENTS: &[&str] = &[
     SELECT_LATEST_TURN,
     DELETE_CONVERSATION,
     SELECT_TURN_REQUEST,
+    SELECT_TURN_HOLDS_CONTEXT,
+    SELECT_TURN_MENTION_KEYS,
+    SELECT_EARLIER_REQUESTS,
     SELECT_TOOL_CALLS_BEFORE,
     SELECT_ACTIVE_RUN_COUNT,
 ];
+
+/// The most earlier messages of the owner that [`Store::earlier_requests`]
+/// reads.
+const EARLIER_REQUESTS: u32 = 2;
 
 /// The events after a subscriber's cursor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -195,6 +217,9 @@ pub struct ModelPart {
     /// The image of an image part, or `None` for other parts and for an
     /// image whose document or bytes are missing.
     pub image: Option<ModelImage>,
+    /// What a context part's provider gave, or `None` for other parts and
+    /// for a context part whose document is missing (ADR-0046).
+    pub context: Option<ContextView>,
 }
 
 /// An image as the model reads it.
@@ -506,6 +531,67 @@ impl Store {
         Ok(text)
     }
 
+    /// Whether the owner's message of a turn holds what the providers of the
+    /// conversation's attachments gave for it (ADR-0046, decision 3).
+    pub async fn turn_holds_context(&self, turn_id: &TurnId) -> Result<bool, RuntimeStoreError> {
+        let turn = turn_id.as_str().to_owned();
+        let holds = self
+            .read(move |connection| {
+                connection
+                    .prepare_cached(SELECT_TURN_HOLDS_CONTEXT)?
+                    .query_row([turn], |row| row.get(0))
+            })
+            .await?;
+        Ok(holds)
+    }
+
+    /// The providers and keys of what the owner's message of a turn
+    /// mentions, in its order.
+    pub async fn turn_mention_keys(
+        &self,
+        turn_id: &TurnId,
+    ) -> Result<Vec<(String, String)>, RuntimeStoreError> {
+        let turn = turn_id.as_str().to_owned();
+        let keys = self
+            .read(move |connection| {
+                let mut statement = connection.prepare_cached(SELECT_TURN_MENTION_KEYS)?;
+                let rows = statement.query_map([turn], |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                    ))
+                })?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .await?;
+        // A mention part of an earlier version without a provider or a key
+        // names nothing.
+        Ok(keys
+            .into_iter()
+            .filter_map(|(provider, key)| provider.zip(key))
+            .collect())
+    }
+
+    /// The owner's messages of the turns before a turn, newest first, at
+    /// most two (ADR-0049, decision 2).
+    pub async fn earlier_requests(
+        &self,
+        turn_id: &TurnId,
+    ) -> Result<Vec<String>, RuntimeStoreError> {
+        let turn = turn_id.as_str().to_owned();
+        let requests = self
+            .read(move |connection| {
+                let mut statement = connection.prepare_cached(SELECT_EARLIER_REQUESTS)?;
+                let rows = statement
+                    .query_map(rusqlite::params![turn, EARLIER_REQUESTS], |row| {
+                        row.get::<_, String>(0)
+                    })?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .await?;
+        Ok(requests)
+    }
+
     /// How many tool calls of its turn come before a part, in every run of
     /// the turn.
     pub async fn tool_calls_before(&self, part_id: &PartId) -> Result<u32, RuntimeStoreError> {
@@ -735,6 +821,12 @@ fn model_parts(
         } else {
             None
         };
+        let context = if kind == Some(PartKind::Context) {
+            let document: PartDocument = from_json(&row.document, "part document")?;
+            document.context
+        } else {
+            None
+        };
         parts.push(ModelPart {
             id: parse_id(&row.id, PartId::parse)?,
             run_id: row
@@ -751,6 +843,7 @@ fn model_parts(
             task,
             attempt: position(row.attempt.unwrap_or(0), "a part's attempt")?,
             image,
+            context,
         });
     }
     Ok(parts)

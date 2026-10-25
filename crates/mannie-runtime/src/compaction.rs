@@ -212,6 +212,13 @@ pub(crate) fn render_turns(turns: &[ModelTurn], requester: Requester) -> Vec<Str
                         lines.push(texts::compaction_command_note(&cut(&part.text)));
                         continue;
                     }
+                    // What the attachments gave can be long, so the summary
+                    // reads its start, as it reads a mention's (ADR-0046,
+                    // decision 4).
+                    Some(PartKind::Context) => {
+                        lines.push(texts::compaction_context(&cut(&part.text)));
+                        continue;
+                    }
                     // The summary's model reads no image, only its size
                     // (ADR-0033, decision 6).
                     Some(PartKind::Image) => {

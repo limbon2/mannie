@@ -7,7 +7,7 @@
 | Deciders | Owner                                                                                                                                                                                                          |
 | Related  | [ADR-0002](0002-grow-through-extension-points.md), [ADR-0013](0013-journal-every-side-effect.md), [ADR-0034](0034-build-plugins-on-a-plugin-sdk.md), [Conversation export](../features/conversation-export.md) |
 
-Later changes: [ADR-0041](0041-let-agents-run-commands-in-the-background.md) refines decision 1: a conversation's record also lists its background commands with their ends. [ADR-0044](0044-let-tool-results-carry-images-to-the-model.md) refines decision 1: a conversation's record also holds the images of its tool calls.
+Later changes: [ADR-0041](0041-let-agents-run-commands-in-the-background.md) refines decision 1: a conversation's record also lists its background commands with their ends. [ADR-0044](0044-let-tool-results-carry-images-to-the-model.md) refines decision 1: a conversation's record also holds the images of its tool calls. [ADR-0046](0046-let-plugins-attach-context-to-conversations.md) refines decision 1: a conversation's record holds its attachments and its parts `context`.
 
 ## Context
 

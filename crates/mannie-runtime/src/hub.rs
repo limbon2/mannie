@@ -345,6 +345,8 @@ pub(crate) fn localize_summary(
         project_id: master.project_id.clone(),
         workspace: master.workspace.clone(),
         task: master.task.clone(),
+        attachments: master.attachments.clone(),
+        home: master.home.clone(),
         created_at: master.created_at,
         updated_at: worker.updated_at.max(master.updated_at),
     }

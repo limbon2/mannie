@@ -69,10 +69,14 @@ tasks:
   # Running and building
 
   dev:
-    desc: Run the desktop app in development mode
+    desc: Run the desktop app in development mode, with a data folder, credentials and logs of its own
     cmds:
       - task: gen
-      - pnpm --dir apps/desktop exec tauri dev
+      # The bundle identifier names the data folder, the credential store's
+      # entries, the logs and the single-instance lock. One of its own keeps a
+      # development build's migrations out of the owner's database, and lets
+      # it run beside a release build instead of handing over to it.
+      - pnpm --dir apps/desktop exec tauri dev --config src-tauri/tauri.dev.conf.json
 
   build:
     desc: Build the desktop app's installers and the plugins' programs, such as the worker, in release mode

@@ -111,6 +111,8 @@ describe('composeShell', () => {
 
     expect(pluginCatalog()).toEqual([]);
     expect(slots.views.entries.map((view) => view.id)).toEqual(['chat']);
+    // Chat is the activity bar's first entry, so its panels name no entry (ADR-0045).
+    expect(slots.navigation.entries.map((entry) => [entry.id, entry.view, entry.order])).toEqual([['chat', 'chat', 0]]);
     expect(slots.sidebarPanels.entries.map((panel) => panel.id)).toEqual(['chat.projects', 'chat.conversations']);
     expect(slots.sidePanels.entries.map((kind) => kind.id)).toEqual(['chat.conversation', 'tools.command-output']);
     expect(slots.conversationControls.entries.map((control) => control.id)).toEqual([
@@ -147,12 +149,15 @@ describe('composeShell', () => {
       'error',
       'mention',
       'image',
+      'context',
       'tool_call',
       'command_note',
       'task',
     ]);
     expect(slots.mentionKinds.entries.map((kind) => kind.id)).toEqual(['files']);
     expect(slots.imageSources.entries).toEqual([]);
+    // The core has no context provider of its own, so no kind of context.
+    expect(slots.contextKinds.entries).toEqual([]);
     expect(slots.settingsSections.entries.map((section) => section.id)).toEqual([
       'shell.interface',
       'chat.providers',

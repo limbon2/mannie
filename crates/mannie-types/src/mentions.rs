@@ -222,6 +222,14 @@ pub fn check_mentions(mentions: Vec<MentionRef>) -> Result<Vec<MentionRef>, Chat
 /// long.
 pub const INVALID_KEY: &str = "invalid_key";
 
+/// The variant of a sent mention that attached what it names to the
+/// conversation (ADR-0050), whose provider is also a context provider.
+pub const ATTACHED_VARIANT: &str = "attachment";
+
+/// The summary code of a sent mention that attached what it names: the
+/// model read no content of it, and the message gathered from it.
+pub const ATTACHED: &str = "attached";
+
 /// A provider's ID as an error names it: its first bytes, cut at a character.
 fn cut_id(id: &str) -> String {
     let mut end = id.len().min(MAX_PROVIDER_ID_BYTES);

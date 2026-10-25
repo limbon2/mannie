@@ -12,6 +12,7 @@ import { createContext } from 'svelte';
 
 import type { PluginSlots as SdkPluginSlots, SlotCatalog } from '#lib/sdk/slots.js';
 import type {
+  ContextKind,
   ConversationControl,
   ImageSourceKind,
   MentionKind,
@@ -164,6 +165,7 @@ type CatalogSlots = { readonly [Name in keyof SlotCatalog]: Slot<SlotCatalog[Nam
 /** Every slot of the shell. */
 export class ShellSlots implements CatalogSlots {
   readonly commands: Slot<ShellCommand>;
+  readonly contextKinds: Slot<ContextKind>;
   readonly conversationControls: Slot<ConversationControl>;
   readonly imageSources: Slot<ImageSourceKind>;
   readonly mentionKinds: Slot<MentionKind>;
@@ -180,6 +182,7 @@ export class ShellSlots implements CatalogSlots {
   /** The slots; `isOn` tells whether a plugin's entries show, and every plugin's do without it. */
   constructor(isOn: PluginIsOn = () => true) {
     this.commands = new Slot('commands', isOn);
+    this.contextKinds = new Slot('context kinds', isOn);
     this.conversationControls = new Slot('conversation controls', isOn);
     this.imageSources = new Slot('image sources', isOn);
     this.mentionKinds = new Slot('mention kinds', isOn);
@@ -203,6 +206,7 @@ export class ShellSlots implements CatalogSlots {
 /** Every slot of the shell as one plugin registers in it (ADR-0030, decision 11). */
 export class PluginSlots implements SdkPluginSlots {
   readonly commands: PluginSlot<ShellCommand>;
+  readonly contextKinds: PluginSlot<ContextKind>;
   readonly conversationControls: PluginSlot<ConversationControl>;
   readonly imageSources: PluginSlot<ImageSourceKind>;
   readonly mentionKinds: PluginSlot<MentionKind>;
@@ -218,6 +222,7 @@ export class PluginSlots implements SdkPluginSlots {
 
   constructor(slots: ShellSlots, plugin: string) {
     this.commands = new PluginSlot(slots.commands, plugin);
+    this.contextKinds = new PluginSlot(slots.contextKinds, plugin);
     this.conversationControls = new PluginSlot(slots.conversationControls, plugin);
     this.imageSources = new PluginSlot(slots.imageSources, plugin);
     this.mentionKinds = new PluginSlot(slots.mentionKinds, plugin);

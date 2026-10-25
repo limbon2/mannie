@@ -7,7 +7,7 @@
 | Deciders | Owner                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | Related  | [ADR-0002](0002-grow-through-extension-points.md), [ADR-0004](0004-keep-system-access-in-the-rust-core.md), [ADR-0013](0013-journal-every-side-effect.md), [ADR-0019](0019-keep-visible-text-in-message-catalogs.md), [ADR-0020](0020-complete-the-ui-shell-slots.md), [ADR-0023](0023-organize-conversations-into-projects.md), [ADR-0029](0029-let-the-owner-give-conversations-and-hosts-full-access.md), [ADR-0030](0030-split-mannie-into-a-core-and-plugins.md), [Extension points](../architecture/extension-points.md), [Security](../architecture/security.md), [Mentions](../features/chat/mentions.md) |
 
-Later changes: [ADR-0034](0034-build-plugins-on-a-plugin-sdk.md) refines decisions 2 and 3: the provider trait moves into the plugin SDK.
+Later changes: [ADR-0034](0034-build-plugins-on-a-plugin-sdk.md) refines decisions 2 and 3: the provider trait moves into the plugin SDK. [ADR-0046](0046-let-plugins-attach-context-to-conversations.md) refines decisions 6 and 7: the context of a message gets the room of one tool result of its own, and the model reads it after the mentions.
 
 ## Context
 

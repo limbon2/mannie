@@ -124,6 +124,7 @@ impl RunActor {
                 agent: document.agent.clone(),
                 executor: Some(plan.target),
             }),
+            home: None,
         };
         let given = Given {
             document,

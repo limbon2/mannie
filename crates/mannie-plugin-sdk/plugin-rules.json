@@ -56,13 +56,14 @@
   ],
   "sdkMajor": 1,
   "secretNameParts": ["KEY", "APIKEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "CREDENTIALS"],
-  "sensitiveServices": ["background-commands", "credentials", "local-servers", "processes", "secrets"],
+  "sensitiveServices": ["background-commands", "credentials", "local-servers", "models", "processes", "secrets"],
   "services": {
     "background-commands": 1,
     "credentials": 1,
     "executor-host": 1,
     "file-dialog": 1,
     "local-servers": 1,
+    "models": 1,
     "processes": 1,
     "secrets": 1,
     "store": 1

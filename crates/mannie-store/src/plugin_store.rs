@@ -391,24 +391,37 @@ impl sdk::ModuleStoreApi for PluginStore {
             if batch.is_empty() {
                 return Ok(Vec::new());
             }
+            let erases = durability == sdk::Durability::Erase;
             let durability = match durability {
                 sdk::Durability::Normal => Durability::Normal,
-                sdk::Durability::Full => Durability::Full,
+                sdk::Durability::Full | sdk::Durability::Erase => Durability::Full,
             };
             let constraints = batch.constraints().to_vec();
             let statements = batch.statements().to_vec();
             // The mapping happens after the transaction, so a deferred
             // foreign key that fails when the batch commits maps the same.
-            match store
+            let changes = match store
                 .transact(durability, move |transaction| {
                     run_batch(transaction, module, &statements)
                 })
                 .await
             {
-                Ok(changes) => Ok(changes),
-                Err(TransactError::Rejected(index)) => Err(sdk::StoreError::Expectation { index }),
-                Err(TransactError::Store(error)) => Err(failure(module, &error, &constraints)),
+                Ok(changes) => changes,
+                Err(TransactError::Rejected(index)) => {
+                    return Err(sdk::StoreError::Expectation { index });
+                }
+                Err(TransactError::Store(error)) => {
+                    return Err(failure(module, &error, &constraints));
+                }
+            };
+            // The writer's `secure_delete` overwrote the freed pages, and
+            // emptying the write-ahead log removes their old versions from it,
+            // as deleting a conversation does (security architecture, local
+            // data).
+            if erases && let Err(error) = store.flush().await {
+                tracing::warn!(module, error = %error, "the log of a plugin's erasing write could not be emptied");
             }
+            Ok(changes)
         })
     }
 }

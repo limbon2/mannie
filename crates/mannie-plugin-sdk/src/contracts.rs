@@ -38,8 +38,12 @@ pub use mannie_types::labels::clean_label;
 // decision 8).
 pub use mannie_types::transport::{Url, credential_transport_allowed};
 // Mentions (ADR-0032): an entry of the "@" list, and the summary of what the
-// model got of a mention, which the UI words.
-pub use mannie_types::mentions::{MentionEntry, MentionSummary};
+// model got of a mention, which the UI words. A mention whose provider is
+// also a context provider attaches what it names, and is sent with the
+// variant and summary code of ADR-0050.
+pub use mannie_types::mentions::{
+    ATTACHED as ATTACHED_SUMMARY, ATTACHED_VARIANT, MentionEntry, MentionSummary,
+};
 // A plugin's work in progress, which turning it off lets go, as its
 // instance reports it (ADR-0034, decision 4).
 pub use mannie_types::plugins::WorkItem;
@@ -76,6 +80,11 @@ pub use mannie_types::tools::{
 pub use mannie_types::transcript::{
     Checkpoint, ConversationUpdate, SubscriptionEnd, SubscriptionId,
 };
+
+// Attached context (ADR-0046): where an item that a context provider gives
+// stands, the most items of a part and the longest key of an item that the
+// core keeps.
+pub use mannie_types::context::{ContextLocation, MAX_CONTEXT_ITEMS, MAX_ITEM_KEY_BYTES};
 
 // Complete read-only conversation records for task executors (ADR-0040).
 pub use mannie_types::export::{

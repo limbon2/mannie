@@ -326,10 +326,14 @@ export async function waitForCompleteReply(timeout = 30_000): Promise<string> {
   return part.text;
 }
 
-/** The conversations in the sidebar, by their links' titles. */
+/**
+ * The conversations in the sidebar, by their links' titles. The activity
+ * bar's Chat entry links to a conversation too, so only the content sidebar
+ * counts.
+ */
 export async function listedConversations(): Promise<string[]> {
   return browser.execute(() =>
-    [...document.querySelectorAll('[data-slot="sidebar"] a[href*="conversation="]')].map((link) =>
+    [...document.querySelectorAll('[data-shell-sidebar="content"] a[href*="conversation="]')].map((link) =>
       link.textContent.trim(),
     ),
   );

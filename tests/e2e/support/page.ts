@@ -167,8 +167,8 @@ export async function leaveSettings(): Promise<void> {
   if (!onSettings) {
     return;
   }
-  // The settings sidebar's header holds only that link.
-  await $('[data-slot="sidebar-header"] a').click();
+  // The header of the settings' content sidebar holds only that link.
+  await $('[data-shell-sidebar="content"] [data-slot="sidebar-header"] a').click();
   await browser.waitUntil(async () => browser.execute(() => !location.pathname.endsWith('/settings')), {
     timeout: 10_000,
     timeoutMsg: 'the settings did not close',

@@ -51,16 +51,24 @@ function oldestFirst(left: ProjectView, right: ProjectView): number {
   return left.id.localeCompare(right.id);
 }
 
+/** Whether a conversation is one of the Chat's: it belongs to no plugin's item (ADR-0051). */
+export function isChat(conversation: ConversationSummary): boolean {
+  return (conversation.home ?? null) === null;
+}
+
 /** The window's conversation list. */
 export class ConversationList {
+  /** Every conversation of the owner, those that belong to a plugin's item too. */
   conversations: ConversationSummary[] = $state([]);
   /** Why the list could not be read, if it could not. */
   failure: Failure<ChatError> | null = $state(null);
   /** The owner's projects, the oldest first. */
   projects: ProjectView[] = $state([]);
   status: 'error' | 'loading' | 'ready' = $state('loading');
-  /** The conversations by project, as the sidebar shows them. */
-  readonly grouped: GroupedConversations = $derived(groupConversations(this.conversations, this.projects));
+  /** The Chat's conversations, without those that a plugin lists under its items, such as notebooks' chats. */
+  readonly chats: ConversationSummary[] = $derived(this.conversations.filter(isChat));
+  /** The Chat's conversations by project, as the sidebar shows them. */
+  readonly grouped: GroupedConversations = $derived(groupConversations(this.chats, this.projects));
   /** Counts subscriptions, so that the updates of an ended one change nothing. */
   #generation = 0;
   /** The functions that hear of moves; no state, since nothing renders them. */

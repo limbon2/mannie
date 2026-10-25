@@ -7,7 +7,7 @@
 | Deciders | Owner                                                                                                                                         |
 | Related  | [ADR-0009](0009-persist-state-in-sqlite.md), [ADR-0013](0013-journal-every-side-effect.md), [Agent runtime](../architecture/agent-runtime.md) |
 
-Later changes: [ADR-0041](0041-let-agents-run-commands-in-the-background.md) refines decisions 1 and 6: a run can also start when a background command ends in an idle conversation, and at startup the background commands that ran become interrupted.
+Later changes: [ADR-0041](0041-let-agents-run-commands-in-the-background.md) refines decisions 1 and 6: a run can also start when a background command ends in an idle conversation, and at startup the background commands that ran become interrupted. [ADR-0046](0046-let-plugins-attach-context-to-conversations.md) refines decisions 2 and 3: a reply to an owner's message gathers the context of the conversation's attachments before its first call, and stores it as a part of the message.
 
 ## Context
 

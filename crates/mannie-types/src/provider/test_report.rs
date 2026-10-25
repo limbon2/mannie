@@ -104,6 +104,10 @@ pub enum CheckNote {
     /// The model answered without calling the tool it was asked to call, so it
     /// may not use tools reliably.
     NoToolCall,
+    /// The reranker scored a passage that does not answer the question at
+    /// least as high as one that does, so its scores may not mean what search
+    /// expects (ADR-0047).
+    UnexpectedOrder,
 }
 
 /// Why a check did not run.

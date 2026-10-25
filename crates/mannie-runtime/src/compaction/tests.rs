@@ -25,6 +25,7 @@ fn part(id: u32, kind: PartKind, text: &str) -> ModelPart {
         task: None,
         attempt: 1,
         image: None,
+        context: None,
     }
 }
 

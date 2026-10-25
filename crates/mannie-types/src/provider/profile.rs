@@ -421,6 +421,13 @@ pub enum ProviderProfileError {
     /// The credential is empty, too long or has control characters.
     #[error("the credential is not valid")]
     InvalidCredential,
+    /// A prefix of a search profile is too long or has control characters,
+    /// or a rerank profile has one (ADR-0047).
+    #[error("a prefix of the search profile is not valid")]
+    InvalidPrefix {
+        /// The longest prefix, in characters.
+        max_characters: u32,
+    },
     /// The profile does not exist.
     #[error("the provider profile does not exist")]
     NotFound,
@@ -452,6 +459,7 @@ impl ProviderProfileError {
             Self::InvalidModel => "provider.invalid_model",
             Self::InvalidLimits { .. } => "provider.invalid_limits",
             Self::InvalidCredential => "provider.invalid_credential",
+            Self::InvalidPrefix { .. } => "provider.invalid_prefix",
             Self::NotFound => "provider.not_found",
             Self::ProfileInUse => "provider.profile_in_use",
             Self::CredentialStoreUnavailable { .. } => "provider.credential_store_unavailable",
