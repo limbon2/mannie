@@ -13,3 +13,7 @@ Each change to the plugin adds one line under Unreleased, below its kind of chan
 - Paste JSON adds the servers of another client's configuration, under `mcpServers` or `servers`, after a preview that names their secrets without their values.
 - The images that a server's tools return reach the model (ADR-0044), with a switch for each server, and so do the server's instructions, marked as its words.
 - "@" attaches a connected server's resource to a message, and agents read resources with `mcp_read_resource`.
+
+### Security
+
+- tokio 1.53.3, which fixes the advisory RUSTSEC-2026-0386 in the constructors of `AsyncFd` on Unix, which neither the plugin's crates nor their dependencies call.
