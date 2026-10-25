@@ -253,20 +253,22 @@ mod tests {
                 "linear": { "url": "https://mcp.linear.app/mcp" }
             }
         }"#;
-        let vscode = r#"{
+        let folder = if cfg!(windows) { r"D:\work" } else { "/work" };
+        let vscode = serde_json::json!({
             "inputs": [{ "id": "token", "type": "promptString", "password": true }],
             "servers": {
-                "files": { "type": "stdio", "command": "uvx", "args": ["mcp-server-files"], "cwd": "D:\\work" },
+                "files": { "type": "stdio", "command": "uvx", "args": ["mcp-server-files"], "cwd": folder },
                 "remote": {
                     "type": "http",
                     "url": "https://mcp.example.com/mcp",
                     "headers": { "Authorization": "Bearer ${input:token}" }
                 }
             }
-        }"#;
+        })
+        .to_string();
 
         let first = read(claude).unwrap();
-        let second = read(vscode).unwrap();
+        let second = read(&vscode).unwrap();
 
         let keys: Vec<&str> = first.iter().map(|(key, _server)| key.as_str()).collect();
         assert_eq!(keys, ["github", "linear"]);
@@ -293,7 +295,7 @@ mod tests {
         );
         let files = second[0].1.as_ref().unwrap();
         assert!(
-            matches!(&files.endpoint, Endpoint::Program { folder: Some(folder), .. } if folder == "D:\\work")
+            matches!(&files.endpoint, Endpoint::Program { folder: Some(actual), .. } if actual == folder)
         );
     }
 

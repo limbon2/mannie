@@ -8,6 +8,7 @@
 #![cfg(test)]
 #![cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 
+#[cfg(windows)]
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
