@@ -80,6 +80,7 @@ export class WorkersActions {
     request.pairing = true;
     request.failure = null;
     const name = request.name.trim();
+    const received = workerList.received;
     const outcome = await call(() =>
       commands.pairWorker({
         address: request.address.trim(),
@@ -92,7 +93,7 @@ export class WorkersActions {
       request.failure = outcome.failure;
       return;
     }
-    workerList.upsert(outcome.data);
+    workerList.upsert(outcome.data, received);
     if (this.pair === request) {
       this.pairOpen = false;
     }
@@ -120,13 +121,14 @@ export class WorkersActions {
   async confirmRename(request: RenameWorkerRequest): Promise<void> {
     request.saving = true;
     request.failure = null;
+    const received = workerList.received;
     const outcome = await call(() => commands.renameWorker({ name: request.name, workerId: request.worker.id }));
     request.saving = false;
     if (!outcome.ok) {
       request.failure = outcome.failure;
       return;
     }
-    workerList.upsert(outcome.data);
+    workerList.upsert(outcome.data, received);
     if (this.renaming === request) {
       this.renameOpen = false;
     }

@@ -164,6 +164,23 @@ describe('the list of servers', () => {
     expect(list.servers).toEqual([]);
     expect(core.unsubscribe).toHaveBeenCalledWith(7);
   });
+
+  it('keeps a list that the channel brought while a command ran over the result of the command', async () => {
+    const context = new TestPluginContext('mcp', true);
+    const list = new ServerList();
+    list.follow(context);
+    await settle();
+    channel.deliver([{ item: { enabledTools: 0, kind: 'servers', servers: [] }, kind: 'item' }]);
+    const received = list.received;
+    // The server starts while it is being added.
+    channel.deliver([
+      { item: { enabledTools: 0, kind: 'servers', servers: [server('A', { status: 'connected' })] }, kind: 'item' },
+    ]);
+
+    list.upsert(server('A'), received);
+
+    expect(list.servers.map((known) => [known.name, known.status])).toEqual([['A', 'connected']]);
+  });
 });
 
 describe('the server dialog', () => {

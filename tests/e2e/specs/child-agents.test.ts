@@ -320,6 +320,29 @@ describe('child agents', () => {
     expect(await focusedElement()).toEqual(expect.objectContaining({ tag: 'main' }));
   });
 
+  it('shows the resize cursor on the whole page while the handle is dragged with the pointer', async () => {
+    await openChild(1);
+    const isMarked = async (): Promise<boolean> =>
+      browser.execute(() => document.documentElement.hasAttribute('data-side-panel-resizing'));
+    const mainCursor = async (): Promise<string> =>
+      browser.execute(() => getComputedStyle(document.querySelector('main') ?? document.body).cursor);
+
+    await browser
+      .action('pointer')
+      .move({ origin: await $(RESIZE_HANDLE) })
+      .down()
+      .move({ origin: 'pointer', x: -40, y: 0 })
+      .perform(true);
+    const whileDragged = { cursor: await mainCursor(), marked: await isMarked() };
+    await browser.releaseActions();
+
+    expect(whileDragged).toEqual({ cursor: 'ew-resize', marked: true });
+    expect(await isMarked()).toBe(false);
+    expect(await mainCursor()).not.toBe('ew-resize');
+    await $('[data-side-panel-close]').click();
+    await $(PANELS).waitForExist({ reverse: true });
+  });
+
   it('covers the main view with the side panel in a narrow window, until the panel closes', async () => {
     const { height, width } = await browser.getWindowSize();
     await browser.setWindowSize(800, height);

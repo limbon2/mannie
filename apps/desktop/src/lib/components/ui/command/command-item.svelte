@@ -18,6 +18,6 @@
 >
   {@render children?.()}
   <CheckIcon
-    class="ml-auto opacity-0 group-has-data-[slot=command-shortcut]/command-item:hidden group-data-[checked=true]/command-item:opacity-100"
+    class="group-has-data-[slot=command-shortcut]/command-item:hidden ml-auto opacity-0 group-data-[checked=true]/command-item:opacity-100"
   />
 </CommandPrimitive.Item>

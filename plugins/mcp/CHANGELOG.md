@@ -17,6 +17,7 @@ Each change to the plugin adds one line under Unreleased, below its kind of chan
 ### Fixed
 
 - The JSON import test uses an absolute working folder for the platform that runs it, so it passes on Linux as well as Windows.
+- A server that started while it was being added, turned on or signed out could keep showing the status that the command returned, when the list with its newer status arrived before the command's answer. The command's server now goes in only while no list arrived during the command.
 
 ### Security
 
