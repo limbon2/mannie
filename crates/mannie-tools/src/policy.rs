@@ -9,9 +9,9 @@ use std::path::{Path, PathBuf};
 use mannie_types::ceiling::CeilingMode;
 use mannie_types::ids::{DatabaseKey, ProjectId};
 use mannie_types::tools::{
-    Access, AccessMode, ApprovalReason, ApprovalRequest, CommandRule, Decision, GrantScope,
-    ProgramEffectKey, ProgramRule, ProgramTarget, Refusal, RemoteCommandRule, RemoteTarget,
-    RuleProposal, StatementClass, TerminalCommandRule, TerminalHost, TerminalTarget,
+    Access, AccessMode, ApprovalReason, ApprovalRequest, CommandRule, DatabaseHome, Decision,
+    GrantScope, ProgramEffectKey, ProgramRule, ProgramTarget, Refusal, RemoteCommandRule,
+    RemoteTarget, RuleProposal, StatementClass, TerminalCommandRule, TerminalHost, TerminalTarget,
     ToolServerEndpoint, ToolsError, effect_keys,
 };
 
@@ -95,8 +95,10 @@ pub enum Verdict {
 }
 
 /// Decides about an operation. A conversation in full access allows every
-/// operation, Mannie's own folders included (ADR-0029, decision 3).
-/// Otherwise it is allowed only when every access is:
+/// operation, Mannie's own folders included (ADR-0029, decision 3), except a
+/// write on a worker's database whose host does not take the master's full
+/// access (ADR-0057, decision 6). Otherwise it is allowed only when every
+/// access is:
 ///
 /// 1. an access inside Mannie's data or log folders asks;
 /// 2. a read inside the workspace is allowed;
@@ -115,7 +117,10 @@ pub enum Verdict {
 /// with a metacharacter is never allowed by a grant or a rule, a call of a
 /// tool server's tool is never allowed by a rule, a move is never
 /// granted, and nothing but full access allows a change of a database's
-/// schema.
+/// schema. A write on a worker's database follows its host (ADR-0057,
+/// decision 6): a read-only host refuses it, an ask host's asks and offers
+/// only Allow once, and an autonomous host or one in full access takes a
+/// grant.
 ///
 /// On a worker, its ceiling decides in place of the workspace and the rules
 /// ([`decide_under_ceiling`]): an access that the ceiling forbids refuses the
@@ -124,7 +129,8 @@ pub fn decide(accesses: &[Access], inputs: &PolicyInputs<'_>) -> Verdict {
     if accesses.is_empty() {
         return Verdict::Unrestricted;
     }
-    if inputs.full_access && inputs.ceiling.is_none() {
+    let full_access = inputs.full_access && inputs.ceiling.is_none();
+    if full_access && accesses.iter().all(takes_full_access) {
         return Verdict::Allowed(Decision::FullAccess);
     }
     let mut decision = if inputs.ceiling.is_some() {
@@ -137,7 +143,8 @@ pub fn decide(accesses: &[Access], inputs: &PolicyInputs<'_>) -> Verdict {
     for access in accesses {
         let held = match inputs.ceiling {
             Some(ceiling) => decide_under_ceiling(access, ceiling, inputs),
-            None => decide_access(access, inputs).map_err(Hold::Ask),
+            None if full_access && takes_full_access(access) => Ok(Decision::FullAccess),
+            None => decide_on_master(access, inputs),
         };
         match held {
             Ok(source) => decision = stronger(decision, source),
@@ -178,6 +185,44 @@ pub fn decide(accesses: &[Access], inputs: &PolicyInputs<'_>) -> Verdict {
         project: inputs.project.cloned(),
         host: None,
     }))
+}
+
+/// Whether the master's full access allows an access: every access but a
+/// write or a change of a schema on a worker's database whose host does not
+/// take it (ADR-0057, decision 6).
+fn takes_full_access(access: &Access) -> bool {
+    match access {
+        Access::Database { home, class, .. } => {
+            *class == StatementClass::Read || home.takes_full_access()
+        }
+        Access::Path { .. }
+        | Access::Command { .. }
+        | Access::Project { .. }
+        | Access::RemoteCommand { .. }
+        | Access::Program { .. }
+        | Access::ExternalTool { .. }
+        | Access::TerminalCommand { .. } => true,
+    }
+}
+
+/// What allows one access on the master, why it asks, or why it is
+/// refused: a write or a change of a schema on a read-only worker's
+/// database is refused, as its host would refuse it (ADR-0057, decision 6).
+fn decide_on_master(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decision, Hold> {
+    if let Access::Database {
+        home:
+            DatabaseHome::Worker {
+                mode: CeilingMode::ReadOnly,
+                ..
+            },
+        class,
+        ..
+    } = access
+        && *class != StatementClass::Read
+    {
+        return Err(Hold::Refuse(Refusal::ReadOnlyHost));
+    }
+    decide_access(access, inputs).map_err(Hold::Ask)
 }
 
 /// Why an access does not run without the owner.
@@ -385,14 +430,16 @@ fn decide_access(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decision,
 /// What allows a statement on a registered database, or why it asks
 /// (ADR-0056, decision 7): a read runs in every conversation; a write runs
 /// under a grant of the same statement on the same database, whatever its
-/// parameters; a change of the schema always asks, and no grant covers it.
-/// Full access, which [`decide`] checks first, allows each. A database is
-/// where the owner registered it, so the workspace does not apply, and the
-/// core refuses to register a file in Mannie's own folders.
+/// parameters, where the database's home takes grants; a change of the
+/// schema always asks, and no grant covers it. Full access, which [`decide`]
+/// checks first, allows each where the home takes it. A database is where
+/// the owner registered it, so the workspace does not apply, and the core
+/// refuses to register a file in Mannie's own folders.
 fn decide_database(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decision, ApprovalReason> {
     let Access::Database {
         plugin,
         key,
+        home,
         statement,
         class,
         ..
@@ -402,11 +449,26 @@ fn decide_database(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decisio
     };
     match class {
         StatementClass::Read => Ok(Decision::RegisteredDatabase),
-        StatementClass::Write => granted(&inputs.grants, |grant| {
+        StatementClass::Write if takes_grants(home) => granted(&inputs.grants, |grant| {
             covers_database(grant, plugin, key, statement)
         })
         .ok_or(ApprovalReason::DatabaseWrite),
+        StatementClass::Write => Err(ApprovalReason::DatabaseWrite),
         StatementClass::Schema => Err(ApprovalReason::DatabaseSchema),
+    }
+}
+
+/// Whether a grant of the master covers a write on a database here: on
+/// this computer, and on a worker's host in autonomous mode or full access.
+/// An ask host takes only the owner's action or Allow once, and a
+/// read-only host no write at all (ADR-0057, decisions 5 and 6).
+fn takes_grants(home: &DatabaseHome) -> bool {
+    match home {
+        DatabaseHome::ThisComputer => true,
+        DatabaseHome::Worker { mode, .. } => match mode {
+            CeilingMode::ReadOnly | CeilingMode::Ask => false,
+            CeilingMode::Autonomous | CeilingMode::FullAccess => true,
+        },
     }
 }
 
@@ -835,8 +897,9 @@ fn grants_for(asking: &[&Access]) -> Vec<GrantScope> {
 
 /// The grant that covers an access: its mode in the folder itself for a
 /// folder, in the folder of a file; the same command in the same working
-/// directory; the same command on the same remote host; or the same run of
-/// an installed program with its effects.
+/// directory; the same command on the same remote host; the same run of an
+/// installed program with its effects; or the same statement on the same
+/// database.
 fn grant_scope(access: &Access) -> Option<GrantScope> {
     match access {
         Access::Path {
@@ -924,22 +987,33 @@ fn grant_scope(access: &Access) -> Option<GrantScope> {
                 effects: run.effects,
             })
         }
-        // A grant covers writes only; a schema change never gets one, and a
-        // read never asks.
-        Access::Database {
-            plugin,
-            key,
-            name,
-            statement,
-            class,
-            ..
-        } => (*class == StatementClass::Write).then(|| GrantScope::Database {
-            plugin: plugin.clone(),
-            key: key.clone(),
-            name: name.clone(),
-            statement: statement.clone(),
-        }),
+        Access::Database { .. } => database_grant(access),
     }
+}
+
+/// The grant that covers a statement on a registered database. A grant
+/// covers writes only: a schema change never gets one, a read never asks,
+/// and a write on an ask host's database takes only Allow once (ADR-0057,
+/// decision 6).
+fn database_grant(access: &Access) -> Option<GrantScope> {
+    let Access::Database {
+        plugin,
+        key,
+        name,
+        home,
+        statement,
+        class,
+        ..
+    } = access
+    else {
+        return None;
+    };
+    (*class == StatementClass::Write && takes_grants(home)).then(|| GrantScope::Database {
+        plugin: plugin.clone(),
+        key: key.clone(),
+        name: name.clone(),
+        statement: statement.clone(),
+    })
 }
 
 /// Whether one grant covers everything another covers.

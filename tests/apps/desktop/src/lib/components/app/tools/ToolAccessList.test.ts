@@ -134,6 +134,25 @@ describe('ToolAccessList', () => {
     expect(body).not.toContain('9a0b1c2d3e4f');
   });
 
+  it('names the worker whose host holds a database, and never its ID', () => {
+    const body = shown([
+      {
+        ...STATEMENT,
+        home: {
+          acceptsFullAccess: true,
+          kind: 'worker',
+          mode: 'autonomous',
+          name: 'build-box',
+          worker: '0199e0f2-0000-7000-8000-0000000000aa',
+        },
+      },
+    ]);
+
+    expect(body).toContain('build-box');
+    expect(body).not.toContain('This computer');
+    expect(body).not.toContain('0199e0f2');
+  });
+
   it('says how many values of a statement the list leaves out, and shows no list for a statement without values', () => {
     const many = shown([{ ...STATEMENT, parameterCount: 40 }]);
     const none = shown([{ ...STATEMENT, class: 'schema', parameterCount: 0, parameters: [] }]);

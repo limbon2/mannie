@@ -27,8 +27,9 @@
   // (ADR-0043), a command typed into a terminal with the terminal, its host,
   // shell, user and folder (ADR-0053, decision 5), a statement on a
   // registered database with its values, what it does and where the database
-  // lives (ADR-0056, decision 7), or the project that the conversation moves
-  // into, with its folder (docs/features/system-tools/tool-activity.md).
+  // lives, this computer or a worker's host (ADR-0056, decision 7; ADR-0057),
+  // or the project that the conversation moves into, with its folder
+  // (docs/features/system-tools/tool-activity.md).
   // Paths, commands, statements, values, arguments, names and a server's
   // words are content, and render as text in their own elements (T-3).
   let { accesses }: { accesses: readonly Access[] } = $props();
@@ -136,7 +137,7 @@
           <dt class="text-muted-foreground">{m.tools_access_database()}</dt>
           <dd class="break-all" data-content dir="auto">{access.name}</dd>
           <dt class="text-muted-foreground">{m.tools_access_database_home()}</dt>
-          <dd>{databaseHomeText(access.home)}</dd>
+          <dd class="break-all" data-content dir="auto">{databaseHomeText(access.home)}</dd>
         </dl>
       {:else if access.kind === 'external_tool'}
         <p class="text-sm wrap-anywhere" data-content dir="auto">

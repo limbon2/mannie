@@ -339,6 +339,15 @@ describe('tools messages', () => {
   it('label what each statement on a database does, and where the database lives', () => {
     expectDistinct([statementClassLabel('read'), statementClassLabel('write'), statementClassLabel('schema')]);
     expect(databaseHomeText({ kind: 'this_computer' }).trim()).not.toBe('');
+    expect(
+      databaseHomeText({
+        acceptsFullAccess: false,
+        kind: 'worker',
+        mode: 'ask',
+        name: 'build-box',
+        worker: '0199e0f2-0000-7000-8000-0000000000aa',
+      }),
+    ).toContain('build-box');
   });
 
   it('name the tool, the server and where it runs of a grant of a tool server’s tool', () => {

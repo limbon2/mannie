@@ -867,6 +867,7 @@
   ],
   "tools_access_database_home": "Computer",
   "tools_access_database_this_computer": "This computer",
+  "tools_access_database_worker": "Worker {name}",
   "tools_access_database_read": "Read",
   "tools_access_database_write": "Change rows",
   "tools_access_database_schema": "Change schema",
@@ -1108,7 +1109,10 @@
     {
       "declarations": ["input count", "local countPlural = count: plural"],
       "selectors": ["countPlural"],
-      "match": { "countPlural=one": "Commands, 1 running", "countPlural=other": "Commands, {count: number} running" }
+      "match": {
+        "countPlural=one": "Commands, 1 running",
+        "countPlural=other": "Commands, {count: number} running"
+      }
     }
   ],
   "tools_background_control_running": "Running",

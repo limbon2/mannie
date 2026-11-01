@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use mannie_types::ceiling::CeilingMode;
 use mannie_types::clock::UtcMillis;
-use mannie_types::ids::{DatabaseKey, ProjectId, RuleId};
+use mannie_types::ids::{DatabaseKey, ProjectId, RuleId, WorkerId};
 use mannie_types::tools::{
     Access, AccessMode, ApprovalReason, ApprovalRequest, CommandRule, DatabaseHome, Decision,
     DiscardedWork, EntryCount, GrantScope, ProgramEffect, ProgramRule, ProgramTarget, Refusal,
@@ -2186,6 +2186,22 @@ fn statement(text: &str, parameters: &[&str], class: StatementClass) -> Access {
     statement_on(DATABASE, text, parameters, class)
 }
 
+/// A statement on a database of the worker `build-box`, whose host is in
+/// `mode` and takes the master's full access when `accepts` says so
+/// (ADR-0057, decision 6).
+fn on_worker(text: &str, class: StatementClass, mode: CeilingMode, accepts: bool) -> Access {
+    let mut access = statement(text, &["12"], class);
+    if let Access::Database { home, .. } = &mut access {
+        *home = DatabaseHome::Worker {
+            worker: WorkerId::parse("0199e0f2-0000-7000-8000-0000000000aa").unwrap(),
+            name: "build-box".to_owned(),
+            mode,
+            accepts_full_access: accepts,
+        };
+    }
+    access
+}
+
 fn database_grant(text: &str) -> GrantScope {
     GrantScope::Database {
         plugin: "workers".to_owned(),
@@ -2394,6 +2410,144 @@ fn an_approval_covers_the_values_and_the_file_that_it_showed() {
             "{other:?}"
         );
     }
+}
+
+#[test]
+fn a_read_of_a_workers_database_runs_whatever_its_hosts_mode() {
+    for mode in MODES.into_iter().chain([CeilingMode::FullAccess]) {
+        assert_eq!(
+            Inputs::new().decide(&[on_worker("SELECT 1", StatementClass::Read, mode, false)]),
+            Verdict::Allowed(Decision::RegisteredDatabase),
+            "{mode:?}"
+        );
+    }
+}
+
+#[test]
+fn a_read_only_hosts_database_refuses_every_write_even_in_full_access() {
+    let mut inputs = Inputs::new();
+    inputs.grants = vec![database_grant(UPDATE)];
+    for full_access in [false, true] {
+        inputs.full_access = full_access;
+        for class in [StatementClass::Write, StatementClass::Schema] {
+            assert_eq!(
+                inputs.decide(&[on_worker(UPDATE, class, CeilingMode::ReadOnly, true)]),
+                Verdict::Refused(Refusal::ReadOnlyHost),
+                "{full_access} {class:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_ask_hosts_write_offers_only_allow_once_and_no_grant_covers_it() {
+    let mut inputs = Inputs::new();
+    inputs.grants = vec![database_grant(UPDATE)];
+    inputs.always_grants = vec![database_grant(UPDATE)];
+    let accesses = [on_worker(
+        UPDATE,
+        StatementClass::Write,
+        CeilingMode::Ask,
+        true,
+    )];
+
+    assert_eq!(
+        inputs.decide(&accesses),
+        ask(
+            &accesses,
+            &[ApprovalReason::DatabaseWrite],
+            Vec::new(),
+            None
+        )
+    );
+}
+
+#[test]
+fn an_autonomous_hosts_write_offers_a_grant_and_runs_under_one() {
+    for mode in [CeilingMode::Autonomous, CeilingMode::FullAccess] {
+        let accesses = [on_worker(UPDATE, StatementClass::Write, mode, false)];
+        assert_eq!(
+            Inputs::new().decide(&accesses),
+            ask(
+                &accesses,
+                &[ApprovalReason::DatabaseWrite],
+                vec![database_grant(UPDATE)],
+                None
+            ),
+            "{mode:?}"
+        );
+        let mut granted = Inputs::new();
+        granted.grants = vec![database_grant(UPDATE)];
+        assert_eq!(
+            granted.decide(&accesses),
+            Verdict::Allowed(Decision::Grant),
+            "{mode:?}"
+        );
+    }
+    let schema = [on_worker(
+        CREATE_INDEX,
+        StatementClass::Schema,
+        CeilingMode::Autonomous,
+        false,
+    )];
+    assert_eq!(
+        Inputs::new().decide(&schema),
+        ask(&schema, &[ApprovalReason::DatabaseSchema], Vec::new(), None)
+    );
+}
+
+#[test]
+fn full_access_counts_for_a_workers_write_only_where_its_host_takes_it() {
+    let mut inputs = Inputs::new();
+    inputs.full_access = true;
+    for (mode, accepts) in [
+        (CeilingMode::Ask, true),
+        (CeilingMode::Autonomous, true),
+        (CeilingMode::FullAccess, false),
+    ] {
+        for class in [StatementClass::Write, StatementClass::Schema] {
+            assert_eq!(
+                inputs.decide(&[on_worker(UPDATE, class, mode, accepts)]),
+                Verdict::Allowed(Decision::FullAccess),
+                "{mode:?} {class:?}"
+            );
+        }
+    }
+    let refused = [on_worker(
+        UPDATE,
+        StatementClass::Write,
+        CeilingMode::Ask,
+        false,
+    )];
+    assert_eq!(
+        inputs.decide(&refused),
+        ask(&refused, &[ApprovalReason::DatabaseWrite], Vec::new(), None)
+    );
+    let schema = [on_worker(
+        CREATE_INDEX,
+        StatementClass::Schema,
+        CeilingMode::Autonomous,
+        false,
+    )];
+    assert_eq!(
+        inputs.decide(&schema),
+        ask(&schema, &[ApprovalReason::DatabaseSchema], Vec::new(), None)
+    );
+    // A grant still covers the write on an autonomous host that refuses the
+    // master's full access, and full access covers the rest of the call.
+    inputs.grants = vec![database_grant(UPDATE)];
+    assert_eq!(
+        inputs.decide(&[
+            read("/elsewhere/a.txt"),
+            on_worker(
+                UPDATE,
+                StatementClass::Write,
+                CeilingMode::Autonomous,
+                false
+            ),
+        ]),
+        Verdict::Allowed(Decision::FullAccess)
+    );
 }
 
 #[test]

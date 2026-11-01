@@ -467,14 +467,16 @@ export function statementClassLabel(statementClass: StatementClass): string {
   }
 }
 
-/** The text of each computer where a registered database can live, one for each kind of home. */
-const DATABASE_HOMES: Record<DatabaseHome['kind'], () => string> = {
-  this_computer: () => m.tools_access_database_this_computer(),
-};
-
-/** The computer where a registered database lives (ADR-0056, decision 2). */
+/** The computer where a registered database lives: this computer or a worker's host, by the worker's name (ADR-0056, decision 2; ADR-0057). */
 export function databaseHomeText(home: DatabaseHome): string {
-  return DATABASE_HOMES[home.kind]();
+  switch (home.kind) {
+    case 'this_computer': {
+      return m.tools_access_database_this_computer();
+    }
+    case 'worker': {
+      return m.tools_access_database_worker({ name: home.name });
+    }
+  }
 }
 
 /** What a recursive delete removes inside a folder, such as "3 files and 2 folders". */
