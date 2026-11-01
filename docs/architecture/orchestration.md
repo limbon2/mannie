@@ -22,7 +22,7 @@ flowchart TD
 ```
 
 - The conversation agent takes care of the owner's request. It answers, uses tools on its machine, starts child agents there, and gives tasks to the executors of the plugins that are on.
-- An agent's tools act on its own machine, and on a remote host that the owner registered with a plugin only through that plugin's tool, under the master's policy ([ADR-0036](../adr/0036-let-plugins-run-commands-on-remote-hosts.md)). A plugin's executor runs a task wherever its target is, and the core never runs tools there.
+- An agent's tools act on its own machine, and on a remote host that the owner registered with a plugin only through that plugin's tool, under the master's policy ([ADR-0036](../adr/0036-let-plugins-run-commands-on-remote-hosts.md)). A plugin's executor runs a task wherever its target is, and the core never runs tools there. From M15, the master works with the databases registered on a worker's host through the worker, which decides under its ceiling and records each statement ([ADR-0057](../adr/0057-let-the-master-work-with-the-databases-on-a-workers-host.md)).
 - A task's agent never assigns tasks of its own.
 
 ## 2. Tasks and reports

@@ -74,6 +74,7 @@ The ceiling is the most that the worker's tools may do. The owner sets it in the
 - In read-only mode, the worker offers the model only the tools that read, so the model rarely meets a refusal; a call that comes anyway ends as not run with the refusal.
 - A refused call ends as not run with the reason `read_only_host`, and the model reads the refusal text above.
 - No plugin runs on a worker, so no tool there runs commands on a remote host. The ceiling still answers such an access, with the refusal `no_remote_commands`, so it has an answer for every kind of access ([ADR-0036](../../../docs/adr/0036-let-plugins-run-commands-on-remote-hosts.md)).
+- From M15, the ceiling also decides the requests of [databases](databases.md) registered on this host, which the host allows in its configuration ([ADR-0057](../../../docs/adr/0057-let-the-master-work-with-the-databases-on-a-workers-host.md)).
 
 ### Approvals
 

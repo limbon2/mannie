@@ -72,6 +72,8 @@ None.
 - [Workers as a plugin](plugin.md): turning workers on and off, what happens to running tasks, and the update from 0.2.0.
 - [Worker activity](worker-activity.md): workers in the master's interface, the pairing dialog, worker tasks in a conversation and their states.
 - [Worker mentions](worker-mentions.md): an idea, mentioning a worker in a message.
+- [Databases](databases.md): built in M15, an optional feature that registers SQLite files on this computer and on workers, with a view like Adminer's and tools for agents.
+- [Database backups and replicas](database-backups.md), [database export and import](database-export-and-import.md) and [database tools for worker tasks](database-tools-for-worker-tasks.md): ideas that follow Databases.
 
 ## Acceptance
 
