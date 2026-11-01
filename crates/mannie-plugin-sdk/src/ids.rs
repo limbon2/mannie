@@ -54,6 +54,9 @@ pub const RESERVED_IDS: &[&str] = &[
     "tests",
     "tools",
     "validation",
+    // The core's tables of the owner's SQLite files, `dbfiles_*` (ADR-0056,
+    // decision 10).
+    "dbfiles",
     // The core's settings section `interface`. The core's other sections are
     // reserved above or are prefixes of the core's message keys (`chat` and
     // `child_agents`), which the build checks.
@@ -100,8 +103,9 @@ pub const RESERVED_IDS: &[&str] = &[
 ];
 
 /// The prefixes, as `<prefix>_*`, of the tables in the store's database that
-/// are not a plugin's: the core's, the core's `validation_*` of validation
-/// builds, and SQLite's own `sqlite_*`. A plugin's prefix may not begin one
+/// are not a plugin's: the core's, among them the registrations of the
+/// owner's SQLite files `dbfiles_*` (ADR-0056, decision 10), the core's
+/// `validation_*` of validation builds, and SQLite's own `sqlite_*`. A plugin's prefix may not begin one
 /// of them, and none of them may begin a plugin's, so that the statements of
 /// a plugin confined to its own prefix never reach such a table (decision 7).
 /// The store's tests also create `tests_*` tables, which no shipped or
@@ -115,6 +119,7 @@ pub const CORE_TABLE_PREFIXES: &[&str] = &[
     "store",
     "validation",
     "sqlite",
+    "dbfiles",
 ];
 
 /// The start of the crate names of Tauri's plugins, which no plugin ID may

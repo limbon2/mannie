@@ -1,5 +1,15 @@
 {
-  "coreTablePrefixes": ["settings", "runtime", "exports", "provider", "tools", "store", "validation", "sqlite"],
+  "coreTablePrefixes": [
+    "settings",
+    "runtime",
+    "exports",
+    "provider",
+    "tools",
+    "store",
+    "validation",
+    "sqlite",
+    "dbfiles"
+  ],
   "loaderNamePrefixes": ["LD_", "DYLD_"],
   "pluginOnlyServices": ["store", "secrets", "processes", "executor-host", "credentials"],
   "reservedIds": [
@@ -25,6 +35,7 @@
     "tests",
     "tools",
     "validation",
+    "dbfiles",
     "interface",
     "sqlite",
     "aux",

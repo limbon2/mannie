@@ -40,6 +40,7 @@ words:
   - ctutils
   - cyclonedx
   - DBCONFIG
+  - dbfiles
   - dbstat
   - dbus
   - Delinea

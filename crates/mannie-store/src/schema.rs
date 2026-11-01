@@ -325,7 +325,21 @@ const EXPORTS: StoreModule = StoreModule {
     confined: false,
 };
 
-pub(crate) const CORE_MODULES: [StoreModule; 5] = [SETTINGS, RUNTIME, PROVIDER, TOOLS, EXPORTS];
+/// The registrations of the owner's SQLite files and the journal of owner
+/// operations on them (ADR-0056).
+const DBFILES: StoreModule = StoreModule {
+    name: "dbfiles",
+    migrations: Cow::Borrowed(&[Migration {
+        version: 1,
+        legacy_version: None,
+        description: "create the registrations of SQLite files and the journal of owner operations",
+        sql: include_str!("dbfiles/0001_create_tables.sql"),
+    }]),
+    confined: false,
+};
+
+pub(crate) const CORE_MODULES: [StoreModule; 6] =
+    [SETTINGS, RUNTIME, PROVIDER, TOOLS, EXPORTS, DBFILES];
 
 /// The records of a database: each module's name and how many of its
 /// migrations the database has. Modules that this binary does not know keep

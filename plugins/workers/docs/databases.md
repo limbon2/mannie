@@ -106,7 +106,7 @@ None.
 
 ### Data
 
-- This computer's registrations and the owner operations live in the core's engine module ([ADR-0056](../../../docs/adr/0056-let-plugins-work-with-the-owners-sqlite-files-through-the-core.md)). A worker keeps its own in its store.
+- This computer's registrations and the owner operations live in the core's engine module, `dbfiles` of `mannie-store`, whose tables `dbfiles_registrations` and `dbfiles_operations` no plugin can reach, since the prefix is reserved ([ADR-0056](../../../docs/adr/0056-let-plugins-work-with-the-owners-sqlite-files-through-the-core.md)). A worker keeps its own in its store.
 - Workers' table `workers_databases` holds the copy of each worker's list: the worker, the key, the name, the path for display, the file's identity, the read-only mark, the last known state and when it was read. Removing a worker removes its rows.
 - The owner's choice is `features.workers.databases` in the core's settings section `plugins`.
 

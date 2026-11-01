@@ -343,6 +343,13 @@ impl Runtime {
         config: RuntimeConfig,
     ) -> Result<Self, RuntimeStoreError> {
         deps.store.recover_exports().await?;
+        let uncertain = deps.store.recover_db_operations().await?;
+        if uncertain > 0 {
+            tracing::warn!(
+                operations = uncertain,
+                "owner operations on databases ran when Mannie ended and may have taken effect"
+            );
+        }
         let recovered = deps.store.recover_interrupted_runs().await?;
         if !recovered.is_empty() {
             tracing::info!(
