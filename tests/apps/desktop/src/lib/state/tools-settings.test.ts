@@ -9,6 +9,7 @@ import type {
   ProgramRule,
   RemoteCommandRule,
   SharedGrant,
+  TerminalCommandRule,
   ToolsError,
   ToolsSettings,
 } from '../../../../../../apps/desktop/src/lib/generated/bindings.js';
@@ -22,11 +23,13 @@ const core = vi.hoisted(() => ({
   deleteCommandRule: vi.fn(),
   deleteProgramRule: vi.fn(),
   deleteRemoteCommandRule: vi.fn(),
+  deleteTerminalCommandRule: vi.fn(),
   getToolsSettings: vi.fn(),
   listCommandRules: vi.fn(),
   listProgramRules: vi.fn(),
   listRemoteCommandRules: vi.fn(),
   listSharedGrants: vi.fn(),
+  listTerminalCommandRules: vi.fn(),
   revokeSharedGrant: vi.fn(),
   updateToolsSettings: vi.fn(),
 }));
@@ -68,6 +71,16 @@ const PROGRAM_RULE: ProgramRule = {
     program: 'C:\\Program Files\\Git\\cmd\\git.exe',
   },
   words: ['git', 'commit'],
+};
+
+const TERMINAL_RULE: TerminalCommandRule = {
+  createdAt: 0,
+  id: '0199e0f2-0000-7000-8000-0000000000ff',
+  target: {
+    host: { kind: 'this_machine', shell: 'C:\\Program Files\\PowerShell\\7\\pwsh.exe' },
+    plugin: 'terminal',
+  },
+  words: ['Get-NetTCPConnection'],
 };
 
 function ok<T>(data: T): { data: T; status: 'ok' } {
@@ -142,6 +155,7 @@ describe('CommandRulesState', () => {
   beforeEach(() => {
     core.listRemoteCommandRules.mockResolvedValue(ok([]));
     core.listProgramRules.mockResolvedValue(ok([]));
+    core.listTerminalCommandRules.mockResolvedValue(ok([]));
   });
 
   it('lists the rules and deletes one', async () => {
@@ -252,6 +266,35 @@ describe('CommandRulesState', () => {
     expect(core.deleteCommandRule).not.toHaveBeenCalled();
     expect(rules.programRules.map((rule) => rule.id)).toEqual(['kept']);
     expect(rules.deleteFailure?.kind).toBe('core');
+  });
+
+  it('lists the rules of terminals beside the others, and deletes one of them', async () => {
+    const rules = new CommandRulesState();
+    core.listCommandRules.mockResolvedValue(ok([]));
+    core.listTerminalCommandRules.mockResolvedValue(ok([TERMINAL_RULE, { ...TERMINAL_RULE, id: 'gone' }]));
+    core.deleteTerminalCommandRule.mockResolvedValueOnce(ok(null));
+
+    await rules.load();
+    expect(rules.isEmpty).toBe(false);
+    await rules.removeTerminal(TERMINAL_RULE.id);
+    core.deleteTerminalCommandRule.mockResolvedValueOnce(refused({ code: 'rule_not_found' }));
+    await rules.removeTerminal('gone');
+
+    expect(core.deleteTerminalCommandRule).toHaveBeenCalledWith({ ruleId: TERMINAL_RULE.id });
+    expect(core.deleteRemoteCommandRule).not.toHaveBeenCalled();
+    expect(rules.terminalRules).toEqual([]);
+    expect(rules.deleteFailure).toBeNull();
+  });
+
+  it('reports the rules as unreadable when the rules of terminals cannot be read', async () => {
+    const rules = new CommandRulesState();
+    core.listCommandRules.mockResolvedValue(ok([RULE]));
+    core.listTerminalCommandRules.mockResolvedValue(refused({ code: 'storage_failed' }));
+
+    await rules.load();
+
+    expect(rules.status).toBe('error');
+    expect(rules.readFailure?.kind).toBe('core');
   });
 
   it('reports the rules as unreadable when the rules of installed programs cannot be read', async () => {

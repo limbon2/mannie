@@ -21,6 +21,12 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - A new embedding profile starts with the query text that instruction-aware models such as Qwen3-Embedding want, which the owner can change or clear, and a plugin's `openView` can replace the address in the history.
 - Search profiles in the Providers settings, "Embedding and rerank models": an embedding or rerank model on a server that the owner names, with an optional key and the texts that go before queries and documents, and a test that reports the vectors' dimensions or the scores of two passages. Plugins embed and rerank through them with the service `models`, and never see a key (ADR-0047).
 - A plugin's write to the store can erase what it deleted from every file of the store, as deleting a conversation does (ADR-0048, proposed).
+- Plugins open terminals through the service `terminals`: this machine's shells, which the supervisor starts on a pseudo console with a setup that the plugin passes and contains as a command, and the hosts that plugins offer through the point `terminal-hosts`. Each terminal belongs to a conversation, at most 8 to one and 32 on the machine, and ends with its conversation, its plugin and Mannie (ADR-0053).
+- A plugin's tool may type a command into a terminal as a terminal-command access, which the owner allows once, for the conversation, for the project or for every conversation, covering the same command on the same host and, on this machine, in the same shell; rules of its leading words apply on their host only and show in the Tools settings, full access runs it, and a worker's ceiling refuses it (ADR-0053).
+- A tool's result may keep up to 8 items that it cites, which the call's part stores, so a citation's popover shows their text after their source is gone; a cite key may end with `#L<first>-L<last>`, whose lines the popover marks, and a context kind without a provider serves citations only (ADR-0054).
+- A plugin's view puts a mention into the open conversation's message box through `@mannie/plugin-sdk/message-box`, as if the owner had chosen it from the "@" list (ADR-0054).
+- A command of the palette may have a key, which the shell binds while the command is available and the palette shows (ADR-0053).
+- The warning before closing or quitting counts the terminals that run a command (ADR-0053).
 
 ### Changed
 

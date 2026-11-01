@@ -12,6 +12,7 @@ pub mod models;
 pub mod processes;
 pub mod secrets;
 pub mod store;
+pub mod terminals;
 
 use crate::service::ServiceInfo;
 
@@ -28,6 +29,7 @@ pub const SERVICES: &[ServiceInfo] = &[
     ServiceInfo::of::<processes::Processes>(),
     ServiceInfo::of::<secrets::Secrets>(),
     ServiceInfo::of::<store::Store>(),
+    ServiceInfo::of::<terminals::Terminals>(),
 ];
 
 /// The service with this name.
@@ -74,7 +76,8 @@ mod tests {
                 ("models", 1, true),
                 ("processes", 1, true),
                 ("secrets", 1, true),
-                ("store", 1, false)
+                ("store", 1, false),
+                ("terminals", 1, true)
             ]
         );
     }

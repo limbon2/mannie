@@ -299,6 +299,12 @@ const TOOLS: StoreModule = StoreModule {
             description: "let rules cover commands in the background",
             sql: include_str!("tools/migrations/0033_add_background_to_rules.sql"),
         },
+        Migration {
+            version: 7,
+            legacy_version: None,
+            description: "create the rules for commands typed into terminals",
+            sql: include_str!("tools/migrations/0038_create_terminal_rules.sql"),
+        },
     ]),
     confined: false,
 };

@@ -1,0 +1,170 @@
+{
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "terminal_plugin_name": "Terminal",
+  "terminal_plugin_description": "Opens terminals beside a conversation, on this computer and on SSH hosts. Agents can run commands in them, which you approve unless a permission, a rule or full access covers them, and cite their output.",
+  "terminal_start_failed": "The terminal plugin could not read its settings. Restart Mannie, then turn the plugin on again.",
+  "terminal_off_question": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "A command runs in a terminal. Turning the plugin off ends every terminal and everything it started.",
+        "countPlural=other": "Commands run in {count: number} terminals. Turning the plugin off ends every terminal and everything it started."
+      }
+    }
+  ],
+  "terminal_this_computer": "This computer",
+  "terminal_name": "Terminal {number} · {shell} · {host}",
+  "terminal_name_without_shell": "Terminal {number} · {host}",
+  "terminal_panel_title": "Terminal",
+  "terminal_panel_unknown": "This terminal is not known",
+  "terminal_control_title": "Terminal",
+  "terminal_control_label": [
+    {
+      "declarations": ["input running", "local runningPlural = running: plural"],
+      "selectors": ["runningPlural"],
+      "match": {
+        "runningPlural=one": "Terminals, 1 runs a command",
+        "runningPlural=other": "Terminals, {running: number} run commands"
+      }
+    }
+  ],
+  "terminal_control_terminals": "Terminals of this conversation",
+  "terminal_control_new": "New terminal",
+  "terminal_control_hosts": "Hosts",
+  "terminal_control_default": "Default",
+  "terminal_control_no_shells": "No shell found",
+  "terminal_host_unavailable": "Not available now ({code})",
+  "terminal_open_failed_title": "The terminal did not open",
+  "terminal_dismiss": "Close",
+  "terminal_toolbar_label": "Terminal actions",
+  "terminal_region_label": "Terminal",
+  "terminal_find": "Find",
+  "terminal_find_label": "Find in the terminal",
+  "terminal_find_placeholder": "Find",
+  "terminal_find_next": "Next match",
+  "terminal_find_previous": "Previous match",
+  "terminal_find_close": "Close find",
+  "terminal_commands": "Commands",
+  "terminal_commands_empty": "No commands yet",
+  "terminal_commands_empty_description": "Commands that you or an agent run in this terminal show here.",
+  "terminal_end": "End",
+  "terminal_end_title": "End this terminal?",
+  "terminal_end_description": "A command runs in it. Ending the terminal ends the command and everything it started.",
+  "terminal_cancel": "Cancel",
+  "terminal_remove": "Remove",
+  "terminal_start_again": "Start again",
+  "terminal_loading": "Opening the terminal…",
+  "terminal_plain_shell": "This shell does not mark its commands, so agents cannot run commands here. You can still use it.",
+  "terminal_key": "Ctrl+`",
+  "terminal_leave_hint_start": "Press",
+  "terminal_leave_hint_end": "in the terminal to move the focus to its toolbar.",
+  "terminal_phase_starting": "Starting",
+  "terminal_phase_prompt": "Ready",
+  "terminal_phase_running": "Running a command",
+  "terminal_phase_ended": "Ended",
+  "terminal_ended_exited": "The terminal ended. Its shell exited with {code}.",
+  "terminal_ended_closed": "The terminal ended.",
+  "terminal_ended_stopped": "The terminal ended when the plugin turned off or Mannie quit.",
+  "terminal_ended_lost": "The connection to the host was lost ({code}).",
+  "terminal_block_running": "Running",
+  "terminal_block_ended": "Ended",
+  "terminal_block_exit": "Exit {code}",
+  "terminal_block_by_owner": "You ran it",
+  "terminal_block_by_agent": "An agent ran it",
+  "terminal_block_no_command": "Command",
+  "terminal_block_actions": "Actions for command {number}",
+  "terminal_block_show": "Show",
+  "terminal_block_mention": "Mention in message",
+  "terminal_block_copy_command": "Copy command",
+  "terminal_block_copy_output": "Copy output",
+  "terminal_block_show_text": "Show output as text",
+  "terminal_copied": "Copied.",
+  "terminal_mention_selection_action": "Mention selection",
+  "terminal_mention_not_added": "The mention was not added: open the conversation's message box, or remove a mention first.",
+  "terminal_output_description": "The command's output.",
+  "terminal_output_omitted": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "The command's output. 1 line is left out where … stands.",
+        "countPlural=other": "The command's output. {count: number} lines are left out where … stands."
+      }
+    }
+  ],
+  "terminal_output_loading": "Reading the output…",
+  "terminal_output_empty": "The command printed nothing.",
+  "terminal_output_label": "Output",
+  "terminal_close": "Close",
+  "terminal_show_in_terminal": "Show in terminal",
+  "terminal_command_group": "Terminal",
+  "terminal_command_open": "Open a terminal",
+  "terminal_settings_title": "Terminal",
+  "terminal_settings_description": "How terminals start and draw.",
+  "terminal_settings_default_shell": "Default shell",
+  "terminal_settings_default_shell_description": "The shell that a new terminal on this computer runs when you choose none.",
+  "terminal_settings_system_default": "System default",
+  "terminal_settings_scrollback": "Scrollback lines",
+  "terminal_settings_scrollback_description": "From {min} to {max}. More lines use more memory.",
+  "terminal_settings_font_size": "Font size",
+  "terminal_settings_cursor_blink": "Blinking cursor",
+  "terminal_settings_cursor_blink_description": "A steady cursor costs less on battery.",
+  "terminal_settings_renderer": "Drawing",
+  "terminal_settings_renderer_automatic": "Automatic: the graphics card where it has hardware acceleration",
+  "terminal_settings_renderer_gpu": "Always the graphics card",
+  "terminal_settings_renderer_compatible": "Always the compatible way",
+  "terminal_settings_screen_reader": "Screen reader support",
+  "terminal_settings_screen_reader_description": "Screen readers read the terminal's output. It makes terminals a little slower.",
+  "terminal_card_ran": "Ran {command} in terminal {terminal}",
+  "terminal_card_exited": "Ran {command} in terminal {terminal} · exit {code}",
+  "terminal_card_interrupted": "Interrupted {command} in terminal {terminal}",
+  "terminal_tool_list": "Listed the terminals",
+  "terminal_tool_busy": "A command ran in the terminal, so this one was not typed.",
+  "terminal_tool_owner_typing": "You were typing in the terminal, so the command was not typed.",
+  "terminal_tool_changed": "The terminal changed since the approval, so the command was not typed.",
+  "terminal_tool_ended": "The terminal ended.",
+  "terminal_tool_plain": "The terminal's shell does not mark its commands, so the command was not typed.",
+  "terminal_tool_not_opened": "The terminal could not be opened.",
+  "terminal_tool_still_running": "The command did not end after Ctrl+C and may still run.",
+  "terminal_tool_interrupted": "The command ran past its wait and was interrupted with Ctrl+C.",
+  "terminal_mention_group": "Terminal commands",
+  "terminal_mention_command": "Command",
+  "terminal_mention_selection": "Selection",
+  "terminal_mention_not_found": "The terminal no longer has this command.",
+  "terminal_mention_lines": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "1 line",
+        "countPlural=other": "{count: number} lines"
+      }
+    }
+  ],
+  "terminal_mention_some_lines": "{shown} of {total} lines",
+  "terminal_context_found": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "1 command",
+        "countPlural=other": "{count: number} commands"
+      }
+    }
+  ],
+  "terminal_context_gathering": "Reading the terminal…",
+  "terminal_context_noun": "Terminal",
+  "terminal_error_block_not_found": "The terminal no longer has this command.",
+  "terminal_error_conversation_not_found": "The conversation no longer exists.",
+  "terminal_error_folder_invalid": "The project's folder does not exist. Check the project, then try again.",
+  "terminal_error_host_not_found": "No plugin offers this host now. Turn its plugin on, then try again.",
+  "terminal_error_host_unavailable": "The host does not open terminals now. Check it in its plugin's settings.",
+  "terminal_error_open_failed": "The terminal could not be opened. The log has the cause.",
+  "terminal_error_shell_not_listed": "This shell is not one of this computer's shells.",
+  "terminal_error_storage_failed": "The terminal settings could not be read or stored. Try again.",
+  "terminal_error_terminal_ended": "The terminal ended.",
+  "terminal_error_terminal_not_found": "This conversation has no such terminal.",
+  "terminal_error_too_many": "As many terminals run as are allowed. End one, then try again.",
+  "terminal_error_unsupported": "This system cannot run terminals."
+}

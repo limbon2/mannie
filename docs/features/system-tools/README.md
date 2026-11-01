@@ -31,7 +31,7 @@ The owner wants the model to do real work on their computer: read, write, edit a
 - Background commands: a command started in the background keeps running after its call and after the reply, until it ends, the agent or the owner stops it, its conversation is deleted, its task ends or Mannie quits. The conversation's menu lists its commands and opens their output with Stop, and the menu's button counts the running ones ([ADR-0042](../../adr/0042-place-conversation-controls-in-a-menu-and-the-message-box.md)). When one ends on its own while the conversation is idle, Mannie wakes the agent with a reply of its own ([wake-ups](wake-ups.md)).
 - Activity: each tool call appears in the reply as one row, which the model names in a few words, such as "Reading package.json", with the statuses that need the owner's eye. The owner can open a row to see what Mannie ran and the details. A conversation that waits for an approval says so in the conversation list.
 - Provider profiles: each profile has a "Use tools" switch, on by default. Without tools, a profile works as chat did before system tools, and the provider test says when a model cannot use tools.
-- Not included: interactive terminals, a file browser panel, undoing changes, sandboxing at the operating system level, and notifications of approval requests while the window is hidden. Each of these would be a feature of its own.
+- Not included: a file browser panel, undoing changes, sandboxing at the operating system level, and notifications of approval requests while the window is hidden. Each of these would be a feature of its own. Interactive terminals are the plugin [Terminal](../../../plugins/terminal/docs/README.md).
 
 ## Fit
 

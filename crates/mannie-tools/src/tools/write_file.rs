@@ -155,5 +155,6 @@ fn written(path: &str, created: bool, bytes: &[u8]) -> Done {
         },
         archives: Vec::new(),
         images: Vec::new(),
+        cited: Vec::new(),
     }
 }

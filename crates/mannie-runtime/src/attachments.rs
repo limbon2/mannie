@@ -21,10 +21,12 @@ use std::time::Duration;
 use futures_util::future::join_all;
 use mannie_plugin_sdk::contributions::{Contributions, ExtensionPoint};
 use mannie_plugin_sdk::host::{ContributionRefusal, ID_TAKEN};
+use mannie_plugin_sdk::ids::owned_by;
 use mannie_plugin_sdk::points::context::{
     ContextItem, ContextProvider, ContextProviders, ContextRequest, MAX_EARLIER_MESSAGE_CHARACTERS,
     MAX_EARLIER_MESSAGES, OUTLINE_TIMEOUT, cite_link,
 };
+use mannie_plugin_sdk::points::tools::{CitedItem, MAX_CITED_ITEMS, MAX_CITED_TEXT_BYTES};
 use mannie_store::{Change, Durability, NewContext, NewMention};
 use mannie_types::chat::ChatError;
 use mannie_types::context::{
@@ -35,6 +37,7 @@ use mannie_types::context::{
 };
 use mannie_types::ids::ConversationId;
 use mannie_types::mentions::{ATTACHED, ATTACHED_VARIANT, MentionRef, MentionSummary, MentionView};
+use mannie_types::tools::CitedItemView;
 
 use crate::conversations::{refuse_task_conversation, store_failure};
 use crate::plugins::Snapshot;
@@ -198,6 +201,56 @@ fn kept_items(
         });
     }
     kept
+}
+
+/// The items that a plugin's tool result cites, as the core keeps them in
+/// the call's part (ADR-0054, decision 1): the first [`MAX_CITED_ITEMS`] of
+/// the plugin's own providers, so no plugin cites for another, each with a
+/// key that a cite link can name and a text cut to [`MAX_CITED_TEXT_BYTES`].
+pub(crate) fn kept_cited(plugin: &str, cited: Vec<CitedItem>) -> Vec<CitedItemView> {
+    let mut kept = Vec::new();
+    for CitedItem { provider, item, .. } in cited {
+        if kept.len() == MAX_CITED_ITEMS {
+            break;
+        }
+        if !owned_by(plugin, &provider) || !is_citable_key(&item.key) {
+            tracing::warn!(
+                plugin,
+                "a tool result cited an item that breaks the rules, which is left out"
+            );
+            continue;
+        }
+        let text = clean_item_text(&item.text);
+        if text.is_empty() {
+            continue;
+        }
+        let title = clean_context_text(&item.title, MAX_ITEM_TITLE_CHARACTERS);
+        let title = if title.is_empty() {
+            clean_context_text(&item.key, MAX_ITEM_TITLE_CHARACTERS)
+        } else {
+            title
+        };
+        kept.push(CitedItemView {
+            provider,
+            key: item.key,
+            title,
+            location: clean_location(item.location),
+            text: cut_to(text, MAX_CITED_TEXT_BYTES),
+        });
+    }
+    kept
+}
+
+/// Whether a link `cite:<provider>/<key>` can name a key: one that is not
+/// empty, within [`MAX_ITEM_KEY_BYTES`], and without the `#` that starts a
+/// link's line fragment (ADR-0054, decision 2), white space or control
+/// characters.
+fn is_citable_key(key: &str) -> bool {
+    !key.is_empty()
+        && key.len() <= MAX_ITEM_KEY_BYTES
+        && !key.chars().any(|character| {
+            character == '#' || character.is_whitespace() || character.is_control()
+        })
 }
 
 /// The labels of a part's attachments.

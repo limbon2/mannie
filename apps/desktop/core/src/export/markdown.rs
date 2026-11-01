@@ -355,8 +355,16 @@ fn render_part(
         };
         fenced(output, language, &part.text);
     }
-    let document: serde_json::Value =
+    let mut document: serde_json::Value =
         serde_json::from_str(&part.document).map_err(|_error| ExportError::InvalidRecord)?;
+    // The result's output already holds the text of the items that a call
+    // cites, so the export leaves them out (ADR-0054, decision 1).
+    if let Some(call) = document
+        .get_mut("toolCall")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        call.remove("cited");
+    }
     if document.as_object().is_none_or(|object| !object.is_empty()) {
         let _written = writeln!(output, "{}\n", labels.get("export_document_record")?);
         fenced(
@@ -622,6 +630,25 @@ mod record_tests {
             data: b"saved-tool-image".to_vec(),
         }];
         record
+    }
+
+    #[test]
+    fn a_tool_call_leaves_out_the_items_that_it_cites() {
+        let mut record = with_tool_image();
+        record.turns[0].parts[1].document = serde_json::json!({
+            "toolCall": {
+                "tool": "run_in_terminal",
+                "cited": [{ "provider": "terminal", "key": "1.2", "title": "ls", "location": null, "text": "secret-free output" }],
+            }
+        })
+        .to_string();
+        let labels = Labels::load().unwrap();
+
+        let root = document(&record, &labels, true).unwrap();
+
+        assert!(root.contains("\"tool\": \"run_in_terminal\""), "{root}");
+        assert!(!root.contains("cited"), "{root}");
+        assert!(!root.contains("secret-free output"), "{root}");
     }
 
     #[test]

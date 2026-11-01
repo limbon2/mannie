@@ -10,6 +10,7 @@ import {
   type RemoteCommandRule,
   type RuleId,
   type SharedGrant,
+  type TerminalCommandRule,
   type ToolsSettings,
   type UpdateToolsSettings,
 } from '#lib/generated/bindings.js';
@@ -83,8 +84,8 @@ export class ToolsSettingsState {
 }
 
 /**
- * The rules of commands on this computer and on remote hosts, and of runs of
- * installed programs, and the outcome of the latest request.
+ * The rules of commands on this computer, on remote hosts and in terminals,
+ * and of runs of installed programs, and the outcome of the latest request.
  */
 export class CommandRulesState {
   /** Why the latest deletion failed, if it failed. */
@@ -100,13 +101,16 @@ export class CommandRulesState {
   /** The rules for commands on this computer, the oldest first, once read. */
   rules: CommandRule[] = $state([]);
   status: 'error' | 'loading' | 'ready' = $state('loading');
+  /** The rules for commands in terminals, each limited to its host, the oldest first, once read (ADR-0053). */
+  terminalRules: TerminalCommandRule[] = $state([]);
 
   /** Whether no rule of any kind is listed. */
   get isEmpty(): boolean {
     const hasNoLocalRules = this.rules.length === 0;
     const hasNoRemoteRules = this.remoteRules.length === 0;
     const hasNoProgramRules = this.programRules.length === 0;
-    return hasNoLocalRules && hasNoRemoteRules && hasNoProgramRules;
+    const hasNoTerminalRules = this.terminalRules.length === 0;
+    return hasNoLocalRules && hasNoRemoteRules && hasNoProgramRules && hasNoTerminalRules;
   }
 
   /** Reads every kind of rule from the core, and keeps the last lists when one cannot be read. */
@@ -115,10 +119,11 @@ export class CommandRulesState {
     if (this.isEmpty) {
       this.status = 'loading';
     }
-    const [local, remote, program] = await Promise.all([
+    const [local, remote, program, terminal] = await Promise.all([
       call(() => commands.listCommandRules()),
       call(() => commands.listRemoteCommandRules()),
       call(() => commands.listProgramRules()),
+      call(() => commands.listTerminalCommandRules()),
     ]);
     if (!local.ok) {
       this.readFailure = local.failure;
@@ -135,9 +140,15 @@ export class CommandRulesState {
       this.status = 'error';
       return;
     }
+    if (!terminal.ok) {
+      this.readFailure = terminal.failure;
+      this.status = 'error';
+      return;
+    }
     this.rules = local.data;
     this.remoteRules = remote.data;
     this.programRules = program.data;
+    this.terminalRules = terminal.data;
     this.status = 'ready';
   }
 
@@ -162,6 +173,14 @@ export class CommandRulesState {
     const deleted = await this.#delete(ruleId, () => commands.deleteRemoteCommandRule({ ruleId }));
     if (deleted) {
       this.remoteRules = this.remoteRules.filter((rule) => rule.id !== ruleId);
+    }
+  }
+
+  /** Deletes a rule of terminals. A rule that no longer exists leaves the list as well. */
+  async removeTerminal(ruleId: RuleId): Promise<void> {
+    const deleted = await this.#delete(ruleId, () => commands.deleteTerminalCommandRule({ ruleId }));
+    if (deleted) {
+      this.terminalRules = this.terminalRules.filter((rule) => rule.id !== ruleId);
     }
   }
 

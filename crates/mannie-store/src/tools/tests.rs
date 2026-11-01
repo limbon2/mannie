@@ -3,7 +3,8 @@ use std::sync::Arc;
 use mannie_types::clock::{Clock, ManualClock, UtcMillis};
 use mannie_types::ids::{ConversationId, GrantId, ProjectId, RuleId};
 use mannie_types::tools::{
-    AccessMode, GrantScope, ProgramEffectKey, ProgramTarget, RemoteTarget, ToolServerEndpoint,
+    AccessMode, GrantScope, ProgramEffectKey, ProgramTarget, RemoteTarget, TerminalHost,
+    TerminalTarget, ToolServerEndpoint,
 };
 
 use super::ToolsStoreError;
@@ -312,6 +313,74 @@ async fn a_remote_rule_is_saved_once_for_its_host_and_endpoint_and_apart_from_lo
     assert_eq!(
         fixture.store.remote_rules().await.unwrap(),
         vec![other_endpoint]
+    );
+}
+
+fn terminal_on(host: TerminalHost) -> TerminalTarget {
+    TerminalTarget {
+        plugin: "terminal".to_owned(),
+        host,
+    }
+}
+
+fn ssh_terminal(endpoint: &str, label: &str) -> TerminalHost {
+    TerminalHost::Remote {
+        plugin: "ssh".to_owned(),
+        target: "0199e0f2-0000-7000-8000-0000000000aa".to_owned(),
+        label: label.to_owned(),
+        endpoint: endpoint.to_owned(),
+    }
+}
+
+#[tokio::test]
+async fn a_terminal_rule_is_saved_once_for_its_plugin_and_host_and_apart_from_other_rules() {
+    let fixture = Fixture::new();
+    let words = vec!["git".to_owned(), "status".to_owned()];
+
+    let saved = fixture
+        .store
+        .add_terminal_rule(
+            &rule_id(1),
+            terminal_on(ssh_terminal("deploy@build-box:22", "build-box")),
+            words.clone(),
+        )
+        .await
+        .unwrap();
+    // A renamed host is the same host, so the rule is not saved again.
+    let again = fixture
+        .store
+        .add_terminal_rule(
+            &rule_id(2),
+            terminal_on(ssh_terminal("deploy@build-box:22", "renamed")),
+            words.clone(),
+        )
+        .await
+        .unwrap();
+    let this_machine = fixture
+        .store
+        .add_terminal_rule(
+            &rule_id(3),
+            terminal_on(TerminalHost::ThisMachine {
+                shell: "/bin/bash".to_owned(),
+            }),
+            words.clone(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(again, saved);
+    assert_ne!(this_machine.id, saved.id);
+    assert_eq!(
+        fixture.store.terminal_rules().await.unwrap(),
+        vec![saved.clone(), this_machine.clone()]
+    );
+    assert_eq!(fixture.store.rules().await.unwrap(), Vec::new());
+    assert_eq!(fixture.store.remote_rules().await.unwrap(), Vec::new());
+    assert!(fixture.store.delete_terminal_rule(&saved.id).await.unwrap());
+    assert!(!fixture.store.delete_terminal_rule(&saved.id).await.unwrap());
+    assert_eq!(
+        fixture.store.terminal_rules().await.unwrap(),
+        vec![this_machine]
     );
 }
 

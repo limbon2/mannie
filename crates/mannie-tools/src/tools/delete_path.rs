@@ -128,6 +128,7 @@ fn delete(target: &Access) -> Result<Done, ToolFailure> {
         },
         archives: Vec::new(),
         images: Vec::new(),
+        cited: Vec::new(),
     })
 }
 

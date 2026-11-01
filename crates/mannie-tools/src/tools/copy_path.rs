@@ -130,6 +130,7 @@ fn copy(source: &Access, destination: &Access) -> Result<Done, ToolFailure> {
         },
         archives: Vec::new(),
         images: Vec::new(),
+        cited: Vec::new(),
     })
 }
 

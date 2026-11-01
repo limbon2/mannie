@@ -22,10 +22,11 @@
   // directory, the arguments that its plugin fixes and what it does beyond
   // the workspace (ADR-0038), a call of a tool server's tool with its
   // arguments, the server, where it runs and what it says of the tool
-  // (ADR-0043), or the project that the conversation moves into, with its
-  // folder (docs/features/system-tools/tool-activity.md). Paths, commands,
-  // arguments, names and a server's words are content, and render as text in
-  // their own elements (T-3).
+  // (ADR-0043), a command typed into a terminal with the terminal, its host,
+  // shell, user and folder (ADR-0053, decision 5), or the project that the
+  // conversation moves into, with its folder (docs/features/system-tools/
+  // tool-activity.md). Paths, commands, arguments, names and a server's words
+  // are content, and render as text in their own elements (T-3).
   let { accesses }: { accesses: readonly Access[] } = $props();
 </script>
 
@@ -77,6 +78,33 @@
             {/each}
           </ul>
         {/if}
+      {:else if access.kind === 'terminal_command'}
+        <AccessText label={m.tools_access_command()} text={access.command} />
+        <p class="text-xs text-muted-foreground">{m.tools_access_terminal_as_typed()}</p>
+        <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs" data-terminal-command="">
+          <dt class="text-muted-foreground">{m.tools_access_terminal()}</dt>
+          <dd>
+            {access.terminal === null
+              ? m.tools_access_terminal_new()
+              : m.tools_access_terminal_number({ terminal: String(access.terminal) })}
+          </dd>
+          <dt class="text-muted-foreground">{m.tools_access_remote_host()}</dt>
+          {#if access.host.kind === 'remote'}
+            <dd class="break-all" data-content dir="auto">{access.host.label}</dd>
+            <dt class="text-muted-foreground">{m.tools_access_remote_endpoint()}</dt>
+            <dd class="font-mono break-all" data-content>{access.host.endpoint}</dd>
+            <dt class="text-muted-foreground">{m.tools_access_remote_identity()}</dt>
+            <dd class="font-mono break-all" data-content>{access.identity}</dd>
+          {:else}
+            <dd>{m.tools_access_terminal_this_machine()}</dd>
+          {/if}
+          <dt class="text-muted-foreground">{m.tools_access_shell()}</dt>
+          <dd class="break-all" data-content dir="auto">{access.shell}</dd>
+          {#if access.state !== null}
+            <dt class="text-muted-foreground">{m.tools_access_terminal_state()}</dt>
+            <dd class="font-mono break-all" data-content>{access.state}</dd>
+          {/if}
+        </dl>
       {:else if access.kind === 'external_tool'}
         <p class="text-sm wrap-anywhere" data-content dir="auto">
           {m.tools_access_external_tool({ server: access.label, tool: access.tool })}

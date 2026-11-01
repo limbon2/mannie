@@ -1,0 +1,51 @@
+[package]
+name = "mannie-terminal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The terminal plugin: terminals beside a conversation, on this machine and on hosts that plugins offer, where agents run commands under the master's policy (ADR-0053)."
+license.workspace = true
+publish.workspace = true
+
+[[bench]]
+harness = false
+name = "emulator"
+required-features = ["validation"]
+
+[dependencies]
+# The streams of the channels and of the terminals' output.
+futures-util = { workspace = true }
+# The nonce of each terminal's markers, from the system's random source.
+getrandom = { workspace = true }
+mannie-plugin-sdk = { workspace = true }
+# The JSON Schema of the tools' arguments.
+schemars = { workspace = true }
+serde = { workspace = true }
+# The tools' arguments, which the model writes as JSON.
+serde_json = { workspace = true }
+specta = { workspace = true }
+thiserror = { workspace = true }
+# The tasks that pump each terminal's output, the waits of the tools, the
+# state that the channels follow, and the select of the hosts' task.
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+tracing = { workspace = true }
+# The IDs of terminals and the keys of selections.
+uuid = { workspace = true }
+# The headless emulator of each terminal.
+vt100 = { workspace = true }
+
+[dev-dependencies]
+# The plugin through the real host on the core's test runtime, and the
+# conformance check (ADR-0034, decision 1).
+mannie-plugin-harness = { workspace = true }
+# The tests parse the plugin's manifest as the host does.
+mannie-plugin-sdk = { workspace = true, features = ["manifest"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+
+[features]
+# Exposes the headless emulator to its benchmark, which `task bench` runs.
+# Never enabled in the desktop app.
+validation = []
+
+[lints]
+workspace = true

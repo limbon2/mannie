@@ -1,0 +1,5 @@
+{
+  "lines": ["test store::tests::upgrade ... ok", "test store::tests::fixtures ... FAILED"],
+  "firstLine": 200,
+  "totalLines": 412
+}

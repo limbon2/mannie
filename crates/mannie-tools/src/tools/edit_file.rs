@@ -119,6 +119,7 @@ fn edit(target: &Access, input: &Input) -> Result<Done, ToolFailure> {
         },
         archives: Vec::new(),
         images: Vec::new(),
+        cited: Vec::new(),
     })
 }
 

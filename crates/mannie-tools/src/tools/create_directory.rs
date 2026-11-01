@@ -82,6 +82,7 @@ impl TypedTool for CreateDirectory {
                     },
                     archives: Vec::new(),
                     images: Vec::new(),
+                    cited: Vec::new(),
                 })
             })
             .await
@@ -102,5 +103,6 @@ fn exists(context: &ToolContext, input: &Input) -> Done {
         outcome: ToolOutcome::FolderCreated { path, created: 0 },
         archives: Vec::new(),
         images: Vec::new(),
+        cited: Vec::new(),
     }
 }

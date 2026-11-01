@@ -11,7 +11,8 @@ use mannie_types::tools::{
     BackgroundCommandView, CommandOutputUpdate, CommandRule, ConversationGrant, DecideApproval,
     GrantRef, ProgramRule, ProgramRuleRef, ReadToolImage, ReadToolOutput, RemoteCommandRule,
     RemoteRuleRef, RuleRef, SetFullAccess, SharedGrant, SharedGrantRef, StopBackgroundCommand,
-    SubscribeCommandOutput, ToolOutputPage, ToolsError, ToolsSettings, UpdateToolsSettings,
+    SubscribeCommandOutput, TerminalCommandRule, TerminalRuleRef, ToolOutputPage, ToolsError,
+    ToolsSettings, UpdateToolsSettings,
 };
 use mannie_types::transcript::SubscriptionId;
 use tauri::State;
@@ -146,6 +147,34 @@ pub(crate) async fn delete_remote_command_rule(
         .delete_remote_command_rule(input)
         .await
         .map_err(refused("delete_remote_command_rule"))
+}
+
+/// The rules for commands in terminals, each limited to its host (ADR-0053,
+/// decision 5).
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn list_terminal_command_rules(
+    core: State<'_, Core>,
+) -> Result<Vec<TerminalCommandRule>, CommandError<ToolsError>> {
+    runtime(&core)
+        .map_err(refused("list_terminal_command_rules"))?
+        .terminal_command_rules()
+        .await
+        .map_err(refused("list_terminal_command_rules"))
+}
+
+/// Deletes a rule for commands in terminals.
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn delete_terminal_command_rule(
+    core: State<'_, Core>,
+    input: TerminalRuleRef,
+) -> Result<(), CommandError<ToolsError>> {
+    runtime(&core)
+        .map_err(refused("delete_terminal_command_rule"))?
+        .delete_terminal_command_rule(input)
+        .await
+        .map_err(refused("delete_terminal_command_rule"))
 }
 
 /// The rules for runs of installed programs, each limited to its plugin's

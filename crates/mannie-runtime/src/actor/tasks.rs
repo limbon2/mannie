@@ -795,8 +795,8 @@ impl RunActor {
             return Ok(());
         };
         if child.executor.is_some() {
-            return self
-                .follow_up_on_executor(call, child, instruction, background)
+            // The follow-up's future is large, so it waits on the heap.
+            return Box::pin(self.follow_up_on_executor(call, child, instruction, background))
                 .await;
         }
         let Some(call) = self.unless_plugin_off(call, &child.agent) else {

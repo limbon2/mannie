@@ -4,9 +4,10 @@
 //! rules, images as the transcript keeps them, the plugins' views, provider
 //! profiles, runs, the documents of tasks and tool calls, the owner's
 //! approvals with what they grant, the rules and full access of runs of
-//! installed programs, the archives of tool calls, the transcript's parts,
-//! the suggestions and references of mentions, and the attachments of
-//! conversations with what their providers gave (ADR-0046).
+//! installed programs, the archives of tool calls, the items that tool
+//! results cite and the hosts of terminal commands (ADR-0053, ADR-0054), the
+//! transcript's parts, the suggestions and references of mentions, and the
+//! attachments of conversations with what their providers gave (ADR-0046).
 
 pub use mannie_types::chat::{
     SendMessage, StartConversation, StartedConversation, StopOutcome, SubscribeConversation,
@@ -24,9 +25,10 @@ pub use mannie_types::run::{FinishReason, RunState};
 pub use mannie_types::tasks::{TaskDocument, TaskPartDocument, TaskRefusal, TaskView};
 pub use mannie_types::tools::{
     Access, ApprovalChoice, ApprovalReason, ApprovalRequest, BackgroundCommandView,
-    BackgroundEnding, BackgroundSource, CommandRule, DecideApproval, Decision, GrantScope,
-    Interruption, ProgramEffectKey, ProgramRule, ProgramTarget, ReadToolOutput, RemoteCommandRule,
-    RemoteTarget, SetFullAccess, StopBackgroundCommand, ToolCallDocument, ToolCallStatus,
-    ToolCallView, ToolOutcome, UpdateToolsSettings,
+    BackgroundEnding, BackgroundSource, CitedItemView, CommandRule, DecideApproval, Decision,
+    GrantScope, Interruption, ProgramEffectKey, ProgramRule, ProgramTarget, ReadToolOutput,
+    RemoteCommandRule, RemoteTarget, SetFullAccess, StopBackgroundCommand, TerminalCommandRule,
+    TerminalHost, TerminalTarget, ToolCallDocument, ToolCallStatus, ToolCallView, ToolOutcome,
+    UpdateToolsSettings,
 };
 pub use mannie_types::transcript::{PartContent, PartKind};

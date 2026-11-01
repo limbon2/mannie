@@ -28,6 +28,24 @@ export function windowFailureMessage(failure: Failure<WindowError>): string {
   }
 }
 
+/** What quitting would end, as a question about quitting counts it. */
+export interface QuitCounts {
+  readonly activeRuns: number;
+  readonly backgroundCommands: number;
+  readonly terminals: number;
+}
+
+/** The title of the warning before quitting, which names the first of what quitting would end. */
+export function quitWarningTitle(counts: QuitCounts): string {
+  if (counts.activeRuns > 0) {
+    return m.window_quit_warning_title();
+  }
+  if (counts.backgroundCommands > 0) {
+    return m.window_quit_warning_title_commands();
+  }
+  return m.window_quit_warning_title_terminals();
+}
+
 /** The tray's labels in the window's language. */
 export function trayLabels(): TrayLabels {
   return { open: m.window_tray_open(), quit: m.window_tray_quit(), tooltip: m.window_tray_tooltip() };

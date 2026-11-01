@@ -21,6 +21,29 @@ function pluginsOn(...plugins: string[]): { isOn: (plugin: string) => boolean; o
   return { isOn: (plugin) => on.has(plugin), on };
 }
 
+describe('the commands slot (ADR-0053, decision 8)', () => {
+  const keyed = (id: string, code: string, shift = false) => ({
+    group: () => 'Terminal',
+    id,
+    key: { code, label: () => code, shift },
+    label: () => id,
+    order: 0,
+    run: () => undefined,
+  });
+
+  it('refuses a key that the shell or another command holds', () => {
+    const slots = new ShellSlots();
+    slots.commands.register(keyed('terminal.open', 'Backquote'));
+
+    expect(() => slots.commands.register(keyed('other.open', 'Backquote'))).toThrow(/terminal\.open/u);
+    expect(() => slots.commands.register(keyed('palette', 'KeyK'))).toThrow(/shell binds/u);
+    slots.commands.register(keyed('terminal.new', 'Backquote', true));
+    slots.commands.register(keyed('find', 'KeyK', true));
+
+    expect(slots.commands.entries.map((entry) => entry.id)).toEqual(['terminal.open', 'terminal.new', 'find']);
+  });
+});
+
 describe('Slot', () => {
   it('keeps the entries in the order they were registered', () => {
     const slot = new Slot<Entry>('test', everyPluginOn);

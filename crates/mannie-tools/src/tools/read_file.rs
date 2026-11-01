@@ -135,6 +135,7 @@ fn read(context: &ToolContext, input: &Input) -> Result<Done, ToolFailure> {
         output,
         archives: Vec::new(),
         images: Vec::new(),
+        cited: Vec::new(),
     })
 }
 

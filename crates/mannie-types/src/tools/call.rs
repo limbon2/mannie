@@ -9,7 +9,7 @@ use crate::clock::UtcMillis;
 
 use super::access::Access;
 use super::approval::{ApprovalRequest, Decision};
-use super::outcome::{ArchiveRef, ToolImageRef, ToolOutcome, ToolResult};
+use super::outcome::{ArchiveRef, CitedItemView, ToolImageRef, ToolOutcome, ToolResult};
 
 /// The largest arguments of one tool call, in bytes: the size of one event of
 /// a provider's stream.
@@ -142,6 +142,9 @@ pub enum Refusal {
     /// A worker calls no tool server's tools, for the same reason (ADR-0043,
     /// decision 4).
     NoExternalTools,
+    /// A worker types no commands into terminals, for the same reason
+    /// (ADR-0053, decision 5).
+    NoTerminals,
 }
 
 /// Why an operation that was executing ended without its result while the
@@ -232,6 +235,11 @@ pub struct ToolCallDocument {
     /// transcript (ADR-0039); none for the core's tools and older calls.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plugin: Option<String>,
+    /// The items that the result cites by their links, which the
+    /// transcript's citations show (ADR-0054, decision 1); none for calls
+    /// that cite nothing and older calls.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cited: Vec<CitedItemView>,
 }
 
 /// Reads the result of a stored call. An outcome that this version cannot
@@ -300,6 +308,7 @@ impl ToolCallDocument {
             process: None,
             interruption: None,
             plugin: None,
+            cited: Vec::new(),
         }
     }
 
@@ -325,6 +334,7 @@ impl ToolCallDocument {
             not_run: self.not_run.clone(),
             interruption: self.interruption.clone(),
             plugin: self.plugin.clone(),
+            cited: self.cited.clone(),
         }
     }
 }
@@ -400,6 +410,10 @@ pub struct ToolCallView {
     /// describes (ADR-0039).
     #[serde(default)]
     pub plugin: Option<String>,
+    /// The items that the result cites by their links (ADR-0054, decision
+    /// 1).
+    #[serde(default)]
+    pub cited: Vec<CitedItemView>,
 }
 
 #[cfg(test)]

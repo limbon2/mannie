@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { NavigationEntry, ShellCommand } from '../../../../../../apps/desktop/src/lib/types/shell-slots.js';
 import {
+  commandOfKey,
   groupCommands,
   isAvailable,
   navigationCommands,
+  type PressedKey,
 } from '../../../../../../apps/desktop/src/lib/utils/commands.js';
 
 function command(id: string, group: string, order: number, available?: () => boolean): ShellCommand {
@@ -50,6 +52,34 @@ describe('navigationCommands', () => {
     expect(commands.map((entry) => entry.label())).toEqual(['Show Chat', 'Show Notebooks']);
     expect(commands[0]?.group()).toBe('Views');
     expect(select).toHaveBeenCalledWith(entries[1]);
+  });
+});
+
+describe('commandOfKey (ADR-0053, decision 8)', () => {
+  const press = (code: string, extra: Partial<PressedKey> = {}): PressedKey => ({
+    altKey: false,
+    code,
+    ctrlKey: true,
+    metaKey: false,
+    shiftKey: false,
+    ...extra,
+  });
+
+  it('finds the available command whose key is pressed with Ctrl or Cmd', () => {
+    let open = true;
+    const terminal: ShellCommand = {
+      ...command('terminal.open', 'Terminal', 0, () => open),
+      key: { code: 'Backquote', label: () => 'Ctrl+`' },
+    };
+    const commands = [command('plain', 'General', 0), terminal];
+
+    expect(commandOfKey(commands, press('Backquote'))?.id).toBe('terminal.open');
+    expect(commandOfKey(commands, press('Backquote', { ctrlKey: false, metaKey: true }))?.id).toBe('terminal.open');
+    expect(commandOfKey(commands, press('Backquote', { ctrlKey: false }))).toBeUndefined();
+    expect(commandOfKey(commands, press('Backquote', { shiftKey: true }))).toBeUndefined();
+    expect(commandOfKey(commands, press('KeyA'))).toBeUndefined();
+    open = false;
+    expect(commandOfKey(commands, press('Backquote'))).toBeUndefined();
   });
 });
 

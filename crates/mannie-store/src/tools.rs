@@ -1,8 +1,9 @@
 //! The system tools repository: the grants of conversations, the grants for
 //! a project or for every conversation, the command rules, the rules for
-//! commands on remote hosts and the rules for runs of installed programs
+//! commands on remote hosts, the rules for runs of installed programs and the
+//! rules for commands typed into terminals
 //! (docs/features/system-tools/operations-and-approvals.md; ADR-0036;
-//! ADR-0038). The journal of operations lives in the tool call parts of the
+//! ADR-0038; ADR-0053). The journal of operations lives in the tool call parts of the
 //! runtime's tables, so the runtime stores each change of an operation
 //! together with its event.
 
@@ -10,7 +11,8 @@ use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{ConversationId, GrantId, ProjectId, RuleId};
 use mannie_types::tools::{
     CommandRule, ConversationGrant, GrantScope, ProgramEffectKey, ProgramRule, ProgramTarget,
-    RemoteCommandRule, RemoteTarget, SharedGrant,
+    RemoteCommandRule, RemoteTarget, SharedGrant, TerminalCommandRule, TerminalHost,
+    TerminalTarget,
 };
 use rusqlite::{OptionalExtension, params};
 
@@ -65,6 +67,14 @@ const INSERT_PROGRAM_RULE: &str = "INSERT INTO tools_program_rules \
      (id, plugin, name, program, version, words, effects, folder, created_at) \
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)";
 const DELETE_PROGRAM_RULE: &str = "DELETE FROM tools_program_rules WHERE id = ?1";
+const SELECT_TERMINAL_RULES: &str = "SELECT id, plugin, host, version, words, created_at \
+     FROM tools_terminal_rules ORDER BY created_at, id";
+const SELECT_TERMINAL_RULE: &str = "SELECT id, plugin, host, version, words, created_at \
+     FROM tools_terminal_rules WHERE plugin = ?1 AND host_key = ?2 AND words = ?3";
+const INSERT_TERMINAL_RULE: &str = "INSERT INTO tools_terminal_rules \
+     (id, plugin, host, host_key, version, words, created_at) \
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)";
+const DELETE_TERMINAL_RULE: &str = "DELETE FROM tools_terminal_rules WHERE id = ?1";
 
 /// Every statement of this module.
 #[cfg(test)]
@@ -91,6 +101,10 @@ pub(crate) const STATEMENTS: &[&str] = &[
     SELECT_PROGRAM_RULE,
     INSERT_PROGRAM_RULE,
     DELETE_PROGRAM_RULE,
+    SELECT_TERMINAL_RULES,
+    SELECT_TERMINAL_RULE,
+    INSERT_TERMINAL_RULE,
+    DELETE_TERMINAL_RULE,
 ];
 
 /// Why grants or rules could not be read or saved.
@@ -242,6 +256,62 @@ impl RawRule {
             background: self.background,
             created_at: UtcMillis::from_millis(self.created_at),
         })
+    }
+}
+
+struct RawTerminalRule {
+    id: String,
+    plugin: String,
+    host: String,
+    version: i64,
+    words: String,
+    created_at: i64,
+}
+
+fn terminal_rule_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawTerminalRule> {
+    Ok(RawTerminalRule {
+        id: row.get(0)?,
+        plugin: row.get(1)?,
+        host: row.get(2)?,
+        version: row.get(3)?,
+        words: row.get(4)?,
+        created_at: row.get(5)?,
+    })
+}
+
+impl RawTerminalRule {
+    fn into_rule(self) -> Result<TerminalCommandRule, ToolsStoreError> {
+        check_version(self.version, "a terminal rule")?;
+        let invalid = |error: serde_json::Error| {
+            ToolsStoreError::invalid(format!("terminal rule {}: {error}", self.id))
+        };
+        let host: TerminalHost = serde_json::from_str(&self.host).map_err(invalid)?;
+        let words: Vec<String> = serde_json::from_str(&self.words).map_err(invalid)?;
+        Ok(TerminalCommandRule {
+            id: RuleId::parse(&self.id)
+                .map_err(|error| ToolsStoreError::invalid(error.to_string()))?,
+            target: TerminalTarget {
+                plugin: self.plugin,
+                host,
+            },
+            words,
+            created_at: UtcMillis::from_millis(self.created_at),
+        })
+    }
+}
+
+/// What decides which terminals a rule covers: the shell on this machine, or
+/// a remote host's plugin, target and endpoint, without the host's name,
+/// joined with a separator that none of them holds.
+fn terminal_host_key(host: &TerminalHost) -> String {
+    match host {
+        TerminalHost::ThisMachine { shell } => format!("this_machine\u{1f}{shell}"),
+        TerminalHost::Remote {
+            plugin,
+            target,
+            endpoint,
+            ..
+        } => format!("remote\u{1f}{plugin}\u{1f}{target}\u{1f}{endpoint}"),
     }
 }
 
@@ -693,6 +763,81 @@ impl Store {
             .write(Durability::Full, move |transaction| {
                 transaction
                     .prepare_cached(DELETE_REMOTE_RULE)?
+                    .execute([rule])
+            })
+            .await?;
+        Ok(deleted > 0)
+    }
+
+    /// Every rule for commands typed into terminals, the oldest first.
+    pub async fn terminal_rules(&self) -> Result<Vec<TerminalCommandRule>, ToolsStoreError> {
+        let raw: Vec<RawTerminalRule> = self
+            .read(|connection| {
+                let mut select = connection.prepare_cached(SELECT_TERMINAL_RULES)?;
+                let rows = select.query_map([], terminal_rule_from_row)?;
+                rows.collect()
+            })
+            .await?;
+        raw.into_iter().map(RawTerminalRule::into_rule).collect()
+    }
+
+    /// Saves a rule for commands that a plugin's tool types into the
+    /// terminals of one host, with full durability. When the same rule exists
+    /// for the same plugin and host, returns it instead.
+    pub async fn add_terminal_rule(
+        &self,
+        id: &RuleId,
+        target: TerminalTarget,
+        words: Vec<String>,
+    ) -> Result<TerminalCommandRule, ToolsStoreError> {
+        let id = id.as_str().to_owned();
+        let words = to_json(&words)?;
+        let host = to_json(&target.host)?;
+        let host_key = terminal_host_key(&target.host);
+        let plugin = target.plugin;
+        let now = self.clock().now().as_millis();
+        let raw = self
+            .transact(Durability::Full, move |transaction| {
+                let existing = transaction
+                    .prepare_cached(SELECT_TERMINAL_RULE)?
+                    .query_row(params![plugin, host_key, words], terminal_rule_from_row)
+                    .optional()?;
+                if let Some(existing) = existing {
+                    return Ok(existing);
+                }
+                transaction
+                    .prepare_cached(INSERT_TERMINAL_RULE)?
+                    .execute(params![
+                        id,
+                        plugin,
+                        host,
+                        host_key,
+                        DOCUMENT_VERSION,
+                        words,
+                        now
+                    ])?;
+                Ok(RawTerminalRule {
+                    id,
+                    plugin,
+                    host,
+                    version: i64::from(DOCUMENT_VERSION),
+                    words,
+                    created_at: now,
+                })
+            })
+            .await
+            .map_err(|error: TransactError<ToolsStoreError>| ToolsStoreError::from(error))?;
+        raw.into_rule()
+    }
+
+    /// Deletes a rule for commands typed into terminals. Returns whether it
+    /// existed.
+    pub async fn delete_terminal_rule(&self, rule_id: &RuleId) -> Result<bool, ToolsStoreError> {
+        let rule = rule_id.as_str().to_owned();
+        let deleted = self
+            .write(Durability::Full, move |transaction| {
+                transaction
+                    .prepare_cached(DELETE_TERMINAL_RULE)?
                     .execute([rule])
             })
             .await?;

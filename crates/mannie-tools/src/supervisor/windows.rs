@@ -235,7 +235,7 @@ impl Contained {
 /// Creates a job that ends its processes when its last handle closes, shows
 /// no error dialogs, and lets no process break away. Its handle is not
 /// inherited.
-fn create_job() -> io::Result<OwnedHandle> {
+pub(super) fn create_job() -> io::Result<OwnedHandle> {
     // SAFETY: null attributes and a null name are valid arguments; the result
     // is checked before it is used.
     let raw = unsafe { CreateJobObjectW(ptr::null(), ptr::null()) };
@@ -268,7 +268,7 @@ fn create_job() -> io::Result<OwnedHandle> {
 }
 
 /// Puts the suspended shell into the job.
-fn assign(job: &OwnedHandle, process: RawHandle) -> io::Result<()> {
+pub(super) fn assign(job: &OwnedHandle, process: RawHandle) -> io::Result<()> {
     // SAFETY: both handles are valid: the job is owned here, and the process
     // handle belongs to the child, which outlives the call.
     let assigned =
@@ -337,7 +337,7 @@ fn resume_thread(thread_id: u32) -> io::Result<()> {
 }
 
 /// Ends every process in the job.
-fn terminate(job: &OwnedHandle) {
+pub(super) fn terminate(job: &OwnedHandle) {
     // SAFETY: the job handle is valid for the call.
     let terminated = unsafe { TerminateJobObject(job.as_raw_handle() as HANDLE, 1) };
     if terminated == 0 {
@@ -350,7 +350,7 @@ fn terminate(job: &OwnedHandle) {
 
 /// The time the process was created, in 100-nanosecond intervals since 1601,
 /// which tells it apart from a later process with the same ID.
-fn creation_time(process: RawHandle) -> Option<String> {
+pub(super) fn creation_time(process: RawHandle) -> Option<String> {
     let mut creation = FILETIME {
         dwLowDateTime: 0,
         dwHighDateTime: 0,

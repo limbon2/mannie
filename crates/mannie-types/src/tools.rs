@@ -17,6 +17,7 @@ mod external;
 mod outcome;
 mod program;
 mod settings;
+mod terminal;
 
 pub use access::{Access, AccessMode, EntryCount};
 pub use approval::{
@@ -40,7 +41,7 @@ pub use commands::{
 };
 pub use external::{ToolHint, ToolServerEndpoint};
 pub use outcome::{
-    ArchiveRef, CommandEnding, EntryKind, MAX_TOOL_IMAGE_BYTES, MAX_TOOL_IMAGE_SIDE,
+    ArchiveRef, CitedItemView, CommandEnding, EntryKind, MAX_TOOL_IMAGE_BYTES, MAX_TOOL_IMAGE_SIDE,
     MAX_TOOL_IMAGES, PathRefusal, ToolFailure, ToolImageRef, ToolOutcome, ToolResult,
 };
 pub use program::{
@@ -50,3 +51,4 @@ pub use settings::{
     EnvName, LOADER_NAME_PREFIXES, MAX_ENVIRONMENT_NAMES, SECRET_NAME_PARTS, ToolsSettings,
     UpdateToolsSettings, is_loader_name, looks_like_secret,
 };
+pub use terminal::{TerminalCommandRule, TerminalHost, TerminalRuleRef, TerminalTarget};

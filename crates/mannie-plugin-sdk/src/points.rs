@@ -16,6 +16,7 @@ pub mod executors;
 pub mod images;
 pub mod mentions;
 pub mod sections;
+pub mod terminal_hosts;
 pub mod tool_sources;
 pub mod tools;
 
@@ -33,6 +34,7 @@ pub const ALL: &[PointInfo] = &[
     PointInfo::of::<images::ImageSources>(),
     PointInfo::of::<tool_sources::ToolSources>(),
     PointInfo::of::<context::ContextProviders>(),
+    PointInfo::of::<terminal_hosts::TerminalHosts>(),
 ];
 
 #[cfg(test)]
@@ -62,6 +64,7 @@ mod tests {
                 ("image-sources", 1, IdRule::Owned),
                 ("tool-sources", 1, IdRule::Owned),
                 ("context-providers", 1, IdRule::Owned),
+                ("terminal-hosts", 1, IdRule::Owned),
             ]
         );
     }

@@ -34,6 +34,9 @@ export const COLLAPSED_ENTRIES = 5;
 /** The most entries that the list remembers having shown, for tokens that the owner types. */
 const MAX_SEEN = 1000;
 
+/** The most mentions that one message carries (mannie-types, `MAX_MENTIONS`). */
+export const MAX_MESSAGE_MENTIONS = 20;
+
 /** An entry of the list with its provider. */
 export interface MentionChoice {
   readonly entry: MentionEntry;
@@ -194,6 +197,29 @@ export class MessageMentions {
       this.close();
     }
     return inserted;
+  }
+
+  /**
+   * Puts the token of `choice` at the end of the text, as a view outside the
+   * message box does (ADR-0054, decision 4), or returns `null` when the text
+   * already holds as many mentions as a message carries. A token that the
+   * text already holds stays once.
+   */
+  append(text: string, choice: MentionChoice): Insertion | null {
+    const held = this.inText(text);
+    if (held.some((mentioned) => mentioned.entry.token === choice.entry.token)) {
+      this.#picked.set(choice.entry.token, choice);
+      return { caret: text.length, text };
+    }
+    if (held.length >= MAX_MESSAGE_MENTIONS) {
+      return null;
+    }
+    this.#picked.set(choice.entry.token, choice);
+    const isEmpty = text === '';
+    const endsInSpace = /\s$/u.test(text);
+    const separated = isEmpty || endsInSpace ? text : `${text} `;
+    const end = { end: separated.length, query: '', spaced: false, start: separated.length };
+    return insertMention(separated, end, choice.entry.token, false);
   }
 
   /** Closes the list for the token that the caret is in, until the owner types in it or moves to another one. */

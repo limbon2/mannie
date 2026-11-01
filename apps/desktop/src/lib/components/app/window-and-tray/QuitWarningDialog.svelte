@@ -6,14 +6,19 @@
   import { Button } from '#lib/components/ui/button/index.js';
   import { m } from '#lib/paraglide/messages.js';
   import { windowRequests } from '#lib/state/window-requests.svelte.js';
-  import { windowFailureMessage } from '#lib/utils/window-messages.js';
+  import { quitWarningTitle, windowFailureMessage } from '#lib/utils/window-messages.js';
 
-  // Quitting while replies are being written or background commands run,
-  // from the window in quit mode or from the tray's menu (docs/features/
-  // window-and-tray.md, behavior). Cancel keeps everything running.
-  let { activeRuns, backgroundCommands }: { activeRuns: number; backgroundCommands: number } = $props();
+  // Quitting while replies are being written, background commands run or
+  // terminals run commands, from the window in quit mode or from the tray's
+  // menu (docs/features/window-and-tray.md, behavior). Cancel keeps
+  // everything running.
+  let {
+    activeRuns,
+    backgroundCommands,
+    terminals,
+  }: { activeRuns: number; backgroundCommands: number; terminals: number } = $props();
 
-  const title = $derived(activeRuns > 0 ? m.window_quit_warning_title() : m.window_quit_warning_title_commands());
+  const title = $derived(quitWarningTitle({ activeRuns, backgroundCommands, terminals }));
 </script>
 
 <AlertDialog.Root
@@ -35,6 +40,9 @@
         {/if}
         {#if backgroundCommands > 0}
           <span>{m.window_background_commands({ count: backgroundCommands })}</span>
+        {/if}
+        {#if terminals > 0}
+          <span>{m.window_terminals({ count: terminals })}</span>
         {/if}
       </AlertDialog.Description>
     </AlertDialog.Header>

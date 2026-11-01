@@ -100,6 +100,7 @@ impl TypedTool for MovePath {
                     },
                     archives: Vec::new(),
                     images: Vec::new(),
+                    cited: Vec::new(),
                 })
             })
             .await
@@ -116,6 +117,7 @@ fn volume(access: &Access) -> Option<&str> {
         | Access::Project { .. }
         | Access::RemoteCommand { .. }
         | Access::Program { .. }
-        | Access::ExternalTool { .. } => None,
+        | Access::ExternalTool { .. }
+        | Access::TerminalCommand { .. } => None,
     }
 }

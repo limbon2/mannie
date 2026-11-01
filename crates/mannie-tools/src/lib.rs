@@ -31,6 +31,7 @@ mod registry;
 mod results;
 mod rules;
 mod schema;
+mod shells;
 mod stop;
 mod supervisor;
 mod system;
@@ -67,11 +68,15 @@ pub use programs::{
 pub use projects::{Availability, MoveFailure, ProjectFacts, ProjectMoves};
 pub use registry::{RegisterError, ToolRegistry, takes_activity};
 pub use results::{MIN_RESULT_LIMIT_BYTES, RESULT_LIMIT_BYTES, result_limit};
-pub use rules::{command_words, remote_command_words};
+pub use rules::{command_words, remote_command_words, terminal_command_words};
+pub use shells::{
+    LocalShell, MAX_SETUP_BYTES, SetupRefused, ShellKind, ShellStart, local_shells, shell_start,
+};
 pub use stop::{StopReason, StopSignal};
 pub use supervisor::{
     ArchivedLog, BackgroundProcess, BackgroundSpec, LiveLog, LogLines, LogMark, MAX_LINE_BYTES,
-    ServerInput, ServerProcess, ServerSpec, ServerStream, end_leftover_command,
+    ServerInput, ServerProcess, ServerSpec, ServerStream, TerminalInput, TerminalLaunch,
+    TerminalProcess, end_leftover_command,
 };
 pub use system::{ShellFacts, SystemFacts};
 pub use tool::{

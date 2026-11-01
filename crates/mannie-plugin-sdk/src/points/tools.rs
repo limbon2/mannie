@@ -39,7 +39,9 @@ use crate::contracts::{
     AccessMode, ArchiveId, ConversationId, ImageBytes, ProgramEffect, ToolHint, ToolServerEndpoint,
 };
 use crate::contributions::{ExtensionPoint, IdRule};
+use crate::points::context::ContextItem;
 use crate::services::background_commands::BackgroundTicket;
+use crate::services::terminals::{ExpectedHost, TerminalHostRef};
 
 /// The point of plugins' tools, whose entries are [`PluginTool`]s named by
 /// their tools' names.
@@ -179,6 +181,86 @@ pub enum ToolAccess {
     /// server that the owner registered with the plugin (ADR-0043,
     /// decision 4).
     ExternalTool(ExternalToolAccess),
+    /// A command that the tool types into a terminal, as the owner would,
+    /// such as a command of the terminal plugin (ADR-0053, decision 5).
+    TerminalCommand(TerminalCommandAccess),
+}
+
+/// A command that a plugin's tool types into a terminal, as the tool
+/// prepares it. The tool names the terminal's host by its reference, and the
+/// core takes the host's name, endpoint and identity from its registry of
+/// terminals and adds the plugin, so no plugin speaks for another or names
+/// another's endpoint. The core decides on every field: an approval covers
+/// only this terminal in this state, a grant or a rule the same command on
+/// any terminal of the host, and a host whose endpoint or identity changed
+/// sends the call back to the policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct TerminalCommandAccess {
+    /// Where the terminal runs.
+    pub host: TerminalHostRef,
+    /// The terminal's number in its conversation, or `None` for a terminal
+    /// that the call opens.
+    pub terminal: Option<u32>,
+    /// The shell's name, such as `bash`, for display only.
+    pub shell: String,
+    /// The user and the folder that the terminal reported last, such as
+    /// `root in /etc`, or `None` before it reported them.
+    pub state: Option<String>,
+    /// The command's text, as the tool types it.
+    pub command: String,
+    /// The endpoint and identity of a host that a plugin offers, which the
+    /// core fills in the accesses that it authorized; a tool leaves it out
+    /// when it prepares.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expect: Option<ExpectedHost>,
+}
+
+impl TerminalCommandAccess {
+    /// A command typed into a terminal on `host`. The texts are easy to
+    /// swap, so callers pass named locals.
+    pub fn new(
+        host: TerminalHostRef,
+        terminal: Option<u32>,
+        shell: String,
+        command: String,
+    ) -> Self {
+        Self {
+            host,
+            terminal,
+            shell,
+            state: None,
+            command,
+            expect: None,
+        }
+    }
+
+    /// The same command, in a terminal that reported this state.
+    #[must_use]
+    pub fn with_state(mut self, state: impl Into<String>) -> Self {
+        self.state = Some(state.into());
+        self
+    }
+
+    /// The same command, with the host's endpoint and identity as the core
+    /// authorized them. Only the core makes one.
+    #[cfg(feature = "host")]
+    #[must_use]
+    pub fn expecting(mut self, expect: ExpectedHost) -> Self {
+        self.expect = Some(expect);
+        self
+    }
+
+    /// Whether this access asks for the same command as `prepared`, which
+    /// the tool made: the same host, terminal, state and command. The core
+    /// adds the expected endpoint and identity, which the tool did not know.
+    pub fn same_request(&self, prepared: &Self) -> bool {
+        self.host == prepared.host
+            && self.terminal == prepared.terminal
+            && self.state == prepared.state
+            && self.command == prepared.command
+    }
 }
 
 /// A call of a tool server's tool, as a plugin's tool prepares it. The core
@@ -771,6 +853,43 @@ pub struct ToolResult {
     /// the output ends with a line for each one that it leaves out.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<ToolImage>,
+    /// The items that the output cites by their links, such as a command's
+    /// output (ADR-0054, decision 1). The core keeps the first
+    /// [`MAX_CITED_ITEMS`] that keep the rules, stores them with the call,
+    /// and the transcript's citations show them after their source is gone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cited: Vec<CitedItem>,
+}
+
+/// The most items that one result cites.
+pub const MAX_CITED_ITEMS: usize = 8;
+
+/// The most bytes of the text of a cited item.
+pub const MAX_CITED_TEXT_BYTES: usize = 64 * 1024;
+
+/// An item that a result's output cites by its link,
+/// `cite:<provider>/<key>`, which [`cite_link`](crate::points::context::cite_link)
+/// writes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct CitedItem {
+    /// The ID that the link names: the plugin's ID, or the plugin's ID, a
+    /// dot and more, so no plugin cites for another.
+    pub provider: String,
+    /// The item, with the key that the link names and the text that the
+    /// citation shows.
+    pub item: ContextItem,
+}
+
+impl CitedItem {
+    /// An item that a link of `provider` cites.
+    pub fn new(provider: impl Into<String>, item: ContextItem) -> Self {
+        Self {
+            provider: provider.into(),
+            item,
+        }
+    }
 }
 
 impl ToolResult {
@@ -782,7 +901,15 @@ impl ToolResult {
             data: None,
             failure: None,
             images: Vec::new(),
+            cited: Vec::new(),
         }
+    }
+
+    /// The same result, with the items that its output cites.
+    #[must_use]
+    pub fn with_cited(mut self, cited: Vec<CitedItem>) -> Self {
+        self.cited = cited;
+        self
     }
 
     /// The same result, with the images that reach the model.

@@ -11,8 +11,10 @@ import type {
   MentionGroup,
   MentionPlace,
 } from '../../../../../../apps/desktop/src/lib/generated/bindings.js';
+import { messageBoxes } from '../../../../../../apps/desktop/src/lib/state/message-boxes.svelte.js';
 import {
   COLLAPSED_ENTRIES,
+  MAX_MESSAGE_MENTIONS,
   type MentionChoice,
   type MentionOption,
   MessageMentions,
@@ -548,5 +550,56 @@ describe('MessageMentions', () => {
 
     expect(mentions.refs('@a.rs ')).toEqual([]);
     expect(mentions.open).toBe(false);
+  });
+});
+
+describe('mentions from views outside the message box (ADR-0054, decision 4)', () => {
+  const block = (key: string): MentionChoice => ({ entry: entry(key, { variant: 'command' }), provider: 'terminal' });
+
+  it('put a token at the end of the text that the message then carries, once', () => {
+    const mentions = new MessageMentions(
+      () => PLACE,
+      () => undefined,
+    );
+
+    const first = mentions.append('Why did this fail?', block('1.4'));
+    const again = mentions.append(first?.text ?? '', block('1.4'));
+
+    expect(first).toEqual({ caret: 24, text: 'Why did this fail? @1.4 ' });
+    expect(again?.text).toBe('Why did this fail? @1.4 ');
+    expect(mentions.refs(again?.text ?? '')).toEqual([{ key: '1.4', provider: 'terminal' }]);
+  });
+
+  it('refuse a mention past the most that a message carries', () => {
+    const mentions = new MessageMentions(
+      () => PLACE,
+      () => undefined,
+    );
+    let text = '';
+    for (let index = 0; index < MAX_MESSAGE_MENTIONS; index += 1) {
+      text = mentions.append(text, block(`1.${String(index)}`))?.text ?? text;
+    }
+
+    expect(mentions.refs(text)).toHaveLength(MAX_MESSAGE_MENTIONS);
+    expect(mentions.append(text, block('2.0'))).toBeNull();
+  });
+
+  it('reach the box of a conversation that shows, the latest one first', () => {
+    const added: string[] = [];
+    const first = messageBoxes.register('c1', {
+      mention: (choice) => {
+        added.push(`first ${choice.entry.key}`);
+        return 'added';
+      },
+    });
+    const second = messageBoxes.register('c1', { mention: () => 'full' });
+
+    expect(messageBoxes.mention('c1', block('1.1'))).toBe('full');
+    second();
+    expect(messageBoxes.mention('c1', block('1.2'))).toBe('added');
+    first();
+    expect(messageBoxes.mention('c1', block('1.3'))).toBe('not_shown');
+    expect(messageBoxes.mention('c2', block('1.3'))).toBe('not_shown');
+    expect(added).toEqual(['first 1.2']);
   });
 });

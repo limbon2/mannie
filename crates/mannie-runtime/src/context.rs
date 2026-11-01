@@ -475,6 +475,7 @@ fn not_run(reason: &NotRunReason, tool: &str) -> String {
             Refusal::NoRemoteCommands => texts::NO_REMOTE_COMMANDS.to_owned(),
             Refusal::NoProgramsOnHost => texts::NO_PROGRAMS_ON_HOST.to_owned(),
             Refusal::NoExternalTools => texts::NO_EXTERNAL_TOOLS.to_owned(),
+            Refusal::NoTerminals => texts::NO_TERMINALS.to_owned(),
         },
         NotRunReason::PluginOff { plugin } => texts::tool_plugin_off(plugin),
     }

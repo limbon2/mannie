@@ -6,6 +6,8 @@
 //! anything that can start a second command, substitute text or redirect
 //! output is never covered: its approval offers only "Allow once" and "Deny".
 
+use mannie_types::tools::TerminalHost;
+
 /// Characters that make a command impossible to cover: they separate
 /// commands, substitute text, group, redirect or escape in `sh` or in
 /// PowerShell. They count anywhere in the command, quoted or not.
@@ -49,6 +51,33 @@ pub fn command_words(command: &str) -> Option<Vec<String>> {
 /// refused: they escape and expand there, but start no second command.
 pub fn remote_command_words(command: &str) -> Option<Vec<String>> {
     split_words(command, true)
+}
+
+/// The words of a command that a plugin's tool types into a terminal
+/// (ADR-0053, decision 5). A remote host's shell may read a backslash as an
+/// escape, as may `sh`, bash, zsh and fish on this machine, Git's bash on
+/// Windows included; only Windows PowerShell, PowerShell 7 and `cmd.exe`
+/// read it as a separator of a path.
+pub fn terminal_command_words(command: &str, host: &TerminalHost) -> Option<Vec<String>> {
+    let backslash_escapes = match host {
+        TerminalHost::Remote { .. } => true,
+        TerminalHost::ThisMachine { shell } => !is_windows_shell(shell),
+    };
+    split_words(command, backslash_escapes)
+}
+
+/// Whether a shell's program is one of Windows' own shells, which do not
+/// escape with a backslash.
+fn is_windows_shell(shell: &str) -> bool {
+    let name = shell
+        .rsplit(['\\', '/'])
+        .next()
+        .unwrap_or(shell)
+        .to_ascii_lowercase();
+    matches!(
+        name.as_str(),
+        "powershell.exe" | "pwsh.exe" | "cmd.exe" | "powershell" | "pwsh"
+    )
 }
 
 /// The words of a command, or `None` when a rule or grant can never cover it.
@@ -103,7 +132,9 @@ pub(crate) fn starts_with_words(command: &[String], rule: &[String]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{command_words, remote_command_words, starts_with_words};
+    use mannie_types::tools::TerminalHost;
+
+    use super::{command_words, remote_command_words, starts_with_words, terminal_command_words};
 
     fn words(command: &str) -> Option<Vec<String>> {
         command_words(command)
@@ -237,5 +268,38 @@ mod tests {
         ));
         assert!(!starts_with_words(&command, &rule("Git")));
         assert!(!starts_with_words(&command, &[]));
+    }
+
+    #[test]
+    fn terminal_commands_escape_with_a_backslash_except_in_windows_shells() {
+        let shell = |path: &str| TerminalHost::ThisMachine {
+            shell: path.to_owned(),
+        };
+        let remote = TerminalHost::Remote {
+            plugin: "ssh".to_owned(),
+            target: "host".to_owned(),
+            label: "build-box".to_owned(),
+            endpoint: "deploy@build-box:22".to_owned(),
+        };
+        let path = r"dir C:\Users";
+
+        assert!(terminal_command_words(path, &shell(r"C:\Windows\System32\cmd.exe")).is_some());
+        assert!(
+            terminal_command_words(
+                path,
+                &shell(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe")
+            )
+            .is_some()
+        );
+        assert!(
+            terminal_command_words(path, &shell(r"C:\Program Files\Git\bin\bash.exe")).is_none()
+        );
+        assert!(terminal_command_words(path, &shell("/bin/zsh")).is_none());
+        assert!(terminal_command_words(path, &remote).is_none());
+        assert_eq!(
+            terminal_command_words("ss -ltnp", &remote),
+            Some(vec!["ss".to_owned(), "-ltnp".to_owned()])
+        );
+        assert!(terminal_command_words("ls | wc -l", &shell("/bin/bash")).is_none());
     }
 }

@@ -8,6 +8,7 @@ use crate::ids::ProjectId;
 
 use super::external::{ToolHint, ToolServerEndpoint};
 use super::program::ProgramEffect;
+use super::terminal::TerminalHost;
 
 /// How an operation uses a path.
 #[derive(
@@ -183,12 +184,40 @@ pub enum Access {
         /// What the server says of the tool, sorted, for display only.
         hints: Vec<ToolHint>,
     },
+    /// A command that a plugin's tool types into a terminal, as the owner
+    /// would (ADR-0053, decision 5). The plugin names the terminal's host by
+    /// its reference; the core takes the host from its registry and adds the
+    /// plugin, so no plugin speaks for another or names another's endpoint.
+    TerminalCommand {
+        /// The plugin whose tool types the command.
+        plugin: String,
+        /// Where the terminal runs.
+        host: TerminalHost,
+        /// What identifies a remote host beyond its address, such as the
+        /// fingerprint of its pinned key, and empty on this machine. A
+        /// changed identity changes the digest, so an earlier approval no
+        /// longer counts.
+        identity: String,
+        /// The terminal's number in its conversation, or `None` for a
+        /// terminal that the call opens. An approval covers only this
+        /// terminal, and a grant or a rule any terminal of the host.
+        terminal: Option<u32>,
+        /// The shell's name, such as `bash` or `Windows PowerShell`, for
+        /// display only.
+        shell: String,
+        /// The user and the folder that the terminal reported last, such as
+        /// `root in /etc`, which an approval covers; `None` before the
+        /// terminal reported them.
+        state: Option<String>,
+        /// The command's text, as the plugin types it.
+        command: String,
+    },
 }
 
 impl Access {
     /// Whether the access changes something: a change of the file system, a
-    /// command on this machine or a remote host, a run of an installed
-    /// program, or a move into a project.
+    /// command on this machine, on a remote host or in a terminal, a run of
+    /// an installed program, or a move into a project.
     pub fn changes(&self) -> bool {
         match self {
             Self::Path { mode, .. } => mode.changes(),
@@ -196,7 +225,8 @@ impl Access {
             | Self::Project { .. }
             | Self::RemoteCommand { .. }
             | Self::Program { .. }
-            | Self::ExternalTool { .. } => true,
+            | Self::ExternalTool { .. }
+            | Self::TerminalCommand { .. } => true,
         }
     }
 }

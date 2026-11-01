@@ -201,7 +201,7 @@ async fn run(hosts: &Hosts, execution: &ToolExecution) -> ToolResult {
     let started = Instant::now();
     let (connected, channel) = match open_channel(hosts, &checked.host).await {
         Ok(opened) => opened,
-        Err(reason) => return ToolResult::new(texts::not_run(reason)),
+        Err(error) => return ToolResult::new(texts::not_run(reason(error))),
     };
     let (mut reader, writer) = channel.split();
     if writer.exec(true, checked.command.as_bytes()).await.is_err() {
@@ -244,13 +244,13 @@ async fn run(hosts: &Hosts, execution: &ToolExecution) -> ToolResult {
 pub(crate) async fn open_channel(
     hosts: &Hosts,
     host: &HostRecord,
-) -> Result<(Connected, russh::Channel<Msg>), &'static str> {
-    let connected = hosts.connect(host).await.map_err(reason)?;
+) -> Result<(Connected, russh::Channel<Msg>), SshError> {
+    let connected = hosts.connect(host).await?;
     match connected.lease.session().channel_open_session().await {
         Ok(channel) => return Ok((connected, channel)),
         Err(error) if !connected.lease.reused() => {
             tracing::warn!(host = %host.id, %error, "a new SSH session opened no channel");
-            return Err(texts::HANDSHAKE_FAILED);
+            return Err(SshError::HandshakeFailed);
         }
         Err(error) => {
             tracing::debug!(host = %host.id, %error, "a reused SSH session opened no channel; opening a new one");
@@ -258,7 +258,7 @@ pub(crate) async fn open_channel(
     }
     drop(connected);
     hosts.sessions().forget(&host.id);
-    let connected = hosts.connect(host).await.map_err(reason)?;
+    let connected = hosts.connect(host).await?;
     let channel = connected
         .lease
         .session()
@@ -266,7 +266,7 @@ pub(crate) async fn open_channel(
         .await
         .map_err(|error| {
             tracing::warn!(host = %host.id, %error, "a new SSH session opened no channel");
-            texts::HANDSHAKE_FAILED
+            SshError::HandshakeFailed
         })?;
     Ok((connected, channel))
 }

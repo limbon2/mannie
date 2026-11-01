@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                           |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                                          |
-| Last updated | 2026-10-24                                                                                                                                                                                |
+| Last updated | 2026-10-30                                                                                                                                                                                |
 | Related      | [Vision](vision.md), [Feature protocol](../features/README.md), [Milestones](../roadmap/milestones.md), [Releasing](../engineering/releasing.md), [Security](../architecture/security.md) |
 
 ## 1. What Mannie is for
@@ -41,15 +41,28 @@ Mannie lets one owner put AI agents to work on their own machines: chat on the d
 
 Every feature meets these requirements. The targets in §4.1 are checked by benchmarks from M1 on, on a reference machine: a Windows 11 x86_64 desktop with 8 cores, 16 GB of memory and an SSD.
 
+NFR-PERF-06 to NFR-PERF-10, the budgets of the plugin Terminal, bind on the reference machine and on a low-end laptop profile, because the owner has seen terminals in webview apps lag on low-end PCs, and on laptops above all ([D45](../roadmap/milestones.md#5-decisions)). The low-end laptop profile:
+
+- 4 threads at most, a base clock of at most 2.5 GHz, 8 GB of memory and integrated graphics, on battery with the power saver mode on.
+- The suite emulates it on Windows by throttling WebView2's CPU 4× through the DevTools protocol, with Mannie limited to 2 cores. On Linux it runs WebKitGTK in a virtual machine with 2 vCPUs and no GPU acceleration.
+- The owner confirms the figures on a real laptop of that class.
+
+The [M14 validation results](../roadmap/m14-validation.md) record the figures, and the spike S1 there measured the shells' own echo.
+
 ### 4.1 Performance
 
-| ID          | Requirement                                                                       |
-| ----------- | --------------------------------------------------------------------------------- |
-| NFR-PERF-01 | A streamed delta appears in the UI within 100 ms of reaching the Rust core (p95). |
-| NFR-PERF-02 | With 8 runs streaming at once, the UI responds to input within 50 ms (p95).       |
-| NFR-PERF-03 | A cold start shows a usable window within 2 s.                                    |
-| NFR-PERF-04 | A conversation with 10,000 parts opens within 1 s.                                |
-| NFR-PERF-05 | An idle worker uses less than 50 MB of memory.                                    |
+| ID          | Requirement                                                                                                                                                                                                                                                                        |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| NFR-PERF-01 | A streamed delta appears in the UI within 100 ms of reaching the Rust core (p95).                                                                                                                                                                                                  |
+| NFR-PERF-02 | With 8 runs streaming at once, the UI responds to input within 50 ms (p95).                                                                                                                                                                                                        |
+| NFR-PERF-03 | A cold start shows a usable window within 2 s.                                                                                                                                                                                                                                     |
+| NFR-PERF-04 | A conversation with 10,000 parts opens within 1 s.                                                                                                                                                                                                                                 |
+| NFR-PERF-05 | An idle worker uses less than 50 MB of memory.                                                                                                                                                                                                                                     |
+| NFR-PERF-06 | Mannie adds at most 25 ms (p95) to a keystroke's echo, measured with a test shell that echoes at once. The shell's own echo comes on top: 21 ms for Windows PowerShell and 7 ms for Git Bash on the workstation (S1).                                                              |
+| NFR-PERF-07 | While a visible terminal floods (`yes` for 10 seconds, `cat` of 50 MiB), the UI responds to input within 50 ms (p95), no task of the page's main thread lasts over 50 ms, and the terminal shows its final output within 300 ms of the flood's end.                                |
+| NFR-PERF-08 | 8 open, idle terminals add under 0.5% of one core to Mannie's processes over 60 seconds, the plugin wakes up for nothing while they idle, and a hidden terminal's output sends nothing to the webview.                                                                             |
+| NFR-PERF-09 | A terminal holds at most 5 MiB in the core, and each open terminal tab adds at most 10 MB to the webview at the default scrollback.                                                                                                                                                |
+| NFR-PERF-10 | The plugin adds nothing to the app's first bundle and less than 10 ms to a cold start. A terminal's view is ready within 300 ms of its shell's first output. A setup adds under 50 ms to a shell's start (100 ms for PowerShell) and under 1 ms to a prompt (5 ms for PowerShell). |
 
 ### 4.2 Reliability
 

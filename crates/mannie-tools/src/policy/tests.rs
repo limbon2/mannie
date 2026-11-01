@@ -6,7 +6,8 @@ use mannie_types::ids::{ProjectId, RuleId};
 use mannie_types::tools::{
     Access, AccessMode, ApprovalReason, ApprovalRequest, CommandRule, Decision, DiscardedWork,
     EntryCount, GrantScope, ProgramEffect, ProgramRule, ProgramTarget, Refusal, RemoteCommandRule,
-    RemoteTarget, RuleProposal, ToolHint, ToolServerEndpoint, ToolsError, effect_keys,
+    RemoteTarget, RuleProposal, TerminalCommandRule, TerminalHost, TerminalTarget, ToolHint,
+    ToolServerEndpoint, ToolsError, effect_keys,
 };
 
 use super::{Grants, PolicyInputs, SavedRule, Verdict, decide, saved_rule};
@@ -110,6 +111,7 @@ struct Inputs {
     rules: Vec<CommandRule>,
     remote_rules: Vec<RemoteCommandRule>,
     program_rules: Vec<ProgramRule>,
+    terminal_rules: Vec<TerminalCommandRule>,
     project: Option<ProjectId>,
     owner_request: Option<String>,
     ceiling: Option<Ceiling>,
@@ -130,6 +132,7 @@ impl Inputs {
             rules: Vec::new(),
             remote_rules: Vec::new(),
             program_rules: Vec::new(),
+            terminal_rules: Vec::new(),
             project: None,
             owner_request: None,
             ceiling: None,
@@ -169,6 +172,7 @@ impl Inputs {
                 rules: &self.rules,
                 remote_rules: &self.remote_rules,
                 program_rules: &self.program_rules,
+                terminal_rules: &self.terminal_rules,
                 project: self.project.as_ref(),
                 owner_request: self.owner_request.as_deref(),
                 ceiling: self.ceiling.as_ref(),
@@ -360,6 +364,7 @@ fn commands_ask_and_offer_a_grant_and_a_rule() {
                 remote: None,
                 program: None,
                 background: false,
+                terminal: None,
             })
         )
     );
@@ -674,6 +679,7 @@ fn a_command_in_the_background_asks_and_offers_a_grant_and_a_rule_for_both_modes
                 remote: None,
                 program: None,
                 background: true,
+                terminal: None,
             })
         )
     );
@@ -738,6 +744,7 @@ fn a_rule_saved_from_the_background_keeps_its_mode() {
         remote: None,
         program: None,
         background: true,
+        terminal: None,
     };
 
     assert_eq!(
@@ -768,6 +775,7 @@ fn saved_rules_keep_the_chosen_leading_words() {
         remote: None,
         program: None,
         background: false,
+        terminal: None,
     };
 
     assert_eq!(
@@ -1140,6 +1148,7 @@ fn a_remote_command_asks_and_offers_a_grant_and_a_rule_for_its_host() {
                 remote: Some(host(SSH_HOST, ENDPOINT)),
                 program: None,
                 background: false,
+                terminal: None,
             })
         )
     );
@@ -1314,6 +1323,7 @@ fn a_saved_remote_rule_is_always_limited_to_its_host() {
         remote: Some(host(SSH_HOST, ENDPOINT)),
         program: None,
         background: false,
+        terminal: None,
     };
 
     for limit_to_folder in [false, true] {
@@ -1437,6 +1447,7 @@ fn a_program_run_asks_beside_its_paths_and_offers_a_grant_and_a_rule() {
         remote: None,
         program: Some(git_target(&effects)),
         background: false,
+        terminal: None,
     };
 
     assert_eq!(
@@ -1679,6 +1690,7 @@ fn a_saved_program_rule_keeps_its_program_and_effects_and_may_be_limited_to_its_
         remote: None,
         program: Some(git_target(&effects)),
         background: false,
+        terminal: None,
     };
 
     for (limit_to_folder, folder) in [(false, None), (true, Some(at("/work")))] {
@@ -1878,5 +1890,270 @@ fn a_tool_grant_covers_another_only_for_the_same_tool_of_the_same_server() {
     assert!(!super::scope_covers(
         &tool_grant("create_issue"),
         &remote_grant("create_issue")
+    ));
+}
+
+/// A command that the terminal plugin types into terminal 2 of a host
+/// (ADR-0053, decision 5).
+fn typed_on(host: TerminalHost, text: &str) -> Access {
+    Access::TerminalCommand {
+        plugin: "terminal".to_owned(),
+        host,
+        identity: String::new(),
+        terminal: Some(2),
+        shell: "bash".to_owned(),
+        state: Some("owner in /work".to_owned()),
+        command: text.to_owned(),
+    }
+}
+
+fn this_machine(shell: &str) -> TerminalHost {
+    TerminalHost::ThisMachine {
+        shell: shell.to_owned(),
+    }
+}
+
+fn ssh_host(endpoint: &str) -> TerminalHost {
+    TerminalHost::Remote {
+        plugin: "ssh".to_owned(),
+        target: "0199e0f2-0000-7000-8000-0000000000aa".to_owned(),
+        label: "build-box".to_owned(),
+        endpoint: endpoint.to_owned(),
+    }
+}
+
+fn typed(text: &str) -> Access {
+    typed_on(this_machine("/bin/bash"), text)
+}
+
+fn terminal_grant(host: TerminalHost, text: &str) -> GrantScope {
+    GrantScope::TerminalCommand {
+        plugin: "terminal".to_owned(),
+        host,
+        command: text.to_owned(),
+    }
+}
+
+fn terminal_rule(host: TerminalHost, words: &[&str]) -> TerminalCommandRule {
+    TerminalCommandRule {
+        id: RuleId::parse("0199e0f2-0000-7000-9000-000000000009").unwrap(),
+        target: TerminalTarget {
+            plugin: "terminal".to_owned(),
+            host,
+        },
+        words: words.iter().map(|word| (*word).to_owned()).collect(),
+        created_at: UtcMillis::EPOCH,
+    }
+}
+
+#[test]
+fn a_terminal_command_asks_and_offers_a_grant_and_a_rule_for_its_host() {
+    let accesses = [typed("ss -ltnp")];
+
+    assert_eq!(
+        Inputs::new().decide(&accesses),
+        ask(
+            &accesses,
+            &[ApprovalReason::TerminalCommand],
+            vec![terminal_grant(this_machine("/bin/bash"), "ss -ltnp")],
+            Some(RuleProposal {
+                words: vec!["ss".to_owned(), "-ltnp".to_owned()],
+                folder: String::new(),
+                remote: None,
+                program: None,
+                background: false,
+                terminal: Some(TerminalTarget {
+                    plugin: "terminal".to_owned(),
+                    host: this_machine("/bin/bash"),
+                }),
+            }),
+        )
+    );
+}
+
+#[test]
+fn the_workspace_never_allows_a_terminal_command() {
+    let mut inputs = Inputs::new();
+    inputs.allow_changes_in_workspace = true;
+
+    assert!(matches!(inputs.decide(&[typed("ls")]), Verdict::Ask(_)));
+}
+
+#[test]
+fn a_terminal_grant_covers_any_terminal_of_its_host_and_shell_only() {
+    let mut inputs = Inputs::new();
+    inputs.grants = vec![terminal_grant(this_machine("/bin/bash"), "ss -ltnp")];
+    let mut other_terminal = typed("ss -ltnp");
+    if let Access::TerminalCommand {
+        terminal, state, ..
+    } = &mut other_terminal
+    {
+        *terminal = None;
+        *state = None;
+    }
+
+    assert_eq!(
+        inputs.decide(&[typed("ss -ltnp")]),
+        Verdict::Allowed(Decision::Grant)
+    );
+    assert_eq!(
+        inputs.decide(&[other_terminal]),
+        Verdict::Allowed(Decision::Grant)
+    );
+    assert!(matches!(
+        inputs.decide(&[typed_on(this_machine("/bin/zsh"), "ss -ltnp")]),
+        Verdict::Ask(_)
+    ));
+    assert!(matches!(
+        inputs.decide(&[typed("ss -ltn")]),
+        Verdict::Ask(_)
+    ));
+}
+
+#[test]
+fn terminal_grants_and_the_grants_of_other_commands_never_cover_each_other() {
+    let mut inputs = Inputs::new();
+    inputs.grants = vec![command_grant("uname -a", "/work"), remote_grant("uname -a")];
+    assert!(matches!(
+        inputs.decide(&[typed("uname -a")]),
+        Verdict::Ask(_)
+    ));
+
+    let mut inputs = Inputs::new();
+    inputs.grants = vec![terminal_grant(this_machine("/bin/bash"), "uname -a")];
+    assert!(matches!(
+        inputs.decide(&[command("uname -a", "/work")]),
+        Verdict::Ask(_)
+    ));
+    assert!(matches!(
+        inputs.decide(&[remote("uname -a")]),
+        Verdict::Ask(_)
+    ));
+}
+
+#[test]
+fn a_terminal_grant_on_a_remote_host_holds_through_a_rename_and_not_on_another_endpoint() {
+    let mut inputs = Inputs::new();
+    inputs.always_grants = vec![terminal_grant(ssh_host("deploy@build-box:22"), "uptime")];
+    let mut renamed = ssh_host("deploy@build-box:22");
+    if let TerminalHost::Remote { label, .. } = &mut renamed {
+        "renamed".clone_into(label);
+    }
+
+    assert_eq!(
+        inputs.decide(&[typed_on(renamed, "uptime")]),
+        Verdict::Allowed(Decision::AlwaysGrant)
+    );
+    assert!(matches!(
+        inputs.decide(&[typed_on(ssh_host("root@build-box:22"), "uptime")]),
+        Verdict::Ask(_)
+    ));
+}
+
+#[test]
+fn a_terminal_rule_is_limited_to_its_plugin_and_host() {
+    let mut inputs = Inputs::new();
+    inputs.terminal_rules = vec![terminal_rule(
+        ssh_host("deploy@build-box:22"),
+        &["git", "status"],
+    )];
+
+    assert_eq!(
+        inputs.decide(&[typed_on(
+            ssh_host("deploy@build-box:22"),
+            "git status --short"
+        )]),
+        Verdict::Allowed(Decision::Rule)
+    );
+    assert!(matches!(
+        inputs.decide(&[typed_on(ssh_host("deploy@other:22"), "git status")]),
+        Verdict::Ask(_)
+    ));
+    assert!(matches!(
+        inputs.decide(&[typed("git status")]),
+        Verdict::Ask(_)
+    ));
+    let mut other_plugin = typed_on(ssh_host("deploy@build-box:22"), "git status");
+    if let Access::TerminalCommand { plugin, .. } = &mut other_plugin {
+        "other".clone_into(plugin);
+    }
+    assert!(matches!(inputs.decide(&[other_plugin]), Verdict::Ask(_)));
+}
+
+#[test]
+fn a_terminal_command_with_metacharacters_can_only_be_allowed_once() {
+    let mut inputs = Inputs::new();
+    inputs.grants = vec![terminal_grant(this_machine("/bin/bash"), "ls | wc -l")];
+    inputs.terminal_rules = vec![terminal_rule(this_machine("/bin/bash"), &["ls"])];
+    let accesses = [typed("ls | wc -l")];
+
+    assert_eq!(
+        inputs.decide(&accesses),
+        ask(
+            &accesses,
+            &[ApprovalReason::TerminalCommand],
+            Vec::new(),
+            None
+        )
+    );
+}
+
+#[test]
+fn full_access_allows_a_terminal_command_and_a_worker_refuses_it() {
+    let mut inputs = Inputs::new();
+    inputs.full_access = true;
+    assert_eq!(
+        inputs.decide(&[typed("rm -rf build")]),
+        Verdict::Allowed(Decision::FullAccess)
+    );
+
+    for mode in MODES.into_iter().chain([CeilingMode::FullAccess]) {
+        assert_eq!(
+            Inputs::worker(mode).decide(&[typed("ls")]),
+            Verdict::Refused(Refusal::NoTerminals),
+            "{mode:?}"
+        );
+    }
+}
+
+#[test]
+fn a_saved_terminal_rule_keeps_its_host_and_never_a_folder() {
+    let proposal = RuleProposal {
+        words: vec!["git".to_owned(), "status".to_owned(), "--short".to_owned()],
+        folder: String::new(),
+        remote: None,
+        program: None,
+        background: false,
+        terminal: Some(TerminalTarget {
+            plugin: "terminal".to_owned(),
+            host: ssh_host("deploy@build-box:22"),
+        }),
+    };
+
+    assert_eq!(
+        saved_rule(&proposal, 2, true),
+        Ok(SavedRule::Terminal {
+            target: TerminalTarget {
+                plugin: "terminal".to_owned(),
+                host: ssh_host("deploy@build-box:22"),
+            },
+            words: vec!["git".to_owned(), "status".to_owned()],
+        })
+    );
+}
+
+#[test]
+fn a_terminal_grant_covers_another_only_on_the_same_host_and_command() {
+    assert!(super::scope_covers(
+        &terminal_grant(ssh_host("deploy@build-box:22"), "uptime"),
+        &terminal_grant(ssh_host("deploy@build-box:22"), "uptime")
+    ));
+    assert!(!super::scope_covers(
+        &terminal_grant(ssh_host("deploy@build-box:22"), "uptime"),
+        &terminal_grant(ssh_host("deploy@other:22"), "uptime")
+    ));
+    assert!(!super::scope_covers(
+        &terminal_grant(this_machine("/bin/bash"), "uptime"),
+        &command_grant("uptime", "/work")
     ));
 }
