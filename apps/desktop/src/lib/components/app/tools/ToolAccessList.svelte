@@ -4,11 +4,13 @@
   import { m } from '#lib/paraglide/messages.js';
   import {
     accessModeLabel,
+    databaseHomeText,
     entryCountMessage,
     keepsSnapshot,
     programEffectItems,
     programEffectMessage,
     programRunText,
+    statementClassLabel,
     toolHintsMessage,
     toolServerEndpointText,
   } from '#lib/utils/tools-messages.js';
@@ -23,10 +25,12 @@
   // the workspace (ADR-0038), a call of a tool server's tool with its
   // arguments, the server, where it runs and what it says of the tool
   // (ADR-0043), a command typed into a terminal with the terminal, its host,
-  // shell, user and folder (ADR-0053, decision 5), or the project that the
-  // conversation moves into, with its folder (docs/features/system-tools/
-  // tool-activity.md). Paths, commands, arguments, names and a server's words
-  // are content, and render as text in their own elements (T-3).
+  // shell, user and folder (ADR-0053, decision 5), a statement on a
+  // registered database with its values, what it does and where the database
+  // lives (ADR-0056, decision 7), or the project that the conversation moves
+  // into, with its folder (docs/features/system-tools/tool-activity.md).
+  // Paths, commands, statements, values, arguments, names and a server's
+  // words are content, and render as text in their own elements (T-3).
   let { accesses }: { accesses: readonly Access[] } = $props();
 </script>
 
@@ -104,6 +108,35 @@
             <dt class="text-muted-foreground">{m.tools_access_terminal_state()}</dt>
             <dd class="font-mono break-all" data-content>{access.state}</dd>
           {/if}
+        </dl>
+      {:else if access.kind === 'database'}
+        <div class="flex min-w-0 items-start gap-2">
+          <Badge class="mt-px" variant="outline">{statementClassLabel(access.class)}</Badge>
+          <span class="min-w-0 text-sm wrap-anywhere" data-content dir="auto">{access.name}</span>
+        </div>
+        <AccessText label={m.tools_access_database_statement()} text={access.statement} />
+        {#if access.statementCut ?? false}
+          <p class="text-xs text-muted-foreground">{m.tools_access_database_statement_cut()}</p>
+        {/if}
+        {#if access.parameters.length > 0}
+          <p class="text-xs font-medium text-muted-foreground">{m.tools_access_database_values()}</p>
+          <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs" data-database-values="">
+            {#each access.parameters as value, valueIndex (valueIndex)}
+              <dt class="font-mono text-muted-foreground">?{valueIndex + 1}</dt>
+              <dd class="font-mono break-all" data-content>{value}</dd>
+            {/each}
+          </dl>
+        {/if}
+        {#if access.parameterCount > access.parameters.length}
+          <p class="text-xs text-muted-foreground">
+            {m.tools_access_database_values_more({ count: access.parameterCount - access.parameters.length })}
+          </p>
+        {/if}
+        <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs" data-database="">
+          <dt class="text-muted-foreground">{m.tools_access_database()}</dt>
+          <dd class="break-all" data-content dir="auto">{access.name}</dd>
+          <dt class="text-muted-foreground">{m.tools_access_database_home()}</dt>
+          <dd>{databaseHomeText(access.home)}</dd>
         </dl>
       {:else if access.kind === 'external_tool'}
         <p class="text-sm wrap-anywhere" data-content dir="auto">

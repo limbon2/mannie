@@ -386,9 +386,11 @@ fn start_runtime(
     // Each plugin gets the services that its manifest declares and no other,
     // which these providers bind to it (ADR-0034, decision 5): the
     // runtime's executor host and credentials, the store's modules, the
-    // plugin's own entries of the credential store, and the file dialog.
-    let file_dialog: Arc<dyn ServiceProvider> = file_dialog;
+    // plugin's own entries of the credential store, the file dialog, and the
+    // owner's SQLite files, which the owner chooses in that dialog.
     let mut services: Vec<Arc<dyn ServiceProvider>> = runtime.service_providers();
+    services.push(runtime.sqlite_files_provider(Some(file_dialog.database_chooser())));
+    let file_dialog: Arc<dyn ServiceProvider> = file_dialog;
     services.extend(mannie_store::service_providers(&store));
     services.push(Arc::new(SecretsProvider::new(vault)));
     services.push(file_dialog);

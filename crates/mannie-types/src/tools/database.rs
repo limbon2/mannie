@@ -1,10 +1,28 @@
 //! Statements on the owner's SQLite files (ADR-0056): the class of a
 //! statement, which the engine reads from the actions that SQLite reports
 //! while it prepares the statement, and which a database access and its
-//! policy name.
+//! policy name, and where a registered database lives.
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
+
+/// The most characters of one parameter's value as an access shows it.
+pub const MAX_VIEW_PARAMETER_CHARS: usize = 200;
+
+/// The most parameters that an access shows; the digest covers them all.
+pub const MAX_VIEW_PARAMETERS: usize = 32;
+
+/// Where a registered database lives (ADR-0056, decision 5).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum DatabaseHome {
+    /// This computer, whose registrations the core keeps.
+    ThisComputer,
+}
 
 /// What a statement on a database does (ADR-0056, decision 5), from the
 /// weakest to the strongest, so the class of several statements is the

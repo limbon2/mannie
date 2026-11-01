@@ -447,6 +447,56 @@ async fn dropping_a_call_interrupts_its_statement() {
     assert_eq!(ended, Err(EngineError::Stopped));
 }
 
+#[tokio::test]
+async fn a_call_with_the_callers_handle_goes_on_when_dropped_and_stops_when_the_caller_stops_it() {
+    let fixture = Fixture::new();
+    let (path, identity) = (fixture.path.clone(), fixture.identity.clone());
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let counting = Sql {
+        text: "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 2000000) \
+               SELECT max(x) FROM n"
+            .to_owned(),
+        parameters: Vec::new(),
+    };
+    let endless = Sql {
+        text:
+            "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n) SELECT max(x) FROM n"
+                .to_owned(),
+        parameters: Vec::new(),
+    };
+
+    let waited = tokio::time::timeout(
+        Duration::ZERO,
+        run_with(Cancel::new(), move |cancel| {
+            let result = read(&path, &identity, &counting, LIMITS, cancel);
+            // The test waits for this result after it stopped waiting for the call.
+            let _sent = sender.send(result.clone());
+            result
+        }),
+    )
+    .await;
+    let ended = tokio::time::timeout(Duration::from_secs(30), receiver)
+        .await
+        .unwrap()
+        .unwrap();
+    let cancel = Cancel::new();
+    let canceller = cancel.clone();
+    let stopping = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        canceller.stop();
+    });
+    let (path, identity) = (fixture.path.clone(), fixture.identity.clone());
+    let stopped = run_with(cancel, move |cancel| {
+        read(&path, &identity, &endless, LIMITS, cancel)
+    })
+    .await;
+    stopping.await.unwrap();
+
+    waited.unwrap_err();
+    assert_eq!(ended.unwrap().rows, vec![vec![Value::Integer(2_000_000)]]);
+    assert_eq!(stopped, Err(EngineError::Stopped));
+}
+
 #[test]
 fn a_replaced_file_is_refused_until_the_owner_accepts_it() {
     let fixture = Fixture::new();

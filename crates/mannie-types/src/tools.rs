@@ -40,7 +40,7 @@ pub use commands::{
     RemoteCommandRule, RemoteRuleRef, RuleRef, SetFullAccess, SharedGrant, SharedGrantRef,
     StopBackgroundCommand, SubscribeCommandOutput, ToolOutputPage, ToolsError,
 };
-pub use database::StatementClass;
+pub use database::{DatabaseHome, MAX_VIEW_PARAMETER_CHARS, MAX_VIEW_PARAMETERS, StatementClass};
 pub use external::{ToolHint, ToolServerEndpoint};
 pub use outcome::{
     ArchiveRef, CitedItemView, CommandEnding, EntryKind, MAX_TOOL_IMAGE_BYTES, MAX_TOOL_IMAGE_SIDE,

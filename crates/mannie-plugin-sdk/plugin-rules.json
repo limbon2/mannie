@@ -75,6 +75,7 @@
     "models",
     "processes",
     "secrets",
+    "sqlite-files",
     "terminals"
   ],
   "services": {
@@ -86,6 +87,7 @@
     "models": 1,
     "processes": 1,
     "secrets": 1,
+    "sqlite-files": 1,
     "store": 1,
     "terminals": 1
   },

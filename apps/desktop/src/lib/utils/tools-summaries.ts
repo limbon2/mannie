@@ -171,6 +171,26 @@ function accessExternalTool(accesses: readonly Access[]): { server: string; tool
   return access?.kind === 'external_tool' ? { server: access.label, tool: access.tool } : null;
 }
 
+/**
+ * How a call on a registered database is named, by the strongest of its
+ * statements, with the database's name (ADR-0056, decision 7).
+ */
+function databaseSummary(accesses: readonly Access[]): string | null {
+  const statements = accesses.filter((candidate) => candidate.kind === 'database');
+  const first = statements.at(0);
+  if (first === undefined) {
+    return null;
+  }
+  const database = first.name;
+  if (statements.some((statement) => statement.class === 'schema')) {
+    return m.tools_call_database_schema({ database });
+  }
+  if (statements.some((statement) => statement.class === 'write')) {
+    return m.tools_call_database_write({ database });
+  }
+  return m.tools_call_database_read({ database });
+}
+
 /** A folder's last name, such as `app` for `D:\Projects\app`, or the whole path for a root. */
 export function folderName(path: string): string {
   const trimmed = path.replace(/[\\/]+$/u, '');
@@ -326,11 +346,16 @@ function intentSummary(call: ToolCallView): string {
     }
     default: {
       // A plugin's tool that runs a command on a remote host, types one into
-      // a terminal or calls a tool server's tool is named by its access, once
-      // prepared, whatever the plugin calls the tool.
+      // a terminal, works on a registered database or calls a tool server's
+      // tool is named by its access, once prepared, whatever the plugin calls
+      // the tool.
       const typed = accessTerminalCommand(call.accesses);
       if (typed !== null) {
         return terminalCommandSummary(typed);
+      }
+      const database = databaseSummary(call.accesses);
+      if (database !== null) {
+        return database;
       }
       const remote = accessRemoteCommand(call.accesses);
       if (remote !== null) {

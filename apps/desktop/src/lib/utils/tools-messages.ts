@@ -6,6 +6,7 @@
 import type {
   AccessMode,
   ApprovalReason,
+  DatabaseHome,
   Decision,
   DiscardedWork,
   EntryCount,
@@ -16,6 +17,7 @@ import type {
   ProgramEffect,
   ProgramEffectKey,
   Refusal,
+  StatementClass,
   TerminalTarget,
   ToolFailure,
   ToolHint,
@@ -306,6 +308,9 @@ export function refusalMessage(refusal: Refusal): string {
     case 'no_programs_on_host': {
       return m.tools_refusal_no_programs_on_host();
     }
+    case 'no_databases': {
+      return m.tools_refusal_no_databases();
+    }
     case 'no_external_tools': {
       return m.tools_refusal_no_external_tools();
     }
@@ -332,6 +337,12 @@ export function approvalReasonMessage(reason: ApprovalReason): string {
     }
     case 'command': {
       return m.tools_reason_command();
+    }
+    case 'database_schema': {
+      return m.tools_reason_database_schema();
+    }
+    case 'database_write': {
+      return m.tools_reason_database_write();
     }
     case 'external_tool': {
       return m.tools_reason_external_tool();
@@ -408,6 +419,9 @@ export function decisionMessage(decision: Decision): string {
     case 'project_grant': {
       return m.tools_decision_project_grant();
     }
+    case 'registered_database': {
+      return m.tools_decision_registered_database();
+    }
     case 'rule': {
       return m.tools_decision_rule();
     }
@@ -436,6 +450,31 @@ export function accessModeLabel(mode: AccessMode): string {
       return m.tools_mode_write();
     }
   }
+}
+
+/** What a statement on a registered database does, as a short label. */
+export function statementClassLabel(statementClass: StatementClass): string {
+  switch (statementClass) {
+    case 'read': {
+      return m.tools_access_database_read();
+    }
+    case 'schema': {
+      return m.tools_access_database_schema();
+    }
+    case 'write': {
+      return m.tools_access_database_write();
+    }
+  }
+}
+
+/** The text of each computer where a registered database can live, one for each kind of home. */
+const DATABASE_HOMES: Record<DatabaseHome['kind'], () => string> = {
+  this_computer: () => m.tools_access_database_this_computer(),
+};
+
+/** The computer where a registered database lives (ADR-0056, decision 2). */
+export function databaseHomeText(home: DatabaseHome): string {
+  return DATABASE_HOMES[home.kind]();
 }
 
 /** What a recursive delete removes inside a folder, such as "3 files and 2 folders". */
@@ -627,6 +666,9 @@ export function terminalRulePlace(target: TerminalTarget): string {
 export function grantScopeMessage(scope: GrantScope): string {
   if (scope.kind === 'command') {
     return m.tools_grant_command({ command: scope.command, folder: scope.workingDirectory });
+  }
+  if (scope.kind === 'database') {
+    return m.tools_grant_database({ database: scope.name, statement: scope.statement });
   }
   if (scope.kind === 'external_tool') {
     return m.tools_grant_external_tool({

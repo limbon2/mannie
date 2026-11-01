@@ -378,6 +378,7 @@ pub(crate) fn mentions(call: &ToolCallView, needle: &str) -> bool {
         | Access::RemoteCommand { command, .. }
         | Access::TerminalCommand { command, .. } => command.contains(needle),
         Access::Project { name, folder, .. } => name.contains(needle) || folder.contains(needle),
+        Access::Database { statement, .. } => statement.contains(needle),
         Access::Program {
             arguments,
             working_directory,
@@ -658,6 +659,7 @@ fn owner_choice(task: &Task, call: &ToolCallView) -> ApprovalChoice {
             Access::Path { .. }
             | Access::Project { .. }
             | Access::RemoteCommand { .. }
+            | Access::Database { .. }
             | Access::Program { .. }
             | Access::ExternalTool { .. }
             | Access::TerminalCommand { .. } => false,

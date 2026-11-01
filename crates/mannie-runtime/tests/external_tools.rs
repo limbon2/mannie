@@ -123,7 +123,8 @@ impl Tool for ServerTools {
                 ToolAccess::Path(_)
                 | ToolAccess::RemoteCommand(_)
                 | ToolAccess::Program(_)
-                | ToolAccess::TerminalCommand(_) => None,
+                | ToolAccess::TerminalCommand(_)
+                | ToolAccess::Database(_) => None,
             })
             .collect();
         self.executions.lock().unwrap().push(execution);

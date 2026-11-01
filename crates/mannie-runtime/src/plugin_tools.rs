@@ -23,6 +23,13 @@
 //! A call whose authorized accesses hold a remote command in the background
 //! gets a ticket in its execution, which lets it hand the core that one
 //! command while it executes (ADR-0041, decision 11).
+//!
+//! A statement on a registered database names the database by its key. The
+//! adapter takes the database's name and identity from the registry, reads
+//! the statement's class from SQLite itself, refuses a write to a database
+//! that the owner marked read-only, and gives a call whose accesses hold
+//! writes a ticket, through which the service writes exactly those
+//! statements (ADR-0056, decisions 5 and 6).
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -38,21 +45,24 @@ use mannie_plugin_sdk::ids::{FeatureId, PluginId, owned_by};
 use mannie_plugin_sdk::points::executors::Executors;
 use mannie_plugin_sdk::points::tool_sources::{MAX_SOURCE_TOOLS, check_published};
 use mannie_plugin_sdk::points::tools::{
-    AgentSelector, ExternalToolAccess, MAX_FAILURE_CODE_CHARS, MAX_TOOL_ARCHIVE_BYTES,
-    MAX_TOOL_ARCHIVES, MAX_TOOL_DATA_BYTES, PathAccess, PluginTool, ProgramAccess,
-    RemoteCommandAccess, TerminalCommandAccess, Tool as SdkTool, ToolAccess, ToolArchive, ToolCall,
-    ToolEffect, ToolExecution, ToolOffering, ToolSpec, Tools, is_tool_name,
+    AgentSelector, DatabaseAccess, ExternalToolAccess, MAX_FAILURE_CODE_CHARS,
+    MAX_TOOL_ARCHIVE_BYTES, MAX_TOOL_ARCHIVES, MAX_TOOL_DATA_BYTES, PathAccess, PluginTool,
+    ProgramAccess, RemoteCommandAccess, TerminalCommandAccess, Tool as SdkTool, ToolAccess,
+    ToolArchive, ToolCall, ToolEffect, ToolExecution, ToolOffering, ToolSpec, Tools, is_tool_name,
 };
+use mannie_plugin_sdk::services::sqlite_files::Statement;
 use mannie_plugin_sdk::services::terminals::{ExpectedHost, TerminalHostRef};
+use mannie_store::dbfiles::{self, RegistryError};
 use mannie_tools::{
     ArchivedOutput, Availability, Done, Execution, FolderError, PermissionClass, PrepareError,
     Prepared, Tool, ToolContext, ToolRegistry, plugin_path_access, stopped, takes_activity,
     workspace_folder,
 };
 use mannie_types::context::Attachment;
-use mannie_types::ids::ArchiveId;
+use mannie_types::ids::{ArchiveId, DatabaseKey};
 use mannie_types::tools::{
-    Access, AccessMode, MAX_ARGUMENTS_BYTES, MAX_EFFECT_ITEMS, ProgramEffect, TerminalHost,
+    Access, AccessMode, DatabaseHome, MAX_ARGUMENTS_BYTES, MAX_EFFECT_ITEMS,
+    MAX_VIEW_PARAMETER_CHARS, MAX_VIEW_PARAMETERS, ProgramEffect, StatementClass, TerminalHost,
     ToolFailure, ToolHint, ToolOutcome, ToolServerEndpoint, looks_like_secret,
 };
 use url::Url;
@@ -61,6 +71,7 @@ use crate::Runtime;
 use crate::agents::{AgentDefinition, EXPLORE_AGENT, Requester};
 use crate::attachments;
 use crate::plugins::Snapshot;
+use crate::sqlite_files::{engine_error, engine_values, parameters_digest};
 use crate::tasks::TASK_TOOLS;
 use crate::texts;
 
@@ -578,7 +589,9 @@ impl Tool for PluginToolAdapter {
     /// records (ADR-0036).
     fn class(&self) -> PermissionClass {
         match self.effect {
-            ToolEffect::ReadsOwnData | ToolEffect::ReadsFiles => PermissionClass::ReadOnly,
+            ToolEffect::ReadsOwnData | ToolEffect::ReadsFiles | ToolEffect::ReadsDatabases => {
+                PermissionClass::ReadOnly
+            }
             ToolEffect::SideEffects => PermissionClass::SideEffects,
         }
     }
@@ -608,9 +621,10 @@ impl Tool for PluginToolAdapter {
             };
             let programs = resolved_programs(&runtime, &plugin, &accesses).await?;
             let terminals = resolved_terminal_hosts(&runtime, &accesses).await?;
+            let databases = resolved_databases(&runtime, &plugin, effect, &accesses, limit).await?;
             // Paths are resolved against the file system, which blocks.
             tokio::task::spawn_blocking(move || {
-                core_accesses(&plugin, effect, accesses, &programs, &terminals)
+                core_accesses(&plugin, effect, accesses, &programs, &terminals, &databases)
                     .map(|accesses| Prepared { accesses })
             })
             .await
@@ -647,6 +661,9 @@ impl Tool for PluginToolAdapter {
                 &accesses,
             )
         });
+        let database_ticket =
+            self.runtime
+                .issue_database_ticket(&self.plugin, self.feature.as_deref(), &accesses);
         let mut tool_execution = ToolExecution::new(arguments, context.conversation_id)
             .with_authorized(sdk_accesses(&accesses))
             .with_result_limit(u32::try_from(limit).unwrap_or(u32::MAX))
@@ -656,11 +673,15 @@ impl Tool for PluginToolAdapter {
         if let Some(guard) = &ticket {
             tool_execution = tool_execution.with_background(guard.ticket());
         }
+        if let Some(guard) = &database_ticket {
+            tool_execution = tool_execution.with_database(guard.ticket());
+        }
         let running = self.tool.execute(tool_execution);
         let plugin = self.plugin.clone();
         async move {
-            // The ticket is good while the call executes.
+            // The tickets are good while the call executes.
             let _ticket = ticket;
+            let _database_ticket = database_ticket;
             tokio::select! {
                 // A result that is ready wins over a stop that arrives at the
                 // same moment, so an operation that finished keeps its result.
@@ -754,6 +775,7 @@ fn core_accesses(
     accesses: Vec<ToolAccess>,
     programs: &HashMap<String, ResolvedProgram>,
     terminals: &ResolvedTerminalHosts,
+    databases: &ResolvedDatabases,
 ) -> Result<Vec<Access>, PrepareError> {
     let fits = match effect {
         ToolEffect::ReadsOwnData => accesses.is_empty(),
@@ -762,6 +784,13 @@ fn core_accesses(
             && accesses.iter().all(
                 |access| matches!(access, ToolAccess::Path(path) if path.mode == AccessMode::Read),
             ),
+        ToolEffect::ReadsDatabases => {
+            !accesses.is_empty()
+                && accesses.len() <= MAX_ACCESSES
+                && accesses
+                    .iter()
+                    .all(|access| matches!(access, ToolAccess::Database(_)))
+        }
         ToolEffect::SideEffects => !accesses.is_empty() && accesses.len() <= MAX_ACCESSES,
     };
     // A call hands the core at most one command in the background, the one
@@ -787,8 +816,174 @@ fn core_accesses(
             ToolAccess::TerminalCommand(typed) => {
                 terminal_access(plugin, typed, terminals).ok_or_else(|| broken(plugin))
             }
+            ToolAccess::Database(database) => {
+                database_access(plugin, database, databases).ok_or_else(|| broken(plugin))
+            }
         })
         .collect()
+}
+
+/// What the core found for a statement of a call's database access: the
+/// database's name and identity from the registry, the statement's class
+/// from SQLite, and the parameters as an approval shows them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResolvedDatabase {
+    name: String,
+    identity: String,
+    class: StatementClass,
+    parameters: Vec<String>,
+    parameters_digest: String,
+}
+
+/// The resolved statements of a call's database accesses, by database and
+/// statement.
+type ResolvedDatabases = HashMap<(DatabaseKey, Statement), ResolvedDatabase>;
+
+/// The result of a call that ends before it runs because of what the core
+/// found of a database, with a failure code for the call's card.
+fn database_refused(plugin: &str, code: &str, detail: String, limit: usize) -> PrepareError {
+    refused(plugin, detail, Some(code.to_owned()), limit)
+}
+
+/// The statements of a call's database accesses, resolved against the
+/// plugin's registrations and classified by SQLite (ADR-0056, decision 6):
+/// a database that is not registered, a file that changed, a statement that
+/// SQLite refuses, a write in a tool that reads, a read in a tool that
+/// changes and a write to a database that the owner marked read-only end
+/// the call with what the model reads.
+async fn resolved_databases(
+    runtime: &Runtime,
+    plugin: &str,
+    effect: ToolEffect,
+    accesses: &[ToolAccess],
+    limit: usize,
+) -> Result<ResolvedDatabases, PrepareError> {
+    let mut resolved = HashMap::new();
+    for access in accesses {
+        let ToolAccess::Database(database) = access else {
+            continue;
+        };
+        let entry = (database.key.clone(), database.statement.clone());
+        if resolved.contains_key(&entry) {
+            continue;
+        }
+        let registration = match runtime.inner.store.db_file(plugin, &database.key).await {
+            Ok(registration) => registration,
+            Err(RegistryError::NotFound) => {
+                return Err(database_refused(
+                    plugin,
+                    "database_not_registered",
+                    texts::database_not_registered(database.key.as_str()),
+                    limit,
+                ));
+            }
+            Err(error) => {
+                tracing::error!(
+                    error.code = error.code(),
+                    "the registry of SQLite files failed"
+                );
+                return Err(PrepareError::Failed(ToolFailure::IoError {
+                    kind: "the registry of databases could not be read".to_owned(),
+                }));
+            }
+        };
+        if engine_values(&database.statement.parameters).is_err() {
+            return Err(database_refused(
+                plugin,
+                "database_invalid_value",
+                texts::DATABASE_INVALID_VALUE.to_owned(),
+                limit,
+            ));
+        }
+        let (path, identity, text) = (
+            registration.path.clone(),
+            registration.identity.clone(),
+            database.statement.text.clone(),
+        );
+        let classified =
+            dbfiles::run(move |_cancel| dbfiles::classify(&path, &identity, &text)).await;
+        let class = match classified {
+            Ok(class) => class,
+            Err(error) => {
+                let failure = engine_error(error);
+                return Err(database_refused(
+                    plugin,
+                    "database_statement_refused",
+                    texts::database_statement_refused(&failure),
+                    limit,
+                ));
+            }
+        };
+        check_class(plugin, effect, class, registration.read_only, limit)?;
+        let parameters = database
+            .statement
+            .parameters
+            .iter()
+            .take(MAX_VIEW_PARAMETERS)
+            .map(|value| value.display(MAX_VIEW_PARAMETER_CHARS))
+            .collect();
+        resolved.insert(
+            entry,
+            ResolvedDatabase {
+                name: registration.name,
+                identity: registration.identity,
+                class,
+                parameters,
+                parameters_digest: parameters_digest(&database.statement.parameters),
+            },
+        );
+    }
+    Ok(resolved)
+}
+
+/// Refuses a statement that the tool may not run: a write in a tool that
+/// reads, a read in a tool that changes, and a write to a database that the
+/// owner marked read-only.
+fn check_class(
+    plugin: &str,
+    effect: ToolEffect,
+    class: StatementClass,
+    read_only: bool,
+    limit: usize,
+) -> Result<(), PrepareError> {
+    let is_write = class != StatementClass::Read;
+    let refusal = if effect == ToolEffect::ReadsDatabases && is_write {
+        Some(("database_not_a_read", texts::DATABASE_NOT_A_READ))
+    } else if effect == ToolEffect::SideEffects && !is_write {
+        Some(("database_read_in_change", texts::DATABASE_READ_IN_CHANGE))
+    } else if is_write && read_only {
+        Some(("database_read_only", texts::DATABASE_READ_ONLY))
+    } else {
+        None
+    };
+    match refusal {
+        Some((code, detail)) => Err(database_refused(plugin, code, detail.to_owned(), limit)),
+        None => Ok(()),
+    }
+}
+
+/// The core's access of a statement on a registered database, with the
+/// plugin's ID, the database's name and identity and the statement's class
+/// as the core resolved them.
+fn database_access(
+    plugin: &str,
+    database: DatabaseAccess,
+    databases: &ResolvedDatabases,
+) -> Option<Access> {
+    let resolved = databases.get(&(database.key.clone(), database.statement.clone()))?;
+    Some(Access::Database {
+        plugin: plugin.to_owned(),
+        key: database.key,
+        name: resolved.name.clone(),
+        home: DatabaseHome::ThisComputer,
+        identity: resolved.identity.clone(),
+        statement: database.statement.text,
+        statement_cut: false,
+        parameters: resolved.parameters.clone(),
+        parameter_count: u32::try_from(database.statement.parameters.len()).unwrap_or(u32::MAX),
+        parameters_digest: resolved.parameters_digest.clone(),
+        class: resolved.class,
+    })
 }
 
 /// The hosts of a call's terminal commands, as the terminals' registry knows
@@ -1163,7 +1358,9 @@ fn remote_access(plugin: &str, remote: RemoteCommandAccess) -> Option<Access> {
     })
 }
 
-/// The authorized accesses of a call as its plugin's tool knows them.
+/// The authorized accesses of a call as its plugin's tool knows them. A
+/// statement on a database is left out: the call's ticket holds it, with the
+/// digest of its parameters, which the service checks.
 fn sdk_accesses(accesses: &[Access]) -> Vec<ToolAccess> {
     accesses
         .iter()
@@ -1243,7 +1440,7 @@ fn sdk_accesses(accesses: &[Access]) -> Vec<ToolAccess> {
             Access::TerminalCommand { .. } => {
                 sdk_terminal_command(access).map(ToolAccess::TerminalCommand)
             }
-            Access::Command { .. } | Access::Project { .. } => None,
+            Access::Command { .. } | Access::Project { .. } | Access::Database { .. } => None,
         })
         .collect()
 }
@@ -1378,7 +1575,14 @@ mod tests {
         effect: ToolEffect,
         accesses: Vec<ToolAccess>,
     ) -> Result<Vec<Access>, PrepareError> {
-        super::core_accesses(plugin, effect, accesses, &HashMap::new(), &HashMap::new())
+        super::core_accesses(
+            plugin,
+            effect,
+            accesses,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+        )
     }
 
     fn read(path: &Path) -> ToolAccess {
@@ -1539,6 +1743,7 @@ mod tests {
             vec![ToolAccess::Program(run), write(folder.path())],
             &found_git(),
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap();
 
@@ -1601,6 +1806,7 @@ mod tests {
                     ToolEffect::SideEffects,
                     vec![ToolAccess::Program(access.clone())],
                     &found_git(),
+                    &HashMap::new(),
                     &HashMap::new()
                 ),
                 Err(invalid()),
@@ -1617,6 +1823,7 @@ mod tests {
                 ToolEffect::SideEffects,
                 vec![ToolAccess::Program(too_many)],
                 &found_git(),
+                &HashMap::new(),
                 &HashMap::new()
             ),
             Err(invalid())
@@ -1628,6 +1835,7 @@ mod tests {
                 ToolEffect::ReadsFiles,
                 vec![ToolAccess::Program(run(&["status"]))],
                 &found_git(),
+                &HashMap::new(),
                 &HashMap::new()
             ),
             Err(invalid())
@@ -1640,6 +1848,7 @@ mod tests {
                 &["status"],
             ))],
             &found_git(),
+            &HashMap::new(),
             &HashMap::new(),
         );
         assert!(

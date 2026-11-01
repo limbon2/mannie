@@ -8,6 +8,7 @@ pub use mannie_types::tasks::{TASK_TITLE_ARGUMENT, task_still_running};
 
 use std::time::Duration;
 
+use mannie_plugin_sdk::services::sqlite_files::SqliteFilesError;
 use mannie_types::images::ImageFormat;
 use mannie_types::tools::{
     BackgroundEnding, MAX_TOOL_IMAGE_BYTES, MAX_TOOL_IMAGE_SIDE, MAX_TOOL_IMAGES,
@@ -191,6 +192,55 @@ pub const NO_EXTERNAL_TOOLS: &str = "Not run: this host calls no tool server's t
 /// The result of a command for a terminal that a worker refused: a worker
 /// runs no plugin (ADR-0053).
 pub const NO_TERMINALS: &str = "Not run: this host types no commands into terminals.";
+
+/// The result of a statement on a database that a worker refused: a worker
+/// runs no plugin (ADR-0056).
+pub const NO_DATABASES: &str = "Not run: this host runs no statements on databases.";
+
+/// The result of a call that names a database that the plugin has not
+/// registered (ADR-0056).
+pub fn database_not_registered(key: &str) -> String {
+    format!(
+        "Not run: no database is registered with the key {key}. The owner registers databases in the plugin's view."
+    )
+}
+
+/// The result of a call whose parameters hold a value that is not valid.
+pub const DATABASE_INVALID_VALUE: &str =
+    "Not run: a parameter is not a valid value, such as an integer that is not a 64-bit integer.";
+
+/// The result of a call whose statement SQLite refused or could not
+/// classify. SQLite's message is about the model's own statement.
+pub fn database_statement_refused(failure: &SqliteFilesError) -> String {
+    let reason = match failure {
+        SqliteFilesError::InvalidStatement { message } => format!("SQLite refused the statement: {message}"),
+        SqliteFilesError::Refused { message } => {
+            format!("the statement does something that Mannie never runs: {message}")
+        }
+        SqliteFilesError::NotOneStatement => "each entry must hold exactly one statement".to_owned(),
+        SqliteFilesError::FileMissing => "the database's file is gone".to_owned(),
+        SqliteFilesError::FileChanged => {
+            "the database's file changed since the owner registered it; the owner accepts the new file in the plugin's view".to_owned()
+        }
+        SqliteFilesError::NotADatabase => "the file is not a database, or it is damaged".to_owned(),
+        SqliteFilesError::Busy => "another program is using the file; try again later".to_owned(),
+        SqliteFilesError::TimedOut => "SQLite took too long to read the statement".to_owned(),
+        _other => "the database could not be used".to_owned(),
+    };
+    format!("Not run: {reason}.")
+}
+
+/// The result of a statement that changes a database in a tool that only
+/// reads.
+pub const DATABASE_NOT_A_READ: &str = "Not run: the statement changes the database, and this tool only reads. Use the tool that changes databases.";
+
+/// The result of a statement that only reads in a tool that changes a
+/// database.
+pub const DATABASE_READ_IN_CHANGE: &str =
+    "Not run: the statement only reads. Use the tool that reads databases.";
+
+/// The result of a write to a database that the owner marked read-only.
+pub const DATABASE_READ_ONLY: &str = "Not run: the owner marked this database read-only, so it takes no writes and no changes of its schema.";
 
 /// The result of a call beyond the reply's tool calls.
 pub const OVER_BUDGET: &str = "Not run: this reply has used all its tool calls.";

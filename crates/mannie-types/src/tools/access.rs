@@ -4,8 +4,9 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use crate::ids::ProjectId;
+use crate::ids::{DatabaseKey, ProjectId};
 
+use super::database::{DatabaseHome, StatementClass};
 use super::external::{ToolHint, ToolServerEndpoint};
 use super::program::ProgramEffect;
 use super::terminal::TerminalHost;
@@ -212,15 +213,53 @@ pub enum Access {
         /// The command's text, as the plugin types it.
         command: String,
     },
+    /// A statement on a SQLite file that the owner registered for a plugin
+    /// (ADR-0056, decision 5). The plugin names the database by its key and
+    /// the statement with its parameters; the core adds the plugin, the
+    /// file's identity and the statement's class, which it reads from SQLite
+    /// itself, so no plugin speaks for another or names its own class.
+    Database {
+        /// The plugin whose tool runs the statement.
+        plugin: String,
+        /// The plugin's key for the database.
+        key: DatabaseKey,
+        /// The owner's name for the database, for display only.
+        name: String,
+        /// Where the database lives.
+        home: DatabaseHome,
+        /// The file's identity. A file that a program replaced since the
+        /// approval changes the digest, so the approval no longer counts.
+        identity: String,
+        /// The statement's text.
+        statement: String,
+        /// Whether a call's view cut the statement to its limit. An access
+        /// that the policy decides on is never cut.
+        #[serde(default)]
+        statement_cut: bool,
+        /// The parameters' values as SQL writes them, at most
+        /// [`MAX_VIEW_PARAMETERS`](super::database::MAX_VIEW_PARAMETERS) of
+        /// them, each cut to its limit, for display.
+        parameters: Vec<String>,
+        /// How many parameters the statement has, of which `parameters`
+        /// shows the first.
+        parameter_count: u32,
+        /// The digest of the parameters' full values, which an approval
+        /// covers and a grant does not.
+        parameters_digest: String,
+        /// What the statement does, as SQLite reports it.
+        class: StatementClass,
+    },
 }
 
 impl Access {
     /// Whether the access changes something: a change of the file system, a
     /// command on this machine, on a remote host or in a terminal, a run of
-    /// an installed program, or a move into a project.
+    /// an installed program, a write or a schema change of a database, or a
+    /// move into a project.
     pub fn changes(&self) -> bool {
         match self {
             Self::Path { mode, .. } => mode.changes(),
+            Self::Database { class, .. } => *class != StatementClass::Read,
             Self::Command { .. }
             | Self::Project { .. }
             | Self::RemoteCommand { .. }

@@ -9,9 +9,9 @@ use std::collections::BTreeSet;
 
 use mannie_plugin_sdk::context::{HostInfo, HostProfile};
 use mannie_plugin_sdk::contracts::{
-    AccessMode, ArchiveId, CommandError, ContextLocation, ImageFormat, MentionEntry,
-    MentionSummary, ProfileSnapshot, SubscriptionEnd, TaskExecutorRef, TaskState, ToolHint,
-    ToolServerEndpoint, WorkItem,
+    AccessMode, ArchiveId, CommandError, ContextLocation, DatabaseKey, ImageFormat, MentionEntry,
+    MentionSummary, ProfileSnapshot, StatementClass, SubscriptionEnd, TaskExecutorRef, TaskState,
+    ToolHint, ToolServerEndpoint, WorkItem,
 };
 use mannie_plugin_sdk::error::StartFailure;
 use mannie_plugin_sdk::ids::PluginId;
@@ -26,7 +26,7 @@ use mannie_plugin_sdk::points::mentions::{ProviderSuggestions, ReadVerdict, Rend
 use mannie_plugin_sdk::points::sections::SectionContext;
 use mannie_plugin_sdk::points::terminal_hosts::{TerminalHostEntry, TerminalOpenFailure};
 use mannie_plugin_sdk::points::tools::{
-    AgentSelector, CitedItem, ExternalToolAccess, PathAccess, RemoteCommandAccess,
+    AgentSelector, CitedItem, DatabaseAccess, ExternalToolAccess, PathAccess, RemoteCommandAccess,
     TerminalCommandAccess, ToolAccess, ToolArchive, ToolCall, ToolExecution, ToolImage,
     ToolOffering, ToolRefusal, ToolResult, ToolSpec,
 };
@@ -38,6 +38,11 @@ use mannie_plugin_sdk::services::executor_host::{ExecutorTask, HostFailure, Outb
 use mannie_plugin_sdk::services::file_dialog::{DialogError, FileFilter};
 use mannie_plugin_sdk::services::models::{InputKind, ModelsError, SearchModel, SearchModelKind};
 use mannie_plugin_sdk::services::secrets::SecretsError;
+use mannie_plugin_sdk::services::sqlite_files::{
+    ChangeOutcome, ChooseRequest, Cursor, DatabaseFile, DatabaseStructure, DatabaseTicket,
+    FileRefusal, FileState, FilterOperator, OwnerChange, PageRequest, RowsCut, SqlValue,
+    SqliteFilesError, Statement, StatementRows,
+};
 use mannie_plugin_sdk::services::terminals::{
     ShellKind, TerminalEnding, TerminalHostRef, TerminalHostState, TerminalOpenError,
 };
@@ -1587,4 +1592,329 @@ fn a_terminal_host_and_the_failures_of_terminals_cross_json_unchanged() {
         .unwrap(),
         json!({ "kind": "lost", "code": "connection_lost" })
     );
+}
+
+/// The key of the registered database of the tests of the service
+/// `sqlite-files`.
+const DATABASE_KEY: &str = "0199e0f2-0000-7000-8000-0000000000ee";
+
+#[test]
+fn a_database_statement_crosses_json_with_its_kind_and_leaves_out_an_unread_class() {
+    let access = ToolAccess::Database(DatabaseAccess::new(
+        DatabaseKey::parse(DATABASE_KEY).unwrap(),
+        Statement::new(
+            "UPDATE parts SET stock = ?1 WHERE name = ?2",
+            vec![SqlValue::integer(12), SqlValue::text("bolt")],
+        ),
+    ));
+    let json = json!({
+        "kind": "database",
+        "key": DATABASE_KEY,
+        "statement": {
+            "text": "UPDATE parts SET stock = ?1 WHERE name = ?2",
+            "parameters": [
+                { "type": "integer", "value": "12" },
+                { "type": "text", "value": "bolt" }
+            ]
+        }
+    });
+    let mut authorized = json.clone();
+    authorized["class"] = json!("write");
+
+    assert_eq!(serde_json::to_value(&access).unwrap(), json);
+    assert_eq!(serde_json::from_value::<ToolAccess>(json).unwrap(), access);
+    let ToolAccess::Database(decoded) = serde_json::from_value::<ToolAccess>(authorized).unwrap()
+    else {
+        panic!("the access is not a database's");
+    };
+    assert_eq!(decoded.class, Some(StatementClass::Write));
+    for json in [
+        json!({ "kind": "database", "key": "parts", "statement": { "text": "SELECT 1" } }),
+        json!({ "kind": "database", "key": DATABASE_KEY }),
+        json!({
+            "kind": "database",
+            "key": DATABASE_KEY,
+            "statement": { "text": "SELECT ?1", "parameters": [{ "type": "date", "value": "2026" }] }
+        }),
+        json!({
+            "kind": "database",
+            "key": DATABASE_KEY,
+            "statement": { "text": "SELECT 1" },
+            "class": "drop"
+        }),
+    ] {
+        let error = serde_json::from_value::<ToolAccess>(json.clone()).unwrap_err();
+        assert!(error.is_data(), "{json}: {error}");
+    }
+}
+
+#[test]
+fn an_execution_carries_its_database_ticket_and_omits_none() {
+    let json = json!({
+        "arguments": "{}",
+        "conversationId": "0199e0f2-0000-7000-8000-000000000001",
+        "resultLimit": 4096,
+        "database": "0199e0f2-0000-7000-8000-0000000000de"
+    });
+
+    let execution = serde_json::from_value::<ToolExecution>(json.clone()).unwrap();
+    let mut plain = execution.clone();
+    plain.database = None;
+    let without = serde_json::to_value(&plain).unwrap();
+
+    assert_eq!(
+        execution.database,
+        Some(DatabaseTicket::new(
+            "0199e0f2-0000-7000-8000-0000000000de".to_owned()
+        ))
+    );
+    assert_eq!(serde_json::to_value(&execution).unwrap(), json);
+    assert!(without.get("database").is_none(), "{without}");
+}
+
+#[test]
+fn a_choose_request_and_a_registered_file_cross_json_unchanged() {
+    let request = json!({
+        "databasesFilter": "SQLite databases",
+        "allFilesFilter": "All files",
+        "name": "Inventory",
+        "readOnly": true
+    });
+    let file = json!({
+        "key": DATABASE_KEY,
+        "name": "Inventory",
+        "fileName": "inventory.db",
+        "readOnly": false,
+        "state": "changed"
+    });
+
+    let decoded_request = serde_json::from_value::<ChooseRequest>(request.clone()).unwrap();
+    let decoded_file = serde_json::from_value::<DatabaseFile>(file.clone()).unwrap();
+
+    assert_eq!(decoded_request.name.as_deref(), Some("Inventory"));
+    assert_eq!(decoded_file.state, FileState::Changed);
+    assert_eq!(serde_json::to_value(&decoded_request).unwrap(), request);
+    assert_eq!(serde_json::to_value(&decoded_file).unwrap(), file);
+    let error = serde_json::from_value::<DatabaseFile>(json!({
+        "key": DATABASE_KEY,
+        "name": "Inventory",
+        "fileName": "inventory.db",
+        "readOnly": false,
+        "state": "locked"
+    }))
+    .unwrap_err();
+    assert!(error.is_data(), "{error}");
+}
+
+#[test]
+fn a_page_request_crosses_json_with_its_filters_and_its_cursor() {
+    let json = json!({
+        "table": "parts",
+        "order": { "column": "stock", "descending": true },
+        "filters": [
+            { "column": "name", "operator": "like", "value": { "type": "text", "value": "b%" } },
+            { "column": "note", "operator": "is_null", "value": { "type": "null" } }
+        ],
+        "after": {
+            "kind": "after",
+            "order": { "type": "integer", "value": "12" },
+            "key": [{ "type": "integer", "value": "7" }]
+        },
+        "rows": 100
+    });
+
+    let request = serde_json::from_value::<PageRequest>(json.clone()).unwrap();
+
+    assert_eq!(request.filters[1].operator, FilterOperator::IsNull);
+    assert_eq!(serde_json::to_value(&request).unwrap(), json);
+    assert_eq!(
+        serde_json::to_value(Cursor::Offset { rows: 200 }).unwrap(),
+        json!({ "kind": "offset", "rows": 200 })
+    );
+    let error = serde_json::from_value::<PageRequest>(json!({
+        "table": "parts",
+        "after": { "kind": "before", "rows": 1 },
+        "rows": 100
+    }))
+    .unwrap_err();
+    assert!(error.is_data(), "{error}");
+}
+
+#[test]
+fn an_owner_change_crosses_json_with_its_kind() {
+    let changes = [
+        json!({
+            "id": "0199e0f2-0000-7000-8000-0000000000f1",
+            "change": {
+                "kind": "statements",
+                "statements": [
+                    { "text": "CREATE INDEX parts_name ON parts(name)", "parameters": [] }
+                ],
+                "schemaConfirmed": true
+            }
+        }),
+        json!({
+            "id": "0199e0f2-0000-7000-8000-0000000000f2",
+            "change": {
+                "kind": "update_row",
+                "table": "parts",
+                "row": {
+                    "key": [{ "type": "integer", "value": "7" }],
+                    "expected": [
+                        { "column": "stock", "value": { "type": "integer", "value": "12" } }
+                    ]
+                },
+                "set": [{ "column": "stock", "value": { "type": "real", "value": 11.5 } }]
+            }
+        }),
+        json!({
+            "id": "0199e0f2-0000-7000-8000-0000000000f3",
+            "change": {
+                "kind": "insert_row",
+                "table": "parts",
+                "values": [{ "column": "photo", "value": { "type": "blob", "base64": "AP8=" } }]
+            }
+        }),
+        json!({
+            "id": "0199e0f2-0000-7000-8000-0000000000f4",
+            "change": {
+                "kind": "delete_rows",
+                "table": "parts",
+                "rows": [{ "key": [{ "type": "integer", "value": "7" }], "expected": [] }]
+            }
+        }),
+    ];
+
+    for json in changes {
+        let change = serde_json::from_value::<OwnerChange>(json.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&change).unwrap(), json);
+    }
+    let error = serde_json::from_value::<OwnerChange>(json!({
+        "id": "0199e0f2-0000-7000-8000-0000000000f5",
+        "change": { "kind": "drop_table", "table": "parts" }
+    }))
+    .unwrap_err();
+    assert!(error.is_data(), "{error}");
+}
+
+#[test]
+fn rows_a_structure_and_an_outcome_cross_json_unchanged() {
+    let rows = json!({
+        "columns": [
+            { "name": "id", "declaredType": "INTEGER" },
+            { "name": "total", "declaredType": null }
+        ],
+        "rows": [
+            [{ "type": "integer", "value": "1" }, { "type": "real", "value": 2.5 }],
+            [{ "type": "integer", "value": "2" }, { "type": "infinity", "negative": false }]
+        ],
+        "cut": "bytes"
+    });
+    let structure = json!({
+        "tables": [{
+            "name": "parts",
+            "kind": "table",
+            "sql": "CREATE TABLE parts(id INTEGER PRIMARY KEY, bin INTEGER REFERENCES bins)",
+            "columns": [
+                {
+                    "name": "id",
+                    "declaredType": "INTEGER",
+                    "notNull": false,
+                    "default": null,
+                    "primaryKey": 1,
+                    "hidden": false
+                },
+                {
+                    "name": "bin",
+                    "declaredType": "INTEGER",
+                    "notNull": false,
+                    "default": "0",
+                    "primaryKey": 0,
+                    "hidden": false
+                }
+            ],
+            "withoutRowid": false,
+            "strict": false,
+            "foreignKeys": [{
+                "columns": ["bin"],
+                "parent": "bins",
+                "parentColumns": [null],
+                "onUpdate": "NO ACTION",
+                "onDelete": "CASCADE"
+            }]
+        }],
+        "indexes": [{
+            "name": "parts_bin",
+            "table": "parts",
+            "unique": false,
+            "automatic": false,
+            "partial": true,
+            "columns": ["bin", null],
+            "sql": "CREATE INDEX parts_bin ON parts(bin, id + 1) WHERE bin > 0"
+        }],
+        "triggers": [{
+            "name": "parts_log",
+            "table": "parts",
+            "sql": "CREATE TRIGGER parts_log AFTER DELETE ON parts BEGIN SELECT 1; END"
+        }]
+    });
+    let outcome = json!({ "changes": 3, "rowid": 9_007_199_254_740_993_i64, "rows": null });
+
+    let decoded_rows = serde_json::from_value::<StatementRows>(rows.clone()).unwrap();
+    let decoded_structure = serde_json::from_value::<DatabaseStructure>(structure.clone()).unwrap();
+    let decoded_outcome = serde_json::from_value::<ChangeOutcome>(outcome.clone()).unwrap();
+
+    assert_eq!(decoded_rows.cut, Some(RowsCut::Bytes));
+    assert_eq!(decoded_outcome.rowid, Some(9_007_199_254_740_993));
+    assert_eq!(serde_json::to_value(&decoded_rows).unwrap(), rows);
+    assert_eq!(serde_json::to_value(&decoded_structure).unwrap(), structure);
+    assert_eq!(serde_json::to_value(&decoded_outcome).unwrap(), outcome);
+}
+
+#[test]
+fn a_sqlite_files_error_crosses_json_as_its_code_and_fields() {
+    let key = DatabaseKey::parse(DATABASE_KEY).unwrap();
+    for (error, json) in [
+        (
+            SqliteFilesError::NotRegistered,
+            json!({ "code": "not_registered" }),
+        ),
+        (
+            SqliteFilesError::AlreadyRegistered { key },
+            json!({ "code": "already_registered", "key": DATABASE_KEY }),
+        ),
+        (
+            SqliteFilesError::FileRefused {
+                reason: FileRefusal::MannieFolder,
+            },
+            json!({ "code": "file_refused", "reason": "mannie_folder" }),
+        ),
+        (
+            SqliteFilesError::NotARead {
+                class: StatementClass::Schema,
+            },
+            json!({ "code": "not_a_read", "class": "schema" }),
+        ),
+        (
+            SqliteFilesError::Constraint {
+                message: "FOREIGN KEY constraint failed".to_owned(),
+            },
+            json!({ "code": "constraint", "message": "FOREIGN KEY constraint failed" }),
+        ),
+        (
+            SqliteFilesError::InvalidFilter,
+            json!({ "code": "invalid_filter" }),
+        ),
+    ] {
+        let code = json["code"].as_str().unwrap().to_owned();
+        assert_eq!(error.code(), format!("sqlite_files.{code}"));
+        assert_eq!(serde_json::to_value(&error).unwrap(), json);
+        assert_eq!(
+            serde_json::from_value::<SqliteFilesError>(json).unwrap(),
+            error
+        );
+    }
+    let error =
+        serde_json::from_value::<SqliteFilesError>(json!({ "code": "locked" })).unwrap_err();
+    assert!(error.is_data(), "{error}");
 }

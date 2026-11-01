@@ -285,6 +285,33 @@ describe('callSummary', () => {
     expect(callSummary(prepared)).toBe('Start journalctl -f on build-box in the background');
   });
 
+  it("names a plugin's call on a registered database by its strongest statement and the database, once prepared", () => {
+    const statement = {
+      home: { kind: 'this_computer' as const },
+      identity: '1f2e3d4c:000a0000000b1234',
+      key: '0199e0f2-0000-7000-8000-0000000000ee',
+      kind: 'database' as const,
+      name: 'Inventory',
+      parameterCount: 0,
+      parameters: [],
+      parametersDigest: '9a0b1c2d3e4f',
+      plugin: 'workers',
+    };
+    const read = { ...statement, class: 'read' as const, statement: 'SELECT * FROM parts' };
+    const write = { ...statement, class: 'write' as const, statement: 'DELETE FROM parts' };
+    const schema = { ...statement, class: 'schema' as const, statement: 'DROP INDEX parts_stock' };
+    const written = call('workers_query_database', { database: 'Inventory' });
+
+    expect(callSummary(written)).toContain('workers_query_database');
+    expect(callSummary(call('workers_query_database', {}, { accesses: [read] }))).toBe('Query Inventory');
+    expect(callSummary(call('workers_change_database', {}, { accesses: [read, write] }))).toBe(
+      'Change rows of Inventory',
+    );
+    expect(callSummary(call('workers_change_database', {}, { accesses: [write, schema] }))).toBe(
+      'Change the schema of Inventory',
+    );
+  });
+
   it("names a plugin's call of a tool server's tool by the tool and the server, once prepared", () => {
     const access = {
       arguments: '{"title":"Crash"}',

@@ -715,6 +715,9 @@
   "tools_call_terminal_command_new": "Run {command} in a new terminal on {host}",
   "tools_call_terminal_command_new_here": "Run {command} in a new terminal",
   "tools_call_external_tool": "Call {tool} on {server}",
+  "tools_call_database_read": "Query {database}",
+  "tools_call_database_write": "Change rows of {database}",
+  "tools_call_database_schema": "Change the schema of {database}",
   "tools_done_listed": [
     {
       "declarations": ["input path", "input shown", "input total", "local totalPlural = total: plural"],
@@ -809,6 +812,7 @@
   "tools_refusal_no_terminals": "The computer that runs this task types no commands into terminals.",
   "tools_refusal_no_programs_on_host": "The computer that runs this task runs no plugin's programs.",
   "tools_refusal_no_external_tools": "The computer that runs this task calls no tool server's tools.",
+  "tools_refusal_no_databases": "The computer that runs this task works with no registered databases.",
   "tools_details_accesses": "What it touches",
   "tools_details_arguments": "Arguments",
   "tools_details_arguments_cut": "The arguments are longer than shown here.",
@@ -847,6 +851,25 @@
   "tools_access_external_program": "Program",
   "tools_access_external_url": "URL",
   "tools_access_external_hints": "The server says that this tool {hints}. Mannie does not check what a server says.",
+  "tools_access_database": "Database",
+  "tools_access_database_statement": "Statement",
+  "tools_access_database_statement_cut": "The statement is longer than shown here.",
+  "tools_access_database_values": "Values",
+  "tools_access_database_values_more": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "1 more value is not shown.",
+        "countPlural=other": "{count: number} more values are not shown."
+      }
+    }
+  ],
+  "tools_access_database_home": "Computer",
+  "tools_access_database_this_computer": "This computer",
+  "tools_access_database_read": "Read",
+  "tools_access_database_write": "Change rows",
+  "tools_access_database_schema": "Change schema",
   "tools_hint_read_only": "only reads",
   "tools_hint_destructive": "may delete or overwrite",
   "tools_hint_idempotent": "changes nothing more when called again with the same arguments",
@@ -941,6 +964,7 @@
   "tools_decision_host_rule": "A command rule of the computer that runs the task allowed this.",
   "tools_decision_full_access": "Full access allowed this.",
   "tools_decision_host_full_access": "The full access of the computer that runs the task allowed this.",
+  "tools_decision_registered_database": "Reads of the databases that you registered run without asking.",
   "tools_output_show": "Show full output",
   "tools_output_show_stdout": "Show full output",
   "tools_output_show_stderr": "Show full error output",
@@ -962,6 +986,8 @@
   "tools_reason_terminal_command": "It types a command into a terminal, and no rule or permission covers it.",
   "tools_reason_program": "It runs an installed program that does something beyond the workspace, and no rule or permission covers it.",
   "tools_reason_external_tool": "It calls a tool of a tool server, and no permission covers it.",
+  "tools_reason_database_write": "It changes rows of a database that you registered, and no permission covers this statement.",
+  "tools_reason_database_schema": "It changes the schema of a database that you registered, which always asks.",
   "tools_plugin_failed": "The tool reported the failure {code}.",
   "tools_grant_read": "Reading in {folder}",
   "tools_grant_write": "Changing files in {folder}",
@@ -974,6 +1000,7 @@
   "tools_grant_program": "The run {run} in {folder}",
   "tools_grant_program_effects": "The run {run} in {folder}, also when it {effects}",
   "tools_grant_external_tool": "The tool {tool} of {server} ({endpoint}) with any arguments",
+  "tools_grant_database": "The statement {statement} on {database} with any values",
   "tools_allow_once": "Allow once",
   "tools_allow_for": "Allow for…",
   "tools_allow_for_conversation": "This conversation",

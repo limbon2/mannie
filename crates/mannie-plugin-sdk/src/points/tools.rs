@@ -15,9 +15,11 @@
 //! effects returns the accesses on which the policy decides, and each of its
 //! calls is an operation with a journal record: a command on a remote host
 //! (ADR-0036), a path that it reads or changes, or a run of an installed
-//! program with an effect beyond the workspace (ADR-0038). Any other access
-//! needs an SDK change with an ADR that maps it onto the core's accesses and
-//! policy.
+//! program with an effect beyond the workspace (ADR-0038). A tool that reads
+//! the owner's registered databases returns its reads, which run without
+//! asking, and a tool that changes them returns its writes and changes of
+//! the schema (ADR-0056). Any other access needs an SDK change with an ADR
+//! that maps it onto the core's accesses and policy.
 //!
 //! A call learns the conversation's workspace, and a tool says where it is
 //! offered ([`ToolOffering`]). A tool offered where its plugin's attachments
@@ -36,11 +38,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::BoxFuture;
 use crate::contracts::{
-    AccessMode, ArchiveId, ConversationId, ImageBytes, ProgramEffect, ToolHint, ToolServerEndpoint,
+    AccessMode, ArchiveId, ConversationId, DatabaseKey, ImageBytes, ProgramEffect, StatementClass,
+    ToolHint, ToolServerEndpoint,
 };
 use crate::contributions::{ExtensionPoint, IdRule};
 use crate::points::context::ContextItem;
 use crate::services::background_commands::BackgroundTicket;
+use crate::services::sqlite_files::{DatabaseTicket, Statement};
 use crate::services::terminals::{ExpectedHost, TerminalHostRef};
 
 /// The point of plugins' tools, whose entries are [`PluginTool`]s named by
@@ -184,6 +188,49 @@ pub enum ToolAccess {
     /// A command that the tool types into a terminal, as the owner would,
     /// such as a command of the terminal plugin (ADR-0053, decision 5).
     TerminalCommand(TerminalCommandAccess),
+    /// A statement on a database that the owner registered for the plugin
+    /// (ADR-0056, decision 5).
+    Database(DatabaseAccess),
+}
+
+/// A statement on a database that the owner registered for the plugin, as a
+/// plugin's tool prepares it. The core adds the plugin, fills in the file's
+/// identity from its registry, reads the statement's class from SQLite
+/// itself and decides on every field: an approval covers this statement with
+/// these parameters on this file, a grant the same statement on the same
+/// database with any parameters, and a file that a program replaced since
+/// sends the call back to the policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct DatabaseAccess {
+    /// The database's key.
+    pub key: DatabaseKey,
+    /// The statement with its parameters.
+    pub statement: Statement,
+    /// What the statement does, which the core fills in the accesses that
+    /// it authorized; a tool leaves it out when it prepares.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<StatementClass>,
+}
+
+impl DatabaseAccess {
+    /// A statement on the database with this key.
+    pub fn new(key: DatabaseKey, statement: Statement) -> Self {
+        Self {
+            key,
+            statement,
+            class: None,
+        }
+    }
+
+    /// The same statement, of the class that the core read from SQLite.
+    #[cfg(feature = "host")]
+    #[must_use]
+    pub fn with_class(mut self, class: StatementClass) -> Self {
+        self.class = Some(class);
+        self
+    }
 }
 
 /// A command that a plugin's tool types into a terminal, as the tool
@@ -512,6 +559,11 @@ pub enum ToolEffect {
     /// (ADR-0013). The core never offers such a tool to the explore agent,
     /// which only reads.
     SideEffects,
+    /// It reads databases that the owner registered for the plugin. Its
+    /// preparation returns 1 to 16 database accesses that only read, which
+    /// run without asking; its calls are not journaled, and the explore
+    /// agent may be offered it (ADR-0056, decision 6).
+    ReadsDatabases,
 }
 
 /// Where a plugin's tool is offered, which the core decides for each model
@@ -599,6 +651,14 @@ impl PluginTool {
     #[must_use]
     pub fn with_file_reads(mut self) -> Self {
         self.effect = ToolEffect::ReadsFiles;
+        self
+    }
+
+    /// The same tool, reading the owner's registered databases: its calls
+    /// return their reads, which run without asking (ADR-0056).
+    #[must_use]
+    pub fn with_database_reads(mut self) -> Self {
+        self.effect = ToolEffect::ReadsDatabases;
         self
     }
 
@@ -720,6 +780,11 @@ pub struct ToolExecution {
     /// preparation had them ([`ToolCall::attachments`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<String>,
+    /// The ticket that lets the call write to a database the statements of
+    /// its authorized accesses, when they hold writes or changes of a
+    /// schema (ADR-0056, decision 6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub database: Option<DatabaseTicket>,
 }
 
 impl ToolExecution {
@@ -737,6 +802,7 @@ impl ToolExecution {
             workspace: None,
             background: None,
             attachments: Vec::new(),
+            database: None,
         }
     }
 
@@ -787,6 +853,14 @@ impl ToolExecution {
     #[must_use]
     pub fn with_background(mut self, ticket: BackgroundTicket) -> Self {
         self.background = Some(ticket);
+        self
+    }
+
+    /// The same execution, with the ticket of a write to a database.
+    #[cfg(feature = "host")]
+    #[must_use]
+    pub fn with_database(mut self, ticket: DatabaseTicket) -> Self {
+        self.database = Some(ticket);
         self
     }
 }

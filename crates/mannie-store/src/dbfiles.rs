@@ -67,6 +67,33 @@ impl Drop for StopOnDrop {
     }
 }
 
+/// Creates the SQLite file `path` with the tables and rows of `sql`, for the
+/// tests of the runtime and of plugins, which never reach SQLite themselves
+/// (ADR-0056, decision 1). The engine never creates a file.
+///
+/// # Errors
+///
+/// When a file is at `path` already, or the file cannot be created, or `sql`
+/// fails.
+#[cfg(any(test, feature = "testing"))]
+pub fn create_for_tests(path: &std::path::Path, sql: &str) -> Result<(), crate::StoreError> {
+    use rusqlite::{Connection, OpenFlags};
+
+    let failed = |source: rusqlite::Error| crate::StoreError::Open {
+        path: path.to_path_buf(),
+        source: crate::error::DatabaseError(source),
+    };
+    if path.exists() {
+        return Err(failed(rusqlite::Error::InvalidPath(path.to_path_buf())));
+    }
+    let connection = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
+    )
+    .map_err(failed)?;
+    connection.execute_batch(sql).map_err(failed)
+}
+
 /// Runs a blocking call of the engine, such as [`read`] or [`write`], on
 /// tokio's threads for blocking work. Dropping the returned future stops the
 /// call's statement within milliseconds (spike S3), and the call returns
@@ -78,10 +105,25 @@ where
 {
     let cancel = Cancel::new();
     let stop = StopOnDrop(Some(cancel.clone()));
-    let joined = tokio::task::spawn_blocking(move || work(&cancel)).await;
+    let result = run_with(cancel, work).await;
     stop.disarm();
-    joined.unwrap_or_else(|error| {
-        tracing::error!(%error, "a call of the database engine failed to finish");
-        Err(EngineError::Failed)
-    })
+    result
+}
+
+/// Runs a blocking call of the engine as [`run`] does, with the caller's
+/// cancel handle, which stops the call's statement when the caller stops
+/// it. Dropping the returned future lets the call go on, so a caller that
+/// must learn how a write ended, such as the journal of owner operations,
+/// waits for it in a task of its own and stops it through the handle.
+pub async fn run_with<T, F>(cancel: Cancel, work: F) -> Result<T, EngineError>
+where
+    T: Send + 'static,
+    F: FnOnce(&Cancel) -> Result<T, EngineError> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || work(&cancel))
+        .await
+        .unwrap_or_else(|error| {
+            tracing::error!(%error, "a call of the database engine failed to finish");
+            Err(EngineError::Failed)
+        })
 }

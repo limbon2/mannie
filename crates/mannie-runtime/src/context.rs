@@ -483,6 +483,7 @@ fn not_run(reason: &NotRunReason, tool: &str) -> String {
             Refusal::NoProgramsOnHost => texts::NO_PROGRAMS_ON_HOST.to_owned(),
             Refusal::NoExternalTools => texts::NO_EXTERNAL_TOOLS.to_owned(),
             Refusal::NoTerminals => texts::NO_TERMINALS.to_owned(),
+            Refusal::NoDatabases => texts::NO_DATABASES.to_owned(),
         },
         NotRunReason::PluginOff {
             plugin,

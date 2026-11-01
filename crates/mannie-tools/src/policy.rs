@@ -7,12 +7,12 @@
 use std::path::{Path, PathBuf};
 
 use mannie_types::ceiling::CeilingMode;
-use mannie_types::ids::ProjectId;
+use mannie_types::ids::{DatabaseKey, ProjectId};
 use mannie_types::tools::{
     Access, AccessMode, ApprovalReason, ApprovalRequest, CommandRule, Decision, GrantScope,
     ProgramEffectKey, ProgramRule, ProgramTarget, Refusal, RemoteCommandRule, RemoteTarget,
-    RuleProposal, TerminalCommandRule, TerminalHost, TerminalTarget, ToolServerEndpoint,
-    ToolsError, effect_keys,
+    RuleProposal, StatementClass, TerminalCommandRule, TerminalHost, TerminalTarget,
+    ToolServerEndpoint, ToolsError, effect_keys,
 };
 
 use crate::ceiling::Ceiling;
@@ -107,13 +107,15 @@ pub enum Verdict {
 ///    on that host, and a rule of an installed program a run of that
 ///    program with the effects that the rule covers;
 /// 6. a move into a project that the owner's request names is allowed;
-/// 7. everything else asks.
+/// 7. a read of a registered database is allowed (ADR-0056, decision 7);
+/// 8. everything else asks.
 ///
 /// Commands, here or on a remote host, runs of installed programs and calls
 /// of a tool server's tools are never allowed by the workspace, a command
 /// with a metacharacter is never allowed by a grant or a rule, a call of a
-/// tool server's tool is never allowed by a rule, and a move is never
-/// granted.
+/// tool server's tool is never allowed by a rule, a move is never
+/// granted, and nothing but full access allows a change of a database's
+/// schema.
 ///
 /// On a worker, its ceiling decides in place of the workspace and the rules
 /// ([`decide_under_ceiling`]): an access that the ceiling forbids refuses the
@@ -276,6 +278,7 @@ fn decide_under_ceiling(
         Access::Program { .. } => Err(Hold::Refuse(Refusal::NoProgramsOnHost)),
         Access::ExternalTool { .. } => Err(Hold::Refuse(Refusal::NoExternalTools)),
         Access::TerminalCommand { .. } => Err(Hold::Refuse(Refusal::NoTerminals)),
+        Access::Database { .. } => Err(Hold::Refuse(Refusal::NoDatabases)),
     }
 }
 
@@ -375,6 +378,55 @@ fn decide_access(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decision,
         Access::Program { .. } => decide_program(access, inputs),
         Access::ExternalTool { .. } => decide_external_tool(access, inputs),
         Access::TerminalCommand { .. } => decide_terminal_command(access, inputs),
+        Access::Database { .. } => decide_database(access, inputs),
+    }
+}
+
+/// What allows a statement on a registered database, or why it asks
+/// (ADR-0056, decision 7): a read runs in every conversation; a write runs
+/// under a grant of the same statement on the same database, whatever its
+/// parameters; a change of the schema always asks, and no grant covers it.
+/// Full access, which [`decide`] checks first, allows each. A database is
+/// where the owner registered it, so the workspace does not apply, and the
+/// core refuses to register a file in Mannie's own folders.
+fn decide_database(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decision, ApprovalReason> {
+    let Access::Database {
+        plugin,
+        key,
+        statement,
+        class,
+        ..
+    } = access
+    else {
+        return Err(ApprovalReason::DatabaseWrite);
+    };
+    match class {
+        StatementClass::Read => Ok(Decision::RegisteredDatabase),
+        StatementClass::Write => granted(&inputs.grants, |grant| {
+            covers_database(grant, plugin, key, statement)
+        })
+        .ok_or(ApprovalReason::DatabaseWrite),
+        StatementClass::Schema => Err(ApprovalReason::DatabaseSchema),
+    }
+}
+
+/// Whether a grant covers a write to a registered database: the same
+/// statement text on the same database of the same plugin, whatever its
+/// parameters (ADR-0056, decision 7).
+fn covers_database(grant: &GrantScope, plugin: &str, key: &DatabaseKey, statement: &str) -> bool {
+    match grant {
+        GrantScope::Database {
+            plugin: granted_plugin,
+            key: granted_key,
+            statement: granted,
+            ..
+        } => granted_plugin == plugin && granted_key == key && granted == statement,
+        GrantScope::Path { .. }
+        | GrantScope::Command { .. }
+        | GrantScope::RemoteCommand { .. }
+        | GrantScope::Program { .. }
+        | GrantScope::ExternalTool { .. }
+        | GrantScope::TerminalCommand { .. } => false,
     }
 }
 
@@ -580,7 +632,7 @@ fn stronger(current: Decision, source: Decision) -> Decision {
         Decision::AlwaysGrant => 4,
         Decision::ProjectGrant => 3,
         Decision::Grant => 2,
-        Decision::OwnerNamedProject => 1,
+        Decision::OwnerNamedProject | Decision::RegisteredDatabase => 1,
         _ => 0,
     };
     if rank(source) > rank(current) {
@@ -601,7 +653,8 @@ fn covers_path(grant: &GrantScope, path: &Path, mode: AccessMode) -> bool {
         | GrantScope::RemoteCommand { .. }
         | GrantScope::Program { .. }
         | GrantScope::ExternalTool { .. }
-        | GrantScope::TerminalCommand { .. } => false,
+        | GrantScope::TerminalCommand { .. }
+        | GrantScope::Database { .. } => false,
     }
 }
 
@@ -628,7 +681,8 @@ fn covers_command(grant: &GrantScope, command: &str, directory: &Path, backgroun
         | GrantScope::RemoteCommand { .. }
         | GrantScope::Program { .. }
         | GrantScope::ExternalTool { .. }
-        | GrantScope::TerminalCommand { .. } => false,
+        | GrantScope::TerminalCommand { .. }
+        | GrantScope::Database { .. } => false,
     }
 }
 
@@ -659,7 +713,8 @@ fn covers_remote_command(
         | GrantScope::Command { .. }
         | GrantScope::Program { .. }
         | GrantScope::ExternalTool { .. }
-        | GrantScope::TerminalCommand { .. } => false,
+        | GrantScope::TerminalCommand { .. }
+        | GrantScope::Database { .. } => false,
     }
 }
 
@@ -682,7 +737,8 @@ fn covers_terminal_command(
         | GrantScope::Command { .. }
         | GrantScope::RemoteCommand { .. }
         | GrantScope::Program { .. }
-        | GrantScope::ExternalTool { .. } => false,
+        | GrantScope::ExternalTool { .. }
+        | GrantScope::Database { .. } => false,
     }
 }
 
@@ -713,7 +769,8 @@ fn covers_external_tool(
         | GrantScope::Command { .. }
         | GrantScope::RemoteCommand { .. }
         | GrantScope::Program { .. }
-        | GrantScope::TerminalCommand { .. } => false,
+        | GrantScope::TerminalCommand { .. }
+        | GrantScope::Database { .. } => false,
     }
 }
 
@@ -745,7 +802,8 @@ fn covers_program(grant: &GrantScope, run: &RunKey<'_>) -> bool {
         | GrantScope::Command { .. }
         | GrantScope::RemoteCommand { .. }
         | GrantScope::ExternalTool { .. }
-        | GrantScope::TerminalCommand { .. } => false,
+        | GrantScope::TerminalCommand { .. }
+        | GrantScope::Database { .. } => false,
     }
 }
 
@@ -866,6 +924,21 @@ fn grant_scope(access: &Access) -> Option<GrantScope> {
                 effects: run.effects,
             })
         }
+        // A grant covers writes only; a schema change never gets one, and a
+        // read never asks.
+        Access::Database {
+            plugin,
+            key,
+            name,
+            statement,
+            class,
+            ..
+        } => (*class == StatementClass::Write).then(|| GrantScope::Database {
+            plugin: plugin.clone(),
+            key: key.clone(),
+            name: name.clone(),
+            statement: statement.clone(),
+        }),
     }
 }
 
@@ -990,6 +1063,15 @@ fn plugin_scope_covers(wider: &GrantScope, narrower: &GrantScope) -> bool {
         ) => {
             plugin == narrower_plugin && host.same_as(narrower_host) && command == narrower_command
         }
+        (
+            GrantScope::Database { .. },
+            GrantScope::Database {
+                plugin,
+                key,
+                statement,
+                ..
+            },
+        ) => covers_database(wider, plugin, key, statement),
         _ => false,
     }
 }

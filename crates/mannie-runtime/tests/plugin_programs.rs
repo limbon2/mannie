@@ -295,7 +295,8 @@ fn program_of(execution: &ToolExecution) -> ProgramAccess {
             ToolAccess::Path(_)
             | ToolAccess::RemoteCommand(_)
             | ToolAccess::ExternalTool(_)
-            | ToolAccess::TerminalCommand(_) => None,
+            | ToolAccess::TerminalCommand(_)
+            | ToolAccess::Database(_) => None,
         })
         .expect("the execution names its program's run")
 }

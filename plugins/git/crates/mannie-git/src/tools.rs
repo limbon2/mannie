@@ -287,7 +287,8 @@ pub(crate) async fn authorized_layout(
             ToolAccess::RemoteCommand(_)
             | ToolAccess::Program(_)
             | ToolAccess::ExternalTool(_)
-            | ToolAccess::TerminalCommand(_) => None,
+            | ToolAccess::TerminalCommand(_)
+            | ToolAccess::Database(_) => None,
         })
         .collect();
     let top = folders.first().ok_or(GitFailure::RepositoryChanged)?;

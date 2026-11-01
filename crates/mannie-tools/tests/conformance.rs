@@ -867,7 +867,8 @@ fn path_accesses(accesses: &[Access]) -> Vec<(String, AccessMode, bool)> {
             | Access::RemoteCommand { .. }
             | Access::Program { .. }
             | Access::ExternalTool { .. }
-            | Access::TerminalCommand { .. } => {
+            | Access::TerminalCommand { .. }
+            | Access::Database { .. } => {
                 panic!("not a path access: {access:?}")
             }
         })

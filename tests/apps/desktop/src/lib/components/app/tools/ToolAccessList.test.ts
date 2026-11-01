@@ -3,8 +3,10 @@
 // side: a run of an installed program shows its words, the program that the
 // core found, its folder, the arguments that its plugin fixes and what it
 // does beyond the workspace, with the names of what it discards (ADR-0038),
-// and a call of a tool server's tool shows the tool, its arguments, the
-// server, where it runs and what the server says of the tool (ADR-0043).
+// a call of a tool server's tool shows the tool, its arguments, the
+// server, where it runs and what the server says of the tool (ADR-0043), and
+// a statement on a registered database shows the statement, its values, what
+// it does, the database and where it lives (ADR-0056, decision 7).
 import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 
@@ -42,6 +44,20 @@ const SERVER_CALL: Access = {
   target: '0199e0f2-0000-7000-8000-0000000000dd',
   title: 'Create an issue',
   tool: 'create_issue',
+};
+
+const STATEMENT: Access = {
+  class: 'write',
+  home: { kind: 'this_computer' },
+  identity: '1f2e3d4c:000a0000000b1234',
+  key: '0199e0f2-0000-7000-8000-0000000000ee',
+  kind: 'database',
+  name: 'Inventory',
+  parameterCount: 2,
+  parameters: ['11', "'bolt'"],
+  parametersDigest: '9a0b1c2d3e4f',
+  plugin: 'workers',
+  statement: 'UPDATE parts SET stock = ?1 WHERE name = ?2',
 };
 
 function shown(accesses: readonly Access[]): string {
@@ -96,6 +112,36 @@ describe('ToolAccessList', () => {
     // The plugin's key for the server is for the policy, and the owner never sees it.
     expect(body).not.toContain('0199e0f2');
     expect(body).not.toMatch(/longer than shown/u);
+  });
+
+  it('shows a statement on a database with its values, what it does, the database and where it lives', () => {
+    const body = shown([STATEMENT]);
+
+    expect(body).toContain('data-database');
+    expect(body).toContain('UPDATE parts SET stock = ?1 WHERE name = ?2');
+    expect(body).toContain('data-database-values');
+    expect(body).toContain('?2');
+    expect(body).toContain("'bolt'");
+    expect(body).toContain('Inventory');
+    expect(body).toContain('Change rows');
+    expect(body).toContain('This computer');
+    expect(body).not.toMatch(/not shown/u);
+    expect(body).not.toMatch(/longer than shown/u);
+    // The key, the file's identity and the digest of the values are for the
+    // core, and the owner never sees them.
+    expect(body).not.toContain('0199e0f2');
+    expect(body).not.toContain('1f2e3d4c');
+    expect(body).not.toContain('9a0b1c2d3e4f');
+  });
+
+  it('says how many values of a statement the list leaves out, and shows no list for a statement without values', () => {
+    const many = shown([{ ...STATEMENT, parameterCount: 40 }]);
+    const none = shown([{ ...STATEMENT, class: 'schema', parameterCount: 0, parameters: [] }]);
+
+    expect(many).toMatch(/38 more values are not shown/u);
+    expect(shown([{ ...STATEMENT, statementCut: true }])).toMatch(/statement is longer than shown/u);
+    expect(none).not.toContain('data-database-values');
+    expect(none).toContain('Change schema');
   });
 
   it('says when the arguments of a tool server’s call are cut, and leaves out hints that the server did not give', () => {

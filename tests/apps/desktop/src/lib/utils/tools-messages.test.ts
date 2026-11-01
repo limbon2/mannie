@@ -20,6 +20,7 @@ import type {
 import {
   accessModeLabel,
   approvalReasonMessage,
+  databaseHomeText,
   decisionMessage,
   effectKeyPhrase,
   effectKeysText,
@@ -32,6 +33,7 @@ import {
   programEffectMessage,
   programRunText,
   refusalMessage,
+  statementClassLabel,
   toolFailureMessage,
   toolHintsMessage,
   toolServerEndpointText,
@@ -124,7 +126,16 @@ const NOT_RUN_REASONS: NotRunReason[] = [
   { feature: 'databases', plugin: 'workers', reason: 'plugin_off' },
 ];
 
+const DATABASE_GRANT: GrantScope = {
+  key: '0199e0f2-0000-7000-8000-0000000000ee',
+  kind: 'database',
+  name: 'Inventory',
+  plugin: 'workers',
+  statement: 'UPDATE parts SET stock = ?1 WHERE name = ?2',
+};
+
 const GRANTS: GrantScope[] = [
+  DATABASE_GRANT,
   { folder: 'D:\\Projects\\app', kind: 'path', mode: 'read' },
   { folder: 'D:\\Projects\\app', kind: 'path', mode: 'write' },
   { folder: 'D:\\Projects\\app', kind: 'path', mode: 'create' },
@@ -163,6 +174,7 @@ const REFUSALS: Refusal[] = [
   'no_remote_commands',
   'no_programs_on_host',
   'no_external_tools',
+  'no_databases',
   'read_only_host',
 ];
 
@@ -267,6 +279,8 @@ describe('tools messages', () => {
       'remote_command',
       'program',
       'external_tool',
+      'database_write',
+      'database_schema',
     ];
     const decisions: Decision[] = [
       'workspace',
@@ -285,6 +299,7 @@ describe('tools messages', () => {
       'host_rule',
       'full_access',
       'host_full_access',
+      'registered_database',
     ];
     const modes: AccessMode[] = ['read', 'write', 'create', 'delete'];
 
@@ -311,6 +326,19 @@ describe('tools messages', () => {
     expect(message).toContain('build-box');
     expect(message).toContain('deploy@build-box.lan:22');
     expect(message).not.toContain('0199e0f2');
+  });
+
+  it('name the statement and the database of a grant of a database’s statement, and never its key', () => {
+    const message = grantScopeMessage(DATABASE_GRANT);
+
+    expect(message).toContain('UPDATE parts SET stock = ?1 WHERE name = ?2');
+    expect(message).toContain('Inventory');
+    expect(message).not.toContain('0199e0f2');
+  });
+
+  it('label what each statement on a database does, and where the database lives', () => {
+    expectDistinct([statementClassLabel('read'), statementClassLabel('write'), statementClassLabel('schema')]);
+    expect(databaseHomeText({ kind: 'this_computer' }).trim()).not.toBe('');
   });
 
   it('name the tool, the server and where it runs of a grant of a tool server’s tool', () => {
