@@ -36,6 +36,7 @@ The owner wants "first class support for an sqlite database for the harness", so
   - Data shows a table in pages of 100 rows, in the order of its key or of the column that the owner sorts by. A filter of conditions on columns becomes a parameterized statement. Edit and Insert open a sheet; saving checks the row's old values and says when the row changed since it was read. Delete removes the selected rows after a confirmation. "Copy page as CSV" copies the page.
   - SQL runs one statement that the owner writes, with Ctrl+Enter or Run, and Stop while it runs. A read shows its rows, a write the number of rows that it changed, and a schema statement runs after a confirmation that names it. The tab keeps the statements of the session.
 - A read-only database shows no edit, insert, delete or write, and its SQL tab runs reads only.
+- Mannie enforces foreign keys on every write, so a write that breaks one fails, even where the file's own program turns them off. A file that another program is writing fails with "busy" after 2 seconds, and Retry tries again. Reading a database in WAL mode can leave its `-wal` and `-shm` files beside it, as any reader of SQLite does ([M15 validation results](../../../docs/roadmap/m15-validation.md#3-opening-other-programs-files-s2)).
 - Every part of the view has its loading, empty and error states, works from the keyboard and meets WCAG 2.1 AA. Long text and blobs show cut, with their size, and a cell opens in full in a sheet.
 
 ### Agents

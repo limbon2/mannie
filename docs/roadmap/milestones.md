@@ -356,7 +356,7 @@ Scope:
 - the database access, the effect `ReadsDatabases` and the database ticket, with their policy and approval UI;
 - the feature Databases of Workers: registrations, the view, the tools, the instruction section and mentions;
 - the link's optional package `databases`, the worker's consent, registry, ceiling rows and journal, and the master's narrowing to the host;
-- spikes S1 to S9: the authorizer's codes, opening other programs' files, interrupts and limits, contention with the owner's applications, file identity, the view's components and grid, feature generations under load, the optional package with a worker of the previous release, and schemas with thousands of tables.
+- spikes S1 to S9: the authorizer's codes, opening other programs' files, interrupts and limits, contention with the owner's applications, file identity, the view's components and grid, feature generations under load, the optional package with a worker of the previous release, and schemas with thousands of tables ([M15 validation results](m15-validation.md)).
 
 Exit criteria:
 

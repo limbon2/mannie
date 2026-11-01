@@ -40,6 +40,7 @@ words:
   - ctutils
   - cyclonedx
   - DBCONFIG
+  - dbstat
   - dbus
   - Delinea
   - DMABUF
@@ -56,6 +57,7 @@ words:
   - fastrand
   - flate
   - fpid
+  - freelist
   - fsmonitor
   - getrandom
   - globset
@@ -163,6 +165,7 @@ words:
   - rustls
   - RustSec
   - rustup
+  - savepoint
   - savepoints
   - sccache
   - schemars
@@ -196,6 +199,7 @@ words:
   - uploadpack
   - USERDOMAIN
   - USERPROFILE
+  - vtable
   - WALLIX
   - WCAG
   - webgl
@@ -203,6 +207,7 @@ words:
   - windir
   - winget
   - worktrees
+  - xinfo
   - zbus
   - zdiff
   - ZDOTDIR
