@@ -1,12 +1,14 @@
 //! Commands of the plugins feature (docs/features/plugins.md): the plugins on
-//! a channel, turning one on or off, and the work that turning one off lets
-//! go. The host checks every request; these commands find the host and log
-//! refusals by their code.
+//! a channel, turning one or one of its optional features on or off, and the
+//! work that turning one off lets go (ADR-0055, decision 9). The host checks
+//! every request; these commands find the host and log refusals by their
+//! code.
 
 use mannie_plugins::PluginHost;
 use mannie_types::ipc::{ChannelBatch, CommandError};
 use mannie_types::plugins::{
-    PluginListUpdate, PluginRef, PluginView, PluginWork, PluginsError, SetPluginEnabled,
+    PluginFeatureRef, PluginListUpdate, PluginRef, PluginView, PluginWork, PluginsError,
+    SetPluginEnabled, SetPluginFeatureEnabled,
 };
 use mannie_types::transcript::{SubscriptionEnd, SubscriptionId};
 use tauri::State;
@@ -96,4 +98,36 @@ pub(crate) async fn plugin_work(
         .work(&input.plugin_id)
         .await
         .map_err(refused("plugin_work"))
+}
+
+/// Turns an optional feature of a plugin on or off, as the owner's lasting
+/// choice, which outlives the plugin's own switch. The answer is the
+/// plugin's view once the feature started or stopped; the channel shows the
+/// steps between.
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn set_plugin_feature_enabled(
+    core: State<'_, Core>,
+    input: SetPluginFeatureEnabled,
+) -> Result<PluginView, CommandError<PluginsError>> {
+    host(&core)
+        .map_err(refused("set_plugin_feature_enabled"))?
+        .set_feature_enabled(&input.plugin_id, &input.feature_id, input.enabled)
+        .await
+        .map_err(refused("set_plugin_feature_enabled"))
+}
+
+/// The work that an optional feature has in progress, which its switch names
+/// before it turns the feature off.
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn plugin_feature_work(
+    core: State<'_, Core>,
+    input: PluginFeatureRef,
+) -> Result<PluginWork, CommandError<PluginsError>> {
+    host(&core)
+        .map_err(refused("plugin_feature_work"))?
+        .feature_work(&input.plugin_id, &input.feature_id)
+        .await
+        .map_err(refused("plugin_feature_work"))
 }

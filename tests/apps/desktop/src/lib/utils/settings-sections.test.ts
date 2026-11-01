@@ -75,11 +75,21 @@ describe('activeSettingsSection', () => {
   it('says that the plugin of the section the URL names is off', () => {
     const sections = new Slot<SettingsSection>('settings sections', () => false);
     sections.register(section('shell.interface', 0));
-    sections.register(section('workers.settings', 28), 'workers');
+    sections.register(section('workers.settings', 28), { feature: null, plugin: 'workers' });
 
     expect(activeSettingsSection(sections, url(`?${settingsSectionQuery('workers.settings')}`))).toEqual({
-      kind: 'plugin_off',
-      plugin: 'workers',
+      kind: 'off',
+      owner: { feature: null, plugin: 'workers' },
+    });
+  });
+
+  it('says that the plugin’s feature of the section the URL names is off', () => {
+    const sections = new Slot<SettingsSection>('settings sections', ({ feature }) => feature === null);
+    sections.register(section('workers.databases', 29), { feature: 'databases', plugin: 'workers' });
+
+    expect(activeSettingsSection(sections, url(`?${settingsSectionQuery('workers.databases')}`))).toEqual({
+      kind: 'off',
+      owner: { feature: 'databases', plugin: 'workers' },
     });
   });
 });

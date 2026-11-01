@@ -2,10 +2,13 @@
 // follows the core's channel, a plugin counts as on only while the core
 // reports it as on, a change that the core returns shows before its update
 // arrives, and a plugin's UI state hears when its plugin turns on and off
-// (ADR-0030, decision 11).
+// (ADR-0030, decision 11). A plugin's optional feature counts as on only
+// while its plugin is on too, and its UI state hears when that changes
+// (ADR-0055, decision 10).
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
+  FeatureView,
   PluginListUpdate,
   PluginState,
   PluginView,
@@ -14,8 +17,10 @@ import { PluginStates } from '../../../../../../apps/desktop/src/lib/state/plugi
 import type * as Calls from '../../../../../../apps/desktop/src/lib/utils/calls.js';
 
 const core = vi.hoisted(() => ({
+  pluginFeatureWork: vi.fn(),
   pluginWork: vi.fn(),
   setPluginEnabled: vi.fn(),
+  setPluginFeatureEnabled: vi.fn(),
   subscribePlugins: vi.fn(),
   unsubscribe: vi.fn(),
 }));
@@ -50,6 +55,31 @@ function plugin(state: PluginState, id = 'workers'): PluginView {
       services: [],
     },
   };
+}
+
+/** The feature `databases` of a plugin, in a state, with the owner's choice. */
+function feature(state: PluginState, enabled = state !== 'off'): FeatureView {
+  return {
+    enabled,
+    failure: state === 'failed' ? 'service_unavailable' : null,
+    id: 'databases',
+    state,
+    uses: {
+      channels: [],
+      commands: [],
+      crates: [],
+      installedPrograms: [],
+      native: [],
+      programs: [],
+      secrets: [],
+      services: [],
+    },
+  };
+}
+
+/** The plugin `workers` in a state, with its feature `databases` in another. */
+function withFeature(state: PluginState, featureView: FeatureView): PluginView {
+  return { ...plugin(state), features: [featureView] };
 }
 
 /** Delivers the whole list with the plugins in these states. */
@@ -206,5 +236,82 @@ describe('following a plugin', () => {
     deliver(plugin('on'));
 
     expect(on).not.toHaveBeenCalled();
+  });
+});
+
+describe('a feature of a plugin', () => {
+  it('counts as on only while the core reports it and its plugin as on', async () => {
+    const states = await started();
+
+    deliver(withFeature('on', feature('starting')));
+    const whileStarting = states.isFeatureOn('workers', 'databases');
+    deliver(withFeature('on', feature('on')));
+    const whileOn = states.isFeatureOn('workers', 'databases');
+    deliver(withFeature('stopping', feature('on')));
+
+    expect(whileStarting).toBe(false);
+    expect(whileOn).toBe(true);
+    expect(states.isFeatureOn('workers', 'databases')).toBe(false);
+    expect(states.isFeatureOn('workers', 'history')).toBe(false);
+    expect(states.featureView('workers', 'databases')?.state).toBe('on');
+  });
+
+  it('turns on through the core, shows what the change returned and reads its work', async () => {
+    const states = await started();
+    deliver(withFeature('on', feature('off')));
+    core.setPluginFeatureEnabled
+      .mockResolvedValueOnce({ data: withFeature('on', feature('on')), status: 'ok' })
+      .mockResolvedValueOnce({ error: { code: 'unknown_feature' }, status: 'error' });
+    core.pluginFeatureWork.mockResolvedValue({ data: { items: [{ code: 'open_files', count: 1 }] }, status: 'ok' });
+
+    const turnedOn = await states.setFeatureEnabled('workers', 'databases', true);
+    const refused = await states.setFeatureEnabled('workers', 'history', true);
+    const work = await states.featureWork('workers', 'databases');
+
+    expect(core.setPluginFeatureEnabled).toHaveBeenNthCalledWith(1, {
+      enabled: true,
+      featureId: 'databases',
+      pluginId: 'workers',
+    });
+    expect(turnedOn).toBeNull();
+    expect(refused).toEqual({ error: { code: 'unknown_feature' }, kind: 'core' });
+    expect(states.isFeatureOn('workers', 'databases')).toBe(true);
+    expect(core.pluginFeatureWork).toHaveBeenCalledWith({ featureId: 'databases', pluginId: 'workers' });
+    expect(work).toEqual({ data: { items: [{ code: 'open_files', count: 1 }] }, ok: true });
+  });
+
+  it('is heard turning on and off with its plugin and on its own', async () => {
+    const states = await started();
+    const on = vi.fn();
+    const off = vi.fn();
+    states.whileFeatureOn('workers', 'databases', on, off);
+
+    deliver(withFeature('on', feature('on')));
+    deliver(withFeature('on', feature('off', true)));
+    deliver(withFeature('on', feature('on')));
+    const beforePluginOff = [on.mock.calls.length, off.mock.calls.length];
+    deliver(withFeature('stopping', feature('on')));
+
+    expect(beforePluginOff).toEqual([2, 1]);
+    expect([on.mock.calls.length, off.mock.calls.length]).toEqual([2, 2]);
+  });
+
+  it('comes back while its plugin starts and the owner keeps it on, until its own start fails', async () => {
+    const states = await started();
+    const databases = { feature: 'databases', plugin: 'workers' };
+
+    deliver(withFeature('starting', feature('off', true)));
+    const whilePluginStarts = states.comesBack(databases);
+    deliver(withFeature('on', feature('failed', true)));
+    const afterFailure = states.comesBack(databases);
+    deliver(withFeature('on', feature('off', false)));
+    const turnedOff = states.comesBack(databases);
+    deliver(withFeature('off', feature('off', true)));
+
+    expect(whilePluginStarts).toBe(true);
+    expect(afterFailure).toBe(false);
+    expect(turnedOff).toBe(false);
+    expect(states.comesBack(databases)).toBe(false);
+    expect(states.comesBack({ feature: null, plugin: 'workers' })).toBe(false);
   });
 });

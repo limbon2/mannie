@@ -3,6 +3,7 @@
 // so that the core's messages and the Plugins page can name a plugin without
 // importing the plugin's code (ADR-0030, decision 10).
 import type { PluginDescriptor } from '#lib/types/plugins.js';
+import type { SlotOwner } from '#lib/types/shell-slots.js';
 
 let catalog: readonly PluginDescriptor[] = [];
 
@@ -33,4 +34,9 @@ export function featureName(plugin: string, feature: string): string {
       ?.features.find((entry) => entry.id === feature)
       ?.name() ?? feature
   );
+}
+
+/** The name of the plugin, or of the plugin's feature, that owns entries of the shell's slots. */
+export function ownerName(owner: SlotOwner): string {
+  return owner.feature === null ? pluginName(owner.plugin) : featureName(owner.plugin, owner.feature);
 }

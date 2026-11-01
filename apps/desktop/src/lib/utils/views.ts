@@ -1,13 +1,13 @@
 // Which view the main area shows: the one the `view` search parameter names,
 // or the first registered view when the URL names none.
 import type { Slot } from '#lib/state/shell-slots.svelte.js';
-import type { ShellView } from '#lib/types/shell-slots.js';
+import type { ShellView, SlotOwner } from '#lib/types/shell-slots.js';
 
 /** The outcome of choosing the view for a URL. */
 export type ActiveView =
   | { readonly kind: 'missing'; readonly requested: string }
   | { readonly kind: 'none' }
-  | { readonly kind: 'plugin_off'; readonly plugin: string }
+  | { readonly kind: 'off'; readonly owner: SlotOwner }
   | { readonly kind: 'view'; readonly view: ShellView };
 
 /** The search parameter that names the view. */
@@ -39,7 +39,8 @@ export function activeView(views: Slot<ShellView>, url: ViewUrl): ActiveView {
   if (view !== undefined) {
     return { kind: 'view', view };
   }
-  // A view of a plugin that is off says so (ADR-0030, decision 11).
-  const plugin = views.pluginOff(requested);
-  return plugin === null ? { kind: 'missing', requested } : { kind: 'plugin_off', plugin };
+  // A view of a plugin or a feature that is off says so (ADR-0030, decision
+  // 11; ADR-0055, decision 10).
+  const owner = views.ownerOff(requested);
+  return owner === null ? { kind: 'missing', requested } : { kind: 'off', owner };
 }

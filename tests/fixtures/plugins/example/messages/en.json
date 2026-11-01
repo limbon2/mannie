@@ -19,5 +19,20 @@
   "example_try_again": "Try again",
   "example_panel_title": "Example notes",
   "example_command_group": "Example",
-  "example_command_add_note": "Add an example note…"
+  "example_command_add_note": "Add an example note…",
+  "example_counts_settings_title": "Note counts",
+  "example_counts_settings_description": "How many notes the example plugin kept since it started.",
+  "example_counting": "Counting the notes…",
+  "example_count_failed_title": "The notes could not be counted",
+  "example_count_kept": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "The plugin kept {count: number} note since it started.",
+        "countPlural=other": "The plugin kept {count: number} notes since it started."
+      }
+    }
+  ],
+  "example_count_again": "Count again"
 }

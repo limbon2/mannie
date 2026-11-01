@@ -52,8 +52,21 @@ describe('activeView', () => {
   it('says that the plugin of the view the URL names is off', () => {
     const views = new Slot<ShellView>('views', () => false);
     views.register(view('chat'));
-    views.register(view('jira'), 'jira');
+    views.register(view('jira'), { feature: null, plugin: 'jira' });
 
-    expect(activeView(views, url(`?${VIEW_PARAMETER}=jira`))).toEqual({ kind: 'plugin_off', plugin: 'jira' });
+    expect(activeView(views, url(`?${VIEW_PARAMETER}=jira`))).toEqual({
+      kind: 'off',
+      owner: { feature: null, plugin: 'jira' },
+    });
+  });
+
+  it('says that the plugin’s feature of the view the URL names is off', () => {
+    const views = new Slot<ShellView>('views', ({ feature }) => feature === null);
+    views.register(view('databases'), { feature: 'databases', plugin: 'workers' });
+
+    expect(activeView(views, url(`?${VIEW_PARAMETER}=databases`))).toEqual({
+      kind: 'off',
+      owner: { feature: 'databases', plugin: 'workers' },
+    });
   });
 });

@@ -14,8 +14,35 @@ import type { PluginSlots } from './slots.js';
 export type { WorkItem } from '#lib/generated/bindings.js';
 export type { Message } from '#lib/types/shell-slots.js';
 
+/**
+ * What a plugin's UI gets for one of the plugin's optional features
+ * (ADR-0055, decision 10): its entries show only while the plugin and the
+ * feature are on.
+ */
+export interface FeatureContext {
+  /** The feature's ID, as the plugin's manifest names it. */
+  readonly id: string;
+  /** Whether the core reports the plugin and the feature as on. */
+  readonly isOn: () => boolean;
+  /** The shell's slots, whose entries of this feature show only while the plugin and the feature are on. */
+  readonly slots: PluginSlots;
+  /**
+   * Calls `on` now if the core reports the plugin and the feature as on and
+   * each time they turn on later, and `off` each time they stop being on,
+   * until the returned function stops following. A feature's state follows
+   * the feature through it, so that its subscriptions run only while the
+   * feature is on.
+   */
+  readonly whileOn: (on: () => void, off: () => void) => () => void;
+}
+
 /** What a plugin's UI gets when the composition root registers it. */
 export interface PluginContext {
+  /**
+   * The context of one of the plugin's optional features. A feature that
+   * the plugin's manifest does not list throws, as a bug of the plugin.
+   */
+  readonly feature: (id: string) => FeatureContext;
   /** The plugin's ID, which equals its folder's name. */
   readonly id: string;
   /** Whether the core reports the plugin as on. */

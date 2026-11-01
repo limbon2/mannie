@@ -17,8 +17,8 @@
 
 {#if active.kind === 'view'}
   <active.view.component />
-{:else if active.kind === 'plugin_off'}
-  <PluginOffState plugin={active.plugin} />
+{:else if active.kind === 'off'}
+  <PluginOffState feature={active.owner.feature} plugin={active.owner.plugin} />
 {:else}
   <Empty.Root class="flex-1">
     <Empty.Header>

@@ -18,6 +18,18 @@ import type {
 /** A message function from the catalog, called when the text is shown (ADR-0019). */
 export type Message = () => string;
 
+/**
+ * The plugin, or one of the plugin's optional features, that registered
+ * entries of the slots, which show only while it is on (ADR-0030, decision
+ * 11; ADR-0055, decision 10).
+ */
+export interface SlotOwner {
+  /** The plugin's optional feature, or `null` for the plugin's own entries. */
+  readonly feature: string | null;
+  /** The plugin. */
+  readonly plugin: string;
+}
+
 /** A command in the command palette. */
 export interface ShellCommand {
   /**

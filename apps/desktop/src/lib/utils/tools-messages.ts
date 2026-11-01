@@ -22,7 +22,7 @@ import type {
   ToolServerEndpoint,
 } from '#lib/generated/bindings.js';
 import { m } from '#lib/paraglide/messages.js';
-import { pluginName } from '#lib/state/plugin-catalog.js';
+import { featureName, pluginName } from '#lib/state/plugin-catalog.js';
 import type { ToolsFailure } from '#lib/types/tools.js';
 
 const BYTE_UNITS = ['byte', 'kilobyte', 'megabyte', 'gigabyte'] as const;
@@ -277,6 +277,15 @@ export function notRunMessage(reason: NotRunReason): string {
       return m.tools_not_run_over_budget();
     }
     case 'plugin_off': {
+      // The owner turned off the tool's feature, and the plugin stayed on
+      // (ADR-0055, decision 7). Records before features have none.
+      const feature = reason.feature ?? null;
+      if (feature !== null) {
+        return m.tools_not_run_feature_off({
+          feature: featureName(reason.plugin, feature),
+          plugin: pluginName(reason.plugin),
+        });
+      }
       return m.tools_not_run_plugin_off({ plugin: pluginName(reason.plugin) });
     }
     case 'refused': {
@@ -442,6 +451,13 @@ export function uncertainMessage(interruption: Interruption | null): string {
   }
   switch (interruption.reason) {
     case 'plugin_off': {
+      const feature = interruption.feature ?? null;
+      if (feature !== null) {
+        return m.tools_uncertain_feature_off_description({
+          feature: featureName(interruption.plugin, feature),
+          plugin: pluginName(interruption.plugin),
+        });
+      }
       return m.tools_uncertain_plugin_off_description({ plugin: pluginName(interruption.plugin) });
     }
     case 'stopped': {

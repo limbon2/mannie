@@ -9,6 +9,7 @@ import type { PluginsError } from '../../../../../../apps/desktop/src/lib/genera
 import { setPluginCatalog } from '../../../../../../apps/desktop/src/lib/state/plugin-catalog.js';
 import {
   failedForPluginOff,
+  featureStateMessage,
   pluginNativeLabel,
   pluginOffQuestion,
   pluginServiceLabel,
@@ -78,11 +79,12 @@ describe('pluginStartFailureMessage', () => {
       pluginStartFailureMessage('workers', 'service_unavailable'),
       pluginStartFailureMessage('workers', 'sdk_incompatible'),
       pluginStartFailureMessage('workers', 'contributions_refused'),
+      pluginStartFailureMessage('workers', 'feature_unknown'),
     ];
     const other = pluginStartFailureMessage('workers', 'disk_on_fire');
 
     expect(own).toBe('The workers could not be read.');
-    expect(new Set([own, ...host, other]).size).toBe(6);
+    expect(new Set([own, ...host, other]).size).toBe(7);
     expect(other).toContain('disk_on_fire');
   });
 });
@@ -123,6 +125,48 @@ describe('pluginStateMessage', () => {
     expect(quiet).toEqual([null, null]);
     expect(new Set(lines).size).toBe(3);
     expect(lines[2]).toContain(pluginStartFailureMessage('workers', 'grant_missing'));
+  });
+});
+
+describe('featureStateMessage', () => {
+  const pluginView = (state: 'off' | 'on' | 'starting') => ({
+    enabled: state !== 'off',
+    failure: null,
+    features: [],
+    id: 'workers',
+    state,
+    uses: NO_USES,
+  });
+  const featureView = (state: 'failed' | 'off' | 'on' | 'starting' | 'stopping') => ({
+    enabled: state !== 'off',
+    failure: state === 'failed' ? 'feature_unknown' : null,
+    id: 'databases',
+    state,
+    uses: NO_USES,
+  });
+
+  it('says that a feature works while its plugin is on, whatever the feature’s own state', () => {
+    const whilePluginOff = featureStateMessage(pluginView('off'), featureView('off'), 'Workers');
+    const whilePluginStarts = featureStateMessage(pluginView('starting'), featureView('off'), 'Workers');
+
+    expect(whilePluginOff).toContain('Workers');
+    expect(whilePluginStarts).toBe(whilePluginOff);
+  });
+
+  it('says nothing for a feature that is on or off, and says when one starts, stops or failed', () => {
+    const quiet = [
+      featureStateMessage(pluginView('on'), featureView('on'), 'Workers'),
+      featureStateMessage(pluginView('on'), featureView('off'), 'Workers'),
+    ];
+    const lines = [
+      featureStateMessage(pluginView('on'), featureView('starting'), 'Workers'),
+      featureStateMessage(pluginView('on'), featureView('stopping'), 'Workers'),
+      featureStateMessage(pluginView('on'), featureView('failed'), 'Workers'),
+    ];
+
+    expect(quiet).toEqual([null, null]);
+    expect(new Set(lines).size).toBe(3);
+    expect(lines[2]).toContain(pluginStartFailureMessage('workers', 'feature_unknown'));
   });
 });
 

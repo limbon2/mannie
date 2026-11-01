@@ -28,6 +28,7 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - A command of the palette may have a key, which the shell binds while the command is available and the palette shows (ADR-0053).
 - The warning before closing or quitting counts the terminals that run a command (ADR-0053).
 - Plugins may have optional features, each a table `[features.<id>]` of the manifest with the services that only it uses, which start off and start on the running plugin when the owner turns them on. A feature's contributions, commands and channels have a generation of their own, and turning it off removes them, ends its calls and channels with `feature_off`, waits for its work and releases its services; turning the plugin off stops its features first (ADR-0055).
+- The Plugins page lists each plugin's optional features under it, with what each adds and may use and a switch that works while the plugin is on, asks first when the feature has work in progress and offers "Try again" after a failed start. A plugin's UI registers a feature's entries through `context.feature(id)`, which show only while the plugin and the feature are on, and the address of a view, settings page or side panel of a feature that is off says so and leads to the Plugins page (ADR-0055).
 
 ### Changed
 

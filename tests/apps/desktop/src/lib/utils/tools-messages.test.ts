@@ -121,6 +121,7 @@ const NOT_RUN_REASONS: NotRunReason[] = [
   { reason: 'over_budget' },
   { reason: 'tools_off' },
   { plugin: 'workers', reason: 'plugin_off' },
+  { feature: 'databases', plugin: 'workers', reason: 'plugin_off' },
 ];
 
 const GRANTS: GrantScope[] = [
@@ -185,7 +186,12 @@ const EFFECT_KEYS: ProgramEffectKey[] = [
   { effect: 'rewrites_published' },
 ];
 
-const INTERRUPTIONS: (Interruption | null)[] = [null, { reason: 'stopped' }, { plugin: 'ssh', reason: 'plugin_off' }];
+const INTERRUPTIONS: (Interruption | null)[] = [
+  null,
+  { reason: 'stopped' },
+  { plugin: 'ssh', reason: 'plugin_off' },
+  { feature: 'databases', plugin: 'workers', reason: 'plugin_off' },
+];
 
 function expectDistinct(messages: string[]): void {
   for (const message of messages) {
@@ -242,6 +248,12 @@ describe('tools messages', () => {
     expectDistinct(INTERRUPTIONS.map((interruption) => uncertainMessage(interruption)));
     expect(uncertainMessage({ plugin: 'ssh', reason: 'plugin_off' })).toContain('ssh');
     expect(toolFailureMessage({ code: 'plugin_invalid', plugin: 'ssh' })).toContain('ssh');
+    // A record from before features reads as its plugin going off.
+    expect(uncertainMessage({ feature: null, plugin: 'ssh', reason: 'plugin_off' })).toBe(
+      uncertainMessage({ plugin: 'ssh', reason: 'plugin_off' }),
+    );
+    expect(uncertainMessage({ feature: 'databases', plugin: 'workers', reason: 'plugin_off' })).toContain('databases');
+    expect(notRunMessage({ feature: 'databases', plugin: 'workers', reason: 'plugin_off' })).toContain('databases');
   });
 
   it('describe every reason to ask, decision, access mode and grant', () => {
