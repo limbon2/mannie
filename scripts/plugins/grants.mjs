@@ -2,9 +2,9 @@
 // Prints what each plugin may use, for the review of a plugin's change
 // (ADR-0034, decision 13; scripts/plugins/lib/grants.mjs): its services, its
 // secret entries, its commands and channels, its programs, the crates that
-// only it may use and its direct native calls. The commands and channels
-// come from `.generated/desktop/interfaces.json`, so `task plugins:grants`
-// runs `task gen` first.
+// only it may use, its direct native calls and its optional features. The
+// commands and channels come from `.generated/desktop/interfaces.json`, so
+// `task plugins:grants` runs `task gen` first.
 //
 // Usage: node scripts/plugins/grants.mjs
 

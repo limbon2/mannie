@@ -2,12 +2,13 @@
 //! the plugin's ID, the SDK major that it builds on, its order, its entry
 //! crate, the services that it uses, its secret entries, the third-party
 //! crates that only it may use, its programs, the installed programs that it
-//! runs and its direct native calls.
+//! runs, its direct native calls and its optional features.
 //!
 //! The manifest is the reviewed registration of a plugin, so the host grants
 //! the plugin the services that it declares and nothing else (ADR-0034,
 //! decisions 5 and 13). Each field has a reader: the host reads the ID, the
-//! major, the order, the services, the secrets and the installed programs,
+//! major, the order, the services, the secrets, the installed programs and
+//! the features with their services (ADR-0055, decision 2),
 //! and shows the names of the programs, the installed programs, the crates
 //! and the native calls on the Plugins page; the build's generator reads the
 //! entry crate (ADR-0035, decision 3), the build's boundary check reads the
@@ -71,7 +72,38 @@ pub struct Manifest {
     /// the SDK's services.
     #[serde(default)]
     pub native: NativeSection,
+    /// The plugin's optional features, as `[features.<id>]` tables, each of
+    /// which the owner turns on and off on its own while the plugin is on
+    /// (ADR-0055, decision 2). Every feature starts off.
+    #[serde(default)]
+    pub features: BTreeMap<String, FeatureSection>,
 }
+
+/// A `[features.<id>]` table of a manifest: an optional feature of the
+/// plugin, and the services that only it uses (ADR-0055, decision 2). The
+/// host binds them while the feature is on and releases them when it stops,
+/// so a sensitive service is held only while the owner keeps the feature on.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+#[non_exhaustive]
+pub struct FeatureSection {
+    /// The services that only the feature uses, each with the major version
+    /// that it builds on. A service is declared by the plugin or by one of
+    /// its features, never by both.
+    #[serde(default)]
+    pub services: BTreeMap<String, u16>,
+}
+
+/// The services that only a plugin may declare, never one of its features:
+/// those whose sections of the manifest, module of the store or executor
+/// belong to the plugin.
+pub const PLUGIN_ONLY_SERVICES: [&str; 5] = [
+    "store",
+    "secrets",
+    "processes",
+    "executor-host",
+    "credentials",
+];
 
 /// The `[rust]` table of a manifest: the plugin's Rust code.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -305,9 +337,15 @@ pub fn is_process_name(name: &str) -> bool {
 }
 
 impl Manifest {
-    /// Whether the manifest declares the service with this name.
+    /// Whether the manifest declares the service with this name for the
+    /// plugin itself, outside its features.
     pub fn declares(&self, name: &str) -> bool {
         self.services.contains_key(name)
+    }
+
+    /// The feature with this ID, if the manifest lists one.
+    pub fn feature(&self, id: &str) -> Option<&FeatureSection> {
+        self.features.get(id)
     }
 }
 
@@ -316,9 +354,12 @@ pub use parse::ManifestError;
 
 #[cfg(feature = "manifest")]
 mod parse {
+    use std::collections::BTreeMap;
+
     use mannie_types::tools::{EnvName, is_loader_name};
 
-    use super::{Manifest, is_process_name};
+    use super::{Manifest, PLUGIN_ONLY_SERVICES, is_process_name};
+    use crate::ids::FeatureId;
     use crate::services::service_info;
     use crate::version::SDK_MAJOR;
 
@@ -347,7 +388,11 @@ mod parse {
         /// 7. each installed program under `[processes]`: its name, its
         ///    reason, its fixed arguments and the names that it inherits;
         /// 8. that a manifest with installed programs declares the service
-        ///    `processes`.
+        ///    `processes`;
+        /// 9. each feature's ID, then each service that only the feature
+        ///    declares: one that the SDK has, at the SDK's major, never one
+        ///    of [`PLUGIN_ONLY_SERVICES`], and never one that the plugin or
+        ///    another feature declares.
         pub fn parse(text: &str) -> Result<Self, ManifestError> {
             let table: toml::Table = text
                 .parse()
@@ -384,7 +429,37 @@ mod parse {
             if !manifest.processes.is_empty() && !manifest.declares(PROCESSES_SERVICE) {
                 return Err(ManifestError::ProcessesWithoutService);
             }
+            manifest.check_features()?;
             Ok(manifest)
+        }
+
+        fn check_features(&self) -> Result<(), ManifestError> {
+            for id in self.features.keys() {
+                FeatureId::parse(id)
+                    .map_err(|_syntax| ManifestError::FeatureId { id: id.clone() })?;
+            }
+            // Who declares each service, so a second declaration is found
+            // wherever it is.
+            let mut declared: BTreeMap<&str, Option<&str>> = self
+                .services
+                .keys()
+                .map(|name| (name.as_str(), None))
+                .collect();
+            for (feature, section) in &self.features {
+                for (name, &major) in &section.services {
+                    check_service(name, major)?;
+                    if PLUGIN_ONLY_SERVICES.contains(&name.as_str()) {
+                        return Err(ManifestError::FeatureService {
+                            feature: feature.clone(),
+                            name: name.clone(),
+                        });
+                    }
+                    if declared.insert(name, Some(feature)).is_some() {
+                        return Err(ManifestError::ServiceDeclaredTwice { name: name.clone() });
+                    }
+                }
+            }
+            Ok(())
         }
 
         fn check_processes(&self) -> Result<(), ManifestError> {
@@ -452,18 +527,27 @@ mod parse {
 
         fn check_services(&self) -> Result<(), ManifestError> {
             for (name, &major) in &self.services {
-                let Some(service) = service_info(name) else {
-                    return Err(ManifestError::UnknownService { name: name.clone() });
-                };
-                if major != service.major {
-                    return Err(ManifestError::ServiceMajor {
-                        name: name.clone(),
-                        major,
-                    });
-                }
+                check_service(name, major)?;
             }
             Ok(())
         }
+    }
+
+    /// Refuses a service that the SDK does not have, or a major of it that
+    /// the SDK does not have.
+    fn check_service(name: &str, major: u16) -> Result<(), ManifestError> {
+        let Some(service) = service_info(name) else {
+            return Err(ManifestError::UnknownService {
+                name: name.to_owned(),
+            });
+        };
+        if major != service.major {
+            return Err(ManifestError::ServiceMajor {
+                name: name.to_owned(),
+                major,
+            });
+        }
+        Ok(())
     }
 
     /// The SDK major that a manifest names, when it is a major other than
@@ -617,6 +701,35 @@ mod parse {
             "the manifest lists programs under [processes] but does not declare the service processes"
         )]
         ProcessesWithoutService,
+        /// The ID of a table under `[features]` breaks the rules of feature
+        /// IDs.
+        #[error(
+            "{id:?} is not a feature's ID, which is lower-case words of letters and digits joined by single hyphens, starting with a letter"
+        )]
+        FeatureId {
+            /// The refused ID.
+            id: String,
+        },
+        /// A feature declares a service whose sections, module or executor
+        /// belong to its plugin, which only the plugin can declare.
+        #[error(
+            "the feature {feature} declares the service {name}, which only its plugin can declare"
+        )]
+        FeatureService {
+            /// The feature's ID.
+            feature: String,
+            /// The service's name.
+            name: String,
+        },
+        /// A service is declared by the plugin and one of its features, or
+        /// by two features.
+        #[error(
+            "the service {name} is declared twice, by the plugin and a feature or by two features"
+        )]
+        ServiceDeclaredTwice {
+            /// The service's name.
+            name: String,
+        },
     }
 
     impl ManifestError {

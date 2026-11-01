@@ -25,7 +25,7 @@ use mannie_plugin_sdk::host::{
     ID_NOT_OWNED, ID_TAKEN, INVALID_NAME, KIND_NOT_PLUGIN, NO_CONSUMER, PLUGIN_REGISTERED,
     PluginBinding, RESERVED_ARGUMENT, TOO_MANY_ENTRIES,
 };
-use mannie_plugin_sdk::ids::PluginId;
+use mannie_plugin_sdk::ids::{Contributor, PluginId};
 use mannie_plugin_sdk::manifest::Manifest;
 use mannie_plugin_sdk::points;
 use mannie_plugin_sdk::points::agents::{AgentBudgets, AgentSpec, Agents, Requester};
@@ -802,8 +802,14 @@ async fn a_refused_image_source_leaves_no_tool_agent_section_executor_or_mention
     // section, the executor and the mention provider passed. The coordinator would have refused the ID
     // first, so the test hands the entries to the consumer as the coordinator
     // does after its checks.
-    let checked = consumer.check(&fake, &every_point("other.shots"));
-    let taken = consumer.add(&fake, every_point("other.shots"));
+    let checked = consumer.check(
+        &Contributor::plugin(fake.clone()),
+        &every_point("other.shots"),
+    );
+    let taken = consumer.add(
+        &Contributor::plugin(fake.clone()),
+        every_point("other.shots"),
+    );
     let left = reached(&harness, "REFUSED").await;
     add_plugin(&harness.runtime, FAKE_EXECUTOR_KIND, every_point(SHOTS)).unwrap();
     let accepted = reached(&harness, "ACCEPTED").await;
@@ -1094,14 +1100,16 @@ async fn a_run_keeps_what_it_started_with_and_its_calls_into_a_stopped_plugin_do
     assert_eq!(
         call.not_run,
         Some(NotRunReason::PluginOff {
-            plugin: PLUGIN.to_owned()
+            plugin: PLUGIN.to_owned(),
+            feature: None,
         })
     );
     let [task_call] = transcript.task_calls(0).try_into().unwrap();
     assert_eq!(
         task_call.not_run,
         Some(NotRunReason::PluginOff {
-            plugin: PLUGIN.to_owned()
+            plugin: PLUGIN.to_owned(),
+            feature: None,
         })
     );
 }
@@ -1157,7 +1165,8 @@ async fn a_tool_of_a_plugin_turned_off_and_on_during_a_run_does_not_run() {
     assert_eq!(
         call.not_run,
         Some(NotRunReason::PluginOff {
-            plugin: PLUGIN.to_owned()
+            plugin: PLUGIN.to_owned(),
+            feature: None,
         })
     );
     assert!(!before.was_called(), "the stopped start's tool never runs");

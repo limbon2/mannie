@@ -185,6 +185,16 @@ pub enum HostRefusal {
     /// The generated transport reports it, and the host never answers it.
     #[error("the call is not allowed")]
     NotAllowed,
+    /// The plugin is on, and the optional feature of the command or channel
+    /// is not, or it was turned off while the call ran (ADR-0055, decision
+    /// 8).
+    #[error("the feature {feature} of the plugin {plugin} is off")]
+    FeatureOff {
+        /// The plugin's ID.
+        plugin: String,
+        /// The feature's ID.
+        feature: String,
+    },
 }
 
 impl HostRefusal {
@@ -200,12 +210,22 @@ impl HostRefusal {
         "input_too_large",
         "host_service_failed",
         "not_allowed",
+        "feature_off",
     ];
 
     /// The refusal of a call of `plugin`, which is off.
     pub fn plugin_off(plugin: &str) -> Self {
         Self::PluginOff {
             plugin: plugin.to_owned(),
+        }
+    }
+
+    /// The refusal of a call of the feature `feature` of `plugin`, which is
+    /// off while the plugin is on.
+    pub fn feature_off(plugin: &str, feature: &str) -> Self {
+        Self::FeatureOff {
+            plugin: plugin.to_owned(),
+            feature: feature.to_owned(),
         }
     }
 
@@ -220,6 +240,7 @@ impl HostRefusal {
             Self::InputTooLarge { .. } => "input_too_large",
             Self::HostServiceFailed => "host_service_failed",
             Self::NotAllowed => "not_allowed",
+            Self::FeatureOff { .. } => "feature_off",
         }
     }
 }
@@ -253,6 +274,7 @@ mod tests {
             HostRefusal::InputTooLarge { max_bytes: 65_536 },
             HostRefusal::HostServiceFailed,
             HostRefusal::NotAllowed,
+            HostRefusal::feature_off("workers", "databases"),
         ]
     }
 
@@ -283,6 +305,14 @@ mod tests {
             })
             .unwrap(),
             serde_json::json!({ "code": "invalid_input", "field": "name" })
+        );
+        assert_eq!(
+            serde_json::to_value(HostRefusal::feature_off("workers", "databases")).unwrap(),
+            serde_json::json!({ "code": "feature_off", "plugin": "workers", "feature": "databases" })
+        );
+        assert_eq!(
+            HostRefusal::feature_off("workers", "databases").to_string(),
+            "the feature databases of the plugin workers is off"
         );
     }
 

@@ -27,6 +27,7 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - A plugin's view puts a mention into the open conversation's message box through `@mannie/plugin-sdk/message-box`, as if the owner had chosen it from the "@" list (ADR-0054).
 - A command of the palette may have a key, which the shell binds while the command is available and the palette shows (ADR-0053).
 - The warning before closing or quitting counts the terminals that run a command (ADR-0053).
+- Plugins may have optional features, each a table `[features.<id>]` of the manifest with the services that only it uses, which start off and start on the running plugin when the owner turns them on. A feature's contributions, commands and channels have a generation of their own, and turning it off removes them, ends its calls and channels with `feature_off`, waits for its work and releases its services; turning the plugin off stops its features first (ADR-0055).
 
 ### Changed
 

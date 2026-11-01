@@ -25,3 +25,12 @@ export function findPlugin(id: string): PluginDescriptor | undefined {
 export function pluginName(id: string): string {
   return findPlugin(id)?.name() ?? id;
 }
+
+/** The name of a plugin's optional feature, or its ID for a feature that this version does not list. */
+export function featureName(plugin: string, feature: string): string {
+  return (
+    findPlugin(plugin)
+      ?.features.find((entry) => entry.id === feature)
+      ?.name() ?? feature
+  );
+}

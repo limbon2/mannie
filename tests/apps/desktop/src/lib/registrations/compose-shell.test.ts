@@ -65,6 +65,7 @@ const EXAMPLE_PLUGIN: PluginEntry = {
     },
   },
   description: () => 'Adds an example.',
+  features: [],
   id: 'example',
   name: () => 'Example',
 };
@@ -212,6 +213,7 @@ describe('composeShell', () => {
     const quiet: PluginEntry = {
       definition: null,
       description: () => 'Adds a service.',
+      features: [],
       id: 'quiet',
       name: () => 'Quiet',
     };

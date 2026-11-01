@@ -197,11 +197,15 @@ impl RunActor {
             return Err(missing_tool_reason(setup, name));
         };
         if let Some(offered) = setup.plugin_tool(name)
-            && self.runtime.contributions().generation_of(&offered.plugin)
+            && self
+                .runtime
+                .contributions()
+                .generation_of(&offered.plugin, offered.feature.as_deref())
                 != Some(offered.generation)
         {
             return Err(NotRunReason::PluginOff {
                 plugin: offered.plugin.clone(),
+                feature: offered.feature.clone(),
             });
         }
         Ok(tool)
@@ -357,7 +361,8 @@ impl RunActor {
             Some(offered) => {
                 let Some(guard) = self.runtime.begin_plugin_execution(offered) else {
                     let plugin = offered.plugin.clone();
-                    self.end_call(call, NotRunReason::PluginOff { plugin });
+                    let feature = offered.feature.clone();
+                    self.end_call(call, NotRunReason::PluginOff { plugin, feature });
                     return Ok(CallEnd::Ran);
                 };
                 Some(guard)
@@ -406,7 +411,8 @@ impl RunActor {
             Watched::Ended { done, halted } => (*done, halted),
             Watched::Aborted => {
                 let plugin = offered.map_or_else(String::new, |offered| offered.plugin.clone());
-                self.abandon_aborted(call, side_effects, plugin);
+                let feature = offered.and_then(|offered| offered.feature.clone());
+                self.abandon_aborted(call, side_effects, plugin, feature);
                 self.flush(Durability::Full).await?;
                 return Ok(CallEnd::Ran);
             }
@@ -438,17 +444,24 @@ impl RunActor {
         }
     }
 
-    /// Ends a call of a plugin's tool whose execution turning the plugin off
-    /// aborted, while the reply goes on: an operation may have taken effect,
-    /// so it is uncertain; a read did not finish, so it did not run.
-    fn abandon_aborted(&mut self, mut call: StepCall, side_effects: bool, plugin: String) {
+    /// Ends a call of a plugin's tool whose execution turning the plugin, or
+    /// the tool's feature, off aborted, while the reply goes on: an operation
+    /// may have taken effect, so it is uncertain; a read did not finish, so
+    /// it did not run.
+    fn abandon_aborted(
+        &mut self,
+        mut call: StepCall,
+        side_effects: bool,
+        plugin: String,
+        feature: Option<String>,
+    ) {
         tracing::info!(run = %self.run, part = %call.part_id, tool = %call.document.tool, "turning a plugin off aborted a tool call");
         if !side_effects {
-            self.end_call(call, NotRunReason::PluginOff { plugin });
+            self.end_call(call, NotRunReason::PluginOff { plugin, feature });
             return;
         }
         call.document.status = ToolCallStatus::Uncertain;
-        call.document.interruption = Some(Interruption::PluginOff { plugin });
+        call.document.interruption = Some(Interruption::PluginOff { plugin, feature });
         call.document.ended_at = Some(self.now());
         self.finish_call(&call);
     }

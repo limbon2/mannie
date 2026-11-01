@@ -23,6 +23,7 @@ function describePlugin(entry: PluginEntry): PluginDescriptor {
   return {
     description: entry.description,
     failure: entry.definition?.failure ?? (() => null),
+    features: entry.features,
     id: entry.id,
     name: entry.name,
     offQuestion: entry.definition?.offQuestion ?? (() => null),

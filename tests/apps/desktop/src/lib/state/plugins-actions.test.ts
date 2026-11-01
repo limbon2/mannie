@@ -21,6 +21,7 @@ function view(enabled: boolean): PluginView {
   return {
     enabled,
     failure: null,
+    features: [],
     id: 'workers',
     state: enabled ? 'on' : 'off',
     uses: {
@@ -47,6 +48,7 @@ beforeEach(() => {
     {
       description: () => 'Runs tasks on other computers.',
       failure: () => null,
+      features: [],
       id: 'workers',
       name: () => 'Workers',
       offQuestion: (items) => {

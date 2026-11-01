@@ -36,6 +36,7 @@ function plugin(state: PluginState, id = 'workers'): PluginView {
   return {
     enabled: state !== 'off',
     failure: state === 'failed' ? 'storage_failed' : null,
+    features: [],
     id,
     state,
     uses: {

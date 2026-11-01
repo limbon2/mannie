@@ -238,7 +238,8 @@ ${rustPluginVec(plugins, '    ')}
  * the manifest that the entry crate embeds as the host does, writes the
  * plugin's TypeScript bindings into `ui/generated/` of its folder and adds
  * its commands and channels to `interfaces.json` in the launcher's folder,
- * which the desktop binary's build script grants.
+ * which the desktop binary's build script grants, with the ones of each
+ * optional feature, which `task plugins:grants` lists under the feature.
  * @param {LauncherPlugin[]} plugins in the order of their starts
  * @returns {{ cargoToml: string, mainRs: string }}
  */
@@ -275,12 +276,14 @@ workspace = true
 //! Writes each plugin's TypeScript bindings into \`ui/generated/\` of its
 //! folder, and the plugins' commands and channels into \`interfaces.json\` in
 //! the launcher's folder, which the desktop binary's build script grants
-//! (ADR-0034, decisions 8 and 9). \`task gen\` runs it.
+//! (ADR-0034, decisions 8 and 9), with the ones of each optional feature
+//! (ADR-0055, decision 5). \`task gen\` runs it.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use mannie_plugin_sdk::bindings::export_plugin;
+use mannie_plugin_sdk::ipc::Endpoint;
 use mannie_plugin_sdk::manifest::Manifest;
 use mannie_plugin_sdk::plugin::PluginEntry;
 use serde_json::json;
@@ -305,6 +308,15 @@ fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
 }
 
+/// The names of the endpoints of the optional feature \`feature\`.
+fn names_of(endpoints: &[Endpoint], feature: &str) -> Vec<&'static str> {
+    endpoints
+        .iter()
+        .filter(|endpoint| endpoint.feature == Some(feature))
+        .map(|endpoint| endpoint.name)
+        .collect()
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = repository_root();
     let mut interfaces = Vec::new();
@@ -315,11 +327,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let interface = plugin.entry.plugin.interface();
         let folder = root.join(plugin.folder).join("ui/generated");
         export_plugin(id, &interface, &folder)?;
+        let features: Vec<_> = interface
+            .features()
+            .into_iter()
+            .map(|feature| {
+                json!({
+                    "id": feature,
+                    "commands": names_of(interface.commands(), feature),
+                    "channels": names_of(interface.channels(), feature),
+                })
+            })
+            .collect();
         interfaces.push(json!({
             "id": id,
             "validation": plugin.validation,
             "commands": interface.command_names(),
             "channels": interface.channel_names(),
+            "features": features,
         }));
     }
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../interfaces.json");

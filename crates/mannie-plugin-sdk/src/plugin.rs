@@ -13,15 +13,20 @@
 //! runs until the host stops it. The host keeps the instance, asks it for the
 //! plugin's work in progress, and stops it after it took the plugin's
 //! contributions out of the core's consumers and its calls in flight ended.
+//!
+//! A plugin's optional features start on its running instance (ADR-0055,
+//! decision 5), each one while the owner keeps it on, and return a
+//! [`FeatureStarted`] of the same shape, whose contributions the core keeps as
+//! a group of their own.
 
 use std::fmt;
 use std::sync::Arc;
 
 use crate::BoxFuture;
-use crate::context::{DefaultContext, StartContext};
+use crate::context::{DefaultContext, FeatureContext, StartContext};
 use crate::contracts::WorkItem;
 use crate::contributions::Contributions;
-use crate::error::StartFailure;
+use crate::error::{FEATURE_UNKNOWN, StartFailure};
 use crate::ipc::{Handlers, Interface};
 use crate::services::store::StoreModule;
 
@@ -115,6 +120,79 @@ pub trait Instance: Send + Sync + fmt::Debug + 'static {
     /// Ends the plugin's background work, after the host took its
     /// contributions out of the core's consumers. Work in progress ends as
     /// it ends when Mannie quits, and nothing is repeated or lost.
+    fn stop(self: Box<Self>) -> BoxFuture<'static, ()>;
+
+    /// Starts one of the plugin's optional features, which the owner turned
+    /// on, with the services that the feature declares (ADR-0055, decision
+    /// 5). The host calls it after the plugin started, and again after the
+    /// feature stopped and the owner turned it on once more. A start that
+    /// fails leaves nothing of the feature running, and the plugin stays
+    /// on. A plugin without features keeps this default, which refuses with
+    /// `feature_unknown`.
+    fn start_feature(
+        &self,
+        _context: FeatureContext,
+    ) -> BoxFuture<'static, Result<FeatureStarted, StartFailure>> {
+        Box::pin(std::future::ready(Err(StartFailure::new(FEATURE_UNKNOWN))))
+    }
+}
+
+/// A feature that started: what it contributes while it is on, the handlers
+/// of its commands and channels, and the instance that the host keeps until
+/// it stops the feature.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct FeatureStarted {
+    /// The feature's entries of the extension points, which the host hands
+    /// to the core's consumers all or none, apart from its plugin's.
+    pub contributions: Contributions,
+    /// The handlers of the commands and channels that the plugin's interface
+    /// names for the feature.
+    pub handlers: Handlers,
+    /// The running feature.
+    pub instance: Box<dyn FeatureInstance>,
+}
+
+impl FeatureStarted {
+    /// A feature that runs as `instance`, contributes nothing yet and has no
+    /// handlers.
+    pub fn new(instance: impl FeatureInstance) -> Self {
+        Self {
+            contributions: Contributions::new(),
+            handlers: Handlers::new(),
+            instance: Box::new(instance),
+        }
+    }
+
+    /// The same start, contributing `contributions`.
+    #[must_use]
+    pub fn with_contributions(mut self, contributions: Contributions) -> Self {
+        self.contributions = contributions;
+        self
+    }
+
+    /// The same start, with `handlers` for the feature's commands and
+    /// channels.
+    #[must_use]
+    pub fn with_handlers(mut self, handlers: Handlers) -> Self {
+        self.handlers = handlers;
+        self
+    }
+}
+
+/// A running feature of a plugin, which the host keeps from its start until
+/// it stops the feature, or the plugin.
+pub trait FeatureInstance: Send + Sync + fmt::Debug + 'static {
+    /// The feature's work in progress, which turning the feature off lets
+    /// go, as items that the plugin's UI words. A feature that cannot read
+    /// its work logs why and reports none.
+    fn work(&self) -> BoxFuture<'static, Vec<WorkItem>> {
+        Box::pin(std::future::ready(Vec::new()))
+    }
+
+    /// Ends the feature's background work, after the host took its
+    /// contributions out of the core's consumers and its calls in flight
+    /// ended.
     fn stop(self: Box<Self>) -> BoxFuture<'static, ()>;
 }
 

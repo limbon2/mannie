@@ -19,7 +19,7 @@ use std::time::Duration;
 use futures_util::stream::{self, BoxStream as FuturesBoxStream};
 use futures_util::{FutureExt, StreamExt};
 use mannie_plugin_sdk::host::{BindRefusal, PluginBinding, ServiceProvider};
-use mannie_plugin_sdk::ids::PluginId;
+use mannie_plugin_sdk::ids::Contributor;
 use mannie_plugin_sdk::service::{BoundService, Service};
 use mannie_plugin_sdk::services::local_servers::{
     LocalServer, LocalServerError, LocalServerSpec, LocalServers, LocalServersApi, LocatedProgram,
@@ -166,17 +166,18 @@ impl ServiceProvider for LocalServersProvider {
         Ok(BoundService::new::<LocalServers>(std::sync::Arc::new(
             BoundServers {
                 runtime: self.runtime.clone(),
-                plugin: binding.id.as_str().to_owned(),
+                plugin: binding.contributor().key(),
             },
         )))
     }
 
-    /// Ends the servers that the plugin started, once it stopped or failed
-    /// to start, so none outlives it (T-59).
-    fn release(&self, plugin: &PluginId) -> BoxFuture<'static, ()> {
+    /// Ends the servers that the plugin, or the feature, started, once it
+    /// stopped or failed to start, so none outlives it (T-59). A binding
+    /// keeps the key of its contributor as the owner of its servers.
+    fn release(&self, contributor: &Contributor) -> BoxFuture<'static, ()> {
         let runtime = self.runtime.clone();
-        let plugin = plugin.as_str().to_owned();
-        async move { runtime.inner.local_servers.end(Some(&plugin)).await }.boxed()
+        let owner = contributor.key();
+        async move { runtime.inner.local_servers.end(Some(&owner)).await }.boxed()
     }
 }
 

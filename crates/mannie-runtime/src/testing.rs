@@ -21,7 +21,7 @@ use mannie_plugin_sdk::contributions::Contributions;
 use mannie_plugin_sdk::host::{
     ContributionRefusal, add_contributions, drain_contributions, remove_contributions,
 };
-use mannie_plugin_sdk::ids::PluginId;
+use mannie_plugin_sdk::ids::{Contributor, FeatureId, PluginId};
 use mannie_plugin_sdk::points::executors::{
     ExecutorRefusal, ExecutorSection, FollowUpPlan, PlanCall, PlanError, SubmitError, TaskExecutor,
     TaskPlan, TaskSubmission,
@@ -1323,23 +1323,92 @@ pub fn add_plugin(
     plugin: &str,
     contributions: Contributions,
 ) -> Result<(), ContributionRefusal> {
+    let contributor = contributor(plugin, None);
+    add_contributions(
+        &runtime.contribution_consumers(),
+        &contributor,
+        contributions,
+    )
+}
+
+/// Takes the contributions of a plugin's optional feature as the plugin host
+/// does when the feature starts, apart from the plugin's own (ADR-0055,
+/// decision 6).
+///
+/// # Panics
+///
+/// When `plugin` is not a plugin ID or `feature` not a feature's ID, which
+/// fails the test.
+pub fn add_feature(
+    runtime: &Runtime,
+    plugin: &str,
+    feature: &str,
+    contributions: Contributions,
+) -> Result<(), ContributionRefusal> {
+    let contributor = contributor(plugin, Some(feature));
+    add_contributions(
+        &runtime.contribution_consumers(),
+        &contributor,
+        contributions,
+    )
+}
+
+/// The contributor of a plugin, or of one of its features, as the test names
+/// them.
+fn contributor(plugin: &str, feature: Option<&str>) -> Contributor {
     let plugin = PluginId::parse(plugin).expect("the test names a plugin ID");
-    add_contributions(&runtime.contribution_consumers(), &plugin, contributions)
+    match feature {
+        None => Contributor::plugin(plugin),
+        Some(feature) => Contributor::feature(
+            plugin,
+            FeatureId::parse(feature).expect("the test names a feature's ID"),
+        ),
+    }
 }
 
 /// Drops a plugin's contributions as the plugin host does when the plugin
-/// stops. Returns whether the runtime held them.
+/// stops, leaving its features' contributions, which the host drops first.
+/// Returns whether the runtime held them.
 ///
 /// # Panics
 ///
 /// When `plugin` is not a plugin ID, which fails the test.
 pub fn remove_plugin(runtime: &Runtime, plugin: &str) -> bool {
-    let plugin = PluginId::parse(plugin).expect("the test names a plugin ID");
+    remove_contributor(runtime, &contributor(plugin, None))
+}
+
+/// Drops a contributor's contributions and says whether the runtime held
+/// them.
+fn remove_contributor(runtime: &Runtime, contributor: &Contributor) -> bool {
     let registered = runtime
         .contributions()
-        .generation_of(plugin.as_str())
+        .generation_of(
+            contributor.plugin_id().as_str(),
+            contributor.feature_id().map(FeatureId::as_str),
+        )
         .is_some();
-    remove_contributions(&runtime.contribution_consumers(), &plugin);
+    remove_contributions(&runtime.contribution_consumers(), contributor);
+    registered
+}
+
+/// Turns a plugin's feature off as the plugin host does: drops the feature's
+/// contributions, then waits up to `grace` for the executions of its tools
+/// and aborts the rest (ADR-0055, decision 7). Returns whether the runtime
+/// held them.
+///
+/// # Panics
+///
+/// When `plugin` is not a plugin ID or `feature` not a feature's ID, which
+/// fails the test.
+pub async fn turn_off_feature(
+    runtime: &Runtime,
+    plugin: &str,
+    feature: &str,
+    grace: Duration,
+) -> bool {
+    let contributor = contributor(plugin, Some(feature));
+    let registered = remove_contributor(runtime, &contributor);
+    drain_contributions(&runtime.contribution_consumers(), &contributor, grace).await;
     registered
 }
 
@@ -1363,9 +1432,9 @@ pub fn published_tools(runtime: &Runtime) -> Vec<String> {
 ///
 /// When `plugin` is not a plugin ID, which fails the test.
 pub async fn turn_off_plugin(runtime: &Runtime, plugin: &str, grace: Duration) -> bool {
-    let id = PluginId::parse(plugin).expect("the test names a plugin ID");
-    let registered = remove_plugin(runtime, plugin);
-    drain_contributions(&runtime.contribution_consumers(), &id, grace).await;
+    let contributor = contributor(plugin, None);
+    let registered = remove_contributor(runtime, &contributor);
+    drain_contributions(&runtime.contribution_consumers(), &contributor, grace).await;
     registered
 }
 

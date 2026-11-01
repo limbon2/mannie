@@ -116,10 +116,16 @@ pub enum NotRunReason {
         refusal: Refusal,
     },
     /// The owner turned off the plugin of the tool, or of the agent that the
-    /// call gives a task to, after the reply started (ADR-0030, decision 8).
+    /// call gives a task to, after the reply started (ADR-0030, decision 8),
+    /// or the plugin's optional feature that the tool belongs to (ADR-0055,
+    /// decision 7).
     PluginOff {
         /// The plugin's ID.
         plugin: String,
+        /// The feature's ID, when the owner turned off the tool's feature and
+        /// the plugin stays on. Records before features have none.
+        #[serde(default)]
+        feature: Option<String>,
     },
 }
 
@@ -161,10 +167,15 @@ pub enum Interruption {
     /// core let it go (ADR-0034, decision 3).
     Stopped,
     /// The owner turned off the operation's plugin while it ran, and it did
-    /// not end in time (ADR-0034, decision 8).
+    /// not end in time (ADR-0034, decision 8), or the plugin's optional
+    /// feature that the operation's tool belongs to (ADR-0055, decision 7).
     PluginOff {
         /// The plugin's ID.
         plugin: String,
+        /// The feature's ID, when the owner turned off the tool's feature and
+        /// the plugin stays on. Records before features have none.
+        #[serde(default)]
+        feature: Option<String>,
     },
 }
 
@@ -427,10 +438,29 @@ mod tests {
     fn an_interruption_serializes_with_its_reason_and_older_documents_have_none() {
         assert_eq!(
             serde_json::to_value(Interruption::PluginOff {
-                plugin: "ssh".to_owned()
+                plugin: "ssh".to_owned(),
+                feature: None,
             })
             .unwrap(),
-            serde_json::json!({ "reason": "plugin_off", "plugin": "ssh" })
+            serde_json::json!({ "reason": "plugin_off", "plugin": "ssh", "feature": null })
+        );
+        assert_eq!(
+            serde_json::to_value(Interruption::PluginOff {
+                plugin: "workers".to_owned(),
+                feature: Some("databases".to_owned()),
+            })
+            .unwrap(),
+            serde_json::json!({ "reason": "plugin_off", "plugin": "workers", "feature": "databases" })
+        );
+        assert_eq!(
+            serde_json::from_value::<Interruption>(
+                serde_json::json!({ "reason": "plugin_off", "plugin": "ssh" })
+            )
+            .unwrap(),
+            Interruption::PluginOff {
+                plugin: "ssh".to_owned(),
+                feature: None,
+            }
         );
         assert_eq!(
             serde_json::to_value(Interruption::Stopped).unwrap(),

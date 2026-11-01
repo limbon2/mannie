@@ -58,6 +58,9 @@ export function pluginsFailureMessage(failure: Failure<PluginsError>): string {
     case 'store_unavailable': {
       return m.plugins_error_store_unavailable();
     }
+    case 'unknown_feature': {
+      return m.plugins_error_unknown_feature();
+    }
     case 'unknown_plugin': {
       return m.plugins_error_unknown_plugin();
     }

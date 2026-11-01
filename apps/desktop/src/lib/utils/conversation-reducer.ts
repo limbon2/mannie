@@ -238,7 +238,10 @@ export function applyUpdate(state: TranscriptState, update: ConversationUpdate):
           return 'resubscribe';
         }
         // Following a task conversation again after its plugin stopped
-        // shows that the plugin is off.
+        // shows that the plugin is off. No conversation belongs to an
+        // optional feature, whose task executors the runtime refuses
+        // (ADR-0055, decision 6), so `feature_off` only follows it again.
+        case 'feature_off':
         case 'plugin_off': {
           return 'resubscribe';
         }

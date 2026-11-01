@@ -50,6 +50,10 @@ pub const SDK_INCOMPATIBLE: &str = "sdk_incompatible";
 /// of the core takes (decision 6).
 pub const CONTRIBUTIONS_REFUSED: &str = "contributions_refused";
 
+/// The code of a feature that the plugin's manifest lists and that the
+/// plugin's running instance does not start (ADR-0055, decision 5).
+pub const FEATURE_UNKNOWN: &str = "feature_unknown";
+
 #[cfg(test)]
 mod tests {
     use super::{GRANT_MISSING, StartFailure};

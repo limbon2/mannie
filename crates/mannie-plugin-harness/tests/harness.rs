@@ -13,13 +13,15 @@ use mannie_plugin_harness::conformance::conformance;
 use mannie_plugin_harness::host::{CallFailure, HostOptions, HostedPlugin};
 use mannie_plugin_harness::types::PluginState;
 use mannie_plugin_sdk::BoxFuture;
-use mannie_plugin_sdk::context::StartContext;
-use mannie_plugin_sdk::error::StartFailure;
+use mannie_plugin_sdk::context::{FeatureContext, StartContext};
+use mannie_plugin_sdk::error::{FEATURE_UNKNOWN, StartFailure};
 use mannie_plugin_sdk::ipc::{
     ChannelMessage, ChannelSpec, CommandSpec, Handlers, HostRefusal, InputRefusal, Interface,
     PluginError, Validate,
 };
-use mannie_plugin_sdk::plugin::{Instance, Plugin, PluginEntry, Started};
+use mannie_plugin_sdk::plugin::{
+    FeatureInstance, FeatureStarted, Instance, Plugin, PluginEntry, Started,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use specta::Type;
@@ -289,6 +291,150 @@ async fn the_check_reports_a_code_of_the_host() {
     assert_eq!(problems.len(), 1, "{problems:#?}");
     assert!(
         problems[0].starts_with("the interface is refused"),
+        "{problems:#?}"
+    );
+}
+
+/// `farewell`: a farewell for a name, a command of the feature `farewell`.
+enum FarewellCommand {}
+
+impl CommandSpec for FarewellCommand {
+    const NAME: &'static str = "farewell";
+    const DOCS: &'static str = "A farewell for a name.";
+    type Input = Greet;
+    type Output = String;
+    type Error = GreeterError;
+}
+
+/// How a plugin with a feature breaks the rules of features.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FeatureBreach {
+    None,
+    /// The feature's start hands over no handler of its command.
+    MissingHandler,
+    /// The plugin's instance does not start the feature that its manifest
+    /// lists.
+    NotStarted,
+}
+
+/// A plugin with the optional feature `farewell` (ADR-0055).
+#[derive(Debug)]
+struct Parting {
+    breach: FeatureBreach,
+}
+
+#[derive(Debug)]
+struct PartingInstance {
+    breach: FeatureBreach,
+}
+
+#[derive(Debug)]
+struct FarewellInstance;
+
+impl FeatureInstance for FarewellInstance {
+    fn stop(self: Box<Self>) -> BoxFuture<'static, ()> {
+        Box::pin(std::future::ready(()))
+    }
+}
+
+impl Instance for PartingInstance {
+    fn stop(self: Box<Self>) -> BoxFuture<'static, ()> {
+        Box::pin(std::future::ready(()))
+    }
+
+    fn start_feature(
+        &self,
+        _context: FeatureContext,
+    ) -> BoxFuture<'static, Result<FeatureStarted, StartFailure>> {
+        let handlers = match self.breach {
+            FeatureBreach::None => Handlers::new().command::<FarewellCommand, _, _>(|input| {
+                std::future::ready(Ok(format!("Goodbye, {}!", input.name)))
+            }),
+            FeatureBreach::MissingHandler => Handlers::new(),
+            FeatureBreach::NotStarted => {
+                return Box::pin(std::future::ready(Err(StartFailure::new(FEATURE_UNKNOWN))));
+            }
+        };
+        Box::pin(std::future::ready(Ok(FeatureStarted::new(
+            FarewellInstance,
+        )
+        .with_handlers(handlers))))
+    }
+}
+
+impl Plugin for Parting {
+    fn interface(&self) -> Interface {
+        Interface::new()
+            .command::<GreetCommand>()
+            .feature("farewell", Interface::command::<FarewellCommand>)
+    }
+
+    fn start(&self, _context: StartContext) -> BoxFuture<'static, Result<Started, StartFailure>> {
+        let handlers = Handlers::new().command::<GreetCommand, _, _>(|input| {
+            std::future::ready(Ok(greeting(Some(input.name))))
+        });
+        let instance = PartingInstance {
+            breach: self.breach,
+        };
+        Box::pin(std::future::ready(Ok(
+            Started::new(instance).with_handlers(handlers)
+        )))
+    }
+}
+
+fn parting(breach: FeatureBreach) -> PluginEntry {
+    let manifest = concat!(manifest!("parting"), "\n[features.farewell]\n");
+    PluginEntry::new(manifest, Arc::new(Parting { breach }))
+}
+
+#[tokio::test]
+async fn a_hosted_feature_answers_while_it_is_on() {
+    let hosted = HostedPlugin::new(parting(FeatureBreach::None), HostOptions::new()).await;
+    hosted.turn_on().await;
+
+    let while_off = hosted.invoke("farewell", json!({ "name": "Ada" })).await;
+    let view = hosted.turn_feature_on("farewell").await;
+    let farewell = hosted.invoke("farewell", json!({ "name": "Ada" })).await;
+    let off = hosted.turn_feature_off("farewell").await;
+
+    assert_eq!(
+        while_off,
+        Err(CallFailure::Host(HostRefusal::feature_off(
+            "parting", "farewell"
+        )))
+    );
+    assert_eq!(view.state, PluginState::On);
+    assert_eq!(farewell, Ok(json!("Goodbye, Ada!")));
+    assert_eq!(off.state, PluginState::Off);
+}
+
+#[tokio::test]
+async fn a_plugin_whose_feature_keeps_the_rules_conforms() {
+    assert_eq!(
+        conformance(parting(FeatureBreach::None), HostOptions::new()).await,
+        Vec::<String>::new()
+    );
+}
+
+#[tokio::test]
+async fn the_check_reports_a_features_command_without_a_handler() {
+    let problems = conformance(parting(FeatureBreach::MissingHandler), HostOptions::new()).await;
+
+    assert!(
+        problems.iter().any(|problem| problem
+            .contains("the start of the feature farewell handed over handlers of the commands []")),
+        "{problems:#?}"
+    );
+}
+
+#[tokio::test]
+async fn the_check_reports_a_feature_that_the_plugin_does_not_start() {
+    let problems = conformance(parting(FeatureBreach::NotStarted), HostOptions::new()).await;
+
+    assert_eq!(problems.len(), 1, "{problems:#?}");
+    assert!(
+        problems[0].contains("the feature farewell did not start")
+            && problems[0].contains("feature_unknown"),
         "{problems:#?}"
     );
 }

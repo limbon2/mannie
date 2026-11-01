@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::contracts::Clock;
 use crate::error::{GRANT_MISSING, SERVICE_UNAVAILABLE, StartFailure};
-use crate::ids::PluginId;
+use crate::ids::{FeatureId, PluginId};
 use crate::service::{BoundService, Service};
 use crate::services::store::ModuleQueries;
 use crate::version::SDK_MAJOR;
@@ -112,13 +112,106 @@ impl StartContext {
     /// the host could not bind with `service_unavailable`, so a plugin
     /// returns the failure from its start as it is.
     pub fn service<S: Service>(&self) -> Result<Arc<S::Api>, StartFailure> {
-        if !self.declared.contains(S::NAME) {
-            return Err(StartFailure::new(GRANT_MISSING));
+        bound_service::<S>(&self.declared, &self.bound)
+    }
+}
+
+/// The service `S` among the services that a manifest declares and the host
+/// bound: `grant_missing` for an undeclared one, `service_unavailable` for a
+/// declared one without its binding.
+fn bound_service<S: Service>(
+    declared: &BTreeSet<String>,
+    bound: &BTreeMap<&'static str, BoundService>,
+) -> Result<Arc<S::Api>, StartFailure> {
+    if !declared.contains(S::NAME) {
+        return Err(StartFailure::new(GRANT_MISSING));
+    }
+    bound
+        .get(S::NAME)
+        .and_then(BoundService::get::<S>)
+        .ok_or_else(|| StartFailure::new(SERVICE_UNAVAILABLE))
+}
+
+/// What the start of a plugin's optional feature receives (ADR-0055,
+/// decision 5): the plugin's ID, the feature's ID, the host, the clock of
+/// every timestamp, and the services that the feature declares in the
+/// plugin's manifest, which the host bound for the feature alone. The
+/// plugin's own services stay with the plugin's instance, which starts the
+/// feature.
+pub struct FeatureContext {
+    plugin: PluginId,
+    feature: FeatureId,
+    host: HostInfo,
+    clock: Arc<dyn Clock>,
+    /// The services that the feature declares, by name.
+    declared: BTreeSet<String>,
+    /// The services that the host bound for the feature, by name.
+    bound: BTreeMap<&'static str, BoundService>,
+}
+
+impl FeatureContext {
+    /// The context of a start of the feature `feature` of `plugin` on
+    /// `host`, with the services that the feature declares and those that
+    /// the host bound.
+    #[cfg(feature = "host")]
+    pub fn new(
+        plugin: PluginId,
+        feature: FeatureId,
+        host: HostInfo,
+        clock: Arc<dyn Clock>,
+        declared: BTreeSet<String>,
+        bound: BTreeMap<&'static str, BoundService>,
+    ) -> Self {
+        Self {
+            plugin,
+            feature,
+            host,
+            clock,
+            declared,
+            bound,
         }
-        self.bound
-            .get(S::NAME)
-            .and_then(BoundService::get::<S>)
-            .ok_or_else(|| StartFailure::new(SERVICE_UNAVAILABLE))
+    }
+
+    /// The plugin's ID.
+    pub fn plugin(&self) -> &PluginId {
+        &self.plugin
+    }
+
+    /// The feature's ID.
+    pub fn feature(&self) -> &FeatureId {
+        &self.feature
+    }
+
+    /// The host that runs the plugin.
+    pub fn host(&self) -> &HostInfo {
+        &self.host
+    }
+
+    /// The clock of every timestamp.
+    pub fn clock(&self) -> Arc<dyn Clock> {
+        Arc::clone(&self.clock)
+    }
+
+    /// The service `S`, bound to the feature. A service that the feature
+    /// does not declare fails with `grant_missing`, also one of its plugin,
+    /// whose instance holds it already, and a declared one that the host
+    /// could not bind with `service_unavailable`.
+    pub fn service<S: Service>(&self) -> Result<Arc<S::Api>, StartFailure> {
+        bound_service::<S>(&self.declared, &self.bound)
+    }
+}
+
+// As for a plugin's start, only the names of the services show.
+impl fmt::Debug for FeatureContext {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("FeatureContext")
+            .field("plugin", &self.plugin)
+            .field("feature", &self.feature)
+            .field("host", &self.host)
+            .field("declared", &self.declared)
+            .field("bound", &self.bound.keys().collect::<Vec<_>>())
+            .finish_non_exhaustive()
     }
 }
 
@@ -172,10 +265,10 @@ mod tests {
     use std::fmt;
     use std::sync::Arc;
 
-    use super::{HostInfo, HostProfile, StartContext};
+    use super::{FeatureContext, HostInfo, HostProfile, StartContext};
     use crate::contracts::{Clock, UtcMillis};
     use crate::error::{GRANT_MISSING, SERVICE_UNAVAILABLE};
-    use crate::ids::PluginId;
+    use crate::ids::{FeatureId, PluginId};
     use crate::service::{BoundService, Service};
     use crate::version::SDK_MAJOR;
 
@@ -273,5 +366,42 @@ mod tests {
 
         assert!(debug.contains(r#"bound: ["greeter"]"#), "{debug}");
         assert!(!debug.contains("hello"), "{debug}");
+    }
+
+    /// A start of the feature `history` of `notes`, which declares only
+    /// `farewell`, bound by the host.
+    fn feature_context() -> FeatureContext {
+        let api: Arc<dyn Greeting> = Arc::new(Fixed("goodbye"));
+        FeatureContext::new(
+            PluginId::parse("notes").unwrap(),
+            FeatureId::parse("history").unwrap(),
+            HostInfo::new("0.3.0", HostProfile::Validation),
+            Arc::new(Stopped),
+            BTreeSet::from(["farewell".to_owned()]),
+            BTreeMap::from([("farewell", BoundService::new::<Farewell>(api))]),
+        )
+    }
+
+    #[test]
+    fn a_feature_gets_only_the_services_that_it_declares() {
+        let context = feature_context();
+
+        let farewell = context.service::<Farewell>().unwrap();
+        let plugins = context.service::<Greeter>().unwrap_err();
+
+        assert_eq!(farewell.greet(), "goodbye");
+        assert_eq!(plugins.code(), GRANT_MISSING);
+        assert_eq!(context.plugin().as_str(), "notes");
+        assert_eq!(context.feature().as_str(), "history");
+        assert_eq!(context.clock().now(), UtcMillis::from_millis(42));
+    }
+
+    #[test]
+    fn a_feature_context_shows_the_names_of_its_services_and_not_their_apis() {
+        let debug = format!("{:?}", feature_context());
+
+        assert!(debug.contains(r#"bound: ["farewell"]"#), "{debug}");
+        assert!(debug.contains("history"), "{debug}");
+        assert!(!debug.contains("goodbye"), "{debug}");
     }
 }

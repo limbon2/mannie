@@ -522,7 +522,8 @@ async fn turning_the_plugin_off_while_a_call_waits_for_the_owner_runs_nothing() 
     assert_eq!(
         call.not_run,
         Some(NotRunReason::PluginOff {
-            plugin: PLUGIN.to_owned()
+            plugin: PLUGIN.to_owned(),
+            feature: None,
         })
     );
     assert_eq!(shell.executions(), Vec::new());
@@ -553,7 +554,8 @@ async fn turning_the_plugin_off_makes_a_running_operation_uncertain_and_the_repl
     assert_eq!(
         call.interruption,
         Some(Interruption::PluginOff {
-            plugin: PLUGIN.to_owned()
+            plugin: PLUGIN.to_owned(),
+            feature: None,
         })
     );
 }

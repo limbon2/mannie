@@ -15,7 +15,7 @@ use mannie_plugin_sdk::plugin::PluginEntry;
 use mannie_plugins::{PluginHostDeps, PluginList};
 use mannie_runtime::testing::{Harness, HarnessOptions};
 use mannie_types::clock::SystemClock;
-use mannie_types::plugins::PluginView;
+use mannie_types::plugins::{FeatureView, PluginView};
 use serde_json::Value;
 
 // What a test reads of the host: its answers to the plugin's calls, and the
@@ -163,6 +163,52 @@ impl HostedPlugin {
             .set_enabled(&self.id, false)
             .await
             .expect("the host keeps the choice")
+    }
+
+    /// The plugin's optional feature `feature` as the Plugins page shows it
+    /// under the plugin (ADR-0055).
+    ///
+    /// # Panics
+    ///
+    /// When the plugin's manifest lists no such feature, which fails the
+    /// test.
+    pub fn feature_view(&self, feature: &str) -> FeatureView {
+        self.view()
+            .features
+            .into_iter()
+            .find(|view| view.id == feature)
+            .expect("the plugin's manifest lists the feature")
+    }
+
+    /// Turns the plugin's optional feature `feature` on, as its switch does,
+    /// and returns the feature's view once its start ended, which happens at
+    /// once only while the plugin is on (ADR-0055, decision 4).
+    ///
+    /// # Panics
+    ///
+    /// When the host cannot keep the owner's choice or the manifest lists no
+    /// such feature, which fails the test.
+    pub async fn turn_feature_on(&self, feature: &str) -> FeatureView {
+        self.host
+            .set_feature_enabled(&self.id, feature, true)
+            .await
+            .expect("the host keeps the choice");
+        self.feature_view(feature)
+    }
+
+    /// Turns the plugin's optional feature `feature` off, as its switch does,
+    /// and returns the feature's view once it stopped.
+    ///
+    /// # Panics
+    ///
+    /// When the host cannot keep the owner's choice or the manifest lists no
+    /// such feature, which fails the test.
+    pub async fn turn_feature_off(&self, feature: &str) -> FeatureView {
+        self.host
+            .set_feature_enabled(&self.id, feature, false)
+            .await
+            .expect("the host keeps the choice");
+        self.feature_view(feature)
     }
 
     /// Calls the plugin's command `command` with `input` through the host's

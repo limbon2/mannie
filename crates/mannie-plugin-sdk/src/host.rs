@@ -16,6 +16,10 @@
 //! one point with one ID. A consumer applies what needs the core: a `Global`
 //! ID that the core or another plugin has, and the checks of its point, such
 //! as the name of a tool.
+//!
+//! A plugin's optional feature contributes as a [`Contributor`] of its own
+//! (ADR-0055, decision 6): its contributions are added and dropped apart from
+//! its plugin's, and its entries follow the rules of IDs of its plugin.
 
 use std::fmt;
 use std::sync::Arc;
@@ -25,7 +29,7 @@ use crate::BoxFuture;
 use crate::context::HostProfile;
 use crate::contracts::WorkItem;
 use crate::contributions::{Contributions, IdRule, PointInfo};
-use crate::ids::{PluginId, owned_by};
+use crate::ids::{Contributor, FeatureId, PluginId, owned_by};
 use crate::manifest::Manifest;
 use crate::service::BoundService;
 
@@ -47,17 +51,20 @@ pub trait ServiceProvider: Send + Sync + fmt::Debug + 'static {
     /// with `service_unavailable`.
     fn bind(&self, binding: &PluginBinding<'_>) -> Result<BoundService, BindRefusal>;
 
-    /// Releases what the service holds for a plugin, once the plugin stopped
-    /// or its start failed, such as the local servers that it started, which
-    /// end with it (ADR-0043, decision 5). The host calls it for every
-    /// provider. A provider that holds nothing for a plugin keeps this
-    /// default, which does nothing.
-    fn release(&self, _plugin: &PluginId) -> BoxFuture<'static, ()> {
+    /// Releases what the service holds for a contributor, once the plugin or
+    /// the feature stopped or its start failed, such as the local servers
+    /// that it started, which end with it (ADR-0043, decision 5). The host
+    /// calls it for every provider: for a feature's services as the feature
+    /// stops, and for the plugin's own as the plugin stops. A provider that
+    /// holds nothing for a contributor keeps this default, which does
+    /// nothing.
+    fn release(&self, _contributor: &Contributor) -> BoxFuture<'static, ()> {
         Box::pin(std::future::ready(()))
     }
 }
 
-/// The plugin that a provider binds a service to.
+/// The plugin that a provider binds a service to, and the feature for a
+/// service that only the feature declares (ADR-0055, decision 5).
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub struct PluginBinding<'a> {
@@ -67,6 +74,9 @@ pub struct PluginBinding<'a> {
     pub manifest: &'a Manifest,
     /// How the host was built.
     pub profile: HostProfile,
+    /// The feature that declares the service, or `None` for a service of the
+    /// plugin itself.
+    pub feature: Option<&'a FeatureId>,
 }
 
 impl<'a> PluginBinding<'a> {
@@ -77,6 +87,22 @@ impl<'a> PluginBinding<'a> {
             id,
             manifest,
             profile,
+            feature: None,
+        }
+    }
+
+    /// The same binding, for a service that the feature `feature` declares.
+    #[must_use]
+    pub fn for_feature(mut self, feature: &'a FeatureId) -> Self {
+        self.feature = Some(feature);
+        self
+    }
+
+    /// The contributor whose service this binds: the plugin, or its feature.
+    pub fn contributor(&self) -> Contributor {
+        match self.feature {
+            None => Contributor::plugin(self.id.clone()),
+            Some(feature) => Contributor::feature(self.id.clone(), feature.clone()),
         }
     }
 }
@@ -121,8 +147,12 @@ pub const RESERVED_ARGUMENT: &str = "reserved_argument";
 /// The code of a second entry of a `PluginKind` point, which takes one entry
 /// from each plugin.
 pub const TOO_MANY_ENTRIES: &str = "too_many_entries";
-/// The code of a plugin whose contributions a consumer holds already.
+/// The code of a plugin, or a feature, whose contributions a consumer holds
+/// already.
 pub const PLUGIN_REGISTERED: &str = "plugin_registered";
+/// The code of a feature's entry of a `PluginKind` point, which takes one
+/// entry from each plugin and none from a feature (ADR-0055, decision 6).
+pub const FEATURE_POINT: &str = "feature_point";
 
 /// A part of the core that consumes the entries of some points, such as the
 /// runtime, which consumes tools, agents, sections, executors, mention
@@ -135,39 +165,42 @@ pub trait ContributionConsumer: Send + Sync + fmt::Debug + 'static {
     /// The points whose entries the consumer takes.
     fn points(&self) -> Vec<PointInfo>;
 
-    /// Refuses a plugin's entries without taking any of them.
+    /// Refuses a contributor's entries without taking any of them.
     fn check(
         &self,
-        plugin: &PluginId,
+        contributor: &Contributor,
         contributions: &Contributions,
     ) -> Result<(), ContributionRefusal>;
 
-    /// Takes a plugin's entries, all or none. It checks them again, because
-    /// another plugin may have taken an ID since [`check`](Self::check).
+    /// Takes a contributor's entries, all or none. It checks them again,
+    /// because another plugin may have taken an ID since
+    /// [`check`](Self::check).
     fn add(
         &self,
-        plugin: &PluginId,
+        contributor: &Contributor,
         contributions: Contributions,
     ) -> Result<(), ContributionRefusal>;
 
-    /// Drops a plugin's entries. A plugin without entries changes nothing.
-    fn remove(&self, plugin: &PluginId);
+    /// Drops a contributor's entries, and only those: a plugin's leaves its
+    /// features' entries, which the host drops first. A contributor without
+    /// entries changes nothing.
+    fn remove(&self, contributor: &Contributor);
 
-    /// Waits up to `grace` for the work that the plugin's entries started and
-    /// that still runs, such as executions of its tools, then aborts the rest
-    /// (ADR-0034, decision 8). The host calls it after
+    /// Waits up to `grace` for the work that the contributor's entries
+    /// started and that still runs, such as executions of its tools, then
+    /// aborts the rest (ADR-0034, decision 8). The host calls it after
     /// [`remove`](Self::remove), so no new work starts meanwhile. A consumer
     /// whose entries start no such work has nothing to wait for.
-    fn drain(&self, _plugin: &PluginId, _grace: Duration) -> BoxFuture<'static, ()> {
+    fn drain(&self, _contributor: &Contributor, _grace: Duration) -> BoxFuture<'static, ()> {
         Box::pin(std::future::ready(()))
     }
 
-    /// The work in progress that the plugin's entries handed the consumer
-    /// and that turning the plugin off ends, such as the background commands
-    /// that its tools started (ADR-0041, decision 11). The host adds the
-    /// items to the plugin's own, under codes that start with
+    /// The work in progress that the contributor's entries handed the
+    /// consumer and that turning it off ends, such as the background
+    /// commands that its tools started (ADR-0041, decision 11). The host adds
+    /// the items to the contributor's own, under codes that start with
     /// [`CORE_WORK_PREFIX`], which the core's UI words.
-    fn work(&self, _plugin: &PluginId) -> Vec<WorkItem> {
+    fn work(&self, _contributor: &Contributor) -> Vec<WorkItem> {
         Vec::new()
     }
 }
@@ -203,16 +236,27 @@ impl ContributionRefusal {
 }
 
 /// Refuses the entries that break their point's rule of IDs on their own:
-/// an `Owned` ID that is not the plugin's, a `PluginKind` ID other than the
-/// plugin's ID or a second entry of such a point, and two entries of one
-/// point with one ID.
+/// an `Owned` ID that is not the plugin's, a `PluginKind` entry of a feature,
+/// a `PluginKind` ID other than the plugin's ID or a second entry of such a
+/// point, and two entries of one point with one ID. A feature's entries
+/// follow the rules of its plugin's ID.
 pub fn check_ids(
-    plugin: &PluginId,
+    contributor: &Contributor,
     contributions: &Contributions,
 ) -> Result<(), ContributionRefusal> {
+    let plugin = contributor.plugin_id();
     let mut seen: Vec<(PointInfo, &str)> = Vec::new();
     for (point, id) in contributions.ids() {
         match point.ids {
+            IdRule::PluginKind if contributor.feature_id().is_some() => {
+                return Err(ContributionRefusal::new(
+                    point.name,
+                    FEATURE_POINT,
+                    format!(
+                        "the feature {contributor} contributes to a point that takes entries only from a plugin"
+                    ),
+                ));
+            }
             IdRule::Owned if !owned_by(plugin.as_str(), id) => {
                 return Err(ContributionRefusal::new(
                     point.name,
@@ -257,13 +301,13 @@ pub fn check_ids(
 /// happens only when another plugin took an ID since the checks, makes the
 /// consumers that added already remove the plugin again.
 ///
-/// A consumer without entries of the plugin is not called.
+/// A consumer without entries of the contributor is not called.
 pub fn add_contributions(
     consumers: &[Arc<dyn ContributionConsumer>],
-    plugin: &PluginId,
+    contributor: &Contributor,
     mut contributions: Contributions,
 ) -> Result<(), ContributionRefusal> {
-    check_ids(plugin, &contributions)?;
+    check_ids(contributor, &contributions)?;
     let mut parts: Vec<(&Arc<dyn ContributionConsumer>, Contributions)> = Vec::new();
     for consumer in consumers {
         let part = contributions.split_off(&consumer.points());
@@ -282,13 +326,13 @@ pub fn add_contributions(
         ));
     }
     for (consumer, part) in &parts {
-        consumer.check(plugin, part)?;
+        consumer.check(contributor, part)?;
     }
     let mut added: Vec<&Arc<dyn ContributionConsumer>> = Vec::with_capacity(parts.len());
     for (consumer, part) in parts {
-        if let Err(refusal) = consumer.add(plugin, part) {
+        if let Err(refusal) = consumer.add(contributor, part) {
             for earlier in added.iter().rev() {
-                earlier.remove(plugin);
+                earlier.remove(contributor);
             }
             return Err(refusal);
         }
@@ -297,23 +341,26 @@ pub fn add_contributions(
     Ok(())
 }
 
-/// Drops a plugin's contributions from every consumer, the last first.
-pub fn remove_contributions(consumers: &[Arc<dyn ContributionConsumer>], plugin: &PluginId) {
+/// Drops a contributor's contributions from every consumer, the last first.
+pub fn remove_contributions(
+    consumers: &[Arc<dyn ContributionConsumer>],
+    contributor: &Contributor,
+) {
     for consumer in consumers.iter().rev() {
-        consumer.remove(plugin);
+        consumer.remove(contributor);
     }
 }
 
-/// Waits for every consumer to drain the plugin's work at the same time, each
-/// up to `grace` before it aborts the rest.
+/// Waits for every consumer to drain the contributor's work at the same
+/// time, each up to `grace` before it aborts the rest.
 pub fn drain_contributions(
     consumers: &[Arc<dyn ContributionConsumer>],
-    plugin: &PluginId,
+    contributor: &Contributor,
     grace: Duration,
 ) -> BoxFuture<'static, ()> {
     let drains: Vec<_> = consumers
         .iter()
-        .map(|consumer| consumer.drain(plugin, grace))
+        .map(|consumer| consumer.drain(contributor, grace))
         .collect();
     Box::pin(async move {
         futures_util::future::join_all(drains).await;
@@ -327,13 +374,13 @@ mod tests {
     use std::sync::{Arc, Mutex, PoisonError};
 
     use super::{
-        BindRefusal, ContributionConsumer, ContributionRefusal, ID_NOT_OWNED, ID_TAKEN,
-        KIND_NOT_PLUGIN, NO_CONSUMER, PluginBinding, ServiceProvider, TOO_MANY_ENTRIES,
+        BindRefusal, ContributionConsumer, ContributionRefusal, FEATURE_POINT, ID_NOT_OWNED,
+        ID_TAKEN, KIND_NOT_PLUGIN, NO_CONSUMER, PluginBinding, ServiceProvider, TOO_MANY_ENTRIES,
         add_contributions, check_ids, remove_contributions,
     };
     use crate::context::HostProfile;
     use crate::contributions::{Contributions, ExtensionPoint, IdRule, PointInfo};
-    use crate::ids::PluginId;
+    use crate::ids::{Contributor, FeatureId, PluginId};
     use crate::manifest::{CratesSection, Manifest, NativeSection, RustSection, SecretsSection};
     use crate::service::{BoundService, Service};
 
@@ -379,8 +426,16 @@ mod tests {
         }
     }
 
-    fn fake() -> PluginId {
+    fn plugin() -> PluginId {
         PluginId::parse("fake").unwrap()
+    }
+
+    fn fake() -> Contributor {
+        Contributor::plugin(plugin())
+    }
+
+    fn feature() -> Contributor {
+        Contributor::feature(plugin(), FeatureId::parse("extra").unwrap())
     }
 
     /// The point and the code of a refusal.
@@ -413,6 +468,52 @@ mod tests {
         assert_eq!(kinds(&["other"]), Some(("kinds", KIND_NOT_PLUGIN)));
         assert_eq!(kinds(&["fake.box"]), Some(("kinds", KIND_NOT_PLUGIN)));
         assert_eq!(kinds(&["fake", "fake"]), Some(("kinds", TOO_MANY_ENTRIES)));
+    }
+
+    #[test]
+    fn a_features_entries_follow_its_plugins_ids_and_never_take_a_plugin_kind() {
+        let owned = Contributions::new()
+            .add::<Notes>("fake.history")
+            .add::<Names>("history");
+        let foreign = Contributions::new().add::<Notes>("extra.history");
+        let kind = Contributions::new().add::<Kinds>("fake");
+
+        assert_eq!(refused(check_ids(&feature(), &owned)), None);
+        assert_eq!(
+            refused(check_ids(&feature(), &foreign)),
+            Some(("notes", ID_NOT_OWNED))
+        );
+        assert_eq!(
+            refused(check_ids(&feature(), &kind)),
+            Some(("kinds", FEATURE_POINT))
+        );
+    }
+
+    #[test]
+    fn a_features_contributions_reach_the_consumers_as_its_own() {
+        let log = Calls::default();
+        let consumers: Vec<Arc<dyn ContributionConsumer>> = vec![Arc::new(Recording::new(
+            "first",
+            vec![PointInfo::of::<Names>()],
+            &log,
+        ))];
+
+        let added = add_contributions(
+            &consumers,
+            &feature(),
+            Contributions::new().add::<Names>("history"),
+        );
+        remove_contributions(&consumers, &feature());
+
+        assert_eq!(added, Ok(()));
+        assert_eq!(
+            calls(&log),
+            [
+                r#"first check fake/extra ["history"]"#,
+                r#"first add fake/extra ["history"]"#,
+                "first remove fake/extra []",
+            ]
+        );
     }
 
     #[test]
@@ -457,14 +558,19 @@ mod tests {
             }
         }
 
-        fn record(&self, call: &str, plugin: &PluginId, contributions: Option<&Contributions>) {
+        fn record(
+            &self,
+            call: &str,
+            contributor: &Contributor,
+            contributions: Option<&Contributions>,
+        ) {
             let ids: Vec<&str> = contributions
                 .map(|contributions| contributions.ids().map(|(_point, id)| id).collect())
                 .unwrap_or_default();
             self.calls
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .push(format!("{} {call} {plugin} {ids:?}", self.name));
+                .push(format!("{} {call} {contributor} {ids:?}", self.name));
         }
     }
 
@@ -475,10 +581,10 @@ mod tests {
 
         fn check(
             &self,
-            plugin: &PluginId,
+            contributor: &Contributor,
             contributions: &Contributions,
         ) -> Result<(), ContributionRefusal> {
-            self.record("check", plugin, Some(contributions));
+            self.record("check", contributor, Some(contributions));
             if self.refuse_checks {
                 return Err(ContributionRefusal::new("names", ID_TAKEN, "taken"));
             }
@@ -487,18 +593,18 @@ mod tests {
 
         fn add(
             &self,
-            plugin: &PluginId,
+            contributor: &Contributor,
             contributions: Contributions,
         ) -> Result<(), ContributionRefusal> {
-            self.record("add", plugin, Some(&contributions));
+            self.record("add", contributor, Some(&contributions));
             if self.refuse_adds {
                 return Err(ContributionRefusal::new("notes", ID_TAKEN, "taken since"));
             }
             Ok(())
         }
 
-        fn remove(&self, plugin: &PluginId) {
-            self.record("remove", plugin, None);
+        fn remove(&self, contributor: &Contributor) {
+            self.record("remove", contributor, None);
         }
     }
 
@@ -696,7 +802,7 @@ mod tests {
 
     fn manifest() -> Manifest {
         Manifest {
-            id: fake(),
+            id: plugin(),
             sdk: 1,
             order: 10,
             rust: RustSection {
@@ -708,6 +814,7 @@ mod tests {
             programs: Vec::new(),
             processes: BTreeMap::new(),
             native: NativeSection::default(),
+            features: BTreeMap::new(),
         }
     }
 
@@ -763,7 +870,7 @@ mod tests {
     #[test]
     fn a_provider_binds_its_service_to_the_plugin_on_the_hosts_profile() {
         let providers: Vec<Arc<dyn ServiceProvider>> = vec![Arc::new(GreeterProvider)];
-        let id = fake();
+        let id = plugin();
         let declaring = manifest();
         let silent = Manifest {
             services: BTreeMap::new(),
@@ -790,6 +897,19 @@ mod tests {
             refused,
             BindRefusal::new("greeter", "the plugin fake does not declare it")
         );
+    }
+
+    #[test]
+    fn a_binding_names_its_contributor_the_plugin_or_its_feature() {
+        let id = plugin();
+        let extra = FeatureId::parse("extra").unwrap();
+        let declaring = manifest();
+        let binding = PluginBinding::new(&id, &declaring, HostProfile::Release);
+
+        assert_eq!(binding.feature, None);
+        assert_eq!(binding.contributor(), fake());
+        assert_eq!(binding.for_feature(&extra).feature, Some(&extra));
+        assert_eq!(binding.for_feature(&extra).contributor(), feature());
     }
 
     #[test]

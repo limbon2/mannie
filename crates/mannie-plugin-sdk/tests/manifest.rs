@@ -18,7 +18,8 @@ use mannie_plugin_sdk::ids::{
     CORE_TABLE_PREFIXES, IdError, PluginId, RESERVED_IDS, TAURI_PLUGIN_CRATE_PREFIX,
 };
 use mannie_plugin_sdk::manifest::{
-    CratesSection, Manifest, ManifestError, NativeSection, SecretsSection, is_process_name,
+    CratesSection, Manifest, ManifestError, NativeSection, PLUGIN_ONLY_SERVICES, SecretsSection,
+    is_process_name,
 };
 use mannie_plugin_sdk::services::SERVICES;
 use mannie_plugin_sdk::version::SDK_MAJOR;
@@ -63,6 +64,105 @@ fn a_manifest_with_the_required_fields_parses_with_no_service_and_no_secret() {
     assert_eq!(manifest.native, NativeSection::default());
     assert_eq!(manifest.native.grants(), Vec::<(&str, &str)>::new());
     assert!(!manifest.declares("executor-host"));
+    assert!(manifest.features.is_empty());
+}
+
+#[test]
+fn a_manifest_lists_its_features_with_the_services_that_only_they_use() {
+    let manifest = Manifest::parse(&with(
+        "
+[services]
+store = 1
+
+[features.databases.services]
+terminals = 1
+
+[features.notes-history]
+",
+    ))
+    .unwrap();
+
+    assert_eq!(
+        manifest
+            .features
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["databases", "notes-history"]
+    );
+    let databases = manifest.feature("databases").unwrap();
+    assert_eq!(
+        databases.services,
+        BTreeMap::from([("terminals".to_owned(), 1)])
+    );
+    assert!(
+        manifest
+            .feature("notes-history")
+            .unwrap()
+            .services
+            .is_empty()
+    );
+    assert!(manifest.feature("unknown").is_none());
+    // A feature's service is not the plugin's own.
+    assert!(!manifest.declares("terminals"));
+    assert!(manifest.declares("store"));
+}
+
+#[test]
+fn a_feature_with_an_invalid_id_is_refused() {
+    for id in ["Databases", "data_bases", "1db"] {
+        assert_eq!(
+            Manifest::parse(&with(&format!("[features.\"{id}\"]"))),
+            Err(ManifestError::FeatureId { id: id.to_owned() }),
+            "{id}"
+        );
+    }
+}
+
+#[test]
+fn a_feature_never_declares_a_service_that_belongs_to_its_plugin() {
+    for name in PLUGIN_ONLY_SERVICES {
+        assert_eq!(
+            Manifest::parse(&with(&format!("[features.databases.services]\n{name} = 1"))),
+            Err(ManifestError::FeatureService {
+                feature: "databases".to_owned(),
+                name: name.to_owned(),
+            }),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn a_service_is_declared_by_the_plugin_or_one_feature() {
+    let by_both = with("[services]\nterminals = 1\n\n[features.databases.services]\nterminals = 1");
+    let by_two = with(
+        "[features.databases.services]\nterminals = 1\n\n[features.notes.services]\nterminals = 1",
+    );
+    let refused = Err(ManifestError::ServiceDeclaredTwice {
+        name: "terminals".to_owned(),
+    });
+
+    assert_eq!(Manifest::parse(&by_both), refused);
+    assert_eq!(Manifest::parse(&by_two), refused);
+}
+
+#[test]
+fn a_features_unknown_service_major_or_field_is_refused() {
+    assert_eq!(
+        Manifest::parse(&with("[features.databases.services]\nweather = 1")),
+        Err(ManifestError::UnknownService {
+            name: "weather".to_owned()
+        })
+    );
+    assert_eq!(
+        Manifest::parse(&with("[features.databases.services]\nterminals = 9")),
+        Err(ManifestError::ServiceMajor {
+            name: "terminals".to_owned(),
+            major: 9,
+        })
+    );
+    assert!(toml_message(&with("[features.databases]\ndefault = true")).contains("unknown field"));
 }
 
 /// The minimal manifest with the service `processes`, running `program`
@@ -792,7 +892,8 @@ fn committed_rules() -> PathBuf {
 /// and the parts and starts of the names of variables that an installed
 /// program may not inherit. The pattern of an ID's syntax is the schema's.
 /// The services that reach sensitive data are listed too, for `task
-/// plugins:grants`.
+/// plugins:grants`, and the services that only a plugin may declare, never
+/// one of its features (ADR-0055, decision 2).
 fn manifest_rules() -> Value {
     let services: BTreeMap<&str, u16> = SERVICES
         .iter()
@@ -806,6 +907,7 @@ fn manifest_rules() -> Value {
     json!({
         "coreTablePrefixes": CORE_TABLE_PREFIXES,
         "loaderNamePrefixes": LOADER_NAME_PREFIXES,
+        "pluginOnlyServices": PLUGIN_ONLY_SERVICES,
         "reservedIds": RESERVED_IDS,
         "sdkMajor": SDK_MAJOR,
         "secretNameParts": SECRET_NAME_PARTS,

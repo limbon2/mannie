@@ -166,6 +166,16 @@ the plugin."
     )
 }
 
+/// The result of an operation of a feature's tool that turning the feature,
+/// or its plugin, off cut short (ADR-0055, decision 7).
+pub fn uncertain_feature_off(plugin: &str, feature: &str) -> String {
+    format!(
+        "The owner turned off the feature \"{feature}\" of the plugin \"{plugin}\" while this \
+operation was running, so it may or may not have taken effect. Check its effects before you \
+repeat it, and continue without the feature."
+    )
+}
+
 /// The result of a command on a remote host that a worker refused: a worker
 /// runs no plugin that reaches one (ADR-0036).
 pub const NO_REMOTE_COMMANDS: &str = "Not run: this host runs no commands on other hosts.";
@@ -778,6 +788,15 @@ pub fn tool_plugin_off(plugin: &str) -> String {
     format!(
         "Not run: the owner turned off the plugin \"{plugin}\", which this tool belongs to. \
 Continue without it, or tell the owner."
+    )
+}
+
+/// The result of a call of a feature's tool whose feature, or plugin, the
+/// owner turned off since the reply started (ADR-0055, decision 7).
+pub fn tool_feature_off(plugin: &str, feature: &str) -> String {
+    format!(
+        "Not run: the owner turned off the feature \"{feature}\" of the plugin \"{plugin}\", which \
+this tool belongs to. Continue without it, or tell the owner."
     )
 }
 

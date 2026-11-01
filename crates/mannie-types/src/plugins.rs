@@ -19,6 +19,23 @@ pub struct PluginsSettings {
     /// its default once, and the outcome is kept here.
     #[serde(default)]
     pub enabled: BTreeMap<String, bool>,
+    /// Whether each optional feature is on, by its plugin's ID and then the
+    /// feature's ID (ADR-0055, decision 4). A feature without an entry is
+    /// off, and a choice outlives its plugin's switch.
+    #[serde(default)]
+    pub features: BTreeMap<String, BTreeMap<String, bool>>,
+}
+
+impl PluginsSettings {
+    /// Whether the owner turned on the feature `feature` of the plugin
+    /// `plugin`.
+    pub fn feature_enabled(&self, plugin: &str, feature: &str) -> bool {
+        self.features
+            .get(plugin)
+            .and_then(|features| features.get(feature))
+            .copied()
+            .unwrap_or(false)
+    }
 }
 
 impl SettingsSection for PluginsSettings {
@@ -69,6 +86,30 @@ pub struct PluginView {
     /// its state is `failed`.
     pub failure: Option<String>,
     /// What the plugin's manifest lets it use.
+    pub uses: PluginUses,
+    /// The plugin's optional features, in the order of its manifest
+    /// (ADR-0055).
+    pub features: Vec<FeatureView>,
+}
+
+/// An optional feature of a plugin, as the Plugins page shows it under its
+/// plugin (ADR-0055, decision 10).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct FeatureView {
+    /// The feature's ID, unique within its plugin, such as `databases`,
+    /// which names its messages.
+    pub id: String,
+    /// Where the feature is in its life. It is off while its plugin is not
+    /// on.
+    pub state: PluginState,
+    /// Whether the owner turned the feature on.
+    pub enabled: bool,
+    /// Why the feature's last start failed, as the plugin's stable code,
+    /// while its state is `failed`.
+    pub failure: Option<String>,
+    /// What the feature uses beyond its plugin: the services that only it
+    /// declares, and its commands and channels.
     pub uses: PluginUses,
 }
 
@@ -158,6 +199,28 @@ pub struct PluginRef {
     pub plugin_id: String,
 }
 
+/// The argument of `set_plugin_feature_enabled`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SetPluginFeatureEnabled {
+    /// The plugin.
+    pub plugin_id: String,
+    /// The plugin's feature.
+    pub feature_id: String,
+    /// Whether the owner turns it on.
+    pub enabled: bool,
+}
+
+/// The argument of `plugin_feature_work`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginFeatureRef {
+    /// The plugin.
+    pub plugin_id: String,
+    /// The plugin's feature.
+    pub feature_id: String,
+}
+
 /// One kind of work that a plugin has in progress, which turning the plugin
 /// off lets go as its feature document says (ADR-0034, decision 4). The
 /// plugin's UI words it by its code.
@@ -207,6 +270,9 @@ pub enum PluginsError {
     /// No plugin of this version of Mannie has this ID.
     #[error("no plugin has this ID")]
     UnknownPlugin,
+    /// The plugin has no optional feature with this ID.
+    #[error("the plugin has no feature with this ID")]
+    UnknownFeature,
     /// The owner's choice could not be saved. The log has the cause.
     #[error("the choice could not be saved")]
     StorageFailed,
@@ -223,6 +289,7 @@ impl PluginsError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::UnknownPlugin => "plugins.unknown_plugin",
+            Self::UnknownFeature => "plugins.unknown_feature",
             Self::StorageFailed => "plugins.storage_failed",
             Self::StoreUnavailable => "plugins.store_unavailable",
             Self::ShuttingDown => "plugins.shutting_down",
@@ -233,8 +300,8 @@ impl PluginsError {
 #[cfg(test)]
 mod tests {
     use super::{
-        PluginState, PluginUses, PluginView, PluginWork, PluginsError, PluginsSettings, ServiceUse,
-        WorkItem,
+        FeatureView, PluginState, PluginUses, PluginView, PluginWork, PluginsError,
+        PluginsSettings, ServiceUse, WorkItem,
     };
 
     #[test]
@@ -258,6 +325,16 @@ mod tests {
                 crates: vec!["tonic".to_owned()],
                 native: vec!["sockets".to_owned()],
             },
+            features: vec![FeatureView {
+                id: "databases".to_owned(),
+                state: PluginState::Off,
+                enabled: true,
+                failure: None,
+                uses: PluginUses {
+                    commands: vec!["choose_database".to_owned()],
+                    ..PluginUses::default()
+                },
+            }],
         };
         assert_eq!(
             serde_json::to_value(&view).unwrap(),
@@ -276,6 +353,22 @@ mod tests {
                     "crates": ["tonic"],
                     "native": ["sockets"],
                 },
+                "features": [{
+                    "id": "databases",
+                    "state": "off",
+                    "enabled": true,
+                    "failure": null,
+                    "uses": {
+                        "services": [],
+                        "secrets": [],
+                        "commands": ["choose_database"],
+                        "channels": [],
+                        "programs": [],
+                        "installedPrograms": [],
+                        "crates": [],
+                        "native": [],
+                    },
+                }],
             })
         );
         assert_eq!(
@@ -322,5 +415,40 @@ mod tests {
     fn settings_without_choices_read_as_empty() {
         let settings: PluginsSettings = serde_json::from_str("{}").unwrap();
         assert!(settings.enabled.is_empty());
+        assert!(settings.features.is_empty());
+    }
+
+    #[test]
+    fn settings_of_an_older_version_keep_their_choices_and_turn_no_feature_on() {
+        let settings: PluginsSettings =
+            serde_json::from_str(r#"{ "enabled": { "workers": true } }"#).unwrap();
+
+        assert_eq!(settings.enabled.get("workers"), Some(&true));
+        assert!(!settings.feature_enabled("workers", "databases"));
+    }
+
+    #[test]
+    fn a_feature_is_on_only_when_the_owner_turned_it_on() {
+        let settings: PluginsSettings = serde_json::from_str(
+            r#"{ "enabled": {}, "features": { "workers": { "databases": true, "other": false } } }"#,
+        )
+        .unwrap();
+
+        assert!(settings.feature_enabled("workers", "databases"));
+        assert!(!settings.feature_enabled("workers", "other"));
+        assert!(!settings.feature_enabled("workers", "unknown"));
+        assert!(!settings.feature_enabled("ssh", "databases"));
+    }
+
+    #[test]
+    fn an_unknown_feature_has_its_code() {
+        assert_eq!(
+            PluginsError::UnknownFeature.code(),
+            "plugins.unknown_feature"
+        );
+        assert_eq!(
+            serde_json::to_value(PluginsError::UnknownFeature).unwrap(),
+            serde_json::json!({ "code": "unknown_feature" })
+        );
     }
 }

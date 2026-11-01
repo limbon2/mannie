@@ -37,6 +37,7 @@ describe('pluginsFailureMessage', () => {
   it('has a message for every error, and one for a call that the core did not answer', () => {
     const errors: PluginsError[] = [
       { code: 'unknown_plugin' },
+      { code: 'unknown_feature' },
       { code: 'storage_failed' },
       { code: 'store_unavailable' },
       { code: 'shutting_down' },
@@ -64,6 +65,7 @@ describe('pluginStartFailureMessage', () => {
       {
         description: () => '',
         failure: (code) => (code === 'storage_failed' ? 'The workers could not be read.' : null),
+        features: [],
         id: 'workers',
         name: () => 'Workers',
         offQuestion: () => null,
@@ -88,13 +90,34 @@ describe('pluginStartFailureMessage', () => {
 describe('pluginStateMessage', () => {
   it('says nothing for a plugin that is on or off, and says when one starts, stops or failed', () => {
     const quiet = [
-      pluginStateMessage({ enabled: true, failure: null, id: 'workers', state: 'on', uses: NO_USES }),
-      pluginStateMessage({ enabled: false, failure: null, id: 'workers', state: 'off', uses: NO_USES }),
+      pluginStateMessage({ enabled: true, failure: null, features: [], id: 'workers', state: 'on', uses: NO_USES }),
+      pluginStateMessage({ enabled: false, failure: null, features: [], id: 'workers', state: 'off', uses: NO_USES }),
     ];
     const lines = [
-      pluginStateMessage({ enabled: true, failure: null, id: 'workers', state: 'starting', uses: NO_USES }),
-      pluginStateMessage({ enabled: false, failure: null, id: 'workers', state: 'stopping', uses: NO_USES }),
-      pluginStateMessage({ enabled: true, failure: 'grant_missing', id: 'workers', state: 'failed', uses: NO_USES }),
+      pluginStateMessage({
+        enabled: true,
+        failure: null,
+        features: [],
+        id: 'workers',
+        state: 'starting',
+        uses: NO_USES,
+      }),
+      pluginStateMessage({
+        enabled: false,
+        failure: null,
+        features: [],
+        id: 'workers',
+        state: 'stopping',
+        uses: NO_USES,
+      }),
+      pluginStateMessage({
+        enabled: true,
+        failure: 'grant_missing',
+        features: [],
+        id: 'workers',
+        state: 'failed',
+        uses: NO_USES,
+      }),
     ];
 
     expect(quiet).toEqual([null, null]);
@@ -130,6 +153,7 @@ describe('pluginOffQuestion', () => {
       {
         description: () => '',
         failure: () => null,
+        features: [],
         id: 'ssh',
         name: () => 'SSH',
         offQuestion: (items) => (items.length === 0 ? null : `It has ${String(items.length)} kinds of work.`),

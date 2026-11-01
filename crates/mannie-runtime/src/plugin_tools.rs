@@ -34,7 +34,7 @@ use mannie_plugin_sdk::contributions::{Contributions, ExtensionPoint};
 use mannie_plugin_sdk::host::{
     ContributionRefusal, ID_NOT_OWNED, ID_TAKEN, INVALID_NAME, RESERVED_ARGUMENT,
 };
-use mannie_plugin_sdk::ids::{PluginId, owned_by};
+use mannie_plugin_sdk::ids::{FeatureId, PluginId, owned_by};
 use mannie_plugin_sdk::points::executors::Executors;
 use mannie_plugin_sdk::points::tool_sources::{MAX_SOURCE_TOOLS, check_published};
 use mannie_plugin_sdk::points::tools::{
@@ -120,12 +120,27 @@ pub(crate) struct OfferedPluginTool {
     pub(crate) name: String,
     /// The plugin's ID.
     pub(crate) plugin: String,
-    /// The generation of the plugin's start.
+    /// The plugin's feature whose start offered the tool, or `None` for a
+    /// tool of the plugin itself (ADR-0055, decision 6).
+    pub(crate) feature: Option<String>,
+    /// The generation of the start of the plugin or of its feature.
     pub(crate) generation: u64,
     /// Whether a source of the plugin published the tool while the plugin
     /// ran (ADR-0043, decision 2), so a run that has no room for every tool
     /// leaves it out first.
     pub(crate) published: bool,
+}
+
+impl OfferedPluginTool {
+    /// The key of the tool's contributor, which the executions of the
+    /// plugin's tools are counted by: the plugin's ID, or the plugin's ID, a
+    /// slash and the feature's ID.
+    pub(crate) fn contributor_key(&self) -> String {
+        match &self.feature {
+            None => self.plugin.clone(),
+            Some(feature) => format!("{}/{feature}", self.plugin),
+        }
+    }
 }
 
 /// The plugins' tools of a snapshot that runs of `agent` are offered, those
@@ -145,6 +160,7 @@ pub(crate) fn offered_tools(
         if offers(&registered.entry, agent) {
             offered.push(adapted(
                 registered.plugin.as_str(),
+                registered.feature.as_ref().map(FeatureId::as_str),
                 registered.generation,
                 &registered.entry,
                 false,
@@ -163,6 +179,7 @@ pub(crate) fn offered_tools(
             if offers(tool, agent) {
                 offered.push(adapted(
                     set.plugin.as_str(),
+                    set.feature.as_ref().map(FeatureId::as_str),
                     set.generation,
                     tool,
                     true,
@@ -178,6 +195,7 @@ pub(crate) fn offered_tools(
 /// loop runs.
 fn adapted(
     plugin: &str,
+    feature: Option<&str>,
     generation: u64,
     entry: &PluginTool,
     published: bool,
@@ -186,11 +204,13 @@ fn adapted(
     let offered = OfferedPluginTool {
         name: entry.spec.name.clone(),
         plugin: plugin.to_owned(),
+        feature: feature.map(str::to_owned),
         generation,
         published,
     };
     let adapter: Arc<dyn Tool> = Arc::new(PluginToolAdapter {
         plugin: plugin.to_owned(),
+        feature: feature.map(str::to_owned),
         tool: Arc::clone(&entry.tool),
         spec: entry.spec.clone(),
         effect: entry.effect,
@@ -516,6 +536,9 @@ fn within_limit(mut output: String, limit: usize) -> String {
 struct PluginToolAdapter {
     /// The plugin's ID, which the call's outcome and accesses name.
     plugin: String,
+    /// The plugin's feature that offered the tool, whose background commands
+    /// end when the feature goes off.
+    feature: Option<String>,
     /// The plugin's tool.
     tool: Arc<dyn SdkTool>,
     /// What the model is told of the tool, as the plugin's entry read it.
@@ -617,6 +640,7 @@ impl Tool for PluginToolAdapter {
         let ticket = part_id.and_then(|part_id| {
             self.runtime.issue_background_ticket(
                 &self.plugin,
+                self.feature.as_deref(),
                 &context.conversation_id,
                 &part_id,
                 activity.as_deref(),

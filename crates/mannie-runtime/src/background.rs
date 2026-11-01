@@ -69,6 +69,10 @@ struct Tracked {
     /// The plugin whose tool started the command on a remote host, or
     /// `None` for a command of this machine.
     plugin: Option<String>,
+    /// The plugin's feature whose tool started the command, which ends it
+    /// when the feature goes off (ADR-0055, decision 6). It is kept in
+    /// memory only: the stored record names the plugin.
+    feature: Option<String>,
     log: LiveLog,
     /// The command's record as stored. Each change of the record is stored
     /// while this lock is held, so the store receives them in their order.
@@ -127,7 +131,8 @@ struct RegistryState {
     /// The conversations whose commands are being forgotten, where no
     /// command starts.
     closed_conversations: HashSet<ConversationId>,
-    /// The plugins that go off, whose tools start no command.
+    /// The plugins and features that go off, whose tools start no command,
+    /// by the key of their contributor.
     closed_plugins: HashSet<String>,
     /// The tickets of the plugins' calls that execute now, by their text.
     tickets: HashMap<String, remote::Ticket>,
@@ -299,13 +304,15 @@ impl CommandRegistry {
         lock(&self.state).running.values().map(BTreeMap::len).sum()
     }
 
-    /// The commands that a plugin's tools started and that run.
-    fn of_plugin(&self, plugin: &str) -> Vec<Arc<Tracked>> {
+    /// The commands that a plugin's tools started and that run, or, for a
+    /// feature, those that the feature's tools started.
+    fn of_plugin(&self, plugin: &str, feature: Option<&str>) -> Vec<Arc<Tracked>> {
         lock(&self.state)
             .running
             .values()
             .flat_map(BTreeMap::values)
             .filter(|tracked| tracked.plugin.as_deref() == Some(plugin))
+            .filter(|tracked| feature.is_none() || tracked.feature.as_deref() == feature)
             .map(Arc::clone)
             .collect()
     }
@@ -395,6 +402,7 @@ struct Start {
     number: u32,
     part_id: PartId,
     plugin: Option<String>,
+    feature: Option<String>,
     log: LiveLog,
     document: BackgroundCommandDocument,
 }
@@ -410,6 +418,7 @@ impl Start {
             number: self.number,
             part_id: self.part_id,
             plugin: self.plugin,
+            feature: self.feature,
             log: self.log,
             record: tokio::sync::Mutex::new(self.document),
             stop: Mutex::new(Some(stop)),
@@ -553,6 +562,7 @@ impl Runtime {
             number,
             part_id,
             plugin: None,
+            feature: None,
             log: process.log().clone(),
             document,
         };

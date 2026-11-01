@@ -24,7 +24,7 @@ use mannie_plugin_sdk::host::{
     BindRefusal, ContributionConsumer, ContributionRefusal, ID_TAKEN, PluginBinding,
     ServiceProvider,
 };
-use mannie_plugin_sdk::ids::PluginId;
+use mannie_plugin_sdk::ids::Contributor;
 use mannie_plugin_sdk::manifest::ManifestError;
 use mannie_plugin_sdk::plugin::{Instance, Plugin, PluginEntry, Started};
 use mannie_plugin_sdk::service::{BoundService, Service};
@@ -146,7 +146,7 @@ impl ContributionConsumer for FakeConsumer {
 
     fn check(
         &self,
-        _plugin: &PluginId,
+        _contributor: &Contributor,
         _contributions: &Contributions,
     ) -> Result<(), ContributionRefusal> {
         Ok(())
@@ -154,7 +154,7 @@ impl ContributionConsumer for FakeConsumer {
 
     fn add(
         &self,
-        plugin: &PluginId,
+        contributor: &Contributor,
         contributions: Contributions,
     ) -> Result<(), ContributionRefusal> {
         if self.refuses_adds {
@@ -164,21 +164,24 @@ impl ContributionConsumer for FakeConsumer {
                 "another plugin took the ID",
             ));
         }
-        log_event(&self.events, format!("{} added {plugin}", self.point.name));
-        lock(&self.held).insert(plugin.to_string(), contributions.ids().count());
+        log_event(
+            &self.events,
+            format!("{} added {contributor}", self.point.name),
+        );
+        lock(&self.held).insert(contributor.key(), contributions.ids().count());
         Ok(())
     }
 
-    fn remove(&self, plugin: &PluginId) {
-        if lock(&self.held).remove(plugin.as_str()).is_some() {
+    fn remove(&self, contributor: &Contributor) {
+        if lock(&self.held).remove(&contributor.key()).is_some() {
             log_event(
                 &self.events,
-                format!("{} removed {plugin}", self.point.name),
+                format!("{} removed {contributor}", self.point.name),
             );
         }
     }
 
-    fn work(&self, _plugin: &PluginId) -> Vec<WorkItem> {
+    fn work(&self, _contributor: &Contributor) -> Vec<WorkItem> {
         lock(&self.work).clone()
     }
 }
@@ -414,8 +417,8 @@ impl ServiceProvider for Releasing {
         ))
     }
 
-    fn release(&self, plugin: &PluginId) -> BoxFuture<'static, ()> {
-        log_event(&self.events, format!("released {plugin}"));
+    fn release(&self, contributor: &Contributor) -> BoxFuture<'static, ()> {
+        log_event(&self.events, format!("released {contributor}"));
         Box::pin(std::future::ready(()))
     }
 }

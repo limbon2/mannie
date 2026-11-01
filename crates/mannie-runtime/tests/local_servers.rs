@@ -17,7 +17,7 @@ use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
 use mannie_plugin_sdk::context::HostProfile;
 use mannie_plugin_sdk::host::{PluginBinding, ServiceProvider};
-use mannie_plugin_sdk::ids::PluginId;
+use mannie_plugin_sdk::ids::{Contributor, PluginId};
 use mannie_plugin_sdk::manifest::Manifest;
 use mannie_plugin_sdk::service::Service;
 use mannie_plugin_sdk::services::local_servers::{
@@ -194,7 +194,9 @@ async fn the_end_of_its_plugin_ends_a_server_and_its_input_takes_nothing_more() 
     let mut output = server.output();
     read_until(&mut output, "token:").await;
 
-    provider.release(&PluginId::parse(PLUGIN).unwrap()).await;
+    provider
+        .release(&Contributor::plugin(PluginId::parse(PLUGIN).unwrap()))
+        .await;
 
     assert!(ending_of(&mut output).await.is_some());
     assert_eq!(

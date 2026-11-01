@@ -17,7 +17,7 @@ pub use mannie_types::context::{Attachment, AttachmentRef, ChangeAttachment, Con
 pub use mannie_types::ids::{InvalidId, PartId, RuleId, RunId, TurnId};
 pub use mannie_types::images::{ImageRef, ImageSize, ReadImage};
 pub use mannie_types::mentions::{MentionPlace, MentionRef, MentionSuggestions, SuggestMentions};
-pub use mannie_types::plugins::{PluginState, PluginView};
+pub use mannie_types::plugins::{FeatureView, PluginState, PluginView};
 pub use mannie_types::provider::{
     ApiInterface, CreateProviderProfile, ProfileDraft, ProviderProfile, ReasoningEffort,
 };

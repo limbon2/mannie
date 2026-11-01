@@ -151,7 +151,14 @@ describe('taskRefusalMessage', () => {
 
   it('says that the plugin of an executor is off, by the plugin’s name', () => {
     setPluginCatalog([
-      { description: () => '', failure: () => null, id: 'workers', name: () => 'Workers', offQuestion: () => null },
+      {
+        description: () => '',
+        failure: () => null,
+        features: [],
+        id: 'workers',
+        name: () => 'Workers',
+        offQuestion: () => null,
+      },
     ]);
 
     expect(taskRefusalMessage({ code: 'plugin_off', kind: 'workers', reason: 'executor' }, kindOf)).toBe(

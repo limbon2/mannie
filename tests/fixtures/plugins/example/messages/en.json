@@ -2,6 +2,8 @@
   "$schema": "https://inlang.com/schema/inlang-message-format",
   "example_plugin_name": "Example",
   "example_plugin_description": "Notes for the core's tests, which validation builds bundle.",
+  "example_feature_counts_name": "Counts",
+  "example_feature_counts_description": "Counts the notes kept since the plugin started.",
   "example_settings_title": "Example",
   "example_settings_description": "The notes that the example plugin keeps.",
   "example_note_label": "Note",

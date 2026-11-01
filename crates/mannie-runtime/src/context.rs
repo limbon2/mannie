@@ -446,7 +446,14 @@ pub(crate) fn call_result(
         ToolCallStatus::Uncertain => match &call.interruption {
             None => texts::UNCERTAIN.to_owned(),
             Some(Interruption::Stopped) => texts::UNCERTAIN_STOPPED.to_owned(),
-            Some(Interruption::PluginOff { plugin }) => texts::uncertain_plugin_off(plugin),
+            Some(Interruption::PluginOff {
+                plugin,
+                feature: None,
+            }) => texts::uncertain_plugin_off(plugin),
+            Some(Interruption::PluginOff {
+                plugin,
+                feature: Some(feature),
+            }) => texts::uncertain_feature_off(plugin, feature),
         },
         ToolCallStatus::NotRun | ToolCallStatus::Canceled => match &call.not_run {
             Some(reason) => not_run(reason, &call.tool),
@@ -477,7 +484,14 @@ fn not_run(reason: &NotRunReason, tool: &str) -> String {
             Refusal::NoExternalTools => texts::NO_EXTERNAL_TOOLS.to_owned(),
             Refusal::NoTerminals => texts::NO_TERMINALS.to_owned(),
         },
-        NotRunReason::PluginOff { plugin } => texts::tool_plugin_off(plugin),
+        NotRunReason::PluginOff {
+            plugin,
+            feature: None,
+        } => texts::tool_plugin_off(plugin),
+        NotRunReason::PluginOff {
+            plugin,
+            feature: Some(feature),
+        } => texts::tool_feature_off(plugin, feature),
     }
 }
 

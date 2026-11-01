@@ -3,12 +3,14 @@
 //! that the host's dispatch adds and the plugin's channel brings.
 
 use futures_util::StreamExt as _;
-use mannie_example::commands::{AddNote, MAX_NOTE_CHARACTERS, interface};
+use mannie_example::commands::{AddNote, COUNTS, MAX_NOTE_CHARACTERS, interface};
 use mannie_example::plugin::{EXAMPLE, MODULE};
 use mannie_example::{PLUGIN_MANIFEST, mannie_plugin};
 use mannie_plugin_harness::conformance::conformance;
+use mannie_plugin_harness::host::CallFailure;
 use mannie_plugin_harness::host::{HostOptions, HostedPlugin};
-use mannie_plugin_sdk::ipc::{ChannelMessage, InputRefusal, Validate};
+use mannie_plugin_harness::types::PluginState;
+use mannie_plugin_sdk::ipc::{ChannelMessage, HostRefusal, InputRefusal, Validate};
 use mannie_plugin_sdk::manifest::Manifest;
 use serde_json::{Value, json};
 
@@ -33,9 +35,46 @@ fn the_interface_lists_the_command_and_the_channel() {
     let declared = interface();
     let exported = mannie_plugin().plugin.interface();
 
-    assert_eq!(declared.command_names(), ["add_note"]);
+    assert_eq!(declared.command_names(), ["add_note", "count_notes"]);
     assert_eq!(declared.channel_names(), ["follow_notes"]);
+    assert_eq!(declared.command_feature("count_notes"), Some(COUNTS));
+    assert_eq!(declared.features(), [COUNTS]);
     assert_eq!(exported.command_names(), declared.command_names());
+}
+
+#[test]
+fn the_manifest_lists_the_feature_that_the_interface_names() {
+    let manifest = Manifest::parse(PLUGIN_MANIFEST).unwrap();
+
+    assert_eq!(
+        manifest
+            .features
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        [COUNTS]
+    );
+}
+
+#[tokio::test]
+async fn the_feature_counts_the_notes_of_the_start_while_it_is_on() {
+    let hosted = HostedPlugin::new(mannie_plugin(), HostOptions::new()).await;
+    hosted.turn_on().await;
+    hosted
+        .invoke("add_note", json!({ "text": "Buy milk" }))
+        .await
+        .unwrap();
+
+    let while_off = hosted.invoke("count_notes", Value::Null).await;
+    let on = hosted.turn_feature_on(COUNTS).await;
+    let count = hosted.invoke("count_notes", Value::Null).await;
+
+    assert_eq!(
+        while_off,
+        Err(CallFailure::Host(HostRefusal::feature_off(EXAMPLE, COUNTS)))
+    );
+    assert_eq!(on.state, PluginState::On);
+    assert_eq!(count, Ok(json!(1)));
 }
 
 #[test]
