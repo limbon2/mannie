@@ -3,9 +3,15 @@
 //! the runtime's and the store's providers of services beside the test's own,
 //! as the desktop app's composition root sets them up. The plugin's module of
 //! the store is registered when the store opens, as the composition root
-//! registers it, and the plugin starts off, as in a new installation.
+//! registers it, and the plugin starts off, as in a new installation. The
+//! service `sqlite-files` shows a file dialog that the test answers with
+//! [`HostedPlugin::choose_file`].
 
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
+
+use futures_util::FutureExt as _;
+use mannie_plugin_sdk::BoxFuture;
 
 use mannie_plugin_sdk::context::{HostInfo, HostProfile};
 use mannie_plugin_sdk::host::ServiceProvider;
@@ -14,6 +20,7 @@ use mannie_plugin_sdk::manifest::Manifest;
 use mannie_plugin_sdk::plugin::PluginEntry;
 use mannie_plugins::{PluginHostDeps, PluginList};
 use mannie_runtime::testing::{Harness, HarnessOptions};
+use mannie_runtime::{DatabaseChooser, DatabaseFilters};
 use mannie_types::clock::SystemClock;
 use mannie_types::plugins::{FeatureView, PluginView};
 use serde_json::Value;
@@ -72,6 +79,26 @@ impl HostOptions {
     }
 }
 
+/// The file dialog of the service `sqlite-files`, as a test answers it:
+/// the file that the test set, once, or none, as when the owner closes it.
+#[derive(Debug, Default)]
+struct FileChoice {
+    next: Mutex<Option<PathBuf>>,
+    filters: Mutex<Option<DatabaseFilters>>,
+}
+
+impl DatabaseChooser for FileChoice {
+    fn choose(&self, filters: DatabaseFilters) -> BoxFuture<'static, Option<PathBuf>> {
+        *self.filters.lock().unwrap_or_else(PoisonError::into_inner) = Some(filters);
+        let chosen = self
+            .next
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        async move { chosen }.boxed()
+    }
+}
+
 /// One plugin, hosted as the desktop app hosts it.
 #[derive(Debug)]
 pub struct HostedPlugin {
@@ -81,6 +108,7 @@ pub struct HostedPlugin {
     /// The host, which lists the plugin alone.
     pub host: PluginHost,
     id: String,
+    choice: Arc<FileChoice>,
 }
 
 impl HostedPlugin {
@@ -98,7 +126,10 @@ impl HostedPlugin {
         let mut core = options.core;
         core.store_modules.extend(plugins.store_modules());
         let core = Harness::with_options(core).await;
+        let choice = Arc::new(FileChoice::default());
+        let chooser: Arc<dyn DatabaseChooser> = Arc::<FileChoice>::clone(&choice);
         let mut providers = core.runtime.service_providers();
+        providers.push(core.runtime.sqlite_files_provider(Some(chooser)));
         providers.extend(mannie_store::service_providers(&core.store));
         for provider in options.providers {
             providers.retain(|existing| existing.name() != provider.name());
@@ -113,7 +144,33 @@ impl HostedPlugin {
             host: HostInfo::new(env!("CARGO_PKG_VERSION"), options.profile),
         })
         .expect("the host takes the plugin");
-        Self { core, host, id }
+        Self {
+            core,
+            host,
+            id,
+            choice,
+        }
+    }
+
+    /// Sets the file that the next file dialog of the service `sqlite-files`
+    /// gives, as if the owner chose it there. A dialog without a file set
+    /// gives none, as when the owner closes it.
+    pub fn choose_file(&self, path: &Path) {
+        *self
+            .choice
+            .next
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(path.to_path_buf());
+    }
+
+    /// The names of the filters that the last file dialog of the service
+    /// `sqlite-files` showed, which come from the plugin's catalog.
+    pub fn file_dialog_filters(&self) -> Option<DatabaseFilters> {
+        self.choice
+            .filters
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// The plugin's ID.

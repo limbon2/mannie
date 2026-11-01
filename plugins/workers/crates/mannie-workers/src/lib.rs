@@ -1,8 +1,8 @@
 //! The master's side of the Workers plugin (ADR-0031; plugins/workers/docs/
 //! README.md): the paired workers and the plugin's tables, pairing, the
-//! hub that keeps a connection to each worker over the link, and the
-//! executor that gives tasks to workers through the runtime's task
-//! executors.
+//! hub that keeps a connection to each worker over the link, the executor
+//! that gives tasks to workers through the runtime's task executors, and the
+//! optional feature Databases (plugins/workers/docs/databases.md).
 //!
 //! The core never depends on this crate (ADR-0030, decision 10). The crate
 //! is the plugin's entry crate: it exports the plugin with its manifest,
@@ -12,12 +12,14 @@
 //! (decision 8).
 
 pub mod commands;
+pub mod databases;
 pub mod delegation;
 pub mod executor;
 mod follow;
 pub mod hub;
 pub mod keys;
 pub mod plugin;
+mod schema;
 pub mod store;
 pub mod texts;
 pub mod view;

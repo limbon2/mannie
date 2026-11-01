@@ -1,5 +1,7 @@
 {
   "$schema": "https://inlang.com/schema/inlang-message-format",
+  "workers_feature_databases_name": "Databases",
+  "workers_feature_databases_description": "Registers SQLite files on this computer, shows them in a view where you browse and edit them, and gives agents tools to query and change them under your approvals.",
   "workers_panel_title": "Workers",
   "workers_pair": "Pair a worker…",
   "workers_pair_label": "Pair a worker",
