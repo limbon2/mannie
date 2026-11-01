@@ -2,6 +2,7 @@
 // goals-and-scope.md §4; plugins/terminal/docs/README.md, performance),
 // measured in the real app with the plugin Terminal on and its compatible
 // renderer, whose rows are in the page, so the page can see each change.
+// Switching between the terminals' tabs costs the hidden terminals nothing.
 // The suite enforces them on the reference machine and under the low-end
 // profile (`MANNIE_PERF_PROFILE=low-end`, support/low-end.ts).
 // `MANNIE_PERF_REPORT_ONLY=1` reports the figures without failing. Every
@@ -33,11 +34,23 @@ const IDLE_MILLIS = 60_000;
 /** How long a terminal floods for NFR-PERF-07. */
 const FLOOD_MILLIS = 10_000;
 
-/** A command that prints without end, in the default shell of this computer. */
-const FLOOD = process.platform === 'win32' ? "while ($true) { 'y' }" : 'yes';
+/** How often the test goes through the tabs of the open terminals. */
+const SWITCH_ROUNDS = 2;
+
+/**
+ * The shell of NFR-PERF-06, whose echo of a key takes no time of its own: on
+ * Windows, Command Prompt, whose console host echoes the key itself. On Linux
+ * the test runs `cat` in the default shell's terminal, whose line discipline
+ * echoes it.
+ */
+const ECHOING_SHELL = 'Command Prompt';
+
+/** A command that prints without end, in the first terminal's shell. */
+const FLOOD = process.platform === 'win32' ? 'for /L %i in (0,0,1) do @echo y' : 'yes';
 
 interface Figure {
-  readonly limit: number;
+  /** The target, or `null` for a figure that only informs. */
+  readonly limit: number | null;
   readonly samples: number;
   readonly unit: string;
   readonly value: number;
@@ -51,8 +64,12 @@ declare global {
     floodLatencies?: number[];
     /** Ends the sampling during a flood. */
     floodSamplingStopped?: boolean;
+    /** Glyphs that terminals in hidden tabs measured. */
+    hiddenMeasurements?: number;
     /** When the terminal's rows last changed. */
     lastRowChange?: number;
+    /** The longest task of the page's main thread while tabs switch, when the webview reports long tasks. */
+    longestSwitchTask?: number;
     /** The longest task of the page's main thread during a flood, when the webview reports long tasks. */
     longestTask?: number;
   }
@@ -63,6 +80,12 @@ const figures: Record<string, Figure> = {};
 function percentile(values: readonly number[], fraction: number): number {
   const sorted = [...values].sort((left, right) => left - right);
   return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)] ?? Number.NaN;
+}
+
+/** Records a figure that informs, with no target. */
+function report(name: string, value: number, unit: string, samples = 1): void {
+  figures[name] = { limit: null, samples, unit, value };
+  console.log(`${name}: ${value.toFixed(2)} ${unit} (no target, ${String(samples)} samples)`);
 }
 
 /** Records a figure and, unless the run only reports, checks it against its target. */
@@ -91,6 +114,94 @@ function heapGrowth(before: number | undefined, after: number | undefined): numb
 async function openTerminal(): Promise<void> {
   await browser.keys([Key.Ctrl, '`']);
   await $(ROWS).waitForDisplayed({ timeout: 30_000 });
+}
+
+/** Opens a terminal of this computer in the shell that the menu names `shell`, or in its first shell. */
+async function openShell(shell?: string): Promise<void> {
+  const open = await $$('[data-side-panel-tab]').length;
+  await $('[data-terminal-control]').click();
+  await $('[role="menuitem"]=New terminal').click();
+  const shown = async (): Promise<WebdriverIO.Element[]> =>
+    $$('[data-slot="dropdown-menu-sub-content"] [role="menuitem"]').filter((item) => item.isDisplayed());
+  await browser.waitUntil(async () => (await shown()).length > 0, { timeoutMsg: 'the menu shows no shell' });
+  const items = await shown();
+  let chosen: WebdriverIO.Element | undefined = items[0];
+  if (shell !== undefined) {
+    chosen = undefined;
+    for (const item of items) {
+      if ((await item.getText()).includes(shell)) {
+        chosen = item;
+        break;
+      }
+    }
+  }
+  if (chosen === undefined) {
+    throw new Error(`the menu offers no ${shell ?? 'shell'}`);
+  }
+  await chosen.click();
+  await browser.waitUntil(async () => (await $$('[data-side-panel-tab]').length) > open, {
+    timeout: 30_000,
+    timeoutMsg: `terminal ${String(open + 1)} did not open`,
+  });
+}
+
+/** Waits until the terminal that shows reached its prompt, and a moment more for the shell to settle. */
+async function waitForPrompt(): Promise<void> {
+  await browser.waitUntil(
+    async () => {
+      const status = await browser.execute(() => {
+        const toolbars = [...document.querySelectorAll<HTMLElement>('[data-side-panels] [role="toolbar"]')];
+        const shown = toolbars.find((toolbar) => toolbar.offsetParent !== null);
+        return shown?.querySelector('[data-content]')?.textContent.trim() ?? '';
+      });
+      const hasStatus = status !== '';
+      const isStarting = status === 'Starting';
+      return hasStatus && !isStarting;
+    },
+    { timeout: 30_000, timeoutMsg: 'the terminal reached no prompt' },
+  );
+  await browser.pause(1_000);
+}
+
+/**
+ * Times 40 keys, each from the key to the row of the terminal that shows it.
+ * The page types and times on its own: WebDriver's round trips would cost
+ * more than the target. xterm.js reads keys from its hidden field.
+ */
+async function measureEcho(): Promise<number[]> {
+  return browser.execute(async () => {
+    const views = [...document.querySelectorAll<HTMLElement>('[data-terminal-view]')];
+    const view = views.find((candidate) => candidate.offsetParent !== null);
+    const rows = view?.querySelector('.xterm-rows') ?? null;
+    const field = view?.querySelector<HTMLTextAreaElement>('.xterm-helper-textarea') ?? null;
+    if (rows === null) {
+      throw new Error('the terminal has no rows');
+    }
+    if (field === null) {
+      throw new Error('the terminal has no field for keys');
+    }
+    const samples: number[] = [];
+    for (let sample = 0; sample < 40; sample += 1) {
+      const before = rows.textContent;
+      const shown = new Promise<number>((resolve) => {
+        const observer = new MutationObserver(() => {
+          if (rows.textContent !== before) {
+            observer.disconnect();
+            resolve(performance.now());
+          }
+        });
+        observer.observe(rows, { characterData: true, childList: true, subtree: true });
+      });
+      const start = performance.now();
+      field.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, code: 'KeyX', key: 'x' }));
+      field.dispatchEvent(new KeyboardEvent('keypress', { bubbles: true, charCode: 120, code: 'KeyX', key: 'x' }));
+      samples.push((await shown) - start);
+      await new Promise((resolve) => {
+        setTimeout(resolve, 100);
+      });
+    }
+    return samples;
+  });
 }
 
 describe('performance of terminals (NFR-PERF-06 to 09)', () => {
@@ -124,40 +235,16 @@ describe('performance of terminals (NFR-PERF-06 to 09)', () => {
   });
 
   it("NFR-PERF-06: Mannie adds at most 25 ms (p95) to a keystroke's echo", async () => {
-    await openTerminal();
-    // The page types and times on its own: WebDriver's round trips would
-    // cost more than the target. xterm.js reads keys from its hidden field.
-    const latencies = await browser.execute(async (rowsSelector: string) => {
-      const rows = document.querySelector(rowsSelector);
-      const field = document.querySelector<HTMLTextAreaElement>('[data-terminal-view] .xterm-helper-textarea');
-      if (rows === null) {
-        throw new Error('the terminal has no rows');
-      }
-      if (field === null) {
-        throw new Error('the terminal has no field for keys');
-      }
-      const samples: number[] = [];
-      for (let sample = 0; sample < 40; sample += 1) {
-        const before = rows.textContent;
-        const shown = new Promise<number>((resolve) => {
-          const observer = new MutationObserver(() => {
-            if (rows.textContent !== before) {
-              observer.disconnect();
-              resolve(performance.now());
-            }
-          });
-          observer.observe(rows, { characterData: true, childList: true, subtree: true });
-        });
-        const start = performance.now();
-        field.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, code: 'KeyX', key: 'x' }));
-        field.dispatchEvent(new KeyboardEvent('keypress', { bubbles: true, charCode: 120, code: 'KeyX', key: 'x' }));
-        samples.push((await shown) - start);
-        await new Promise((resolve) => {
-          setTimeout(resolve, 100);
-        });
-      }
-      return samples;
-    }, ROWS);
+    if (process.platform === 'win32') {
+      await openShell(ECHOING_SHELL);
+      await waitForPrompt();
+    } else {
+      await openTerminal();
+      await waitForPrompt();
+      await browser.keys([...'cat'.split(''), Key.Enter]);
+      await browser.pause(1_000);
+    }
+    const latencies = await measureEcho();
     await browser.keys([Key.Ctrl, 'c']);
 
     check('NFR-PERF-06 echo p95', percentile(latencies, 0.95), 25, 'ms', latencies.length);
@@ -203,6 +290,7 @@ describe('performance of terminals (NFR-PERF-06 to 09)', () => {
       };
       sample();
     }, ROWS);
+    await waitForPrompt();
     await $('[data-terminal-view]').click();
     await browser.keys(FLOOD.split(''));
     await browser.keys(Key.Enter);
@@ -258,19 +346,10 @@ describe('performance of terminals (NFR-PERF-06 to 09)', () => {
   });
 
   it('opens 7 more terminals', async () => {
-    // The first terminal is open; the rest open as new tabs.
+    // The first terminal is open; the rest open as new tabs, in the first
+    // shell of this computer, the default.
     for (let terminal = 2; terminal <= IDLE_TERMINALS; terminal += 1) {
-      await $('[data-terminal-control]').click();
-      await $('[role="menuitem"]=New terminal').click();
-      // The first shell of this computer, the default.
-      const [shell] = await $$('[data-slot="dropdown-menu-sub-content"] [role="menuitem"]').filter((item) =>
-        item.isDisplayed(),
-      );
-      await shell?.click();
-      await browser.waitUntil(async () => (await $$('[data-side-panel-tab]').length) >= terminal, {
-        timeout: 30_000,
-        timeoutMsg: `terminal ${String(terminal)} did not open`,
-      });
+      await openShell();
     }
   });
 
@@ -290,6 +369,62 @@ describe('performance of terminals (NFR-PERF-06 to 09)', () => {
     } else {
       const perTab = growth / (IDLE_TERMINALS - 1) / 1_000_000;
       check('NFR-PERF-09 memory per terminal tab', Math.max(0, perTab), 10, 'MB', IDLE_TERMINALS - 1);
+    }
+  });
+
+  it("reports the echo of the default shell, the shell's own echo included", async () => {
+    // The last terminal that opened shows, in the default shell.
+    await waitForPrompt();
+    const latencies = await measureEcho();
+    await browser.keys([Key.Ctrl, 'c']);
+
+    report('NFR-PERF-06 echo p95 in the default shell', percentile(latencies, 0.95), 'ms', latencies.length);
+  });
+
+  it('switches between the terminals’ tabs without work for the hidden terminals', async () => {
+    // The compatible renderer measures a glyph's width in the page, by
+    // putting the glyph into a measuring element, and a terminal in a hidden
+    // tab would measure each as 0, again for every glyph that it draws.
+    await browser.execute(() => {
+      window.hiddenMeasurements = 0;
+      new MutationObserver((records) => {
+        for (const record of records) {
+          const target = record.target instanceof Element ? record.target : null;
+          const isMeasure = target?.classList.contains('xterm-char-measure-element') === true;
+          const isHidden = target?.closest('[role="tabpanel"]')?.hasAttribute('hidden') === true;
+          if (isMeasure && isHidden) {
+            window.hiddenMeasurements = (window.hiddenMeasurements ?? 0) + 1;
+          }
+        }
+      }).observe(document.body, { childList: true, subtree: true });
+      if (PerformanceObserver.supportedEntryTypes.includes('longtask')) {
+        window.longestSwitchTask = 0;
+        new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) {
+            window.longestSwitchTask = Math.max(window.longestSwitchTask ?? 0, entry.duration);
+          }
+        }).observe({ type: 'longtask' });
+      }
+    });
+    let switches = 0;
+    for (let round = 0; round < SWITCH_ROUNDS; round += 1) {
+      for (const tab of await $$('[data-side-panel-tab] [role="tab"]')) {
+        await tab.click();
+        switches += 1;
+        await browser.pause(500);
+      }
+    }
+    const measured = await browser.execute(() => ({
+      hidden: window.hiddenMeasurements ?? 0,
+      longestTask: window.longestSwitchTask,
+    }));
+
+    expect(switches).toBe(SWITCH_ROUNDS * IDLE_TERMINALS);
+    check('Glyphs that hidden terminals measured in tab switches', measured.hidden, 0, 'measurements', switches);
+    if (measured.longestTask === undefined) {
+      console.log('Tab switches: this webview reports no long tasks');
+    } else {
+      report('The longest task of the page in tab switches', measured.longestTask, 'ms', switches);
     }
   });
 });

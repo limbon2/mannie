@@ -7,6 +7,7 @@ Each change to the plugin adds one line under Unreleased, below its kind of chan
 ### Fixed
 
 - The end-to-end test of workers expects a task report's result as the runtime now writes it, with the sentence that its evidence comes from the worker's own tool calls.
+- A worker that connected while it was being paired, or while it was renamed, could keep showing the status that the command returned, when the list with its newer status arrived before the command's answer. The command's worker now goes in only while no list arrived during the command.
 
 ### Security
 

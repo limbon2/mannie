@@ -22,6 +22,8 @@ export class ServerList {
   /** Counts subscriptions, so that the updates of an ended one change nothing. */
   #generation = 0;
   #subscription: SubscriptionId | null = null;
+  /** Counts the lists that the channel brought, so that a command's result never covers a newer one. */
+  #received = 0;
 
   /** The server with this ID, if the list has it. */
   find(id: string): ServerView | undefined {
@@ -47,13 +49,27 @@ export class ServerList {
     this.servers = this.servers.filter((server) => server.id !== id);
   }
 
+  /** How many lists the channel brought so far, which an action notes before its command and gives `upsert`. */
+  get received(): number {
+    return this.#received;
+  }
+
   /** Follows the list again after a failure. */
   retry(): void {
     void this.#subscribe();
   }
 
-  /** Adds or replaces a server that a command returned, before the list arrives through the channel. */
-  upsert(server: ServerView): void {
+  /**
+   * Adds or replaces a server that a command returned, before the list
+   * arrives through the channel. When the channel brought a list after the
+   * action noted `received`, that list may be newer than the result, as a
+   * server starts while it is being added, and the channel brings the list
+   * again after every change, so the result stays out.
+   */
+  upsert(server: ServerView, received: number): void {
+    if (received !== this.#received) {
+      return;
+    }
     const index = this.servers.findIndex((known) => known.id === server.id);
     this.servers = index === -1 ? [...this.servers, server] : this.servers.with(index, server);
   }
@@ -69,6 +85,7 @@ export class ServerList {
         return;
       }
       case 'item': {
+        this.#received += 1;
         this.servers = message.item.servers;
         this.enabledTools = message.item.enabledTools;
         this.status = 'ready';

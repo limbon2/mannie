@@ -120,6 +120,20 @@ describe('the list of hosts', () => {
     ]);
   });
 
+  it('keeps a list that the channel brought while a command ran over the result of the command', async () => {
+    const context = new TestPluginContext('ssh', true);
+    const list = new HostList();
+    list.follow(context);
+    await settle();
+    channel.deliver([{ item: { hosts: [host('a')], kind: 'hosts' }, kind: 'item' }]);
+    const received = list.received;
+    channel.deliver([{ item: { hosts: [host('a', 'ready')], kind: 'hosts' }, kind: 'item' }]);
+
+    list.upsert(host('a'), received);
+
+    expect(list.hosts.map((known) => [known.name, known.status])).toEqual([['a', 'ready']]);
+  });
+
   it('forgets the hosts and ends the subscription as the plugin turns off', async () => {
     const context = new TestPluginContext('ssh', true);
     const list = new HostList();

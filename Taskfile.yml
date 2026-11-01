@@ -86,6 +86,8 @@ tasks:
       # The terminal's library stays out of the app's first bundle
       # (NFR-PERF-10).
       - node scripts/check-first-bundle.mjs
+      # No selector makes every change of the page restyle all of it.
+      - node scripts/check-css.mjs
       # Every program of the plugins' manifests, from its plugin's workspace
       # (ADR-0035, decision 10).
       - node scripts/plugins/programs.mjs build --release
@@ -317,6 +319,7 @@ tasks:
         platforms: [windows]
       - pnpm --dir apps/desktop exec tauri build --debug --no-bundle --features validation --config src-tauri/tauri.validation.conf.json -- --locked
       - node scripts/check-first-bundle.mjs
+      - node scripts/check-css.mjs
       # The programs that the end-to-end tests use, such as the worker that
       # the workers' tests pair the app with (tests/e2e/support/worker.ts).
       - node scripts/plugins/programs.mjs build --e2e

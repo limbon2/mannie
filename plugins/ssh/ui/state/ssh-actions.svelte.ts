@@ -116,6 +116,7 @@ export class SshActions {
       username: request.username.trim(),
     };
     const password = request.password;
+    const received = hostList.received;
     const outcome = await call(() =>
       request.host === null
         ? commands.addHost({ ...fields, password })
@@ -127,7 +128,7 @@ export class SshActions {
       return;
     }
     request.password = '';
-    hostList.upsert(outcome.data);
+    hostList.upsert(outcome.data, received);
     if (this.edit === request) {
       this.editOpen = false;
     }
@@ -165,6 +166,7 @@ export class SshActions {
     request.failedStep = null;
     const scanned = request.scan;
     const fingerprint = scanned.key.fingerprint;
+    const received = hostList.received;
     const trusted = await call(() => commands.trustHostKey({ fingerprint, hostId: request.host.id }));
     request.trusting = false;
     if (!trusted.ok) {
@@ -175,7 +177,7 @@ export class SshActions {
     request.host = trusted.data;
     // The key that the host showed is the trusted one now.
     request.scan = { ...scanned, comparison: 'same' };
-    hostList.upsert(trusted.data);
+    hostList.upsert(trusted.data, received);
     request.testing = true;
     const tested = await call(() => commands.testHost({ hostId: request.host.id }));
     request.testing = false;

@@ -26,6 +26,13 @@ export class WorkerList {
   /** Counts subscriptions, so that the updates of an ended one change nothing. */
   #generation = 0;
   #subscription: SubscriptionId | null = null;
+  /** Counts the lists that the channel brought, so that a command's result never covers a newer one. */
+  #received = 0;
+
+  /** How many lists the channel brought so far, which an action notes before its command and gives `upsert`. */
+  get received(): number {
+    return this.#received;
+  }
 
   /** The worker with this ID, if the list has it. */
   find(id: string): WorkerView | undefined {
@@ -51,8 +58,17 @@ export class WorkerList {
     void this.#subscribe();
   }
 
-  /** Adds or replaces a worker that a command returned, before its update arrives through the channel. */
-  upsert(worker: WorkerView): void {
+  /**
+   * Adds or replaces a worker that a command returned, before its update
+   * arrives through the channel. When the channel brought a list after the
+   * action noted `received`, that list may be newer than the result, as a
+   * worker connects while it is being paired, and the channel brings the list
+   * again after every change, so the result stays out.
+   */
+  upsert(worker: WorkerView, received: number): void {
+    if (received !== this.#received) {
+      return;
+    }
     const index = this.workers.findIndex((known) => known.id === worker.id);
     this.workers = index === -1 ? [...this.workers, worker] : this.workers.with(index, worker);
   }
@@ -74,6 +90,7 @@ export class WorkerList {
         return;
       }
       case 'item': {
+        this.#received += 1;
         this.workers = message.item.workers;
         this.status = 'ready';
         this.failure = null;

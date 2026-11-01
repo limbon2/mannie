@@ -180,11 +180,65 @@
 /*
  * While a pane resizer is dragged with the pointer, PaneForge sets the cursor
  * of the whole page through a style element, which the Content Security
- * Policy blocks (ADR-0004). This rule shows the same cursor while the side
- * panel's handle is dragged.
+ * Policy blocks (ADR-0004). The shell marks the root while the side panel's
+ * handle is dragged, and this rule shows the same cursor. The rule looks for
+ * the mark on the root itself, since `:root:has(<dragged handle>) *` made
+ * every change of the page restyle all of it, as the next comment explains.
  */
 @layer base {
-  :root:has([data-pane-resizer][data-active="pointer"][data-direction="horizontal"]) * {
+  :root[data-side-panel-resizing] * {
     cursor: ew-resize !important;
+  }
+}
+
+/*
+ * A selector that puts `*` after a `:has()`, as Tailwind's `group-has-*`
+ * variants compile to, makes the webview restyle the whole page on every
+ * change of the page, even while nothing matches it: 5 to 6 ms for each change
+ * on the reference machine, such as each row that a terminal redraws, and four
+ * times that on the low-end laptop profile (docs/roadmap/m14-validation.md).
+ * These utilities of the shadcn-svelte components stay out of the build, and
+ * the rules after them do what Mannie needs of them with a named element after
+ * each `:has()`, which costs nothing between changes
+ * (src/lib/components/ui/PATCHES.md). `task build` refuses a build with such
+ * a selector (scripts/check-css.mjs).
+ */
+@source not inline("group-has-data-[sidebar=menu-action]/menu-item:pr-8");
+@source not inline("group-has-data-[slot=command-shortcut]/command-item:hidden");
+@source not inline("group-has-data-[slot=item-description]/item:self-start");
+@source not inline("group-has-data-[slot=item-description]/item:translate-y-0.5");
+@source not inline("group-has-data-horizontal/field:text-balance");
+@source not inline("group-has-[:focus-visible]/field-label:border-transparent");
+@source not inline("group-has-[:focus-visible]/field-label:ring-0");
+@source not inline("group-has-[:focus-visible]/field-label:data-checked:border-primary");
+@source not inline("group-has-[:focus-visible]/field-label:not-data-checked:border-input");
+@source not inline("group-has-[>input]/input-group:pt-2");
+@source not inline("group-has-[>input]/input-group:pb-2");
+@source not inline("group-has-[>svg]/alert:col-start-2");
+@source not
+  inline(
+    "sm:group-data-[size=default]/alert-dialog-content:group-has-data-[slot=alert-dialog-media]/alert-dialog-content:col-start-2"
+  );
+
+@layer utilities {
+  /* A menu button leaves room for its item's action, on the right, where the action sits. */
+  [data-sidebar="menu-item"]:has([data-sidebar="menu-action"]) [data-sidebar="menu-button"] {
+    padding-right: calc(var(--spacing) * 8);
+  }
+
+  /* A command item that shows a shortcut hides its check mark. */
+  [data-slot="command-item"]:has([data-slot="command-shortcut"]) > .lucide-check {
+    display: none;
+  }
+
+  /* An item's media lines up with its title when the item has a description. */
+  [data-slot="item"]:has([data-slot="item-description"]) [data-slot="item-media"] {
+    align-self: flex-start;
+    translate: 0 calc(var(--spacing) * 0.5);
+  }
+
+  /* An alert's title takes the column beside the alert's icon. */
+  [data-slot="alert"]:has(> svg) > [data-slot="alert-title"] {
+    grid-column-start: 2;
   }
 }

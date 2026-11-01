@@ -43,6 +43,9 @@
   // stay the same from one start to the next.
   const MAIN_PANE_ID = 'shell-main-pane';
   const SIDE_PANE_ID = 'shell-side-pane';
+  // The root's mark while the side panel's handle is dragged with the
+  // pointer, which shows the resize cursor on the whole page (src/app.css).
+  const RESIZING_MARK = 'data-side-panel-resizing';
 
   let paletteOpen = $state(false);
   /** The main view's search parameters as the owner last saw them, where the settings lead back to. */
@@ -159,6 +162,10 @@
     }
   }
 
+  function markResizing(dragging: boolean): void {
+    document.documentElement.toggleAttribute(RESIZING_MARK, dragging);
+  }
+
   // The slots show a plugin's entries while the core reports the plugin as
   // on, so the window follows the plugins' states from its start (ADR-0030,
   // decision 11).
@@ -199,6 +206,17 @@
     if (address !== null) {
       mainViewSearch = address;
     }
+  });
+
+  // A handle that goes away during a drag never reports the drag's end, so
+  // the mark goes with the handle.
+  $effect(() => {
+    if (!split) {
+      return;
+    }
+    return () => {
+      document.documentElement.removeAttribute(RESIZING_MARK);
+    };
   });
 </script>
 
@@ -242,7 +260,12 @@
           <!-- The window splitter pattern: PaneForge gives the handle the main
                pane's share as its value and names that pane as the one it
                controls; the name and the orientation come from here. -->
-          <Resizable.Handle aria-label={m.shell_side_panel_resize()} aria-orientation="vertical" withHandle />
+          <Resizable.Handle
+            aria-label={m.shell_side_panel_resize()}
+            aria-orientation="vertical"
+            withHandle
+            onDraggingChange={markResizing}
+          />
           <Resizable.Pane
             id={SIDE_PANE_ID}
             class="flex min-h-0 flex-col"

@@ -1,8 +1,12 @@
 // A terminal's view in its panel
 // (plugins/terminal/docs/adr/0002-keep-a-headless-emulator-of-each-terminal-in-rust.md,
 // views and floods): xterm.js, fed by the channel `follow_terminal` while the
-// panel shows and the window is visible. A view that opens or shows again
-// starts from a full snapshot, so a hidden terminal costs the page nothing.
+// panel's tab shows and the window is visible. A view that opens or shows
+// again starts from a full snapshot, so a hidden terminal costs the page
+// nothing. xterm.js opens once the view first shows: its DOM renderer
+// measures each glyph as it opens and draws, and in a hidden tab every
+// measurement comes out as 0, which it does not keep, so it measures again
+// each time it draws.
 //
 // Output goes straight into xterm.js, in pieces of at most 32 KiB, and never
 // through Svelte state; the state holds the commands and what the terminal
@@ -81,32 +85,50 @@ export class TerminalViewState {
   /** The user and folder that the terminal reported last. */
   state: string | null = $state(null);
   readonly #address: TerminalAddress;
+  /** The settings that xterm.js opens with. */
+  readonly #settings: TerminalSettings;
   /** What the owner typed that no write has carried yet, in order. */
   #typed = '';
   /** Whether a write is on its way, which the next one waits for. */
   #writing = false;
   #ackTimer: ReturnType<typeof setTimeout> | null = null;
-  /** The lines of scrollback that the view keeps, which its snapshots fill. */
-  #scrollback = 2000;
   #acknowledged = 0;
   /** The absolute row of the screen's top and the buffer's line there, after the last write. */
   #anchor = { baseY: 0, topRow: 0 };
+  /**
+   * Whether the view waits for the snapshot that starts its subscription. A
+   * view that follows again shows what it showed before until then, and the
+   * snapshot resets xterm.js, so lines that it marked before would go.
+   */
+  #awaitingSnapshot = false;
   #disposed = false;
+  /** Where xterm.js opens once the view shows. */
+  #element: HTMLElement | null = null;
   readonly #followed: Followed<TerminalUpdate>;
+  /** Whether the view follows the terminal. */
+  #following = false;
+  /** Whether xterm.js is loading, which it does once. */
+  #opening = false;
   #pendingReveal: Reveal | null = null;
   #resizeTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Whether the panel's tab shows the view. */
+  #tabShown = false;
   #view: TerminalView | null = null;
   readonly #viewId = viewId();
+  /** Whether the window is visible. */
+  #windowShown = true;
   #written = 0;
 
-  constructor(address: TerminalAddress) {
+  constructor(address: TerminalAddress, settings: TerminalSettings) {
     this.#address = address;
+    // A copy, so that opening xterm.js later reads no state of the plugin.
+    this.#settings = { ...settings };
     this.#followed = new Followed(
       (channel) =>
         channels.followTerminal(
           {
             conversationId: address.conversationId,
-            scrollback: this.#scrollback,
+            scrollback: this.#settings.scrollback,
             terminal: address.terminal,
             view: this.#viewId,
           },
@@ -128,9 +150,62 @@ export class TerminalViewState {
     return this.#followed.failure;
   }
 
-  /** Opens xterm.js in `element` and follows the terminal. */
-  async attach(element: HTMLElement, settings: TerminalSettings): Promise<void> {
-    this.#scrollback = settings.scrollback;
+  /** Gives the view the element where xterm.js opens, once the view shows. */
+  attach(element: HTMLElement): void {
+    this.#element = element;
+    this.#update();
+  }
+
+  /** Says whether the panel's tab shows the view. */
+  setTabShown(shown: boolean): void {
+    this.#tabShown = shown;
+    this.#update();
+  }
+
+  /** Says whether the window is visible. */
+  setWindowShown(shown: boolean): void {
+    this.#windowShown = shown;
+    this.#update();
+  }
+
+  /**
+   * Follows the terminal while the view shows, and stops while it hides. A
+   * view that shows for the first time opens xterm.js first.
+   */
+  #update(): void {
+    if (this.#disposed) {
+      return;
+    }
+    const isShown = this.#tabShown && this.#windowShown;
+    if (!isShown) {
+      if (this.#following) {
+        this.#following = false;
+        this.#followed.stop();
+      }
+      return;
+    }
+    if (this.#view === null) {
+      void this.#open();
+      return;
+    }
+    if (!this.#following) {
+      this.#following = true;
+      this.#awaitingSnapshot = true;
+      this.#followed.start();
+    }
+  }
+
+  /** Opens xterm.js in the view's element, and follows the terminal if the view still shows. */
+  async #open(): Promise<void> {
+    const element = this.#element;
+    if (element === null) {
+      return;
+    }
+    if (this.#opening) {
+      return;
+    }
+    this.#opening = true;
+    const settings = this.#settings;
     const view = await createTerminalView(element, {
       cursorBlink: settings.cursorBlink,
       fontSize: settings.fontSize,
@@ -153,27 +228,13 @@ export class TerminalViewState {
       return;
     }
     this.#view = view;
-    this.#followed.start();
-  }
-
-  /** Stops following, as while the window is hidden; `resume` starts from a snapshot. */
-  pause(): void {
-    this.#followed.stop();
-  }
-
-  /** Follows the terminal again, from a full snapshot. */
-  resume(): void {
-    if (this.#view === null) {
-      return;
-    }
-    if (!this.#disposed) {
-      this.#followed.start();
-    }
+    this.#update();
   }
 
   /** Stops following and frees xterm.js. */
   dispose(): void {
     this.#disposed = true;
+    this.#following = false;
     this.#followed.stop();
     if (this.#ackTimer !== null) {
       clearTimeout(this.#ackTimer);
@@ -220,7 +281,8 @@ export class TerminalViewState {
     if (view === null) {
       return;
     }
-    if (!this.ready) {
+    const showsCurrent = this.ready && !this.#awaitingSnapshot;
+    if (!showsCurrent) {
       return;
     }
     const block = this.blocks.find((candidate) => candidate.number === reveal.block);
@@ -244,6 +306,7 @@ export class TerminalViewState {
       case 'snapshot': {
         this.#view?.reset();
         this.#write(update.data, update.seq, update.topRow, () => {
+          this.#awaitingSnapshot = false;
           this.ready = true;
           this.#revealNow();
         });

@@ -20,6 +20,8 @@ export class HostList {
   /** Counts subscriptions, so that the updates of an ended one change nothing. */
   #generation = 0;
   #subscription: SubscriptionId | null = null;
+  /** Counts the lists that the channel brought, so that a command's result never covers a newer one. */
+  #received = 0;
 
   /** The host with this ID, if the list has it. */
   find(id: string): HostView | undefined {
@@ -45,13 +47,26 @@ export class HostList {
     this.hosts = this.hosts.filter((host) => host.id !== id);
   }
 
+  /** How many lists the channel brought so far, which an action notes before its command and gives `upsert`. */
+  get received(): number {
+    return this.#received;
+  }
+
   /** Follows the list again after a failure. */
   retry(): void {
     void this.#subscribe();
   }
 
-  /** Adds or replaces a host that a command returned, before the list arrives through the channel. */
-  upsert(host: HostView): void {
+  /**
+   * Adds or replaces a host that a command returned, before the list arrives
+   * through the channel. When the channel brought a list after the action
+   * noted `received`, that list may be newer than the result, and the channel
+   * brings the list again after every change, so the result stays out.
+   */
+  upsert(host: HostView, received: number): void {
+    if (received !== this.#received) {
+      return;
+    }
     const index = this.hosts.findIndex((known) => known.id === host.id);
     this.hosts = index === -1 ? [...this.hosts, host] : this.hosts.with(index, host);
   }
@@ -67,6 +82,7 @@ export class HostList {
         return;
       }
       case 'item': {
+        this.#received += 1;
         this.hosts = message.item.hosts;
         this.status = 'ready';
         this.failure = null;

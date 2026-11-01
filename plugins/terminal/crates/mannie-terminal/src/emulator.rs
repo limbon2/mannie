@@ -213,7 +213,10 @@ impl vt100::Callbacks for Capture {
 }
 
 /// The text between two places of the screen, such as a command line, or
-/// `None` when the first place left the screen.
+/// `None` when the first place left the screen or lies past its width. A
+/// screen that narrowed after the first place leaves it at a column that
+/// the screen no longer has, and vt100's `contents_between` subtracts that
+/// column from the width without a check.
 fn line_between(
     screen: &vt100::Screen,
     top: u64,
@@ -222,6 +225,10 @@ fn line_between(
 ) -> Option<String> {
     let start_row = u16::try_from(start.row.checked_sub(top)?).ok()?;
     let end_row = u16::try_from(end.row.checked_sub(top)?).ok()?;
+    let (_rows, columns) = screen.size();
+    if start.column > columns.get() {
+        return None;
+    }
     let text = screen.contents_between(start_row, start.column, end_row, end.column);
     let line = text.trim().to_owned();
     Some(line)
@@ -600,6 +607,19 @@ mod tests {
         assert_eq!(marks[2].at, Position { row: 1, column: 0 });
         assert_eq!(marks[2].line.as_deref(), Some("ls"));
         assert_eq!(marks[3].at, Position { row: 3, column: 0 });
+    }
+
+    #[test]
+    fn a_command_after_the_screen_narrowed_past_its_prompt_has_no_line() {
+        let mut emulator = Emulator::new(40, 5, NONCE, 1 << 20);
+        emulator.process(format!("{}PS C:\\Users\\owner> {}", marker("A"), marker("B")).as_bytes());
+
+        emulator.resize(10, 5);
+        let marks = emulator.process(format!("echo after\r\n{}", marker("C")).as_bytes());
+
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].mark, Mark::CommandStart);
+        assert_eq!(marks[0].line, None);
     }
 
     #[test]

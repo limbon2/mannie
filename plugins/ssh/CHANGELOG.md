@@ -11,6 +11,7 @@ Each change to the plugin adds one line under Unreleased, below its kind of chan
 ### Fixed
 
 - CI uses crypto-bigint 0.7.10 after the upstream project yanked 0.7.6, with its required ctutils 0.4.6 dependency.
+- A host that a command saved or trusted could keep showing the state that the command returned, when the list with its newer state arrived before the command's answer. The command's host now goes in only while no list arrived during the command.
 
 ### Security
 

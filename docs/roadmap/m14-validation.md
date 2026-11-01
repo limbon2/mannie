@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                                                                                                                                                                                                    |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Status       | Draft for review                                                                                                                                                                                                                                                                                                                                                   |
-| Last updated | 2026-10-30                                                                                                                                                                                                                                                                                                                                                         |
+| Last updated | 2026-11-01                                                                                                                                                                                                                                                                                                                                                         |
 | Related      | [Milestones](milestones.md#m14-terminals), [ADR-0053](../adr/0053-let-plugins-offer-terminals.md), [ADR-0054](../adr/0054-let-tool-results-keep-what-they-cite-and-let-plugin-views-add-mentions.md), [Terminals](../../plugins/terminal/docs/README.md), [Goals and scope](../product/goals-and-scope.md#41-performance), [Security](../architecture/security.md) |
 
 This document records what the spikes and checks of [M14](milestones.md#m14-terminals) showed, so that the owner can review the plugin Terminal, ADR-0053, ADR-0054 and the plugin's two ADRs, and see what remains before the release. The owner accepted the four ADRs with the plan (D45). Each section names the checks, where they ran, the result, and what is open.
@@ -12,15 +12,16 @@ The spikes S1, S2 and S3 ran on 2026-10-30 on the owner's workstation, Windows 1
 
 ## 1. Summary
 
-| Spike or check                                                           | Result                                                                                                                                                    | Open                                                                          |
-| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| S1: ConPTY with Windows PowerShell 5.1, cmd and Git Bash in a Job Object | Passed on Windows 11 build 28000: markers in order with the output, resize, Ctrl+C once the inherited flag is cleared, and closing ends the shell         | Windows 10 22H2, and PowerShell 7                                             |
-| S2: xterm.js 6.0.0 under ADR-0004's policy                               | On Chromium, the engine of WebView2, the WebGL renderer works as shipped, and the DOM renderer works once its CSS goes through a constructable stylesheet | WebKitGTK 4.1, software WebGL, NVDA and Orca, and the keys of the terminal    |
-| S3: the headless emulator                                                | vt100 0.18.1 chosen: exact blocks across scrollback, markers at their place, 30 MiB/s with capture                                                        | None                                                                          |
-| S4: the setups of shells                                                 | Not run, apart from the setups of Windows PowerShell and Git Bash, which S1 injected                                                                      | The shells of Linux, the setups typed over SSH, prompt frameworks and history |
-| S5: performance on the low-end profile                                   | Not run                                                                                                                                                   | All of it, on both webviews and on a real low-end laptop                      |
-| The emulator's benchmark (`task bench`)                                  | 26 MiB/s for plain lines and 32 MiB/s for colored ones, against a floor of 4 MiB/s; a full snapshot of 20,000 lines takes 1.50 MiB and 1.3 ms             | The figures of the low-end profile                                            |
-| The plugins' Rust tests                                                  | The terminal plugin's 34 unit tests and 9 tests through the plugin host, and the SSH plugin's 7 tests of terminals, passed on the workstation             | Linux in `task test:linux`                                                    |
+| Spike or check                                                           | Result                                                                                                                                                                                                                                          | Open                                                                          |
+| ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| S1: ConPTY with Windows PowerShell 5.1, cmd and Git Bash in a Job Object | Passed on Windows 11 build 28000: markers in order with the output, resize, Ctrl+C once the inherited flag is cleared, and closing ends the shell                                                                                               | Windows 10 22H2, and PowerShell 7                                             |
+| S2: xterm.js 6.0.0 under ADR-0004's policy                               | On Chromium, the engine of WebView2, the WebGL renderer works as shipped, and the DOM renderer works once its CSS goes through a constructable stylesheet                                                                                       | WebKitGTK 4.1, software WebGL, NVDA and Orca, and the keys of the terminal    |
+| S3: the headless emulator                                                | vt100 0.18.1 chosen: exact blocks across scrollback, markers at their place, 30 MiB/s with capture                                                                                                                                              | None                                                                          |
+| S4: the setups of shells                                                 | Not run, apart from the setups of Windows PowerShell and Git Bash, which S1 injected                                                                                                                                                            | The shells of Linux, the setups typed over SSH, prompt frameworks and history |
+| S5: performance on the low-end profile                                   | Not run                                                                                                                                                                                                                                         | All of it, on both webviews and on a real low-end laptop                      |
+| The emulator's benchmark (`task bench`)                                  | 26 MiB/s for plain lines and 32 MiB/s for colored ones, against a floor of 4 MiB/s; a full snapshot of 20,000 lines takes 1.50 MiB and 1.3 ms                                                                                                   | The figures of the low-end profile                                            |
+| The plugins' Rust tests                                                  | The terminal plugin's 36 unit tests and 9 tests through the plugin host, and the SSH plugin's 7 tests of terminals, passed on the workstation                                                                                                   | Linux in `task test:linux`                                                    |
+| The performance suite (`task e2e:perf`)                                  | Every budget met on the workstation and under the emulated low-end profile after two fixes in the core, of the channels to the webview and of the app's styles (section 7.5), and a tab switch costs the hidden terminals nothing (section 7.6) | WebKitGTK, and a real low-end laptop                                          |
 
 ## 2. ConPTY (S1)
 
@@ -149,10 +150,12 @@ The plugin's spec ran on WebView2 156 on the workstation:
 - After the fixes, the spec passed with its four tests, axe included in both themes: `` Ctrl+` `` opens a terminal whose command becomes a block, an agent's command asks with the terminal access and its reply's citation shows the cited output and opens the agent's terminal, a command goes into the message box as a mention, and the terminal ends.
 - The terminal spec then failed now and then at its second test. The list showed the owner's `echo` with two letters swapped: each key went to the core as a call of its own, the core handles calls side by side, and under load a key overtook the one before it. A view now hands the owner's keys to the core one write at a time, with what arrives meanwhile in the next write and long input in pieces within the core's limit, which a test of the view's state covers. The spec's wait for the agent's terminal also read a tab that it had found once, which could be the old one, and now reads it again each time.
 - After these fixes, the whole suite passed: 27 of 27 spec files.
+- Batches that go at once, the first fix of section 7.4, exposed a race that the spec of Workers caught: the lists of workers, SSH hosts, MCP servers and plugins put in what a command returned, and so replaced a newer state that the channel had brought before the command's answer, such as a worker that connected while it was being paired. A command's result now goes in only while no list arrived during the command, which each list's tests cover.
+- With the fixes of section 7.4 and this one, the whole suite passed again on 2026-11-01: 27 of 27 spec files.
 
 ### 7.3 Performance
 
-`task e2e:perf` ran on 2026-11-01 on the workstation, the reference machine, with `MANNIE_PERF_REPORT_ONLY=1`, and the terminal's spec ran again under the emulated low-end profile (`MANNIE_PERF_PROFILE=low-end`): WebView2's CPU slowed 4 times through Microsoft Edge WebDriver's DevTools endpoint, and Mannie's processes held to 2 cores. The terminal's spec uses the compatible renderer, whose rows the page can watch, and the default shell, Windows PowerShell 5.1. Where runs differed, the table gives their range.
+The first run of `task e2e:perf` was on 2026-11-01 on the workstation, the reference machine, with `MANNIE_PERF_REPORT_ONLY=1`, and the terminal's spec ran again under the emulated low-end profile (`MANNIE_PERF_PROFILE=low-end`): WebView2's CPU slowed 4 times through Microsoft Edge WebDriver's DevTools endpoint, and Mannie's processes held to 2 cores. The terminal's spec used the compatible renderer, whose rows the page can watch, and the default shell, Windows PowerShell 5.1. Where runs differed, the table gives their range. Two budgets missed; section 7.4 has what the misses came from, and section 7.5 the figures after the fixes.
 
 | Budget                                               | Target         | Workstation  | Low-end profile |
 | ---------------------------------------------------- | -------------- | ------------ | --------------- |
@@ -167,10 +170,63 @@ The plugin's spec ran on WebView2 156 on the workstation:
 | NFR-PERF-08: what 8 idle terminals add to the CPU    | 0.5% of a core | 0.00%        | 0.36%           |
 | NFR-PERF-09: memory of each terminal tab             | 10 MB          | 0 MB         | 0.55 MB         |
 
-- The echo misses its budget on both: Windows PowerShell's own echo took 21 ms in S1, so Mannie adds about 42 to 45 ms on the workstation. The spec measures from the key to the row that shows it, so the frame of the DOM renderer is part of the figure.
+- The echo missed its budget on both: Windows PowerShell's own echo took 21 ms in S1, so Mannie seemed to add about 42 to 45 ms on the workstation. The spec measures from the key to the row that shows it, so the frame of the DOM renderer is part of the figure.
 - During a flood, the page answered input within the budget on the workstation, and within 52 ms on the low-end profile, where one of two runs missed it. The view settled at once when the flood ended. The page ran a task over 50 ms in 3 of 4 floods on the workstation, and one of about a second on the low-end profile, which a person sees as a stall.
 - Idle terminals cost almost nothing, as the plugin's views pause and nothing polls.
 - `performance.memory` gives coarse figures in WebView2, so the memory of a tab needs a finer measure before NFR-PERF-09 counts as met.
+
+### 7.4 What the misses came from
+
+A build that logged the time of each step of a key's way, from the page to the shell and back, and a CPU profile of the page during a flood found two causes outside the plugin, and both are fixed. The logging was removed afterwards.
+
+- A key reached the pseudo console 1.9 ms after the page saw it. PowerShell answered at once with a piece that changed nothing on the screen, and ConPTY sent the echo one frame later, 15 ms after the key. The core's batched channel held the first piece until a timer fired, which on Windows happens only at the system's next tick, up to 15.6 ms later, and the echo then waited 16 ms for the next batch, rounded up to a tick again: it reached the page 47 ms after the key, and the page drew it within a frame. A channel now sends a batch that may go at once without a timer, and up to 4 batches one after another after a pause ([desktop app](../architecture/desktop-app.md#3-streaming-to-the-ui)).
+- Every change of the page restyled the whole page: 5 to 6 ms on the workstation, with 14,000 elements in the page, wherever the change was. A terminal changes the page for each row that its compatible renderer redraws and for each glyph that it measures the first time, so a flood restyled the page every frame, and typing a command with glyphs that the terminal had not shown made tasks of 50 to 300 ms. With the page's 94 `:has()` rules deleted, a change took 0.08 ms. Any one rule that puts `*` after a `:has()` brought back 4 to 6 ms, even with nothing in the page that it could match, while the other rules cost nothing between changes. Tailwind's `group-has-*` variants compile to such selectors: 15 came from the shadcn-svelte components and one from the cursor rule of the side panel's handle. They stay out of the build now, rules that cost nothing do what Mannie needs of them ([patches to the components](../../apps/desktop/src/lib/components/ui/PATCHES.md#utilities-that-the-app-keeps-out-of-the-build)), and `task build` refuses a build with such a selector (`scripts/check-css.mjs`).
+- After the fix, a glyph's measurement took 0.7 ms on the workstation and 2 ms on the low-end profile, where it had taken 7 ms and about 25 ms. Strict CSS containment of the terminal measured no faster, so the terminal has none.
+- NFR-PERF-06 asks for a shell that echoes at once, which the spec now uses: Command Prompt, whose console host echoes the key itself, 0.3 ms after it reached the pseudo console. The default shell's echo is reported without a target, since PowerShell's second frame comes on top of Mannie's share.
+- While 8 terminals idled for 30 seconds, the page changed nothing and Mannie's own process used no processor time. The idle PowerShell processes used 0.3% of a core between them, which NFR-PERF-08 counts, as they run below Mannie.
+
+### 7.5 Performance after the fixes
+
+`task e2e:perf` ran again on 2026-11-01 on a build without the logging, on the workstation, and the terminal's spec ran twice under the low-end profile. NFR-PERF-06 is measured in Command Prompt, and the flood runs there too, as Command Prompt's loop prints faster than PowerShell's. Every budget was met.
+
+| Budget                                                  | Target         | Workstation | Low-end profile |
+| ------------------------------------------------------- | -------------- | ----------- | --------------- |
+| NFR-PERF-01: a streamed piece appears (p95)             | 100 ms         | 79 ms       | Not run         |
+| NFR-PERF-02: input with 8 replies streaming (p95)       | 50 ms          | 16.8 ms     | Not run         |
+| NFR-PERF-03: a cold start                               | 2 s            | 985 ms      | Not run         |
+| NFR-PERF-04: a conversation of 10,000 parts opens       | 1 s            | 68 ms       | Not run         |
+| NFR-PERF-06: a keystroke's echo in Command Prompt (p95) | 25 ms          | 6.8 ms      | 16.5 to 20.1 ms |
+| NFR-PERF-07: input during a flood (p95)                 | 50 ms          | 17.3 ms     | 17.8 to 18.8 ms |
+| NFR-PERF-07: the view settles after a flood             | 300 ms         | 9.3 ms      | 3.7 to 4.0 ms   |
+| NFR-PERF-07: the longest task of the page in a flood    | 50 ms          | 0 ms        | 0 ms            |
+| NFR-PERF-08: what 8 idle terminals add to the CPU       | 0.5% of a core | 0.00%       | 0.00%           |
+| NFR-PERF-09: memory of each terminal tab                | 10 MB          | 0 MB        | 0 to 0.53 MB    |
+| The default shell's echo, Windows PowerShell (p95)      | None           | 32 ms       | 35.5 to 44.4 ms |
+
+- PowerShell's echo comes in two frames of ConPTY, about 15 ms apart, with the key in the second, so most of its figure is the shell's own.
+- NFR-PERF-09's figures still come from `performance.memory`, which is coarse in WebView2.
+
+### 7.6 Tab switches
+
+A temporary spec logged each glyph that the compatible renderer measured, with its stack and whether its tab showed, while the tabs of two Windows PowerShell terminals switched on the workstation.
+
+- Every change of the side panels, such as showing another tab or opening a panel, made each terminal panel build its view again. The side panel area read the open panels from the address again and handed each panel a new object, so a panel remade the view that it had made of its argument, and the new view opened xterm.js and the terminal's channel again, in the hidden tab too. A switch took 83 or 84 measurements: 18 for the terminal that showed, and 65 at a width of 0 for the hidden one, since xterm.js keeps no width of 0 and measures again for every glyph that it draws. The Git panel remade its repository's state in the same way.
+- The side panels now keep a panel's object while the panel stays open. A terminal's view opens xterm.js once its tab first shows, and follows the terminal only while its tab and the window show, from a full snapshot each time it shows, as the plugin's [feature document](../../plugins/terminal/docs/README.md) says. A switch then took no measurement, and opening a second terminal took 18, all in the new terminal, where it had taken 83.
+- The plugin's end-to-end spec checks that a switch keeps each terminal's xterm.js, and that a terminal follows its channel again once its tab shows. Its first run stopped a terminal's thread: the owner typed a command after the command list had narrowed the terminal past its prompt's end, and vt100's `contents_between` subtracted the prompt's column from the screen's width without a check, which panics in debug builds, while release builds go on with a wrapped number. The emulator now reads no command line from the screen when the prompt's place lies past the screen's width.
+
+The terminal spec of the performance suite now goes through the tabs of its 8 terminals twice and checks that the hidden terminals measure no glyph. It ran on 2026-11-01 in the whole suite on the workstation and once under the low-end profile, and every budget was met.
+
+| Figure                                                   | Target         | Workstation     | Low-end profile |
+| -------------------------------------------------------- | -------------- | --------------- | --------------- |
+| Glyphs that hidden terminals measured in 16 tab switches | 0              | 0               | 0               |
+| The longest task of the page in those switches           | None           | None over 50 ms | None over 50 ms |
+| NFR-PERF-06: a keystroke's echo in Command Prompt (p95)  | 25 ms          | 8.4 ms          | 18.8 ms         |
+| NFR-PERF-07: input during a flood (p95)                  | 50 ms          | 17.1 ms         | 18.8 ms         |
+| NFR-PERF-07: the view settles after a flood              | 300 ms         | 0 ms            | 4.2 ms          |
+| NFR-PERF-07: the longest task of the page in a flood     | 50 ms          | 0 ms            | 0 ms            |
+| NFR-PERF-08: what 8 idle terminals add to the CPU        | 0.5% of a core | 0.00%           | 0.00%           |
+| NFR-PERF-09: memory of each terminal tab                 | 10 MB          | 0.42 MB         | 0.04 MB         |
+| The default shell's echo, Windows PowerShell (p95)       | None           | 25.7 ms         | 36.5 ms         |
 
 ## 8. Open
 
@@ -178,5 +234,5 @@ The plugin's spec ran on WebView2 156 on the workstation:
 - S2 on WebKitGTK 4.1 on Ubuntu 22.04, where constructable stylesheets need WebKit 2.40 or later; software WebGL; NVDA and Orca with screen reader mode; and `` Ctrl+` `` with the key that moves the focus out of the terminal.
 - S4: the setups on Linux and over SSH, with prompt frameworks and a clean history.
 - S5: performance on the low-end profile, on both webviews and on a real low-end laptop.
-- The keystroke's echo (NFR-PERF-06) and the long tasks of a flood (NFR-PERF-07), which miss their budgets (section 7.3).
+- Whether a resize between a prompt and its command moves the prompt's place, so that the command takes another row's text as its command line, is not checked: the emulator keeps the place from before the resize, and reads no line only when that place lies past the screen's width (section 7.6).
 - `task test:linux`, `task e2e` and `task e2e:perf` on WebKitGTK, NFR-PERF-10 beyond the first bundle, a measure of memory finer than `performance.memory`, and the owner's checks on a real low-end laptop.

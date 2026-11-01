@@ -93,6 +93,19 @@ describe('the list of workers', () => {
     ]);
   });
 
+  it('keeps a list that the channel brought while a command ran over the result of the command', async () => {
+    const { list } = followedList();
+    await Promise.resolve();
+    channel.deliver([listed([])]);
+    const received = list.received;
+    // The worker connects while it is being paired.
+    channel.deliver([listed([worker('new', 'connected')])]);
+
+    list.upsert(worker('new', 'connecting'), received);
+
+    expect(list.find('new')?.status).toBe('connected');
+  });
+
   it('says why it could not follow the list, and follows it again on request', async () => {
     core.subscribeWorkers.mockResolvedValueOnce({
       error: { code: 'store_unavailable', description: '', origin: 'host' },

@@ -3,10 +3,12 @@
 // computer beside the conversation, where the owner's command becomes a block
 // of the command list; a command of the agent asks the owner with the
 // terminal access and runs once allowed; the reply's citation shows the cited
-// lines and opens them in the terminal; a command goes into the message box
-// as a mention; and the owner ends the terminal. Every step passes axe in
-// both themes. The fixture provider's tools scenario calls the tool that a
-// message names, and its answer repeats the tool's result with its cite link.
+// lines and opens them in the terminal; each terminal keeps its view while
+// another tab shows, and follows its terminal again once it shows; a command
+// goes into the message box as a mention; and the owner ends the terminal.
+// Every step passes axe in both themes. The fixture provider's tools
+// scenario calls the tool that a message names, and its answer repeats the
+// tool's result with its cite link.
 // The plugin is off in a new installation, so the spec turns it on first.
 import {
   addProfile,
@@ -41,6 +43,13 @@ const VIEW = '[data-terminal-view]';
 
 /** The menus of the command list's rows. */
 const MENU_ITEM = '[data-slot="dropdown-menu-item"]';
+
+declare global {
+  interface Window {
+    /** The xterm.js elements of the open terminals, in the order of their tabs. */
+    keptTerminals?: Element[];
+  }
+}
 
 /** Runs axe in the light and the dark theme. */
 async function axeInBothThemes(): Promise<void> {
@@ -128,6 +137,35 @@ async function showCommandList(): Promise<void> {
   if (pressed !== 'true') {
     await clickWithText('[role="toolbar"] button', 'Commands');
   }
+}
+
+/** Shows the side panel tab whose label names `terminal`, such as "Terminal 1", with a click on it. */
+async function showTab(terminal: string): Promise<void> {
+  const label = `${terminal} ·`;
+  for (const tab of await $$('[data-side-panel-tab] [role="tab"]')) {
+    if ((await tab.getText()).includes(label)) {
+      await tab.click();
+      break;
+    }
+  }
+  await browser.waitUntil(
+    async () =>
+      browser.execute((wanted: string) => {
+        const selected = document.querySelector('[data-side-panel-tab] [role="tab"][aria-selected="true"]');
+        return selected?.textContent.includes(wanted) ?? false;
+      }, label),
+    { timeout: 10_000, timeoutMsg: `the tab of ${terminal} did not show` },
+  );
+}
+
+/** Whether the terminals' xterm.js elements are the ones that the test noted, in the same order. */
+async function keepsTerminals(): Promise<boolean> {
+  return browser.execute(() => {
+    const kept = window.keptTerminals ?? [];
+    const current = [...document.querySelectorAll('[data-side-panels] [data-terminal-view] .xterm')];
+    const isSameCount = kept.length > 0 && current.length === kept.length;
+    return isSameCount && current.every((element, index) => element === kept[index]);
+  });
 }
 
 /** Chooses an action of a block's menu in the command list, whose button is the row's last. */
@@ -235,6 +273,27 @@ describe('Terminal', () => {
       timeout: 10_000,
       timeoutMsg: "the agent's terminal did not show",
     });
+  });
+
+  it('keeps each terminal’s view while another tab shows, and follows its terminal again once it shows', async () => {
+    // Terminal 2 shows, and terminal 1 waits behind its tab.
+    await browser.execute(() => {
+      window.keptTerminals = [...document.querySelectorAll('[data-side-panels] [data-terminal-view] .xterm')];
+    });
+
+    await showTab('Terminal 1');
+    const keptWhileTerminalOneShows = await keepsTerminals();
+    await showTab('Terminal 2');
+    await waitForPrompt();
+    const [shownView] = await $$(VIEW).filter((view) => view.isDisplayed());
+    await shownView?.click();
+    await typeLine('echo after the switch');
+    await showCommandList();
+    await endedBlock('echo after the switch');
+    await axeInBothThemes();
+
+    expect(keptWhileTerminalOneShows).toBe(true);
+    expect(await keepsTerminals()).toBe(true);
   });
 
   it('puts a command into the message box as a mention, and ends the terminal', async () => {

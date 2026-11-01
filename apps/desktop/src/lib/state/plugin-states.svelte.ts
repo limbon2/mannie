@@ -31,6 +31,8 @@ export class PluginStates {
   plugins: PluginView[] = $state([]);
   status: 'error' | 'loading' | 'ready' = $state('loading');
   #followers: Follower[] = [];
+  /** Counts the lists that the channel brought, so that a command's result never covers a newer one. */
+  #received = 0;
   /** Counts subscriptions, so that the updates of an ended one change nothing. */
   #generation = 0;
   #started = false;
@@ -48,11 +50,12 @@ export class PluginStates {
 
   /** Turns a plugin on or off; returns why it could not, or `null`. */
   async setEnabled(id: string, enabled: boolean): Promise<Failure<PluginsError> | null> {
+    const received = this.#received;
     const outcome = await call(() => commands.setPluginEnabled({ enabled, pluginId: id }));
     if (!outcome.ok) {
       return outcome.failure;
     }
-    this.#replace(outcome.data);
+    this.#replace(outcome.data, received);
     return null;
   }
 
@@ -102,6 +105,7 @@ export class PluginStates {
         return;
       }
       case 'plugins': {
+        this.#received += 1;
         this.plugins = update.plugins;
         this.status = 'ready';
         this.failure = null;
@@ -110,8 +114,16 @@ export class PluginStates {
     }
   }
 
-  /** Puts in a plugin that a command returned, before its update arrives through the channel. */
-  #replace(view: PluginView): void {
+  /**
+   * Puts in a plugin that a command returned, before its update arrives
+   * through the channel. When the channel brought a list after the command
+   * started, that list may be newer than the result, and the channel brings
+   * the list again after every change, so the result stays out.
+   */
+  #replace(view: PluginView, received: number): void {
+    if (received !== this.#received) {
+      return;
+    }
     const index = this.plugins.findIndex((plugin) => plugin.id === view.id);
     if (index !== -1) {
       this.plugins = this.plugins.with(index, view);

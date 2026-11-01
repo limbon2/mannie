@@ -208,6 +208,7 @@ export class McpActions {
     request.saving = true;
     request.failure = null;
     const input = inputOf(request);
+    const received = serverList.received;
     const outcome = await call(() =>
       request.server === null
         ? commands.addServer(input)
@@ -222,7 +223,7 @@ export class McpActions {
     for (const row of request.secrets) {
       row.value = '';
     }
-    serverList.upsert(outcome.data);
+    serverList.upsert(outcome.data, received);
     if (this.edit === request) {
       this.editOpen = false;
     }
@@ -250,6 +251,7 @@ export class McpActions {
     request.adding = true;
     request.failure = null;
     const keys = [...request.chosen];
+    const received = serverList.received;
     const outcome = await call(() => commands.importConfiguration({ keys, text: request.text }));
     request.adding = false;
     if (!outcome.ok) {
@@ -258,7 +260,7 @@ export class McpActions {
     }
     request.outcome = outcome.data;
     for (const server of outcome.data.added) {
-      serverList.upsert(server);
+      serverList.upsert(server, received);
     }
   }
 
@@ -359,9 +361,10 @@ export class McpActions {
   /** Turns a server on or off. */
   async setEnabled(server: ServerView, enabled: boolean): Promise<void> {
     this.#clearFailure(server.id);
+    const received = serverList.received;
     const outcome = await call(() => commands.setServerEnabled({ enabled, serverId: server.id }));
     if (outcome.ok) {
-      serverList.upsert(outcome.data);
+      serverList.upsert(outcome.data, received);
       return;
     }
     this.actionFailures = { ...this.actionFailures, [server.id]: outcome.failure };
@@ -417,9 +420,10 @@ export class McpActions {
   /** Forgets a server's OAuth tokens. */
   async signOut(server: ServerView): Promise<void> {
     this.#clearFailure(server.id);
+    const received = serverList.received;
     const outcome = await call(() => commands.signOut({ serverId: server.id }));
     if (outcome.ok) {
-      serverList.upsert(outcome.data);
+      serverList.upsert(outcome.data, received);
       return;
     }
     this.actionFailures = { ...this.actionFailures, [server.id]: outcome.failure };

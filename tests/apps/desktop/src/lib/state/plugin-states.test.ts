@@ -134,6 +134,20 @@ describe('the list of plugins', () => {
     expect(states.isOn('workers')).toBe(true);
   });
 
+  it('keeps a list that arrived while a change ran over the plugin that the change returned', async () => {
+    const states = await started();
+    deliver(plugin('off'));
+    core.setPluginEnabled.mockImplementation(() => {
+      // The plugin is on before the answer to the change arrives.
+      deliver(plugin('on'));
+      return Promise.resolve({ data: plugin('starting'), status: 'ok' });
+    });
+
+    await states.setEnabled('workers', true);
+
+    expect(states.isOn('workers')).toBe(true);
+  });
+
   it('reads the work that a plugin has in progress', async () => {
     core.pluginWork.mockResolvedValue({ data: { items: [{ code: 'active_tasks', count: 2 }] }, status: 'ok' });
     const states = new PluginStates();
