@@ -12,6 +12,7 @@ import { createContext } from 'svelte';
 
 import type { PluginSlots as SdkPluginSlots, SlotCatalog } from '#lib/sdk/slots.js';
 import type {
+  CommandKey,
   ContextKind,
   ConversationControl,
   ImageSourceKind,
@@ -46,16 +47,16 @@ interface Registered<T> {
  * does an entry that the slot's check refuses.
  */
 export class Slot<T extends SlotEntry> {
-  readonly #check: ((entry: T) => string | null) | undefined;
+  readonly #check: ((entry: T, registered: readonly T[]) => string | null) | undefined;
   readonly #isOn: PluginIsOn;
   readonly #name: string;
   readonly #registered: Registered<T>[] = $state([]);
 
   /**
    * A slot. `isOn` tells whether a plugin's entries show; `check` returns why
-   * an entry cannot be registered, or null.
+   * an entry cannot be registered beside those registered before, or null.
    */
-  constructor(name: string, isOn: PluginIsOn, check?: (entry: T) => string | null) {
+  constructor(name: string, isOn: PluginIsOn, check?: (entry: T, registered: readonly T[]) => string | null) {
     this.#name = name;
     this.#isOn = isOn;
     this.#check = check;
@@ -123,7 +124,11 @@ export class Slot<T extends SlotEntry> {
     if (isDuplicate) {
       throw new Error(`The ${this.#name} slot already has an entry with the ID ${entry.id}.`);
     }
-    const problem = this.#check?.(entry) ?? null;
+    const problem =
+      this.#check?.(
+        entry,
+        this.#registered.map((registered) => registered.entry),
+      ) ?? null;
     if (problem !== null) {
       throw new Error(problem);
     }
@@ -159,6 +164,42 @@ function checkSidePanelKind(kind: SidePanelKind): string | null {
   return kind.id.includes(':') ? `The side panel kind ${kind.id} has a colon, which its address uses.` : null;
 }
 
+/**
+ * The keys that the shell binds itself, by `KeyboardEvent.code`, with Ctrl
+ * or Cmd: the palette, the settings and the sidebar.
+ */
+export const SHELL_KEYS: readonly string[] = ['KeyK', 'Comma', 'KeyB'];
+
+/** Whether two keys of commands are the same key. */
+function sameKey(left: CommandKey, right: CommandKey): boolean {
+  const sameCode = left.code === right.code;
+  const sameShift = (left.shift ?? false) === (right.shift ?? false);
+  const sameAlt = (left.alt ?? false) === (right.alt ?? false);
+  return sameCode && sameShift && sameAlt;
+}
+
+/** Whether a command has this key. */
+function holdsKey(command: ShellCommand, key: CommandKey): boolean {
+  if (command.key === undefined) {
+    return false;
+  }
+  return sameKey(command.key, key);
+}
+
+/** Why a command cannot be registered: its key is the shell's or another command's (ADR-0053, decision 8). */
+function checkCommand(command: ShellCommand, registered: readonly ShellCommand[]): string | null {
+  const { key } = command;
+  if (key === undefined) {
+    return null;
+  }
+  const isShellKey = SHELL_KEYS.includes(key.code) && key.shift !== true && key.alt !== true;
+  if (isShellKey) {
+    return `The command ${command.id} takes the key ${key.code}, which the shell binds.`;
+  }
+  const holder = registered.find((other) => holdsKey(other, key));
+  return holder === undefined ? null : `The command ${command.id} takes the key of the command ${holder.id}.`;
+}
+
 /** Every slot of the slot catalog, as the shell holds it. */
 type CatalogSlots = { readonly [Name in keyof SlotCatalog]: Slot<SlotCatalog[Name]> };
 
@@ -181,7 +222,7 @@ export class ShellSlots implements CatalogSlots {
 
   /** The slots; `isOn` tells whether a plugin's entries show, and every plugin's do without it. */
   constructor(isOn: PluginIsOn = () => true) {
-    this.commands = new Slot('commands', isOn);
+    this.commands = new Slot('commands', isOn, checkCommand);
     this.contextKinds = new Slot('context kinds', isOn);
     this.conversationControls = new Slot('conversation controls', isOn);
     this.imageSources = new Slot('image sources', isOn);

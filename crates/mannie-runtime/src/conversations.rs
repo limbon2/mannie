@@ -589,6 +589,7 @@ impl Runtime {
         let mut forgotten = vec![conversation.clone()];
         forgotten.extend(children.iter().cloned());
         self.forget_background_commands(&forgotten).await;
+        self.end_conversation_terminals(&forgotten).await;
         self.inner.hubs.deleted(conversation).await;
         for child in &children {
             self.inner.hubs.ended_task_conversation(child).await;

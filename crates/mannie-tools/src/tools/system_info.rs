@@ -62,6 +62,7 @@ impl TypedTool for SystemInfo {
                 output,
                 archives: Vec::new(),
                 images: Vec::new(),
+                cited: Vec::new(),
             })
         }
         .boxed()

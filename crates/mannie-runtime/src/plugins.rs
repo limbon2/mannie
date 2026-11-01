@@ -43,6 +43,7 @@ use mannie_plugin_sdk::points::executors::Executors;
 use mannie_plugin_sdk::points::images::ImageSources;
 use mannie_plugin_sdk::points::mentions::Mentions;
 use mannie_plugin_sdk::points::sections::Sections;
+use mannie_plugin_sdk::points::terminal_hosts::TerminalHosts;
 use mannie_plugin_sdk::points::tool_sources::{PluginToolSource, ToolSet, ToolSources};
 use mannie_plugin_sdk::points::tools::{PluginTool, Tools};
 use mannie_plugin_sdk::services::background_commands::BACKGROUND_COMMANDS_WORK;
@@ -311,7 +312,7 @@ struct RuntimeContributions {
 }
 
 /// The points that the runtime consumes.
-const RUNTIME_POINTS: [PointInfo; 8] = [
+const RUNTIME_POINTS: [PointInfo; 9] = [
     PointInfo::of::<Tools>(),
     PointInfo::of::<Agents>(),
     PointInfo::of::<Sections>(),
@@ -320,6 +321,7 @@ const RUNTIME_POINTS: [PointInfo; 8] = [
     PointInfo::of::<ImageSources>(),
     PointInfo::of::<ToolSources>(),
     PointInfo::of::<ContextProviders>(),
+    PointInfo::of::<TerminalHosts>(),
 ];
 
 impl ContributionConsumer for RuntimeContributions {
@@ -366,6 +368,7 @@ impl ContributionConsumer for RuntimeContributions {
         let images = contributions.take::<ImageSources>();
         let sources = contributions.take::<ToolSources>();
         let context = contributions.take::<ContextProviders>();
+        let terminal_hosts = contributions.take::<TerminalHosts>();
         tracing::info!(
             plugin = %plugin,
             generation,
@@ -377,6 +380,7 @@ impl ContributionConsumer for RuntimeContributions {
             images = images.len(),
             tool_sources = sources.len(),
             context_providers = context.len(),
+            terminal_hosts = terminal_hosts.len(),
             "a plugin's contributions were registered"
         );
         self.runtime.inner.agent_plugins.record(plugin, &agents);
@@ -402,6 +406,7 @@ impl ContributionConsumer for RuntimeContributions {
         *current = Arc::new(next);
         drop(current);
         self.runtime.drain_sources(plugin, generation, sources);
+        self.runtime.add_terminal_sources(plugin, terminal_hosts);
         Ok(())
     }
 
@@ -579,6 +584,8 @@ impl Runtime {
     /// and their calls into the plugin are refused; each run that follows a
     /// task of the plugin's executor lets the task go.
     fn drop_contributions(&self, plugin: &PluginId) {
+        // The plugin's hosts leave the terminals' registry.
+        self.remove_terminal_sources(plugin);
         // The plugin's sources publish nothing more.
         let drains = self
             .inner

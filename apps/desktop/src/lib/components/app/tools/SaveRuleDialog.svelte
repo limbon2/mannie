@@ -17,10 +17,13 @@
   // command's leading words the rule keeps, and whether it applies only in
   // the command's working directory. A rule from a command on a remote host
   // always applies only on that host (ADR-0036), so the dialog names the
-  // host instead. A rule from a run of an installed program applies only to
-  // that plugin's program, with the effects of the run (ADR-0038), which the
-  // dialog names. The core builds the rule from these answers and the
-  // request it answers. `toolsActions.startSaveRule` opens it.
+  // host instead, and so does a rule from a command in a terminal, which
+  // applies only in the terminals of that host, or of that shell on this
+  // machine (ADR-0053, decision 5). A rule from a run of an installed program
+  // applies only to that plugin's program, with the effects of the run
+  // (ADR-0038), which the dialog names. The core builds the rule from these
+  // answers and the request it answers. `toolsActions.startSaveRule` opens
+  // it.
   interface PrefixChoice {
     readonly count: number;
     readonly text: string;
@@ -29,6 +32,7 @@
   const request = $derived(toolsActions.rule);
   const remote = $derived(request?.proposal.remote ?? null);
   const program = $derived(request?.proposal.program ?? null);
+  const terminal = $derived(request?.proposal.terminal ?? null);
   const deciding = $derived(request !== null && toolsActions.deciding.includes(request.partId));
   const failure = $derived(request === null ? null : (toolsActions.decisionFailures[request.partId] ?? null));
   const choices: PrefixChoice[] = $derived(
@@ -65,6 +69,8 @@
           <Dialog.Description>
             {#if program !== null}
               {m.tools_rule_program_description({ program: program.name })}
+            {:else if terminal !== null}
+              {m.tools_rule_terminal_description()}
             {:else if remote !== null}
               {m.tools_rule_remote_description()}
             {:else}
@@ -89,7 +95,21 @@
             {/each}
           </RadioGroup.Root>
         </Field.Set>
-        {#if remote === null}
+        {#if terminal !== null}
+          <p class="text-sm" data-rule-terminal="">
+            {#if terminal.host.kind === 'remote'}
+              {m.tools_rule_limit_terminal({ host: terminal.host.label })}
+              <span class="block font-mono text-xs break-all text-muted-foreground" data-content>
+                {terminal.host.endpoint}
+              </span>
+            {:else}
+              {m.tools_rule_limit_terminal_here()}
+              <span class="block font-mono text-xs break-all text-muted-foreground" data-content>
+                {terminal.host.shell}
+              </span>
+            {/if}
+          </p>
+        {:else if remote === null}
           <Field.Field orientation="horizontal">
             <Field.Content>
               <Field.Label for="tools-rule-folder">{m.tools_rule_limit_folder()}</Field.Label>

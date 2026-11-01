@@ -3,7 +3,11 @@
 import { describe, expect, it } from 'vitest';
 
 import type { WindowError } from '../../../../../../apps/desktop/src/lib/generated/bindings.js';
-import { trayLabels, windowFailureMessage } from '../../../../../../apps/desktop/src/lib/utils/window-messages.js';
+import {
+  quitWarningTitle,
+  trayLabels,
+  windowFailureMessage,
+} from '../../../../../../apps/desktop/src/lib/utils/window-messages.js';
 
 const ERRORS: WindowError[] = [
   { code: 'invalid_label' },
@@ -27,6 +31,18 @@ describe('window messages', () => {
       expect(message.trim()).not.toBe('');
     }
     expect(new Set(messages).size).toBe(messages.length);
+  });
+
+  it('title the warning before quitting after the first of what quitting ends', () => {
+    expect(quitWarningTitle({ activeRuns: 1, backgroundCommands: 1, terminals: 1 })).toBe(
+      'Quit while replies are being written?',
+    );
+    expect(quitWarningTitle({ activeRuns: 0, backgroundCommands: 2, terminals: 1 })).toBe(
+      'Quit while background commands run?',
+    );
+    expect(quitWarningTitle({ activeRuns: 0, backgroundCommands: 0, terminals: 1 })).toBe(
+      'Quit while terminals run commands?',
+    );
   });
 
   it('give the tray labels that the core accepts', () => {

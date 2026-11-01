@@ -7,6 +7,8 @@
 | Deciders | Owner                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | Related  | [ADR-0021](0021-render-model-output-as-markdown-with-micromark.md), [ADR-0032](0032-let-features-and-plugins-add-kinds-of-mentions.md), [ADR-0046](0046-let-plugins-attach-context-to-conversations.md), [ADR-0050](0050-let-a-mention-attach-what-it-names.md), [ADR-0051](0051-let-a-plugin-keep-conversations-of-its-own.md), [ADR-0052](0052-offer-a-plugins-tools-where-its-attachments-are.md), [Notebooks](../../plugins/notebooks/docs/README.md) |
 
+Later changes: [ADR-0054](0054-let-tool-results-keep-what-they-cite-and-let-plugin-views-add-mentions.md) refines decision 4: a tool's result keeps the items that it cites, which the popover shows after their source is gone, a cite key may name lines of its item with `#L<first>-L<last>`, and an entry of `contextKinds` without a context provider serves citations only.
+
 ## Context
 
 - ADR-0046 gives every owner's message in a conversation with attachments the items that its providers find for that message, stored as a part `context`. The model reads them numbered [1] to [n], and the transcript links a marker such as [2] to the items of the message that the reply answers. The model may cite only the latest message's numbers, and it has no search tool ([D43](../roadmap/milestones.md#5-decisions)).

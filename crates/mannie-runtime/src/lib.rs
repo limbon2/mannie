@@ -44,6 +44,7 @@ mod projects;
 mod retry;
 mod search_profiles;
 mod tasks;
+mod terminals;
 #[cfg(feature = "testing")]
 pub mod testing;
 pub mod texts;
@@ -100,6 +101,7 @@ use crate::plugins::Registry;
 use crate::processes::{ProcessesProvider, Programs};
 use crate::search_profiles::ModelsProvider;
 use crate::tasks::ChildSlots;
+use crate::terminals::{Terminals, TerminalsProvider};
 use crate::wake_ups::WakeUps;
 
 /// What the system tools work with. The composition root builds it once.
@@ -267,6 +269,8 @@ struct Inner {
     background: CommandRegistry,
     /// The servers that plugins started (ADR-0043, decision 5).
     local_servers: Servers,
+    /// The hosts of terminals and the terminals that run (ADR-0053).
+    terminals: Terminals,
     /// The IDs of search profiles that changed or were deleted, for the
     /// plugins that follow them through the service `models` (ADR-0047).
     search_changes: tokio::sync::broadcast::Sender<String>,
@@ -409,6 +413,7 @@ impl Runtime {
             approvals: Mutex::default(),
             background: CommandRegistry::default(),
             local_servers: Servers::default(),
+            terminals: Terminals::default(),
             search_changes: tokio::sync::broadcast::channel(SEARCH_CHANGES_CAPACITY).0,
             wake_ups: WakeUps::default(),
             hubs: Hubs::default(),
@@ -441,6 +446,7 @@ impl Runtime {
             Arc::new(BackgroundCommandsProvider::new(self)),
             Arc::new(LocalServersProvider::new(self)),
             Arc::new(ModelsProvider::new(self)),
+            Arc::new(TerminalsProvider::new(self)),
         ]
     }
 
@@ -491,6 +497,7 @@ impl Runtime {
         // the ends reach the subscribers.
         self.end_background_commands().await;
         self.end_local_servers().await;
+        self.end_terminals().await;
         self.inner.hubs.shut_down().await;
         self.inner.assigned.shut_down();
         if let Err(error) = self.inner.store.flush().await {

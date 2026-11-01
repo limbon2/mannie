@@ -22,6 +22,12 @@ use crate::services::models::{
 use crate::services::secrets::{Secrets, SecretsApi, SecretsError};
 use crate::{BoxFuture, BoxStream};
 
+mod terminals;
+
+pub use self::terminals::{
+    FAKE_HOME, FAKE_SHELL, FAKE_USER, FakeTerminals, OpenedTerminal, ScriptedHosts,
+};
+
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     // Every critical section only reads or replaces a value.
     mutex.lock().unwrap_or_else(PoisonError::into_inner)

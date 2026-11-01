@@ -15,14 +15,17 @@ use crate::state::Core;
 /// active replies become interrupted and can be retried.
 const UNANSWERED_QUESTION_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// What quitting would end: the replies that it interrupts and the
-/// background commands that it ends (ADR-0041).
+/// What quitting would end: the replies that it interrupts, the background
+/// commands that it ends (ADR-0041) and the terminals whose commands it ends
+/// (ADR-0053, decision 9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct Running {
     /// The active replies.
     pub(crate) runs: u32,
     /// The background commands that run.
     pub(crate) commands: u32,
+    /// The terminals that run a command.
+    pub(crate) terminals: u32,
 }
 
 impl Running {
@@ -31,11 +34,12 @@ impl Running {
         Self {
             runs: core.active_run_count(),
             commands: core.background_command_count(),
+            terminals: core.running_terminal_count(),
         }
     }
 
     fn any(self) -> bool {
-        self.runs > 0 || self.commands > 0
+        self.runs > 0 || self.commands > 0 || self.terminals > 0
     }
 }
 
@@ -51,8 +55,8 @@ pub(crate) enum CloseDecision {
         /// What quitting would end.
         running: Running,
     },
-    /// Ask the owner to confirm quitting, because replies or background
-    /// commands run.
+    /// Ask the owner to confirm quitting, because replies, background
+    /// commands or commands in terminals run.
     ConfirmQuit {
         /// What quitting would end.
         running: Running,
@@ -77,7 +81,7 @@ pub(crate) fn close_decision(
 }
 
 /// What quitting does: at once when nothing runs, after a confirmation while
-/// replies or background commands run.
+/// replies, background commands or commands in terminals run.
 pub(crate) fn quit_decision(core_started: bool, running: Running) -> CloseDecision {
     if core_started && running.any() {
         CloseDecision::ConfirmQuit { running }
@@ -120,6 +124,7 @@ fn act(app: &AppHandle, core: &Core, decision: CloseDecision, source: QuitSource
                 WindowRequest::AskCloseAction {
                     active_runs: running.runs,
                     background_commands: running.commands,
+                    terminals: running.terminals,
                 },
             );
         }
@@ -130,6 +135,7 @@ fn act(app: &AppHandle, core: &Core, decision: CloseDecision, source: QuitSource
                 WindowRequest::ConfirmQuit {
                     active_runs: running.runs,
                     background_commands: running.commands,
+                    terminals: running.terminals,
                     source,
                 },
             );
@@ -180,7 +186,11 @@ mod tests {
     use super::{CloseDecision, Running, close_decision, quit_decision};
 
     fn running(runs: u32, commands: u32) -> Running {
-        Running { runs, commands }
+        Running {
+            runs,
+            commands,
+            terminals: 0,
+        }
     }
 
     #[test]
@@ -226,6 +236,23 @@ mod tests {
                 "{action:?} with {what:?}"
             );
         }
+    }
+
+    #[test]
+    fn quitting_confirms_while_a_terminal_runs_a_command() {
+        let terminals = Running {
+            terminals: 1,
+            ..Running::default()
+        };
+
+        assert_eq!(
+            quit_decision(true, terminals),
+            CloseDecision::ConfirmQuit { running: terminals }
+        );
+        assert_eq!(
+            close_decision(true, CloseAction::Quit, terminals),
+            CloseDecision::ConfirmQuit { running: terminals }
+        );
     }
 
     #[test]

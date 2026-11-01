@@ -6,7 +6,13 @@ import { describe, expect, it } from 'vitest';
 
 import type { ContextView, TurnView } from '../../../../../../apps/desktop/src/lib/generated/bindings.js';
 import type { ContextKind } from '../../../../../../apps/desktop/src/lib/types/shell-slots.js';
-import { citedItems, citeTarget, findCited } from '../../../../../../apps/desktop/src/lib/utils/citations.js';
+import {
+  citedItems,
+  citeKeyParts,
+  citeTarget,
+  findCited,
+  markedLines,
+} from '../../../../../../apps/desktop/src/lib/utils/citations.js';
 import {
   attachmentNoun,
   contextFailure,
@@ -104,10 +110,70 @@ describe('the excerpts that cite links name (ADR-0049, decision 4)', () => {
 
     const cited = citedItems(turns);
 
-    expect(findCited(cited, 'notebooks', 's1:1')?.item.number).toBe(2);
+    expect(findCited(cited, 'notebooks', 's1:1')?.item.location).toEqual({ kind: 'page', number: 2 });
     expect(findCited(cited, 'notebooks', 's1:0')?.provider).toBe('notebooks');
     expect(findCited(cited, 'notebooks', 's1:9')).toBeUndefined();
     expect(findCited(cited, 'wiki', 's1:0')).toBeUndefined();
+  });
+
+  it('include the items that tool calls cite, a later one replacing an earlier one, found without a line fragment', () => {
+    const call = (id: string, text: string): TurnView['parts'][number] => ({
+      content: {
+        call: {
+          accesses: [],
+          activity: null,
+          arguments: '{}',
+          argumentsCut: false,
+          cited: [{ key: '1.4', location: null, provider: 'terminal', text, title: 'ls' }],
+          decision: null,
+          endedAt: null,
+          notRun: null,
+          request: null,
+          result: null,
+          startedAt: null,
+          status: 'completed',
+          tool: 'run_in_terminal',
+        },
+        kind: 'tool_call',
+      },
+      createdAt: 0,
+      id,
+      position: 0,
+      runId: null,
+      state: 'complete',
+      turnId: 't1',
+    });
+    const turns: TurnView[] = [
+      { createdAt: 0, id: 't1', parts: [call('p1', 'old')], position: 0, run: null },
+      { createdAt: 0, id: 't2', parts: [call('p2', 'a.txt')], position: 1, run: null },
+    ];
+
+    const cited = citedItems(turns);
+
+    expect(findCited(cited, 'terminal', '1.4')?.item.text).toBe('a.txt');
+    expect(findCited(cited, 'terminal', '1.4#L1-L1')?.item.title).toBe('ls');
+    expect(findCited(cited, 'notebooks', '1.4')).toBeUndefined();
+  });
+
+  it('take a line fragment off a key, and keep a fragment that names no lines', () => {
+    expect(citeKeyParts('1.4#L2-L5')).toEqual({ key: '1.4', lines: { first: 2, last: 5 } });
+    expect(citeKeyParts('1.4#L7')).toEqual({ key: '1.4', lines: { first: 7, last: 7 } });
+    for (const key of ['1.4', '1.4#L5-L2', '1.4#L0', '1.4#La', '#L3', '1.4#L2-']) {
+      expect(citeKeyParts(key).lines, key).toBeNull();
+    }
+    expect(citeKeyParts('1.4#L5-L2').key).toBe('1.4#L5-L2');
+  });
+
+  it('split an excerpt around the lines that a citation names', () => {
+    const text = ['one', 'two', 'three', 'four'].join(String.fromCodePoint(10));
+
+    expect(markedLines(text, { first: 2, last: 3 })).toEqual({
+      after: `${String.fromCodePoint(10)}four`,
+      before: `one${String.fromCodePoint(10)}`,
+      marked: `two${String.fromCodePoint(10)}three`,
+    });
+    expect(markedLines(text, { first: 1, last: 9 })?.marked).toBe(text);
+    expect(markedLines(text, { first: 5, last: 6 })).toBeNull();
   });
 
   it('take a cite link apart into its provider and key, and nothing else', () => {

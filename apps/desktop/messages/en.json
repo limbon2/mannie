@@ -629,6 +629,17 @@
     }
   ],
   "window_quit_warning_title_commands": "Quit while background commands run?",
+  "window_terminals": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "1 terminal runs a command. Quitting ends the terminal and everything it started.",
+        "countPlural=other": "{count: number} terminals run commands. Quitting ends the terminals and everything they started."
+      }
+    }
+  ],
+  "window_quit_warning_title_terminals": "Quit while terminals run commands?",
   "window_cancel": "Cancel",
   "window_try_again": "Try again",
   "window_answering": "Saving your choice",
@@ -699,6 +710,10 @@
   "tools_call_other": "Use the tool {tool}",
   "tools_call_remote_command": "Run {command} on {host}",
   "tools_call_remote_command_background": "Start {command} on {host} in the background",
+  "tools_call_terminal_command": "Run {command} in terminal {terminal} on {host}",
+  "tools_call_terminal_command_here": "Run {command} in terminal {terminal}",
+  "tools_call_terminal_command_new": "Run {command} in a new terminal on {host}",
+  "tools_call_terminal_command_new_here": "Run {command} in a new terminal",
   "tools_call_external_tool": "Call {tool} on {server}",
   "tools_done_listed": [
     {
@@ -789,6 +804,7 @@
   "tools_refusal_read_only_host": "The computer that runs this task only reads and searches, so it refused this.",
   "tools_refusal_no_projects_on_host": "The computer that runs this task has no projects to move a conversation into.",
   "tools_refusal_no_remote_commands": "The computer that runs this task runs no commands on other computers.",
+  "tools_refusal_no_terminals": "The computer that runs this task types no commands into terminals.",
   "tools_refusal_no_programs_on_host": "The computer that runs this task runs no plugin's programs.",
   "tools_refusal_no_external_tools": "The computer that runs this task calls no tool server's tools.",
   "tools_details_accesses": "What it touches",
@@ -811,6 +827,12 @@
   "tools_access_remote_host": "Host",
   "tools_access_remote_endpoint": "Address",
   "tools_access_remote_identity": "Host key",
+  "tools_access_terminal": "Terminal",
+  "tools_access_terminal_number": "Terminal {terminal}",
+  "tools_access_terminal_new": "A new terminal",
+  "tools_access_terminal_this_machine": "This computer",
+  "tools_access_terminal_state": "User and folder",
+  "tools_access_terminal_as_typed": "The command runs as typed, in a shell that earlier commands may have set up.",
   "tools_access_program_run": "Run of an installed program",
   "tools_access_program": "Program",
   "tools_access_program_fixed": "Set by the plugin",
@@ -935,6 +957,7 @@
   "tools_reason_outside_allowed_folders": "It reaches outside the allowed folders of the computer that runs the task.",
   "tools_reason_host_asks": "The settings of the computer that runs the task ask before this change or command.",
   "tools_reason_remote_command": "It runs a command on another computer, and no rule or permission covers it.",
+  "tools_reason_terminal_command": "It types a command into a terminal, and no rule or permission covers it.",
   "tools_reason_program": "It runs an installed program that does something beyond the workspace, and no rule or permission covers it.",
   "tools_reason_external_tool": "It calls a tool of a tool server, and no permission covers it.",
   "tools_plugin_failed": "The tool reported the failure {code}.",
@@ -944,6 +967,8 @@
   "tools_grant_delete": "Deleting in {folder}",
   "tools_grant_command": "The command {command} in {folder}",
   "tools_grant_remote_command": "The command {command} on {host} ({endpoint})",
+  "tools_grant_terminal_command": "The command {command} in terminals on {host} ({endpoint})",
+  "tools_grant_terminal_command_here": "The command {command} in terminals of {shell} on this computer",
   "tools_grant_program": "The run {run} in {folder}",
   "tools_grant_program_effects": "The run {run} in {folder}, also when it {effects}",
   "tools_grant_external_tool": "The tool {tool} of {server} ({endpoint}) with any arguments",
@@ -960,6 +985,9 @@
   "tools_rule_limit_folder": "Only in this folder and the folders inside it",
   "tools_rule_remote_description": "Commands that start with the words you choose then run without asking on this host, in every conversation. Commands with shell operators always ask.",
   "tools_rule_limit_host": "Only on {host}",
+  "tools_rule_terminal_description": "Commands that start with the words you choose then run without asking in the terminals of this host, in every conversation. Commands with shell operators always ask.",
+  "tools_rule_limit_terminal": "Only in terminals on {host}",
+  "tools_rule_limit_terminal_here": "Only in terminals of this shell on this computer",
   "tools_rule_program_description": "In every conversation, runs of {program} that start with the words you choose no longer ask for the run. What a call changes in the workspace still follows the setting for changes.",
   "tools_rule_program_effects": "Also when a run {effects}. A run that does more beyond the workspace asks.",
   "tools_rule_program_no_effects": "A run that does anything beyond the workspace asks.",
@@ -1021,6 +1049,8 @@
   "tools_settings_rule_anywhere": "In any folder",
   "tools_settings_rule_in_folder": "In {folder} and the folders inside it",
   "tools_settings_rule_on_host": "On {host} ({endpoint})",
+  "tools_settings_rule_terminal_on_host": "In terminals on {host} ({endpoint})",
+  "tools_settings_rule_terminal_here": "In terminals of {shell} on this computer",
   "tools_settings_rule_program": "Runs of {program} by {plugin}",
   "tools_settings_rule_program_effects": "Also when a run {effects}",
   "tools_settings_rule_delete": "Delete",

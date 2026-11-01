@@ -5,11 +5,12 @@
 //! default, like every plugin (D28).
 //!
 //! A start reads the hosts and contributes the tools `run_ssh_command` and
-//! `start_ssh_command`, the section of the hosts and the mention provider.
-//! Turning the plugin off removes them, the host waits for the tools' calls
-//! that run and drops the rest (ADR-0036, decision 7), the core ends the
-//! commands in the background (ADR-0041, decision 11), and the stop closes
-//! every session.
+//! `start_ssh_command`, the section of the hosts, the mention provider and
+//! the hosts as terminal hosts (ADR-0053, decision 3). Turning the plugin
+//! off removes them, the host waits for the tools' calls that run and drops
+//! the rest (ADR-0036, decision 7), the core ends the commands in the
+//! background (ADR-0041, decision 11), and the stop closes every session,
+//! which ends the terminals on the hosts.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -23,6 +24,7 @@ use mannie_plugin_sdk::ipc::{Handlers, Interface, PluginStream};
 use mannie_plugin_sdk::plugin::{Instance, Plugin, Started};
 use mannie_plugin_sdk::points::mentions::{MentionProvider, Mentions};
 use mannie_plugin_sdk::points::sections::{Section, SectionBody, Sections};
+use mannie_plugin_sdk::points::terminal_hosts::{PluginTerminalHostSource, TerminalHosts};
 use mannie_plugin_sdk::points::tools::{AgentSelector, PluginTool, Tools};
 use mannie_plugin_sdk::services::background_commands::BackgroundCommands;
 use mannie_plugin_sdk::services::secrets::Secrets;
@@ -39,6 +41,7 @@ use crate::hosts::Hosts;
 use crate::mentions::HostMentions;
 use crate::section::{AGENTS, HostsSection, SECTION_ID, SECTION_POSITION};
 use crate::store::{HostRecord, MODULE};
+use crate::terminals::SshTerminalHosts;
 use crate::tool::RunSshCommand;
 
 /// The plugin's ID.
@@ -159,11 +162,14 @@ impl SshPlugin {
             SectionBody::Source(Arc::new(HostsSection::new(hosts.clone()))),
         );
         let mentions: Arc<dyn MentionProvider> = Arc::new(HostMentions::new(hosts.clone()));
+        let terminal_hosts =
+            PluginTerminalHostSource::new(SSH, Arc::new(SshTerminalHosts::new(hosts.clone())));
         let contributions = Contributions::new()
             .add::<Tools>(tool)
             .add::<Tools>(background_tool)
             .add::<Sections>(section)
-            .add::<Mentions>(mentions);
+            .add::<Mentions>(mentions)
+            .add::<TerminalHosts>(terminal_hosts);
         let handlers = handlers(&hosts);
         let (stop_closing, stopped) = oneshot::channel();
         tokio::spawn(close_idle_sessions(hosts.clone(), stopped));

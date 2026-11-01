@@ -4,6 +4,10 @@ Each change to the plugin adds one line under Unreleased, below its kind of chan
 
 ## Unreleased
 
+### Added
+
+- Terminals on the registered hosts: the plugin offers its hosts to the terminal plugin, whose terminals run the account's login shell on a pseudo terminal over the host's session, with the password replaced in their output ([ADR-0053](../../docs/adr/0053-let-plugins-offer-terminals.md)).
+
 ### Fixed
 
 - CI uses crypto-bigint 0.7.10 after the upstream project yanked 0.7.6, with its required ctutils 0.4.6 dependency.

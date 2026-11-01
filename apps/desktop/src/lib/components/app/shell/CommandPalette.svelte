@@ -38,6 +38,9 @@
         {#each group.commands as command (command.id)}
           <Command.Item value={command.label()} onSelect={() => run(command)}>
             {command.label()}
+            {#if command.key !== undefined}
+              <Command.Shortcut>{command.key.label()}</Command.Shortcut>
+            {/if}
           </Command.Item>
         {/each}
       </Command.Group>

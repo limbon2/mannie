@@ -3,7 +3,8 @@
 //! name and a password, the tool `run_ssh_command`, which runs commands on
 //! them under the master's policy and journal, and the tool
 //! `start_ssh_command`, which starts commands on them in the background
-//! (ADR-0041, decision 11).
+//! (ADR-0041, decision 11). The hosts are also offered to terminals, which
+//! open there through the core (ADR-0053, decision 3).
 //!
 //! The plugin speaks SSH through russh on ring, pins each host's key once
 //! the owner checked its fingerprint, and sends a password only to a host
@@ -19,11 +20,13 @@ mod lines;
 mod mentions;
 mod output;
 pub mod plugin;
+mod redaction;
 pub mod rules;
 mod schema;
 mod section;
 mod sessions;
 mod store;
+mod terminals;
 mod texts;
 mod tool;
 

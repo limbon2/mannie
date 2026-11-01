@@ -26,7 +26,7 @@ use mannie_types::run::{RunActivity, RunFailure};
 use mannie_types::tools::{
     Access, ApprovalChoice, ApprovalRequest, ArchiveRef, CommandRule, Decision, GrantScope,
     Interruption, NotRunReason, ProcessRecord, ProgramRule, Refusal, RemoteCommandRule,
-    ToolCallStatus, ToolImageRef, ToolOutcome, ToolResult, ToolsSettings,
+    TerminalCommandRule, ToolCallStatus, ToolImageRef, ToolOutcome, ToolResult, ToolsSettings,
 };
 use tokio::sync::oneshot;
 
@@ -109,6 +109,8 @@ struct Surroundings {
     remote_rules: Vec<RemoteCommandRule>,
     /// The rules for runs of installed programs (ADR-0038).
     program_rules: Vec<ProgramRule>,
+    /// The rules for commands typed into terminals (ADR-0053).
+    terminal_rules: Vec<TerminalCommandRule>,
     /// The conversation's project.
     project: Option<ProjectId>,
     /// On a worker, the ceiling of the task, narrowed as the task asks.
@@ -325,6 +327,7 @@ impl RunActor {
                 rules: &surroundings.rules,
                 remote_rules: &surroundings.remote_rules,
                 program_rules: &surroundings.program_rules,
+                terminal_rules: &surroundings.terminal_rules,
                 project: surroundings.project.as_ref(),
                 owner_request,
                 ceiling: surroundings.ceiling.as_ref(),
@@ -610,6 +613,10 @@ impl RunActor {
                         .add_program_rule(&ids.rule(), target, words, folder)
                         .await
                         .map(drop),
+                    Some(Ok(SavedRule::Terminal { target, words })) => store
+                        .add_terminal_rule(&ids.rule(), target, words)
+                        .await
+                        .map(drop),
                     Some(Err(_)) | None => Ok(()),
                 };
                 if let Err(error) = saved {
@@ -670,6 +677,7 @@ impl RunActor {
             rules,
             remote_rules,
             program_rules,
+            terminal_rules,
         } = self
             .runtime
             .policy_grants(Some(&self.authority), project.as_ref())
@@ -734,6 +742,7 @@ impl RunActor {
             rules,
             remote_rules,
             program_rules,
+            terminal_rules,
             project,
             ceiling,
             host,
@@ -757,7 +766,8 @@ impl RunActor {
 
     /// Stores a call's result and finishes its part. Archived outputs and the
     /// images that reach the model are stored with it, the images checked and
-    /// without their metadata (ADR-0044).
+    /// without their metadata (ADR-0044), and so are the items that the
+    /// output cites (ADR-0054, decision 1).
     fn complete_call(&mut self, mut call: StepCall, done: Done) {
         let offered = done.images.len();
         let (output, images) = tool_images::clean_result(done.output, &done.images);
@@ -800,6 +810,7 @@ impl RunActor {
             archives: references,
             images: image_refs,
         });
+        call.document.cited = done.cited;
         call.document.ended_at = Some(self.now());
         tracing::info!(run = %self.run, part = %call.part_id, tool = %call.document.tool, "a tool call completed");
         self.pending.push(Change::UpdatePart {

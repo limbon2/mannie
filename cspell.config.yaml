@@ -22,6 +22,7 @@ words:
   - AUTOINCREMENT
   - autolinks
   - autosquash
+  - Backquote
   - bsdtar
   - bufbuild
   - checksummed
@@ -32,6 +33,8 @@ words:
   - clippy
   - cmap
   - cmark
+  - COLORTERM
+  - conpty
   - Crockford
   - cssparser
   - ctutils
@@ -60,6 +63,7 @@ words:
   - huntabyte
   - inlang
   - IPTC
+  - itoa
   - jexec
   - Jina
   - Jina's
@@ -68,6 +72,7 @@ words:
   - keepalive
   - kwallet
   - Lanczos
+  - LASTEXITCODE
   - libappindicator
   - libayatana
   - libc
@@ -83,6 +88,7 @@ words:
   - limbon
   - linkme
   - lld
+  - llvmpipe
   - LOCALAPPDATA
   - lockfiles
   - logit
@@ -94,6 +100,7 @@ words:
   - Mannie's
   - mebibytes
   - metacharacters
+  - miow
   - modelcontextprotocol
   - msvc
   - netrc
@@ -112,6 +119,8 @@ words:
   - pidfds
   - pinentry
   - PKCE
+  - precmd
+  - preexec
   - prerender
   - prerendered
   - prerendering
@@ -123,6 +132,7 @@ words:
   - pypirc
   - QUIC
   - Qwen
+  - rcfile
   - receivepack
   - redb
   - redirections
@@ -167,9 +177,11 @@ words:
   - Tauri
   - Tauri's
   - taurignore
+  - termios
   - thiserror
   - Tombi
   - Tombi's
+  - truecolor
   - Unpair
   - unpairing
   - unpairs
@@ -178,11 +190,13 @@ words:
   - USERPROFILE
   - WALLIX
   - WCAG
+  - webgl
   - winapi
   - windir
   - winget
   - worktrees
   - zbus
   - zdiff
+  - ZDOTDIR
   - zenity
   - zeroize

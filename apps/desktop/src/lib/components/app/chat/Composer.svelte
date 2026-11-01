@@ -9,6 +9,7 @@
   import * as Tooltip from '#lib/components/ui/tooltip/index.js';
   import type { ImageRef, MentionPlace, MentionRef } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
+  import { messageBoxes } from '#lib/state/message-boxes.svelte.js';
   import { MessageImages } from '#lib/state/message-images.svelte.js';
   import { type MentionChoice, type MentionOption, MessageMentions } from '#lib/state/message-mentions.svelte.js';
   import { getShellSlots } from '#lib/state/shell-slots.svelte.js';
@@ -28,7 +29,8 @@
   // whose keys come first while it shows (docs/features/chat/mentions.md).
   // Image sources add their buttons at the start of the row, and take the
   // files of a paste or a drop (ADR-0033, decision 7); the images stay too
-  // when sending fails.
+  // when sending fails. The box of a conversation takes mentions from views
+  // outside it while it shows, such as a terminal's (ADR-0054, decision 4).
   interface Props {
     /** What the conversation has attached, below the box, such as notebooks (ADR-0046, decision 6). */
     attached?: Snippet;
@@ -108,6 +110,21 @@
     if (box !== null) {
       mentions.update(box.value, box.selectionStart);
     }
+  }
+
+  /** Puts a mention that a view outside the box adds at the end of the text, and moves the focus to it. */
+  function mentionFromOutside(choice: MentionChoice): 'added' | 'full' {
+    const inserted = mentions.append(text, choice);
+    if (inserted === null) {
+      return 'full';
+    }
+    text = inserted.text;
+    if (box !== null) {
+      box.value = inserted.text;
+      box.focus();
+      box.setSelectionRange(inserted.caret, inserted.caret);
+    }
+    return 'added';
   }
 
   function choose(choice: MentionChoice): void {
@@ -301,6 +318,15 @@
       element.focus();
     }
   };
+
+  // The box of a conversation takes mentions from views outside it while it
+  // shows (ADR-0054, decision 4).
+  $effect(() => {
+    if (mentionPlace.kind !== 'conversation') {
+      return;
+    }
+    return messageBoxes.register(mentionPlace.conversationId, { mention: mentionFromOutside });
+  });
 </script>
 
 <form

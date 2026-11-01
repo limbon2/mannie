@@ -126,6 +126,8 @@ macro_rules! app_commands {
             tools::delete_remote_command_rule,
             tools::list_program_rules,
             tools::delete_program_rule,
+            tools::list_terminal_command_rules,
+            tools::delete_terminal_command_rule,
             tools::list_conversation_grants,
             tools::revoke_conversation_grant,
             tools::list_shared_grants,

@@ -24,9 +24,11 @@ use mannie_plugin_sdk::points::executors::{
 };
 use mannie_plugin_sdk::points::mentions::{ProviderSuggestions, ReadVerdict, RenderedMention};
 use mannie_plugin_sdk::points::sections::SectionContext;
+use mannie_plugin_sdk::points::terminal_hosts::{TerminalHostEntry, TerminalOpenFailure};
 use mannie_plugin_sdk::points::tools::{
-    AgentSelector, ExternalToolAccess, PathAccess, RemoteCommandAccess, ToolAccess, ToolArchive,
-    ToolCall, ToolExecution, ToolImage, ToolOffering, ToolRefusal, ToolResult, ToolSpec,
+    AgentSelector, CitedItem, ExternalToolAccess, PathAccess, RemoteCommandAccess,
+    TerminalCommandAccess, ToolAccess, ToolArchive, ToolCall, ToolExecution, ToolImage,
+    ToolOffering, ToolRefusal, ToolResult, ToolSpec,
 };
 use mannie_plugin_sdk::services::background_commands::{
     BackgroundError, BackgroundScope, BackgroundTicket, RemoteEnding, RemoteOutput, StartedCommand,
@@ -36,6 +38,9 @@ use mannie_plugin_sdk::services::executor_host::{ExecutorTask, HostFailure, Outb
 use mannie_plugin_sdk::services::file_dialog::{DialogError, FileFilter};
 use mannie_plugin_sdk::services::models::{InputKind, ModelsError, SearchModel, SearchModelKind};
 use mannie_plugin_sdk::services::secrets::SecretsError;
+use mannie_plugin_sdk::services::terminals::{
+    ShellKind, TerminalEnding, TerminalHostRef, TerminalHostState, TerminalOpenError,
+};
 use serde_json::json;
 
 /// A module of the SDK whose shapes break the protocol rules, such as a trait
@@ -132,6 +137,22 @@ const KNOWN_EXCEPTIONS: &[KnownException] = &[
                  is a trait object whose output and errors the plugin takes once; a boundary \
                  carries the spec's secrets in a transport of their own and proxies the \
                  server, while its output, its end and its errors cross JSON",
+    },
+    KnownException {
+        module: "points::terminal_hosts",
+        reason: "a source of terminal hosts is a trait object that the core calls for each \
+                 terminal it opens, and an open terminal is a trait object whose output the core \
+                 takes once (ADR-0053, decision 3); a boundary proxies the source and its \
+                 terminals, while a host's entry, a terminal's output, its end and the failures \
+                 cross JSON",
+    },
+    KnownException {
+        module: "services::terminals",
+        reason: "an open terminal is a trait object whose output the plugin takes once and \
+                 whose input it writes (ADR-0053, decision 4), and a spec names a folder and a \
+                 setup that only the core checks; a boundary proxies the terminal, while the \
+                 list of hosts, a host's reference, a terminal's output, its end and the errors \
+                 cross JSON",
     },
     KnownException {
         module: "services::secrets",
@@ -1459,5 +1480,111 @@ fn a_start_in_the_background_and_its_errors_cross_json() {
     assert_eq!(
         serde_json::from_value::<StartedCommand>(json!({ "number": 2 })).unwrap(),
         started
+    );
+}
+
+#[test]
+fn a_terminal_command_crosses_json_with_its_host_and_leaves_out_an_unset_expectation() {
+    let typed = ToolAccess::TerminalCommand(
+        TerminalCommandAccess::new(
+            TerminalHostRef::Plugin {
+                plugin: "ssh".to_owned(),
+                key: "0199e0f2-0000-7000-8000-0000000000aa".to_owned(),
+            },
+            Some(2),
+            "bash".to_owned(),
+            "ss -ltnp".to_owned(),
+        )
+        .with_state("deploy in /srv"),
+    );
+
+    let encoded = serde_json::to_value(&typed).unwrap();
+
+    assert_eq!(
+        encoded,
+        json!({
+            "kind": "terminal_command",
+            "host": { "kind": "plugin", "plugin": "ssh", "key": "0199e0f2-0000-7000-8000-0000000000aa" },
+            "terminal": 2,
+            "shell": "bash",
+            "state": "deploy in /srv",
+            "command": "ss -ltnp",
+        })
+    );
+    assert_eq!(
+        serde_json::from_value::<ToolAccess>(encoded).unwrap(),
+        typed
+    );
+}
+
+#[test]
+fn a_result_carries_the_items_that_it_cites() {
+    let result = ToolResult::new("Output, 2 lines").with_cited(vec![CitedItem::new(
+        "terminal",
+        ContextItem::new(
+            "0199e0f2-0000-7000-8000-000000000001.1.3".to_owned(),
+            "netstat -ano".to_owned(),
+            None,
+            "TCP 0.0.0.0:135 LISTENING\nTCP 0.0.0.0:445 LISTENING".to_owned(),
+        ),
+    )]);
+
+    let encoded = serde_json::to_value(&result).unwrap();
+
+    assert_eq!(encoded["cited"][0]["provider"], "terminal");
+    assert_eq!(encoded["cited"][0]["item"]["title"], "netstat -ano");
+    assert_eq!(
+        serde_json::from_value::<ToolResult>(encoded).unwrap(),
+        result
+    );
+    assert!(
+        serde_json::to_value(ToolResult::new("plain"))
+            .unwrap()
+            .get("cited")
+            .is_none()
+    );
+}
+
+#[test]
+fn a_terminal_host_and_the_failures_of_terminals_cross_json_unchanged() {
+    let entry = TerminalHostEntry::new(
+        "0199e0f2-0000-7000-8000-0000000000aa".to_owned(),
+        "build-box".to_owned(),
+        "deploy@build-box.lan:22".to_owned(),
+        "SHA256:abc".to_owned(),
+    )
+    .with_state(TerminalHostState::Unavailable {
+        code: "key_changed".to_owned(),
+    })
+    .with_shell(ShellKind::Bash);
+
+    let encoded = serde_json::to_value(&entry).unwrap();
+
+    assert_eq!(
+        encoded["state"],
+        json!({ "kind": "unavailable", "code": "key_changed" })
+    );
+    assert_eq!(encoded["shell"], "bash");
+    assert_eq!(
+        serde_json::from_value::<TerminalHostEntry>(encoded).unwrap(),
+        entry
+    );
+    assert_eq!(
+        serde_json::to_value(TerminalOpenFailure::Failed {
+            reason: "login_failed".to_owned()
+        })
+        .unwrap(),
+        json!({ "code": "failed", "reason": "login_failed" })
+    );
+    assert_eq!(
+        serde_json::to_value(TerminalOpenError::HostChanged).unwrap(),
+        json!({ "code": "host_changed" })
+    );
+    assert_eq!(
+        serde_json::to_value(TerminalEnding::Lost {
+            code: "connection_lost".to_owned()
+        })
+        .unwrap(),
+        json!({ "kind": "lost", "code": "connection_lost" })
     );
 }

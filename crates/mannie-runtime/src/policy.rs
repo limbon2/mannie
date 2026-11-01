@@ -1,14 +1,16 @@
 //! What the policy reads besides an operation's accesses (docs/features/
 //! system-tools/operations-and-approvals.md, policy): the grants that apply to
 //! a conversation, the command rules, the rules of remote hosts, the rules of
-//! installed programs and the tools settings. Tool calls and mentions read
+//! installed programs, the rules of terminals and the tools settings. Tool calls and mentions read
 //! them the same way, so a mention is authorized as the model's read would be
 //! (ADR-0004, decision 2; ADR-0032, decision 8).
 
 use std::fmt::Display;
 
 use mannie_types::ids::{ConversationId, ProjectId};
-use mannie_types::tools::{CommandRule, GrantScope, ProgramRule, RemoteCommandRule, ToolsSettings};
+use mannie_types::tools::{
+    CommandRule, GrantScope, ProgramRule, RemoteCommandRule, TerminalCommandRule, ToolsSettings,
+};
 
 use crate::Runtime;
 
@@ -29,6 +31,8 @@ pub(crate) struct PolicyGrants {
     pub(crate) remote_rules: Vec<RemoteCommandRule>,
     /// The rules for runs of installed programs (ADR-0038).
     pub(crate) program_rules: Vec<ProgramRule>,
+    /// The rules for commands typed into terminals (ADR-0053).
+    pub(crate) terminal_rules: Vec<TerminalCommandRule>,
 }
 
 /// What could not be read, with the error, for the log.
@@ -87,6 +91,10 @@ impl Runtime {
             .program_rules()
             .await
             .map_err(|error| read_error("the rules of installed programs", &error))?;
+        grants.terminal_rules = store
+            .terminal_rules()
+            .await
+            .map_err(|error| read_error("the rules of terminals", &error))?;
         Ok(grants)
     }
 }

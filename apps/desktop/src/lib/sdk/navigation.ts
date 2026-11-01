@@ -13,6 +13,7 @@ import { type OpenPanelOptions, sidePanels } from '#lib/state/side-panels.svelte
 import {
   PROVIDER_SETTINGS_SECTION,
   openConversation as showConversation,
+  openConversationId as shownConversationId,
   startNewConversation,
 } from '#lib/utils/chat-urls.js';
 import { PLUGINS_SETTINGS_SECTION } from '#lib/utils/plugins-messages.js';
@@ -21,6 +22,15 @@ import { openSettings } from '#lib/utils/settings-sections.js';
 export type { NavigateOptions } from '#lib/state/activities.svelte.js';
 export type { OpenPanelOptions } from '#lib/state/side-panels.svelte.js';
 export { openSettings } from '#lib/utils/settings-sections.js';
+
+/**
+ * The conversation that the chat view shows, or `null` while it shows none,
+ * such as a new conversation's pane; read in a component, it follows the
+ * address (ADR-0053, decision 8).
+ */
+export function openConversationId(): string | null {
+  return shownConversationId();
+}
 
 /** Shows a conversation in the chat view, while the activity bar keeps its selection. */
 export function openConversation(id: string): Promise<void> {

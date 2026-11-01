@@ -120,7 +120,10 @@ impl Tool for ServerTools {
             .iter()
             .filter_map(|access| match access {
                 ToolAccess::ExternalTool(external) => Some(external.tool.clone()),
-                ToolAccess::Path(_) | ToolAccess::RemoteCommand(_) | ToolAccess::Program(_) => None,
+                ToolAccess::Path(_)
+                | ToolAccess::RemoteCommand(_)
+                | ToolAccess::Program(_)
+                | ToolAccess::TerminalCommand(_) => None,
             })
             .collect();
         self.executions.lock().unwrap().push(execution);

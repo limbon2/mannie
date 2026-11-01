@@ -139,6 +139,12 @@ impl Core {
         self.runtime().map_or(0, Runtime::running_background_count)
     }
 
+    /// How many terminals run a command, which quitting would end
+    /// (ADR-0053, decision 9).
+    pub(crate) fn running_terminal_count(&self) -> u32 {
+        self.runtime().map_or(0, Runtime::running_terminal_count)
+    }
+
     /// The window settings in memory.
     pub(crate) fn window_settings(&self) -> WindowSettings {
         self.inner

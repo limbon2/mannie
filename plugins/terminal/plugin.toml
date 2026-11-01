@@ -1,0 +1,26 @@
+#:schema ../../crates/mannie-plugin-sdk/plugin.schema.json
+# The terminal plugin (ADR-0053; plugins/terminal/docs/README.md):
+# terminals beside a conversation, on this machine and on hosts that plugins
+# offer, where the owner types and agents run commands under the master's
+# policy.
+
+id = "terminal"
+sdk = 1
+# After Git and MCP, on the Plugins page too.
+order = 70
+
+[rust]
+entry = "mannie-terminal"
+
+[services]
+# The table of the settings.
+store = 1
+# The core's registry of terminals, which starts the shells of this machine
+# and opens terminals on the hosts that plugins offer (ADR-0053, decision 4).
+terminals = 1
+
+[crates]
+# Only the terminal plugin emulates terminals in Rust: no crate outside this
+# folder may depend on vt100
+# (plugins/terminal/docs/adr/0002-keep-a-headless-emulator-of-each-terminal-in-rust.md).
+exclusive = ["vt100"]

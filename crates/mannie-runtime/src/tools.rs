@@ -13,7 +13,8 @@ use mannie_types::images::ImageData;
 use mannie_types::tools::{
     CommandRule, ConversationGrant, GrantRef, ProgramRule, ProgramRuleRef, ReadToolImage,
     ReadToolOutput, RemoteCommandRule, RemoteRuleRef, RuleRef, SetFullAccess, SharedGrant,
-    SharedGrantRef, ToolOutputPage, ToolsError, ToolsSettings, UpdateToolsSettings,
+    SharedGrantRef, TerminalCommandRule, TerminalRuleRef, ToolOutputPage, ToolsError,
+    ToolsSettings, UpdateToolsSettings,
 };
 
 use crate::Runtime;
@@ -160,6 +161,34 @@ impl Runtime {
             return Err(ToolsError::RuleNotFound);
         }
         tracing::info!(rule = %input.rule_id, "deleted a rule for commands on a remote host");
+        Ok(())
+    }
+
+    /// The rules for commands in terminals, the oldest first (ADR-0053,
+    /// decision 5).
+    pub async fn terminal_command_rules(&self) -> Result<Vec<TerminalCommandRule>, ToolsError> {
+        self.inner
+            .store
+            .terminal_rules()
+            .await
+            .map_err(tools_store_failure)
+    }
+
+    /// Deletes a rule for commands in terminals.
+    pub async fn delete_terminal_command_rule(
+        &self,
+        input: TerminalRuleRef,
+    ) -> Result<(), ToolsError> {
+        let deleted = self
+            .inner
+            .store
+            .delete_terminal_rule(&input.rule_id)
+            .await
+            .map_err(tools_store_failure)?;
+        if !deleted {
+            return Err(ToolsError::RuleNotFound);
+        }
+        tracing::info!(rule = %input.rule_id, "deleted a rule for commands in terminals");
         Ok(())
     }
 

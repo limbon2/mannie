@@ -12,6 +12,7 @@
   import { pluginStates } from '#lib/state/plugin-states.svelte.js';
   import { getShellSlots } from '#lib/state/shell-slots.svelte.js';
   import { MAIN_AREA_ID, sidePanels } from '#lib/state/side-panels.svelte.js';
+  import { commandOfKey } from '#lib/utils/commands.js';
   import { openSettings } from '#lib/utils/settings-sections.js';
   import { carriesFiles } from '#lib/utils/transfer-files.js';
   import { activeView } from '#lib/utils/views.js';
@@ -116,7 +117,11 @@
     return !comesBack;
   }
 
-  /** Ctrl+K opens the command palette and Ctrl+, the settings. The sidebar handles Ctrl+B itself. */
+  /**
+   * Ctrl+K opens the command palette and Ctrl+, the settings. The sidebar
+   * handles Ctrl+B itself. The keys of palette commands run their commands
+   * while they are available (ADR-0053, decision 8).
+   */
   function handleShortcut(event: KeyboardEvent): void {
     const withCommandKey = event.ctrlKey || event.metaKey;
     const key = event.key.toLowerCase();
@@ -129,6 +134,12 @@
     } else if (key === ',') {
       event.preventDefault();
       void openSettings();
+    } else if (!event.defaultPrevented) {
+      const command = commandOfKey(slots.commands.entries, event);
+      if (command !== undefined) {
+        event.preventDefault();
+        command.run();
+      }
     }
   }
 

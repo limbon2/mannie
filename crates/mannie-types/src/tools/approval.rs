@@ -9,6 +9,7 @@ use crate::ids::{ConversationId, PartId, ProjectId};
 use super::access::AccessMode;
 use super::external::ToolServerEndpoint;
 use super::program::{ProgramEffectKey, ProgramTarget};
+use super::terminal::{TerminalHost, TerminalTarget};
 
 /// Why the policy asks the owner about an operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
@@ -42,6 +43,9 @@ pub enum ApprovalReason {
     Program,
     /// A call of a tool server's tool, which no grant allows (ADR-0043).
     ExternalTool,
+    /// A command that a plugin's tool types into a terminal, which no rule or
+    /// grant allows (ADR-0053).
+    TerminalCommand,
 }
 
 /// What a grant covers.
@@ -123,6 +127,17 @@ pub enum GrantScope {
         /// The tool, as the server names it.
         tool: String,
     },
+    /// The same command text typed by the same plugin into any terminal of
+    /// the same host (ADR-0053, decision 5). It never covers a command of
+    /// `run_command` or of a remote host's tool, and they never cover it.
+    TerminalCommand {
+        /// The plugin whose tool types the command.
+        plugin: String,
+        /// Where the terminals run.
+        host: TerminalHost,
+        /// The command's text.
+        command: String,
+    },
 }
 
 /// A remote host as a grant, a rule or a proposal names it: the plugin, its
@@ -168,6 +183,11 @@ pub struct RuleProposal {
     /// covers commands in the background (ADR-0041, D40).
     #[serde(default)]
     pub background: bool,
+    /// The terminals of a command that a plugin's tool types, or `None` for
+    /// any other command. A rule from it applies only to that plugin's
+    /// commands on that host (ADR-0053, decision 5).
+    #[serde(default)]
+    pub terminal: Option<TerminalTarget>,
 }
 
 /// A question to the owner about one operation. It shows exactly what will

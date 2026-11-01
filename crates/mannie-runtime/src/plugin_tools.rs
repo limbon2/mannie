@@ -40,9 +40,10 @@ use mannie_plugin_sdk::points::tool_sources::{MAX_SOURCE_TOOLS, check_published}
 use mannie_plugin_sdk::points::tools::{
     AgentSelector, ExternalToolAccess, MAX_FAILURE_CODE_CHARS, MAX_TOOL_ARCHIVE_BYTES,
     MAX_TOOL_ARCHIVES, MAX_TOOL_DATA_BYTES, PathAccess, PluginTool, ProgramAccess,
-    RemoteCommandAccess, Tool as SdkTool, ToolAccess, ToolArchive, ToolCall, ToolEffect,
-    ToolExecution, ToolOffering, ToolSpec, Tools, is_tool_name,
+    RemoteCommandAccess, TerminalCommandAccess, Tool as SdkTool, ToolAccess, ToolArchive, ToolCall,
+    ToolEffect, ToolExecution, ToolOffering, ToolSpec, Tools, is_tool_name,
 };
+use mannie_plugin_sdk::services::terminals::{ExpectedHost, TerminalHostRef};
 use mannie_tools::{
     ArchivedOutput, Availability, Done, Execution, FolderError, PermissionClass, PrepareError,
     Prepared, Tool, ToolContext, ToolRegistry, plugin_path_access, stopped, takes_activity,
@@ -51,13 +52,14 @@ use mannie_tools::{
 use mannie_types::context::Attachment;
 use mannie_types::ids::ArchiveId;
 use mannie_types::tools::{
-    Access, AccessMode, MAX_ARGUMENTS_BYTES, MAX_EFFECT_ITEMS, ProgramEffect, ToolFailure,
-    ToolHint, ToolOutcome, ToolServerEndpoint, looks_like_secret,
+    Access, AccessMode, MAX_ARGUMENTS_BYTES, MAX_EFFECT_ITEMS, ProgramEffect, TerminalHost,
+    ToolFailure, ToolHint, ToolOutcome, ToolServerEndpoint, looks_like_secret,
 };
 use url::Url;
 
 use crate::Runtime;
 use crate::agents::{AgentDefinition, EXPLORE_AGENT, Requester};
+use crate::attachments;
 use crate::plugins::Snapshot;
 use crate::tasks::TASK_TOOLS;
 use crate::texts;
@@ -75,6 +77,11 @@ const MAX_ARCHIVE_NAME_CHARS: usize = 64;
 
 /// The most characters of the state that a plugin read of a path.
 const MAX_STATE_CHARS: usize = 1024;
+
+/// The most bytes of a command that a plugin's tool types into a terminal,
+/// and the most characters of a shell's name (ADR-0053).
+const MAX_TERMINAL_COMMAND_BYTES: usize = 16 * 1024;
+const MAX_SHELL_NAME_CHARS: usize = 64;
 
 /// The most arguments of a run of an installed program, and their most bytes
 /// in all, which the longest command line of Windows holds.
@@ -577,9 +584,10 @@ impl Tool for PluginToolAdapter {
                 Err(refusal) => return Err(refused(&plugin, refusal.detail, refusal.code, limit)),
             };
             let programs = resolved_programs(&runtime, &plugin, &accesses).await?;
+            let terminals = resolved_terminal_hosts(&runtime, &accesses).await?;
             // Paths are resolved against the file system, which blocks.
             tokio::task::spawn_blocking(move || {
-                core_accesses(&plugin, effect, accesses, &programs)
+                core_accesses(&plugin, effect, accesses, &programs, &terminals)
                     .map(|accesses| Prepared { accesses })
             })
             .await
@@ -640,11 +648,13 @@ impl Tool for PluginToolAdapter {
                     // The run checks and cleans the images when it completes
                     // the call, as it does every tool's (ADR-0044).
                     let images = result.images.into_iter().map(|image| image.data).collect();
+                    let cited = attachments::kept_cited(&plugin, result.cited);
                     Done {
                         outcome: ToolOutcome::Plugin { plugin, data, failure },
                         output: within_limit(result.output, limit),
                         archives,
                         images,
+                        cited,
                     }
                 }
                 // The SDK cancels a call by dropping its future (ADR-0034,
@@ -719,6 +729,7 @@ fn core_accesses(
     effect: ToolEffect,
     accesses: Vec<ToolAccess>,
     programs: &HashMap<String, ResolvedProgram>,
+    terminals: &ResolvedTerminalHosts,
 ) -> Result<Vec<Access>, PrepareError> {
     let fits = match effect {
         ToolEffect::ReadsOwnData => accesses.is_empty(),
@@ -749,8 +760,83 @@ fn core_accesses(
             ToolAccess::ExternalTool(external) => {
                 external_access(plugin, external).ok_or_else(|| broken(plugin))
             }
+            ToolAccess::TerminalCommand(typed) => {
+                terminal_access(plugin, typed, terminals).ok_or_else(|| broken(plugin))
+            }
         })
         .collect()
+}
+
+/// The hosts of a call's terminal commands, as the terminals' registry knows
+/// them: this machine in a listed shell, or a plugin's host with its name,
+/// endpoint and identity, and the identity of each.
+type ResolvedTerminalHosts = HashMap<TerminalHostRef, (TerminalHost, String)>;
+
+/// The hosts that a call's terminal commands name, resolved from the
+/// terminals' registry, so a plugin never names another plugin's endpoint
+/// (ADR-0053, decision 5). A host that left the registry since the tool
+/// listed it fails the call with what the model reads.
+async fn resolved_terminal_hosts(
+    runtime: &Runtime,
+    accesses: &[ToolAccess],
+) -> Result<ResolvedTerminalHosts, PrepareError> {
+    let mut resolved = HashMap::new();
+    for access in accesses {
+        let ToolAccess::TerminalCommand(typed) = access else {
+            continue;
+        };
+        if resolved.contains_key(&typed.host) {
+            continue;
+        }
+        let Some(host) = runtime.resolve_terminal_host(&typed.host).await else {
+            return Err(PrepareError::Failed(match &typed.host {
+                TerminalHostRef::ThisMachine { shell } => ToolFailure::ShellMissing {
+                    path: shell.to_string_lossy().into_owned(),
+                },
+                TerminalHostRef::Plugin { .. } => ToolFailure::SpawnFailed {
+                    reason: "the terminal's host is not offered now".to_owned(),
+                },
+            }));
+        };
+        resolved.insert(typed.host.clone(), host);
+    }
+    Ok(resolved)
+}
+
+/// The core's access of a command that a plugin's tool types into a
+/// terminal, with the plugin's ID and the host as the registry resolved it,
+/// or `None` when the command is empty, past its limit or holds a control
+/// character, or when a name breaks its limits.
+fn terminal_access(
+    plugin: &str,
+    typed: TerminalCommandAccess,
+    terminals: &ResolvedTerminalHosts,
+) -> Option<Access> {
+    let (host, identity) = terminals.get(&typed.host)?.clone();
+    let plain = |text: &str, max_chars: usize| {
+        !text.is_empty() && text.chars().count() <= max_chars && !text.chars().any(char::is_control)
+    };
+    // A control character, a line break among them, would type more than
+    // the command that the owner approved.
+    let command_fits =
+        plain(&typed.command, usize::MAX) && typed.command.len() <= MAX_TERMINAL_COMMAND_BYTES;
+    let shell_fits = plain(&typed.shell, MAX_SHELL_NAME_CHARS);
+    let state_fits = typed
+        .state
+        .as_deref()
+        .is_none_or(|state| plain(state, MAX_STATE_CHARS));
+    if !(command_fits && shell_fits && state_fits) {
+        return None;
+    }
+    Some(Access::TerminalCommand {
+        plugin: plugin.to_owned(),
+        host,
+        identity,
+        terminal: typed.terminal,
+        shell: typed.shell,
+        state: typed.state,
+        command: typed.command,
+    })
 }
 
 /// The core's access of a call of a tool server's tool, with the plugin's
@@ -980,6 +1066,7 @@ fn refused(plugin: &str, detail: String, code: Option<String>, limit: usize) -> 
             output: within_limit(detail, limit),
             archives: Vec::new(),
             images: Vec::new(),
+            cited: Vec::new(),
         })),
         Some(_) => {
             tracing::error!(
@@ -1129,9 +1216,62 @@ fn sdk_accesses(accesses: &[Access]) -> Vec<ToolAccess> {
                     None => access,
                 }))
             }
+            Access::TerminalCommand { .. } => {
+                sdk_terminal_command(access).map(ToolAccess::TerminalCommand)
+            }
             Access::Command { .. } | Access::Project { .. } => None,
         })
         .collect()
+}
+
+/// A command in a terminal as its plugin's tool knows it: the host as the
+/// registry names it, and for a remote host the endpoint and identity that
+/// the owner authorized.
+fn sdk_terminal_command(access: &Access) -> Option<TerminalCommandAccess> {
+    let Access::TerminalCommand {
+        host,
+        identity,
+        terminal,
+        shell,
+        state,
+        command,
+        ..
+    } = access
+    else {
+        return None;
+    };
+    let (reference, expect) = match host {
+        TerminalHost::ThisMachine { shell: program } => (
+            TerminalHostRef::ThisMachine {
+                shell: program.into(),
+            },
+            None,
+        ),
+        TerminalHost::Remote {
+            plugin,
+            target,
+            endpoint,
+            ..
+        } => (
+            TerminalHostRef::Plugin {
+                plugin: plugin.clone(),
+                key: target.clone(),
+            },
+            Some(ExpectedHost {
+                endpoint: endpoint.clone(),
+                identity: identity.clone(),
+            }),
+        ),
+    };
+    let mut terminal_access =
+        TerminalCommandAccess::new(reference, *terminal, shell.clone(), command.clone());
+    if let Some(state) = state {
+        terminal_access = terminal_access.with_state(state.clone());
+    }
+    if let Some(expect) = expect {
+        terminal_access = terminal_access.expecting(expect);
+    }
+    Some(terminal_access)
 }
 
 /// The archives of a plugin's result that keep the SDK's rules: each under
@@ -1214,7 +1354,7 @@ mod tests {
         effect: ToolEffect,
         accesses: Vec<ToolAccess>,
     ) -> Result<Vec<Access>, PrepareError> {
-        super::core_accesses(plugin, effect, accesses, &HashMap::new())
+        super::core_accesses(plugin, effect, accesses, &HashMap::new(), &HashMap::new())
     }
 
     fn read(path: &Path) -> ToolAccess {
@@ -1374,6 +1514,7 @@ mod tests {
             ToolEffect::SideEffects,
             vec![ToolAccess::Program(run), write(folder.path())],
             &found_git(),
+            &HashMap::new(),
         )
         .unwrap();
 
@@ -1435,7 +1576,8 @@ mod tests {
                     "shell",
                     ToolEffect::SideEffects,
                     vec![ToolAccess::Program(access.clone())],
-                    &found_git()
+                    &found_git(),
+                    &HashMap::new()
                 ),
                 Err(invalid()),
                 "{access:?}"
@@ -1450,7 +1592,8 @@ mod tests {
                 "shell",
                 ToolEffect::SideEffects,
                 vec![ToolAccess::Program(too_many)],
-                &found_git()
+                &found_git(),
+                &HashMap::new()
             ),
             Err(invalid())
         );
@@ -1460,7 +1603,8 @@ mod tests {
                 "shell",
                 ToolEffect::ReadsFiles,
                 vec![ToolAccess::Program(run(&["status"]))],
-                &found_git()
+                &found_git(),
+                &HashMap::new()
             ),
             Err(invalid())
         );
@@ -1472,6 +1616,7 @@ mod tests {
                 &["status"],
             ))],
             &found_git(),
+            &HashMap::new(),
         );
         assert!(
             matches!(
@@ -1628,6 +1773,7 @@ mod tests {
                 output: "This folder is not in a repository.".to_owned(),
                 archives: Vec::new(),
                 images: Vec::new(),
+                cited: Vec::new(),
             }))
         );
         for code in [None, Some("Not Valid".to_owned())] {

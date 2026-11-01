@@ -13,7 +13,7 @@ use mannie_store::Store;
 use mannie_types::context::Attachment;
 use mannie_types::ids::{ArchiveId, ConversationId, PartId};
 use mannie_types::images::ImageBytes;
-use mannie_types::tools::{Access, ProcessRecord, ToolFailure, ToolOutcome};
+use mannie_types::tools::{Access, CitedItemView, ProcessRecord, ToolFailure, ToolOutcome};
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use tokio::sync::oneshot;
@@ -144,6 +144,9 @@ pub struct Done {
     /// The files of the images that reach the model with the output, which
     /// the runtime checks and cleans before it keeps them (ADR-0044).
     pub images: Vec<ImageBytes>,
+    /// The items that the output cites by their links, which the call's
+    /// part keeps for the transcript's citations (ADR-0054, decision 1).
+    pub cited: Vec<CitedItemView>,
 }
 
 /// One execution of a call, after authorization.
@@ -390,6 +393,7 @@ impl Done {
             outcome: ToolOutcome::Failed { failure },
             archives: Vec::new(),
             images: Vec::new(),
+            cited: Vec::new(),
         }
     }
 }

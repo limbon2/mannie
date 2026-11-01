@@ -45,8 +45,8 @@ use crate::sessions::Lease;
 use crate::store::HostRecord;
 use crate::texts;
 use crate::tool::{
-    CLOSE_GRACE, KILL_GRACE, Running, check_command, open_channel, ready_host, remote_access,
-    signal_text,
+    CLOSE_GRACE, KILL_GRACE, Running, check_command, open_channel, ready_host, reason,
+    remote_access, signal_text,
 };
 
 /// The tool's name.
@@ -138,7 +138,7 @@ async fn start(
     tracing::debug!(host = %host.id, command = %command, "the command of an SSH call in the background");
     let (connected, channel) = match open_channel(hosts, &host).await {
         Ok(opened) => opened,
-        Err(reason) => return ToolResult::new(texts::not_run(reason)),
+        Err(error) => return ToolResult::new(texts::not_run(reason(error))),
     };
     let (mut reader, writer) = channel.split();
     if writer.exec(true, command.as_bytes()).await.is_err() {

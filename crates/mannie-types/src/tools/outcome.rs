@@ -538,6 +538,25 @@ pub struct ToolImageRef {
     pub bytes: u32,
 }
 
+/// An item that a tool's result cites by its link,
+/// `cite:<provider>/<key>`, which the transcript's citations show after its
+/// source is gone (ADR-0054, decision 1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CitedItemView {
+    /// The ID that the link names: the ID of the plugin whose tool cited
+    /// it, or that ID, a dot and more.
+    pub provider: String,
+    /// The provider's key of the item, which its kind of context opens.
+    pub key: String,
+    /// What the item comes from, such as a command. It is content.
+    pub title: String,
+    /// Where the item stands in it.
+    pub location: Option<crate::context::ContextLocation>,
+    /// The text that the citation shows.
+    pub text: String,
+}
+
 /// The result of a finished tool call.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]

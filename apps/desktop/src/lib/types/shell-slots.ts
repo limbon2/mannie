@@ -22,20 +22,44 @@ export type Message = () => string;
 export interface ShellCommand {
   /**
    * Whether the command applies now, such as a command for the open
-   * conversation. The palette asks when it opens; without it, the command
-   * is always available.
+   * conversation. The palette asks when it opens, and its key when it is
+   * pressed; without it, the command is always available.
    */
   readonly available?: () => boolean;
   /** The group the palette lists it under. */
   readonly group: Message;
   /** Unique among commands. */
   readonly id: string;
+  /**
+   * The key that runs the command while it is available, which the palette
+   * shows (ADR-0053, decision 8). The slot refuses a key that the shell or
+   * another command holds.
+   */
+  readonly key?: CommandKey;
   /** What the command does, as a label. */
   readonly label: Message;
   /** Commands of a group are sorted by this number, lowest first. */
   readonly order: number;
   /** Runs the command. */
   readonly run: () => void;
+}
+
+/**
+ * A key of a palette command: Ctrl, or Cmd on macOS, with a physical key
+ * and maybe Shift and Alt (ADR-0053, decision 8).
+ */
+export interface CommandKey {
+  /** Whether Alt is held too. */
+  readonly alt?: boolean;
+  /**
+   * The physical key, as `KeyboardEvent.code` names it, such as `Backquote`,
+   * so that the key works on every keyboard layout.
+   */
+  readonly code: string;
+  /** How the palette shows the key, such as "Ctrl+`". */
+  readonly label: Message;
+  /** Whether Shift is held too. */
+  readonly shift?: boolean;
 }
 
 /**

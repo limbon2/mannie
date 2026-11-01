@@ -20,7 +20,14 @@
 //! - `count <n>` prints n numbered lines, one every 50 ms, then exits 0;
 //! - `drip-password` prints the account's password cut across two writes,
 //!   50 ms apart, then waits until a signal ends it;
+//! - `printf '%s' "$SHELL"` prints the login shell, `/bin/bash`;
 //! - anything else prints `ran: <command>` and exits 0.
+//!
+//! A shell on a PTY, as the terminal plugin opens one, echoes what is typed
+//! and shows a prompt. It knows `echo <text>`, `print-password`, which
+//! prints the account's password cut across two writes, and `exit <code>`.
+//! A typed line that holds the terminal plugin's nonce turns on the
+//! markers of its setup, which then mark the prompts and commands.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -70,6 +77,10 @@ struct Seen {
     auth_attempts: AtomicUsize,
     commands: Mutex<Vec<String>>,
     signals: Mutex<Vec<String>>,
+    /// The sizes of PTYs, as their requests and changes gave them.
+    pty_sizes: Mutex<Vec<(u32, u32)>>,
+    /// The lines that shells on PTYs read.
+    shell_lines: Mutex<Vec<String>>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -162,6 +173,16 @@ impl TestServer {
     pub fn signals(&self) -> Vec<String> {
         lock(&self.seen.signals).clone()
     }
+
+    /// The sizes of PTYs that clients asked for, columns then rows, in order.
+    pub fn pty_sizes(&self) -> Vec<(u32, u32)> {
+        lock(&self.seen.pty_sizes).clone()
+    }
+
+    /// The lines that shells on PTYs read, in order.
+    pub fn shell_lines(&self) -> Vec<String> {
+        lock(&self.seen.shell_lines).clone()
+    }
 }
 
 impl Drop for TestServer {
@@ -212,6 +233,7 @@ async fn accept(
             options,
             waiting: HashMap::new(),
             ended: HashMap::new(),
+            shells: HashMap::new(),
         };
         tokio::spawn(async move {
             if let Ok(session) = server::run_stream(current, stream, connection).await {
@@ -243,6 +265,51 @@ struct Connection {
     /// Set for each command that writes over time once its channel ended,
     /// so it writes no more.
     ended: HashMap<ChannelId, Arc<AtomicBool>>,
+    /// The shells on PTYs, by channel.
+    shells: HashMap<ChannelId, PtyShell>,
+}
+
+/// A shell on a PTY: the line being typed, and the nonce of the markers once
+/// a setup gave one.
+#[derive(Debug, Default)]
+struct PtyShell {
+    line: String,
+    nonce: Option<String>,
+}
+
+impl PtyShell {
+    fn marker(&self, kind: &str) -> String {
+        self.nonce
+            .as_ref()
+            .map(|nonce| format!("\x1b]633;{kind};{nonce}\x07"))
+            .unwrap_or_default()
+    }
+
+    fn prompt(&self) -> String {
+        let mut prompt = self.marker("P;Cwd=/home/deploy");
+        prompt.push_str(&self.marker("A"));
+        prompt.push_str("deploy$ ");
+        prompt.push_str(&self.marker("B"));
+        prompt
+    }
+}
+
+/// The first run of 32 hexadecimal digits of a line: the nonce of a typed
+/// setup.
+fn nonce_in(line: &str) -> Option<String> {
+    let bytes = line.as_bytes();
+    let mut start = 0;
+    while start + 32 <= bytes.len() {
+        let run = bytes[start..]
+            .iter()
+            .take_while(|byte| byte.is_ascii_hexdigit())
+            .count();
+        if run >= 32 {
+            return Some(line[start..start + 32].to_owned());
+        }
+        start += run.max(1);
+    }
+    None
 }
 
 /// What a command that writes over time does after its writes.
@@ -278,6 +345,110 @@ async fn write_over_time(
 }
 
 impl Connection {
+    /// Starts a shell on a PTY with its first prompt.
+    fn start_shell(
+        &mut self,
+        channel: ChannelId,
+        session: &mut Session,
+    ) -> Result<(), russh::Error> {
+        session.channel_success(channel)?;
+        let shell = PtyShell::default();
+        session.data(channel, Bytes::from(shell.prompt()))?;
+        self.shells.insert(channel, shell);
+        Ok(())
+    }
+
+    /// Echoes what a client typed into a shell, and runs each line.
+    fn type_into_shell(
+        &mut self,
+        channel: ChannelId,
+        data: &[u8],
+        session: &mut Session,
+    ) -> Result<(), russh::Error> {
+        let Some(shell) = self.shells.get_mut(&channel) else {
+            return Ok(());
+        };
+        let mut lines = Vec::new();
+        let mut echo = String::new();
+        for character in String::from_utf8_lossy(data).chars() {
+            match character {
+                '\r' => {
+                    echo.push_str("\r\n");
+                    lines.push(std::mem::take(&mut shell.line));
+                }
+                character if !character.is_control() => {
+                    shell.line.push(character);
+                    echo.push(character);
+                }
+                _ => {}
+            }
+        }
+        if !echo.is_empty() {
+            session.data(channel, Bytes::from(echo))?;
+        }
+        for line in lines {
+            lock(&self.seen.shell_lines).push(line.clone());
+            if self.run_line(channel, &line, session)? {
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
+    /// Runs a line of a shell, and says whether the shell ended.
+    fn run_line(
+        &mut self,
+        channel: ChannelId,
+        line: &str,
+        session: &mut Session,
+    ) -> Result<bool, russh::Error> {
+        let Some(shell) = self.shells.get_mut(&channel) else {
+            return Ok(true);
+        };
+        if shell.nonce.is_none()
+            && line.contains("__mannie_n")
+            && let Some(nonce) = nonce_in(line)
+        {
+            shell.nonce = Some(nonce);
+            let mut text = String::from("\x1b[H\x1b[2J");
+            text.push_str(&shell.prompt());
+            session.data(channel, Bytes::from(text))?;
+            return Ok(false);
+        }
+        let command = line.trim();
+        if let Some(code) = command.strip_prefix("exit") {
+            let code = code.trim().parse().unwrap_or(0);
+            self.shells.remove(&channel);
+            session.exit_status_request(channel, code)?;
+            session.eof(channel)?;
+            session.close(channel)?;
+            return Ok(true);
+        }
+        if command.is_empty() {
+            session.data(channel, Bytes::from(shell.prompt()))?;
+            return Ok(false);
+        }
+        let mut start = shell.marker(&format!("E;{command}"));
+        start.push_str(&shell.marker("C"));
+        if !start.is_empty() {
+            session.data(channel, Bytes::from(start))?;
+        }
+        if command == "print-password" {
+            // The password arrives cut across two writes, as output does.
+            let (first, rest) = PASSWORD.split_at(7);
+            session.data(channel, Bytes::from(format!("the password is {first}")))?;
+            session.data(channel, Bytes::from(format!("{rest}\r\n")))?;
+        } else if let Some(text) = command.strip_prefix("echo ") {
+            session.data(channel, Bytes::from(format!("{text}\r\n")))?;
+        } else {
+            session.data(channel, Bytes::from(format!("{command}: not found\r\n")))?;
+        }
+        let mut end = shell.marker("D;0");
+        end.push_str(&shell.prompt());
+        session.data(channel, Bytes::from(end))?;
+        Ok(false)
+    }
+
     fn password_login(&self, user: &str, password: &str) -> Auth {
         self.seen.auth_attempts.fetch_add(1, Ordering::SeqCst);
         if self.options.login == Login::KeyboardInteractive {
@@ -418,6 +589,9 @@ fn writes_over_time(command: &str) -> Option<(Vec<String>, AfterWrites)> {
 
 /// What `echo`, `lines` and any other command print.
 fn output_of(command: &str) -> String {
+    if command == "printf '%s' \"$SHELL\"" {
+        return "/bin/bash".to_owned();
+    }
     if let Some(text) = command.strip_prefix("echo ") {
         return format!("{text}\n");
     }
@@ -472,6 +646,51 @@ impl server::Handler for Connection {
         std::future::ready(self.run(channel, data, session))
     }
 
+    fn pty_request(
+        &mut self,
+        channel: ChannelId,
+        _term: &str,
+        col_width: u32,
+        row_height: u32,
+        _pix_width: u32,
+        _pix_height: u32,
+        _modes: &[(russh::Pty, u32)],
+        session: &mut Session,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        lock(&self.seen.pty_sizes).push((col_width, row_height));
+        std::future::ready(session.channel_success(channel))
+    }
+
+    fn window_change_request(
+        &mut self,
+        _channel: ChannelId,
+        col_width: u32,
+        row_height: u32,
+        _pix_width: u32,
+        _pix_height: u32,
+        _session: &mut Session,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        lock(&self.seen.pty_sizes).push((col_width, row_height));
+        std::future::ready(Ok(()))
+    }
+
+    fn shell_request(
+        &mut self,
+        channel: ChannelId,
+        session: &mut Session,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        std::future::ready(self.start_shell(channel, session))
+    }
+
+    fn data(
+        &mut self,
+        channel: ChannelId,
+        data: &[u8],
+        session: &mut Session,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        std::future::ready(self.type_into_shell(channel, data, session))
+    }
+
     fn signal(
         &mut self,
         channel: ChannelId,
@@ -487,6 +706,7 @@ impl server::Handler for Connection {
         _session: &mut Session,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
         self.waiting.remove(&channel);
+        self.shells.remove(&channel);
         if let Some(ended) = self.ended.remove(&channel) {
             ended.store(true, Ordering::SeqCst);
         }

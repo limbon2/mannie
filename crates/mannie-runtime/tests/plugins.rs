@@ -18,13 +18,15 @@ use std::time::Duration;
 
 use futures_util::{FutureExt, StreamExt};
 use mannie_plugin_sdk::BoxFuture;
+use mannie_plugin_sdk::context::HostProfile;
 use mannie_plugin_sdk::contracts::{ImageBytes, ImageFormat, MentionEntry, MentionSummary};
 use mannie_plugin_sdk::contributions::{Contributions, ExtensionPoint, IdRule, PointInfo};
 use mannie_plugin_sdk::host::{
     ID_NOT_OWNED, ID_TAKEN, INVALID_NAME, KIND_NOT_PLUGIN, NO_CONSUMER, PLUGIN_REGISTERED,
-    RESERVED_ARGUMENT, TOO_MANY_ENTRIES,
+    PluginBinding, RESERVED_ARGUMENT, TOO_MANY_ENTRIES,
 };
 use mannie_plugin_sdk::ids::PluginId;
+use mannie_plugin_sdk::manifest::Manifest;
 use mannie_plugin_sdk::points;
 use mannie_plugin_sdk::points::agents::{AgentBudgets, AgentSpec, Agents, Requester};
 use mannie_plugin_sdk::points::context::{
@@ -38,11 +40,17 @@ use mannie_plugin_sdk::points::mentions::{
 use mannie_plugin_sdk::points::sections::{
     Section, SectionBody, SectionContext, SectionSource, Sections,
 };
+use mannie_plugin_sdk::points::terminal_hosts::{
+    OpenTerminal, PluginTerminalHostSource, TerminalConnection, TerminalHostEntry,
+    TerminalHostSource, TerminalHosts, TerminalOpenFailure,
+};
 use mannie_plugin_sdk::points::tool_sources::{PluginToolSource, ToolSet, ToolSource, ToolSources};
 use mannie_plugin_sdk::points::tools::{
     AgentSelector, PluginTool, Tool, ToolAccess, ToolCall, ToolExecution, ToolRefusal, ToolResult,
     ToolSpec, Tools,
 };
+use mannie_plugin_sdk::service::Service;
+use mannie_plugin_sdk::services::terminals::Terminals;
 use mannie_provider::testing::Step;
 use mannie_provider::{Content, ModelRequest, Role};
 use mannie_runtime::testing::{
@@ -471,6 +479,75 @@ fn every_point(source: &'static str) -> Contributions {
             Arc::new(OneSet(vec![published])),
         ))
         .add::<ContextProviders>(PluginContextProvider::new(SHELF, Arc::new(Shelf)))
+        .add::<TerminalHosts>(PluginTerminalHostSource::new(
+            FAKE_EXECUTOR_KIND,
+            Arc::new(OneHost),
+        ))
+}
+
+/// The key of the terminal host that the fake plugin offers.
+const HOST_KEY: &str = "box";
+
+/// A source of terminal hosts that lists one host and opens nothing there.
+#[derive(Debug)]
+struct OneHost;
+
+impl TerminalHostSource for OneHost {
+    fn hosts(&self) -> futures_util::stream::BoxStream<'static, Vec<TerminalHostEntry>> {
+        let host = TerminalHostEntry::new(
+            HOST_KEY.to_owned(),
+            "box".to_owned(),
+            "owner@box:22".to_owned(),
+            String::new(),
+        );
+        // The list stays until the plugin stops.
+        futures_util::stream::once(async move { vec![host] })
+            .chain(futures_util::stream::pending())
+            .boxed()
+    }
+
+    fn open(
+        &self,
+        _request: OpenTerminal,
+    ) -> BoxFuture<'static, Result<Box<dyn TerminalConnection>, TerminalOpenFailure>> {
+        async { Err(TerminalOpenFailure::UnknownHost) }.boxed()
+    }
+}
+
+/// Whether the core's registry of terminals lists the fake plugin's host,
+/// as the service `terminals` shows it to a plugin.
+async fn lists_terminal_host(harness: &Harness) -> bool {
+    let provider = harness
+        .runtime
+        .service_providers()
+        .into_iter()
+        .find(|provider| provider.name() == Terminals::NAME)
+        .expect("the runtime provides terminals");
+    let id = PluginId::parse("terminal").expect("a plugin ID");
+    let manifest: Manifest = serde_json::from_value(json!({
+        "id": "terminal",
+        "sdk": 1,
+        "order": 10,
+        "rust": { "entry": "mannie-terminal" },
+        "services": { "terminals": 1 },
+    }))
+    .expect("a manifest");
+    let service = provider
+        .bind(&PluginBinding::new(
+            &id,
+            &manifest,
+            HostProfile::Development,
+        ))
+        .expect("the service binds")
+        .get::<Terminals>()
+        .expect("the binding is the service terminals");
+    let list = tokio::time::timeout(Duration::from_secs(20), service.hosts().next())
+        .await
+        .expect("the list of hosts comes at once")
+        .expect("the list of hosts has an item");
+    list.hosts
+        .iter()
+        .any(|host| host.plugin == FAKE_EXECUTOR_KIND && host.key == HOST_KEY)
 }
 
 /// A section's source that tells the model what the runtime told it of the
@@ -667,6 +744,7 @@ async fn reached(harness: &Harness, marker: &str) -> Vec<&'static str> {
         (ImageSources::NAME, images),
         (ToolSources::NAME, tools.contains(&PUBLISHED.to_owned())),
         (ContextProviders::NAME, context),
+        (TerminalHosts::NAME, lists_terminal_host(harness).await),
     ];
     offered
         .into_iter()

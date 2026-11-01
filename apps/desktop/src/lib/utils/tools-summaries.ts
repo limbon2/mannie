@@ -135,6 +135,36 @@ function accessRemoteCommand(
     : null;
 }
 
+/**
+ * The command that a plugin's call types into a terminal, with the terminal's
+ * number, or `null` for one that the call opens, and the remote host's name,
+ * or `null` on this machine (ADR-0053, decision 5).
+ */
+function accessTerminalCommand(
+  accesses: readonly Access[],
+): { command: string; host: string | null; terminal: number | null } | null {
+  const access = accesses.find((candidate) => candidate.kind === 'terminal_command');
+  if (access?.kind !== 'terminal_command') {
+    return null;
+  }
+  const host = access.host.kind === 'remote' ? access.host.label : null;
+  return { command: access.command, host, terminal: access.terminal };
+}
+
+/** How a call that types a command into a terminal is named, by where the terminal runs and whether the call opens it. */
+function terminalCommandSummary(typed: { command: string; host: string | null; terminal: number | null }): string {
+  const command = firstLine(typed.command);
+  if (typed.terminal === null) {
+    return typed.host === null
+      ? m.tools_call_terminal_command_new_here({ command })
+      : m.tools_call_terminal_command_new({ command, host: typed.host });
+  }
+  const terminal = String(typed.terminal);
+  return typed.host === null
+    ? m.tools_call_terminal_command_here({ command, terminal })
+    : m.tools_call_terminal_command({ command, host: typed.host, terminal });
+}
+
 /** The tool of a tool server that a plugin's call calls, with the server's name (ADR-0043). */
 function accessExternalTool(accesses: readonly Access[]): { server: string; tool: string } | null {
   const access = accesses.find((candidate) => candidate.kind === 'external_tool');
@@ -295,9 +325,13 @@ function intentSummary(call: ToolCallView): string {
       return path === null ? toolLabel(call.tool) : m.tools_call_write_file({ path });
     }
     default: {
-      // A plugin's tool that runs a command on a remote host or calls a tool
-      // server's tool is named by its access, once prepared, whatever the
-      // plugin calls the tool.
+      // A plugin's tool that runs a command on a remote host, types one into
+      // a terminal or calls a tool server's tool is named by its access, once
+      // prepared, whatever the plugin calls the tool.
+      const typed = accessTerminalCommand(call.accesses);
+      if (typed !== null) {
+        return terminalCommandSummary(typed);
+      }
       const remote = accessRemoteCommand(call.accesses);
       if (remote !== null) {
         const words = { command: firstLine(remote.command), host: remote.host };

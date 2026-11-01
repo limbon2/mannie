@@ -53,6 +53,17 @@ export function listConversations(): readonly ConversationSummary[] {
 }
 
 /**
+ * The folder of a conversation's project, or `null` for a general
+ * conversation or one that the list does not hold, such as where a terminal
+ * of the conversation starts (ADR-0053, decision 4).
+ */
+export function projectFolder(conversationId: string): string | null {
+  const conversation = conversationList.conversations.find((candidate) => candidate.id === conversationId);
+  const projectId = conversation?.projectId ?? null;
+  return projectId === null ? null : (conversationList.findProject(projectId)?.folder ?? null);
+}
+
+/**
  * What to tell the owner about a conversation's command that failed. The
  * plugin's kind of context words the refusals of its own keys.
  */

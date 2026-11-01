@@ -16,10 +16,15 @@ mod freebsd;
 mod linux;
 mod live;
 mod server;
+mod terminal;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod unix;
+#[cfg(target_os = "linux")]
+mod unix_terminal;
 #[cfg(windows)]
 mod windows;
+#[cfg(windows)]
+mod windows_terminal;
 
 #[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 use std::ffi::OsString;
@@ -46,6 +51,7 @@ use capture::{ByteStream, Stream};
 pub use background::{BackgroundProcess, BackgroundSpec};
 pub use live::{ArchivedLog, LiveLog, LogLines, LogMark, MAX_LINE_BYTES};
 pub use server::{ServerInput, ServerProcess, ServerSpec, ServerStream};
+pub use terminal::{TerminalInput, TerminalLaunch, TerminalProcess};
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use unix as platform;
@@ -56,6 +62,12 @@ use windows as platform;
 /// are not available yet.
 pub(crate) fn shell() -> Option<ShellFacts> {
     platform_shell()
+}
+
+/// The system folder, such as `C:\Windows\System32`, from Windows itself.
+#[cfg(windows)]
+pub(crate) fn system_folder() -> std::io::Result<std::path::PathBuf> {
+    windows::system_directory()
 }
 
 /// Windows PowerShell 5.1 from the system folder, never from `PATH`.

@@ -129,10 +129,12 @@ mod tests {
         let first = requests.ask(WindowRequest::AskCloseAction {
             active_runs: 0,
             background_commands: 0,
+            terminals: 0,
         });
         let second = requests.ask(WindowRequest::ConfirmQuit {
             active_runs: 2,
             background_commands: 1,
+            terminals: 1,
             source: QuitSource::Tray,
         });
 
@@ -143,6 +145,7 @@ mod tests {
             Ok(WindowRequest::ConfirmQuit {
                 active_runs: 2,
                 background_commands: 1,
+                terminals: 1,
                 source: QuitSource::Tray
             })
         );

@@ -12,12 +12,24 @@
   import { Skeleton } from '#lib/components/ui/skeleton/index.js';
   import { Switch } from '#lib/components/ui/switch/index.js';
   import { Textarea } from '#lib/components/ui/textarea/index.js';
-  import type { CommandRule, ProgramRule, RemoteCommandRule, SharedGrant } from '#lib/generated/bindings.js';
+  import type {
+    CommandRule,
+    ProgramRule,
+    RemoteCommandRule,
+    SharedGrant,
+    TerminalCommandRule,
+  } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
   import { conversationList } from '#lib/state/conversation-list.svelte.js';
   import { pluginName } from '#lib/state/plugin-catalog.js';
   import { commandRules, sharedGrants, toolsSettings } from '#lib/state/tools-settings.svelte.js';
-  import { effectKeysText, grantScopeMessage, programRunText, toolsFailureMessage } from '#lib/utils/tools-messages.js';
+  import {
+    effectKeysText,
+    grantScopeMessage,
+    programRunText,
+    terminalRulePlace,
+    toolsFailureMessage,
+  } from '#lib/utils/tools-messages.js';
 
   // The Tools section of the settings (docs/features/system-tools/
   // tool-activity.md, settings): whether changes inside a workspace run
@@ -45,7 +57,7 @@
       .filter((line) => line !== '');
   }
 
-  function ruleWords(rule: CommandRule | RemoteCommandRule): string {
+  function ruleWords(rule: CommandRule | RemoteCommandRule | TerminalCommandRule): string {
     return rule.words.join(' ');
   }
 
@@ -241,6 +253,29 @@
                   size="sm"
                   variant="outline"
                   onclick={() => void commandRules.removeRemote(rule.id)}
+                >
+                  {m.tools_settings_rule_delete()}
+                </Button>
+              </Item.Actions>
+            </Item.Root>
+          {/each}
+          {#each commandRules.terminalRules as rule (rule.id)}
+            <Item.Root data-terminal-rule="" role="listitem" size="sm" variant="outline">
+              <Item.Content class="min-w-0">
+                <Item.Title class="line-clamp-none w-full">
+                  <span class="font-mono break-all" data-content>{ruleWords(rule)}</span>
+                </Item.Title>
+                <Item.Description class="line-clamp-none break-all">
+                  {terminalRulePlace(rule.target)}
+                </Item.Description>
+              </Item.Content>
+              <Item.Actions>
+                <Button
+                  aria-label={m.tools_settings_rule_delete_label({ words: ruleWords(rule) })}
+                  disabled={commandRules.deleting.includes(rule.id)}
+                  size="sm"
+                  variant="outline"
+                  onclick={() => void commandRules.removeTerminal(rule.id)}
                 >
                   {m.tools_settings_rule_delete()}
                 </Button>

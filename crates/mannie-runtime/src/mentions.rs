@@ -93,6 +93,7 @@ impl MentionContext {
                 },
                 rules: &self.grants.rules,
                 remote_rules: &self.grants.remote_rules,
+                terminal_rules: &self.grants.terminal_rules,
                 program_rules: &self.grants.program_rules,
                 project: self.project.as_ref(),
                 // Content never counts as the owner's words, and a mention

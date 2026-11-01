@@ -61,14 +61,22 @@ pub enum WindowRequest {
         active_runs: u32,
         /// How many background commands quitting would end (ADR-0041).
         background_commands: u32,
+        /// How many terminals run a command that quitting would end
+        /// (ADR-0053, decision 9).
+        #[serde(default)]
+        terminals: u32,
     },
-    /// Quitting would interrupt active runs or end background commands: quit
-    /// anyway, or cancel?
+    /// Quitting would interrupt active runs, or end background commands or
+    /// commands in terminals: quit anyway, or cancel?
     ConfirmQuit {
         /// How many runs quitting would interrupt.
         active_runs: u32,
         /// How many background commands quitting would end (ADR-0041).
         background_commands: u32,
+        /// How many terminals run a command that quitting would end
+        /// (ADR-0053, decision 9).
+        #[serde(default)]
+        terminals: u32,
         /// What asked to quit.
         source: QuitSource,
     },
@@ -211,8 +219,8 @@ impl WindowError {
 #[cfg(test)]
 mod tests {
     use super::{
-        CloseAction, CloseChoice, TrayLabels, WindowError, WindowRequest, WindowRequestUpdate,
-        WindowSettings,
+        CloseAction, CloseChoice, QuitSource, TrayLabels, WindowError, WindowRequest,
+        WindowRequestUpdate, WindowSettings,
     };
 
     fn labels() -> TrayLabels {
@@ -261,6 +269,7 @@ mod tests {
             request: WindowRequest::AskCloseAction {
                 active_runs: 2,
                 background_commands: 1,
+                terminals: 1,
             },
         };
 
@@ -273,8 +282,30 @@ mod tests {
                     "kind": "ask_close_action",
                     "activeRuns": 2,
                     "backgroundCommands": 1,
+                    "terminals": 1,
                 },
             })
+        );
+    }
+
+    #[test]
+    fn a_request_of_an_earlier_version_reads_without_terminals() {
+        let request: WindowRequest = serde_json::from_value(serde_json::json!({
+            "kind": "confirm_quit",
+            "activeRuns": 0,
+            "backgroundCommands": 1,
+            "source": "tray",
+        }))
+        .unwrap();
+
+        assert_eq!(
+            request,
+            WindowRequest::ConfirmQuit {
+                active_runs: 0,
+                background_commands: 1,
+                terminals: 0,
+                source: QuitSource::Tray,
+            }
         );
     }
 }

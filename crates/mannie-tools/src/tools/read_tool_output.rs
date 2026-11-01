@@ -85,6 +85,7 @@ impl TypedTool for ReadToolOutput {
                 output,
                 archives: Vec::new(),
                 images: Vec::new(),
+                cited: Vec::new(),
             })
         }
         .boxed()

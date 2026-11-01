@@ -178,6 +178,10 @@ pub const NO_PROGRAMS_ON_HOST: &str = "Not run: this host runs no plugin's progr
 /// worker runs no plugin (ADR-0043).
 pub const NO_EXTERNAL_TOOLS: &str = "Not run: this host calls no tool server's tools.";
 
+/// The result of a command for a terminal that a worker refused: a worker
+/// runs no plugin (ADR-0053).
+pub const NO_TERMINALS: &str = "Not run: this host types no commands into terminals.";
+
 /// The result of a call beyond the reply's tool calls.
 pub const OVER_BUDGET: &str = "Not run: this reply has used all its tool calls.";
 

@@ -11,14 +11,17 @@ use mannie_types::ids::ProjectId;
 use mannie_types::tools::{
     Access, AccessMode, ApprovalReason, ApprovalRequest, CommandRule, Decision, GrantScope,
     ProgramEffectKey, ProgramRule, ProgramTarget, Refusal, RemoteCommandRule, RemoteTarget,
-    RuleProposal, ToolServerEndpoint, ToolsError, effect_keys,
+    RuleProposal, TerminalCommandRule, TerminalHost, TerminalTarget, ToolServerEndpoint,
+    ToolsError, effect_keys,
 };
 
 use crate::ceiling::Ceiling;
 use crate::digest::digest;
 use crate::paths::{is_inside, is_same_path};
 use crate::projects::names_project;
-use crate::rules::{command_words, remote_command_words, starts_with_words};
+use crate::rules::{
+    command_words, remote_command_words, starts_with_words, terminal_command_words,
+};
 
 /// The grants that apply to a conversation, by how far they reach.
 #[derive(Debug, Clone, Copy, Default)]
@@ -53,6 +56,9 @@ pub struct PolicyInputs<'a> {
     /// plugin's program and to the effects of the run that it was saved from
     /// (ADR-0038).
     pub program_rules: &'a [ProgramRule],
+    /// The rules for commands that a plugin's tool types into terminals,
+    /// each limited to its plugin and host (ADR-0053).
+    pub terminal_rules: &'a [TerminalCommandRule],
     /// The conversation's project, which "Allow for this project" would
     /// cover.
     pub project: Option<&'a ProjectId>,
@@ -269,6 +275,7 @@ fn decide_under_ceiling(
         Access::RemoteCommand { .. } => Err(Hold::Refuse(Refusal::NoRemoteCommands)),
         Access::Program { .. } => Err(Hold::Refuse(Refusal::NoProgramsOnHost)),
         Access::ExternalTool { .. } => Err(Hold::Refuse(Refusal::NoExternalTools)),
+        Access::TerminalCommand { .. } => Err(Hold::Refuse(Refusal::NoTerminals)),
     }
 }
 
@@ -367,7 +374,44 @@ fn decide_access(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decision,
         }
         Access::Program { .. } => decide_program(access, inputs),
         Access::ExternalTool { .. } => decide_external_tool(access, inputs),
+        Access::TerminalCommand { .. } => decide_terminal_command(access, inputs),
     }
+}
+
+/// What allows a command that a plugin's tool types into a terminal, or why
+/// it asks (ADR-0053, decision 5): a grant or a rule given or saved from a
+/// terminal command's approval, for the same plugin and host. The workspace
+/// never allows one, since the shell's folder is wherever earlier commands
+/// left it, and a command with a metacharacter only asks.
+fn decide_terminal_command(
+    access: &Access,
+    inputs: &PolicyInputs<'_>,
+) -> Result<Decision, ApprovalReason> {
+    let Access::TerminalCommand {
+        plugin,
+        host,
+        command,
+        ..
+    } = access
+    else {
+        return Err(ApprovalReason::TerminalCommand);
+    };
+    let Some(words) = terminal_command_words(command, host) else {
+        return Err(ApprovalReason::TerminalCommand);
+    };
+    if let Some(decision) = granted(&inputs.grants, |grant| {
+        covers_terminal_command(grant, plugin, host, command)
+    }) {
+        return Ok(decision);
+    }
+    let ruled = inputs
+        .terminal_rules
+        .iter()
+        .any(|rule| rule.target.covers(plugin, host) && starts_with_words(&words, &rule.words));
+    if ruled {
+        return Ok(Decision::Rule);
+    }
+    Err(ApprovalReason::TerminalCommand)
 }
 
 /// What allows a call of a tool server's tool, or why it asks: a grant that
@@ -556,7 +600,8 @@ fn covers_path(grant: &GrantScope, path: &Path, mode: AccessMode) -> bool {
         GrantScope::Command { .. }
         | GrantScope::RemoteCommand { .. }
         | GrantScope::Program { .. }
-        | GrantScope::ExternalTool { .. } => false,
+        | GrantScope::ExternalTool { .. }
+        | GrantScope::TerminalCommand { .. } => false,
     }
 }
 
@@ -582,7 +627,8 @@ fn covers_command(grant: &GrantScope, command: &str, directory: &Path, backgroun
         GrantScope::Path { .. }
         | GrantScope::RemoteCommand { .. }
         | GrantScope::Program { .. }
-        | GrantScope::ExternalTool { .. } => false,
+        | GrantScope::ExternalTool { .. }
+        | GrantScope::TerminalCommand { .. } => false,
     }
 }
 
@@ -611,6 +657,30 @@ fn covers_remote_command(
         }
         GrantScope::Path { .. }
         | GrantScope::Command { .. }
+        | GrantScope::Program { .. }
+        | GrantScope::ExternalTool { .. }
+        | GrantScope::TerminalCommand { .. } => false,
+    }
+}
+
+/// Whether a grant covers a command that a plugin's tool types into a
+/// terminal: the same command text, typed by the same plugin, into any
+/// terminal of the same host (ADR-0053, decision 5).
+fn covers_terminal_command(
+    grant: &GrantScope,
+    plugin: &str,
+    host: &TerminalHost,
+    command: &str,
+) -> bool {
+    match grant {
+        GrantScope::TerminalCommand {
+            plugin: granted_plugin,
+            host: granted_host,
+            command: granted,
+        } => granted_plugin == plugin && granted_host.same_as(host) && granted == command,
+        GrantScope::Path { .. }
+        | GrantScope::Command { .. }
+        | GrantScope::RemoteCommand { .. }
         | GrantScope::Program { .. }
         | GrantScope::ExternalTool { .. } => false,
     }
@@ -642,7 +712,8 @@ fn covers_external_tool(
         GrantScope::Path { .. }
         | GrantScope::Command { .. }
         | GrantScope::RemoteCommand { .. }
-        | GrantScope::Program { .. } => false,
+        | GrantScope::Program { .. }
+        | GrantScope::TerminalCommand { .. } => false,
     }
 }
 
@@ -673,7 +744,8 @@ fn covers_program(grant: &GrantScope, run: &RunKey<'_>) -> bool {
         GrantScope::Path { .. }
         | GrantScope::Command { .. }
         | GrantScope::RemoteCommand { .. }
-        | GrantScope::ExternalTool { .. } => false,
+        | GrantScope::ExternalTool { .. }
+        | GrantScope::TerminalCommand { .. } => false,
     }
 }
 
@@ -769,6 +841,19 @@ fn grant_scope(access: &Access) -> Option<GrantScope> {
             endpoint: endpoint.clone(),
             tool: tool.clone(),
         }),
+        Access::TerminalCommand {
+            plugin,
+            host,
+            command,
+            ..
+        } => {
+            terminal_command_words(command, host)?;
+            Some(GrantScope::TerminalCommand {
+                plugin: plugin.clone(),
+                host: host.clone(),
+                command: command.clone(),
+            })
+        }
         Access::Program { .. } => {
             let run = RunKey::of(access)?;
             Some(GrantScope::Program {
@@ -810,6 +895,14 @@ fn scope_covers(wider: &GrantScope, narrower: &GrantScope) -> bool {
                 && is_same_path(Path::new(narrower_directory), Path::new(working_directory))
                 && covers_mode(*background, *narrower_background)
         }
+        _ => plugin_scope_covers(wider, narrower),
+    }
+}
+
+/// Whether one grant of a plugin's access, such as a command on a remote
+/// host, covers everything another covers.
+fn plugin_scope_covers(wider: &GrantScope, narrower: &GrantScope) -> bool {
+    match (wider, narrower) {
         (
             GrantScope::RemoteCommand {
                 plugin,
@@ -883,6 +976,20 @@ fn scope_covers(wider: &GrantScope, narrower: &GrantScope) -> bool {
                 && endpoint == narrower_endpoint
                 && tool == narrower_tool
         }
+        (
+            GrantScope::TerminalCommand {
+                plugin,
+                host,
+                command,
+            },
+            GrantScope::TerminalCommand {
+                plugin: narrower_plugin,
+                host: narrower_host,
+                command: narrower_command,
+            },
+        ) => {
+            plugin == narrower_plugin && host.same_as(narrower_host) && command == narrower_command
+        }
         _ => false,
     }
 }
@@ -905,6 +1012,7 @@ fn rule_for(accesses: &[Access]) -> Option<RuleProposal> {
             remote: None,
             program: None,
             background: *background,
+            terminal: None,
         }),
         [
             Access::RemoteCommand {
@@ -927,6 +1035,25 @@ fn rule_for(accesses: &[Access]) -> Option<RuleProposal> {
             }),
             program: None,
             background: *background,
+            terminal: None,
+        }),
+        [
+            Access::TerminalCommand {
+                plugin,
+                host,
+                command,
+                ..
+            },
+        ] => Some(RuleProposal {
+            words: terminal_command_words(command, host)?,
+            folder: String::new(),
+            remote: None,
+            program: None,
+            background: false,
+            terminal: Some(TerminalTarget {
+                plugin: plugin.clone(),
+                host: host.clone(),
+            }),
         }),
         _ => program_rule_for(accesses),
     }
@@ -954,6 +1081,7 @@ fn program_rule_for(accesses: &[Access]) -> Option<RuleProposal> {
         folder: run.working_directory.to_owned(),
         remote: None,
         background: false,
+        terminal: None,
         program: Some(ProgramTarget {
             plugin: run.plugin.to_owned(),
             name: run.name.to_owned(),
@@ -997,6 +1125,14 @@ pub enum SavedRule {
         /// anywhere.
         folder: Option<String>,
     },
+    /// A rule for commands that one plugin's tool types into the terminals
+    /// of one host (ADR-0053).
+    Terminal {
+        /// The plugin and the host, which the rule is always limited to.
+        target: TerminalTarget,
+        /// The leading words a command must start with.
+        words: Vec<String>,
+    },
 }
 
 /// The rule that "Save rule" makes from a request's proposal, with the
@@ -1014,6 +1150,14 @@ pub fn saved_rule(
         return Err(ToolsError::RulePrefixInvalid);
     }
     let words = proposal.words[..count].to_vec();
+    if let Some(target) = &proposal.terminal {
+        // A terminal's folder is wherever earlier commands left it, so the
+        // rule is limited to its host and never to a folder.
+        return Ok(SavedRule::Terminal {
+            target: target.clone(),
+            words,
+        });
+    }
     let folder = limit_to_folder.then(|| proposal.folder.clone());
     Ok(match (&proposal.remote, &proposal.program) {
         (Some(target), _) => SavedRule::Remote {

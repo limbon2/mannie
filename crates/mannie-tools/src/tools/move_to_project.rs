@@ -106,6 +106,7 @@ impl TypedTool for MoveToProject {
                 },
                 archives: Vec::new(),
                 images: Vec::new(),
+                cited: Vec::new(),
             })
         }
         .boxed()

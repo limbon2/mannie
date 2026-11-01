@@ -16,7 +16,7 @@ When the owner closes the window, Mannie asks once whether to keep running in th
 - The first time the owner closes the main window, Mannie asks whether to keep running in the system tray or to quit when the window closes. The answer is saved as a setting.
 - The settings show the choice, and the owner can change it at any time.
 - Tray mode: closing the window hides it, and runs and worker links continue. The tray icon's menu has "Open Mannie" and "Quit". On Windows, clicking the tray icon also opens the window.
-- Quit mode: closing the window quits Mannie. When runs are active, Mannie first warns how many runs are active and that quitting interrupts them, and that they can be retried later. When background commands run, the warning also says how many and that quitting ends them ([background commands](system-tools/background-commands.md)). The owner can quit anyway or cancel.
+- Quit mode: closing the window quits Mannie. When runs are active, Mannie first warns how many runs are active and that quitting interrupts them, and that they can be retried later. When background commands run, the warning also says how many and that quitting ends them ([background commands](system-tools/background-commands.md)), and so it does for terminals that run a command ([Terminal](../../plugins/terminal/docs/README.md)). The owner can quit anyway or cancel.
 - Quitting from the tray menu while runs are active shows the same warning.
 - Tasks on workers are not affected by either choice. They keep running on their workers.
 - Starting Mannie again while it runs in the tray brings the window back.
@@ -38,6 +38,7 @@ None.
 - 2026-10-13: the owner chooses between tray and quit on the first close, and can change it later (D13).
 - 2026-10-13: quitting from the tray menu while runs are active warns in the same way as closing in quit mode, so that no path quits active runs without a warning.
 - 2026-10-21: the warning before closing or quitting also counts running background commands, which quitting ends, and warns when only they run ([ADR-0041](../adr/0041-let-agents-run-commands-in-the-background.md), D40).
+- 2026-10-30: the warning also counts the terminals that run a command, which their plugin reports, and warns when only they run ([ADR-0053](../adr/0053-let-plugins-offer-terminals.md), decision 9; D45).
 - 2026-10-14: the defaults below were chosen when building started, and each one waits for the owner's review.
   - The tray icon is present in every mode, once the window has given it its labels.
   - When runs are active, the first-close question says so, and choosing Quit there needs no second warning.
@@ -61,7 +62,7 @@ The core decides what a close request does, in a function with unit tests for ev
 | Quit         | None        | Mannie quits                                                                                               |
 | Quit         | Some        | The window stays and warns with the number of runs                                                         |
 
-Running background commands count as runs do: the question and the warning carry the number of active runs and the number of running background commands, and each sentence names its own.
+Running background commands and terminals that run a command count as runs do: the question and the warning carry the number of active runs, of running background commands and of such terminals, and each sentence names its own. The window's requests carry the terminals' number as `terminals`, which a request of an older version leaves out and reads as 0.
 
 - "Quit" in the tray menu shows the window and follows the last two rows. "Open Mannie" shows the window and brings it to the front.
 - The window learns about a question through a channel that it opens at startup (`subscribe_window_requests`), so no event permission is granted to the webview. A question that is pending when the window subscribes, for example after a reload, is sent again.

@@ -16,6 +16,7 @@ import type {
   ProgramEffect,
   ProgramEffectKey,
   Refusal,
+  TerminalTarget,
   ToolFailure,
   ToolHint,
   ToolServerEndpoint,
@@ -305,6 +306,9 @@ export function refusalMessage(refusal: Refusal): string {
     case 'no_remote_commands': {
       return m.tools_refusal_no_remote_commands();
     }
+    case 'no_terminals': {
+      return m.tools_refusal_no_terminals();
+    }
     case 'read_only_host': {
       return m.tools_refusal_read_only_host();
     }
@@ -346,6 +350,9 @@ export function approvalReasonMessage(reason: ApprovalReason): string {
     }
     case 'remote_command': {
       return m.tools_reason_remote_command();
+    }
+    case 'terminal_command': {
+      return m.tools_reason_terminal_command();
     }
   }
 }
@@ -593,6 +600,13 @@ export function toolHintsMessage(hints: readonly ToolHint[]): string {
   });
 }
 
+/** Where a rule of terminals applies: the terminals of one shell on this machine, or of one host (ADR-0053, decision 5). */
+export function terminalRulePlace(target: TerminalTarget): string {
+  return target.host.kind === 'this_machine'
+    ? m.tools_settings_rule_terminal_here({ shell: target.host.shell })
+    : m.tools_settings_rule_terminal_on_host({ endpoint: target.host.endpoint, host: target.host.label });
+}
+
 /** What a grant allows, such as "Changing files in D:\Projects\app". */
 export function grantScopeMessage(scope: GrantScope): string {
   if (scope.kind === 'command') {
@@ -607,6 +621,15 @@ export function grantScopeMessage(scope: GrantScope): string {
   }
   if (scope.kind === 'remote_command') {
     return m.tools_grant_remote_command({ command: scope.command, endpoint: scope.endpoint, host: scope.label });
+  }
+  if (scope.kind === 'terminal_command') {
+    return scope.host.kind === 'this_machine'
+      ? m.tools_grant_terminal_command_here({ command: scope.command, shell: scope.host.shell })
+      : m.tools_grant_terminal_command({
+          command: scope.command,
+          endpoint: scope.host.endpoint,
+          host: scope.host.label,
+        });
   }
   if (scope.kind === 'program') {
     const run = programRunText([scope.name, ...scope.arguments]);

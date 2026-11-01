@@ -218,6 +218,7 @@ fn render(context: &ToolContext, command: &str, timeout_seconds: u32, finished: 
         output: format!("{ending}{duration}{stdout}{stderr}{replaced}"),
         archives,
         images: Vec::new(),
+        cited: Vec::new(),
     }
 }
 
