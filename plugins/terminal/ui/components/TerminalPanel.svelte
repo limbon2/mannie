@@ -32,9 +32,9 @@
   // and using terminals): the terminal, a toolbar with Find, the list of
   // commands and End, which asks first while a command runs, and what to do
   // once the terminal ended. The view follows the terminal only while the
-  // panel shows and the window is visible, and starts from a snapshot when
-  // it shows again. Ctrl+` moves the focus from the terminal to the toolbar,
-  // so the keyboard never stays in the terminal (WCAG 2.1.2).
+  // panel's tab shows and the window is visible, and starts from a snapshot
+  // when it shows again. Ctrl+` moves the focus from the terminal to the
+  // toolbar, so the keyboard never stays in the terminal (WCAG 2.1.2).
   let { argument, close, setLabel }: SidePanelProps = $props();
 
   let element = $state<HTMLElement | null>(null);
@@ -45,12 +45,20 @@
   let confirmingEnd = $state(false);
   let notice = $state<string | null>(null);
   let failure = $state<TerminalFailure | null>(null);
-  /** Whether the panel moved the focus into its terminal yet; it does once. */
+  /**
+   * Whether the panel moved the focus into its terminal yet. It does once,
+   * when the terminal first shows, unless the panel opened behind another
+   * tab, as on a reload: showing that tab later leaves the focus on the tab.
+   */
   let hasFocused = false;
+  /** Whether the panel learned yet whether its tab showed when it opened. */
+  let hasLearnedTab = false;
 
   const address = $derived(parsePanelArgument(argument));
   const summary = $derived(address === null ? undefined : summaryOf(address));
-  const view = $derived(address === null ? null : new TerminalViewState(address));
+  // A view opens xterm.js with the settings of its time, so other settings
+  // make a new view.
+  const view = $derived(address === null ? null : new TerminalViewState(address, terminals.settings));
   const ended = $derived(view?.ending ?? null);
   const shownFailure = $derived(failure ?? view?.failure ?? view?.followFailure ?? null);
   const isPlain = $derived(isPlainShell());
@@ -169,6 +177,17 @@
     notice = added === 'added' ? null : m.terminal_mention_not_added();
   }
 
+  /** Tells the view whether the panel's tab shows it, and learns whether it showed when the panel opened. */
+  function tabShown(current: TerminalViewState, shown: boolean): void {
+    if (!hasLearnedTab) {
+      hasLearnedTab = true;
+      if (!shown) {
+        hasFocused = true;
+      }
+    }
+    current.setTabShown(shown);
+  }
+
   $effect(() => {
     if (address !== null) {
       return terminals.watch(address.conversationId);
@@ -190,12 +209,23 @@
     if (container === null) {
       return;
     }
-    void current.attach(container, terminals.settings);
+    current.setWindowShown(document.visibilityState === 'visible');
+    current.attach(container);
+    // The side panel area hides the panels of other tabs, so the terminal's
+    // element stops intersecting the window while another tab shows.
+    const tab = new IntersectionObserver((entries) => {
+      const last = entries.at(-1);
+      if (last !== undefined) {
+        tabShown(current, last.isIntersecting);
+      }
+    });
+    tab.observe(container);
     const resize = new ResizeObserver(() => {
       current.fit();
     });
     resize.observe(container);
     return () => {
+      tab.disconnect();
       resize.disconnect();
       current.dispose();
     };
@@ -226,11 +256,7 @@
 
   onMount(() =>
     on(document, 'visibilitychange', () => {
-      if (document.visibilityState === 'hidden') {
-        view?.pause();
-      } else {
-        view?.resume();
-      }
+      view?.setWindowShown(document.visibilityState === 'visible');
     }),
   );
 </script>

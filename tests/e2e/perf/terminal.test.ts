@@ -2,6 +2,7 @@
 // goals-and-scope.md §4; plugins/terminal/docs/README.md, performance),
 // measured in the real app with the plugin Terminal on and its compatible
 // renderer, whose rows are in the page, so the page can see each change.
+// Switching between the terminals' tabs costs the hidden terminals nothing.
 // The suite enforces them on the reference machine and under the low-end
 // profile (`MANNIE_PERF_PROFILE=low-end`, support/low-end.ts).
 // `MANNIE_PERF_REPORT_ONLY=1` reports the figures without failing. Every
@@ -33,6 +34,9 @@ const IDLE_MILLIS = 60_000;
 /** How long a terminal floods for NFR-PERF-07. */
 const FLOOD_MILLIS = 10_000;
 
+/** How often the test goes through the tabs of the open terminals. */
+const SWITCH_ROUNDS = 2;
+
 /**
  * The shell of NFR-PERF-06, whose echo of a key takes no time of its own: on
  * Windows, Command Prompt, whose console host echoes the key itself. On Linux
@@ -60,8 +64,12 @@ declare global {
     floodLatencies?: number[];
     /** Ends the sampling during a flood. */
     floodSamplingStopped?: boolean;
+    /** Glyphs that terminals in hidden tabs measured. */
+    hiddenMeasurements?: number;
     /** When the terminal's rows last changed. */
     lastRowChange?: number;
+    /** The longest task of the page's main thread while tabs switch, when the webview reports long tasks. */
+    longestSwitchTask?: number;
     /** The longest task of the page's main thread during a flood, when the webview reports long tasks. */
     longestTask?: number;
   }
@@ -371,5 +379,52 @@ describe('performance of terminals (NFR-PERF-06 to 09)', () => {
     await browser.keys([Key.Ctrl, 'c']);
 
     report('NFR-PERF-06 echo p95 in the default shell', percentile(latencies, 0.95), 'ms', latencies.length);
+  });
+
+  it('switches between the terminals’ tabs without work for the hidden terminals', async () => {
+    // The compatible renderer measures a glyph's width in the page, by
+    // putting the glyph into a measuring element, and a terminal in a hidden
+    // tab would measure each as 0, again for every glyph that it draws.
+    await browser.execute(() => {
+      window.hiddenMeasurements = 0;
+      new MutationObserver((records) => {
+        for (const record of records) {
+          const target = record.target instanceof Element ? record.target : null;
+          const isMeasure = target?.classList.contains('xterm-char-measure-element') === true;
+          const isHidden = target?.closest('[role="tabpanel"]')?.hasAttribute('hidden') === true;
+          if (isMeasure && isHidden) {
+            window.hiddenMeasurements = (window.hiddenMeasurements ?? 0) + 1;
+          }
+        }
+      }).observe(document.body, { childList: true, subtree: true });
+      if (PerformanceObserver.supportedEntryTypes.includes('longtask')) {
+        window.longestSwitchTask = 0;
+        new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) {
+            window.longestSwitchTask = Math.max(window.longestSwitchTask ?? 0, entry.duration);
+          }
+        }).observe({ type: 'longtask' });
+      }
+    });
+    let switches = 0;
+    for (let round = 0; round < SWITCH_ROUNDS; round += 1) {
+      for (const tab of await $$('[data-side-panel-tab] [role="tab"]')) {
+        await tab.click();
+        switches += 1;
+        await browser.pause(500);
+      }
+    }
+    const measured = await browser.execute(() => ({
+      hidden: window.hiddenMeasurements ?? 0,
+      longestTask: window.longestSwitchTask,
+    }));
+
+    expect(switches).toBe(SWITCH_ROUNDS * IDLE_TERMINALS);
+    check('Glyphs that hidden terminals measured in tab switches', measured.hidden, 0, 'measurements', switches);
+    if (measured.longestTask === undefined) {
+      console.log('Tab switches: this webview reports no long tasks');
+    } else {
+      report('The longest task of the page in tab switches', measured.longestTask, 'ms', switches);
+    }
   });
 });

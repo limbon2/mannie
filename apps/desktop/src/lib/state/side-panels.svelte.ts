@@ -2,7 +2,8 @@
 // comes from the main view's address (`utils/side-panels.ts`); this module
 // opens, shows and closes them by changing the address, and keeps what the
 // address does not hold: the tabs' labels, the controls that opened panels,
-// and the panel whose heading takes the focus once it shows.
+// the panel whose heading takes the focus once it shows, and the objects of
+// the panels that stay open.
 import { tick } from 'svelte';
 import { SvelteMap } from 'svelte/reactivity';
 
@@ -11,6 +12,7 @@ import { resolve } from '$app/paths';
 import { page } from '$app/state';
 
 import {
+  type OpenPanel,
   openPanel,
   readSidePanels,
   type SidePanelState,
@@ -60,10 +62,24 @@ export class SidePanels {
   focusRequest: string | null = $state(null);
   readonly #labels = new SvelteMap<string, PanelLabel>();
   readonly #openers = new SvelteMap<string, HTMLElement>();
+  /**
+   * The panels of the address when it was last read. Every change of the
+   * address reads it again, as when another tab shows, and a panel that
+   * stays open keeps its object: a key names one kind and argument. So the
+   * side panel area hands the panel's component the same props, and the
+   * component keeps what it made of them, such as a terminal's view.
+   */
+  #read: readonly OpenPanel[] = [];
 
   /** The open panels and the visible one, as the main view's address holds them. */
   get state(): SidePanelState {
-    return page.route.id === '/' ? readSidePanels(page.url) : NO_PANELS;
+    if (page.route.id !== '/') {
+      return NO_PANELS;
+    }
+    const state = readSidePanels(page.url);
+    const panels = state.panels.map((panel) => this.#read.find((known) => known.key === panel.key) ?? panel);
+    this.#read = panels;
+    return { ...state, panels };
   }
 
   /** Closes the panel `key`, and returns the focus to its opener or to the main area unless asked not to. */
