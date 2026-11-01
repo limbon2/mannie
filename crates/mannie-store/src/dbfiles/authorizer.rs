@@ -161,6 +161,43 @@ impl Actions {
     }
 }
 
+/// Whether SQLite may go on with one action while the engine builds the
+/// copy of a schema that another machine sent, from its `CREATE`
+/// statements: the copy's objects in the main database and the rows that
+/// their creation writes, such as a virtual table's shadow tables. It never
+/// allows a pragma, which could change the whole process, `ATTACH`, which
+/// could create a file, a transaction, a temporary object or
+/// `load_extension`.
+fn decide_replay(context: &AuthContext<'_>) -> Authorization {
+    let in_temp = context.database_name == Some("temp");
+    let allowed = match context.action {
+        AuthAction::Select | AuthAction::Recursive | AuthAction::Read { .. } => true,
+        AuthAction::Function { function_name } => {
+            !function_name.eq_ignore_ascii_case("load_extension")
+        }
+        AuthAction::Insert { .. }
+        | AuthAction::Update { .. }
+        | AuthAction::Delete { .. }
+        | AuthAction::CreateIndex { .. }
+        | AuthAction::CreateTable { .. }
+        | AuthAction::CreateTrigger { .. }
+        | AuthAction::CreateView { .. }
+        | AuthAction::CreateVtable { .. } => !in_temp,
+        _other => false,
+    };
+    if allowed {
+        Authorization::Allow
+    } else {
+        Authorization::Deny
+    }
+}
+
+/// Installs the authorizer of a schema copy, which the engine removes once
+/// the copy is built.
+pub(super) fn install_replay(connection: &Connection) -> rusqlite::Result<()> {
+    connection.authorizer(Some(|context: AuthContext<'_>| decide_replay(&context)))
+}
+
 /// Installs the authorizer on a connection for its whole life, and returns
 /// what its actions show.
 pub(super) fn install(connection: &Connection) -> rusqlite::Result<Actions> {

@@ -562,6 +562,47 @@ fn a_copy_of_the_schema_classifies_statements_as_the_file_does() {
     classify_on_schema(&schema, "ATTACH DATABASE 'x' AS x").unwrap_err();
 }
 
+#[test]
+fn a_forged_schema_runs_nothing_but_its_create_statements_in_the_copy() {
+    let folder = tempfile::tempdir().unwrap();
+    let attached = folder.path().join("attached.db");
+    let vacuumed = folder.path().join("vacuumed.db");
+    let forged = vec![
+        format!("ATTACH DATABASE '{}' AS other", attached.display()),
+        format!(
+            "CREATE TABLE main.t (x); ATTACH DATABASE '{}' AS other",
+            attached.display()
+        ),
+        format!("VACUUM INTO '{}'", vacuumed.display()),
+        "PRAGMA hard_heap_limit = 1".to_owned(),
+        "CREATE TEMP TABLE scratch (x)".to_owned(),
+        "CREATE TABLE loaded AS SELECT load_extension('evil') AS x".to_owned(),
+        "CREATE TABLE kept (id INTEGER PRIMARY KEY, name TEXT)".to_owned(),
+    ];
+
+    let class = classify_on_schema(&forged, "INSERT INTO kept (name) VALUES ('x')");
+    let missing = classify_on_schema(&forged, "SELECT x FROM t");
+    let loaded = classify_on_schema(&forged, "SELECT x FROM loaded");
+
+    assert_eq!(class, Ok(StatementClass::Write));
+    assert!(
+        matches!(missing, Err(EngineError::Invalid { .. })),
+        "{missing:?}"
+    );
+    assert!(
+        matches!(loaded, Err(EngineError::Invalid { .. })),
+        "{loaded:?}"
+    );
+    assert!(!attached.exists(), "the copy attached a file");
+    assert!(!vacuumed.exists(), "the copy vacuumed into a file");
+    // The pragma never ran, so the process keeps its heap.
+    let connection = Connection::open_in_memory().unwrap();
+    let limit: i64 = connection
+        .query_row("PRAGMA hard_heap_limit", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(limit, 0);
+}
+
 /// Every row of a table, page by page, with the request that each page
 /// continues.
 fn all_pages(fixture: &Fixture, table: &str, order: Option<Order>, rows: usize) -> Vec<Vec<Value>> {

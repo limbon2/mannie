@@ -530,17 +530,31 @@ pub fn classify(path: &Path, identity: &str, text: &str) -> Result<StatementClas
 /// make it in a database in memory, for a database that is not on this
 /// computer (ADR-0056, decision 6). A statement whose object the copy lacks
 /// fails as on the file.
+///
+/// The schema comes from another machine, such as a worker, so it is as
+/// untrusted as a hostile file: the copy opens without URI filenames and is
+/// hardened before any of it runs, each entry runs alone and only when it is
+/// a `CREATE` statement, under an authorizer that refuses every pragma,
+/// which could change the whole process, `ATTACH`, which could create a
+/// file, transactions and `load_extension`.
 pub fn classify_on_schema(schema: &[String], text: &str) -> Result<StatementClass, EngineError> {
     let cancel = Cancel::new();
-    let connection = Connection::open_in_memory().map_err(|error| engine_error(error, &cancel))?;
+    let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+        | OpenFlags::SQLITE_OPEN_CREATE
+        | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let connection = Connection::open_in_memory_with_flags(flags)
+        .map_err(|error| engine_error(error, &cancel))?;
+    harden(&connection, Mode::Write).map_err(|error| engine_error(error, &cancel))?;
+    authorizer::install_replay(&connection).map_err(|error| engine_error(error, &cancel))?;
     for create in schema {
-        // A virtual table's own `CREATE` already made its shadow tables, whose
-        // `CREATE` fails in the copy (spike S1); the copy classifies alike.
-        if let Err(error) = connection.execute_batch(create) {
-            tracing::debug!(%error, "a statement of a schema copy did not run");
-        }
+        replay(&connection, create);
     }
-    harden(&connection, Mode::Read).map_err(|error| engine_error(error, &cancel))?;
+    connection
+        .authorizer(None::<fn(rusqlite::hooks::AuthContext<'_>) -> rusqlite::hooks::Authorization>)
+        .map_err(|error| engine_error(error, &cancel))?;
+    connection
+        .execute_batch("PRAGMA query_only = ON;")
+        .map_err(|error| engine_error(error, &cancel))?;
     let mut opened = Opened {
         connection,
         actions: None,
@@ -549,6 +563,30 @@ pub fn classify_on_schema(schema: &[String], text: &str) -> Result<StatementClas
     opened.confine()?;
     let (_statement, class) = opened.prepare(text)?;
     Ok(class)
+}
+
+/// Runs one entry of a schema in its copy, when it is a single `CREATE`
+/// statement, and logs the code of one that does not run. A virtual table's
+/// own `CREATE` already made its shadow tables, whose `CREATE` fails in the
+/// copy (spike S1), and the copy classifies alike.
+fn replay(connection: &Connection, create: &str) {
+    let is_create = create
+        .trim_start()
+        .get(..6)
+        .is_some_and(|start| start.eq_ignore_ascii_case("CREATE"));
+    if !is_create {
+        tracing::debug!("an entry of a schema copy is not a CREATE statement and did not run");
+        return;
+    }
+    let ran = connection
+        .prepare(create)
+        .and_then(|mut statement| statement.raw_execute());
+    if let Err(error) = ran {
+        tracing::debug!(
+            code = ?error.sqlite_error_code(),
+            "a statement of a schema copy did not run"
+        );
+    }
 }
 
 /// Runs a read on a registered file: one statement that changes nothing,
