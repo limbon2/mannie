@@ -8,7 +8,16 @@
 import { hostRefusalMessage, ipcFailureMessage } from '@mannie/plugin-sdk/messages';
 import type { MentionSummary } from '@mannie/plugin-sdk/slots';
 
-import type { FileRefusal, FileState, FilterOperator, SqliteFilesError, TableKind } from '../generated/bindings.js';
+import type {
+  DatabaseReach,
+  DatabaseView,
+  FileRefusal,
+  FileState,
+  FilterOperator,
+  HostDatabaseRefusal,
+  SqliteFilesError,
+  TableKind,
+} from '../generated/bindings.js';
 import { m } from '../generated/messages.js';
 import type { DatabasesFailure } from '../types/databases.js';
 
@@ -22,14 +31,47 @@ export function databasesFailureMessage(failure: DatabasesFailure): string {
     return hostRefusalMessage(error, m.workers_feature_databases_name());
   }
   switch (error.code) {
+    case 'answer_lost': {
+      return m.workers_databases_error_answer_lost();
+    }
     case 'files': {
       return filesErrorMessage(error.error);
+    }
+    case 'host_refused': {
+      return workerRefusalMessage(error.refusal);
     }
     case 'name_taken': {
       return m.workers_databases_error_name_taken();
     }
+    case 'needs_owner': {
+      return m.workers_databases_error_needs_owner();
+    }
     case 'stopped': {
       return m.workers_databases_error_stopped();
+    }
+    case 'worker_needs_update': {
+      return m.workers_databases_error_worker_needs_update();
+    }
+    case 'worker_offline': {
+      return m.workers_databases_error_worker_offline();
+    }
+  }
+}
+
+/** Why a worker's ceiling refused a request on one of its databases (ADR-0057, decision 5). */
+export function workerRefusalMessage(refusal: HostDatabaseRefusal): string {
+  switch (refusal) {
+    case 'no_databases_on_host': {
+      return m.workers_databases_error_host_no_databases();
+    }
+    case 'outside_allowed_folders': {
+      return m.workers_databases_error_host_outside_allowed_folders();
+    }
+    case 'read_only_host': {
+      return m.workers_databases_error_read_only_host();
+    }
+    case 'worker_folder': {
+      return m.workers_databases_error_host_worker_folder();
     }
   }
 }
@@ -172,8 +214,56 @@ export function databaseStateLabel(state: FileState): string {
   }
 }
 
+/** Whether the master reaches a database's machine, as a database's row and page name it. */
+export function databaseReachLabel(reach: DatabaseReach): string {
+  switch (reach) {
+    case 'not_allowed': {
+      return m.workers_databases_reach_not_allowed();
+    }
+    case 'reachable': {
+      return m.workers_databases_reach_reachable();
+    }
+    case 'worker_needs_update': {
+      return m.workers_databases_reach_worker_needs_update();
+    }
+    case 'worker_offline': {
+      return m.workers_databases_reach_worker_offline();
+    }
+  }
+}
+
+/** Whether a database can run statements now: its machine is reached and its file is there. */
+export function isUsable(database: Pick<DatabaseView, 'reach' | 'state'>): boolean {
+  const isReached = database.reach === 'reachable';
+  const isThere = database.state === 'available';
+  return isReached && isThere;
+}
+
+/** What a database's row and page say of it: why it cannot run statements, its machine first, or its file's state. */
+export function databaseStatusLabel(database: Pick<DatabaseView, 'reach' | 'state'>): string {
+  return database.reach === 'reachable' ? databaseStateLabel(database.state) : databaseReachLabel(database.reach);
+}
+
+/** What a database's page says of a database that cannot run statements, or `null` for one that can. */
+export function unusableMessage(database: Pick<DatabaseView, 'reach' | 'state'>): string | null {
+  switch (database.reach) {
+    case 'not_allowed': {
+      return m.workers_databases_unusable_not_allowed();
+    }
+    case 'reachable': {
+      return fileUnusableMessage(database.state);
+    }
+    case 'worker_needs_update': {
+      return m.workers_databases_unusable_worker_needs_update();
+    }
+    case 'worker_offline': {
+      return m.workers_databases_unusable_worker_offline();
+    }
+  }
+}
+
 /** What a database's page says of a file that cannot run statements, or `null` for one that can. */
-export function unusableMessage(state: FileState): string | null {
+function fileUnusableMessage(state: FileState): string | null {
   switch (state) {
     case 'available': {
       return null;
@@ -251,7 +341,16 @@ const TOOL_FAILURES: ReadonlyMap<string, () => string> = new Map(
     already_run: () => m.workers_databases_error_already_run(),
     busy: () => m.workers_databases_error_busy(),
     constraint: () => m.workers_databases_tool_constraint(),
+    database_invalid_value: () => m.workers_databases_error_invalid_value(),
+    database_not_a_read: () => m.workers_databases_error_not_a_read(),
+    database_not_registered: () => m.workers_databases_error_not_registered(),
+    database_read_in_change: () => m.workers_databases_tool_read_in_change(),
+    database_read_only: () => m.workers_databases_error_marked_read_only(),
+    database_read_only_host: () => m.workers_databases_error_read_only_host(),
+    database_schema_too_large: () => m.workers_databases_error_schema_too_large(),
+    database_statement_refused: () => m.workers_databases_tool_invalid_statement(),
     database_unusable: () => m.workers_databases_tool_database_unusable(),
+    database_worker_facts: () => m.workers_databases_tool_worker_facts(),
     failed: () => m.workers_databases_error_failed(),
     file_changed: () => m.workers_databases_error_file_changed(),
     file_missing: () => m.workers_databases_error_file_missing(),
@@ -260,19 +359,27 @@ const TOOL_FAILURES: ReadonlyMap<string, () => string> = new Map(
     invalid_statement: () => m.workers_databases_tool_invalid_statement(),
     invalid_value: () => m.workers_databases_error_invalid_value(),
     marked_read_only: () => m.workers_databases_error_marked_read_only(),
+    no_databases_on_host: () => m.workers_databases_error_host_no_databases(),
     no_key: () => m.workers_databases_error_no_key(),
     not_a_database: () => m.workers_databases_error_not_a_database(),
     not_a_read: () => m.workers_databases_error_not_a_read(),
     not_allowed: () => m.workers_databases_error_not_allowed(),
     not_one_statement: () => m.workers_databases_error_not_one_statement(),
     not_registered: () => m.workers_databases_error_not_registered(),
+    outside_allowed_folders: () => m.workers_databases_error_host_outside_allowed_folders(),
     parameters: () => m.workers_databases_tool_parameters(),
+    read_only_host: () => m.workers_databases_error_read_only_host(),
     refused: () => m.workers_databases_tool_refused(),
     row_changed: () => m.workers_databases_error_row_changed(),
     schema_unconfirmed: () => m.workers_databases_error_schema_unconfirmed(),
     timed_out: () => m.workers_databases_error_timed_out(),
     too_many_statements: () => m.workers_databases_error_too_many_statements(),
     unknown_database: () => m.workers_databases_tool_unknown_database(),
+    worker_answer_lost: () => m.workers_databases_error_answer_lost(),
+    worker_folder: () => m.workers_databases_error_host_worker_folder(),
+    worker_needs_owner: () => m.workers_databases_tool_worker_needs_owner(),
+    worker_needs_update: () => m.workers_databases_error_worker_needs_update(),
+    worker_offline: () => m.workers_databases_error_worker_offline(),
   }),
 );
 

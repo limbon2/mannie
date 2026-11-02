@@ -10,18 +10,19 @@
   import type { DatabaseView } from '../generated/bindings.js';
   import { m } from '../generated/messages.js';
   import { databaseActions } from '../state/database-actions.svelte.js';
-  import { databaseStateLabel } from '../utils/databases-messages.js';
+  import { databaseStatusLabel, isUsable } from '../utils/databases-messages.js';
   import { openDatabase, shownDatabaseKey } from '../utils/databases-places.js';
 
   // One database in the sidebar (plugins/workers/docs/databases.md, the
   // view): its name, which the owner gave and so is content, a mark when it
-  // is read-only, and its state when it cannot run statements. The row opens
-  // the database's page; its menu renames, marks, accepts a replaced file
-  // and removes. The menu's button lies over room that the row keeps free,
-  // so nothing moves when it shows.
+  // is read-only, and why it cannot run statements, such as its worker being
+  // offline (ADR-0057). The row opens the database's page; its menu renames,
+  // marks, accepts a replaced file and removes. The menu's button lies over
+  // room that the row keeps free, so nothing moves when it shows.
   let { database }: { database: DatabaseView } = $props();
 
-  const usable = $derived(database.state === 'available');
+  const usable = $derived(isUsable(database));
+  const replaced = $derived(database.state === 'changed' && database.reach === 'reachable');
 </script>
 
 <Sidebar.MenuItem data-database={database.key}>
@@ -36,7 +37,7 @@
       <span class="min-w-0 truncate" data-content dir="auto">{database.name}</span>
       {#if !usable}
         <CircleAlertIcon class="ms-auto text-destructive" />
-        <span class="sr-only">{databaseStateLabel(database.state)}</span>
+        <span class="sr-only">{databaseStatusLabel(database)}</span>
       {:else if database.readOnly}
         <LockIcon class="ms-auto text-muted-foreground" />
         <span class="sr-only">{m.workers_databases_read_only()}</span>
@@ -62,7 +63,7 @@
             <DropdownMenu.Item onSelect={() => void databaseActions.mark(database, !database.readOnly)}>
               {database.readOnly ? m.workers_databases_allow_changes() : m.workers_databases_mark_read_only()}
             </DropdownMenu.Item>
-            {#if database.state === 'changed'}
+            {#if replaced}
               <DropdownMenu.Item onSelect={() => void databaseActions.accept(database)}>
                 {m.workers_databases_accept()}
               </DropdownMenu.Item>

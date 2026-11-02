@@ -165,6 +165,7 @@ fn the_exported_entry_carries_the_manifest_of_the_plugins_folder() {
             "remove_worker",
             "refresh_databases",
             "add_database",
+            "add_worker_database",
             "rename_database",
             "mark_database",
             "accept_database",

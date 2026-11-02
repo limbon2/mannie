@@ -1,12 +1,14 @@
 use std::sync::Arc;
 
+use mannie_link::databases::HostDatabase;
 use mannie_link::host::{CeilingView, HostFacts, WorkerDetails};
 use mannie_plugin_harness::store::{PluginModule, Store, StoreOptions};
 use mannie_plugin_harness::types::ManualClock;
 use mannie_plugin_sdk::contracts::CeilingMode;
-use mannie_plugin_sdk::contracts::WorkerId;
 use mannie_plugin_sdk::contracts::{Clock, UtcMillis};
+use mannie_plugin_sdk::contracts::{DatabaseKey, WorkerId};
 use mannie_plugin_sdk::ids::PluginId;
+use mannie_plugin_sdk::services::sqlite_files::{DatabaseFile, FileState};
 use mannie_plugin_sdk::services::store::StoreError;
 use tempfile::TempDir;
 
@@ -190,7 +192,7 @@ async fn every_listed_statement_prepares_when_the_module_registers() {
         "the module's store: {:?}",
         module.err()
     );
-    assert_eq!(WORKERS_MODULE.statements.len(), 6);
+    assert_eq!(WORKERS_MODULE.statements.len(), 10);
 }
 
 #[tokio::test]
@@ -247,4 +249,78 @@ async fn removing_a_worker_reports_whether_it_was_paired() {
     assert!(removed);
     assert!(!again);
     assert_eq!(store.paired_workers().await.unwrap(), Vec::new());
+}
+
+/// A database on a worker's host, as the worker lists it.
+fn host_database(last: u8, name: &str, state: FileState) -> HostDatabase {
+    HostDatabase {
+        file: DatabaseFile {
+            key: DatabaseKey::parse(&format!("0199e0f2-0000-7000-8000-0000000000{last:02x}"))
+                .unwrap(),
+            name: name.to_owned(),
+            file_name: format!("{}.db", name.to_lowercase()),
+            read_only: last.is_multiple_of(2),
+            state,
+        },
+        identity: format!("2049:{last}"),
+    }
+}
+
+#[tokio::test]
+async fn a_workers_databases_are_kept_as_it_listed_them_and_go_with_the_worker() {
+    let (_folder, store) = open();
+    store
+        .add_paired_worker(new_worker(1, &"5".repeat(64)))
+        .await
+        .unwrap();
+    store
+        .add_paired_worker(new_worker(2, &"4".repeat(64)))
+        .await
+        .unwrap();
+    let parts = host_database(1, "Parts", FileState::Available);
+    let orders = host_database(2, "Orders", FileState::Changed);
+
+    store
+        .replace_worker_databases(&worker_id(1), &[parts.clone(), orders.clone()])
+        .await
+        .unwrap();
+    store
+        .replace_worker_databases(
+            &worker_id(2),
+            &[host_database(3, "Logs", FileState::Missing)],
+        )
+        .await
+        .unwrap();
+    let renamed = HostDatabase {
+        file: DatabaseFile {
+            name: "Stock".to_owned(),
+            ..parts.file.clone()
+        },
+        ..parts.clone()
+    };
+    store
+        .put_worker_database(&worker_id(1), &renamed)
+        .await
+        .unwrap();
+    store
+        .remove_worker_database(&worker_id(1), &orders.file.key)
+        .await
+        .unwrap();
+
+    let kept = store.worker_databases().await.unwrap();
+    assert_eq!(
+        kept,
+        vec![
+            (worker_id(1), renamed),
+            (worker_id(2), host_database(3, "Logs", FileState::Missing)),
+        ]
+    );
+    // A list replaces the one before, and removing the worker drops its
+    // databases with it.
+    store
+        .replace_worker_databases(&worker_id(1), &[])
+        .await
+        .unwrap();
+    store.remove_paired_worker(&worker_id(2)).await.unwrap();
+    assert_eq!(store.worker_databases().await.unwrap(), Vec::new());
 }

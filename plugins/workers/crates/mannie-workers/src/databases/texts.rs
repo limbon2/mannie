@@ -55,6 +55,35 @@ pub(crate) fn state_note(
     }
 }
 
+/// What a database's line says about its machine's reach, or nothing for
+/// one that the master reaches.
+pub(crate) fn reach_note(reach: super::commands::DatabaseReach) -> &'static str {
+    use super::commands::DatabaseReach;
+    match reach {
+        DatabaseReach::Reachable => "",
+        DatabaseReach::WorkerOffline => ", not usable now: its worker is offline",
+        DatabaseReach::WorkerNeedsUpdate => {
+            ", not usable: its worker needs an update, which the owner runs with mannie-worker update"
+        }
+        DatabaseReach::NotAllowed => {
+            ", not usable: its worker's configuration does not allow databases"
+        }
+    }
+}
+
+/// The machine of a database, as the model reads it: this computer, or a
+/// worker by its name, cleaned as the core cleans labels.
+pub(crate) fn machine(machine: &super::commands::DatabaseMachine) -> String {
+    use super::commands::DatabaseMachine;
+    match machine {
+        DatabaseMachine::ThisComputer => "this computer".to_owned(),
+        DatabaseMachine::Worker { name, .. } => {
+            let name = mannie_plugin_sdk::contracts::clean_label(name, 200).unwrap_or_default();
+            format!("the worker {name}")
+        }
+    }
+}
+
 /// The refusal of a database name that no registered database has.
 pub(crate) fn unknown_database(name: &str) -> String {
     format!(
@@ -134,19 +163,72 @@ and nothing changed. Call change_database again."
     }
 }
 
+/// What the model reads of a request that a database's machine refused or
+/// could not run, which never holds the statement's values.
+pub(crate) fn database_failure(error: &super::commands::DatabasesError) -> String {
+    use super::commands::DatabasesError;
+    use mannie_plugin_sdk::contracts::HostDatabaseRefusal;
+    match error {
+        DatabasesError::Files { error } => failure(error),
+        DatabasesError::WorkerOffline => "Failed: the database's worker is offline, so its \
+databases are out of reach until it connects again."
+            .to_owned(),
+        DatabasesError::WorkerNeedsUpdate => "Failed: the database's worker runs a version \
+without databases. The owner updates it with mannie-worker update."
+            .to_owned(),
+        DatabasesError::HostRefused { refusal } => match refusal {
+            HostDatabaseRefusal::NoDatabasesOnHost => {
+                "Not run: the worker's configuration does not allow databases.".to_owned()
+            }
+            HostDatabaseRefusal::ReadOnlyHost => {
+                "Not run: the worker's host lets it only read, so its databases take no writes \
+and no changes of their schemas."
+                    .to_owned()
+            }
+            HostDatabaseRefusal::OutsideAllowedFolders => "Not run: the database's file is \
+outside the folders that the worker's host allows. The owner registers it again once its \
+folder is allowed."
+                .to_owned(),
+            HostDatabaseRefusal::WorkerFolder => {
+                "Not run: the database's file is inside the worker's own folders.".to_owned()
+            }
+        },
+        DatabasesError::NeedsOwner => "Not run: the worker's host asks the owner for this \
+change. Call change_database again, and Mannie asks the owner."
+            .to_owned(),
+        DatabasesError::AnswerLost => "The link to the worker dropped before the worker \
+answered, so the change may have run. Read the rows before you change them again."
+            .to_owned(),
+        DatabasesError::NameTaken | DatabasesError::Stopped => {
+            "Failed: Mannie could not work with the database. The log has the cause.".to_owned()
+        }
+    }
+}
+
 /// A database that the owner mentioned, with its structure as far as it
 /// fits.
-pub(crate) fn mentioned(name: &str, file_name: &str, notes: &str, structure: &str) -> String {
+pub(crate) fn mentioned(
+    name: &str,
+    file_name: &str,
+    machine: &str,
+    notes: &str,
+    structure: &str,
+) -> String {
     format!(
-        "The owner means the SQLite database \"{name}\" (file {file_name} on this computer){notes}. \
+        "The owner means the SQLite database \"{name}\" (file {file_name} on {machine}){notes}. \
 Read it with describe_database and query_database. Its structure:\n{structure}"
     )
 }
 
 /// A mentioned database whose structure could not be read.
-pub(crate) fn mentioned_without_structure(name: &str, file_name: &str, notes: &str) -> String {
+pub(crate) fn mentioned_without_structure(
+    name: &str,
+    file_name: &str,
+    machine: &str,
+    notes: &str,
+) -> String {
     format!(
-        "The owner means the SQLite database \"{name}\" (file {file_name} on this computer){notes}. \
+        "The owner means the SQLite database \"{name}\" (file {file_name} on {machine}){notes}. \
 Its structure could not be read now."
     )
 }

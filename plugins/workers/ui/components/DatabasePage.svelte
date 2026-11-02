@@ -13,7 +13,12 @@
   import { databaseActions } from '../state/database-actions.svelte.js';
   import { databaseList } from '../state/databases.svelte.js';
   import type { DatabasesFailure } from '../types/databases.js';
-  import { databasesFailureMessage, databaseStateLabel, unusableMessage } from '../utils/databases-messages.js';
+  import {
+    databasesFailureMessage,
+    databaseStatusLabel,
+    isUsable,
+    unusableMessage,
+  } from '../utils/databases-messages.js';
   import { DATABASE_TABS, openDatabase, shownTab, shownTable } from '../utils/databases-places.js';
 
   import DatabaseDataTab from './DatabaseDataTab.svelte';
@@ -22,10 +27,11 @@
   import DatabaseTablesTab from './DatabaseTablesTab.svelte';
 
   // A database's page (plugins/workers/docs/databases.md, the view): its
-  // name, file and marks, and the tabs Tables, Structure, Data and SQL,
-  // which share the database's structure. A file that cannot run statements
-  // says why instead of the tabs, with what the owner can do. The name and
-  // the file's name are content.
+  // name, file, machine and marks, and the tabs Tables, Structure, Data and
+  // SQL, which share the database's structure. A database that cannot run
+  // statements, such as one whose worker is offline (ADR-0057), says why
+  // instead of the tabs, with what the owner can do. The name, the file's
+  // name and a worker's name are content.
   let { database }: { database: DatabaseView } = $props();
 
   let structure: DatabaseStructure | null = $state(null);
@@ -34,7 +40,13 @@
   /** Counts reads of the structure, so that a slower earlier one never covers a newer one. */
   let reads = 0;
 
-  const unusable = $derived(unusableMessage(database.state));
+  const unusable = $derived(unusableMessage(database));
+  const replaced = $derived(database.state === 'changed' && database.reach === 'reachable');
+  const where = $derived(
+    database.machine.kind === 'worker'
+      ? m.workers_databases_file_on_worker({ file: database.fileName, worker: database.machine.name })
+      : m.workers_databases_file_on_this_computer({ file: database.fileName }),
+  );
   const actionFailure = $derived(databaseActions.failures.get(database.key) ?? null);
   const tab = $derived(shownTab());
   /** The failure of the latest read of the structure, while no read runs. */
@@ -69,7 +81,7 @@
     // The view mounts the page again when the file's state changes, so a
     // file that became usable, such as after the owner accepted a replaced
     // one, reads its structure.
-    if (database.state === 'available') {
+    if (isUsable(database)) {
       void load();
     }
   });
@@ -83,12 +95,10 @@
         <Badge variant="secondary">{m.workers_databases_read_only()}</Badge>
       {/if}
       {#if unusable !== null}
-        <Badge variant="destructive">{databaseStateLabel(database.state)}</Badge>
+        <Badge variant="destructive">{databaseStatusLabel(database)}</Badge>
       {/if}
     </div>
-    <p class="text-sm wrap-anywhere text-muted-foreground" data-content dir="auto">
-      {m.workers_databases_file_on_this_computer({ file: database.fileName })}
-    </p>
+    <p class="text-sm wrap-anywhere text-muted-foreground" data-content dir="auto">{where}</p>
   </header>
   {#if actionFailure !== null}
     <p class="px-6 pt-3 text-sm text-destructive" role="alert">{databasesFailureMessage(actionFailure)}</p>
@@ -97,11 +107,11 @@
     <div class="p-6">
       <Alert.Root data-database-unusable="">
         <CircleAlertIcon />
-        <Alert.Title>{databaseStateLabel(database.state)}</Alert.Title>
+        <Alert.Title>{databaseStatusLabel(database)}</Alert.Title>
         <Alert.Description>
           <p>{unusable}</p>
           <div class="mt-2 flex flex-wrap gap-2">
-            {#if database.state === 'changed'}
+            {#if replaced}
               <Button size="sm" onclick={() => void databaseActions.accept(database)}>
                 {m.workers_databases_accept()}
               </Button>

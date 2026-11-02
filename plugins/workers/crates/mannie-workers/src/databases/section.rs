@@ -71,14 +71,16 @@ pub(crate) fn render_databases(databases: &[DatabaseView], changes: bool) -> Str
 fn database_line(database: &DatabaseView) -> String {
     let name = clean_label(&database.name, MAX_NAME_CHARS).unwrap_or_default();
     let file = clean_label(&database.file_name, MAX_NAME_CHARS).unwrap_or_default();
+    let machine = texts::machine(&database.machine);
     let read_only = if database.read_only {
         ", read-only"
     } else {
         ""
     };
     format!(
-        "- {name} (file {file} on this computer){read_only}{}",
-        texts::state_note(database.state)
+        "- {name} (file {file} on {machine}){read_only}{}{}",
+        texts::state_note(database.state),
+        texts::reach_note(database.reach)
     )
 }
 
@@ -87,8 +89,10 @@ mod tests {
     use mannie_plugin_sdk::contracts::DatabaseKey;
     use mannie_plugin_sdk::services::sqlite_files::FileState;
 
+    use mannie_plugin_sdk::contracts::WorkerId;
+
     use super::render_databases;
-    use crate::databases::commands::{DatabaseMachine, DatabaseView};
+    use crate::databases::commands::{DatabaseMachine, DatabaseReach, DatabaseView};
     use crate::databases::texts;
 
     fn database(name: &str, read_only: bool, state: FileState) -> DatabaseView {
@@ -99,7 +103,27 @@ mod tests {
             read_only,
             state,
             machine: DatabaseMachine::ThisComputer,
+            reach: DatabaseReach::Reachable,
         }
+    }
+
+    #[test]
+    fn a_workers_database_names_its_worker_and_says_when_it_is_out_of_reach() {
+        let mut parts = database("Parts", false, FileState::Available);
+        parts.machine = DatabaseMachine::Worker {
+            worker: WorkerId::parse("0199e0f2-0000-7000-8000-0000000000aa").unwrap(),
+            name: "build-box".to_owned(),
+        };
+        parts.reach = DatabaseReach::WorkerOffline;
+
+        let text = render_databases(&[parts], true);
+
+        assert!(
+            text.contains(
+                "- Parts (file parts.db on the worker build-box), not usable now: its worker is offline"
+            ),
+            "{text}"
+        );
     }
 
     #[test]

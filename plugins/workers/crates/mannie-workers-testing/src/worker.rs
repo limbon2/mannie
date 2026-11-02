@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use mannie_host_kit::logging::Redactor;
 use mannie_host_kit::runtime::HostDatabaseSettings;
-use mannie_host_kit::tools::Ceiling;
+use mannie_host_kit::tools::{Ceiling, canonical_folder};
 use mannie_plugin_harness::runtime::{WorkerHarness, WorkerOptions};
 use mannie_plugin_harness::types::SystemClock;
 use mannie_plugin_sdk::contracts::CeilingMode;
@@ -20,7 +20,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{oneshot, watch};
 use tokio::task::JoinHandle;
 
-use mannie_link::host::WorkerDetails;
+use mannie_link::host::{CeilingView, WorkerDetails};
 use mannie_link::keys::LinkKey;
 use mannie_link::{levels, tls};
 use mannie_link_worker::{self as worker, LeaseVault, WorkerLink};
@@ -36,9 +36,19 @@ pub struct LinkedWorkerOptions {
     pub worker: WorkerOptions,
     /// The version that the worker says it runs.
     pub version: String,
-    /// How the worker takes the master's requests on its host's databases:
-    /// by default, its configuration does not allow them.
-    pub databases: HostDatabaseSettings,
+    /// How the worker's configuration takes the master's requests on the
+    /// databases of its host, inside the harness's allowed folder, or
+    /// `None`, by default, for a configuration that does not allow them.
+    pub databases: Option<WorkerDatabases>,
+}
+
+/// A worker's configuration that allows databases (ADR-0057, decision 2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkerDatabases {
+    /// The mode of the host's ceiling, which `Hello` reports.
+    pub mode: CeilingMode,
+    /// Whether the host accepts the master's full access.
+    pub accepts_master_full_access: bool,
 }
 
 impl Default for LinkedWorkerOptions {
@@ -46,16 +56,7 @@ impl Default for LinkedWorkerOptions {
         Self {
             worker: WorkerOptions::default(),
             version: env!("CARGO_PKG_VERSION").to_owned(),
-            databases: HostDatabaseSettings {
-                enabled: false,
-                ceiling: Ceiling {
-                    mode: CeilingMode::Ask,
-                    allowed_folders: Vec::new(),
-                    rules: Vec::new(),
-                },
-                accepts_master_full_access: true,
-                plugin: "workers".to_owned(),
-            },
+            databases: None,
         }
     }
 }
@@ -99,6 +100,29 @@ impl LinkedWorker {
         })
         .await;
         let key = Arc::new(LinkKey::generate().expect("a key"));
+        let allowed = PathBuf::from(
+            canonical_folder(&harness.allowed).expect("the harness's allowed folder exists"),
+        );
+        let databases = harness.runtime.host_databases(HostDatabaseSettings {
+            enabled: options.databases.is_some(),
+            ceiling: Ceiling {
+                mode: options
+                    .databases
+                    .map_or(CeilingMode::Ask, |databases| databases.mode),
+                allowed_folders: vec![allowed.clone()],
+                rules: Vec::new(),
+            },
+            accepts_master_full_access: options
+                .databases
+                .is_none_or(|databases| databases.accepts_master_full_access),
+            plugin: "workers".to_owned(),
+        });
+        let ceiling = options.databases.map(|databases| CeilingView {
+            mode: databases.mode,
+            allowed_folders: vec![allowed.display().to_string()],
+            rules: Vec::new(),
+            accepts_master_full_access: databases.accepts_master_full_access,
+        });
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("a loopback port");
@@ -110,16 +134,16 @@ impl LinkedWorker {
             details: WorkerDetails {
                 purpose: "Builds and tests the backend".to_owned(),
                 facts: None,
-                ceiling: None,
+                ceiling,
                 version: Some(options.version.clone()),
                 max_parallel_tasks: 4,
-                databases: options.databases.enabled,
+                databases: options.databases.is_some(),
             },
             version: options.version,
             data: harness.data_folder(),
             leases: Arc::clone(&leases),
             clock: Arc::new(SystemClock),
-            databases: harness.runtime.host_databases(options.databases),
+            databases,
         };
         let (shutdown, stopped) = oneshot::channel::<()>();
         let server = tokio::spawn(async move {

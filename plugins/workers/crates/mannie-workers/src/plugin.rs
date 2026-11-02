@@ -208,7 +208,7 @@ impl Instance for WorkersInstance {
         context: FeatureContext,
     ) -> BoxFuture<'static, Result<FeatureStarted, StartFailure>> {
         if context.feature().as_str() == DATABASES {
-            databases::start(context)
+            databases::start(context, self.hub.clone())
         } else {
             Box::pin(std::future::ready(Err(StartFailure::new(FEATURE_UNKNOWN))))
         }

@@ -1,19 +1,22 @@
 //! The feature Databases of Workers (plugins/workers/docs/databases.md;
-//! ADR-0055, ADR-0056): the owner's SQLite files on this computer, which its
-//! view browses and edits and agents query and change. The owner turns it on
-//! under Workers on the Plugins page; while it is off, Workers works as
-//! before and the core holds no binding of the service `sqlite-files`.
+//! ADR-0055, ADR-0056, ADR-0057): the owner's SQLite files on this computer
+//! and on the paired workers' hosts, which its view browses and edits and
+//! agents query and change. The owner turns it on under Workers on the
+//! Plugins page; while it is off, Workers works as before and the core holds
+//! no binding of the service `sqlite-files`.
 //!
-//! A start lists the registered files and contributes the three tools, the
-//! section of the databases and the mention provider, with the handlers of
-//! the view's commands and channel. Turning the feature off removes them,
-//! ends its calls and channel with `feature_off`, waits for its work and
-//! releases the service; the registrations stay.
+//! A start lists the registered files, reads the copy of each worker's list
+//! and follows the workers, and contributes the three tools, the section of
+//! the databases and the mention provider, with the handlers of the view's
+//! commands and channel. Turning the feature off removes them, ends its
+//! calls and channel with `feature_off`, waits for its work, stops following
+//! the workers and releases the service; the registrations stay.
 
 pub mod commands;
 mod mentions;
 mod output;
 mod registry;
+mod remote;
 mod section;
 mod texts;
 pub mod tools;
@@ -29,22 +32,24 @@ use mannie_plugin_sdk::context::FeatureContext;
 use mannie_plugin_sdk::contracts::WorkItem;
 use mannie_plugin_sdk::contributions::Contributions;
 use mannie_plugin_sdk::error::StartFailure;
-use mannie_plugin_sdk::ipc::{Handlers, PluginStream};
+use mannie_plugin_sdk::ipc::{Handlers, PluginError as _, PluginStream};
 use mannie_plugin_sdk::plugin::{FeatureInstance, FeatureStarted};
 use mannie_plugin_sdk::points::mentions::{MentionProvider, Mentions};
 use mannie_plugin_sdk::points::sections::{Section, SectionBody, Sections};
 use mannie_plugin_sdk::points::tools::{AgentSelector, PluginTool, Tools};
 use mannie_plugin_sdk::services::sqlite_files::{ReadLimits, SqliteFiles, StatementRows};
 use tokio::sync::watch;
+use tokio::task::JoinHandle;
 
 pub use self::commands::DATABASES;
 use self::commands::{
-    AcceptDatabaseCommand, AddDatabase, AddDatabaseCommand, ChangeDatabase, ChangeDatabaseCommand,
-    ChangeDone, ClassifyStatement, ClassifyStatementCommand, CountRows, CountRowsCommand,
-    DatabaseListUpdate, DatabasePageCommand, DatabaseRef, DatabaseStructureCommand, DatabaseView,
-    DatabasesError, FollowDatabasesChannel, MarkDatabase, MarkDatabaseCommand, PageDatabase,
-    ReadDatabase, ReadDatabaseCommand, RefreshDatabasesCommand, RemoveDatabaseCommand,
-    RenameDatabase, RenameDatabaseCommand, StopRead, StopReadCommand,
+    AcceptDatabaseCommand, AddDatabase, AddDatabaseCommand, AddWorkerDatabase,
+    AddWorkerDatabaseCommand, ChangeDatabase, ChangeDatabaseCommand, ChangeDone, ClassifyStatement,
+    ClassifyStatementCommand, CountRows, CountRowsCommand, DatabaseListUpdate, DatabasePageCommand,
+    DatabaseRef, DatabaseStructureCommand, DatabaseView, DatabasesError, FollowDatabasesChannel,
+    MarkDatabase, MarkDatabaseCommand, PageDatabase, ReadDatabase, ReadDatabaseCommand,
+    RefreshDatabasesCommand, RemoveDatabaseCommand, RenameDatabase, RenameDatabaseCommand,
+    StopRead, StopReadCommand,
 };
 use self::mentions::DatabaseMentions;
 use self::registry::Databases;
@@ -52,6 +57,7 @@ use self::section::{DatabasesSection, SECTION_ID, SECTION_POSITION};
 use self::tools::{
     CHANGING_AGENTS, ChangeDatabase as ChangeTool, DescribeDatabase, QueryDatabase, READING_AGENTS,
 };
+use crate::hub::Hub;
 
 /// The code of a start that could not list the registered databases.
 pub const DATABASES_UNAVAILABLE: &str = "databases_unavailable";
@@ -65,13 +71,15 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Starts the feature with the service that it declares.
+/// Starts the feature with the service that it declares and the hub of
+/// the plugin's start, which reaches the workers.
 pub(crate) fn start(
     context: FeatureContext,
+    hub: Hub,
 ) -> BoxFuture<'static, Result<FeatureStarted, StartFailure>> {
     Box::pin(async move {
         let files = context.service::<SqliteFiles>()?;
-        let databases = Databases::start(files).await.map_err(|error| {
+        let databases = Databases::start(files, hub).await.map_err(|error| {
             tracing::error!(
                 error.code = error.code(),
                 "the feature Databases could not list the registered databases"
@@ -81,8 +89,9 @@ pub(crate) fn start(
         let running = Running::default();
         let contributions = contributions(&databases);
         let handlers = handlers(&databases, &running);
+        let follower = tokio::spawn(databases.follow_workers());
         tracing::info!("the feature Databases of Workers started");
-        Ok(FeatureStarted::new(DatabasesInstance { running })
+        Ok(FeatureStarted::new(DatabasesInstance { running, follower })
             .with_contributions(contributions)
             .with_handlers(handlers))
     })
@@ -153,11 +162,8 @@ impl Running {
         input: ReadDatabase,
     ) -> Result<StatementRows, DatabasesError> {
         let _counted = Counted::new(&self.count);
-        let (reading, handle) = abortable(databases.files().read(
-            input.key,
-            input.statement,
-            ReadLimits::VIEW,
-        ));
+        let (reading, handle) =
+            abortable(databases.read(input.key, input.statement, ReadLimits::VIEW));
         if let Some(run) = &input.run {
             lock(&self.reads).insert(run.clone(), handle);
         }
@@ -166,9 +172,9 @@ impl Running {
             lock(&self.reads).remove(run);
         }
         match read {
-            Ok(Ok(rows)) => Ok(rows),
-            Ok(Err(error)) => Err(databases.noticed(error).await.into()),
-            // Dropping the read stops its statement in the engine.
+            Ok(read) => read,
+            // Dropping the read stops its statement in the engine, on this
+            // computer or on the worker, which sees its call cancelled.
             Err(_aborted) => Err(DatabasesError::Stopped),
         }
     }
@@ -188,14 +194,12 @@ impl Running {
         input: ChangeDatabase,
     ) -> Result<ChangeDone, DatabasesError> {
         let _counted = Counted::new(&self.count);
-        match databases.files().change(input.key, input.change).await {
-            Ok(outcome) => Ok(ChangeDone {
-                changes: outcome.changes.to_string(),
-                rowid: outcome.rowid.map(|rowid| rowid.to_string()),
-                rows: outcome.rows,
-            }),
-            Err(error) => Err(databases.noticed(error).await.into()),
-        }
+        let outcome = databases.change(input.key, input.change).await?;
+        Ok(ChangeDone {
+            changes: outcome.changes.to_string(),
+            rowid: outcome.rowid.map(|rowid| rowid.to_string()),
+            rows: outcome.rows,
+        })
     }
 }
 
@@ -219,15 +223,19 @@ fn database_list(list: watch::Receiver<Vec<DatabaseView>>) -> PluginStream<Datab
 fn registration_handlers(databases: &Databases) -> Handlers {
     let (refreshing, adding, renaming) = (databases.clone(), databases.clone(), databases.clone());
     let (marking, accepting, removing) = (databases.clone(), databases.clone(), databases.clone());
-    let following = databases.clone();
+    let (following, adding_on_worker) = (databases.clone(), databases.clone());
     Handlers::new()
         .command::<RefreshDatabasesCommand, _, _>(move |()| {
             let databases = refreshing.clone();
-            async move { databases.refresh().await.map_err(DatabasesError::from) }
+            async move { databases.refresh().await }
         })
         .command::<AddDatabaseCommand, _, _>(move |input: AddDatabase| {
             let databases = adding.clone();
             async move { databases.add(input).await }
+        })
+        .command::<AddWorkerDatabaseCommand, _, _>(move |input: AddWorkerDatabase| {
+            let databases = adding_on_worker.clone();
+            async move { databases.add_on_worker(input).await }
         })
         .command::<RenameDatabaseCommand, _, _>(move |input: RenameDatabase| {
             let databases = renaming.clone();
@@ -261,39 +269,22 @@ fn handlers(databases: &Databases, running: &Running) -> Handlers {
     registration_handlers(databases)
         .command::<DatabaseStructureCommand, _, _>(move |input: DatabaseRef| {
             let databases = structuring.clone();
-            async move {
-                match databases.files().structure(input.key).await {
-                    Ok(structure) => Ok(structure),
-                    Err(error) => Err(databases.noticed(error).await.into()),
-                }
-            }
+            async move { databases.structure(input.key).await }
         })
         .command::<CountRowsCommand, _, _>(move |input: CountRows| {
             let databases = counting.clone();
             async move {
-                match databases.files().count(input.key, input.table).await {
-                    Ok(rows) => Ok(rows.to_string()),
-                    Err(error) => Err(databases.noticed(error).await.into()),
-                }
+                let rows = databases.count(input.key, input.table).await?;
+                Ok(rows.to_string())
             }
         })
         .command::<DatabasePageCommand, _, _>(move |input: PageDatabase| {
             let databases = paging.clone();
-            async move {
-                match databases.files().page(input.key, input.request).await {
-                    Ok(page) => Ok(page),
-                    Err(error) => Err(databases.noticed(error).await.into()),
-                }
-            }
+            async move { databases.page(input.key, input.request).await }
         })
         .command::<ClassifyStatementCommand, _, _>(move |input: ClassifyStatement| {
             let databases = classifying.clone();
-            async move {
-                match databases.files().classify(input.key, input.text).await {
-                    Ok(class) => Ok(class),
-                    Err(error) => Err(databases.noticed(error).await.into()),
-                }
-            }
+            async move { databases.classify(input.key, input.text).await }
         })
         .command::<ReadDatabaseCommand, _, _>(move |input: ReadDatabase| {
             let (running, databases) = (read_runs.clone(), reading.clone());
@@ -309,10 +300,12 @@ fn handlers(databases: &Databases, running: &Running) -> Handlers {
         })
 }
 
-/// Databases while it is on: the view's statements that run.
+/// Databases while it is on: the view's statements that run, and the task
+/// that follows the workers.
 #[derive(Debug)]
 struct DatabasesInstance {
     running: Running,
+    follower: JoinHandle<()>,
 }
 
 impl FeatureInstance for DatabasesInstance {
@@ -336,6 +329,7 @@ impl FeatureInstance for DatabasesInstance {
         for handle in handles {
             handle.abort();
         }
+        self.follower.abort();
         tracing::info!("the feature Databases of Workers stopped");
         Box::pin(std::future::ready(()))
     }

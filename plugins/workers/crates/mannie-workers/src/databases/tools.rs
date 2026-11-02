@@ -5,11 +5,15 @@
 //! transaction, as an operation that the core's policy decides on and its
 //! journal records.
 //!
-//! Prepare reads only the feature's list of databases: it checks the
-//! arguments and returns each statement with its values as a database
-//! access, from which the core reads what the statement does. Execute reads
-//! the arguments again, and the service runs a change only with the call's
-//! ticket, which holds exactly the statements and values that were allowed.
+//! Prepare checks the arguments against the feature's list of databases and
+//! returns each statement with its values as a database access, from which
+//! the core reads what the statement does. A statement on a worker's
+//! database names what the worker reports of it now, its schema included,
+//! so prepare reads the database's structure from the worker (ADR-0057,
+//! decision 6). Execute reads the arguments again, and a change runs only
+//! with the call's ticket, which holds exactly the statements and values
+//! that were allowed: the service runs it on this computer, and a worker
+//! runs it with the evidence that the core gives.
 
 use mannie_plugin_sdk::BoxFuture;
 use mannie_plugin_sdk::points::tools::{
@@ -20,7 +24,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
 
-use super::commands::DatabaseView;
+use super::commands::{DatabaseView, DatabasesError};
 use super::output::{Room, fitted, query_result, structure_text};
 use super::registry::{Databases, is_available};
 use super::texts;
@@ -51,6 +55,10 @@ pub(crate) const DATABASE_UNUSABLE: &str = "database_unusable";
 
 /// The code of a call whose arguments did not fit when it was about to run.
 pub(crate) const INVALID_ARGUMENTS: &str = "invalid_arguments";
+
+/// The code of a write whose worker's answer the link lost, which may have
+/// run.
+pub(crate) const WORKER_ANSWER_LOST: &str = "worker_answer_lost";
 
 /// The most characters of a statement.
 const MAX_STATEMENT_CHARS: usize = 100_000;
@@ -174,6 +182,54 @@ fn statement(text: String, values: Vec<ParameterValue>) -> Result<Statement, Too
     Ok(Statement::new(text, parameters))
 }
 
+/// The code of a call that a database's machine refused or could not run,
+/// which the call's card words.
+fn failure_code(error: &DatabasesError) -> String {
+    match error {
+        DatabasesError::Files { error } => {
+            error.code().trim_start_matches("sqlite_files.").to_owned()
+        }
+        DatabasesError::WorkerOffline => "worker_offline".to_owned(),
+        DatabasesError::WorkerNeedsUpdate => "worker_needs_update".to_owned(),
+        DatabasesError::HostRefused { refusal } => serde_json::to_value(refusal)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_owned))
+            .unwrap_or_else(|| "host_refused".to_owned()),
+        DatabasesError::NeedsOwner => "worker_needs_owner".to_owned(),
+        DatabasesError::AnswerLost => WORKER_ANSWER_LOST.to_owned(),
+        DatabasesError::NameTaken | DatabasesError::Stopped => "failed".to_owned(),
+    }
+}
+
+/// The refusal of a call whose database's machine could not say what the
+/// call touches, such as a worker that is offline.
+fn prepare_refused(error: &DatabasesError) -> ToolRefusal {
+    ToolRefusal::new(texts::database_failure(error)).with_code(failure_code(error))
+}
+
+/// The access of a statement on a database, with what its worker reports of
+/// it for a database on a worker's host.
+async fn access_of(
+    databases: &Databases,
+    database: &DatabaseView,
+    statements: Vec<Statement>,
+) -> Result<Vec<ToolAccess>, ToolRefusal> {
+    let reported = databases
+        .worker_database(&database.key)
+        .await
+        .map_err(|error| prepare_refused(&error))?;
+    Ok(statements
+        .into_iter()
+        .map(|statement| {
+            let access = DatabaseAccess::new(database.key.clone(), statement);
+            ToolAccess::Database(match &reported {
+                Some((_worker, reported)) => access.on_worker(reported.clone()),
+                None => access,
+            })
+        })
+        .collect())
+}
+
 /// The room of a call's result.
 fn room(execution: &ToolExecution) -> Room<'_> {
     Room {
@@ -220,7 +276,7 @@ impl Tool for DescribeDatabase {
                 Ok(database) => database,
                 Err(refusal) => return refused(refusal),
             };
-            match databases.files().structure(database.key.clone()).await {
+            match databases.structure(database.key.clone()).await {
                 Ok(structure) => {
                     let text = structure_text(&structure);
                     let tables = structure.tables.len();
@@ -234,7 +290,7 @@ impl Tool for DescribeDatabase {
                         None => result,
                     }
                 }
-                Err(error) => failed(&databases, error).await,
+                Err(error) => failed(&error),
             }
         })
     }
@@ -273,14 +329,11 @@ impl Tool for QueryDatabase {
     }
 
     fn prepare(&self, call: ToolCall) -> BoxFuture<'static, Result<Vec<ToolAccess>, ToolRefusal>> {
-        let checked =
-            checked_query(&self.databases, &call.arguments).map(|(database, statement)| {
-                vec![ToolAccess::Database(DatabaseAccess::new(
-                    database.key,
-                    statement,
-                ))]
-            });
-        Box::pin(std::future::ready(checked))
+        let databases = self.databases.clone();
+        Box::pin(async move {
+            let (database, statement) = checked_query(&databases, &call.arguments)?;
+            access_of(&databases, &database, vec![statement]).await
+        })
     }
 
     fn execute(&self, execution: ToolExecution) -> BoxFuture<'static, ToolResult> {
@@ -291,7 +344,6 @@ impl Tool for QueryDatabase {
                 Err(refusal) => return refused(refusal),
             };
             let read = databases
-                .files()
                 .read(database.key.clone(), statement, TOOL_READ_LIMITS)
                 .await;
             match read {
@@ -304,7 +356,7 @@ impl Tool for QueryDatabase {
                     });
                     query_result(&rows, room(&execution)).with_data(data)
                 }
-                Err(error) => failed(&databases, error).await,
+                Err(error) => failed(&error),
             }
         })
     }
@@ -351,16 +403,11 @@ impl Tool for ChangeDatabase {
     }
 
     fn prepare(&self, call: ToolCall) -> BoxFuture<'static, Result<Vec<ToolAccess>, ToolRefusal>> {
-        let checked =
-            checked_change(&self.databases, &call.arguments).map(|(database, statements)| {
-                statements
-                    .into_iter()
-                    .map(|statement| {
-                        ToolAccess::Database(DatabaseAccess::new(database.key.clone(), statement))
-                    })
-                    .collect()
-            });
-        Box::pin(std::future::ready(checked))
+        let databases = self.databases.clone();
+        Box::pin(async move {
+            let (database, statements) = checked_change(&databases, &call.arguments)?;
+            access_of(&databases, &database, statements).await
+        })
     }
 
     fn execute(&self, execution: ToolExecution) -> BoxFuture<'static, ToolResult> {
@@ -379,7 +426,6 @@ impl Tool for ChangeDatabase {
                 .with_failure("not_allowed");
             };
             let written = databases
-                .files()
                 .write(ticket, database.key.clone(), statements)
                 .await;
             match written {
@@ -399,7 +445,12 @@ impl Tool for ChangeDatabase {
                         "changes": changes,
                     }))
                 }
-                Err(error) => failed(&databases, error).await,
+                // The worker may have run the write: the call is uncertain,
+                // and the model learns why (ADR-0057, decision 8).
+                Err(DatabasesError::AnswerLost) => {
+                    failed(&DatabasesError::AnswerLost).with_lost_answer()
+                }
+                Err(error) => failed(&error),
             }
         })
     }
@@ -420,15 +471,10 @@ fn refused(refusal: ToolRefusal) -> ToolResult {
     ToolResult::new(refusal.detail).with_failure(code)
 }
 
-/// The result of a call that the service refused or failed, after the list
-/// is read again when the error is about the file.
-async fn failed(
-    databases: &Databases,
-    error: mannie_plugin_sdk::services::sqlite_files::SqliteFilesError,
-) -> ToolResult {
-    let error = databases.noticed(error).await;
-    let code = error.code().trim_start_matches("sqlite_files.").to_owned();
-    ToolResult::new(texts::failure(&error)).with_failure(code)
+/// The result of a call that a database's machine refused or failed; the
+/// registry read the list again when the error is about the file.
+fn failed(error: &DatabasesError) -> ToolResult {
+    ToolResult::new(texts::database_failure(error)).with_failure(failure_code(error))
 }
 
 #[cfg(test)]

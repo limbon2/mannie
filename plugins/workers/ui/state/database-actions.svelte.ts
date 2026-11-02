@@ -1,26 +1,35 @@
 // What the owner does with registered databases (plugins/workers/docs/
 // databases.md, registering a database): adding one through the system's
-// file dialog, naming one, marking one read-only, accepting a file that
-// replaced one, and removing one. The dialogs these actions open are mounted
-// once, as the feature's overlay. The feature's commands go through the
-// plugin's generated bindings (ADR-0034, decision 9).
-import { call } from '@mannie/plugin-sdk/ipc';
+// file dialog or, on a worker, by its path (ADR-0057, decision 3), naming
+// one, marking one read-only, accepting a file that replaced one, and
+// removing one. The dialogs these actions open are mounted once, as the
+// feature's overlay. The feature's commands go through the plugin's
+// generated bindings (ADR-0034, decision 9).
+import { call, type PluginOutcome } from '@mannie/plugin-sdk/ipc';
 import { SvelteMap } from 'svelte/reactivity';
 
-import { commands, type DatabaseView } from '../generated/bindings.js';
+import { commands, type DatabasesError, type DatabaseView, type WorkerView } from '../generated/bindings.js';
 import { m } from '../generated/messages.js';
 import type { DatabasesFailure } from '../types/databases.js';
 import { openDatabase, openDatabases, shownDatabaseKey } from '../utils/databases-places.js';
 
 /** One opening of the dialog that adds a database, whose fields start empty. */
 export class AddDatabaseRequest {
-  /** Whether the system's file dialog is open or the core is registering the file. */
+  /** Whether the system's file dialog is open or the core or the worker is registering the file. */
   adding = $state(false);
   /** Why the latest attempt failed. */
   failure: DatabasesFailure | null = $state(null);
   /** The owner's name for the database; empty takes the file's name. */
   name = $state('');
+  /** The file's absolute path on the worker's host, for a database on a worker. */
+  path = $state('');
   readOnly = $state(false);
+  /** The worker whose host holds the file, or `null` for this computer. */
+  readonly worker: WorkerView | null;
+
+  constructor(worker: WorkerView | null) {
+    this.worker = worker;
+  }
 }
 
 /** One opening of the rename dialog, which starts with the database's name. */
@@ -81,22 +90,15 @@ export class DatabaseActions {
   }
 
   /**
-   * Shows the system's file dialog and registers the file that the owner
-   * chooses there; the dialog that asked closes once the file is
-   * registered, and stays when the owner closed the file dialog.
+   * Registers the database of an add dialog: on this computer, the file that
+   * the owner chooses in the system's file dialog, and on a worker, the file
+   * at the path that the owner typed. The dialog that asked closes once the
+   * file is registered, and stays when the owner closed the file dialog.
    */
   async confirmAdd(request: AddDatabaseRequest): Promise<void> {
     request.adding = true;
     request.failure = null;
-    const name = request.name.trim();
-    const outcome = await call(() =>
-      commands.addDatabase({
-        allFilesFilter: m.workers_databases_filter_all(),
-        databasesFilter: m.workers_databases_filter_databases(),
-        name: name === '' ? null : name,
-        readOnly: request.readOnly,
-      }),
-    );
+    const outcome = await register(request);
     request.adding = false;
     if (!outcome.ok) {
       request.failure = outcome.failure;
@@ -155,9 +157,9 @@ export class DatabaseActions {
     }
   }
 
-  /** Opens the dialog that adds a database. */
-  startAdd(): void {
-    this.adding = new AddDatabaseRequest();
+  /** Opens the dialog that adds a database on this computer, or on a worker. */
+  startAdd(worker: WorkerView | null = null): void {
+    this.adding = new AddDatabaseRequest(worker);
     this.addOpen = true;
   }
 
@@ -172,6 +174,25 @@ export class DatabaseActions {
     this.renaming = new RenameDatabaseRequest(database);
     this.renameOpen = true;
   }
+}
+
+/** Registers the database of an add dialog, on this computer or on its worker. */
+async function register(request: AddDatabaseRequest): Promise<PluginOutcome<DatabaseView | null, DatabasesError>> {
+  const typed = request.name.trim();
+  const name = typed === '' ? null : typed;
+  const { readOnly, worker } = request;
+  if (worker === null) {
+    return call(() =>
+      commands.addDatabase({
+        allFilesFilter: m.workers_databases_filter_all(),
+        databasesFilter: m.workers_databases_filter_databases(),
+        name,
+        readOnly,
+      }),
+    );
+  }
+  const path = request.path.trim();
+  return call(() => commands.addWorkerDatabase({ name, path, readOnly, worker: worker.id }));
 }
 
 /** Whether a removal failed because the database was gone already, which counts as removed. */

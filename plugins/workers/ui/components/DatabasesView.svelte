@@ -76,7 +76,7 @@
       </Empty.Header>
     </Empty.Root>
   {:else}
-    {#key `${database.key}:${database.state}`}
+    {#key `${database.key}:${database.state}:${database.reach}`}
       <DatabasePage {database} />
     {/key}
   {/if}

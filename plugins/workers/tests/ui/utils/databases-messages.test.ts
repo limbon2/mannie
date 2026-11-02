@@ -6,21 +6,27 @@
 import { describe, expect, it } from 'vitest';
 
 import type {
+  DatabaseReach,
   FileRefusal,
   FileState,
   FilterOperator,
+  HostDatabaseRefusal,
   SqliteFilesError,
   TableKind,
 } from '../../../ui/generated/bindings.js';
 import type { DatabasesFailure } from '../../../ui/types/databases.js';
 import {
+  databaseReachLabel,
   databasesFailureMessage,
   databaseStateLabel,
+  databaseStatusLabel,
   databasesToolFailure,
   filesErrorMessage,
+  isUsable,
   operatorLabel,
   tableKindLabel,
   unusableMessage,
+  workerRefusalMessage,
 } from '../../../ui/utils/databases-messages.js';
 
 const ERRORS: SqliteFilesError[] = [
@@ -121,10 +127,45 @@ describe('the labels of the view', () => {
     expect(new Set(operators.map((operator) => operatorLabel(operator))).size).toBe(operators.length);
   });
 
-  it('says what the owner can do only for a file that cannot run statements', () => {
-    expect(unusableMessage('available')).toBeNull();
-    expect(unusableMessage('changed')).not.toBeNull();
-    expect(unusableMessage('missing')).not.toBeNull();
+  it('says what the owner can do only for a database that cannot run statements', () => {
+    expect(unusableMessage({ reach: 'reachable', state: 'available' })).toBeNull();
+    expect(unusableMessage({ reach: 'reachable', state: 'changed' })).not.toBeNull();
+    expect(unusableMessage({ reach: 'reachable', state: 'missing' })).not.toBeNull();
+    expect(unusableMessage({ reach: 'worker_offline', state: 'available' })).not.toBeNull();
+  });
+
+  it("names a worker's reach before its file's state, and only a reached file is usable", () => {
+    const reaches: DatabaseReach[] = ['reachable', 'worker_offline', 'worker_needs_update', 'not_allowed'];
+
+    expect(new Set(reaches.map((reach) => databaseReachLabel(reach))).size).toBe(reaches.length);
+    expect(databaseStatusLabel({ reach: 'worker_offline', state: 'missing' })).toBe(
+      databaseReachLabel('worker_offline'),
+    );
+    expect(databaseStatusLabel({ reach: 'reachable', state: 'missing' })).toBe(databaseStateLabel('missing'));
+    expect(isUsable({ reach: 'reachable', state: 'available' })).toBe(true);
+    expect(isUsable({ reach: 'not_allowed', state: 'available' })).toBe(false);
+  });
+
+  it("words every refusal of a worker's ceiling differently, and the commands' worker errors", () => {
+    const refusals: HostDatabaseRefusal[] = [
+      'no_databases_on_host',
+      'read_only_host',
+      'outside_allowed_folders',
+      'worker_folder',
+    ];
+
+    expect(new Set(refusals.map((refusal) => workerRefusalMessage(refusal))).size).toBe(refusals.length);
+    expect(
+      databasesFailureMessage({
+        error: { code: 'host_refused', description: '', origin: 'plugin', refusal: 'read_only_host' },
+        kind: 'core',
+      }),
+    ).toBe(workerRefusalMessage('read_only_host'));
+    const workerCodes = ['worker_offline', 'worker_needs_update', 'needs_owner', 'answer_lost'] as const;
+    const messages = workerCodes.map((code) =>
+      databasesFailureMessage({ error: { code, description: '', origin: 'plugin' }, kind: 'core' }),
+    );
+    expect(new Set(messages).size).toBe(workerCodes.length);
   });
 });
 
@@ -135,5 +176,22 @@ describe('databasesToolFailure', () => {
     expect(databasesToolFailure('constraint')).not.toBeNull();
     expect(databasesToolFailure('sqlite_files.busy')).toBeNull();
     expect(databasesToolFailure('something_else')).toBeNull();
+  });
+
+  it("words the codes of a worker's write and of the core's refusals", () => {
+    for (const code of [
+      'worker_offline',
+      'worker_needs_update',
+      'worker_needs_owner',
+      'worker_answer_lost',
+      'read_only_host',
+      'outside_allowed_folders',
+      'database_read_only_host',
+      'database_worker_facts',
+      'database_schema_too_large',
+      'database_statement_refused',
+    ]) {
+      expect(databasesToolFailure(code), code).not.toBeNull();
+    }
   });
 });

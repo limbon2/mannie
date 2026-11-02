@@ -1,13 +1,14 @@
 //! The commands and the channel of the feature Databases (plugins/workers/
 //! docs/databases.md, the view; ADR-0055, decision 6): registering and
-//! naming databases, reading their structures, pages and statements, the
-//! owner's changes, and following the list. Each is a spec of the plugin SDK,
-//! so the host checks its input before the handler runs and answers
-//! `feature_off` while the feature is off. The service `sqlite-files` checks
-//! names, statements and limits itself and answers with codes that the view
-//! words (ADR-0056).
+//! naming databases on this computer and on workers, reading their
+//! structures, pages and statements, the owner's changes, and following the
+//! list. Each is a spec of the plugin SDK, so the host checks its input
+//! before the handler runs and answers `feature_off` while the feature is
+//! off. The service `sqlite-files` and the workers check names, paths,
+//! statements and limits themselves and answer with codes that the view
+//! words (ADR-0056, ADR-0057).
 
-use mannie_plugin_sdk::contracts::{DatabaseKey, StatementClass};
+use mannie_plugin_sdk::contracts::{DatabaseKey, HostDatabaseRefusal, StatementClass, WorkerId};
 use mannie_plugin_sdk::ipc::{
     ChannelSpec, CommandSpec, InputRefusal, Interface, PluginError, Validate,
 };
@@ -24,13 +25,44 @@ pub const DATABASES: &str = "databases";
 /// The most characters of the ID that the view gives a read it may stop.
 pub const MAX_RUN_ID_CHARS: usize = 64;
 
-/// Where a registered database lives. Workers' databases come with
-/// ADR-0057.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+/// The most characters of a path that the owner types for a worker's host.
+pub const MAX_PATH_CHARS: usize = 4_096;
+
+/// Where a registered database lives.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum DatabaseMachine {
     /// This computer.
     ThisComputer,
+    /// A paired worker's host, which runs each statement under its ceiling
+    /// (ADR-0057).
+    Worker {
+        /// The worker.
+        worker: WorkerId,
+        /// The worker's name, as Mannie shows it.
+        name: String,
+    },
+}
+
+/// Whether the master reaches a database's machine now (ADR-0057,
+/// decisions 4 and 9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum DatabaseReach {
+    /// The machine runs the database's statements.
+    Reachable,
+    /// The worker is not connected; the list shows its databases as the
+    /// worker listed them last.
+    WorkerOffline,
+    /// The worker's version has no databases; `mannie-worker update` brings
+    /// them.
+    WorkerNeedsUpdate,
+    /// The worker's configuration does not allow databases.
+    NotAllowed,
 }
 
 /// A registered database, as the view lists it.
@@ -45,10 +77,12 @@ pub struct DatabaseView {
     pub file_name: String,
     /// Whether the owner marked it read-only.
     pub read_only: bool,
-    /// What the core found at its path when the feature last listed it.
+    /// What its machine found at its path when it last listed it.
     pub state: FileState,
     /// Where it lives.
     pub machine: DatabaseMachine,
+    /// Whether the master reaches its machine now.
+    pub reach: DatabaseReach,
 }
 
 /// The databases as they are, then after each change, while the feature is
@@ -83,6 +117,35 @@ impl Validate for AddDatabase {
     /// `invalid_name` or `invalid_filter`.
     fn validate(&self) -> Result<(), InputRefusal> {
         Ok(())
+    }
+}
+
+/// The argument of `add_worker_database`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AddWorkerDatabase {
+    /// The worker.
+    pub worker: WorkerId,
+    /// The file's absolute path on the worker's host, as the owner typed it.
+    pub path: String,
+    /// The owner's name for the database, or `None` for the file's name.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Whether the owner marks it read-only.
+    pub read_only: bool,
+}
+
+impl Validate for AddWorkerDatabase {
+    /// The path has 1 to 4,096 characters, none of them a control
+    /// character; the worker checks the rest, since the master does not know
+    /// the host's rules of paths.
+    fn validate(&self) -> Result<(), InputRefusal> {
+        let is_sized = (1..=MAX_PATH_CHARS).contains(&self.path.chars().count());
+        if is_sized && !self.path.chars().any(char::is_control) {
+            Ok(())
+        } else {
+            Err(InputRefusal::new("path"))
+        }
     }
 }
 
@@ -281,6 +344,25 @@ pub enum DatabasesError {
     /// The owner stopped the read.
     #[error("the read was stopped")]
     Stopped,
+    /// The database's worker is not connected (ADR-0057, decision 9).
+    #[error("the worker is offline")]
+    WorkerOffline,
+    /// The database's worker runs a version without databases.
+    #[error("the worker needs an update")]
+    WorkerNeedsUpdate,
+    /// The worker's ceiling refused the request, whatever the master sends.
+    #[error("the worker's host refused it")]
+    HostRefused {
+        /// Why.
+        refusal: HostDatabaseRefusal,
+    },
+    /// The worker's host asks the owner for this write first.
+    #[error("the worker's host asks the owner first")]
+    NeedsOwner,
+    /// The link dropped before the worker answered a write, which may have
+    /// run; the worker's journal holds how it ended.
+    #[error("the worker's answer was lost")]
+    AnswerLost,
     /// The service `sqlite-files` refused or failed.
     #[error("{error}")]
     Files {
@@ -301,6 +383,11 @@ impl PluginError for DatabasesError {
         match self {
             Self::NameTaken => "workers.databases.name_taken",
             Self::Stopped => "workers.databases.stopped",
+            Self::WorkerOffline => "workers.databases.worker_offline",
+            Self::WorkerNeedsUpdate => "workers.databases.worker_needs_update",
+            Self::HostRefused { .. } => "workers.databases.host_refused",
+            Self::NeedsOwner => "workers.databases.needs_owner",
+            Self::AnswerLost => "workers.databases.answer_lost",
             Self::Files { error } => error.code(),
         }
     }
@@ -343,6 +430,19 @@ impl CommandSpec for AddDatabaseCommand {
         "Registers the SQLite file that the owner chooses in the system's file dialog.";
     type Input = AddDatabase;
     type Output = Option<DatabaseView>;
+    type Error = DatabasesError;
+}
+
+/// `add_worker_database`: registers the file at a path that the owner
+/// typed on a worker's host, which the worker checks.
+#[derive(Debug)]
+pub enum AddWorkerDatabaseCommand {}
+
+impl CommandSpec for AddWorkerDatabaseCommand {
+    const NAME: &'static str = "add_worker_database";
+    const DOCS: &'static str = "Registers the SQLite file at a path that the owner typed on a worker's host, which the worker checks under its ceiling.";
+    type Input = AddWorkerDatabase;
+    type Output = DatabaseView;
     type Error = DatabasesError;
 }
 
@@ -486,6 +586,7 @@ pub fn interface(feature: Interface) -> Interface {
     feature
         .command::<RefreshDatabasesCommand>()
         .command::<AddDatabaseCommand>()
+        .command::<AddWorkerDatabaseCommand>()
         .command::<RenameDatabaseCommand>()
         .command::<MarkDatabaseCommand>()
         .command::<AcceptDatabaseCommand>()
@@ -503,6 +604,11 @@ pub fn interface(feature: Interface) -> Interface {
             "The most characters of a database's name.",
             u32::try_from(MAX_NAME_CHARS).unwrap_or(u32::MAX),
         )
+        .constant(
+            "MAX_DATABASE_PATH_CHARACTERS",
+            "The most characters of a path that the owner types for a worker's host.",
+            u32::try_from(MAX_PATH_CHARS).unwrap_or(u32::MAX),
+        )
 }
 
 #[cfg(test)]
@@ -511,7 +617,7 @@ mod tests {
     use mannie_plugin_sdk::services::sqlite_files::SqliteFilesError;
     use serde_json::json;
 
-    use super::{DatabasesError, ReadDatabase, StopRead};
+    use super::{AddWorkerDatabase, DatabasesError, ReadDatabase, StopRead};
 
     #[test]
     fn an_error_of_the_service_crosses_json_inside_its_own_code_and_logs_the_services_code() {
@@ -541,6 +647,18 @@ mod tests {
 
         read(None).validate().unwrap();
         read(Some("run-1")).validate().unwrap();
+        let add = |path: &str| AddWorkerDatabase {
+            worker: mannie_plugin_sdk::contracts::WorkerId::parse(
+                "0199e0f2-0000-7000-8000-0000000000aa",
+            )
+            .unwrap(),
+            path: path.to_owned(),
+            name: None,
+            read_only: false,
+        };
+        add("/srv/app/parts.db").validate().unwrap();
+        assert!(add("").validate().is_err());
+        assert!(add("/srv/app/a\nb.db").validate().is_err());
         assert!(read(Some("")).validate().is_err());
         assert!(read(Some(&"r".repeat(65))).validate().is_err());
         assert!(

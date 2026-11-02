@@ -70,11 +70,16 @@ fn the_module_carries_the_workers_part_of_the_list_before_m5() {
         .collect();
 
     assert_eq!(legacy, [19, 20, 22]);
-    assert_eq!(versions, [1, 2, 3, 4]);
+    assert_eq!(versions, [1, 2, 3, 4, 5]);
     assert_eq!(
         WORKERS_MODULE.migrations[3].legacy_version(),
         None,
         "M5's migration has no number of the old list"
+    );
+    assert_eq!(
+        WORKERS_MODULE.migrations[4].legacy_version(),
+        None,
+        "M15's copy of the workers' databases has no number of the old list"
     );
     let names: BTreeSet<&str> = [WORKERS_MODULE.name].into();
     assert_eq!(names, ["workers"].into());

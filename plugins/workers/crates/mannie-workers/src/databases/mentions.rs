@@ -82,11 +82,7 @@ impl MentionProvider for DatabaseMentions {
                 .and_then(|key| self.databases.by_key(&key))
                 .ok_or_else(|| DATABASE_NOT_FOUND.to_owned())?;
             let structure = if is_available(&database) {
-                self.databases
-                    .files()
-                    .structure(database.key.clone())
-                    .await
-                    .ok()
+                self.databases.structure(database.key.clone()).await.ok()
             } else {
                 None
             };
@@ -148,10 +144,15 @@ impl MentionedDatabase {
         } else {
             ""
         };
-        let notes = format!("{read_only}{}", texts::state_note(database.state));
+        let notes = format!(
+            "{read_only}{}{}",
+            texts::state_note(database.state),
+            texts::reach_note(database.reach)
+        );
+        let machine = texts::machine(&database.machine);
         let text = match structure {
-            Some(structure) => texts::mentioned(&name, &file, &notes, &structure),
-            None => texts::mentioned_without_structure(&name, &file, &notes),
+            Some(structure) => texts::mentioned(&name, &file, &machine, &notes, &structure),
+            None => texts::mentioned_without_structure(&name, &file, &machine, &notes),
         };
         Self {
             name: database.name.clone(),
@@ -193,7 +194,7 @@ mod tests {
     use mannie_plugin_sdk::services::sqlite_files::FileState;
 
     use super::{MentionedDatabase, NOT_USABLE_WARNING, suggestions};
-    use crate::databases::commands::{DatabaseMachine, DatabaseView};
+    use crate::databases::commands::{DatabaseMachine, DatabaseReach, DatabaseView};
 
     fn database(name: &str, last: u8, state: FileState) -> DatabaseView {
         DatabaseView {
@@ -204,6 +205,7 @@ mod tests {
             read_only: false,
             state,
             machine: DatabaseMachine::ThisComputer,
+            reach: DatabaseReach::Reachable,
         }
     }
 
