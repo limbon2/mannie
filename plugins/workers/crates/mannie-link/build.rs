@@ -6,13 +6,14 @@ use std::error::Error;
 use std::path::PathBuf;
 
 /// The link's packages, one file each.
-const FILES: [&str; 6] = [
+const FILES: [&str; 7] = [
     "mannie/link/session/v1/session.proto",
     "mannie/link/pairing/v1/pairing.proto",
     "mannie/link/tasks/v1/tasks.proto",
     "mannie/link/events/v1/events.proto",
     "mannie/link/approvals/v1/approvals.proto",
     "mannie/link/leases/v1/leases.proto",
+    "mannie/link/databases/v1/databases.proto",
 ];
 
 fn main() -> Result<(), Box<dyn Error>> {

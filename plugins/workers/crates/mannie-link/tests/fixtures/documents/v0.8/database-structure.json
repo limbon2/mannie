@@ -1,0 +1,91 @@
+{
+  "tables": [
+    {
+      "name": "parts",
+      "kind": "table",
+      "sql": "CREATE TABLE parts (name TEXT PRIMARY KEY, stock INTEGER NOT NULL DEFAULT 0, bin INTEGER REFERENCES bins (id))",
+      "columns": [
+        {
+          "name": "name",
+          "declaredType": "TEXT",
+          "notNull": false,
+          "default": null,
+          "primaryKey": 1,
+          "hidden": false
+        },
+        {
+          "name": "stock",
+          "declaredType": "INTEGER",
+          "notNull": true,
+          "default": "0",
+          "primaryKey": 0,
+          "hidden": false
+        },
+        {
+          "name": "bin",
+          "declaredType": "INTEGER",
+          "notNull": false,
+          "default": null,
+          "primaryKey": 0,
+          "hidden": false
+        }
+      ],
+      "withoutRowid": false,
+      "strict": false,
+      "foreignKeys": [
+        {
+          "columns": ["bin"],
+          "parent": "bins",
+          "parentColumns": ["id"],
+          "onUpdate": "NO ACTION",
+          "onDelete": "NO ACTION"
+        }
+      ]
+    },
+    {
+      "name": "low_stock",
+      "kind": "view",
+      "sql": "CREATE VIEW low_stock AS SELECT name FROM parts WHERE stock < 5",
+      "columns": [
+        {
+          "name": "name",
+          "declaredType": "TEXT",
+          "notNull": false,
+          "default": null,
+          "primaryKey": 0,
+          "hidden": false
+        }
+      ],
+      "withoutRowid": false,
+      "strict": false,
+      "foreignKeys": []
+    }
+  ],
+  "indexes": [
+    {
+      "name": "parts_stock",
+      "table": "parts",
+      "unique": false,
+      "automatic": false,
+      "partial": false,
+      "columns": ["stock", null],
+      "sql": "CREATE INDEX parts_stock ON parts (stock, lower(name))"
+    },
+    {
+      "name": "sqlite_autoindex_parts_1",
+      "table": "parts",
+      "unique": true,
+      "automatic": true,
+      "partial": false,
+      "columns": ["name"],
+      "sql": null
+    }
+  ],
+  "triggers": [
+    {
+      "name": "parts_touched",
+      "table": "parts",
+      "sql": "CREATE TRIGGER parts_touched AFTER UPDATE ON parts BEGIN SELECT 1; END"
+    }
+  ]
+}

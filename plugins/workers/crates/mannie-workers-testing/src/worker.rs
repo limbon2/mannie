@@ -9,8 +9,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use mannie_host_kit::logging::Redactor;
+use mannie_host_kit::runtime::HostDatabaseSettings;
+use mannie_host_kit::tools::Ceiling;
 use mannie_plugin_harness::runtime::{WorkerHarness, WorkerOptions};
 use mannie_plugin_harness::types::SystemClock;
+use mannie_plugin_sdk::contracts::CeilingMode;
 use mannie_plugin_sdk::contracts::Clock;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -33,6 +36,9 @@ pub struct LinkedWorkerOptions {
     pub worker: WorkerOptions,
     /// The version that the worker says it runs.
     pub version: String,
+    /// How the worker takes the master's requests on its host's databases:
+    /// by default, its configuration does not allow them.
+    pub databases: HostDatabaseSettings,
 }
 
 impl Default for LinkedWorkerOptions {
@@ -40,6 +46,16 @@ impl Default for LinkedWorkerOptions {
         Self {
             worker: WorkerOptions::default(),
             version: env!("CARGO_PKG_VERSION").to_owned(),
+            databases: HostDatabaseSettings {
+                enabled: false,
+                ceiling: Ceiling {
+                    mode: CeilingMode::Ask,
+                    allowed_folders: Vec::new(),
+                    rules: Vec::new(),
+                },
+                accepts_master_full_access: true,
+                plugin: "workers".to_owned(),
+            },
         }
     }
 }
@@ -97,11 +113,13 @@ impl LinkedWorker {
                 ceiling: None,
                 version: Some(options.version.clone()),
                 max_parallel_tasks: 4,
+                databases: options.databases.enabled,
             },
             version: options.version,
             data: harness.data_folder(),
             leases: Arc::clone(&leases),
             clock: Arc::new(SystemClock),
+            databases: harness.runtime.host_databases(options.databases),
         };
         let (shutdown, stopped) = oneshot::channel::<()>();
         let server = tokio::spawn(async move {

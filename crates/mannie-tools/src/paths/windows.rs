@@ -111,6 +111,16 @@ pub(super) fn link_target(target: &Path) -> Result<PathBuf, PathRefusal> {
     Ok(checked)
 }
 
+/// The ordinary form of a path: a verbatim path of a drive, such as the
+/// `\\?\C:\folder` that `std::fs::canonicalize` returns, without its
+/// prefix, and any other path as it is.
+pub(super) fn ordinary(path: &Path) -> PathBuf {
+    match without_verbatim(path) {
+        Some(Ok(plain)) => plain,
+        Some(Err(_)) | None => path.to_path_buf(),
+    }
+}
+
 /// The ordinary form of a verbatim path, or `None` when the path is not
 /// verbatim.
 fn without_verbatim(path: &Path) -> Option<Result<PathBuf, PathRefusal>> {

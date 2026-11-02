@@ -1,0 +1,38 @@
+{
+  "table": "parts",
+  "order": {
+    "column": "stock",
+    "descending": true
+  },
+  "filters": [
+    {
+      "column": "stock",
+      "operator": "less",
+      "value": {
+        "type": "integer",
+        "value": "5"
+      }
+    },
+    {
+      "column": "bin",
+      "operator": "is_null",
+      "value": {
+        "type": "null"
+      }
+    }
+  ],
+  "after": {
+    "kind": "after",
+    "order": {
+      "type": "integer",
+      "value": "3"
+    },
+    "key": [
+      {
+        "type": "text",
+        "value": "bolt"
+      }
+    ]
+  },
+  "rows": 100
+}

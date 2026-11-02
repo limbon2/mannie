@@ -68,4 +68,9 @@ pub struct WorkerDetails {
     /// How many tasks the worker runs at once.
     #[serde(default)]
     pub max_parallel_tasks: u32,
+    /// Whether the host's configuration allows the master's requests on its
+    /// databases (ADR-0057, decision 2). A worker before them says nothing,
+    /// which reads as false.
+    #[serde(default)]
+    pub databases: bool,
 }

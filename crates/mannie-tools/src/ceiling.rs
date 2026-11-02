@@ -13,7 +13,7 @@ use mannie_types::tools::{
 };
 
 use crate::digest::WrittenStatement;
-use crate::paths::is_inside;
+use crate::paths::{is_inside, ordinary};
 
 /// The ceiling that the policy applies to every call on a worker.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,7 +44,8 @@ impl Ceiling {
 /// host (ADR-0057, decision 5).
 #[derive(Debug, Clone, Copy)]
 pub struct DatabaseRequest<'a> {
-    /// The canonical path of the registered file.
+    /// The canonical path of the registered file, in its ordinary form or,
+    /// as the store keeps it on Windows, its verbatim one.
     pub path: &'a Path,
     /// The worker's own folders, in canonical form, where no registered
     /// file may be.
@@ -102,10 +103,11 @@ pub fn decide_database_request(
     accepts_master_full_access: bool,
     request: &DatabaseRequest<'_>,
 ) -> HostDecision {
+    let path = ordinary(request.path);
     if request
         .protected
         .iter()
-        .any(|folder| is_inside(request.path, folder))
+        .any(|folder| is_inside(&path, folder))
     {
         return HostDecision::Refused(HostDatabaseRefusal::WorkerFolder);
     }
@@ -113,7 +115,7 @@ pub fn decide_database_request(
     let inside = ceiling
         .allowed_folders
         .iter()
-        .any(|folder| is_inside(request.path, folder));
+        .any(|folder| is_inside(&path, folder));
     if !inside && !full_access {
         return HostDecision::Refused(HostDatabaseRefusal::OutsideAllowedFolders);
     }
@@ -307,6 +309,22 @@ mod tests {
                 .decide(CeilingMode::FullAccess, false),
             HostDecision::Runs
         );
+    }
+
+    #[test]
+    fn a_verbatim_path_compares_with_the_folders_in_its_ordinary_form() {
+        let verbatim = if cfg!(windows) {
+            "\\\\?\\C:\\srv\\app\\parts.db".to_owned()
+        } else {
+            "/srv/app/parts.db".to_owned()
+        };
+        let case = Case {
+            path: PathBuf::from(verbatim),
+            statements: Vec::new(),
+            authority: None,
+        };
+
+        assert_eq!(case.decide(CeilingMode::Ask, false), HostDecision::Runs);
     }
 
     #[test]

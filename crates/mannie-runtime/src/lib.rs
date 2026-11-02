@@ -86,7 +86,10 @@ pub use mentions::{
 };
 pub use profiles::{CredentialVault, VaultError};
 pub use retry::RetryPolicy;
-pub use sqlite_files::{DATABASE_EXTENSIONS, DatabaseChooser, DatabaseFilters};
+pub use sqlite_files::{
+    DATABASE_EXTENSIONS, DatabaseChooser, DatabaseFilters, HostDatabaseError, HostDatabaseSettings,
+    HostDatabases, HostFile, HostWritten,
+};
 pub use tasks::TASK_TOOLS;
 
 use crate::actor::Command;

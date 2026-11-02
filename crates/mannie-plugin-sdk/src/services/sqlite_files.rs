@@ -832,6 +832,21 @@ pub struct DatabaseStructure {
     pub triggers: Vec<TriggerInfo>,
 }
 
+impl DatabaseStructure {
+    /// The copy of the schema that the structure's statements make, in an
+    /// order that recreates it: tables and views by name, then indexes, then
+    /// triggers, as the core reads them.
+    pub fn schema(&self) -> DatabaseSchema {
+        let tables = self.tables.iter().filter_map(|table| table.sql.clone());
+        let indexes = self.indexes.iter().filter_map(|index| index.sql.clone());
+        let triggers = self
+            .triggers
+            .iter()
+            .filter_map(|trigger| trigger.sql.clone());
+        DatabaseSchema::new(tables.chain(indexes).chain(triggers).collect())
+    }
+}
+
 /// How a filter compares a column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]

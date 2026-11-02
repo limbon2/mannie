@@ -1,0 +1,41 @@
+[
+  {
+    "code": "refused",
+    "refusal": "no_databases_on_host"
+  },
+  {
+    "code": "refused",
+    "refusal": "read_only_host"
+  },
+  {
+    "code": "refused",
+    "refusal": "outside_allowed_folders"
+  },
+  {
+    "code": "refused",
+    "refusal": "worker_folder"
+  },
+  {
+    "code": "needs_owner",
+    "digest": "6b1d8c2f0a9e4d3c7b5a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c"
+  },
+  {
+    "code": "files",
+    "error": {
+      "code": "file_changed"
+    }
+  },
+  {
+    "code": "files",
+    "error": {
+      "code": "constraint",
+      "message": "UNIQUE constraint failed: parts.name"
+    }
+  },
+  {
+    "code": "files",
+    "error": {
+      "code": "already_run"
+    }
+  }
+]

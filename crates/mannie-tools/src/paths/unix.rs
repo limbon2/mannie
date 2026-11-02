@@ -40,6 +40,11 @@ pub(super) fn canonical(
 }
 
 /// Unix compares names exactly.
+/// A path as it is: Unix paths have no verbatim form.
+pub(super) fn ordinary(path: &Path) -> PathBuf {
+    path.to_path_buf()
+}
+
 pub(super) fn same_name(left: &OsStr, right: &OsStr) -> bool {
     left == right
 }

@@ -10,6 +10,7 @@
 //! them tasks, is `mannie-workers`. The core never depends on the link.
 
 pub mod codec;
+pub mod databases;
 pub mod host;
 pub mod keys;
 pub mod levels;

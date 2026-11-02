@@ -1,20 +1,30 @@
 //! Versions and feature levels (plugins/workers/docs/
 //! compatibility-and-updates.md): the master works with a worker of its own
 //! minor version or the one before it, and each package of the link has a
-//! feature level, of which both sides use the lower.
+//! feature level, of which both sides use the lower. A package is required
+//! or optional: the master connects to a worker that lacks an optional
+//! package, whose features then say that the worker needs an update
+//! (ADR-0057, decision 4).
 
 use std::collections::HashMap;
 
+/// The package of the databases on a worker's host (ADR-0057).
+pub const DATABASES: &str = "mannie.link.databases.v1";
+
 /// The feature level that this version speaks of each package of the link.
 /// Every package of `plugins/workers/proto/` has one, which a test checks.
-pub const LEVELS: [(&str, u32); 6] = [
+pub const LEVELS: [(&str, u32); 7] = [
     ("mannie.link.session.v1", 1),
     ("mannie.link.pairing.v1", 1),
     ("mannie.link.tasks.v1", 1),
     ("mannie.link.events.v1", 2),
     ("mannie.link.approvals.v1", 1),
     ("mannie.link.leases.v1", 1),
+    (DATABASES, 1),
 ];
+
+/// The packages that a worker may lack.
+pub const OPTIONAL: [&str; 1] = [DATABASES];
 
 /// This version's levels, as `Hello` carries them.
 pub fn levels() -> HashMap<String, u32> {
@@ -36,11 +46,18 @@ pub fn agree(theirs: &HashMap<String, u32>) -> HashMap<String, u32> {
         .collect()
 }
 
-/// Whether the agreed levels cover every package that this version uses.
+/// Whether the agreed levels cover every package that a worker must
+/// speak; an optional package may be missing.
 pub fn covers_every_package(agreed: &HashMap<String, u32>) -> bool {
     LEVELS
         .iter()
-        .all(|(package, _level)| agreed.get(*package).is_some_and(|level| *level > 0))
+        .filter(|(package, _level)| !OPTIONAL.contains(package))
+        .all(|(package, _level)| speaks(agreed, package))
+}
+
+/// Whether the agreed levels hold `package`.
+pub fn speaks(agreed: &HashMap<String, u32>, package: &str) -> bool {
+    agreed.get(package).is_some_and(|level| *level > 0)
 }
 
 /// A version of Mannie: its major, minor and patch numbers.
@@ -81,7 +98,9 @@ pub fn compatible(master: Version, worker: Version) -> bool {
 mod tests {
     use std::collections::HashMap;
 
-    use super::{LEVELS, Version, agree, compatible, covers_every_package, levels};
+    use super::{
+        DATABASES, LEVELS, Version, agree, compatible, covers_every_package, levels, speaks,
+    };
 
     fn version(text: &str) -> Version {
         Version::parse(text).unwrap()
@@ -118,6 +137,18 @@ mod tests {
         missing.remove("mannie.link.leases.v1");
         assert!(!covers_every_package(&agree(&missing)));
         assert!(!covers_every_package(&agree(&HashMap::new())));
+    }
+
+    #[test]
+    fn a_worker_without_an_optional_package_is_covered_and_does_not_speak_it() {
+        let mut behind = levels();
+        behind.remove(DATABASES);
+
+        let agreed = agree(&behind);
+
+        assert!(covers_every_package(&agreed));
+        assert!(!speaks(&agreed, DATABASES));
+        assert!(speaks(&agree(&levels()), DATABASES));
     }
 
     #[test]

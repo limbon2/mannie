@@ -837,7 +837,7 @@ fn row_change(id: &str) -> OwnerChange {
         change: Change::UpdateRow {
             table: "parts".to_owned(),
             row: RowMatch {
-                key: vec![SqlValue::text("bolt")],
+                key: vec![SqlValue::integer(1)],
                 expected: vec![ColumnValue {
                     column: "stock".to_owned(),
                     value: SqlValue::integer(12),

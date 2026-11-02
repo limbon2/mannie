@@ -1,0 +1,44 @@
+{
+  "operation": "0199e0f2-0000-7000-8000-000000000102",
+  "key": "0199e0f2-0000-7000-8000-0000000000ee",
+  "identity": "2049:131",
+  "write": {
+    "kind": "change",
+    "change": {
+      "kind": "update_row",
+      "table": "parts",
+      "row": {
+        "key": [
+          {
+            "type": "text",
+            "value": "bolt"
+          }
+        ],
+        "expected": [
+          {
+            "column": "stock",
+            "value": {
+              "type": "integer",
+              "value": "12"
+            }
+          }
+        ]
+      },
+      "set": [
+        {
+          "column": "stock",
+          "value": {
+            "type": "integer",
+            "value": "11"
+          }
+        }
+      ]
+    }
+  },
+  "origin": {
+    "kind": "owner_operation"
+  },
+  "authority": {
+    "kind": "owner_action"
+  }
+}

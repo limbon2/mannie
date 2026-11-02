@@ -55,6 +55,7 @@ fn details() -> WorkerDetails {
         }),
         version: Some("0.4.0".to_owned()),
         max_parallel_tasks: 4,
+        databases: true,
     }
 }
 

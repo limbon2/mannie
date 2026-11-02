@@ -51,6 +51,10 @@ use sha2::{Digest, Sha256};
 
 use crate::{Runtime, lock};
 
+mod host;
+
+pub use host::{HostDatabaseError, HostDatabaseSettings, HostDatabases, HostFile, HostWritten};
+
 /// How long the structure of a database may take to read.
 const STRUCTURE_TIME: Duration = Duration::from_secs(10);
 
@@ -1046,18 +1050,19 @@ async fn begin_operation(
         })
 }
 
-/// Records how an owner operation ended, and returns its outcome. A record
-/// that fails to change stays executing, which the next start marks
-/// uncertain.
-async fn record_outcome(
+/// Records how an owner operation ended, with the rows that its outcome
+/// changed, and returns its outcome. A record that fails to change stays
+/// executing, which the next start marks uncertain.
+async fn record_outcome<T>(
     runtime: &Runtime,
     id: &DatabaseOperationId,
-    ran: Result<ChangeOutcome, EngineError>,
-) -> Result<ChangeOutcome, SqliteFilesError> {
+    ran: Result<T, EngineError>,
+    changes: fn(&T) -> u64,
+) -> Result<T, SqliteFilesError> {
     let store = &runtime.inner.store;
     match ran {
         Ok(outcome) => {
-            if let Err(error) = store.complete_db_operation(id, outcome.changes).await {
+            if let Err(error) = store.complete_db_operation(id, changes(&outcome)).await {
                 tracing::error!(
                     error.code = error.code(),
                     "an owner operation completed and its record did not"
@@ -1108,29 +1113,8 @@ impl SqliteFilesApi for BoundFiles {
             let Some(path) = chooser.choose(filters).await else {
                 return Ok(None);
             };
-            let protected = bound.protected();
-            let checked =
-                tokio::task::spawn_blocking(move || dbfiles::check_new(&path, &protected))
-                    .await
-                    .map_err(|_join_error| SqliteFilesError::Failed)?
-                    .map_err(file_error)?;
-            let name = name.map_or_else(|| unnamed(&checked.path), Ok)?;
-            let registration = bound
-                .runtime
-                .inner
-                .store
-                .add_db_file(
-                    &bound.plugin,
-                    NewRegistration {
-                        key: bound.runtime.inner.ids.database_key(),
-                        name,
-                        path: checked.path,
-                        identity: checked.identity,
-                        read_only,
-                    },
-                )
-                .await
-                .map_err(registry_error)?;
+            let checked = bound.check_path(path).await?;
+            let registration = bound.add_checked(checked, name, read_only).await?;
             Ok(Some(database_file(&registration, FileState::Available)))
         }
         .boxed()
@@ -1436,6 +1420,42 @@ impl SqliteFilesApi for BoundFiles {
 }
 
 impl BoundFiles {
+    /// The file at `path` once it passes the checks of a new registration,
+    /// with its canonical path and its identity.
+    async fn check_path(&self, path: PathBuf) -> Result<dbfiles::CheckedFile, SqliteFilesError> {
+        let protected = self.protected();
+        tokio::task::spawn_blocking(move || dbfiles::check_new(&path, &protected))
+            .await
+            .map_err(|_join_error| SqliteFilesError::Failed)?
+            .map_err(file_error)
+    }
+
+    /// Registers a checked file under the owner's name for it, or its
+    /// file's name.
+    async fn add_checked(
+        &self,
+        checked: dbfiles::CheckedFile,
+        name: Option<String>,
+        read_only: bool,
+    ) -> Result<Registration, SqliteFilesError> {
+        let name = name.map_or_else(|| unnamed(&checked.path), Ok)?;
+        self.runtime
+            .inner
+            .store
+            .add_db_file(
+                &self.plugin,
+                NewRegistration {
+                    key: self.runtime.inner.ids.database_key(),
+                    name,
+                    path: checked.path,
+                    identity: checked.identity,
+                    read_only,
+                },
+            )
+            .await
+            .map_err(registry_error)
+    }
+
     /// Plans an owner's change: its statements of their class, refusing a
     /// read and a change of the schema that the owner has not confirmed, or
     /// an edit of a table's rows, which writes.
@@ -1571,7 +1591,7 @@ impl BoundFiles {
                 run_planned(&registration.path, &registration.identity, planned, cancel)
             })
             .await;
-            record_outcome(&runtime, &operation.id, ran).await
+            record_outcome(&runtime, &operation.id, ran, |outcome| outcome.changes).await
         });
         let stop = StopWhenDropped(Some(cancel));
         let result = finished.await.unwrap_or_else(|_join_error| {

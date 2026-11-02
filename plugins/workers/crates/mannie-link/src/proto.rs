@@ -46,3 +46,8 @@ pub mod approvals {
 pub mod leases {
     tonic::include_proto!("mannie.link.leases.v1");
 }
+
+/// `mannie.link.databases.v1`.
+pub mod databases {
+    tonic::include_proto!("mannie.link.databases.v1");
+}

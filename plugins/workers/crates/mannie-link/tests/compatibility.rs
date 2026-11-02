@@ -17,12 +17,19 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
+use mannie_link::databases::{
+    DatabaseRefusal, HostDatabase, RegisterDatabase, UpdateDatabase, WriteDone,
+};
 use mannie_link::host::WorkerDetails;
 use mannie_plugin_harness::runtime::{AssignError, LeaseError};
+use mannie_plugin_sdk::contracts::WriteAuthority;
 use mannie_plugin_sdk::contracts::{AssignedTaskState, TaskAssignment};
 use mannie_plugin_sdk::contracts::{ChatError, CheckpointRef, EarlierTurns, LoadEarlierTurns};
 use mannie_plugin_sdk::contracts::{Checkpoint, ConversationUpdate};
 use mannie_plugin_sdk::contracts::{DecideApproval, ReadToolOutput, ToolOutputPage, ToolsError};
+use mannie_plugin_sdk::services::sqlite_files::{
+    DatabaseStructure, Page, PageRequest, ReadLimits, Statement, StatementRows, WriteEvidence,
+};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
@@ -72,6 +79,20 @@ fn documents() -> Vec<Document> {
         document::<ToolOutputPage>("tool-output-page.json"),
         document::<Vec<ChatError>>("chat-errors.json"),
         document::<Vec<ToolsError>>("tools-errors.json"),
+        document::<RegisterDatabase>("register-database.json"),
+        document::<Vec<HostDatabase>>("host-databases.json"),
+        document::<Vec<UpdateDatabase>>("update-databases.json"),
+        document::<DatabaseStructure>("database-structure.json"),
+        document::<PageRequest>("page-request.json"),
+        document::<Page>("page.json"),
+        document::<Statement>("statement.json"),
+        document::<ReadLimits>("read-limits.json"),
+        document::<StatementRows>("statement-rows.json"),
+        document::<WriteEvidence>("write-evidence-statements.json"),
+        document::<WriteEvidence>("write-evidence-change.json"),
+        document::<Vec<WriteAuthority>>("write-authorities.json"),
+        document::<Vec<WriteDone>>("write-done.json"),
+        document::<Vec<DatabaseRefusal>>("database-refusals.json"),
     ]
 }
 

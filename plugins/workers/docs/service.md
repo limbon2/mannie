@@ -32,21 +32,22 @@ rules = [
 ]
 ```
 
-| Key                                     | Rule                                                                                                                                                   |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `version`                               | 1. A newer version is refused with the version it names, so an older worker never misreads a newer file                                                |
-| `name`                                  | Required: 1 to 64 characters without control characters. The master and the conversation agent see it, unless the owner names the worker in the master |
-| `purpose`                               | Optional, at most 1,000 characters                                                                                                                     |
-| `listen`                                | The address and port to listen on; `0.0.0.0:7445` by default                                                                                           |
-| `data_dir`                              | The data folder; the system's default below when left out                                                                                              |
-| `host_instructions`                     | A Markdown file of at most 64 KiB; `host-instructions.md` beside the configuration when left out. A missing file means no host instructions            |
-| `max_parallel_tasks`                    | From 1 to 16, 4 by default                                                                                                                             |
-| `ceiling.mode`                          | `read_only`, `ask` (the default), `autonomous` or `full_access` ([host and ceiling](host-and-ceiling.md#the-ceiling))                                  |
-| `ceiling.allow_full_access_from_master` | Whether a conversation in full access on the master answers the host's requests; `true` by default ([host and ceiling](host-and-ceiling.md#approvals)) |
-| `ceiling.allowed_folders`               | Absolute folders that exist when the worker starts; empty by default                                                                                   |
-| `ceiling.rules`                         | Command prefixes of whole words, each optionally limited to a folder, as the master's rules are                                                        |
+| Key                                     | Rule                                                                                                                                                      |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `version`                               | 1. A newer version is refused with the version it names, so an older worker never misreads a newer file                                                   |
+| `name`                                  | Required: 1 to 64 characters without control characters. The master and the conversation agent see it, unless the owner names the worker in the master    |
+| `purpose`                               | Optional, at most 1,000 characters                                                                                                                        |
+| `listen`                                | The address and port to listen on; `0.0.0.0:7445` by default                                                                                              |
+| `data_dir`                              | The data folder; the system's default below when left out                                                                                                 |
+| `host_instructions`                     | A Markdown file of at most 64 KiB; `host-instructions.md` beside the configuration when left out. A missing file means no host instructions               |
+| `max_parallel_tasks`                    | From 1 to 16, 4 by default                                                                                                                                |
+| `ceiling.mode`                          | `read_only`, `ask` (the default), `autonomous` or `full_access` ([host and ceiling](host-and-ceiling.md#the-ceiling))                                     |
+| `ceiling.allow_full_access_from_master` | Whether a conversation in full access on the master answers the host's requests; `true` by default ([host and ceiling](host-and-ceiling.md#approvals))    |
+| `ceiling.allowed_folders`               | Absolute folders that exist when the worker starts; empty by default                                                                                      |
+| `ceiling.rules`                         | Command prefixes of whole words, each optionally limited to a folder, as the master's rules are                                                           |
+| `databases.enabled`                     | Whether the master may work with the SQLite files that the owner registers on the host, under the ceiling; `false` by default ([databases](databases.md)) |
 
-Unknown keys are refused, and every error names the key and what is wrong with it. The worker reads the configuration when it starts, so a change applies after a restart. It reads the host instructions again for every task.
+Unknown keys are refused, and every error names the key and what is wrong with it. A worker before 0.8 refuses a file with the table `[databases]`, so the initial file writes it as a comment. The worker reads the configuration when it starts, so a change applies after a restart. It reads the host instructions again for every task.
 
 The worker refuses to start when its own account can open the configuration for writing, since such an account could widen its own ceiling. `--allow-writable-config` lets a worker in a terminal or a test run with a configuration of its own account; the service definitions never pass it.
 
