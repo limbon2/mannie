@@ -1212,6 +1212,7 @@ async fn a_plugins_tool_runs_while_the_plugin_is_on() {
             plugin: PLUGIN.to_owned(),
             data: None,
             failure: None,
+            uncertain: false,
         }
     );
     assert_eq!(result.output, r#"Echo: {"text":"hi"}"#);
@@ -1452,6 +1453,7 @@ async fn a_plugin_tool_with_the_name_of_an_executors_tool_is_refused_and_a_run_o
             plugin: PLUGIN.to_owned(),
             data: None,
             failure: None,
+            uncertain: false,
         }
     );
     let task_calls = transcript.task_calls(0);
@@ -1605,6 +1607,7 @@ async fn a_plugin_tools_output_is_cut_to_the_result_limit() {
             plugin: PLUGIN.to_owned(),
             data: None,
             failure: None,
+            uncertain: false,
         }
     );
 }

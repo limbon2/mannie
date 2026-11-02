@@ -11,6 +11,12 @@
 //! and never run twice (decision 8); a write of a tool is part of its call's
 //! operation, which the call's record journals (ADR-0013). Nothing logs a
 //! statement's text, its values or SQLite's messages.
+//!
+//! A database on a worker's host is the worker's to run (ADR-0057): the
+//! provider classifies its statements against the copy of its schema that
+//! the worker reported, states what lets a write run in the write's
+//! evidence, from the call's ticket or the owner operation, and journals
+//! the owner's change there before the plugin sends it (decisions 6 to 8).
 
 use std::collections::HashMap;
 use std::fmt;
@@ -23,19 +29,24 @@ use mannie_plugin_sdk::BoxFuture;
 use mannie_plugin_sdk::host::{BindRefusal, PluginBinding, ServiceProvider};
 use mannie_plugin_sdk::service::{BoundService, Service};
 use mannie_plugin_sdk::services::sqlite_files::{
-    Change, ChangeOutcome, ChooseRequest, ColumnValue, Cursor, DatabaseFile, DatabaseStructure,
-    DatabaseTicket, FileRefusal, FileState, Filter, FilterOperator, ForeignKey, IndexInfo,
-    MAX_FILTER_CHARS, MAX_NAME_CHARS, MAX_PAGE_ROWS, MAX_STATEMENTS, Order, OwnerChange, Page,
-    PageRequest, PageRow, ReadLimits, ResultColumn, RowMatch, RowsCut, SqlValue, SqliteFiles,
-    SqliteFilesApi, SqliteFilesError, Statement, StatementOutcome, StatementRows, TableColumn,
-    TableInfo, TableKind, TriggerInfo,
+    Change, ChangeOutcome, ChooseRequest, ColumnValue, Cursor, DatabaseFile, DatabaseSchema,
+    DatabaseStructure, DatabaseTicket, EvidencedWrite, FileRefusal, FileState, Filter,
+    FilterOperator, ForeignKey, IndexInfo, MAX_FILTER_CHARS, MAX_NAME_CHARS, MAX_PAGE_ROWS,
+    MAX_STATEMENTS, Order, OwnerChange, Page, PageRequest, PageRow, ReadLimits, RemoteChange,
+    RemoteOutcome, ResultColumn, RowMatch, RowsCut, SqlValue, SqliteFiles, SqliteFilesApi,
+    SqliteFilesError, Statement, StatementOutcome, StatementRows, TableColumn, TableInfo,
+    TableKind, TriggerInfo, WorkerDatabase, WriteEvidence,
 };
 use mannie_store::dbfiles::{
     self, EngineError, Limits, NewOperation, NewRegistration, OperationError, Registration,
     RegistryError,
 };
-use mannie_types::ids::{DatabaseKey, DatabaseOperationId};
-use mannie_types::tools::{Access, StatementClass};
+use mannie_tools::{WrittenStatement, write_digest};
+use mannie_types::ceiling::CeilingMode;
+use mannie_types::ids::{ConversationId, DatabaseKey, DatabaseOperationId, PartId};
+use mannie_types::tools::{
+    Access, DatabaseHome, Decision, GrantScope, StatementClass, WriteAuthority, WriteOrigin,
+};
 use sha2::{Digest, Sha256};
 
 use crate::{Runtime, lock};
@@ -107,10 +118,19 @@ fn checked_filter(label: &str) -> Result<String, SqliteFilesError> {
     Ok(label.to_owned())
 }
 
+/// The most characters of a worker's name that a worker's database names,
+/// and of a file's identity on a worker's host.
+const MAX_HOST_NAME_CHARS: usize = 128;
+const MAX_IDENTITY_CHARS: usize = 512;
+
 /// A write that a call's authorized accesses hold.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AuthorizedWrite {
     key: DatabaseKey,
+    /// The owner's name for the database, which a grant of it names.
+    name: String,
+    /// Where the database lives.
+    home: DatabaseHome,
     identity: String,
     statement: String,
     parameters_digest: String,
@@ -123,7 +143,20 @@ struct TicketEntry {
     /// The plugin, or the plugin's feature, whose tool made the call, as its
     /// contributor key.
     contributor: String,
+    /// What allowed the call, which the evidence of a write on a worker's
+    /// database states (ADR-0057, decision 7).
+    decision: Option<Decision>,
+    /// The call's conversation and part, where such a write comes from.
+    origin: Option<(ConversationId, PartId)>,
     /// The writes that the call's accesses authorized, in order.
+    writes: Vec<AuthorizedWrite>,
+}
+
+/// The writes of one database that a ticket held, with what allowed their
+/// call and where it comes from.
+struct TakenWrites {
+    decision: Option<Decision>,
+    origin: Option<(ConversationId, PartId)>,
     writes: Vec<AuthorizedWrite>,
 }
 
@@ -182,12 +215,16 @@ impl Runtime {
 
     /// The ticket of a call whose authorized accesses hold writes or
     /// changes of a schema of its plugin's databases, good while the call
-    /// executes, or `None` for a call without them.
+    /// executes, or `None` for a call without them. It keeps what allowed
+    /// the call and where the call is, which the evidence of a write on a
+    /// worker's database states (ADR-0057, decision 7).
     pub(crate) fn issue_database_ticket(
         &self,
         plugin: &str,
         feature: Option<&str>,
         accesses: &[Access],
+        decision: Option<Decision>,
+        origin: Option<(ConversationId, PartId)>,
     ) -> Option<DatabaseTicketGuard> {
         let writes: Vec<AuthorizedWrite> = accesses
             .iter()
@@ -195,6 +232,8 @@ impl Runtime {
                 Access::Database {
                     plugin: owner,
                     key,
+                    name,
+                    home,
                     identity,
                     statement,
                     parameters_digest,
@@ -202,6 +241,8 @@ impl Runtime {
                     ..
                 } if owner == plugin && *class != StatementClass::Read => Some(AuthorizedWrite {
                     key: key.clone(),
+                    name: name.clone(),
+                    home: home.clone(),
                     identity: identity.clone(),
                     statement: statement.clone(),
                     parameters_digest: parameters_digest.clone(),
@@ -222,6 +263,8 @@ impl Runtime {
             text.clone(),
             TicketEntry {
                 contributor,
+                decision,
+                origin,
                 writes,
             },
         );
@@ -283,6 +326,273 @@ impl BoundFiles {
     /// Mannie's own folders, where no registered file may be.
     fn protected(&self) -> Vec<PathBuf> {
         self.runtime.inner.tools.protected.clone()
+    }
+}
+
+/// What a worker reported of a database, checked against the core's
+/// limits: the database's name as the owner's names are, the worker's name
+/// and the file's identity plain and within their limits, and the copy of
+/// the schema within its own.
+pub(crate) fn checked_worker_database(database: &WorkerDatabase) -> Result<(), SqliteFilesError> {
+    let plain = |text: &str, max_chars: usize| {
+        !text.trim().is_empty()
+            && text.chars().count() <= max_chars
+            && !text.chars().any(char::is_control)
+    };
+    checked_name(&database.name)?;
+    if !plain(&database.host.name, MAX_HOST_NAME_CHARS) {
+        return Err(SqliteFilesError::InvalidName);
+    }
+    if !plain(&database.identity, MAX_IDENTITY_CHARS) {
+        return Err(SqliteFilesError::InvalidValue);
+    }
+    if !database.schema.fits() {
+        return Err(SqliteFilesError::SchemaTooLarge);
+    }
+    Ok(())
+}
+
+/// Whether statements are exactly the writes that a ticket allowed: the
+/// same texts with the same values, in their order.
+fn writes_match(allowed: &[AuthorizedWrite], statements: &[Statement]) -> bool {
+    !allowed.is_empty()
+        && allowed.len() == statements.len()
+        && allowed.iter().zip(statements).all(|(write, statement)| {
+            write.statement == statement.text
+                && write.parameters_digest == parameters_digest(&statement.parameters)
+        })
+}
+
+/// What lets the writes of one worker's database run there, from what
+/// allowed their call (ADR-0057, decision 7): the owner's approval of the
+/// call is an Allow once of exactly these writes, full access counts where
+/// the host takes it, and otherwise the grants that the policy found cover
+/// them, one for each statement. Nothing else allows a write.
+fn authority_of(
+    decision: Option<Decision>,
+    plugin: &str,
+    writes: &[AuthorizedWrite],
+) -> Option<WriteAuthority> {
+    let first = writes.first()?;
+    match decision? {
+        Decision::AllowedOnce
+        | Decision::AllowedForConversation
+        | Decision::AllowedForProject
+        | Decision::AllowedAlways
+        | Decision::RuleSaved => {
+            let statements: Vec<WrittenStatement<'_>> = writes
+                .iter()
+                .map(|write| WrittenStatement {
+                    text: &write.statement,
+                    parameters_digest: &write.parameters_digest,
+                    class: write.class,
+                })
+                .collect();
+            Some(WriteAuthority::AllowedOnce {
+                digest: write_digest(&first.key, &first.identity, &statements),
+            })
+        }
+        Decision::FullAccess if first.home.takes_full_access() => Some(WriteAuthority::FullAccess),
+        Decision::FullAccess | Decision::Grant | Decision::ProjectGrant | Decision::AlwaysGrant => {
+            let mut scopes: Vec<GrantScope> = Vec::new();
+            for write in writes {
+                let scope = GrantScope::Database {
+                    plugin: plugin.to_owned(),
+                    key: write.key.clone(),
+                    name: write.name.clone(),
+                    statement: write.statement.clone(),
+                };
+                if !scopes.contains(&scope) {
+                    scopes.push(scope);
+                }
+            }
+            Some(WriteAuthority::Grants { scopes })
+        }
+        Decision::Workspace
+        | Decision::Rule
+        | Decision::OwnerNamedProject
+        | Decision::Denied
+        | Decision::AllowedFolder
+        | Decision::HostRule
+        | Decision::HostFullAccess
+        | Decision::RegisteredDatabase => None,
+    }
+}
+
+/// A name as SQL quotes it: in double quotes, each double quote doubled.
+fn quoted(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+/// The text that the master's journal records of the owner's change on a
+/// worker's database: its statements, or one that names the table, the
+/// columns and how many rows an edit changes. The worker's journal records
+/// the statements that the worker ran (ADR-0057, decision 8).
+fn remote_change_text(change: &Change) -> String {
+    let names = |columns: &[ColumnValue]| -> Vec<String> {
+        columns
+            .iter()
+            .map(|column| quoted(&column.column))
+            .collect()
+    };
+    match change {
+        Change::Statements { statements, .. } => statements
+            .iter()
+            .map(|statement| statement.text.as_str())
+            .collect::<Vec<_>>()
+            .join(";\n"),
+        Change::UpdateRow { table, set, .. } => {
+            let assignments: Vec<String> = names(set)
+                .into_iter()
+                .map(|name| format!("{name} = ?"))
+                .collect();
+            format!(
+                "UPDATE {} SET {} -- 1 row",
+                quoted(table),
+                assignments.join(", ")
+            )
+        }
+        Change::InsertRow { table, values } => format!(
+            "INSERT INTO {} ({}) -- 1 row",
+            quoted(table),
+            names(values).join(", ")
+        ),
+        Change::DeleteRows { table, rows } => {
+            format!("DELETE FROM {} -- {} rows", quoted(table), rows.len())
+        }
+    }
+}
+
+/// The class of the owner's change on a worker's database, checked as the
+/// worker checks it, against what the worker reported: statements, at most
+/// [`MAX_STATEMENTS`], classified against the copy of the schema, with no
+/// read and a change of the schema only once the owner confirmed it; an
+/// edit of rows, whose values must be SQLite's, writes.
+async fn remote_change_class(
+    database: &WorkerDatabase,
+    change: &Change,
+) -> Result<StatementClass, SqliteFilesError> {
+    match change {
+        Change::Statements {
+            statements,
+            schema_confirmed,
+        } => {
+            if statements.is_empty() || statements.len() > MAX_STATEMENTS {
+                return Err(SqliteFilesError::TooManyStatements);
+            }
+            let texts = statements
+                .iter()
+                .map(|statement| engine_sql(statement).map(|sql| sql.text))
+                .collect::<Result<Vec<_>, _>>()?;
+            let schema = database.schema.clone();
+            let classes = dbfiles::run(move |_cancel| {
+                dbfiles::classify_all_on_schema(schema.statements(), &texts)
+            })
+            .await
+            .map_err(engine_error)?
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(engine_error)?;
+            if let Some(read) = classes.iter().find(|class| **class == StatementClass::Read) {
+                return Err(SqliteFilesError::NotARead { class: *read });
+            }
+            let class = classes.into_iter().max().unwrap_or(StatementClass::Write);
+            if class == StatementClass::Schema && !schema_confirmed {
+                return Err(SqliteFilesError::SchemaUnconfirmed);
+            }
+            Ok(class)
+        }
+        Change::UpdateRow { row, set, .. } => {
+            engine_row(row)?;
+            engine_columns(set)?;
+            Ok(StatementClass::Write)
+        }
+        Change::InsertRow { values, .. } => {
+            engine_columns(values)?;
+            Ok(StatementClass::Write)
+        }
+        Change::DeleteRows { rows, .. } => {
+            for row in rows {
+                engine_row(row)?;
+            }
+            Ok(StatementClass::Write)
+        }
+    }
+}
+
+/// A failure's code as the journal keeps it: the plugin's when it is 1 to
+/// 64 lower-case letters, digits, dots and underscores, and `failed`
+/// otherwise.
+fn journal_code(code: &str) -> &str {
+    let fits = !code.is_empty()
+        && code.len() <= 64
+        && code.chars().all(|letter| {
+            letter.is_ascii_lowercase() || letter.is_ascii_digit() || letter == '.' || letter == '_'
+        });
+    if fits { code } else { "failed" }
+}
+
+/// Records how the owner's change on a worker's database ended. A record
+/// that fails to change stays executing, which the next start marks
+/// uncertain.
+async fn record_remote_outcome(
+    runtime: &Runtime,
+    id: &DatabaseOperationId,
+    outcome: RemoteOutcome,
+) {
+    let store = &runtime.inner.store;
+    let recorded = match outcome {
+        RemoteOutcome::Completed { changes } => store.complete_db_operation(id, changes).await,
+        RemoteOutcome::Failed { code } => store.fail_db_operation(id, journal_code(&code)).await,
+        // An outcome that is uncertain, or one that a later SDK names: the
+        // worker may have run the change.
+        _uncertain => store.mark_db_operation_uncertain(id).await,
+    };
+    if let Err(error) = recorded {
+        tracing::error!(
+            error.code = error.code(),
+            "the outcome of an owner operation on a worker's database was not recorded"
+        );
+    }
+}
+
+/// The owner's change on a worker's database, journaled as executing until
+/// the plugin ends it (ADR-0057, decision 8).
+#[derive(Debug)]
+struct JournaledChange {
+    runtime: Runtime,
+    evidence: WriteEvidence,
+    ended: bool,
+}
+
+impl RemoteChange for JournaledChange {
+    fn evidence(&self) -> &WriteEvidence {
+        &self.evidence
+    }
+
+    fn end(mut self: Box<Self>, outcome: RemoteOutcome) -> BoxFuture<'static, ()> {
+        self.ended = true;
+        let runtime = self.runtime.clone();
+        let id = self.evidence.operation.clone();
+        async move { record_remote_outcome(&runtime, &id, outcome).await }.boxed()
+    }
+}
+
+impl Drop for JournaledChange {
+    fn drop(&mut self) {
+        if self.ended {
+            return;
+        }
+        // The plugin let the change go without its outcome, so the worker may
+        // have run it: the record becomes uncertain at once, and without a
+        // runtime to record it on, at the next start.
+        let runtime = self.runtime.clone();
+        let id = self.evidence.operation.clone();
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                record_remote_outcome(&runtime, &id, RemoteOutcome::Uncertain).await;
+            });
+        }
     }
 }
 
@@ -1076,6 +1386,44 @@ impl SqliteFilesApi for BoundFiles {
         async move { bound.run_owner_change(key, change).await }.boxed()
     }
 
+    fn classify_copy(
+        &self,
+        schema: DatabaseSchema,
+        statement: String,
+    ) -> BoxFuture<'static, Result<StatementClass, SqliteFilesError>> {
+        async move {
+            if !schema.fits() {
+                return Err(SqliteFilesError::SchemaTooLarge);
+            }
+            dbfiles::run(move |_cancel| {
+                dbfiles::classify_on_schema(schema.statements(), &statement)
+            })
+            .await
+            .map_err(engine_error)
+        }
+        .boxed()
+    }
+
+    fn evidence(
+        &self,
+        ticket: DatabaseTicket,
+        key: DatabaseKey,
+        statements: Vec<Statement>,
+    ) -> BoxFuture<'static, Result<WriteEvidence, SqliteFilesError>> {
+        let evidence = self.tool_evidence(&ticket, key, statements);
+        async move { evidence }.boxed()
+    }
+
+    fn begin_remote_change(
+        &self,
+        key: DatabaseKey,
+        database: WorkerDatabase,
+        change: OwnerChange,
+    ) -> BoxFuture<'static, Result<Box<dyn RemoteChange>, SqliteFilesError>> {
+        let bound = self.clone();
+        async move { bound.begin_on_worker(key, database, change).await }.boxed()
+    }
+
     fn write(
         &self,
         ticket: DatabaseTicket,
@@ -1241,7 +1589,7 @@ impl BoundFiles {
         &self,
         ticket: &DatabaseTicket,
         key: &DatabaseKey,
-    ) -> Result<Vec<AuthorizedWrite>, SqliteFilesError> {
+    ) -> Result<TakenWrites, SqliteFilesError> {
         let mut tickets = lock(&self.runtime.inner.database_tickets.tickets);
         let Some(entry) = tickets.get_mut(ticket.as_str()) else {
             return Err(SqliteFilesError::NotAllowed);
@@ -1254,10 +1602,92 @@ impl BoundFiles {
                 .into_iter()
                 .partition(|write| write.key == *key);
         entry.writes = rest;
+        let taken = TakenWrites {
+            decision: entry.decision,
+            origin: entry.origin.clone(),
+            writes: allowed,
+        };
         if entry.writes.is_empty() {
             tickets.remove(ticket.as_str());
         }
-        Ok(allowed)
+        Ok(taken)
+    }
+
+    /// The evidence of the writes on one worker's database that a tool's
+    /// call's ticket allowed, exactly as they were allowed and in their
+    /// order, with what allowed the call (ADR-0057, decision 7).
+    fn tool_evidence(
+        &self,
+        ticket: &DatabaseTicket,
+        key: DatabaseKey,
+        statements: Vec<Statement>,
+    ) -> Result<WriteEvidence, SqliteFilesError> {
+        let taken = self.take_writes(ticket, &key)?;
+        let on_worker = taken
+            .writes
+            .iter()
+            .all(|write| matches!(write.home, DatabaseHome::Worker { .. }));
+        if !on_worker || !writes_match(&taken.writes, &statements) {
+            return Err(SqliteFilesError::NotAllowed);
+        }
+        let authority = authority_of(taken.decision, &self.plugin, &taken.writes)
+            .ok_or(SqliteFilesError::NotAllowed)?;
+        let (Some((conversation, part)), Some(first)) = (taken.origin, taken.writes.first()) else {
+            return Err(SqliteFilesError::NotAllowed);
+        };
+        Ok(WriteEvidence::new(
+            self.runtime.inner.ids.database_operation(),
+            key,
+            first.identity.clone(),
+            EvidencedWrite::Statements { statements },
+            WriteOrigin::Call { conversation, part },
+            authority,
+        ))
+    }
+
+    /// Begins the owner's change on a worker's database as an owner
+    /// operation (ADR-0057, decisions 7 and 8): refused as the worker would
+    /// refuse it on a database that the owner marked read-only or a
+    /// read-only host, checked against the copy of the schema, then
+    /// journaled as executing with its text and the digest of its values.
+    async fn begin_on_worker(
+        &self,
+        key: DatabaseKey,
+        database: WorkerDatabase,
+        change: OwnerChange,
+    ) -> Result<Box<dyn RemoteChange>, SqliteFilesError> {
+        checked_worker_database(&database)?;
+        if database.read_only {
+            return Err(SqliteFilesError::MarkedReadOnly);
+        }
+        if database.host.mode == CeilingMode::ReadOnly {
+            return Err(SqliteFilesError::ReadOnlyHost);
+        }
+        let class = remote_change_class(&database, &change.change).await?;
+        let operation = NewOperation {
+            id: change.id.clone(),
+            plugin: self.plugin.clone(),
+            key: key.clone(),
+            statement: remote_change_text(&change.change),
+            parameters_digest: parameters_digest(&change_parameters(&change.change)),
+            class,
+        };
+        begin_operation(&self.runtime, &operation).await?;
+        let evidence = WriteEvidence::new(
+            change.id,
+            key,
+            database.identity,
+            EvidencedWrite::Change {
+                change: change.change,
+            },
+            WriteOrigin::OwnerOperation,
+            WriteAuthority::OwnerAction,
+        );
+        Ok(Box::new(JournaledChange {
+            runtime: self.runtime.clone(),
+            evidence,
+            ended: false,
+        }))
     }
 
     /// Runs the statements on one database that a tool's call's ticket
@@ -1268,14 +1698,12 @@ impl BoundFiles {
         key: DatabaseKey,
         statements: Vec<Statement>,
     ) -> Result<Vec<StatementOutcome>, SqliteFilesError> {
-        let allowed = self.take_writes(ticket, &key)?;
-        let matches = !allowed.is_empty()
-            && allowed.len() == statements.len()
-            && allowed.iter().zip(&statements).all(|(write, statement)| {
-                write.statement == statement.text
-                    && write.parameters_digest == parameters_digest(&statement.parameters)
-            });
-        if !matches {
+        let allowed = self.take_writes(ticket, &key)?.writes;
+        // A write on a worker's database runs there, with its evidence.
+        let on_this_computer = allowed
+            .iter()
+            .all(|write| write.home == DatabaseHome::ThisComputer);
+        if !on_this_computer || !writes_match(&allowed, &statements) {
             return Err(SqliteFilesError::NotAllowed);
         }
         let registration = self.registration(&key).await?;

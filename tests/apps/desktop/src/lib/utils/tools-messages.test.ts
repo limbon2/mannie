@@ -203,6 +203,7 @@ const INTERRUPTIONS: (Interruption | null)[] = [
   { reason: 'stopped' },
   { plugin: 'ssh', reason: 'plugin_off' },
   { feature: 'databases', plugin: 'workers', reason: 'plugin_off' },
+  { plugin: 'workers', reason: 'answer_lost' },
 ];
 
 function expectDistinct(messages: string[]): void {

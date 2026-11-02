@@ -399,6 +399,7 @@ impl RunActor {
             process: Some(process_sender),
             part_id: Some(call.part_id.clone()),
             activity: call.document.activity.clone(),
+            decision: call.document.decision,
         });
         let abort = execution_guard.as_ref().map(|guard| guard.abort.clone());
         let watched = self
@@ -816,7 +817,22 @@ impl RunActor {
                 content: archive.content,
             })
             .collect();
-        call.document.status = ToolCallStatus::Completed;
+        // A plugin that lost the answer of its operation, such as a write
+        // on a worker whose link dropped, leaves the call uncertain, with
+        // its result (ADR-0057, decision 8).
+        call.document.status = match &done.outcome {
+            ToolOutcome::Plugin {
+                plugin,
+                uncertain: true,
+                ..
+            } => {
+                call.document.interruption = Some(Interruption::AnswerLost {
+                    plugin: plugin.clone(),
+                });
+                ToolCallStatus::Uncertain
+            }
+            _completed => ToolCallStatus::Completed,
+        };
         call.document.result = Some(ToolResult {
             outcome: done.outcome,
             output,

@@ -29,7 +29,7 @@ pub use browse::{
 pub use edits::{Edit, Edited, RowMatch, edit, edit_text};
 pub use engine::{
     Cancel, Column, Cut, EngineError, Limits, MAX_BATCH_STATEMENTS, Returned, Sql, Written,
-    classify, classify_on_schema, count, read, write,
+    classify, classify_all_on_schema, classify_on_schema, count, read, write,
 };
 pub use files::{CheckedFile, FileRefusal, check_new, check_registered};
 pub use operations::{MAX_STATEMENT_CHARS, NewOperation, OperationError, OperationState};

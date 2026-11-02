@@ -50,6 +50,8 @@ const ERRORS: SqliteFilesError[] = [
   { code: 'not_allowed' },
   { code: 'already_run' },
   { code: 'no_dialog' },
+  { code: 'read_only_host' },
+  { code: 'schema_too_large' },
   { code: 'failed' },
 ];
 

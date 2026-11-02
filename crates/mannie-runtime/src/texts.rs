@@ -177,6 +177,17 @@ repeat it, and continue without the feature."
     )
 }
 
+/// The result of a plugin's operation whose answer the plugin lost, such
+/// as a write on a worker whose link dropped, which may have taken effect
+/// (ADR-0057, decision 8). The plugin's own result says more when it has
+/// one.
+pub fn uncertain_answer_lost(plugin: &str) -> String {
+    format!(
+        "The plugin \"{plugin}\" lost the answer of this operation, so it may or may not have \
+taken effect. Check its effects before you repeat it."
+    )
+}
+
 /// The result of a command on a remote host that a worker refused: a worker
 /// runs no plugin that reaches one (ADR-0036).
 pub const NO_REMOTE_COMMANDS: &str = "Not run: this host runs no commands on other hosts.";
@@ -241,6 +252,19 @@ pub const DATABASE_READ_IN_CHANGE: &str =
 
 /// The result of a write to a database that the owner marked read-only.
 pub const DATABASE_READ_ONLY: &str = "Not run: the owner marked this database read-only, so it takes no writes and no changes of its schema.";
+
+/// The result of a write to a database on a worker's host that lets the
+/// worker only read (ADR-0057, decision 6).
+pub const DATABASE_READ_ONLY_HOST: &str = "Not run: the worker's host lets it only read, so its databases take no writes and no changes of their schemas.";
+
+/// The result of a statement on a worker's database whose worker reported
+/// what the core cannot use, such as a name with control characters.
+pub const DATABASE_WORKER_FACTS: &str =
+    "Not run: what the worker reported of this database is not valid.";
+
+/// The result of a statement on a worker's database whose schema is too
+/// large to read the statement against a copy of it.
+pub const DATABASE_SCHEMA_TOO_LARGE: &str = "Not run: the database's schema is too large for Mannie to read the statement against a copy of it.";
 
 /// The result of a call beyond the reply's tool calls.
 pub const OVER_BUDGET: &str = "Not run: this reply has used all its tool calls.";

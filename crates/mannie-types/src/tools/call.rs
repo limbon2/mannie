@@ -180,6 +180,13 @@ pub enum Interruption {
         #[serde(default)]
         feature: Option<String>,
     },
+    /// A plugin lost the answer of its operation, such as when the link to
+    /// the worker that ran a write dropped before the worker answered
+    /// (ADR-0057, decision 8). The machine that ran it knows how it ended.
+    AnswerLost {
+        /// The plugin's ID.
+        plugin: String,
+    },
 }
 
 /// The process of a running command, so that the recovery after a crash can
@@ -675,6 +682,7 @@ mod tests {
                 plugin: "notes".to_owned(),
                 data: None,
                 failure: None,
+                uncertain: false,
             }
         );
         let result = without_plugin.result.unwrap();

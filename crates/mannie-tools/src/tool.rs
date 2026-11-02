@@ -13,7 +13,9 @@ use mannie_store::Store;
 use mannie_types::context::Attachment;
 use mannie_types::ids::{ArchiveId, ConversationId, PartId};
 use mannie_types::images::ImageBytes;
-use mannie_types::tools::{Access, CitedItemView, ProcessRecord, ToolFailure, ToolOutcome};
+use mannie_types::tools::{
+    Access, CitedItemView, Decision, ProcessRecord, ToolFailure, ToolOutcome,
+};
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use tokio::sync::oneshot;
@@ -170,6 +172,10 @@ pub struct Execution {
     /// in the background keeps as its name. The model wrote it, so nothing
     /// that authorizes the call reads it.
     pub activity: Option<String>,
+    /// What allowed the call, the policy or the owner, which the evidence of
+    /// a write on a worker's database states (ADR-0057, decision 7); `None`
+    /// for a call that needed no authorization.
+    pub decision: Option<Decision>,
 }
 
 /// A tool in the registry (docs/architecture/extension-points.md, tool

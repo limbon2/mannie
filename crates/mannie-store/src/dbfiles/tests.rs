@@ -613,6 +613,31 @@ fn a_copy_of_the_schema_classifies_statements_as_the_file_does() {
 }
 
 #[test]
+fn one_copy_of_the_schema_classifies_several_statements_each_on_its_own() {
+    let schema = vec!["CREATE TABLE parts (name TEXT PRIMARY KEY, stock INTEGER)".to_owned()];
+    let texts = [
+        "SELECT stock FROM parts",
+        "UPDATE parts SET stock = 1",
+        "SELECT x FROM bins",
+        "CREATE INDEX parts_stock ON parts (stock)",
+    ]
+    .map(str::to_owned);
+
+    let classes = classify_all_on_schema(&schema, &texts).unwrap();
+
+    assert_eq!(classes.len(), 4);
+    assert_eq!(classes[0], Ok(StatementClass::Read));
+    assert_eq!(classes[1], Ok(StatementClass::Write));
+    assert!(
+        matches!(classes[2], Err(EngineError::Invalid { .. })),
+        "{:?}",
+        classes[2]
+    );
+    assert_eq!(classes[3], Ok(StatementClass::Schema));
+    assert_eq!(classify_all_on_schema(&schema, &[]).unwrap(), Vec::new());
+}
+
+#[test]
 fn a_forged_schema_runs_nothing_but_its_create_statements_in_the_copy() {
     let folder = tempfile::tempdir().unwrap();
     let attached = folder.path().join("attached.db");
@@ -1044,6 +1069,36 @@ async fn the_journal_records_an_owner_operation_before_it_runs_and_never_twice()
             .begin_db_operation(&operation(4, StatementClass::Read))
             .await,
         Err(OperationError::NotAChange)
+    ));
+}
+
+#[tokio::test]
+async fn an_operation_whose_answer_was_lost_is_marked_uncertain_and_never_runs_again() {
+    let (_folder, store) = store();
+    let lost = operation(6, StatementClass::Write);
+    let completed = operation(7, StatementClass::Write);
+
+    store.begin_db_operation(&lost).await.unwrap();
+    store.mark_db_operation_uncertain(&lost.id).await.unwrap();
+    store.begin_db_operation(&completed).await.unwrap();
+    store.complete_db_operation(&completed.id, 2).await.unwrap();
+    // Only an operation that is executing becomes uncertain.
+    store
+        .mark_db_operation_uncertain(&completed.id)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        store.db_operation_state(&lost.id).await.unwrap(),
+        Some(OperationState::Uncertain)
+    );
+    assert_eq!(
+        store.db_operation_state(&completed.id).await.unwrap(),
+        Some(OperationState::Completed)
+    );
+    assert!(matches!(
+        store.begin_db_operation(&lost).await,
+        Err(OperationError::AlreadyJournaled)
     ));
 }
 

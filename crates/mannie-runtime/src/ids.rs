@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use mannie_types::clock::Clock;
 use mannie_types::ids::{
-    ArchiveId, CheckpointId, ConversationId, DatabaseKey, ExportId, GrantId, InvalidId, PartId,
-    ProfileId, ProjectId, RuleId, RunId, TaskId, TurnId,
+    ArchiveId, CheckpointId, ConversationId, DatabaseKey, DatabaseOperationId, ExportId, GrantId,
+    InvalidId, PartId, ProfileId, ProjectId, RuleId, RunId, TaskId, TurnId,
 };
 use uuid::timestamp::context::ContextV7;
 use uuid::{Timestamp, Uuid};
@@ -65,6 +65,11 @@ impl IdGenerator {
     /// A new key of a SQLite file that the owner registered (ADR-0056).
     pub(crate) fn database_key(&self) -> DatabaseKey {
         self.make(DatabaseKey::parse)
+    }
+
+    /// A new ID of a write on a worker's database (ADR-0057, decision 7).
+    pub(crate) fn database_operation(&self) -> DatabaseOperationId {
+        self.make(DatabaseOperationId::parse)
     }
 
     /// A new turn ID.

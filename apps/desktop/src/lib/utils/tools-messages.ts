@@ -485,7 +485,7 @@ export function entryCountMessage(entries: EntryCount): string {
   return new Intl.ListFormat(undefined, { type: 'conjunction' }).format(counts);
 }
 
-/** Why an operation that was executing may have taken effect: Mannie quit, the owner stopped it, or its plugin went off. */
+/** Why an operation that was executing may have taken effect: Mannie quit, the owner stopped it, its plugin went off, or its plugin lost the answer. */
 export function uncertainMessage(interruption: Interruption | null): string {
   if (interruption === null) {
     return m.tools_uncertain_description();
@@ -503,6 +503,9 @@ export function uncertainMessage(interruption: Interruption | null): string {
     }
     case 'stopped': {
       return m.tools_uncertain_stopped_description();
+    }
+    case 'answer_lost': {
+      return m.tools_uncertain_answer_lost_description();
     }
   }
 }

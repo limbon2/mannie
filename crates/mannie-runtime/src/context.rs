@@ -454,6 +454,12 @@ pub(crate) fn call_result(
                 plugin,
                 feature: Some(feature),
             }) => texts::uncertain_feature_off(plugin, feature),
+            // The plugin's result says what it knows of the operation whose
+            // answer it lost (ADR-0057, decision 8).
+            Some(Interruption::AnswerLost { plugin }) => match &call.result {
+                Some(result) => result.output.clone(),
+                None => texts::uncertain_answer_lost(plugin),
+            },
         },
         ToolCallStatus::NotRun | ToolCallStatus::Canceled => match &call.not_run {
             Some(reason) => not_run(reason, &call.tool),

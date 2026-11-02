@@ -127,11 +127,17 @@ export function filesErrorMessage(error: SqliteFilesError): string {
     case 'parameters': {
       return m.workers_databases_error_parameters({ expected: error.expected, given: error.given });
     }
+    case 'read_only_host': {
+      return m.workers_databases_error_read_only_host();
+    }
     case 'refused': {
       return m.workers_databases_error_refused({ message: error.message });
     }
     case 'row_changed': {
       return m.workers_databases_error_row_changed();
+    }
+    case 'schema_too_large': {
+      return m.workers_databases_error_schema_too_large();
     }
     case 'schema_unconfirmed': {
       return m.workers_databases_error_schema_unconfirmed();

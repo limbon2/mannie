@@ -538,6 +538,28 @@ pub fn classify(path: &Path, identity: &str, text: &str) -> Result<StatementClas
 /// which could change the whole process, `ATTACH`, which could create a
 /// file, transactions and `load_extension`.
 pub fn classify_on_schema(schema: &[String], text: &str) -> Result<StatementClass, EngineError> {
+    let opened = schema_copy(schema)?;
+    let (_statement, class) = opened.prepare(text)?;
+    Ok(class)
+}
+
+/// What each of several statements does, read against one copy of a
+/// schema, as [`classify_on_schema`] reads one: the copy is made once, and
+/// each statement has its own result.
+pub fn classify_all_on_schema(
+    schema: &[String],
+    texts: &[String],
+) -> Result<Vec<Result<StatementClass, EngineError>>, EngineError> {
+    let opened = schema_copy(schema)?;
+    Ok(texts
+        .iter()
+        .map(|text| opened.prepare(text).map(|(_statement, class)| class))
+        .collect())
+}
+
+/// A copy of a schema in a database in memory, hardened and confined
+/// before any of it runs, for [`classify_on_schema`].
+fn schema_copy(schema: &[String]) -> Result<Opened, EngineError> {
     let cancel = Cancel::new();
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
         | OpenFlags::SQLITE_OPEN_CREATE
@@ -561,8 +583,7 @@ pub fn classify_on_schema(schema: &[String], text: &str) -> Result<StatementClas
         cancel,
     };
     opened.confine()?;
-    let (_statement, class) = opened.prepare(text)?;
-    Ok(class)
+    Ok(opened)
 }
 
 /// Runs one entry of a schema in its copy, when it is a single `CREATE`

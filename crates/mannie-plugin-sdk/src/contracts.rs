@@ -23,8 +23,10 @@ pub use mannie_types::ids::{ArchiveId, ConversationId, ProfileId, ProjectId, Tas
 // of the owner operations on them (ADR-0056, decisions 2 and 8).
 pub use mannie_types::ids::{DatabaseKey, DatabaseOperationId};
 // What a statement on a database does, which the core reads from SQLite
-// (ADR-0056, decision 5).
-pub use mannie_types::tools::StatementClass;
+// (ADR-0056, decision 5), and what lets a write run on a worker's database,
+// where it comes from and why the worker's ceiling refuses a request
+// (ADR-0057, decisions 5 and 7).
+pub use mannie_types::tools::{HostDatabaseRefusal, StatementClass, WriteAuthority, WriteOrigin};
 // The envelopes of IPC (ADR-0007): an error as a command returns it, and the
 // batches of a channel, which carry a plugin's channel messages (ADR-0034,
 // decisions 8 and 9).

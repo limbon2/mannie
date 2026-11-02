@@ -141,12 +141,14 @@ async fn the_tools_read_a_project_s_repository_without_asking() {
         plugin,
         data,
         failure,
+        uncertain,
     } = result.outcome
     else {
         panic!("a plugin's outcome: {:?}", result.outcome);
     };
     assert_eq!(plugin, GIT);
     assert_eq!(failure, None);
+    assert!(!uncertain);
     let data: Value = serde_json::from_str(&data.expect("the card's data")).unwrap();
     assert_eq!(data["branch"]["head"], "main");
     let request = &core.model.reply_requests()[0];

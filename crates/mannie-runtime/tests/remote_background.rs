@@ -382,6 +382,7 @@ async fn a_plugin_s_command_runs_past_its_call_and_reads_and_stops_like_a_local_
             plugin: PLUGIN.to_owned(),
             data: None,
             failure: None,
+            uncertain: false,
         }
     );
     let command = &transcript.background_commands[&1];

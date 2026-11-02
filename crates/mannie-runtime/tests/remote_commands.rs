@@ -311,6 +311,7 @@ async fn a_remote_command_asks_and_runs_what_was_authorized_once_allowed() {
             plugin: PLUGIN.to_owned(),
             data: None,
             failure: None,
+            uncertain: false,
         }
     );
     assert_eq!(result.output, "Ran systemctl status nginx.");

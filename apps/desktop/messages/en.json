@@ -798,6 +798,7 @@
   "tools_uncertain_stopped_description": "You stopped the reply while this ran, so it may have taken effect. Check the result before you run it again.",
   "tools_uncertain_plugin_off_description": "The {plugin} plugin was turned off while this ran, so it may have taken effect. Check the result before you run it again.",
   "tools_uncertain_feature_off_description": "{feature} of the {plugin} plugin was turned off while this ran, so it may have taken effect. Check the result before you run it again.",
+  "tools_uncertain_answer_lost_description": "The connection to the computer that ran this dropped before its answer, so it may have taken effect. Check the result before you run it again.",
   "tools_not_run_unknown_tool": "The model called a tool that does not exist.",
   "tools_not_run_invalid_arguments": "The model's arguments do not fit the tool. The model was told what is wrong.",
   "tools_not_run_cut_off": "The reply reached its output limit before the call was complete.",

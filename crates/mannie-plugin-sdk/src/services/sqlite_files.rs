@@ -17,15 +17,26 @@
 //! value of its own, and bytes cross as base64. SQLite's messages are
 //! content: the plugin's view shows them under its catalog's wording, and
 //! nothing logs them.
+//!
+//! A database on a worker's host is the worker's to run (ADR-0057): the
+//! plugin reaches it through its own link, and the core classifies its
+//! statements against the copy of the schema that the worker reported,
+//! decides on them under the master's policy and states what lets a write
+//! run in the write's evidence, which the plugin sends to the worker as it
+//! is (decisions 6 and 7).
 
 use std::fmt;
+use std::sync::Arc;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::BoxFuture;
-use crate::contracts::{DatabaseKey, DatabaseOperationId, StatementClass};
+use crate::contracts::{
+    CeilingMode, DatabaseKey, DatabaseOperationId, StatementClass, WorkerId, WriteAuthority,
+    WriteOrigin,
+};
 use crate::service::Service;
 
 /// The service `sqlite-files`, major 1. It reads and changes the owner's
@@ -48,6 +59,12 @@ pub const MAX_PAGE_ROWS: u32 = 500;
 
 /// The most characters of the owner's name for a database.
 pub const MAX_NAME_CHARS: usize = 100;
+
+/// The most statements of a copy of a database's schema.
+pub const MAX_SCHEMA_STATEMENTS: usize = 20_000;
+
+/// The most bytes of the statements of a copy of a database's schema.
+pub const MAX_SCHEMA_BYTES: usize = 16 * 1024 * 1024;
 
 /// The owner's SQLite files, as one plugin reaches them.
 pub trait SqliteFilesApi: Send + Sync + fmt::Debug {
@@ -142,6 +159,255 @@ pub trait SqliteFilesApi: Send + Sync + fmt::Debug {
         key: DatabaseKey,
         statements: Vec<Statement>,
     ) -> BoxFuture<'static, Result<Vec<StatementOutcome>, SqliteFilesError>>;
+
+    /// What a statement does on a database of a worker's host, read from
+    /// SQLite against the copy of the schema that the worker reported,
+    /// without running it (ADR-0056, decision 6). The worker classifies it
+    /// again before it runs it.
+    fn classify_copy(
+        &self,
+        schema: DatabaseSchema,
+        statement: String,
+    ) -> BoxFuture<'static, Result<StatementClass, SqliteFilesError>>;
+
+    /// The evidence of the statements on a worker's database that the
+    /// policy or the owner allowed for a call of the plugin's tool, which its
+    /// ticket names, exactly as they were allowed and in their order
+    /// (ADR-0057, decision 7). The plugin sends it to the worker, which
+    /// journals the write and runs it under its ceiling. The ticket gives
+    /// evidence once for each worker's database that the call's accesses
+    /// name.
+    fn evidence(
+        &self,
+        ticket: DatabaseTicket,
+        key: DatabaseKey,
+        statements: Vec<Statement>,
+    ) -> BoxFuture<'static, Result<WriteEvidence, SqliteFilesError>>;
+
+    /// Begins the owner's change from the plugin's view on a worker's
+    /// database as an owner operation (ADR-0057, decisions 7 and 8): the
+    /// core checks it against what the worker reported of the database,
+    /// journals it as executing and returns it with its evidence, which the
+    /// plugin sends to the worker. An ID that the journal has refuses it.
+    fn begin_remote_change(
+        &self,
+        key: DatabaseKey,
+        database: WorkerDatabase,
+        change: OwnerChange,
+    ) -> BoxFuture<'static, Result<Box<dyn RemoteChange>, SqliteFilesError>>;
+}
+
+/// The `CREATE` statements of a database's tables, indexes, views and
+/// triggers, as the database's machine reported them, at most
+/// [`MAX_SCHEMA_STATEMENTS`] of them and [`MAX_SCHEMA_BYTES`] in all. Clones
+/// share the statements, so every statement of a call can name the same
+/// copy.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct DatabaseSchema(Arc<[String]>);
+
+impl DatabaseSchema {
+    /// A copy of a schema with these statements.
+    pub fn new(statements: Vec<String>) -> Self {
+        Self(Arc::from(statements))
+    }
+
+    /// The statements.
+    pub fn statements(&self) -> &[String] {
+        &self.0
+    }
+
+    /// Whether the copy keeps to [`MAX_SCHEMA_STATEMENTS`] and
+    /// [`MAX_SCHEMA_BYTES`].
+    pub fn fits(&self) -> bool {
+        let bytes: usize = self.0.iter().map(String::len).sum();
+        self.0.len() <= MAX_SCHEMA_STATEMENTS && bytes <= MAX_SCHEMA_BYTES
+    }
+}
+
+impl Serialize for DatabaseSchema {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for DatabaseSchema {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Vec::<String>::deserialize(deserializer).map(Self::new)
+    }
+}
+
+/// A worker's host as the worker reported it when it last connected: the
+/// worker, its name and its ceiling (ADR-0057, decision 6).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct WorkerHost {
+    /// The worker.
+    pub worker: WorkerId,
+    /// The worker's name, for display.
+    pub name: String,
+    /// The mode of the host's ceiling.
+    pub mode: CeilingMode,
+    /// Whether the host accepts the master's full access (ADR-0029,
+    /// decision 5).
+    pub accepts_full_access: bool,
+}
+
+impl WorkerHost {
+    /// A worker's host in this mode.
+    pub fn new(
+        worker: WorkerId,
+        name: impl Into<String>,
+        mode: CeilingMode,
+        accepts_full_access: bool,
+    ) -> Self {
+        Self {
+            worker,
+            name: name.into(),
+            mode,
+            accepts_full_access,
+        }
+    }
+}
+
+/// A database on a worker's host, as the worker reported it: what a
+/// plugin's tool names for a statement there, and what the owner's change
+/// there begins from (ADR-0057, decision 6). The core classifies the
+/// statement against the copy of the schema and narrows its decision to the
+/// host, and the worker checks every write again under its ceiling.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct WorkerDatabase {
+    /// The host.
+    pub host: WorkerHost,
+    /// The owner's name for the database, at most [`MAX_NAME_CHARS`].
+    pub name: String,
+    /// The file's identity on the host.
+    pub identity: String,
+    /// Whether the owner marked it read-only.
+    pub read_only: bool,
+    /// The copy of its schema.
+    pub schema: DatabaseSchema,
+}
+
+impl WorkerDatabase {
+    /// A database on a worker's host, as the worker reported it.
+    pub fn new(
+        host: WorkerHost,
+        name: impl Into<String>,
+        identity: impl Into<String>,
+        read_only: bool,
+        schema: DatabaseSchema,
+    ) -> Self {
+        Self {
+            host,
+            name: name.into(),
+            identity: identity.into(),
+            read_only,
+            schema,
+        }
+    }
+}
+
+/// A write on a database of a worker's host with what lets it run, as the
+/// core states it from a call's ticket or an owner operation, never the
+/// plugin (ADR-0057, decision 7). The plugin sends it to the worker as it
+/// is: the worker computes the write's digest again from its own registry
+/// and the write, checks the authority against its ceiling, and journals
+/// the write under its operation ID before it runs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct WriteEvidence {
+    /// The operation's ID, good once: a worker's journal that has it refuses
+    /// the write.
+    pub operation: DatabaseOperationId,
+    /// The database's key.
+    pub key: DatabaseKey,
+    /// The file's identity that the master saw.
+    pub identity: String,
+    /// The write.
+    pub write: EvidencedWrite,
+    /// Where it comes from.
+    pub origin: WriteOrigin,
+    /// What lets it run.
+    pub authority: WriteAuthority,
+}
+
+impl WriteEvidence {
+    /// The evidence of a write. Only the core makes one.
+    #[cfg(feature = "host")]
+    pub fn new(
+        operation: DatabaseOperationId,
+        key: DatabaseKey,
+        identity: String,
+        write: EvidencedWrite,
+        origin: WriteOrigin,
+        authority: WriteAuthority,
+    ) -> Self {
+        Self {
+            operation,
+            key,
+            identity,
+            write,
+            origin,
+            authority,
+        }
+    }
+}
+
+/// The write of a piece of evidence.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum EvidencedWrite {
+    /// The statements that a call of a plugin's tool writes, in order, in
+    /// one transaction.
+    Statements {
+        /// The statements.
+        statements: Vec<Statement>,
+    },
+    /// The owner's change from the plugin's view.
+    Change {
+        /// The change.
+        change: Change,
+    },
+}
+
+/// An owner operation on a worker's database, which the core journaled as
+/// executing before the plugin sends it (ADR-0057, decision 8). Dropping it
+/// before it ends records the operation as uncertain, since the worker may
+/// have run it.
+pub trait RemoteChange: Send + Sync + fmt::Debug {
+    /// The evidence that the plugin sends with the change.
+    fn evidence(&self) -> &WriteEvidence;
+
+    /// Records how the change ended on the worker.
+    fn end(self: Box<Self>, outcome: RemoteOutcome) -> BoxFuture<'static, ()>;
+}
+
+/// How a write on a worker's database ended, as the plugin learned it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RemoteOutcome {
+    /// It completed.
+    Completed {
+        /// The rows that it changed.
+        changes: u64,
+    },
+    /// It failed without a change.
+    Failed {
+        /// The stable code of the failure: 1 to 64 lower-case letters,
+        /// digits, dots and underscores.
+        code: String,
+    },
+    /// Its answer was lost, such as when the link dropped, so it may have
+    /// taken effect. The worker's journal holds how it ended.
+    Uncertain,
 }
 
 /// The most characters of a filter's name in the file dialog.
@@ -913,6 +1179,14 @@ pub enum SqliteFilesError {
     /// This computer has no file dialog, such as a worker.
     #[error("this computer has no file dialog")]
     NoDialog,
+    /// The worker's host lets it only read, so it refuses every write and
+    /// change of a schema (ADR-0057, decision 6).
+    #[error("the worker's host only reads")]
+    ReadOnlyHost,
+    /// The copy of a schema that a worker reported holds more than
+    /// [`MAX_SCHEMA_STATEMENTS`] statements or [`MAX_SCHEMA_BYTES`].
+    #[error("the copy of the schema is too large")]
+    SchemaTooLarge,
     /// The core could not do it; the log has the cause.
     #[error("the core could not do it")]
     Failed,
@@ -949,6 +1223,8 @@ impl SqliteFilesError {
             Self::NotAllowed => "sqlite_files.not_allowed",
             Self::AlreadyRun => "sqlite_files.already_run",
             Self::NoDialog => "sqlite_files.no_dialog",
+            Self::ReadOnlyHost => "sqlite_files.read_only_host",
+            Self::SchemaTooLarge => "sqlite_files.schema_too_large",
             Self::Failed => "sqlite_files.failed",
         }
     }
@@ -956,7 +1232,25 @@ impl SqliteFilesError {
 
 #[cfg(test)]
 mod tests {
-    use super::{SqlValue, SqliteFilesError, Statement};
+    use super::{
+        DatabaseSchema, MAX_SCHEMA_BYTES, MAX_SCHEMA_STATEMENTS, SqlValue, SqliteFilesError,
+        Statement,
+    };
+
+    #[test]
+    fn a_schema_crosses_json_as_its_statements_and_keeps_to_its_limits() {
+        let schema = DatabaseSchema::new(vec!["CREATE TABLE parts (name TEXT)".to_owned()]);
+
+        let json = serde_json::to_value(&schema).unwrap();
+        assert_eq!(json, serde_json::json!(["CREATE TABLE parts (name TEXT)"]));
+        assert_eq!(
+            serde_json::from_value::<DatabaseSchema>(json).unwrap(),
+            schema
+        );
+        assert!(schema.fits());
+        assert!(!DatabaseSchema::new(vec![String::new(); MAX_SCHEMA_STATEMENTS + 1]).fits());
+        assert!(!DatabaseSchema::new(vec!["x".repeat(MAX_SCHEMA_BYTES + 1)]).fits());
+    }
 
     #[test]
     fn values_cross_json_with_integers_as_text_and_infinity_of_its_own() {

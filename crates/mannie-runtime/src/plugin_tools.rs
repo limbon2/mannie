@@ -50,14 +50,15 @@ use mannie_plugin_sdk::points::tools::{
     ProgramAccess, RemoteCommandAccess, TerminalCommandAccess, Tool as SdkTool, ToolAccess,
     ToolArchive, ToolCall, ToolEffect, ToolExecution, ToolOffering, ToolSpec, Tools, is_tool_name,
 };
-use mannie_plugin_sdk::services::sqlite_files::Statement;
+use mannie_plugin_sdk::services::sqlite_files::{SqliteFilesError, Statement, WorkerDatabase};
 use mannie_plugin_sdk::services::terminals::{ExpectedHost, TerminalHostRef};
-use mannie_store::dbfiles::{self, RegistryError};
+use mannie_store::dbfiles::{self, EngineError, RegistryError};
 use mannie_tools::{
     ArchivedOutput, Availability, Done, Execution, FolderError, PermissionClass, PrepareError,
     Prepared, Tool, ToolContext, ToolRegistry, plugin_path_access, stopped, takes_activity,
     workspace_folder,
 };
+use mannie_types::ceiling::CeilingMode;
 use mannie_types::context::Attachment;
 use mannie_types::ids::{ArchiveId, DatabaseKey};
 use mannie_types::tools::{
@@ -71,7 +72,9 @@ use crate::Runtime;
 use crate::agents::{AgentDefinition, EXPLORE_AGENT, Requester};
 use crate::attachments;
 use crate::plugins::Snapshot;
-use crate::sqlite_files::{engine_error, engine_values, parameters_digest};
+use crate::sqlite_files::{
+    checked_worker_database, engine_error, engine_values, parameters_digest,
+};
 use crate::tasks::TASK_TOOLS;
 use crate::texts;
 
@@ -645,12 +648,16 @@ impl Tool for PluginToolAdapter {
             stop,
             part_id,
             activity,
+            decision,
             ..
         } = execution;
         let limit = context.result_limit;
         let reserved: Vec<ArchiveId> = (0..MAX_TOOL_ARCHIVES)
             .map(|_| (context.archive_ids)())
             .collect();
+        let origin = part_id
+            .clone()
+            .map(|part| (context.conversation_id.clone(), part));
         let ticket = part_id.and_then(|part_id| {
             self.runtime.issue_background_ticket(
                 &self.plugin,
@@ -661,9 +668,13 @@ impl Tool for PluginToolAdapter {
                 &accesses,
             )
         });
-        let database_ticket =
-            self.runtime
-                .issue_database_ticket(&self.plugin, self.feature.as_deref(), &accesses);
+        let database_ticket = self.runtime.issue_database_ticket(
+            &self.plugin,
+            self.feature.as_deref(),
+            &accesses,
+            decision,
+            origin,
+        );
         let mut tool_execution = ToolExecution::new(arguments, context.conversation_id)
             .with_authorized(sdk_accesses(&accesses))
             .with_result_limit(u32::try_from(limit).unwrap_or(u32::MAX))
@@ -678,6 +689,7 @@ impl Tool for PluginToolAdapter {
         }
         let running = self.tool.execute(tool_execution);
         let plugin = self.plugin.clone();
+        let side_effects = self.effect == ToolEffect::SideEffects;
         async move {
             // The tickets are good while the call executes.
             let _ticket = ticket;
@@ -690,12 +702,20 @@ impl Tool for PluginToolAdapter {
                     let archives = kept_archives(&plugin, &reserved, result.archives);
                     let data = card_data(&plugin, result.data);
                     let failure = result.failure.map(|code| kept_code(&plugin, code));
+                    // Only an operation can have taken effect without its
+                    // answer; a read that lost its answer just failed.
+                    let uncertain = side_effects && result.uncertain;
                     // The run checks and cleans the images when it completes
                     // the call, as it does every tool's (ADR-0044).
                     let images = result.images.into_iter().map(|image| image.data).collect();
                     let cited = attachments::kept_cited(&plugin, result.cited);
                     Done {
-                        outcome: ToolOutcome::Plugin { plugin, data, failure },
+                        outcome: ToolOutcome::Plugin {
+                            plugin,
+                            data,
+                            failure,
+                            uncertain,
+                        },
                         output: within_limit(result.output, limit),
                         archives,
                         images,
@@ -829,6 +849,7 @@ fn core_accesses(
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ResolvedDatabase {
     name: String,
+    home: DatabaseHome,
     identity: String,
     class: StatementClass,
     parameters: Vec<String>,
@@ -850,7 +871,8 @@ fn database_refused(plugin: &str, code: &str, detail: String, limit: usize) -> P
 /// a database that is not registered, a file that changed, a statement that
 /// SQLite refuses, a write in a tool that reads, a read in a tool that
 /// changes and a write to a database that the owner marked read-only end
-/// the call with what the model reads.
+/// the call with what the model reads. A statement on a worker's database
+/// is resolved from what the worker reported ([`resolved_on_workers`]).
 async fn resolved_databases(
     runtime: &Runtime,
     plugin: &str,
@@ -858,13 +880,13 @@ async fn resolved_databases(
     accesses: &[ToolAccess],
     limit: usize,
 ) -> Result<ResolvedDatabases, PrepareError> {
-    let mut resolved = HashMap::new();
+    let mut resolved = resolved_on_workers(plugin, effect, accesses, limit).await?;
     for access in accesses {
         let ToolAccess::Database(database) = access else {
             continue;
         };
         let entry = (database.key.clone(), database.statement.clone());
-        if resolved.contains_key(&entry) {
+        if database.worker.is_some() || resolved.contains_key(&entry) {
             continue;
         }
         let registration = match runtime.inner.store.db_file(plugin, &database.key).await {
@@ -926,6 +948,7 @@ async fn resolved_databases(
             entry,
             ResolvedDatabase {
                 name: registration.name,
+                home: DatabaseHome::ThisComputer,
                 identity: registration.identity,
                 class,
                 parameters,
@@ -934,6 +957,163 @@ async fn resolved_databases(
         );
     }
     Ok(resolved)
+}
+
+/// A database on a worker's host that a call names, with its statements
+/// in their order, each once.
+struct OnWorker {
+    key: DatabaseKey,
+    database: WorkerDatabase,
+    statements: Vec<Statement>,
+}
+
+/// The statements of a call on workers' databases, resolved from what each
+/// worker reported (ADR-0057, decision 6): each database's statements are
+/// classified against the copy of its schema, made once (ADR-0056,
+/// decision 6), and a write on a read-only host is refused, as the host
+/// would refuse it, besides what [`check_class`] refuses. What a worker
+/// reported that breaks the core's limits, a key that the call names both
+/// on a worker and on this computer, and two accounts of one database end
+/// the call.
+async fn resolved_on_workers(
+    plugin: &str,
+    effect: ToolEffect,
+    accesses: &[ToolAccess],
+    limit: usize,
+) -> Result<ResolvedDatabases, PrepareError> {
+    let facts_refused = || {
+        database_refused(
+            plugin,
+            "database_worker_facts",
+            texts::DATABASE_WORKER_FACTS.to_owned(),
+            limit,
+        )
+    };
+    let mut groups: Vec<OnWorker> = Vec::new();
+    for access in accesses {
+        let ToolAccess::Database(access) = access else {
+            continue;
+        };
+        let Some(database) = &access.worker else {
+            continue;
+        };
+        match groups.iter_mut().find(|group| group.key == access.key) {
+            Some(group) if group.database != *database => return Err(facts_refused()),
+            Some(group) => {
+                if !group.statements.contains(&access.statement) {
+                    group.statements.push(access.statement.clone());
+                }
+            }
+            None => groups.push(OnWorker {
+                key: access.key.clone(),
+                database: database.clone(),
+                statements: vec![access.statement.clone()],
+            }),
+        }
+    }
+    let named_here = accesses.iter().any(|access| match access {
+        ToolAccess::Database(access) => {
+            access.worker.is_none() && groups.iter().any(|group| group.key == access.key)
+        }
+        _other => false,
+    });
+    if named_here {
+        return Err(facts_refused());
+    }
+    let mut resolved = HashMap::new();
+    for group in groups {
+        resolve_on_worker(plugin, effect, group, limit, &mut resolved).await?;
+    }
+    Ok(resolved)
+}
+
+/// Resolves the statements of one worker's database into `resolved`.
+async fn resolve_on_worker(
+    plugin: &str,
+    effect: ToolEffect,
+    group: OnWorker,
+    limit: usize,
+    resolved: &mut ResolvedDatabases,
+) -> Result<(), PrepareError> {
+    let OnWorker {
+        key,
+        database,
+        statements,
+    } = group;
+    if let Err(failure) = checked_worker_database(&database) {
+        let (code, detail) = match failure {
+            SqliteFilesError::SchemaTooLarge => (
+                "database_schema_too_large",
+                texts::DATABASE_SCHEMA_TOO_LARGE,
+            ),
+            _other => ("database_worker_facts", texts::DATABASE_WORKER_FACTS),
+        };
+        return Err(database_refused(plugin, code, detail.to_owned(), limit));
+    }
+    if statements
+        .iter()
+        .any(|statement| engine_values(&statement.parameters).is_err())
+    {
+        return Err(database_refused(
+            plugin,
+            "database_invalid_value",
+            texts::DATABASE_INVALID_VALUE.to_owned(),
+            limit,
+        ));
+    }
+    let schema = database.schema.clone();
+    let texts: Vec<String> = statements
+        .iter()
+        .map(|statement| statement.text.clone())
+        .collect();
+    let statement_refused = |error: EngineError| {
+        database_refused(
+            plugin,
+            "database_statement_refused",
+            texts::database_statement_refused(&engine_error(error)),
+            limit,
+        )
+    };
+    let classes =
+        dbfiles::run(move |_cancel| dbfiles::classify_all_on_schema(schema.statements(), &texts))
+            .await
+            .map_err(statement_refused)?;
+    let home = DatabaseHome::Worker {
+        worker: database.host.worker.clone(),
+        name: database.host.name.clone(),
+        mode: database.host.mode,
+        accepts_full_access: database.host.accepts_full_access,
+    };
+    for (statement, class) in statements.into_iter().zip(classes) {
+        let class = class.map_err(statement_refused)?;
+        check_class(plugin, effect, class, database.read_only, limit)?;
+        if class != StatementClass::Read && database.host.mode == CeilingMode::ReadOnly {
+            return Err(database_refused(
+                plugin,
+                "database_read_only_host",
+                texts::DATABASE_READ_ONLY_HOST.to_owned(),
+                limit,
+            ));
+        }
+        let parameters = statement
+            .parameters
+            .iter()
+            .take(MAX_VIEW_PARAMETERS)
+            .map(|value| value.display(MAX_VIEW_PARAMETER_CHARS))
+            .collect();
+        resolved.insert(
+            (key.clone(), statement.clone()),
+            ResolvedDatabase {
+                name: database.name.clone(),
+                home: home.clone(),
+                identity: database.identity.clone(),
+                class,
+                parameters,
+                parameters_digest: parameters_digest(&statement.parameters),
+            },
+        );
+    }
+    Ok(())
 }
 
 /// Refuses a statement that the tool may not run: a write in a tool that
@@ -975,7 +1155,7 @@ fn database_access(
         plugin: plugin.to_owned(),
         key: database.key,
         name: resolved.name.clone(),
-        home: DatabaseHome::ThisComputer,
+        home: resolved.home.clone(),
         identity: resolved.identity.clone(),
         statement: database.statement.text,
         statement_cut: false,
@@ -1281,6 +1461,7 @@ fn refused(plugin: &str, detail: String, code: Option<String>, limit: usize) -> 
                 plugin: plugin.to_owned(),
                 data: None,
                 failure: Some(code),
+                uncertain: false,
             },
             output: within_limit(detail, limit),
             archives: Vec::new(),
@@ -2002,6 +2183,7 @@ mod tests {
                     plugin: "shell".to_owned(),
                     data: None,
                     failure: Some("not_a_repository".to_owned()),
+                    uncertain: false,
                 },
                 output: "This folder is not in a repository.".to_owned(),
                 archives: Vec::new(),

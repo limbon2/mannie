@@ -173,6 +173,7 @@ async fn a_features_tool_runs_while_the_feature_is_on_as_a_tool_of_its_plugin() 
             plugin: PLUGIN.to_owned(),
             data: None,
             failure: None,
+            uncertain: false,
         }
     );
     assert_eq!(*recall.executions.lock().unwrap(), 1);

@@ -44,7 +44,7 @@ use crate::contracts::{
 use crate::contributions::{ExtensionPoint, IdRule};
 use crate::points::context::ContextItem;
 use crate::services::background_commands::BackgroundTicket;
-use crate::services::sqlite_files::{DatabaseTicket, Statement};
+use crate::services::sqlite_files::{DatabaseTicket, Statement, WorkerDatabase};
 use crate::services::terminals::{ExpectedHost, TerminalHostRef};
 
 /// The point of plugins' tools, whose entries are [`PluginTool`]s named by
@@ -199,7 +199,10 @@ pub enum ToolAccess {
 /// itself and decides on every field: an approval covers this statement with
 /// these parameters on this file, a grant the same statement on the same
 /// database with any parameters, and a file that a program replaced since
-/// sends the call back to the policy.
+/// sends the call back to the policy. A statement on a worker's database
+/// names what the worker reported of it, whose schema the core classifies
+/// the statement against and whose host the policy narrows its decision to
+/// (ADR-0057, decision 6).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
@@ -212,6 +215,10 @@ pub struct DatabaseAccess {
     /// it authorized; a tool leaves it out when it prepares.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub class: Option<StatementClass>,
+    /// The database on a worker's host that the statement runs on, as the
+    /// worker reported it, or `None` for a database on this computer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker: Option<WorkerDatabase>,
 }
 
 impl DatabaseAccess {
@@ -221,7 +228,15 @@ impl DatabaseAccess {
             key,
             statement,
             class: None,
+            worker: None,
         }
+    }
+
+    /// The same statement, on a database of a worker's host.
+    #[must_use]
+    pub fn on_worker(mut self, database: WorkerDatabase) -> Self {
+        self.worker = Some(database);
+        self
     }
 
     /// The same statement, of the class that the core read from SQLite.
@@ -933,6 +948,12 @@ pub struct ToolResult {
     /// and the transcript's citations show them after their source is gone.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cited: Vec<CitedItem>,
+    /// Whether the plugin lost the answer of the call's operation, such as
+    /// when the link to the machine that ran a write dropped before its
+    /// answer, so the operation may have taken effect (ADR-0057, decision
+    /// 8). The core makes the call of a tool with side effects uncertain.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub uncertain: bool,
 }
 
 /// The most items that one result cites.
@@ -976,7 +997,16 @@ impl ToolResult {
             failure: None,
             images: Vec::new(),
             cited: Vec::new(),
+            uncertain: false,
         }
+    }
+
+    /// The same result, of an operation whose answer the plugin lost, which
+    /// may have taken effect.
+    #[must_use]
+    pub fn with_lost_answer(mut self) -> Self {
+        self.uncertain = true;
+        self
     }
 
     /// The same result, with the items that its output cites.

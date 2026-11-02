@@ -29,11 +29,20 @@ const FAIL: &str = "UPDATE dbfiles_operations SET state = 'failed', failure = ?2
      WHERE id = ?1 AND state = 'executing'";
 const RECOVER: &str = "UPDATE dbfiles_operations SET state = 'uncertain', updated_at = ?1 \
      WHERE state = 'executing'";
+const UNCERTAIN: &str = "UPDATE dbfiles_operations SET state = 'uncertain', updated_at = ?2 \
+     WHERE id = ?1 AND state = 'executing'";
 const SELECT_STATE: &str = "SELECT state FROM dbfiles_operations WHERE id = ?1";
 
 #[cfg(test)]
-pub(crate) const STATEMENTS: &[&str] =
-    &[INSERT, SELECT_EXISTS, COMPLETE, FAIL, RECOVER, SELECT_STATE];
+pub(crate) const STATEMENTS: &[&str] = &[
+    INSERT,
+    SELECT_EXISTS,
+    COMPLETE,
+    FAIL,
+    RECOVER,
+    UNCERTAIN,
+    SELECT_STATE,
+];
 
 /// An owner operation before it runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -172,6 +181,22 @@ impl Store {
         let now = self.clock().now().as_millis();
         self.write(Durability::Full, move |transaction| {
             transaction.execute(FAIL, params![id, code, now])?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// Records that an owner operation may have taken effect without its
+    /// outcome reaching Mannie, such as a write on a worker's database whose
+    /// answer the link lost (ADR-0057, decision 8). It never runs again.
+    pub async fn mark_db_operation_uncertain(
+        &self,
+        id: &DatabaseOperationId,
+    ) -> Result<(), StoreError> {
+        let id = id.to_string();
+        let now = self.clock().now().as_millis();
+        self.write(Durability::Full, move |transaction| {
+            transaction.execute(UNCERTAIN, params![id, now])?;
             Ok(())
         })
         .await
