@@ -42,6 +42,15 @@ function literal(text: string): string {
   return `'${text}'`;
 }
 
+/** How a test worker is configured. */
+export interface TestWorkerOptions {
+  /**
+   * Whether its configuration allows the master's requests on the databases
+   * of its host (ADR-0057, decision 2), in an allowed folder of their own.
+   */
+  databases?: boolean;
+}
+
 /** A worker in a temporary folder, which a test starts, stops and starts again. */
 export class TestWorker {
   /** The address that the app pairs with. */
@@ -53,16 +62,27 @@ export class TestWorker {
   readonly name: string;
   readonly #config: string;
   readonly #data: string;
+  /**
+   * The allowed folder for databases, outside the worker's folder: the
+   * worker refuses files in the folder of its configuration (ADR-0057,
+   * decision 3), where the other allowed folder lies.
+   */
+  readonly #databases: string | null;
   #process: ChildProcess | null = null;
 
-  private constructor(folder: string, name: string, port: number) {
+  private constructor(folder: string, name: string, port: number, options: TestWorkerOptions) {
     this.folder = folder;
     this.name = name;
     this.address = `127.0.0.1:${String(port)}`;
     this.allowed = join(folder, 'work');
     this.#data = join(folder, 'data');
     this.#config = join(folder, 'worker.toml');
+    this.#databases =
+      options.databases === true
+        ? realpathSync.native(mkdtempSync(join(tmpdir(), 'mannie-e2e-worker-databases-')))
+        : null;
     mkdirSync(this.allowed, { recursive: true });
+    const allowedFolders = this.#databases === null ? [this.allowed] : [this.allowed, this.#databases];
     writeFileSync(
       this.#config,
       [
@@ -74,17 +94,18 @@ export class TestWorker {
         '',
         '[ceiling]',
         'mode = "ask"',
-        `allowed_folders = [${literal(this.allowed)}]`,
+        `allowed_folders = [${allowedFolders.map(literal).join(', ')}]`,
         '',
+        ...(this.#databases === null ? [] : ['[databases]', 'enabled = true', '']),
       ].join('\n'),
     );
   }
 
   /** A new worker named `name`, started. */
-  static async start(name: string): Promise<TestWorker> {
+  static async start(name: string, options: TestWorkerOptions = {}): Promise<TestWorker> {
     // The folder as the system names it, which is how the worker compares paths.
     const folder = realpathSync.native(mkdtempSync(join(tmpdir(), 'mannie-e2e-worker-')));
-    const worker = new TestWorker(folder, name, await freePort());
+    const worker = new TestWorker(folder, name, await freePort(), options);
     await worker.start();
     return worker;
   }
@@ -99,9 +120,21 @@ export class TestWorker {
     return code;
   }
 
-  /** Deletes the worker's folder; the worker must have stopped. */
+  /** A path in the worker's allowed folder for databases, which its options must allow. */
+  databasePath(file: string): string {
+    if (this.#databases === null) {
+      throw new Error('the worker was started without databases');
+    }
+    return join(this.#databases, file);
+  }
+
+  /** Deletes the worker's folders; the worker must have stopped. */
   remove(): void {
-    rmSync(this.folder, { force: true, maxRetries: 20, recursive: true, retryDelay: 250 });
+    for (const folder of [this.folder, this.#databases]) {
+      if (folder !== null) {
+        rmSync(folder, { force: true, maxRetries: 20, recursive: true, retryDelay: 250 });
+      }
+    }
   }
 
   /** Starts the worker and waits until it opened its store and listens. */

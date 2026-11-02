@@ -6,7 +6,6 @@
 // runs as an owner operation, and a change of the schema runs only after
 // the owner confirmed it.
 import { call } from '@mannie/plugin-sdk/ipc';
-import { SvelteMap } from 'svelte/reactivity';
 
 import { commands, type DatabaseView, type StatementRows } from '../generated/bindings.js';
 import type { DatabasesFailure } from '../types/databases.js';
@@ -135,8 +134,13 @@ export class SqlSession {
   }
 }
 
-/** The sessions by database key. */
-const sessions = new SvelteMap<string, SqlSession>();
+/**
+ * The sessions by database key. The map is not state: each session's fields
+ * are, and the SQL tab gets or adds its session inside a `$derived`, where
+ * Svelte forbids writing state.
+ */
+// eslint-disable-next-line svelte/prefer-svelte-reactivity -- adding a session inside the tab's $derived must write no state
+const sessions = new Map<string, SqlSession>();
 
 /** The SQL tab's session of a database, which starts empty. */
 export function sqlSession(key: string): SqlSession {

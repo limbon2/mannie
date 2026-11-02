@@ -7,6 +7,7 @@
 //! their end, so that a call whose answer was lost has still happened once
 //! and calling it again finds what it did.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 
@@ -26,7 +27,6 @@ use zeroize::Zeroizing;
 use super::{Binding, LeaseVault, WorkerLink};
 use mannie_link::codec::{from_json, refused, refused_with, to_json};
 use mannie_link::host::WorkerDetails;
-use mannie_link::levels;
 use mannie_link::proto::approvals::approvals_service_server::ApprovalsService;
 use mannie_link::proto::approvals::{DecideRequest, DecideResponse};
 use mannie_link::proto::events::events_service_server::EventsService;
@@ -53,6 +53,7 @@ pub(crate) struct Services {
     name: Arc<str>,
     details: Arc<WorkerDetails>,
     version: Arc<str>,
+    levels: Arc<HashMap<String, u32>>,
     binding: Arc<Binding>,
     leases: Arc<LeaseVault>,
     /// The databases of the host (ADR-0057).
@@ -98,6 +99,7 @@ impl Services {
             name: Arc::from(link.name),
             details: Arc::new(link.details),
             version: Arc::from(link.version),
+            levels: Arc::new(link.levels),
             binding,
             leases: link.leases,
             databases: link.databases,
@@ -116,7 +118,7 @@ impl SessionService for Services {
         tracing::info!(master_version = %hello.version, "the master connected");
         Ok(Response::new(HelloResponse {
             version: self.version.to_string(),
-            levels: levels::levels(),
+            levels: self.levels.as_ref().clone(),
             name: self.name.to_string(),
             details_json: to_json(&*self.details)?,
         }))

@@ -196,6 +196,7 @@ impl Worker {
                 databases: config.databases_enabled,
             },
             version: VERSION.to_owned(),
+            levels: mannie_link::levels::levels(),
             data: data_directory.clone(),
             leases,
             clock,

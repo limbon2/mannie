@@ -4,6 +4,7 @@
 //! a key of its own (plugins/workers/docs/pairing-and-link.md, acceptance).
 //! The master's side of the tests is [`crate::master`].
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -36,6 +37,9 @@ pub struct LinkedWorkerOptions {
     pub worker: WorkerOptions,
     /// The version that the worker says it runs.
     pub version: String,
+    /// The feature levels that the worker says it speaks: this version's by
+    /// default, and an older version's for a test of compatibility.
+    pub levels: HashMap<String, u32>,
     /// How the worker's configuration takes the master's requests on the
     /// databases of its host, inside the harness's allowed folder, or
     /// `None`, by default, for a configuration that does not allow them.
@@ -56,6 +60,7 @@ impl Default for LinkedWorkerOptions {
         Self {
             worker: WorkerOptions::default(),
             version: env!("CARGO_PKG_VERSION").to_owned(),
+            levels: levels::levels(),
             databases: None,
         }
     }
@@ -140,6 +145,7 @@ impl LinkedWorker {
                 databases: options.databases.is_some(),
             },
             version: options.version,
+            levels: options.levels,
             data: harness.data_folder(),
             leases: Arc::clone(&leases),
             clock: Arc::new(SystemClock),
@@ -374,6 +380,6 @@ impl Drop for KeyInTheMiddle {
 }
 
 /// This version's levels, for tests that simulate another version.
-pub fn current_levels() -> std::collections::HashMap<String, u32> {
+pub fn current_levels() -> HashMap<String, u32> {
     levels::levels()
 }

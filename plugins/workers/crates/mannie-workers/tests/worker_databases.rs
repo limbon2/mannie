@@ -5,8 +5,10 @@
 //! runs the owner's change once, journaled on both machines; agents read it
 //! without asking, and a write asks with only Allow once on an ask host and
 //! runs under a grant on an autonomous one; a worker whose configuration
-//! does not allow databases refuses them; an offline worker's databases stay
-//! listed and its requests fail; and removing the worker forgets them.
+//! does not allow databases refuses them; a worker whose version lacks the
+//! package stays connected and needs an update; an offline worker's
+//! databases stay listed and its requests fail; and removing the worker
+//! forgets them.
 
 #![cfg(test)]
 
@@ -47,11 +49,16 @@ struct Setup {
 impl Setup {
     /// A worker whose configuration takes databases as `databases` says.
     async fn new(databases: Option<WorkerDatabases>) -> Self {
-        let worker = LinkedWorker::with_options(LinkedWorkerOptions {
+        Self::with_options(LinkedWorkerOptions {
             databases,
             ..LinkedWorkerOptions::default()
         })
-        .await;
+        .await
+    }
+
+    /// A worker with these options.
+    async fn with_options(options: LinkedWorkerOptions) -> Self {
+        let worker = LinkedWorker::with_options(options).await;
         let secrets: Arc<dyn ServiceProvider> = Arc::new(FakeSecrets::new());
         let options = HostOptions::new()
             .with_core(HarnessOptions {
@@ -330,6 +337,26 @@ async fn the_worker_refuses_a_path_outside_its_allowed_folders_and_a_host_withou
     let path = without.database("parts.db");
     let refused = without.add(&path, "Parts").await.unwrap_err();
     assert_eq!(failure_code(&refused), "host_refused.no_databases_on_host");
+}
+
+#[tokio::test]
+async fn a_worker_whose_version_lacks_the_package_stays_connected_and_needs_an_update() {
+    let mut levels = mannie_link::levels::levels();
+    levels.remove(mannie_link::levels::DATABASES);
+    let setup = Setup::with_options(LinkedWorkerOptions {
+        levels,
+        databases: Some(WorkerDatabases {
+            mode: CeilingMode::Autonomous,
+            accepts_master_full_access: true,
+        }),
+        ..LinkedWorkerOptions::default()
+    })
+    .await;
+    let path = setup.database("parts.db");
+
+    let refused = setup.add(&path, "Parts").await.unwrap_err();
+
+    assert_eq!(failure_code(&refused), "worker_needs_update");
 }
 
 #[tokio::test]

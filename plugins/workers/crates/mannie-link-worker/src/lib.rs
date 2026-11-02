@@ -9,6 +9,7 @@ mod leases;
 mod pairing;
 mod services;
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -157,6 +158,9 @@ pub struct WorkerLink {
     pub details: WorkerDetails,
     /// The worker's version of Mannie.
     pub version: String,
+    /// The feature level that the worker speaks of each package, which
+    /// `Hello` says: `levels::levels()` for this version.
+    pub levels: HashMap<String, u32>,
     /// The data folder, which holds the master's pin and the pairing code.
     pub data: PathBuf,
     /// The leases of the worker's tasks, which unpairing drops.

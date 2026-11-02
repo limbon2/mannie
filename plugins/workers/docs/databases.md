@@ -29,8 +29,8 @@ The owner wants "first class support for an sqlite database for the harness", so
 
 ### The view
 
-- The sidebar of the Databases view lists the databases grouped by machine, this computer first and then each worker by its name. Each shows its state: available, worker offline, worker needs an update, file missing, file changed, or refused, with the reason.
-- A database opens in the main area with its name, machine, path, size and read-only mark, and four tabs:
+- The sidebar of the Databases view lists the databases grouped by machine, this computer first and then each worker by its name. A worker shows while its configuration allows databases or the list has databases on it, and its "+" adds a database on it while it is connected. Each database shows its state when it cannot run statements: worker offline, worker needs an update, not allowed on the worker, file missing, file changed or file unreadable.
+- A database opens in the main area with its name, its file and machine, and its read-only mark, and four tabs:
   - Tables lists the tables and views. "Count rows" counts a table's rows on request and stops after 10 seconds.
   - Structure shows a table's columns with their types, nullability, defaults and primary key, its indexes, foreign keys and triggers, and its CREATE statement.
   - Data shows a table in pages of 100 rows, in the order of its key or of the column that the owner sorts by. A filter of conditions on columns becomes a parameterized statement. Edit and Insert open a dialog with a field for each column and the kind of value it writes; saving writes only the changed columns, checks the row's old values and says when the row changed since it was read. Delete removes the selected rows after a confirmation. "Copy page as CSV" copies the page.
@@ -92,22 +92,23 @@ None.
 
 - Workers' manifest declares `[features.databases]` with the service `sqlite-files`, so the service is bound only while Databases is on. The feature starts on Workers' running hub, which knows the paired workers and their links.
 - On this computer, every call goes through `sqlite-files`. For a worker's database, the feature calls the worker over the package `databases`, and the worker uses the engine and the journal of `mannie-host-kit`.
-- The feature's work in progress is its running statements, as the item `databases_running`, which the question before turning it off words.
+- The feature's work in progress is the view's running statements, as the item `running_statements`, which the question before turning it off words.
+- The feature routes each request by its database's machine. For a worker's database, a tool's access names what the worker reports of the database, its schema included, which the core classifies the statement against; a write carries the evidence that the core gives from the call's ticket or the owner operation; and the master keeps each worker's list in its store, which it lists again when the worker connects.
 
 ### Contracts
 
 - Tools, offered to conversations and the general child agent, with the two reading tools also for the explore agent:
-  - `describe_database { database }`, with the effect `ReadsDatabases`.
-  - `query_database { database, sql, parameters? }`, with the effect `ReadsDatabases`.
-  - `change_database { database, statements: [{ sql, parameters? }] }`, with the effect `SideEffects`.
-  - Each access is a database access with the class read, write or schema. The refusals carry codes, such as `unknown_database`, `worker_offline`, `worker_needs_update`, `read_only_database`, `not_one_statement`, `busy` and `row_changed`, which the tool kinds word.
-- IPC, as feature commands of Workers: choose, register, rename and forget a database; follow the list of databases; read a schema; browse a table; count rows; run a read; and the owner's writes, a statement, a row edit, an insert and a deletion. Integers and keys travel as text. Their names settle when building starts.
+  - `describe_database { database }`, with the effect `ReadsOwnData`, since it reads only the structure.
+  - `query_database { database, statement, parameters }`, with the effect `ReadsDatabases`.
+  - `change_database { database, statements: [{ statement, parameters }] }`, with the effect `SideEffects`.
+  - Each access is a database access with the class read, write or schema. The refusals carry codes, such as `unknown_database`, `database_unusable`, `worker_offline`, `worker_needs_update`, `read_only_host`, `outside_allowed_folders`, `no_databases_on_host`, `worker_needs_owner`, `worker_answer_lost`, `marked_read_only`, `not_one_statement`, `busy` and `row_changed`, and the core's, such as `database_read_only_host` and `database_statement_refused`, which the tool kinds word. A write whose worker's answer the link lost ends the call uncertain.
+- IPC, as feature commands of Workers: `refresh_databases`, `add_database`, `add_worker_database`, `rename_database`, `mark_database`, `accept_database`, `remove_database`, `database_structure`, `count_database_rows`, `database_page`, `classify_database_statement`, `read_database`, `stop_database_read` and `run_database_change`, and the channel `follow_databases`. Integers and keys travel as text.
 - The link: the package `mannie.link.databases.v1` of [ADR-0057](../../../docs/adr/0057-let-the-master-work-with-the-databases-on-a-workers-host.md), optional, with its documents and fixtures, and `WorkerDetails.databases` in `Hello`.
 
 ### Data
 
 - This computer's registrations and the owner operations live in the core's engine module, `dbfiles` of `mannie-store`, whose tables `dbfiles_registrations` and `dbfiles_operations` no plugin can reach, since the prefix is reserved ([ADR-0056](../../../docs/adr/0056-let-plugins-work-with-the-owners-sqlite-files-through-the-core.md)). A worker keeps its own in its store.
-- Workers' table `workers_databases` holds the copy of each worker's list: the worker, the key, the name, the path for display, the file's identity, the read-only mark, the last known state and when it was read. Removing a worker removes its rows.
+- Workers' table `workers_databases` holds the copy of each worker's list: the worker, the key, the name, the file's name, the file's identity, the read-only mark, the last known state and when it was read. It keeps no path. Removing a worker removes its rows.
 - The owner's choice is `features.workers.databases` in the core's settings section `plugins`.
 
 ### Interface
@@ -130,5 +131,6 @@ None.
 - Registering refuses each kind of file listed above, on this computer and on a worker (the engine's tests, link tests over loopback).
 - The view browses, sorts, filters, edits with an old-value check, inserts, deletes after a confirmation and runs SQL, with a schema statement after a confirmation, from the keyboard with axe passing in both themes on WebView2 and WebKitGTK (the plugin's end-to-end tests against a fixture database).
 - An agent's read runs without asking, a write asks and a grant covers the same statement, a schema change asks despite a grant, and a read-only database refuses writes (runtime and policy tests).
-- On a worker: every row of the ceiling's table, a forged authority refused, a write that a dropped link interrupted runs once, and a worker of the previous release stays connected with its databases needing an update (link and compatibility tests, the owner's checks on Linux and FreeBSD).
+- On a worker: every row of the ceiling's table, a forged authority refused, a write that a dropped link interrupted runs once, and a worker of the previous release stays connected with its databases needing an update (the ceiling's and the host databases' tests, `plugins/workers/crates/mannie-workers/tests/worker_databases.rs` over loopback, the link's level and document tests, the owner's checks on Linux and FreeBSD).
+- The view registers a file on this computer through the dialog, from the keyboard, and on a real worker by its path, shows the tables and rows of both, and shows a worker that stops as offline, with axe passing in both themes (`plugins/workers/tests/e2e/databases.test.ts`).
 - The owner's writes are journaled before they run and become uncertain after a crash (the engine's tests).
