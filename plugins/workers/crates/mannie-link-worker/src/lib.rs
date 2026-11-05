@@ -1,19 +1,21 @@
 //! The worker's side of the link (ADR-0016, ADR-0028; plugins/workers/docs/
 //! pairing-and-link.md): the server, whose connections reach only pairing
 //! until their key is the pinned master's, the services over the runtime's
-//! assigned tasks, the lease vault, and the pin of the master in the data
-//! folder.
+//! assigned tasks and over the databases of the host (ADR-0057), the lease
+//! vault, and the pin of the master in the data folder.
 
+mod databases;
 mod leases;
 mod pairing;
 mod services;
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, PoisonError, RwLock};
 
-use mannie_host_kit::runtime::Runtime;
+use mannie_host_kit::runtime::{HostDatabases, Runtime};
 use mannie_plugin_sdk::contracts::Clock;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
@@ -28,6 +30,7 @@ use mannie_link::codec::MAX_MESSAGE_BYTES;
 use mannie_link::host::WorkerDetails;
 use mannie_link::keys::{KeyError, KeyPin, LinkKey};
 use mannie_link::proto::approvals::approvals_service_server::ApprovalsServiceServer;
+use mannie_link::proto::databases::databases_service_server::DatabasesServiceServer;
 use mannie_link::proto::events::events_service_server::EventsServiceServer;
 use mannie_link::proto::leases::leases_service_server::LeasesServiceServer;
 use mannie_link::proto::pairing::pairing_service_server::PairingServiceServer;
@@ -155,12 +158,18 @@ pub struct WorkerLink {
     pub details: WorkerDetails,
     /// The worker's version of Mannie.
     pub version: String,
+    /// The feature level that the worker speaks of each package, which
+    /// `Hello` says: `levels::levels()` for this version.
+    pub levels: HashMap<String, u32>,
     /// The data folder, which holds the master's pin and the pairing code.
     pub data: PathBuf,
     /// The leases of the worker's tasks, which unpairing drops.
     pub leases: Arc<LeaseVault>,
     /// The clock of the pairing code's lifetime.
     pub clock: Arc<dyn Clock>,
+    /// The databases that the owner registered on the host, which unpairing
+    /// forgets (ADR-0057).
+    pub databases: HostDatabases,
 }
 
 /// Lets only the pinned master past the interceptor; every other key reaches
@@ -246,7 +255,13 @@ pub async fn serve(
             guard.clone(),
         ))
         .add_service(InterceptedService::new(
-            LeasesServiceServer::new(services)
+            LeasesServiceServer::new(services.clone())
+                .max_decoding_message_size(MAX_MESSAGE_BYTES)
+                .max_encoding_message_size(MAX_MESSAGE_BYTES),
+            guard.clone(),
+        ))
+        .add_service(InterceptedService::new(
+            DatabasesServiceServer::new(services)
                 .max_decoding_message_size(MAX_MESSAGE_BYTES)
                 .max_encoding_message_size(MAX_MESSAGE_BYTES),
             guard,

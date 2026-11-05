@@ -34,6 +34,14 @@ exclusive = ["protox", "tonic", "tonic-prost", "tonic-prost-build"]
 [native]
 sockets = "The link speaks gRPC over TLS on sockets of its own: the master's hub connects to its workers, and the link's server listens for the master in the worker."
 
+# Databases (plugins/workers/docs/databases.md): the owner's SQLite files,
+# which its view browses and edits and agents query and change, an optional
+# feature that the owner turns on under Workers (ADR-0055, ADR-0056).
+[features.databases]
+# The owner's SQLite files on this computer, which the owner chooses in the
+# system's file dialog; held only while Databases is on.
+services = { sqlite-files = 1 }
+
 # The worker service (plugins/workers/docs/service.md), which the release
 # ships for Windows, for Linux as a static binary and for FreeBSD.
 [[programs]]

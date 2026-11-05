@@ -90,11 +90,29 @@ impl ChannelSpec for FollowNotesChannel {
     type Error = ExampleError;
 }
 
-/// The plugin's command, its channel and the limit that the UI checks.
+/// The plugin's optional feature (ADR-0055), which counts the notes.
+pub const COUNTS: &str = "counts";
+
+/// `count_notes`: how many notes the plugin kept since it started, a command
+/// of the feature `counts`.
+#[derive(Debug)]
+pub enum CountNotesCommand {}
+
+impl CommandSpec for CountNotesCommand {
+    const NAME: &'static str = "count_notes";
+    const DOCS: &'static str = "How many notes the plugin kept since it started.";
+    type Input = ();
+    type Output = u32;
+    type Error = ExampleError;
+}
+
+/// The plugin's command, its channel, the command of its feature and the
+/// limit that the UI checks.
 pub fn interface() -> Interface {
     Interface::new()
         .command::<AddNoteCommand>()
         .channel::<FollowNotesChannel>()
+        .feature(COUNTS, Interface::command::<CountNotesCommand>)
         .constant(
             "MAX_NOTE_CHARACTERS",
             "The longest note that the plugin keeps, in characters.",

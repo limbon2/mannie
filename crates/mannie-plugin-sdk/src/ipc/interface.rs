@@ -50,6 +50,9 @@ pub struct Endpoint {
         expect(dead_code, reason = "only the bindings exporter reads the types")
     )]
     pub(crate) error_name: &'static str,
+    /// The optional feature that the endpoint belongs to, or `None` for one
+    /// of the plugin itself (ADR-0055, decision 5).
+    pub feature: Option<&'static str>,
 }
 
 impl fmt::Debug for Endpoint {
@@ -58,6 +61,7 @@ impl fmt::Debug for Endpoint {
             .debug_struct("Endpoint")
             .field("name", &self.name)
             .field("max_input_bytes", &self.max_input_bytes)
+            .field("feature", &self.feature)
             .finish_non_exhaustive()
     }
 }
@@ -116,7 +120,29 @@ impl Interface {
             output: <C::Output as specta::Type>::definition,
             error: <C::Error as specta::Type>::definition,
             error_name: std::any::type_name::<C::Error>(),
+            feature: None,
         });
+        self
+    }
+
+    /// The interface with the commands, channels and constants that `build`
+    /// adds to an empty interface, the commands and channels as those of the
+    /// optional feature `feature` (ADR-0055, decision 5). Features do not
+    /// nest, so this names every endpoint that `build` adds. The host refuses
+    /// them with `feature_off` while the feature is off, and the feature's
+    /// start hands their handlers.
+    #[must_use]
+    pub fn feature(mut self, feature: &'static str, build: impl FnOnce(Self) -> Self) -> Self {
+        let part = build(Self::new());
+        let of_feature = |endpoint: Endpoint| Endpoint {
+            feature: Some(feature),
+            ..endpoint
+        };
+        self.commands
+            .extend(part.commands.into_iter().map(of_feature));
+        self.channels
+            .extend(part.channels.into_iter().map(of_feature));
+        self.constants.extend(part.constants);
         self
     }
 
@@ -131,6 +157,7 @@ impl Interface {
             output: <C::Item as specta::Type>::definition,
             error: <C::Error as specta::Type>::definition,
             error_name: std::any::type_name::<C::Error>(),
+            feature: None,
         });
         self
     }
@@ -183,6 +210,43 @@ impl Interface {
     pub fn channel_names(&self) -> Vec<&'static str> {
         self.channels.iter().map(|endpoint| endpoint.name).collect()
     }
+
+    /// The feature that the command `name` belongs to, or `None` for a
+    /// command of the plugin itself or one that the interface lacks.
+    pub fn command_feature(&self, name: &str) -> Option<&'static str> {
+        feature_of(&self.commands, name)
+    }
+
+    /// The feature that the channel `name` belongs to, or `None` for a
+    /// channel of the plugin itself or one that the interface lacks.
+    pub fn channel_feature(&self, name: &str) -> Option<&'static str> {
+        feature_of(&self.channels, name)
+    }
+
+    /// The features that the commands and channels name, each once, in the
+    /// order of their first endpoint.
+    pub fn features(&self) -> Vec<&'static str> {
+        let mut features = Vec::new();
+        for feature in self
+            .commands
+            .iter()
+            .chain(&self.channels)
+            .filter_map(|endpoint| endpoint.feature)
+        {
+            if !features.contains(&feature) {
+                features.push(feature);
+            }
+        }
+        features
+    }
+}
+
+/// The feature of the endpoint `name` among `endpoints`.
+fn feature_of(endpoints: &[Endpoint], name: &str) -> Option<&'static str> {
+    endpoints
+        .iter()
+        .find(|endpoint| endpoint.name == name)
+        .and_then(|endpoint| endpoint.feature)
 }
 
 #[cfg(test)]
@@ -257,6 +321,42 @@ mod tests {
         assert_eq!(interface.constants()[0].docs, "The longest note.");
         assert_eq!(interface.constants()[0].value, serde_json::json!(200));
         assert_eq!(NotesError::TooLong.code(), "notes.too_long");
+    }
+
+    enum FollowHistory {}
+
+    impl ChannelSpec for FollowHistory {
+        const NAME: &'static str = "follow_history";
+        const DOCS: &'static str = "Follows the history.";
+        type Input = ();
+        type Item = Vec<String>;
+        type Error = NotesError;
+    }
+
+    #[test]
+    fn a_features_commands_and_channels_name_it_and_the_plugins_name_none() {
+        let interface = Interface::new()
+            .command::<AddNote>()
+            .feature("history", |feature| {
+                feature.channel::<FollowHistory>().constant(
+                    "MAX_HISTORY",
+                    "The longest history.",
+                    50_u32,
+                )
+            })
+            .channel::<FollowNotes>();
+
+        assert_eq!(interface.command_names(), ["add_note"]);
+        assert_eq!(
+            interface.channel_names(),
+            ["follow_history", "follow_notes"]
+        );
+        assert_eq!(interface.command_feature("add_note"), None);
+        assert_eq!(interface.channel_feature("follow_history"), Some("history"));
+        assert_eq!(interface.channel_feature("follow_notes"), None);
+        assert_eq!(interface.channel_feature("unknown"), None);
+        assert_eq!(interface.features(), ["history"]);
+        assert_eq!(interface.constants()[0].name, "MAX_HISTORY");
     }
 
     #[test]

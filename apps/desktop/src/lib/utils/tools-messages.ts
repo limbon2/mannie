@@ -6,6 +6,7 @@
 import type {
   AccessMode,
   ApprovalReason,
+  DatabaseHome,
   Decision,
   DiscardedWork,
   EntryCount,
@@ -16,13 +17,14 @@ import type {
   ProgramEffect,
   ProgramEffectKey,
   Refusal,
+  StatementClass,
   TerminalTarget,
   ToolFailure,
   ToolHint,
   ToolServerEndpoint,
 } from '#lib/generated/bindings.js';
 import { m } from '#lib/paraglide/messages.js';
-import { pluginName } from '#lib/state/plugin-catalog.js';
+import { featureName, pluginName } from '#lib/state/plugin-catalog.js';
 import type { ToolsFailure } from '#lib/types/tools.js';
 
 const BYTE_UNITS = ['byte', 'kilobyte', 'megabyte', 'gigabyte'] as const;
@@ -277,6 +279,15 @@ export function notRunMessage(reason: NotRunReason): string {
       return m.tools_not_run_over_budget();
     }
     case 'plugin_off': {
+      // The owner turned off the tool's feature, and the plugin stayed on
+      // (ADR-0055, decision 7). Records before features have none.
+      const feature = reason.feature ?? null;
+      if (feature !== null) {
+        return m.tools_not_run_feature_off({
+          feature: featureName(reason.plugin, feature),
+          plugin: pluginName(reason.plugin),
+        });
+      }
       return m.tools_not_run_plugin_off({ plugin: pluginName(reason.plugin) });
     }
     case 'refused': {
@@ -296,6 +307,9 @@ export function refusalMessage(refusal: Refusal): string {
   switch (refusal) {
     case 'no_programs_on_host': {
       return m.tools_refusal_no_programs_on_host();
+    }
+    case 'no_databases': {
+      return m.tools_refusal_no_databases();
     }
     case 'no_external_tools': {
       return m.tools_refusal_no_external_tools();
@@ -323,6 +337,12 @@ export function approvalReasonMessage(reason: ApprovalReason): string {
     }
     case 'command': {
       return m.tools_reason_command();
+    }
+    case 'database_schema': {
+      return m.tools_reason_database_schema();
+    }
+    case 'database_write': {
+      return m.tools_reason_database_write();
     }
     case 'external_tool': {
       return m.tools_reason_external_tool();
@@ -399,6 +419,9 @@ export function decisionMessage(decision: Decision): string {
     case 'project_grant': {
       return m.tools_decision_project_grant();
     }
+    case 'registered_database': {
+      return m.tools_decision_registered_database();
+    }
     case 'rule': {
       return m.tools_decision_rule();
     }
@@ -429,23 +452,60 @@ export function accessModeLabel(mode: AccessMode): string {
   }
 }
 
+/** What a statement on a registered database does, as a short label. */
+export function statementClassLabel(statementClass: StatementClass): string {
+  switch (statementClass) {
+    case 'read': {
+      return m.tools_access_database_read();
+    }
+    case 'schema': {
+      return m.tools_access_database_schema();
+    }
+    case 'write': {
+      return m.tools_access_database_write();
+    }
+  }
+}
+
+/** The computer where a registered database lives: this computer or a worker's host, by the worker's name (ADR-0056, decision 2; ADR-0057). */
+export function databaseHomeText(home: DatabaseHome): string {
+  switch (home.kind) {
+    case 'this_computer': {
+      return m.tools_access_database_this_computer();
+    }
+    case 'worker': {
+      return m.tools_access_database_worker({ name: home.name });
+    }
+  }
+}
+
 /** What a recursive delete removes inside a folder, such as "3 files and 2 folders". */
 export function entryCountMessage(entries: EntryCount): string {
   const counts = [m.tools_count_files({ count: entries.files }), m.tools_count_folders({ count: entries.folders })];
   return new Intl.ListFormat(undefined, { type: 'conjunction' }).format(counts);
 }
 
-/** Why an operation that was executing may have taken effect: Mannie quit, the owner stopped it, or its plugin went off. */
+/** Why an operation that was executing may have taken effect: Mannie quit, the owner stopped it, its plugin went off, or its plugin lost the answer. */
 export function uncertainMessage(interruption: Interruption | null): string {
   if (interruption === null) {
     return m.tools_uncertain_description();
   }
   switch (interruption.reason) {
     case 'plugin_off': {
+      const feature = interruption.feature ?? null;
+      if (feature !== null) {
+        return m.tools_uncertain_feature_off_description({
+          feature: featureName(interruption.plugin, feature),
+          plugin: pluginName(interruption.plugin),
+        });
+      }
       return m.tools_uncertain_plugin_off_description({ plugin: pluginName(interruption.plugin) });
     }
     case 'stopped': {
       return m.tools_uncertain_stopped_description();
+    }
+    case 'answer_lost': {
+      return m.tools_uncertain_answer_lost_description();
     }
   }
 }
@@ -611,6 +671,9 @@ export function terminalRulePlace(target: TerminalTarget): string {
 export function grantScopeMessage(scope: GrantScope): string {
   if (scope.kind === 'command') {
     return m.tools_grant_command({ command: scope.command, folder: scope.workingDirectory });
+  }
+  if (scope.kind === 'database') {
+    return m.tools_grant_database({ database: scope.name, statement: scope.statement });
   }
   if (scope.kind === 'external_tool') {
     return m.tools_grant_external_tool({

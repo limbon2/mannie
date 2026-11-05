@@ -3,7 +3,7 @@
 // off does to its work. The UI shows the catalog's message for a code and
 // never the core's description; a plugin names its own start failures and
 // words its own work, and the core words the work that a plugin handed it.
-import type { PluginsError, PluginView, WorkItem } from '#lib/generated/bindings.js';
+import type { FeatureView, PluginsError, PluginView, WorkItem } from '#lib/generated/bindings.js';
 import { m } from '#lib/paraglide/messages.js';
 import { findPlugin } from '#lib/state/plugin-catalog.js';
 import type { Failure } from '#lib/types/calls.js';
@@ -58,6 +58,9 @@ export function pluginsFailureMessage(failure: Failure<PluginsError>): string {
     case 'store_unavailable': {
       return m.plugins_error_store_unavailable();
     }
+    case 'unknown_feature': {
+      return m.plugins_error_unknown_feature();
+    }
     case 'unknown_plugin': {
       return m.plugins_error_unknown_plugin();
     }
@@ -73,6 +76,9 @@ export function pluginStartFailureMessage(id: string, code: string): string {
   switch (code) {
     case 'contributions_refused': {
       return m.plugins_failure_contributions_refused();
+    }
+    case 'feature_unknown': {
+      return m.plugins_failure_feature_unknown();
     }
     case 'grant_missing': {
       return m.plugins_failure_grant_missing();
@@ -148,6 +154,33 @@ export function pluginStateMessage(view: PluginView): string | null {
   switch (view.state) {
     case 'failed': {
       const cause = pluginStartFailureMessage(view.id, view.failure ?? '');
+      return m.plugins_state_failed({ cause });
+    }
+    case 'off':
+    case 'on': {
+      return null;
+    }
+    case 'starting': {
+      return m.plugins_state_starting();
+    }
+    case 'stopping': {
+      return m.plugins_state_stopping();
+    }
+  }
+}
+
+/**
+ * What the Plugins page says under an optional feature of a plugin: that it
+ * works only while its plugin is on, which also says why its switch is
+ * disabled; otherwise when it starts, stops or failed, as for a plugin.
+ */
+export function featureStateMessage(plugin: PluginView, feature: FeatureView, pluginName: string): string | null {
+  if (plugin.state !== 'on') {
+    return m.plugins_feature_needs_plugin({ name: pluginName });
+  }
+  switch (feature.state) {
+    case 'failed': {
+      const cause = pluginStartFailureMessage(plugin.id, feature.failure ?? '');
       return m.plugins_state_failed({ cause });
     }
     case 'off':

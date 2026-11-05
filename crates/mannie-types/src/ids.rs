@@ -93,6 +93,18 @@ uuid_id!(
     ConversationId
 );
 uuid_id!(
+    /// Identifies a SQLite file that the owner registered for a plugin,
+    /// which the plugin and its view use in place of the file's path
+    /// (ADR-0056, decision 2).
+    DatabaseKey
+);
+uuid_id!(
+    /// Identifies an owner operation on a registered database, which the
+    /// journal records before it runs and never runs twice (ADR-0056,
+    /// decision 8).
+    DatabaseOperationId
+);
+uuid_id!(
     /// Identifies a turn: one request and the agent's response to it.
     TurnId
 );

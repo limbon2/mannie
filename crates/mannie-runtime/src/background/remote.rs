@@ -19,6 +19,7 @@ use futures_util::future::BoxFuture;
 use futures_util::stream::BoxStream;
 use futures_util::{FutureExt, StreamExt};
 use mannie_plugin_sdk::host::{BindRefusal, PluginBinding, ServiceProvider};
+use mannie_plugin_sdk::ids::{Contributor, FeatureId};
 use mannie_plugin_sdk::service::{BoundService, Service};
 use mannie_plugin_sdk::services::background_commands::{
     BackgroundCommands, BackgroundCommandsApi, BackgroundError, BackgroundScope, BackgroundTicket,
@@ -51,6 +52,8 @@ const MAX_SIGNAL_CHARS: usize = 32;
 #[derive(Debug, Clone)]
 pub(super) struct Ticket {
     plugin: String,
+    /// The plugin's feature whose tool's call holds the ticket.
+    feature: Option<String>,
     conversation: ConversationId,
     part_id: PartId,
     activity: Option<String>,
@@ -82,6 +85,17 @@ impl Drop for TicketGuard {
     }
 }
 
+impl Ticket {
+    /// The key of the contributor whose tool's call holds the ticket: the
+    /// plugin's ID, or the plugin's ID, a slash and the feature's ID.
+    fn contributor_key(&self) -> String {
+        match &self.feature {
+            None => self.plugin.clone(),
+            Some(feature) => format!("{}/{feature}", self.plugin),
+        }
+    }
+}
+
 /// The SDK's name of a limit of running commands.
 fn sdk_scope(limit: BackgroundLimit) -> BackgroundScope {
     match limit {
@@ -107,7 +121,11 @@ impl CommandRegistry {
         let held = state
             .tickets
             .get(text)
-            .filter(|ticket| ticket.plugin == plugin && !state.closed_plugins.contains(plugin))
+            .filter(|ticket| {
+                ticket.plugin == plugin
+                    && !state.closed_plugins.contains(plugin)
+                    && !state.closed_plugins.contains(&ticket.contributor_key())
+            })
             .map(|ticket| ticket.conversation.clone());
         let Some(conversation) = held else {
             return Err(BackgroundError::TicketInvalid);
@@ -129,14 +147,14 @@ impl CommandRegistry {
         Ok((self.hold(state, &conversation), ticket))
     }
 
-    /// Refuses the starts of a plugin's commands until
-    /// [`Self::reopen_plugin`].
-    fn close_plugin(&self, plugin: &str) {
-        lock(&self.state).closed_plugins.insert(plugin.to_owned());
+    /// Refuses the starts of the commands of a plugin or a feature, by the
+    /// key of its contributor, until [`Self::reopen_plugin`].
+    fn close_plugin(&self, key: &str) {
+        lock(&self.state).closed_plugins.insert(key.to_owned());
     }
 
-    fn reopen_plugin(&self, plugin: &str) {
-        lock(&self.state).closed_plugins.remove(plugin);
+    fn reopen_plugin(&self, key: &str) {
+        lock(&self.state).closed_plugins.remove(key);
     }
 }
 
@@ -289,6 +307,7 @@ impl Runtime {
     pub(crate) fn issue_background_ticket(
         &self,
         plugin: &str,
+        feature: Option<&str>,
         conversation: &ConversationId,
         part_id: &PartId,
         activity: Option<&str>,
@@ -307,6 +326,7 @@ impl Runtime {
         let text = self.inner.ids.ticket();
         let ticket = Ticket {
             plugin: plugin.to_owned(),
+            feature: feature.map(str::to_owned),
             conversation: conversation.clone(),
             part_id: part_id.clone(),
             activity: activity.map(str::to_owned),
@@ -354,6 +374,7 @@ impl Runtime {
             }
         };
         let Ticket {
+            feature,
             conversation,
             part_id,
             activity,
@@ -382,6 +403,7 @@ impl Runtime {
             number,
             part_id,
             plugin: Some(plugin.to_owned()),
+            feature,
             log: LiveLog::new(),
             document,
         };
@@ -442,18 +464,22 @@ impl Runtime {
         self.record_end(&tracked, stop, reported).await;
     }
 
-    /// Ends the commands that a plugin's tools started, because the plugin
-    /// goes off, and waits until their ends are stored. No command of the
-    /// plugin starts meanwhile, and a start under way finishes first, so no
-    /// command outlives its plugin.
-    pub(crate) async fn end_plugin_commands(&self, plugin: &str) {
+    /// Ends the commands that the tools of a plugin, or of its feature,
+    /// started, because the plugin or the feature goes off, and waits until
+    /// their ends are stored. No command of it starts meanwhile, and a start
+    /// under way finishes first, so no command outlives it.
+    pub(crate) async fn end_plugin_commands(&self, contributor: &Contributor) {
         let registry = &self.inner.background;
-        registry.close_plugin(plugin);
+        let key = contributor.key();
+        registry.close_plugin(&key);
         registry.starts_done(None).await;
-        let commands = registry.of_plugin(plugin);
+        let commands = registry.of_plugin(
+            contributor.plugin_id().as_str(),
+            contributor.feature_id().map(FeatureId::as_str),
+        );
         if !commands.is_empty() {
             tracing::info!(
-                plugin,
+                plugin = %contributor,
                 commands = commands.len(),
                 "ending the background commands of a plugin that goes off"
             );
@@ -462,13 +488,20 @@ impl Runtime {
             command.request_stop(Stop::Record(BackgroundEnding::PluginOff));
         }
         futures_util::future::join_all(commands.iter().map(|command| command.wait_ended())).await;
-        registry.reopen_plugin(plugin);
+        registry.reopen_plugin(&key);
     }
 
-    /// How many commands that a plugin's tools started still run, which the
-    /// question before turning the plugin off names.
-    pub(crate) fn plugin_command_count(&self, plugin: &str) -> u32 {
-        let running = self.inner.background.of_plugin(plugin).len();
+    /// How many commands that the tools of a plugin, or of its feature,
+    /// started still run, which the question before turning it off names.
+    pub(crate) fn plugin_command_count(&self, contributor: &Contributor) -> u32 {
+        let running = self
+            .inner
+            .background
+            .of_plugin(
+                contributor.plugin_id().as_str(),
+                contributor.feature_id().map(FeatureId::as_str),
+            )
+            .len();
         u32::try_from(running).unwrap_or(u32::MAX)
     }
 }

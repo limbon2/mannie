@@ -715,6 +715,9 @@
   "tools_call_terminal_command_new": "Run {command} in a new terminal on {host}",
   "tools_call_terminal_command_new_here": "Run {command} in a new terminal",
   "tools_call_external_tool": "Call {tool} on {server}",
+  "tools_call_database_read": "Query {database}",
+  "tools_call_database_write": "Change rows of {database}",
+  "tools_call_database_schema": "Change the schema of {database}",
   "tools_done_listed": [
     {
       "declarations": ["input path", "input shown", "input total", "local totalPlural = total: plural"],
@@ -794,6 +797,8 @@
   "tools_uncertain_description": "Mannie quit while this ran, so it may have taken effect. Check the result before you run it again.",
   "tools_uncertain_stopped_description": "You stopped the reply while this ran, so it may have taken effect. Check the result before you run it again.",
   "tools_uncertain_plugin_off_description": "The {plugin} plugin was turned off while this ran, so it may have taken effect. Check the result before you run it again.",
+  "tools_uncertain_feature_off_description": "{feature} of the {plugin} plugin was turned off while this ran, so it may have taken effect. Check the result before you run it again.",
+  "tools_uncertain_answer_lost_description": "The connection to the computer that ran this dropped before its answer, so it may have taken effect. Check the result before you run it again.",
   "tools_not_run_unknown_tool": "The model called a tool that does not exist.",
   "tools_not_run_invalid_arguments": "The model's arguments do not fit the tool. The model was told what is wrong.",
   "tools_not_run_cut_off": "The reply reached its output limit before the call was complete.",
@@ -801,12 +806,14 @@
   "tools_not_run_over_budget": "The reply used up its tool calls.",
   "tools_not_run_tools_off": "The provider profile does not use tools.",
   "tools_not_run_plugin_off": "The {plugin} plugin was turned off after the reply started, so this did not run.",
+  "tools_not_run_feature_off": "{feature} of the {plugin} plugin was turned off after the reply started, so this did not run.",
   "tools_refusal_read_only_host": "The computer that runs this task only reads and searches, so it refused this.",
   "tools_refusal_no_projects_on_host": "The computer that runs this task has no projects to move a conversation into.",
   "tools_refusal_no_remote_commands": "The computer that runs this task runs no commands on other computers.",
   "tools_refusal_no_terminals": "The computer that runs this task types no commands into terminals.",
   "tools_refusal_no_programs_on_host": "The computer that runs this task runs no plugin's programs.",
   "tools_refusal_no_external_tools": "The computer that runs this task calls no tool server's tools.",
+  "tools_refusal_no_databases": "The computer that runs this task works with no registered databases.",
   "tools_details_accesses": "What it touches",
   "tools_details_arguments": "Arguments",
   "tools_details_arguments_cut": "The arguments are longer than shown here.",
@@ -845,6 +852,26 @@
   "tools_access_external_program": "Program",
   "tools_access_external_url": "URL",
   "tools_access_external_hints": "The server says that this tool {hints}. Mannie does not check what a server says.",
+  "tools_access_database": "Database",
+  "tools_access_database_statement": "Statement",
+  "tools_access_database_statement_cut": "The statement is longer than shown here.",
+  "tools_access_database_values": "Values",
+  "tools_access_database_values_more": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "1 more value is not shown.",
+        "countPlural=other": "{count: number} more values are not shown."
+      }
+    }
+  ],
+  "tools_access_database_home": "Computer",
+  "tools_access_database_this_computer": "This computer",
+  "tools_access_database_worker": "Worker {name}",
+  "tools_access_database_read": "Read",
+  "tools_access_database_write": "Change rows",
+  "tools_access_database_schema": "Change schema",
   "tools_hint_read_only": "only reads",
   "tools_hint_destructive": "may delete or overwrite",
   "tools_hint_idempotent": "changes nothing more when called again with the same arguments",
@@ -939,6 +966,7 @@
   "tools_decision_host_rule": "A command rule of the computer that runs the task allowed this.",
   "tools_decision_full_access": "Full access allowed this.",
   "tools_decision_host_full_access": "The full access of the computer that runs the task allowed this.",
+  "tools_decision_registered_database": "Reads of the databases that you registered run without asking.",
   "tools_output_show": "Show full output",
   "tools_output_show_stdout": "Show full output",
   "tools_output_show_stderr": "Show full error output",
@@ -960,6 +988,8 @@
   "tools_reason_terminal_command": "It types a command into a terminal, and no rule or permission covers it.",
   "tools_reason_program": "It runs an installed program that does something beyond the workspace, and no rule or permission covers it.",
   "tools_reason_external_tool": "It calls a tool of a tool server, and no permission covers it.",
+  "tools_reason_database_write": "It changes rows of a database that you registered, and no permission covers this statement.",
+  "tools_reason_database_schema": "It changes the schema of a database that you registered, which always asks.",
   "tools_plugin_failed": "The tool reported the failure {code}.",
   "tools_grant_read": "Reading in {folder}",
   "tools_grant_write": "Changing files in {folder}",
@@ -972,6 +1002,7 @@
   "tools_grant_program": "The run {run} in {folder}",
   "tools_grant_program_effects": "The run {run} in {folder}, also when it {effects}",
   "tools_grant_external_tool": "The tool {tool} of {server} ({endpoint}) with any arguments",
+  "tools_grant_database": "The statement {statement} on {database} with any values",
   "tools_allow_once": "Allow once",
   "tools_allow_for": "Allow for…",
   "tools_allow_for_conversation": "This conversation",
@@ -1079,7 +1110,10 @@
     {
       "declarations": ["input count", "local countPlural = count: plural"],
       "selectors": ["countPlural"],
-      "match": { "countPlural=one": "Commands, 1 running", "countPlural=other": "Commands, {count: number} running" }
+      "match": {
+        "countPlural=one": "Commands, 1 running",
+        "countPlural=other": "Commands, {count: number} running"
+      }
     }
   ],
   "tools_background_control_running": "Running",
@@ -1269,6 +1303,9 @@
   "plugins_failure_service_unavailable": "Mannie could not give the plugin a service that it needs. Report this as a bug.",
   "plugins_failure_sdk_incompatible": "The plugin was built for another version of the plugin SDK. Report this as a bug.",
   "plugins_failure_contributions_refused": "Mannie refused what the plugin adds, such as a tool with the name of another one. Report this as a bug.",
+  "plugins_failure_feature_unknown": "This version of the plugin cannot start this feature. Report this as a bug.",
+  "plugins_features_label": "Features of {name}",
+  "plugins_feature_needs_plugin": "Works while {name} is on.",
   "plugins_failure_other": "The plugin reported the code {code}. The log has the cause.",
   "plugins_use_title": "What it may use",
   "plugins_use_services": "Services of Mannie",
@@ -1309,10 +1346,12 @@
   ],
   "plugins_cancel": "Cancel",
   "plugins_error_unknown_plugin": "This version of Mannie has no such plugin.",
+  "plugins_error_unknown_feature": "This version of the plugin has no such feature.",
   "plugins_error_storage_failed": "Mannie could not save your choice. Check the log, then try again.",
   "plugins_error_store_unavailable": "Mannie started without its database, so plugins cannot change.",
   "plugins_error_shutting_down": "Mannie is quitting.",
   "plugins_host_plugin_off": "{name} is off. Turn it on in Settings, Plugins, then try again.",
+  "plugins_host_feature_off": "{feature} is off. Turn it on under {name} in Settings, Plugins, then try again.",
   "plugins_host_store_unavailable": "Mannie started without its database. Restart Mannie, and check the log if this happens again.",
   "plugins_host_shutting_down": "Mannie is quitting.",
   "plugins_host_unknown_command": "This version of {name} cannot do this. Report this as a bug.",
@@ -1322,6 +1361,7 @@
   "plugins_host_not_allowed": "The window may not ask {name} for this. Report this as a bug.",
   "plugins_off_part_title": "{name} is off",
   "plugins_off_part_description": "This belongs to the {name} plugin. Turn it on in the Plugins settings to use it.",
+  "plugins_off_feature_part_description": "This belongs to {feature}, a feature of the {name} plugin. Turn it on in the Plugins settings to use it.",
   "plugins_open_settings": "Open the Plugins settings",
   "export_action": "Export conversation…",
   "export_command_group": "Conversation export",

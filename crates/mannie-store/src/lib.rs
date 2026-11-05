@@ -12,7 +12,11 @@
 //!   SQLite. A plugin's code reaches its own tables through the SDK's service
 //!   `store`, as statements that its module lists (ADR-0034, decision 7),
 //!   which [`service_providers`] binds to the plugin.
+//! - The owner's own SQLite files open through [`dbfiles`], an engine with
+//!   hardened connections of its own, which the service `sqlite-files`
+//!   reaches (ADR-0056).
 
+pub mod dbfiles;
 mod error;
 mod exports;
 mod legacy;
@@ -69,6 +73,7 @@ pub(crate) fn all_statements() -> impl Iterator<Item = &'static str> {
         .chain(tools::STATEMENTS)
         .copied()
         .chain(runtime::statements())
+        .chain(dbfiles::statements())
 }
 
 #[cfg(test)]

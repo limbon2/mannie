@@ -124,6 +124,7 @@ impl Harness {
             process: None,
             part_id: None,
             activity: None,
+            decision: None,
         });
         let stopper = async {
             if end == End::Stop {

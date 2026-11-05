@@ -13,8 +13,8 @@ use std::time::Duration;
 use mannie_host_kit::logging::{ErrorChain, LogConfig, LoggingError, LoggingGuard, Redactor};
 use mannie_host_kit::provider::{HttpClient, ProviderRegistry};
 use mannie_host_kit::runtime::{
-    CredentialVault, MachineSettings, MentionRegistry, Runtime, RuntimeConfig, RuntimeDeps,
-    ToolsDeps,
+    CredentialVault, HostDatabaseSettings, MachineSettings, MentionRegistry, Runtime,
+    RuntimeConfig, RuntimeDeps, ToolsDeps,
 };
 use mannie_host_kit::store::{Store, StoreError, StoreOptions};
 use mannie_host_kit::tools::{MutationLock, SystemFacts, ToolRegistry};
@@ -40,6 +40,10 @@ const LOG_FILE_PREFIX: &str = "mannie-worker";
 
 /// The worker's version, which `Hello` and the health marker report.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The plugin whose master's requests the host's databases take, which keys
+/// their registrations and the records of their journal (ADR-0057).
+const WORKERS_PLUGIN: &str = "workers";
 
 /// How long a stop waits for the link's running calls to finish before it
 /// closes the link's connections.
@@ -189,11 +193,19 @@ impl Worker {
                 ceiling: Some(ceiling_view(config)),
                 version: Some(VERSION.to_owned()),
                 max_parallel_tasks: config.max_parallel_tasks,
+                databases: config.databases_enabled,
             },
             version: VERSION.to_owned(),
+            levels: mannie_link::levels::levels(),
             data: data_directory.clone(),
             leases,
             clock,
+            databases: runtime.host_databases(HostDatabaseSettings {
+                enabled: config.databases_enabled,
+                ceiling: config.ceiling.clone(),
+                accepts_master_full_access: config.accepts_master_full_access,
+                plugin: WORKERS_PLUGIN.to_owned(),
+            }),
         };
         let (stop_link, stopped) = oneshot::channel::<()>();
         let link = tokio::spawn(mannie_link_worker::serve(link, listener, async {

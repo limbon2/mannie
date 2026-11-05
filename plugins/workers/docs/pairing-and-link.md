@@ -48,7 +48,7 @@ sequenceDiagram
 - A code is valid for 10 minutes and allows 5 attempts; then the worker deletes it. A code works once.
 - A proof is the HMAC-SHA256, keyed by the code, of a label (`mannie-pairing-v1 worker` or `mannie-pairing-v1 master`), the master's nonce, the worker's nonce, the master's pin and the worker's pin. Each side takes both pins from the TLS session it is in, never from a message, so a proof made for another session or another key never verifies. The worker proves first, and `Finish` must come on the connection that `Begin` came on.
 - A worker that is paired refuses to pair again (`already_paired`); `mannie-worker pair --reset` on the host starts over.
-- Unpairing: removing a worker in the master calls `Session.Unpair` when the worker is reachable. The worker cancels its tasks, drops its leases and forgets the master. A worker that was offline keeps its pin until `pair --reset`, and refuses every connection of the master, whose key is no longer pinned on the master's side either.
+- Unpairing: removing a worker in the master calls `Session.Unpair` when the worker is reachable. The worker cancels its tasks, drops its leases, forgets the databases that the owner registered on the host, whose files stay, and forgets the master. A worker that was offline keeps its pin until `pair --reset`, and refuses every connection of the master, whose key is no longer pinned on the master's side either.
 
 ### The services
 
@@ -62,10 +62,11 @@ One protobuf package for each service, under `plugins/workers/proto/mannie/link/
 | `mannie.link.events.v1`    | `Subscribe` (a task conversation from a cursor), `EarlierTurns`, `Checkpoint`, `ToolOutput`                   | 1     |
 | `mannie.link.approvals.v1` | `Decide`                                                                                                      | 1     |
 | `mannie.link.leases.v1`    | `Deliver`, `Revoke`                                                                                           | 1     |
+| `mannie.link.databases.v1` | `Register`, `List`, `Update`, `Forget`, `Structure`, `Count`, `Browse`, `Read`, `Write`; optional             | 1     |
 
 Documents of the runtime, such as a task's state, an update of a conversation or an approval choice, travel as their JSON in protobuf fields named `*_json`, the encoding that the desktop app's IPC already uses. A message is at most 32 MiB. A snapshot of a task conversation holds at most 50 turns and 400 parts, which stays far below that unless many parts are long; a snapshot over the limit is refused, and the master cannot show that conversation.
 
-`Submit`, `Cancel`, `Deliver` and `Decide` run to their end on the worker even when the connection drops, so a call whose answer was lost has still happened once, and calling it again finds what it did.
+`Submit`, `Cancel`, `Deliver` and `Decide` run to their end on the worker even when the connection drops, so a call whose answer was lost has still happened once, and calling it again finds what it did. So do the databases' `Register`, `Update`, `Forget` and `Write`; a write runs once for its operation ID, and a `Read` stops when the master cancels it ([databases](databases.md); [ADR-0057](../../../docs/adr/0057-let-the-master-work-with-the-databases-on-a-workers-host.md)).
 
 ### The connection
 

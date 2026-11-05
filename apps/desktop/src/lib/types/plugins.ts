@@ -13,9 +13,21 @@ export interface PluginEntry {
   readonly definition: PluginDefinition | null;
   /** What the plugin adds, in one sentence, for the Plugins page. */
   readonly description: Message;
+  /** The plugin's optional features, in the order of their IDs (ADR-0055, decision 3). */
+  readonly features: readonly PluginFeatureEntry[];
   /** The plugin's ID, as the core reports it. */
   readonly id: string;
   /** The plugin's name. */
+  readonly name: Message;
+}
+
+/** An optional feature of a plugin in the generated plugin list, named from the plugin's catalog. */
+export interface PluginFeatureEntry {
+  /** What the feature adds, in one sentence, for the Plugins page. */
+  readonly description: Message;
+  /** The feature's ID, as the core reports it. */
+  readonly id: string;
+  /** The feature's name. */
   readonly name: Message;
 }
 
@@ -25,6 +37,8 @@ export interface PluginDescriptor {
   readonly description: Message;
   /** The sentence of one of the plugin's start failure codes, or `null` for a code it does not know. */
   readonly failure: (code: string) => string | null;
+  /** The plugin's optional features, in the order of their IDs (ADR-0055, decision 3). */
+  readonly features: readonly PluginFeatureEntry[];
   /** The plugin's ID, as the core reports it. */
   readonly id: string;
   /** The plugin's name. */

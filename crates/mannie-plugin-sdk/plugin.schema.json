@@ -15,6 +15,24 @@
       },
       "type": "object"
     },
+    "FeatureSection": {
+      "additionalProperties": false,
+      "description": "A `[features.<id>]` table of a manifest: an optional feature of the\nplugin, and the services that only it uses (ADR-0055, decision 2). The\nhost binds them while the feature is on and releases them when it stops,\nso a sensitive service is held only while the owner keeps the feature on.",
+      "properties": {
+        "services": {
+          "additionalProperties": {
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "default": {},
+          "description": "The services that only the feature uses, each with the major version\nthat it builds on. A service is declared by the plugin or by one of\nits features, never by both.",
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
     "NativeSection": {
       "additionalProperties": false,
       "description": "The `[native]` table of a manifest: the categories of direct native calls\nthat the plugin's library crates make past the SDK's services, each with\nits reason, such as the sockets of Workers' link. Clippy refuses the\ncalls of every other category in the library crates that the plugin's\nentry crate ships, and `task plugins:grants` lists the grants (ADR-0035,\ndecision 6). The host only shows the categories on the Plugins page.",
@@ -196,6 +214,13 @@
     "crates": {
       "$ref": "#/$defs/CratesSection",
       "description": "The third-party crates that only this plugin may use."
+    },
+    "features": {
+      "additionalProperties": {
+        "$ref": "#/$defs/FeatureSection"
+      },
+      "description": "The plugin's optional features, as `[features.<id>]` tables, each of\nwhich the owner turns on and off on its own while the plugin is on\n(ADR-0055, decision 2). Every feature starts off.",
+      "type": "object"
     },
     "id": {
       "description": "The plugin's ID, which equals the name of its folder, `plugins/<id>/`.",

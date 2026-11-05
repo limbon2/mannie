@@ -1,0 +1,13 @@
+[
+  {
+    "kind": "rename",
+    "name": "Stock"
+  },
+  {
+    "kind": "mark",
+    "readOnly": true
+  },
+  {
+    "kind": "accept"
+  }
+]

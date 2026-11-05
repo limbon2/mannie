@@ -1196,6 +1196,8 @@ dependencies = [
  "time",
  "tokio",
  "tracing",
+ "winapi-util",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1277,6 +1279,7 @@ dependencies = [
  "mannie-workers-testing",
  "ring",
  "rustls",
+ "schemars",
  "serde",
  "serde_json",
  "specta",

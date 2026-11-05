@@ -39,6 +39,9 @@ words:
   - cssparser
   - ctutils
   - cyclonedx
+  - DBCONFIG
+  - dbfiles
+  - dbstat
   - dbus
   - Delinea
   - DMABUF
@@ -55,6 +58,7 @@ words:
   - fastrand
   - flate
   - fpid
+  - freelist
   - fsmonitor
   - getrandom
   - globset
@@ -80,6 +84,7 @@ words:
   - libexec
   - libgit
   - libqca
+  - libsqlite
   - libssh
   - librsvg
   - libwebkit
@@ -101,6 +106,7 @@ words:
   - mebibytes
   - metacharacters
   - miow
+  - mmap
   - modelcontextprotocol
   - msvc
   - netrc
@@ -110,6 +116,8 @@ words:
   - NSIS
   - Ollama
   - openat
+  - openraft
+  - openraft's
   - PaneForge
   - Paraglide
   - PATHEXT
@@ -150,12 +158,15 @@ words:
   - reranks
   - RLIMIT
   - rmcp
+  - rqlite
+  - rqlite's
   - rusqlite
   - russh
   - rustix
   - rustls
   - RustSec
   - rustup
+  - savepoint
   - savepoints
   - sccache
   - schemars
@@ -170,6 +181,7 @@ words:
   - sqlx
   - Streamable
   - strikethrough
+  - subplugin
   - subr
   - subreaper
   - Taskfile
@@ -188,6 +200,7 @@ words:
   - uploadpack
   - USERDOMAIN
   - USERPROFILE
+  - vtable
   - WALLIX
   - WCAG
   - webgl
@@ -195,6 +208,7 @@ words:
   - windir
   - winget
   - worktrees
+  - xinfo
   - zbus
   - zdiff
   - ZDOTDIR

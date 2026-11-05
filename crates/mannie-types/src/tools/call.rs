@@ -116,10 +116,16 @@ pub enum NotRunReason {
         refusal: Refusal,
     },
     /// The owner turned off the plugin of the tool, or of the agent that the
-    /// call gives a task to, after the reply started (ADR-0030, decision 8).
+    /// call gives a task to, after the reply started (ADR-0030, decision 8),
+    /// or the plugin's optional feature that the tool belongs to (ADR-0055,
+    /// decision 7).
     PluginOff {
         /// The plugin's ID.
         plugin: String,
+        /// The feature's ID, when the owner turned off the tool's feature and
+        /// the plugin stays on. Records before features have none.
+        #[serde(default)]
+        feature: Option<String>,
     },
 }
 
@@ -145,6 +151,9 @@ pub enum Refusal {
     /// A worker types no commands into terminals, for the same reason
     /// (ADR-0053, decision 5).
     NoTerminals,
+    /// A worker runs no plugin's statements on databases, for the same
+    /// reason (ADR-0056).
+    NoDatabases,
 }
 
 /// Why an operation that was executing ended without its result while the
@@ -161,8 +170,20 @@ pub enum Interruption {
     /// core let it go (ADR-0034, decision 3).
     Stopped,
     /// The owner turned off the operation's plugin while it ran, and it did
-    /// not end in time (ADR-0034, decision 8).
+    /// not end in time (ADR-0034, decision 8), or the plugin's optional
+    /// feature that the operation's tool belongs to (ADR-0055, decision 7).
     PluginOff {
+        /// The plugin's ID.
+        plugin: String,
+        /// The feature's ID, when the owner turned off the tool's feature and
+        /// the plugin stays on. Records before features have none.
+        #[serde(default)]
+        feature: Option<String>,
+    },
+    /// A plugin lost the answer of its operation, such as when the link to
+    /// the worker that ran a write dropped before the worker answered
+    /// (ADR-0057, decision 8). The machine that ran it knows how it ended.
+    AnswerLost {
         /// The plugin's ID.
         plugin: String,
     },
@@ -353,23 +374,34 @@ fn cut_for_view(text: &str) -> (&str, bool) {
 }
 
 /// An access as a call's view shows it: the arguments of a call of a tool
-/// server's tool, which reach up to [`MAX_ARGUMENTS_BYTES`], cut as the
-/// call's own are (ADR-0043, decision 4).
+/// server's tool and the statement on a database, which reach up to
+/// [`MAX_ARGUMENTS_BYTES`], cut as the call's own are (ADR-0043, decision 4;
+/// ADR-0056, decision 7).
 fn view_access(access: &Access) -> Access {
     let mut shown = access.clone();
-    if let Access::ExternalTool {
-        arguments,
-        arguments_cut,
-        ..
-    } = &mut shown
-    {
-        let (start, cut) = cut_for_view(arguments);
-        if cut {
-            *arguments = start.to_owned();
-            *arguments_cut = true;
-        }
+    match &mut shown {
+        Access::ExternalTool {
+            arguments,
+            arguments_cut,
+            ..
+        } => cut_text_for_view(arguments, arguments_cut),
+        Access::Database {
+            statement,
+            statement_cut,
+            ..
+        } => cut_text_for_view(statement, statement_cut),
+        _uncut => {}
     }
     shown
+}
+
+/// Cuts a text of an access for the view, and marks the cut.
+fn cut_text_for_view(text: &mut String, marked: &mut bool) {
+    let (start, cut) = cut_for_view(text);
+    if cut {
+        *text = start.to_owned();
+        *marked = true;
+    }
 }
 
 /// A tool call as the UI shows it.
@@ -419,7 +451,9 @@ pub struct ToolCallView {
 #[cfg(test)]
 mod tests {
     use super::{Interruption, MAX_VIEW_ARGUMENTS_BYTES, ToolCallDocument, ToolCallStatus};
+    use crate::ids::DatabaseKey;
     use crate::tools::access::Access;
+    use crate::tools::database::{DatabaseHome, StatementClass};
     use crate::tools::external::ToolServerEndpoint;
     use crate::tools::outcome::ToolOutcome;
 
@@ -427,10 +461,29 @@ mod tests {
     fn an_interruption_serializes_with_its_reason_and_older_documents_have_none() {
         assert_eq!(
             serde_json::to_value(Interruption::PluginOff {
-                plugin: "ssh".to_owned()
+                plugin: "ssh".to_owned(),
+                feature: None,
             })
             .unwrap(),
-            serde_json::json!({ "reason": "plugin_off", "plugin": "ssh" })
+            serde_json::json!({ "reason": "plugin_off", "plugin": "ssh", "feature": null })
+        );
+        assert_eq!(
+            serde_json::to_value(Interruption::PluginOff {
+                plugin: "workers".to_owned(),
+                feature: Some("databases".to_owned()),
+            })
+            .unwrap(),
+            serde_json::json!({ "reason": "plugin_off", "plugin": "workers", "feature": "databases" })
+        );
+        assert_eq!(
+            serde_json::from_value::<Interruption>(
+                serde_json::json!({ "reason": "plugin_off", "plugin": "ssh" })
+            )
+            .unwrap(),
+            Interruption::PluginOff {
+                plugin: "ssh".to_owned(),
+                feature: None,
+            }
         );
         assert_eq!(
             serde_json::to_value(Interruption::Stopped).unwrap(),
@@ -517,6 +570,53 @@ mod tests {
         assert_eq!(document.accesses[0], external(long));
     }
 
+    fn statement(text: String) -> Access {
+        Access::Database {
+            plugin: "workers".to_owned(),
+            key: DatabaseKey::parse("0199e0f2-0000-7000-8000-0000000000ee").unwrap(),
+            name: "Inventory".to_owned(),
+            home: DatabaseHome::ThisComputer,
+            identity: "7:42".to_owned(),
+            statement: text,
+            statement_cut: false,
+            parameters: Vec::new(),
+            parameter_count: 0,
+            parameters_digest: "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+                .to_owned(),
+            class: StatementClass::Write,
+        }
+    }
+
+    #[test]
+    fn the_view_cuts_a_long_statement_on_a_database_and_keeps_the_document_whole() {
+        let long = format!(
+            "INSERT INTO notes (body) VALUES ('{}')",
+            "é".repeat(MAX_VIEW_ARGUMENTS_BYTES)
+        );
+        let mut document =
+            ToolCallDocument::receiving("call_1".to_owned(), "workers_change_database".to_owned());
+        document.accesses = vec![
+            statement(long.clone()),
+            statement("DELETE FROM notes".to_owned()),
+        ];
+
+        let view = document.view("{}");
+
+        let Access::Database {
+            statement: shown,
+            statement_cut,
+            ..
+        } = &view.accesses[0]
+        else {
+            panic!("not a statement on a database: {:?}", view.accesses[0]);
+        };
+        assert!(*statement_cut);
+        assert!(shown.len() <= MAX_VIEW_ARGUMENTS_BYTES);
+        assert!(long.starts_with(shown.as_str()));
+        assert_eq!(view.accesses[1], statement("DELETE FROM notes".to_owned()));
+        assert_eq!(document.accesses[0], statement(long));
+    }
+
     #[test]
     fn a_document_without_later_fields_still_reads() {
         let document: ToolCallDocument = serde_json::from_value(serde_json::json!({
@@ -582,6 +682,7 @@ mod tests {
                 plugin: "notes".to_owned(),
                 data: None,
                 failure: None,
+                uncertain: false,
             }
         );
         let result = without_plugin.result.unwrap();

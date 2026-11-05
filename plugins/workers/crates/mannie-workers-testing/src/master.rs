@@ -147,6 +147,7 @@ impl LocalDelegation {
                 ceiling: None,
                 version: Some(env!("CARGO_PKG_VERSION").to_owned()),
                 max_parallel_tasks: 4,
+                databases: false,
             },
             key_pin: "0123456789ab".to_owned(),
             paired_at: UtcMillis::EPOCH,

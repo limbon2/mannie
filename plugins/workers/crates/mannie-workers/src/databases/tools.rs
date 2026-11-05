@@ -1,0 +1,542 @@
+//! The tools of the feature Databases (plugins/workers/docs/databases.md,
+//! agents; ADR-0056, decisions 5 to 7). `describe_database` reads a
+//! database's structure and `query_database` runs one read; both run
+//! without asking. `change_database` runs 1 to 16 statements in one
+//! transaction, as an operation that the core's policy decides on and its
+//! journal records.
+//!
+//! Prepare checks the arguments against the feature's list of databases and
+//! returns each statement with its values as a database access, from which
+//! the core reads what the statement does. A statement on a worker's
+//! database names what the worker reports of it now, its schema included,
+//! so prepare reads the database's structure from the worker (ADR-0057,
+//! decision 6). Execute reads the arguments again, and a change runs only
+//! with the call's ticket, which holds exactly the statements and values
+//! that were allowed: the service runs it on this computer, and a worker
+//! runs it with the evidence that the core gives.
+
+use mannie_plugin_sdk::BoxFuture;
+use mannie_plugin_sdk::points::tools::{
+    DatabaseAccess, Tool, ToolAccess, ToolCall, ToolExecution, ToolRefusal, ToolResult, ToolSpec,
+};
+use mannie_plugin_sdk::services::sqlite_files::{ReadLimits, SqlValue, Statement};
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde_json::json;
+
+use super::commands::{DatabaseView, DatabasesError};
+use super::output::{Room, fitted, query_result, structure_text};
+use super::registry::{Databases, is_available};
+use super::texts;
+use crate::schema::parameters;
+
+/// The tool that reads a database's structure.
+pub const DESCRIBE_DATABASE: &str = "describe_database";
+
+/// The tool that runs one read.
+pub const QUERY_DATABASE: &str = "query_database";
+
+/// The tool that changes a database.
+pub const CHANGE_DATABASE: &str = "change_database";
+
+/// The agents that read databases: the owner's conversations, the general
+/// child agent and the explore agent.
+pub(crate) const READING_AGENTS: [&str; 3] = ["conversation", "general", "explore"];
+
+/// The agents that change databases: the explore agent only reads.
+pub(crate) const CHANGING_AGENTS: [&str; 2] = ["conversation", "general"];
+
+/// The code of a call that names no registered database, which the call's
+/// card words.
+pub(crate) const UNKNOWN_DATABASE: &str = "unknown_database";
+
+/// The code of a call on a database that cannot run statements now.
+pub(crate) const DATABASE_UNUSABLE: &str = "database_unusable";
+
+/// The code of a call whose arguments did not fit when it was about to run.
+pub(crate) const INVALID_ARGUMENTS: &str = "invalid_arguments";
+
+/// The code of a write whose worker's answer the link lost, which may have
+/// run.
+pub(crate) const WORKER_ANSWER_LOST: &str = "worker_answer_lost";
+
+/// The most characters of a statement.
+const MAX_STATEMENT_CHARS: usize = 100_000;
+
+/// The most statements of a change.
+const MAX_STATEMENTS: usize = 16;
+
+/// The limits of a tool's read: up to 10,000 rows and 4 MiB within 30
+/// seconds, of which the model reads the first rows and the archive keeps
+/// up to 2 MiB.
+const TOOL_READ_LIMITS: ReadLimits = ReadLimits {
+    rows: 10_000,
+    bytes: 4 * 1024 * 1024,
+    milliseconds: 30_000,
+};
+
+/// The arguments of `describe_database`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct DescribeArguments {
+    /// The name of a registered database, as the list of SQLite databases
+    /// gives it.
+    database: String,
+}
+
+/// The arguments of `query_database`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct QueryArguments {
+    /// The name of a registered database, as the list of SQLite databases
+    /// gives it.
+    database: String,
+    /// One SQL statement that changes nothing, with ?1, ?2 and so on for
+    /// its parameters: at most 100,000 characters.
+    statement: String,
+    /// The parameters' values in order: text, numbers, true or false, or
+    /// null.
+    parameters: Vec<ParameterValue>,
+}
+
+/// The arguments of `change_database`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ChangeArguments {
+    /// The name of a registered database, as the list of SQLite databases
+    /// gives it.
+    database: String,
+    /// The statements, 1 to 16, which run in order in one transaction.
+    statements: Vec<StatementArgument>,
+}
+
+/// One statement of `change_database`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct StatementArgument {
+    /// One SQL statement, with ?1, ?2 and so on for its parameters: at most
+    /// 100,000 characters.
+    statement: String,
+    /// The parameters' values in order: text, numbers, true or false, or
+    /// null.
+    parameters: Vec<ParameterValue>,
+}
+
+/// A parameter's value, as JSON writes it.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(untagged)]
+enum ParameterValue {
+    /// A whole number.
+    Integer(i64),
+    /// A number with a fraction.
+    Real(f64),
+    /// True or false, which SQLite stores as 1 or 0.
+    Boolean(bool),
+    /// Text.
+    Text(String),
+    /// Null.
+    Null,
+}
+
+impl ParameterValue {
+    /// The value as SQLite stores it.
+    fn into_sql(self) -> SqlValue {
+        match self {
+            Self::Integer(value) => SqlValue::integer(value),
+            Self::Real(value) => SqlValue::real(value),
+            Self::Boolean(value) => SqlValue::integer(i64::from(value)),
+            Self::Text(value) => SqlValue::text(value),
+            Self::Null => SqlValue::Null,
+        }
+    }
+}
+
+/// The arguments of a call, read as `T`, or what the model reads of
+/// arguments that do not fit.
+fn arguments<T: for<'de> Deserialize<'de>>(text: &str) -> Result<T, ToolRefusal> {
+    serde_json::from_str(text).map_err(|error| {
+        ToolRefusal::new(format!(
+            "The arguments do not fit the tool's schema: {error}"
+        ))
+    })
+}
+
+/// The registered database with this name that can run statements now.
+fn usable(databases: &Databases, name: &str) -> Result<DatabaseView, ToolRefusal> {
+    let database = databases.by_name(name).ok_or_else(|| {
+        ToolRefusal::new(texts::unknown_database(name)).with_code(UNKNOWN_DATABASE)
+    })?;
+    if is_available(&database) {
+        Ok(database)
+    } else {
+        Err(ToolRefusal::new(texts::unusable_database(&database.name)).with_code(DATABASE_UNUSABLE))
+    }
+}
+
+/// A statement of a call, with its values.
+fn statement(text: String, values: Vec<ParameterValue>) -> Result<Statement, ToolRefusal> {
+    if text.chars().count() > MAX_STATEMENT_CHARS {
+        return Err(ToolRefusal::new(texts::STATEMENT_TOO_LONG));
+    }
+    let parameters = values.into_iter().map(ParameterValue::into_sql).collect();
+    Ok(Statement::new(text, parameters))
+}
+
+/// The code of a call that a database's machine refused or could not run,
+/// which the call's card words.
+fn failure_code(error: &DatabasesError) -> String {
+    match error {
+        DatabasesError::Files { error } => {
+            error.code().trim_start_matches("sqlite_files.").to_owned()
+        }
+        DatabasesError::WorkerOffline => "worker_offline".to_owned(),
+        DatabasesError::WorkerNeedsUpdate => "worker_needs_update".to_owned(),
+        DatabasesError::HostRefused { refusal } => serde_json::to_value(refusal)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_owned))
+            .unwrap_or_else(|| "host_refused".to_owned()),
+        DatabasesError::NeedsOwner => "worker_needs_owner".to_owned(),
+        DatabasesError::AnswerLost => WORKER_ANSWER_LOST.to_owned(),
+        DatabasesError::NameTaken | DatabasesError::Stopped => "failed".to_owned(),
+    }
+}
+
+/// The refusal of a call whose database's machine could not say what the
+/// call touches, such as a worker that is offline.
+fn prepare_refused(error: &DatabasesError) -> ToolRefusal {
+    ToolRefusal::new(texts::database_failure(error)).with_code(failure_code(error))
+}
+
+/// The access of a statement on a database, with what its worker reports of
+/// it for a database on a worker's host.
+async fn access_of(
+    databases: &Databases,
+    database: &DatabaseView,
+    statements: Vec<Statement>,
+) -> Result<Vec<ToolAccess>, ToolRefusal> {
+    let reported = databases
+        .worker_database(&database.key)
+        .await
+        .map_err(|error| prepare_refused(&error))?;
+    Ok(statements
+        .into_iter()
+        .map(|statement| {
+            let access = DatabaseAccess::new(database.key.clone(), statement);
+            ToolAccess::Database(match &reported {
+                Some((_worker, reported)) => access.on_worker(reported.clone()),
+                None => access,
+            })
+        })
+        .collect())
+}
+
+/// The room of a call's result.
+fn room(execution: &ToolExecution) -> Room<'_> {
+    Room {
+        limit: usize::try_from(execution.result_limit).unwrap_or(usize::MAX),
+        archive_ids: &execution.archive_ids,
+    }
+}
+
+/// `describe_database`.
+#[derive(Debug)]
+pub(crate) struct DescribeDatabase {
+    databases: Databases,
+}
+
+impl DescribeDatabase {
+    pub(crate) fn new(databases: Databases) -> Self {
+        Self { databases }
+    }
+}
+
+impl Tool for DescribeDatabase {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec::new(
+            DESCRIBE_DATABASE,
+            texts::DESCRIBE_DATABASE,
+            parameters::<DescribeArguments>(),
+        )
+    }
+
+    /// A read of the plugin's own list: the call has no access.
+    fn prepare(&self, call: ToolCall) -> BoxFuture<'static, Result<Vec<ToolAccess>, ToolRefusal>> {
+        let checked = arguments::<DescribeArguments>(&call.arguments)
+            .and_then(|arguments| usable(&self.databases, &arguments.database))
+            .map(|_database| Vec::new());
+        Box::pin(std::future::ready(checked))
+    }
+
+    fn execute(&self, execution: ToolExecution) -> BoxFuture<'static, ToolResult> {
+        let databases = self.databases.clone();
+        Box::pin(async move {
+            let database = match arguments::<DescribeArguments>(&execution.arguments)
+                .and_then(|arguments| usable(&databases, &arguments.database))
+            {
+                Ok(database) => database,
+                Err(refusal) => return refused(refusal),
+            };
+            match databases.structure(database.key.clone()).await {
+                Ok(structure) => {
+                    let text = structure_text(&structure);
+                    let tables = structure.tables.len();
+                    let shown = fitted(&text, &text, usize::MAX, room(&execution));
+                    let result = ToolResult::new(shown.text).with_data(json!({
+                        "database": database.name,
+                        "tables": tables,
+                    }));
+                    match shown.archive {
+                        Some(archive) => result.with_archives(vec![archive]),
+                        None => result,
+                    }
+                }
+                Err(error) => failed(&error),
+            }
+        })
+    }
+}
+
+/// `query_database`.
+#[derive(Debug)]
+pub(crate) struct QueryDatabase {
+    databases: Databases,
+}
+
+impl QueryDatabase {
+    pub(crate) fn new(databases: Databases) -> Self {
+        Self { databases }
+    }
+}
+
+/// A checked call of `query_database`.
+fn checked_query(
+    databases: &Databases,
+    text: &str,
+) -> Result<(DatabaseView, Statement), ToolRefusal> {
+    let arguments = arguments::<QueryArguments>(text)?;
+    let database = usable(databases, &arguments.database)?;
+    let statement = statement(arguments.statement, arguments.parameters)?;
+    Ok((database, statement))
+}
+
+impl Tool for QueryDatabase {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec::new(
+            QUERY_DATABASE,
+            texts::QUERY_DATABASE,
+            parameters::<QueryArguments>(),
+        )
+    }
+
+    fn prepare(&self, call: ToolCall) -> BoxFuture<'static, Result<Vec<ToolAccess>, ToolRefusal>> {
+        let databases = self.databases.clone();
+        Box::pin(async move {
+            let (database, statement) = checked_query(&databases, &call.arguments)?;
+            access_of(&databases, &database, vec![statement]).await
+        })
+    }
+
+    fn execute(&self, execution: ToolExecution) -> BoxFuture<'static, ToolResult> {
+        let databases = self.databases.clone();
+        Box::pin(async move {
+            let (database, statement) = match checked_query(&databases, &execution.arguments) {
+                Ok(checked) => checked,
+                Err(refusal) => return refused(refusal),
+            };
+            let read = databases
+                .read(database.key.clone(), statement, TOOL_READ_LIMITS)
+                .await;
+            match read {
+                Ok(rows) => {
+                    let data = json!({
+                        "database": database.name,
+                        "rows": rows.rows.len(),
+                        "columns": rows.columns.len(),
+                        "cut": rows.cut.is_some(),
+                    });
+                    query_result(&rows, room(&execution)).with_data(data)
+                }
+                Err(error) => failed(&error),
+            }
+        })
+    }
+}
+
+/// `change_database`.
+#[derive(Debug)]
+pub(crate) struct ChangeDatabase {
+    databases: Databases,
+}
+
+impl ChangeDatabase {
+    pub(crate) fn new(databases: Databases) -> Self {
+        Self { databases }
+    }
+}
+
+/// A checked call of `change_database`.
+fn checked_change(
+    databases: &Databases,
+    text: &str,
+) -> Result<(DatabaseView, Vec<Statement>), ToolRefusal> {
+    let arguments = arguments::<ChangeArguments>(text)?;
+    let database = usable(databases, &arguments.database)?;
+    let count = arguments.statements.len();
+    if count == 0 || count > MAX_STATEMENTS {
+        return Err(ToolRefusal::new(texts::STATEMENT_COUNT));
+    }
+    let statements = arguments
+        .statements
+        .into_iter()
+        .map(|argument| statement(argument.statement, argument.parameters))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((database, statements))
+}
+
+impl Tool for ChangeDatabase {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec::new(
+            CHANGE_DATABASE,
+            texts::CHANGE_DATABASE,
+            parameters::<ChangeArguments>(),
+        )
+    }
+
+    fn prepare(&self, call: ToolCall) -> BoxFuture<'static, Result<Vec<ToolAccess>, ToolRefusal>> {
+        let databases = self.databases.clone();
+        Box::pin(async move {
+            let (database, statements) = checked_change(&databases, &call.arguments)?;
+            access_of(&databases, &database, statements).await
+        })
+    }
+
+    fn execute(&self, execution: ToolExecution) -> BoxFuture<'static, ToolResult> {
+        let databases = self.databases.clone();
+        Box::pin(async move {
+            let (database, statements) = match checked_change(&databases, &execution.arguments) {
+                Ok(checked) => checked,
+                Err(refusal) => return refused(refusal),
+            };
+            let Some(ticket) = execution.database.clone() else {
+                // The core gives every call with writes a ticket; a call
+                // without one was not allowed to write.
+                return ToolResult::new(texts::failure(
+                    &mannie_plugin_sdk::services::sqlite_files::SqliteFilesError::NotAllowed,
+                ))
+                .with_failure("not_allowed");
+            };
+            let written = databases
+                .write(ticket, database.key.clone(), statements)
+                .await;
+            match written {
+                Ok(outcomes) => {
+                    let mut text = String::new();
+                    let mut changes = Vec::with_capacity(outcomes.len());
+                    for (index, outcome) in outcomes.iter().enumerate() {
+                        changes.push(outcome.changes);
+                        text.push_str(&changed_line(index + 1, outcome.changes));
+                        if let Some(rows) = &outcome.rows {
+                            let returned = query_result(rows, room(&execution));
+                            text.push_str(&returned.output);
+                        }
+                    }
+                    ToolResult::new(text).with_data(json!({
+                        "database": database.name,
+                        "changes": changes,
+                    }))
+                }
+                // The worker may have run the write: the call is uncertain,
+                // and the model learns why (ADR-0057, decision 8).
+                Err(DatabasesError::AnswerLost) => {
+                    failed(&DatabasesError::AnswerLost).with_lost_answer()
+                }
+                Err(error) => failed(&error),
+            }
+        })
+    }
+}
+
+/// What one statement of a change did, as a line.
+fn changed_line(number: usize, changes: u64) -> String {
+    match changes {
+        1 => format!("Statement {number}: changed 1 row.\n"),
+        _other => format!("Statement {number}: changed {changes} rows.\n"),
+    }
+}
+
+/// The result of a call that the arguments or the list refused when it was
+/// about to run.
+fn refused(refusal: ToolRefusal) -> ToolResult {
+    let code = refusal.code.unwrap_or_else(|| INVALID_ARGUMENTS.to_owned());
+    ToolResult::new(refusal.detail).with_failure(code)
+}
+
+/// The result of a call that a database's machine refused or failed; the
+/// registry read the list again when the error is about the file.
+fn failed(error: &DatabasesError) -> ToolResult {
+    ToolResult::new(texts::database_failure(error)).with_failure(failure_code(error))
+}
+
+#[cfg(test)]
+mod tests {
+    use mannie_plugin_sdk::services::sqlite_files::SqlValue;
+    use serde_json::json;
+
+    use super::{ChangeArguments, ParameterValue, QueryArguments, changed_line};
+    use crate::schema::parameters;
+
+    #[test]
+    fn parameters_are_json_values_that_become_sqlite_values() {
+        let arguments: QueryArguments = serde_json::from_value(json!({
+            "database": "Inventory",
+            "statement": "SELECT ?1, ?2, ?3, ?4, ?5",
+            "parameters": [12, 1.5, true, "bolt", null],
+        }))
+        .unwrap();
+
+        let values: Vec<SqlValue> = arguments
+            .parameters
+            .into_iter()
+            .map(ParameterValue::into_sql)
+            .collect();
+
+        assert_eq!(
+            values,
+            vec![
+                SqlValue::integer(12),
+                SqlValue::real(1.5),
+                SqlValue::integer(1),
+                SqlValue::text("bolt"),
+                SqlValue::Null,
+            ]
+        );
+    }
+
+    #[test]
+    fn the_schemas_require_every_argument_and_offer_each_kind_of_value() {
+        let query = parameters::<QueryArguments>();
+        let change = parameters::<ChangeArguments>();
+
+        assert_eq!(
+            query["required"],
+            json!(["database", "parameters", "statement"])
+        );
+        let value = &query["properties"]["parameters"]["items"];
+        let kinds: Vec<&str> = value["anyOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|branch| branch["type"].as_str().unwrap())
+            .collect();
+        assert_eq!(kinds, ["integer", "number", "boolean", "string", "null"]);
+        let statement = &change["properties"]["statements"]["items"];
+        assert_eq!(statement["required"], json!(["parameters", "statement"]));
+        assert_eq!(statement["additionalProperties"], json!(false));
+    }
+
+    #[test]
+    fn a_change_says_how_many_rows_each_statement_changed() {
+        assert_eq!(changed_line(1, 1), "Statement 1: changed 1 row.\n");
+        assert_eq!(changed_line(2, 0), "Statement 2: changed 0 rows.\n");
+    }
+}

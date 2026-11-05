@@ -21,7 +21,7 @@ use std::time::Duration;
 use futures_util::stream::{self, BoxStream as FuturesBoxStream};
 use futures_util::{FutureExt, StreamExt};
 use mannie_plugin_sdk::host::{BindRefusal, PluginBinding, ServiceProvider};
-use mannie_plugin_sdk::ids::PluginId;
+use mannie_plugin_sdk::ids::Contributor;
 use mannie_plugin_sdk::points::terminal_hosts::{
     MAX_SOURCE_HOSTS, OpenTerminal, PluginTerminalHostSource, TerminalConnection,
     TerminalHostEntry, TerminalHostSource, TerminalOpenFailure, check_host_entry,
@@ -92,6 +92,9 @@ impl Default for Terminals {
 #[derive(Debug)]
 struct HostSource {
     plugin: String,
+    /// The key of the contributor whose start offered the source: the
+    /// plugin's ID, or the plugin's ID, a slash and its feature's ID.
+    owner: String,
     source: Arc<dyn TerminalHostSource>,
     hosts: Vec<TerminalHostEntry>,
     drain: Option<AbortHandle>,
@@ -194,7 +197,7 @@ impl Runtime {
     /// stops (ADR-0053, decision 3). A stream that ends empties its source.
     pub(crate) fn add_terminal_sources(
         &self,
-        plugin: &PluginId,
+        contributor: &Contributor,
         sources: Vec<PluginTerminalHostSource>,
     ) {
         for source in sources {
@@ -206,7 +209,8 @@ impl Runtime {
                 registry.insert(
                     id.clone(),
                     HostSource {
-                        plugin: plugin.as_str().to_owned(),
+                        plugin: contributor.plugin_id().as_str().to_owned(),
+                        owner: contributor.key(),
                         source: Arc::clone(&source.source),
                         hosts: Vec::new(),
                         drain: None,
@@ -249,13 +253,15 @@ impl Runtime {
         terminals.bump();
     }
 
-    /// Forgets a plugin's sources of terminal hosts, as the plugin stops.
-    pub(crate) fn remove_terminal_sources(&self, plugin: &PluginId) {
+    /// Forgets the sources of terminal hosts of a plugin or a feature, as it
+    /// stops.
+    pub(crate) fn remove_terminal_sources(&self, contributor: &Contributor) {
+        let owner = contributor.key();
         let removed: Vec<HostSource> = {
             let mut sources = lock(&self.inner.terminals.sources);
             let ids: Vec<String> = sources
                 .iter()
-                .filter(|(_, source)| source.plugin == plugin.as_str())
+                .filter(|(_, source)| source.owner == owner)
                 .map(|(id, _)| id.clone())
                 .collect();
             ids.into_iter()
@@ -460,21 +466,22 @@ impl ServiceProvider for TerminalsProvider {
         Ok(BoundService::new::<TerminalsService>(Arc::new(
             BoundTerminals {
                 runtime: self.runtime.clone(),
-                plugin: binding.id.as_str().to_owned(),
+                plugin: binding.contributor().key(),
             },
         )))
     }
 
-    /// Ends the terminals that the plugin opened, once it stopped or failed
-    /// to start, so none outlives it.
-    fn release(&self, plugin: &PluginId) -> BoxFuture<'static, ()> {
+    /// Ends the terminals that the plugin, or the feature, opened, once it
+    /// stopped or failed to start, so none outlives it. A binding keeps the
+    /// key of its contributor as the owner of the terminals that it opens.
+    fn release(&self, contributor: &Contributor) -> BoxFuture<'static, ()> {
         let runtime = self.runtime.clone();
-        let plugin = plugin.as_str().to_owned();
+        let owner = contributor.key();
         async move {
             runtime
                 .inner
                 .terminals
-                .end(Which::Plugin(&plugin), TerminalEnding::PluginOff)
+                .end(Which::Plugin(&owner), TerminalEnding::PluginOff)
                 .await;
         }
         .boxed()

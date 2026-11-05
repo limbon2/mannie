@@ -236,6 +236,9 @@ uuid = { workspace = true }
 
 [dev-dependencies]
 mannie-provider = { workspace = true, features = ["testing"] }
+# Creates the SQLite files that the tests of the service sqlite-files
+# register, since rusqlite belongs to mannie-store alone.
+mannie-store = { workspace = true, features = ["testing"] }
 proptest = { workspace = true }
 tempfile = { workspace = true }
 # test-util lets the waits of background commands run on a paused clock.

@@ -58,6 +58,9 @@ mannie-link = { workspace = true }
 # 5).
 mannie-plugin-sdk = { workspace = true }
 rustls = { workspace = true }
+# The JSON Schemas of the database tools' arguments, generated from the types
+# that read them, as the other plugins with tools generate theirs.
+schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 # The workers' IPC types, from which the desktop app generates bindings

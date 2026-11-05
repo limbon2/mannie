@@ -1,0 +1,28 @@
+{
+  "text": "SELECT ?1, ?2, ?3, ?4, ?5, ?6",
+  "parameters": [
+    {
+      "type": "null"
+    },
+    {
+      "type": "integer",
+      "value": "-9223372036854775808"
+    },
+    {
+      "type": "real",
+      "value": 2.5
+    },
+    {
+      "type": "infinity",
+      "negative": true
+    },
+    {
+      "type": "text",
+      "value": "a 'quote'"
+    },
+    {
+      "type": "blob",
+      "base64": "AP8="
+    }
+  ]
+}

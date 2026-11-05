@@ -28,7 +28,7 @@ flowchart TD
 
 - The master's conversation agent delegates tasks to workers with `delegate_task`, the tool of the plugin's executor ([ADR-0015](../../../docs/adr/0015-run-an-agent-runtime-on-every-machine.md), [ADR-0031](../../../docs/adr/0031-move-workers-into-the-first-plugin.md)).
 - A worker agent takes care of the master's request. It knows its host from the host facts and host instructions, and it decides how to do the task there. The master does not need to know how the host works.
-- The master never runs tools on a worker's host, and workers do not delegate to other workers.
+- The master never runs tools on a worker's host, and workers do not delegate to other workers. From M15, the master works with the databases registered on a worker's host through the worker, which decides under its ceiling and records each statement ([ADR-0057](../../../docs/adr/0057-let-the-master-work-with-the-databases-on-a-workers-host.md)).
 
 ### Workers
 

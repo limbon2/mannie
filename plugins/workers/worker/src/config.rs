@@ -77,6 +77,16 @@ struct ConfigFile {
     max_parallel_tasks: Option<i64>,
     #[serde(default)]
     ceiling: CeilingFile,
+    #[serde(default)]
+    databases: DatabasesFile,
+}
+
+/// The table `[databases]`, which a worker before 0.8 refuses as unknown.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DatabasesFile {
+    #[serde(default)]
+    enabled: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -121,6 +131,10 @@ pub(crate) struct Config {
     /// host's requests (ADR-0029, decision 5). True when the file does not
     /// say.
     pub(crate) accepts_master_full_access: bool,
+    /// Whether the master may work with the databases that the owner
+    /// registers on the host, under its ceiling (ADR-0057, decision 2).
+    /// False when the file does not say.
+    pub(crate) databases_enabled: bool,
 }
 
 /// Reads and checks the configuration in `file`. `now` dates the host's
@@ -153,6 +167,7 @@ pub(crate) fn without_file(name: &str, data_dir: PathBuf, folders: &Folders) -> 
             rules: Vec::new(),
         },
         accepts_master_full_access: true,
+        databases_enabled: false,
     }
 }
 
@@ -223,6 +238,7 @@ pub(crate) fn parse(
         ceiling: checked_ceiling(raw.ceiling, now)
             .map_err(|(key, problem)| invalid(&key, problem))?,
         accepts_master_full_access,
+        databases_enabled: raw.databases.enabled,
     })
 }
 
@@ -394,6 +410,12 @@ allowed_folders = []
 # words, such as {{ command = \"git status\" }}, optionally only in a folder:
 # {{ command = \"cargo test\", folder = \"/srv/app\" }}.
 rules = []
+
+# Whether Mannie may work with SQLite files on this host that you register
+# from Mannie, inside the allowed folders and under the ceiling above. A
+# worker before 0.8 refuses a file with this table.
+# [databases]
+# enabled = true
 ",
         data = toml_literal(&folders.data.display().to_string()),
     )

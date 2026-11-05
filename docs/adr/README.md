@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                           |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Living index                                                                                                                                                                              |
-| Last updated | 2026-10-30                                                                                                                                                                                |
+| Last updated | 2026-11-01                                                                                                                                                                                |
 | Related      | [ADR-0001](0001-record-architecture-decisions.md), [Template](0000-template.md), [Decisions](../roadmap/milestones.md#5-decisions), [Validations](../roadmap/milestones.md#4-validations) |
 
 [ADR-0001](0001-record-architecture-decisions.md) describes the process, and new ADRs start from the [template](0000-template.md).
@@ -72,3 +72,6 @@ Each ADR has exactly one of these statuses:
 | [0052](0052-offer-a-plugins-tools-where-its-attachments-are.md)                        | Offer a plugin's tools where its attachments are                                              | Accepted (D44)         | M13        |
 | [0053](0053-let-plugins-offer-terminals.md)                                            | Let plugins offer terminals, and let agents run commands in them under the master's policy    | Accepted (D45)         | M14        |
 | [0054](0054-let-tool-results-keep-what-they-cite-and-let-plugin-views-add-mentions.md) | Let tool results keep what they cite, and let plugin views add mentions                       | Accepted (D45)         | M14        |
+| [0055](0055-let-plugins-have-optional-features.md)                                     | Let plugins have optional features that the owner turns on and off                            | Accepted (D47)         | M15        |
+| [0056](0056-let-plugins-work-with-the-owners-sqlite-files-through-the-core.md)         | Let plugins work with the owner's SQLite files through the core                               | Accepted (D47)         | M15        |
+| [0057](0057-let-the-master-work-with-the-databases-on-a-workers-host.md)               | Let the master work with the databases on a worker's host, under the host's ceiling           | Accepted (D47)         | M15        |

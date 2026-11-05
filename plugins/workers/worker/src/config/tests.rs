@@ -142,6 +142,27 @@ fn the_keys_left_out_take_their_defaults() {
     assert_eq!(config.ceiling.allowed_folders.len(), 0);
     assert_eq!(config.ceiling.rules.len(), 0);
     assert!(config.accepts_master_full_access);
+    assert!(!config.databases_enabled);
+}
+
+#[test]
+fn the_host_allows_databases_only_in_its_table_and_refuses_an_unknown_key_there() {
+    let host = Host::new();
+
+    let enabled = host
+        .parse("version = 1\nname = \"build-01\"\n[databases]\nenabled = true\n")
+        .unwrap();
+    let empty = host
+        .parse("version = 1\nname = \"build-01\"\n[databases]\n")
+        .unwrap();
+    let unknown = syntax_message(
+        host.parse("version = 1\nname = \"build-01\"\n[databases]\nfolders = []\n")
+            .unwrap_err(),
+    );
+
+    assert!(enabled.databases_enabled);
+    assert!(!empty.databases_enabled);
+    assert!(unknown.contains("folders"), "{unknown}");
 }
 
 #[test]
@@ -296,6 +317,10 @@ fn the_initial_file_is_a_valid_configuration_with_the_hosts_name() {
     assert_eq!(config.name, "build-01");
     assert_eq!(config.ceiling.mode, CeilingMode::Ask);
     assert_eq!(config.data_dir, host.folders.data);
+    assert!(
+        !config.databases_enabled,
+        "the initial file leaves databases off"
+    );
     assert_eq!(
         odd.name, "mannie-worker",
         "a name that needs quoting is replaced"

@@ -41,6 +41,9 @@ pub enum SubscriptionEnd {
     /// The owner turned off the plugin whose channel it was (ADR-0030,
     /// decision 5).
     PluginOff,
+    /// The owner turned off the optional feature of a plugin whose channel
+    /// it was, while the plugin stays on (ADR-0055, decision 7).
+    FeatureOff,
 }
 
 /// A message of a conversation's channel. The first one is a snapshot or the

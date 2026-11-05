@@ -13,5 +13,6 @@
     "acceptsMasterFullAccess": true
   },
   "version": "0.2.0",
-  "maxParallelTasks": 4
+  "maxParallelTasks": 4,
+  "databases": true
 }

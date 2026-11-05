@@ -258,6 +258,12 @@ impl Hub {
         self.update_view(worker, |view| view.status = status);
     }
 
+    /// The plugin's store, which also keeps the copy of each worker's
+    /// databases (ADR-0057, decision 3).
+    pub(crate) fn store(&self) -> WorkersStore {
+        self.inner.store.clone()
+    }
+
     /// The working connection to a worker.
     pub(crate) fn connection(&self, worker: &WorkerId) -> Option<Arc<Connection>> {
         lock(&self.inner.connections).get(worker).map(Arc::clone)

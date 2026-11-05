@@ -1018,7 +1018,13 @@ impl RunActor {
         let Some(plugin) = self.runtime.agent_plugin(agent) else {
             return Some(call);
         };
-        self.end_call(call, NotRunReason::PluginOff { plugin });
+        self.end_call(
+            call,
+            NotRunReason::PluginOff {
+                plugin,
+                feature: None,
+            },
+        );
         None
     }
 

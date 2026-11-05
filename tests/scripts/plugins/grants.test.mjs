@@ -12,6 +12,7 @@ describe('grantLines', () => {
         id: 'workers',
         manifest: {
           crates: { exclusive: ['tonic'] },
+          features: { databases: { services: { 'file-dialog': 1, terminals: 1 } }, 'query-history': {} },
           id: 'workers',
           native: { processes: 'Runs the updater.', sockets: 'The link.' },
           order: 10,
@@ -27,8 +28,13 @@ describe('grantLines', () => {
         },
         validation: false,
       },
-      { channels: ['subscribe_workers'], commands: ['pair_worker', 'remove_worker'], id: 'workers' },
-      ['credentials', 'processes', 'secrets'],
+      {
+        channels: ['subscribe_workers', 'follow_databases'],
+        commands: ['pair_worker', 'remove_worker', 'list_databases'],
+        features: [{ channels: ['follow_databases'], commands: ['list_databases'], id: 'databases' }],
+        id: 'workers',
+      },
+      ['credentials', 'processes', 'secrets', 'terminals'],
     );
 
     assert.deepEqual(lines, [
@@ -49,6 +55,15 @@ describe('grantLines', () => {
       '  Native calls:',
       '    processes: Runs the updater.',
       '    sockets: The link.',
+      '  Features:',
+      '    databases',
+      '      Services: file-dialog 1, terminals 1 (sensitive)',
+      '      Commands: list_databases',
+      '      Channels: follow_databases',
+      '    query-history',
+      '      Services: none',
+      '      Commands: none',
+      '      Channels: none',
     ]);
   });
 
@@ -60,7 +75,7 @@ describe('grantLines', () => {
         manifest: { id: 'example', order: 90, rust: { entry: 'mannie-example' }, sdk: 1 },
         validation: true,
       },
-      { channels: [], commands: [], id: 'example' },
+      { channels: [], commands: [], features: [], id: 'example' },
       ['secrets'],
     );
 
@@ -74,6 +89,7 @@ describe('grantLines', () => {
       '  Installed programs: none',
       '  Crates that only it may use: none',
       '  Native calls: none',
+      '  Features: none',
     ]);
   });
 });

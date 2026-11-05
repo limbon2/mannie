@@ -183,7 +183,7 @@ stateDiagram-v2
 2. An event is stored before it is published.
 3. An operation executes at most once. An uncertain operation is never repeated automatically.
 4. A side effect needs an allow decision from policy or from the owner. Content that the model reads never grants a permission.
-5. An agent's tools act on the machine where the agent runs, and on a remote host only through a remote command that the master's policy authorized ([ADR-0036](../adr/0036-let-plugins-run-commands-on-remote-hosts.md)). The master never runs tools on a worker's host.
+5. An agent's tools act on the machine where the agent runs, and on a remote host only through a remote command that the master's policy authorized ([ADR-0036](../adr/0036-let-plugins-run-commands-on-remote-hosts.md)). The master never runs tools on a worker's host. From M15, the master works with the databases registered on a worker's host through the worker, which decides under its ceiling and records each statement ([ADR-0057](../adr/0057-let-the-master-work-with-the-databases-on-a-workers-host.md)).
 6. A machine's policy ceiling, such as a worker's, can be narrowed for a task and never widened.
 7. Provider credentials are at rest only in the master's operating system credential store.
 8. Contracts and stored data change only by addition, with deprecation before removal.

@@ -493,6 +493,12 @@ pub enum ToolOutcome {
         /// fail.
         #[serde(default)]
         failure: Option<String>,
+        /// Whether the plugin lost the answer of the call's operation, such
+        /// as when the link to the worker that ran a write dropped, so the
+        /// operation may have taken effect and the call is uncertain
+        /// (ADR-0057, decision 8). Older calls have none.
+        #[serde(default)]
+        uncertain: bool,
     },
     /// The tool failed.
     Failed {
@@ -664,11 +670,18 @@ mod tests {
             plugin: "notes".to_owned(),
             data: None,
             failure: None,
+            uncertain: false,
         };
         let older = serde_json::json!({ "kind": "plugin", "plugin": "notes" });
         assert_eq!(
             serde_json::to_value(&plugin).unwrap(),
-            serde_json::json!({ "kind": "plugin", "plugin": "notes", "data": null, "failure": null })
+            serde_json::json!({
+                "kind": "plugin",
+                "plugin": "notes",
+                "data": null,
+                "failure": null,
+                "uncertain": false,
+            })
         );
         assert_eq!(
             serde_json::from_value::<ToolOutcome>(older).unwrap(),
@@ -678,6 +691,7 @@ mod tests {
             plugin: "git".to_owned(),
             data: Some(r#"{"commit":"1a2b3c"}"#.to_owned()),
             failure: Some("not_a_repository".to_owned()),
+            uncertain: false,
         };
         assert_eq!(
             serde_json::to_value(&described).unwrap(),
@@ -686,6 +700,7 @@ mod tests {
                 "plugin": "git",
                 "data": r#"{"commit":"1a2b3c"}"#,
                 "failure": "not_a_repository",
+                "uncertain": false,
             })
         );
     }

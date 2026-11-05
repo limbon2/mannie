@@ -129,18 +129,36 @@ export function workersRefusalMessage(code: string, worker: string | null): stri
 /** The code of the work item that counts the worker tasks that are running, as the core reports it. */
 export const WORKERS_ACTIVE_TASKS = 'active_tasks';
 
+/** The code of the Databases view's running statements, which the feature reports as its work. */
+const DATABASES_RUNNING_STATEMENTS = 'running_statements';
+
 /**
  * What turning Workers off does to its worker tasks that are running, or
  * `null` when none is. Items with other codes are not Workers' own.
  */
 export function workersOffQuestion(items: readonly WorkItem[]): string | null {
-  const count = items.find((item) => item.code === WORKERS_ACTIVE_TASKS)?.count ?? 0;
-  return count === 0 ? null : m.workers_plugin_off_question({ count });
+  const tasks = items.find((item) => item.code === WORKERS_ACTIVE_TASKS)?.count ?? 0;
+  const statements = items.find((item) => item.code === DATABASES_RUNNING_STATEMENTS)?.count ?? 0;
+  const sentences = [
+    tasks === 0 ? null : m.workers_plugin_off_question({ count: tasks }),
+    statements === 0 ? null : m.workers_databases_off_question({ count: statements }),
+  ].filter((sentence) => sentence !== null);
+  return sentences.length === 0 ? null : sentences.join(' ');
 }
 
 /** Why the Workers plugin could not start, by its code, or `null` for the host's codes. */
 export function workersStartFailureMessage(code: string): string | null {
-  return code === 'storage_failed' ? m.workers_plugin_failure_storage_failed() : null;
+  switch (code) {
+    case 'databases_unavailable': {
+      return m.workers_databases_failure_unavailable();
+    }
+    case 'storage_failed': {
+      return m.workers_plugin_failure_storage_failed();
+    }
+    default: {
+      return null;
+    }
+  }
 }
 
 /** What a worker's ceiling lets its tasks do. */

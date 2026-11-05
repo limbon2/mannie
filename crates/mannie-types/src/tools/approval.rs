@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use crate::ids::{ConversationId, PartId, ProjectId};
+use crate::ids::{ConversationId, DatabaseKey, PartId, ProjectId};
 
 use super::access::AccessMode;
 use super::external::ToolServerEndpoint;
@@ -46,6 +46,12 @@ pub enum ApprovalReason {
     /// A command that a plugin's tool types into a terminal, which no rule or
     /// grant allows (ADR-0053).
     TerminalCommand,
+    /// A write to a registered database, which no grant allows (ADR-0056,
+    /// decision 7).
+    DatabaseWrite,
+    /// A change of a registered database's schema, which no grant covers
+    /// (ADR-0056, decision 7).
+    DatabaseSchema,
 }
 
 /// What a grant covers.
@@ -137,6 +143,19 @@ pub enum GrantScope {
         host: TerminalHost,
         /// The command's text.
         command: String,
+    },
+    /// The same statement text on the same registered database, with any
+    /// parameters (ADR-0056, decision 7). It covers writes, never a schema
+    /// change.
+    Database {
+        /// The plugin whose tool runs the statement.
+        plugin: String,
+        /// The plugin's key for the database.
+        key: DatabaseKey,
+        /// The database's name when the owner allowed it, for display only.
+        name: String,
+        /// The statement's text.
+        statement: String,
     },
 }
 
@@ -301,6 +320,9 @@ pub enum Decision {
     FullAccess,
     /// On a worker whose ceiling is in full access mode (ADR-0029).
     HostFullAccess,
+    /// A read of a database that the owner registered, which runs without
+    /// asking in every conversation (ADR-0056, decision 7).
+    RegisteredDatabase,
 }
 
 impl Decision {

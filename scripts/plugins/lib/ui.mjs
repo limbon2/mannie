@@ -5,17 +5,19 @@
 //
 // The list of the builds that ship names the shipped plugins, and the list of
 // the validation builds also the fixture plugins, each in the order of their
-// starts. An entry carries the plugin's name and description from the catalog
-// and the definition that its `ui/index.ts` exports, or none for a plugin
-// without UI, so the Plugins page names every plugin. A plugin imports its
-// messages from its barrel, `ui/generated/messages.ts`, which re-exports only
-// the keys of the plugin's catalog, so the type checks refuse a key of the
-// core or of another plugin.
+// starts. An entry carries the plugin's name and description from the catalog,
+// the name and description of each of its optional features (ADR-0055,
+// decision 3) and the definition that its `ui/index.ts` exports, or none for
+// a plugin without UI, so the Plugins page names every plugin and feature. A
+// plugin imports its messages from its barrel, `ui/generated/messages.ts`,
+// which re-exports only the keys of the plugin's catalog, so the type checks
+// refuse a key of the core or of another plugin.
 
 import { existsSync } from 'node:fs';
 import { join, posix } from 'node:path';
 
-import { prefixOf } from './manifests.mjs';
+import { compareText, prefixOf } from './manifests.mjs';
+import { featureMessageKeys } from './messages.mjs';
 
 /**
  * @typedef {import('./generator.mjs').GeneratedFile} GeneratedFile
@@ -24,6 +26,7 @@ import { prefixOf } from './manifests.mjs';
 /**
  * A plugin as the UI's lists name it.
  * @typedef {object} UiPlugin
+ * @property {string[]} features the IDs of the plugin's optional features, in the order of their IDs
  * @property {string} folder the plugin's folder, relative to the root, with forward slashes
  * @property {boolean} hasUi whether the plugin has `ui/index.ts`
  * @property {string} id
@@ -41,11 +44,12 @@ const HEADER = (/** @type {string} */ source) =>
 /**
  * The plugins as the UI's lists name them, with whether each has UI.
  * @param {string} root
- * @param {{ folder: string, id: string, validation: boolean }[]} plugins in the order of their starts
+ * @param {{ folder: string, id: string, manifest: { features?: Record<string, unknown> }, validation: boolean }[]} plugins in the order of their starts
  * @returns {UiPlugin[]}
  */
 export function uiPlugins(root, plugins) {
   return plugins.map((plugin) => ({
+    features: Object.keys(plugin.manifest.features ?? {}).sort(compareText),
     folder: plugin.folder,
     hasUi: existsSync(join(root, plugin.folder, 'ui', 'index.ts')),
     id: plugin.id,
@@ -80,10 +84,22 @@ export function uiPluginList(plugins, description) {
   const entries = plugins.map((plugin) => {
     const prefix = prefixOf(plugin.id);
     const definition = plugin.hasUi ? definitionName(plugin.id) : 'null';
+    const features = plugin.features.map((feature) => {
+      const keys = featureMessageKeys(prefix, feature);
+      return [
+        '      {\n',
+        `        description: m.${keys.description},\n`,
+        `        id: '${feature}',\n`,
+        `        name: m.${keys.name},\n`,
+        '      },\n',
+      ].join('');
+    });
+    const featureList = features.length > 0 ? ['    features: [\n', ...features, '    ],\n'] : ['    features: [],\n'];
     return [
       '  {\n',
       `    definition: ${definition},\n`,
       `    description: m.${prefix}_plugin_description,\n`,
+      ...featureList,
       `    id: '${plugin.id}',\n`,
       `    name: m.${prefix}_plugin_name,\n`,
       '  },\n',

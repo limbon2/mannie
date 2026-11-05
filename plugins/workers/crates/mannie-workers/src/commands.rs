@@ -12,6 +12,7 @@ use mannie_plugin_sdk::ipc::{
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+use crate::databases::{self, DATABASES};
 use crate::view::{WorkerListUpdate, WorkerView};
 
 /// The most characters of a worker's name, as a worker's configuration
@@ -232,13 +233,15 @@ impl ChannelSpec for SubscribeWorkersChannel {
     type Error = WorkersError;
 }
 
-/// The plugin's commands and channel, and the limit that the UI shows.
+/// The plugin's commands and channel, the commands and channel of its
+/// feature Databases, and the limits that the UI shows.
 pub fn interface() -> Interface {
     Interface::new()
         .command::<PairWorkerCommand>()
         .command::<RenameWorkerCommand>()
         .command::<RemoveWorkerCommand>()
         .channel::<SubscribeWorkersChannel>()
+        .feature(DATABASES, databases::commands::interface)
         .constant(
             "MAX_WORKER_NAME_CHARACTERS",
             "The most characters of a worker's name.",

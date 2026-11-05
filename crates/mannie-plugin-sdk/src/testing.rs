@@ -670,6 +670,7 @@ mod tests {
             programs: Vec::new(),
             processes: BTreeMap::new(),
             native: NativeSection::default(),
+            features: BTreeMap::new(),
         }
     }
 

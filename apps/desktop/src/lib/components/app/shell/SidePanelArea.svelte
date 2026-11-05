@@ -6,7 +6,7 @@
   import type { Attachment } from 'svelte/attachments';
 
   import { m } from '#lib/paraglide/messages.js';
-  import { pluginName } from '#lib/state/plugin-catalog.js';
+  import { ownerName } from '#lib/state/plugin-catalog.js';
   import { getShellSlots } from '#lib/state/shell-slots.svelte.js';
   import { type PanelLabel, sidePanels } from '#lib/state/side-panels.svelte.js';
   import type { OpenPanel } from '#lib/utils/side-panels.js';
@@ -36,9 +36,8 @@
     if (kind !== undefined) {
       return { isContent: false, text: kind.defaultLabel() };
     }
-    const plugin = slots.sidePanels.pluginOff(panel.kind);
-    const text = plugin === null ? m.shell_side_panel_unknown_label() : pluginName(plugin);
-    return { isContent: false, text };
+    const owner = slots.sidePanels.ownerOff(panel.kind);
+    return { isContent: false, text: owner === null ? m.shell_side_panel_unknown_label() : ownerName(owner) };
   }
 
   function iconOf(panel: OpenPanel): Component {
@@ -46,7 +45,7 @@
     if (kind !== undefined) {
       return kind.icon;
     }
-    return slots.sidePanels.pluginOff(panel.kind) === null ? PanelRightIcon : PlugIcon;
+    return slots.sidePanels.ownerOff(panel.kind) === null ? PanelRightIcon : PlugIcon;
   }
 
   function show(key: string): void {
@@ -103,7 +102,7 @@
     </Tabs.List>
     {#each open.panels as panel (panel.key)}
       {const kind = $derived(slots.sidePanels.find(panel.kind))}
-      {const offPlugin = $derived(slots.sidePanels.pluginOff(panel.kind))}
+      {const offOwner = $derived(slots.sidePanels.ownerOff(panel.kind))}
       {const label = $derived(labelOf(panel))}
       <Tabs.Content class="flex min-h-0 flex-1 flex-col outline-none" tabindex={-1} value={panel.key}>
         <h2
@@ -123,8 +122,8 @@
                 sidePanels.setLabel(panel.key, { isContent, text });
               }}
             />
-          {:else if offPlugin !== null}
-            <PluginOffState plugin={offPlugin} />
+          {:else if offOwner !== null}
+            <PluginOffState feature={offOwner.feature} plugin={offOwner.plugin} />
           {:else}
             <UnknownSidePanel close={() => void sidePanels.close(panel.key)} kind={panel.kind} />
           {/if}

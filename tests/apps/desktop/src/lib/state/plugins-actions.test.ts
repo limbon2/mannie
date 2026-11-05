@@ -1,16 +1,19 @@
 // What the Plugins page does (docs/features/plugins.md): a switch takes effect
 // at once, turning off a plugin with work in progress asks first and says
 // what happens to that work, a failed change stays beside the plugin until the
-// next one, and "Try again" starts a failed plugin again.
+// next one, and "Try again" starts a failed plugin again. A plugin's optional
+// feature does the same under its own key (ADR-0055, decision 10).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PluginView } from '../../../../../../apps/desktop/src/lib/generated/bindings.js';
 import { setPluginCatalog } from '../../../../../../apps/desktop/src/lib/state/plugin-catalog.js';
-import { PluginsActions } from '../../../../../../apps/desktop/src/lib/state/plugins-actions.svelte.js';
+import { featureKey, PluginsActions } from '../../../../../../apps/desktop/src/lib/state/plugins-actions.svelte.js';
 
 const core = vi.hoisted(() => ({
+  pluginFeatureWork: vi.fn(),
   pluginWork: vi.fn(),
   setPluginEnabled: vi.fn(),
+  setPluginFeatureEnabled: vi.fn(),
   subscribePlugins: vi.fn(),
   unsubscribe: vi.fn(),
 }));
@@ -21,6 +24,7 @@ function view(enabled: boolean): PluginView {
   return {
     enabled,
     failure: null,
+    features: [],
     id: 'workers',
     state: enabled ? 'on' : 'off',
     uses: {
@@ -43,10 +47,12 @@ beforeEach(() => {
   core.setPluginEnabled.mockImplementation(({ enabled }: { enabled: boolean }) =>
     Promise.resolve({ data: view(enabled), status: 'ok' }),
   );
+  core.setPluginFeatureEnabled.mockResolvedValue({ data: view(true), status: 'ok' });
   setPluginCatalog([
     {
       description: () => 'Runs tasks on other computers.',
       failure: () => null,
+      features: [],
       id: 'workers',
       name: () => 'Workers',
       offQuestion: (items) => {
@@ -84,7 +90,10 @@ describe('the Plugins page', () => {
     const turnedOffBeforeConfirming = core.setPluginEnabled.mock.calls.length;
     await actions.confirmOff();
 
-    expect(asked).toEqual({ open: true, question: { id: 'workers', question: '2 tasks keep running.' } });
+    expect(asked).toEqual({
+      open: true,
+      question: { feature: null, id: 'workers', question: '2 tasks keep running.' },
+    });
     expect(turnedOffBeforeConfirming).toBe(0);
     expect(core.setPluginEnabled).toHaveBeenCalledWith({ enabled: false, pluginId: 'workers' });
     expect(actions.offOpen).toBe(false);
@@ -106,6 +115,7 @@ describe('the Plugins page', () => {
     await actions.toggle('workers', false);
 
     expect(actions.offQuestion).toEqual({
+      feature: null,
       id: 'workers',
       question:
         '1 tasks keep running. Its tools started a command in the background that still runs. Turning the plugin off stops it.',
@@ -136,5 +146,59 @@ describe('the Plugins page', () => {
     expect(failure).toEqual({ error: { code: 'storage_failed' }, kind: 'core' });
     expect(actions.failures.has('workers')).toBe(false);
     expect(core.setPluginEnabled).toHaveBeenLastCalledWith({ enabled: true, pluginId: 'workers' });
+  });
+
+  it('turns a feature on at once, under its own key', async () => {
+    const actions = new PluginsActions();
+
+    const turning = actions.toggleFeature('workers', 'databases', true);
+    const changing = actions.changing.has(featureKey('workers', 'databases'));
+    await turning;
+
+    expect(core.setPluginFeatureEnabled).toHaveBeenCalledWith({
+      enabled: true,
+      featureId: 'databases',
+      pluginId: 'workers',
+    });
+    expect(changing).toBe(true);
+    expect(actions.changing.has('workers')).toBe(false);
+    expect(actions.changing.size).toBe(0);
+  });
+
+  it('asks before turning off a feature with work in progress, in the plugin’s words, and turns it off once confirmed', async () => {
+    core.pluginFeatureWork.mockResolvedValue({ data: { items: [{ code: 'active_tasks', count: 3 }] }, status: 'ok' });
+    const actions = new PluginsActions();
+
+    await actions.toggleFeature('workers', 'databases', false);
+    const asked = actions.offQuestion;
+    await actions.confirmOff();
+
+    expect(core.pluginFeatureWork).toHaveBeenCalledWith({ featureId: 'databases', pluginId: 'workers' });
+    expect(asked).toEqual({ feature: 'databases', id: 'workers', question: '3 tasks keep running.' });
+    expect(core.setPluginFeatureEnabled).toHaveBeenCalledWith({
+      enabled: false,
+      featureId: 'databases',
+      pluginId: 'workers',
+    });
+    expect(core.setPluginEnabled).not.toHaveBeenCalled();
+  });
+
+  it('keeps why a feature’s change failed beside the feature, and tries its start again', async () => {
+    core.pluginFeatureWork.mockResolvedValue({ data: { items: [] }, status: 'ok' });
+    core.setPluginFeatureEnabled.mockResolvedValueOnce({ error: { code: 'storage_failed' }, status: 'error' });
+    const actions = new PluginsActions();
+
+    await actions.toggleFeature('workers', 'databases', false);
+    const failure = actions.failures.get(featureKey('workers', 'databases'));
+    await actions.retryFeature('workers', 'databases');
+
+    expect(failure).toEqual({ error: { code: 'storage_failed' }, kind: 'core' });
+    expect(actions.failures.has('workers')).toBe(false);
+    expect(actions.failures.size).toBe(0);
+    expect(core.setPluginFeatureEnabled).toHaveBeenLastCalledWith({
+      enabled: true,
+      featureId: 'databases',
+      pluginId: 'workers',
+    });
   });
 });

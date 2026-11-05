@@ -31,6 +31,7 @@ import { nativeGrants } from './native.mjs';
  * @property {string[]} coreTablePrefixes the prefixes of the tables that are not a plugin's
  * @property {RegExp} idPattern the syntax of a plugin ID
  * @property {string[]} loaderNamePrefixes the starts of the names of variables that load libraries into programs
+ * @property {string[]} pluginOnlyServices the services that only a plugin may declare, never one of its features
  * @property {string[]} reservedIds IDs that no plugin may have
  * @property {JsonSchema} schema the manifest's JSON Schema
  * @property {number} sdkMajor the major of the SDK that this build has
@@ -48,6 +49,7 @@ import { nativeGrants } from './native.mjs';
  * @property {{ entry: string }} rust
  * @property {number} sdk
  * @property {{ exclusive?: string[] }} [crates]
+ * @property {Record<string, { services?: Record<string, number> }>} [features]
  * @property {Partial<Record<import('./native.mjs').NativeCategory, string>>} [native]
  * @property {Record<string, { fixed?: string[], inherit?: string[], reason: string }>} [processes]
  * @property {{ crates?: string[], package: string }[]} [programs]
@@ -363,10 +365,65 @@ function processProblem(manifest, rules) {
 }
 
 /**
+ * The problem of a service that a manifest declares: one that the SDK does
+ * not have, or another major of it.
+ * @param {string} name
+ * @param {number} major
+ * @param {Rules} rules
+ * @returns {string | null}
+ */
+function serviceProblem(name, major, rules) {
+  const known = rules.services[name];
+  if (known === undefined) {
+    return `the manifest declares the service ${JSON.stringify(name)}, which the plugin SDK does not have`;
+  }
+  if (major !== known) {
+    return `the manifest declares major ${String(major)} of the service ${name}, which the plugin SDK does not have`;
+  }
+  return null;
+}
+
+/**
+ * The first problem of the optional features under `[features]` (ADR-0055,
+ * decision 2), in the order of `Manifest::parse`: each feature's ID, then
+ * each service that only it declares: one that the SDK has, at its major,
+ * never one of the plugin's own, and never one that the plugin or another
+ * feature declares.
+ * @param {Manifest} manifest
+ * @param {Rules} rules
+ * @returns {string | null}
+ */
+function featureProblem(manifest, rules) {
+  const features = Object.entries(manifest.features ?? {});
+  const badId = features.find(([id]) => !rules.idPattern.test(id));
+  if (badId !== undefined) {
+    return `${JSON.stringify(badId[0])} is not a feature's ID, which is lower-case words of letters and digits joined by single hyphens, starting with a letter`;
+  }
+  const declared = new Set(Object.keys(manifest.services ?? {}));
+  for (const [feature, section] of features) {
+    for (const [name, major] of Object.entries(section.services ?? {})) {
+      const problem = serviceProblem(name, major, rules);
+      if (problem !== null) {
+        return problem;
+      }
+      if (rules.pluginOnlyServices.includes(name)) {
+        return `the feature ${feature} declares the service ${name}, which only its plugin can declare`;
+      }
+      if (declared.has(name)) {
+        return `the service ${name} is declared twice, by the plugin and a feature or by two features`;
+      }
+      declared.add(name);
+    }
+  }
+  return null;
+}
+
+/**
  * Parses and checks the text of a `plugin.toml` in the order of
  * `Manifest::parse`: another SDK major first, then the shape, the ID, the
  * secrets' names, the services, the service that secrets need, the reasons
- * of native grants, the installed programs and the service that they need.
+ * of native grants, the installed programs and the service that they need,
+ * and the optional features with their services.
  * @param {string} text
  * @param {Rules} rules
  * @returns {{ manifest: Manifest, problems: [] } | { manifest: null, problems: string[] }}
@@ -432,20 +489,9 @@ export function checkManifest(text, rules) {
     };
   }
   for (const [name, major] of Object.entries(manifest.services ?? {})) {
-    const known = rules.services[name];
-    if (known === undefined) {
-      return {
-        manifest: null,
-        problems: [`the manifest declares the service ${JSON.stringify(name)}, which the plugin SDK does not have`],
-      };
-    }
-    if (major !== known) {
-      return {
-        manifest: null,
-        problems: [
-          `the manifest declares major ${String(major)} of the service ${name}, which the plugin SDK does not have`,
-        ],
-      };
+    const problem = serviceProblem(name, major, rules);
+    if (problem !== null) {
+      return { manifest: null, problems: [problem] };
     }
   }
   const listsSecrets = entries.length > 0 || legacy.length > 0 || keyed.length > 0;
@@ -467,6 +513,10 @@ export function checkManifest(text, rules) {
   const process = processProblem(manifest, rules);
   if (process !== null) {
     return { manifest: null, problems: [process] };
+  }
+  const feature = featureProblem(manifest, rules);
+  if (feature !== null) {
+    return { manifest: null, problems: [feature] };
   }
   return { manifest, problems: [] };
 }

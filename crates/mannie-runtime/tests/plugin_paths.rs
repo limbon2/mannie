@@ -418,6 +418,7 @@ async fn a_card_s_data_and_failure_reach_the_stored_outcome_and_a_coded_refusal_
             plugin: PLUGIN.to_owned(),
             data: Some(r#"{"conflicted":["a.txt","b.txt"]}"#.to_owned()),
             failure: Some("merge_conflicts".to_owned()),
+            uncertain: false,
         }
     );
     assert_eq!(result.output, "2 files conflict.");
@@ -429,6 +430,7 @@ async fn a_card_s_data_and_failure_reach_the_stored_outcome_and_a_coded_refusal_
             plugin: PLUGIN.to_owned(),
             data: None,
             failure: Some("not_a_repository".to_owned()),
+            uncertain: false,
         }
     );
     assert_eq!(refusal.output, "This folder is not a repository.");

@@ -43,6 +43,7 @@ mod profiles;
 mod projects;
 mod retry;
 mod search_profiles;
+mod sqlite_files;
 mod tasks;
 mod terminals;
 #[cfg(feature = "testing")]
@@ -85,6 +86,10 @@ pub use mentions::{
 };
 pub use profiles::{CredentialVault, VaultError};
 pub use retry::RetryPolicy;
+pub use sqlite_files::{
+    DATABASE_EXTENSIONS, DatabaseChooser, DatabaseFilters, HostDatabaseError, HostDatabaseSettings,
+    HostDatabases, HostFile, HostWritten,
+};
 pub use tasks::TASK_TOOLS;
 
 use crate::actor::Command;
@@ -100,6 +105,7 @@ use crate::plugin_executions::PluginExecutions;
 use crate::plugins::Registry;
 use crate::processes::{ProcessesProvider, Programs};
 use crate::search_profiles::ModelsProvider;
+use crate::sqlite_files::DatabaseTickets;
 use crate::tasks::ChildSlots;
 use crate::terminals::{Terminals, TerminalsProvider};
 use crate::wake_ups::WakeUps;
@@ -271,6 +277,9 @@ struct Inner {
     local_servers: Servers,
     /// The hosts of terminals and the terminals that run (ADR-0053).
     terminals: Terminals,
+    /// The tickets of the calls of plugins' tools that write to a database
+    /// while they execute (ADR-0056, decision 6).
+    database_tickets: DatabaseTickets,
     /// The IDs of search profiles that changed or were deleted, for the
     /// plugins that follow them through the service `models` (ADR-0047).
     search_changes: tokio::sync::broadcast::Sender<String>,
@@ -343,6 +352,13 @@ impl Runtime {
         config: RuntimeConfig,
     ) -> Result<Self, RuntimeStoreError> {
         deps.store.recover_exports().await?;
+        let uncertain = deps.store.recover_db_operations().await?;
+        if uncertain > 0 {
+            tracing::warn!(
+                operations = uncertain,
+                "owner operations on databases ran when Mannie ended and may have taken effect"
+            );
+        }
         let recovered = deps.store.recover_interrupted_runs().await?;
         if !recovered.is_empty() {
             tracing::info!(
@@ -414,6 +430,7 @@ impl Runtime {
             background: CommandRegistry::default(),
             local_servers: Servers::default(),
             terminals: Terminals::default(),
+            database_tickets: DatabaseTickets::default(),
             search_changes: tokio::sync::broadcast::channel(SEARCH_CHANGES_CAPACITY).0,
             wake_ups: WakeUps::default(),
             hubs: Hubs::default(),

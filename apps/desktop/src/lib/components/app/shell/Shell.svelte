@@ -111,13 +111,11 @@
     if (slots.navigation.find(selected) !== undefined) {
       return false;
     }
-    const plugin = slots.navigation.pluginOff(selected);
-    if (plugin === null) {
+    const owner = slots.navigation.ownerOff(selected);
+    if (owner === null) {
       return true;
     }
-    const state = pluginStates.view(plugin)?.state;
-    const comesBack = state === 'starting' || state === 'on';
-    return !comesBack;
+    return !pluginStates.comesBack(owner);
   }
 
   /**

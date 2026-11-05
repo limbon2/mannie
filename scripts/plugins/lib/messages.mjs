@@ -6,17 +6,19 @@
 // and then each plugin's, in the order of the plugins' starts, so Paraglide
 // compiles one catalog for each locale with one `m` namespace, and checks
 // what inlang does not: a key outside its file's prefix, a key in two
-// sources, a missing name or description of a plugin, and a plugin's catalog
-// for a locale that the core does not register.
+// sources, a missing name or description of a plugin or of one of its
+// optional features (ADR-0055, decision 3), and a plugin's catalog for a
+// locale that the core does not register.
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
 
-import { prefixOf } from './manifests.mjs';
+import { compareText, prefixOf } from './manifests.mjs';
 
 /**
  * A source of messages: the core's catalogs or a plugin's.
  * @typedef {object} MessageSource
+ * @property {string[]} features the IDs of the plugin's optional features, or none for the core
  * @property {string} folder its catalogs' folder, relative to the root, with forward slashes
  * @property {string} name `core`, or the plugin's ID
  * @property {string | null} prefix the plugin's prefix, or none for the core
@@ -30,23 +32,48 @@ export const CORE_MESSAGES = `${APP_FOLDER}/messages`;
 export const GENERATED_MESSAGES = `${APP_FOLDER}/.generated`;
 
 /**
+ * A plugin as the catalogs know it: its folder, its ID and the optional
+ * features that its manifest lists.
+ * @typedef {{ folder: string, id: string, manifest: { features?: Record<string, unknown> } }} CatalogPlugin
+ */
+
+/**
  * The sources of messages: the core's, then each plugin's in the order of
  * the plugins' starts. A plugin without a `messages` folder has none, which
  * the checks refuse, since every plugin names itself.
- * @param {{ folder: string, id: string }[]} plugins in the order of their starts
+ * @param {CatalogPlugin[]} plugins in the order of their starts
  * @returns {MessageSource[]}
  */
 export function messageSources(plugins) {
-  return [{ folder: CORE_MESSAGES, name: 'core', prefix: null }, ...plugins.map(pluginMessageSource)];
+  return [{ features: [], folder: CORE_MESSAGES, name: 'core', prefix: null }, ...plugins.map(pluginMessageSource)];
 }
 
 /**
  * A plugin's source of messages: its folder's `messages`, under its prefix.
- * @param {{ folder: string, id: string }} plugin
+ * @param {CatalogPlugin} plugin
  * @returns {MessageSource}
  */
 export function pluginMessageSource(plugin) {
-  return { folder: `${plugin.folder}/messages`, name: plugin.id, prefix: prefixOf(plugin.id) };
+  return {
+    features: Object.keys(plugin.manifest.features ?? {}).sort(compareText),
+    folder: `${plugin.folder}/messages`,
+    name: plugin.id,
+    prefix: prefixOf(plugin.id),
+  };
+}
+
+/**
+ * The keys of the messages that name an optional feature of a plugin on the
+ * Plugins page (ADR-0055, decision 3): `<prefix>_feature_<id>_name` and
+ * `<prefix>_feature_<id>_description`, with underscores in place of the
+ * ID's hyphens.
+ * @param {string} prefix the plugin's prefix
+ * @param {string} feature the feature's ID
+ * @returns {{ description: string, name: string }}
+ */
+export function featureMessageKeys(prefix, feature) {
+  const stem = `${prefix}_feature_${prefixOf(feature)}`;
+  return { description: `${stem}_description`, name: `${stem}_name` };
 }
 
 /**
@@ -149,6 +176,16 @@ export function messageProblems(sources, catalogs, settings) {
           problems.push(
             `${where(settings.baseLocale)}: the plugin needs the message ${required}, which names it on the Plugins page`,
           );
+        }
+      }
+      for (const feature of source.features) {
+        const keys = featureMessageKeys(source.prefix, feature);
+        for (const required of [keys.name, keys.description]) {
+          if (!Object.hasOwn(base, required)) {
+            problems.push(
+              `${where(settings.baseLocale)}: the feature ${feature} needs the message ${required}, which names it on the Plugins page`,
+            );
+          }
         }
       }
     }

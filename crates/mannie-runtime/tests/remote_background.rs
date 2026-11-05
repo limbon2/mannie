@@ -16,7 +16,7 @@ use futures_util::{FutureExt, StreamExt};
 use mannie_plugin_sdk::BoxFuture;
 use mannie_plugin_sdk::contracts::WorkItem;
 use mannie_plugin_sdk::contributions::Contributions;
-use mannie_plugin_sdk::ids::PluginId;
+use mannie_plugin_sdk::ids::{Contributor, PluginId};
 use mannie_plugin_sdk::points::tools::{
     AgentSelector, PluginTool, RemoteCommandAccess, Tool, ToolAccess, ToolCall, ToolExecution,
     ToolRefusal, ToolResult, ToolSpec, Tools,
@@ -345,7 +345,7 @@ fn result(request: &ModelRequest, call_id: &str) -> String {
 
 /// The work in progress that the runtime keeps for the fake plugin.
 fn work(harness: &Harness) -> Vec<WorkItem> {
-    let plugin = PluginId::parse(PLUGIN).unwrap();
+    let plugin = Contributor::plugin(PluginId::parse(PLUGIN).unwrap());
     harness
         .runtime
         .contribution_consumers()
@@ -382,6 +382,7 @@ async fn a_plugin_s_command_runs_past_its_call_and_reads_and_stops_like_a_local_
             plugin: PLUGIN.to_owned(),
             data: None,
             failure: None,
+            uncertain: false,
         }
     );
     let command = &transcript.background_commands[&1];

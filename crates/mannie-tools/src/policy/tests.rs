@@ -2,12 +2,12 @@ use std::path::PathBuf;
 
 use mannie_types::ceiling::CeilingMode;
 use mannie_types::clock::UtcMillis;
-use mannie_types::ids::{ProjectId, RuleId};
+use mannie_types::ids::{DatabaseKey, ProjectId, RuleId, WorkerId};
 use mannie_types::tools::{
-    Access, AccessMode, ApprovalReason, ApprovalRequest, CommandRule, Decision, DiscardedWork,
-    EntryCount, GrantScope, ProgramEffect, ProgramRule, ProgramTarget, Refusal, RemoteCommandRule,
-    RemoteTarget, RuleProposal, TerminalCommandRule, TerminalHost, TerminalTarget, ToolHint,
-    ToolServerEndpoint, ToolsError, effect_keys,
+    Access, AccessMode, ApprovalReason, ApprovalRequest, CommandRule, DatabaseHome, Decision,
+    DiscardedWork, EntryCount, GrantScope, ProgramEffect, ProgramRule, ProgramTarget, Refusal,
+    RemoteCommandRule, RemoteTarget, RuleProposal, StatementClass, TerminalCommandRule,
+    TerminalHost, TerminalTarget, ToolHint, ToolServerEndpoint, ToolsError, effect_keys,
 };
 
 use super::{Grants, PolicyInputs, SavedRule, Verdict, decide, saved_rule};
@@ -2155,5 +2155,448 @@ fn a_terminal_grant_covers_another_only_on_the_same_host_and_command() {
     assert!(!super::scope_covers(
         &terminal_grant(this_machine("/bin/bash"), "uptime"),
         &command_grant("uptime", "/work")
+    ));
+}
+
+const DATABASE: &str = "0199e0f2-0000-7000-8000-0000000000ee";
+const OTHER_DATABASE: &str = "0199e0f2-0000-7000-8000-0000000000ef";
+const UPDATE: &str = "UPDATE parts SET stock = ?1 WHERE name = ?2";
+const CREATE_INDEX: &str = "CREATE INDEX parts_name ON parts(name)";
+
+/// A statement on a database that the owner registered for the plugin
+/// `workers`, of the class that SQLite reported (ADR-0056, decision 7).
+fn statement_on(key: &str, text: &str, parameters: &[&str], class: StatementClass) -> Access {
+    let parameters: Vec<String> = parameters.iter().map(|value| (*value).to_owned()).collect();
+    Access::Database {
+        plugin: "workers".to_owned(),
+        key: DatabaseKey::parse(key).unwrap(),
+        name: "Inventory".to_owned(),
+        home: DatabaseHome::ThisComputer,
+        identity: "7:42".to_owned(),
+        statement: text.to_owned(),
+        statement_cut: false,
+        parameters_digest: parameters.join(","),
+        parameter_count: u32::try_from(parameters.len()).unwrap(),
+        parameters,
+        class,
+    }
+}
+
+fn statement(text: &str, parameters: &[&str], class: StatementClass) -> Access {
+    statement_on(DATABASE, text, parameters, class)
+}
+
+/// A statement on a database of the worker `build-box`, whose host is in
+/// `mode` and takes the master's full access when `accepts` says so
+/// (ADR-0057, decision 6).
+fn on_worker(text: &str, class: StatementClass, mode: CeilingMode, accepts: bool) -> Access {
+    let mut access = statement(text, &["12"], class);
+    if let Access::Database { home, .. } = &mut access {
+        *home = DatabaseHome::Worker {
+            worker: WorkerId::parse("0199e0f2-0000-7000-8000-0000000000aa").unwrap(),
+            name: "build-box".to_owned(),
+            mode,
+            accepts_full_access: accepts,
+        };
+    }
+    access
+}
+
+fn database_grant(text: &str) -> GrantScope {
+    GrantScope::Database {
+        plugin: "workers".to_owned(),
+        key: DatabaseKey::parse(DATABASE).unwrap(),
+        name: "Inventory".to_owned(),
+        statement: text.to_owned(),
+    }
+}
+
+#[test]
+fn a_read_of_a_registered_database_runs_in_every_conversation_and_names_its_source() {
+    let mut without_workspace = Inputs::new();
+    without_workspace.workspace = None;
+    let query = statement(
+        "SELECT * FROM parts WHERE name = ?1",
+        &["'bolt'"],
+        StatementClass::Read,
+    );
+
+    for inputs in [Inputs::new(), without_workspace] {
+        assert_eq!(
+            inputs.decide(std::slice::from_ref(&query)),
+            Verdict::Allowed(Decision::RegisteredDatabase)
+        );
+    }
+    assert_eq!(
+        Inputs::new().decide(&[read("/work/a.txt"), query.clone()]),
+        Verdict::Allowed(Decision::RegisteredDatabase)
+    );
+    let mut granted = Inputs::new();
+    granted.grants = vec![path_grant(AccessMode::Read, "/other")];
+    assert_eq!(
+        granted.decide(&[read("/other/b.txt"), query]),
+        Verdict::Allowed(Decision::Grant)
+    );
+}
+
+#[test]
+fn a_database_write_asks_and_offers_a_grant_of_its_statement_and_no_rule() {
+    let mut inputs = Inputs::new();
+    inputs.allow_changes_in_workspace = true;
+    let accesses = [statement(UPDATE, &["12", "'bolt'"], StatementClass::Write)];
+
+    assert_eq!(
+        inputs.decide(&accesses),
+        ask(
+            &accesses,
+            &[ApprovalReason::DatabaseWrite],
+            vec![database_grant(UPDATE)],
+            None
+        )
+    );
+    let twice = [
+        statement(UPDATE, &["12", "'bolt'"], StatementClass::Write),
+        statement(UPDATE, &["4", "'nut'"], StatementClass::Write),
+    ];
+    assert_eq!(
+        inputs.decide(&twice),
+        ask(
+            &twice,
+            &[ApprovalReason::DatabaseWrite],
+            vec![database_grant(UPDATE)],
+            None
+        )
+    );
+}
+
+#[test]
+fn a_database_grant_covers_the_same_statement_on_the_same_database_with_any_parameters() {
+    let mut inputs = Inputs::new();
+    inputs.grants = vec![database_grant(UPDATE)];
+    let mut renamed = statement(UPDATE, &["3", "'nut'"], StatementClass::Write);
+    if let Access::Database { name, .. } = &mut renamed {
+        "Stock".clone_into(name);
+    }
+    let mut other_plugin = statement(UPDATE, &["12", "'bolt'"], StatementClass::Write);
+    if let Access::Database { plugin, .. } = &mut other_plugin {
+        "other".clone_into(plugin);
+    }
+
+    assert_eq!(
+        inputs.decide(&[statement(UPDATE, &["3", "'nut'"], StatementClass::Write)]),
+        Verdict::Allowed(Decision::Grant)
+    );
+    // The database's name is for display: a rename changes nothing that a
+    // grant covers.
+    assert_eq!(inputs.decide(&[renamed]), Verdict::Allowed(Decision::Grant));
+    for access in [
+        statement(
+            "UPDATE parts SET stock = ?1",
+            &["12"],
+            StatementClass::Write,
+        ),
+        statement_on(
+            OTHER_DATABASE,
+            UPDATE,
+            &["12", "'bolt'"],
+            StatementClass::Write,
+        ),
+        other_plugin,
+    ] {
+        assert!(
+            matches!(
+                inputs.decide(std::slice::from_ref(&access)),
+                Verdict::Ask(_)
+            ),
+            "{access:?}"
+        );
+    }
+
+    let mut shared = Inputs::new();
+    shared.project_grants = vec![database_grant(UPDATE)];
+    assert_eq!(
+        shared.decide(&[statement(UPDATE, &[], StatementClass::Write)]),
+        Verdict::Allowed(Decision::ProjectGrant)
+    );
+    shared.project_grants = Vec::new();
+    shared.always_grants = vec![database_grant(UPDATE)];
+    assert_eq!(
+        shared.decide(&[statement(UPDATE, &[], StatementClass::Write)]),
+        Verdict::Allowed(Decision::AlwaysGrant)
+    );
+}
+
+#[test]
+fn a_change_of_a_schema_always_asks_and_no_grant_covers_it() {
+    let mut inputs = Inputs::new();
+    inputs.allow_changes_in_workspace = true;
+    inputs.grants = vec![database_grant(CREATE_INDEX)];
+    inputs.always_grants = vec![database_grant(CREATE_INDEX)];
+    let accesses = [statement(CREATE_INDEX, &[], StatementClass::Schema)];
+
+    assert_eq!(
+        inputs.decide(&accesses),
+        ask(
+            &accesses,
+            &[ApprovalReason::DatabaseSchema],
+            Vec::new(),
+            None
+        )
+    );
+    // A grant of the write would not cover the call, so the approval offers
+    // none for it.
+    let both = [
+        statement(UPDATE, &["1", "'bolt'"], StatementClass::Write),
+        statement(CREATE_INDEX, &[], StatementClass::Schema),
+    ];
+    assert_eq!(
+        Inputs::new().decide(&both),
+        ask(
+            &both,
+            &[
+                ApprovalReason::DatabaseWrite,
+                ApprovalReason::DatabaseSchema
+            ],
+            Vec::new(),
+            None
+        )
+    );
+}
+
+#[test]
+fn neither_the_workspace_nor_another_kind_of_grant_or_rule_allows_a_database_write() {
+    let mut inputs = Inputs::new();
+    inputs.allow_changes_in_workspace = true;
+    inputs.rules = vec![rule(&["UPDATE"], None)];
+    inputs.grants = vec![
+        path_grant(AccessMode::Write, "/work"),
+        command_grant(UPDATE, "/work"),
+        remote_grant(UPDATE),
+        tool_grant(UPDATE),
+        terminal_grant(this_machine("/bin/bash"), UPDATE),
+    ];
+
+    assert!(matches!(
+        inputs.decide(&[statement(UPDATE, &[], StatementClass::Write)]),
+        Verdict::Ask(_)
+    ));
+}
+
+#[test]
+fn an_approval_covers_the_values_and_the_file_that_it_showed() {
+    let shown = [statement(UPDATE, &["12", "'bolt'"], StatementClass::Write)];
+    let mut replaced = statement(UPDATE, &["12", "'bolt'"], StatementClass::Write);
+    if let Access::Database { identity, .. } = &mut replaced {
+        "7:43".clone_into(identity);
+    }
+    // The approval shows long values cut, so two values that show alike
+    // still differ in the digest of the full values.
+    let mut cut_alike = statement(UPDATE, &["12", "'bolt'"], StatementClass::Write);
+    if let Access::Database {
+        parameters_digest, ..
+    } = &mut cut_alike
+    {
+        "another digest".clone_into(parameters_digest);
+    }
+
+    for other in [
+        statement(UPDATE, &["13", "'bolt'"], StatementClass::Write),
+        replaced,
+        cut_alike,
+    ] {
+        assert_ne!(
+            digest(&shown),
+            digest(std::slice::from_ref(&other)),
+            "{other:?}"
+        );
+    }
+}
+
+#[test]
+fn a_read_of_a_workers_database_runs_whatever_its_hosts_mode() {
+    for mode in MODES.into_iter().chain([CeilingMode::FullAccess]) {
+        assert_eq!(
+            Inputs::new().decide(&[on_worker("SELECT 1", StatementClass::Read, mode, false)]),
+            Verdict::Allowed(Decision::RegisteredDatabase),
+            "{mode:?}"
+        );
+    }
+}
+
+#[test]
+fn a_read_only_hosts_database_refuses_every_write_even_in_full_access() {
+    let mut inputs = Inputs::new();
+    inputs.grants = vec![database_grant(UPDATE)];
+    for full_access in [false, true] {
+        inputs.full_access = full_access;
+        for class in [StatementClass::Write, StatementClass::Schema] {
+            assert_eq!(
+                inputs.decide(&[on_worker(UPDATE, class, CeilingMode::ReadOnly, true)]),
+                Verdict::Refused(Refusal::ReadOnlyHost),
+                "{full_access} {class:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_ask_hosts_write_offers_only_allow_once_and_no_grant_covers_it() {
+    let mut inputs = Inputs::new();
+    inputs.grants = vec![database_grant(UPDATE)];
+    inputs.always_grants = vec![database_grant(UPDATE)];
+    let accesses = [on_worker(
+        UPDATE,
+        StatementClass::Write,
+        CeilingMode::Ask,
+        true,
+    )];
+
+    assert_eq!(
+        inputs.decide(&accesses),
+        ask(
+            &accesses,
+            &[ApprovalReason::DatabaseWrite],
+            Vec::new(),
+            None
+        )
+    );
+}
+
+#[test]
+fn an_autonomous_hosts_write_offers_a_grant_and_runs_under_one() {
+    for mode in [CeilingMode::Autonomous, CeilingMode::FullAccess] {
+        let accesses = [on_worker(UPDATE, StatementClass::Write, mode, false)];
+        assert_eq!(
+            Inputs::new().decide(&accesses),
+            ask(
+                &accesses,
+                &[ApprovalReason::DatabaseWrite],
+                vec![database_grant(UPDATE)],
+                None
+            ),
+            "{mode:?}"
+        );
+        let mut granted = Inputs::new();
+        granted.grants = vec![database_grant(UPDATE)];
+        assert_eq!(
+            granted.decide(&accesses),
+            Verdict::Allowed(Decision::Grant),
+            "{mode:?}"
+        );
+    }
+    let schema = [on_worker(
+        CREATE_INDEX,
+        StatementClass::Schema,
+        CeilingMode::Autonomous,
+        false,
+    )];
+    assert_eq!(
+        Inputs::new().decide(&schema),
+        ask(&schema, &[ApprovalReason::DatabaseSchema], Vec::new(), None)
+    );
+}
+
+#[test]
+fn full_access_counts_for_a_workers_write_only_where_its_host_takes_it() {
+    let mut inputs = Inputs::new();
+    inputs.full_access = true;
+    for (mode, accepts) in [
+        (CeilingMode::Ask, true),
+        (CeilingMode::Autonomous, true),
+        (CeilingMode::FullAccess, false),
+    ] {
+        for class in [StatementClass::Write, StatementClass::Schema] {
+            assert_eq!(
+                inputs.decide(&[on_worker(UPDATE, class, mode, accepts)]),
+                Verdict::Allowed(Decision::FullAccess),
+                "{mode:?} {class:?}"
+            );
+        }
+    }
+    let refused = [on_worker(
+        UPDATE,
+        StatementClass::Write,
+        CeilingMode::Ask,
+        false,
+    )];
+    assert_eq!(
+        inputs.decide(&refused),
+        ask(&refused, &[ApprovalReason::DatabaseWrite], Vec::new(), None)
+    );
+    let schema = [on_worker(
+        CREATE_INDEX,
+        StatementClass::Schema,
+        CeilingMode::Autonomous,
+        false,
+    )];
+    assert_eq!(
+        inputs.decide(&schema),
+        ask(&schema, &[ApprovalReason::DatabaseSchema], Vec::new(), None)
+    );
+    // A grant still covers the write on an autonomous host that refuses the
+    // master's full access, and full access covers the rest of the call.
+    inputs.grants = vec![database_grant(UPDATE)];
+    assert_eq!(
+        inputs.decide(&[
+            read("/elsewhere/a.txt"),
+            on_worker(
+                UPDATE,
+                StatementClass::Write,
+                CeilingMode::Autonomous,
+                false
+            ),
+        ]),
+        Verdict::Allowed(Decision::FullAccess)
+    );
+}
+
+#[test]
+fn full_access_allows_every_statement_and_a_worker_refuses_every_one() {
+    let mut inputs = Inputs::new();
+    inputs.full_access = true;
+    for class in [
+        StatementClass::Read,
+        StatementClass::Write,
+        StatementClass::Schema,
+    ] {
+        assert_eq!(
+            inputs.decide(&[statement("DROP TABLE parts", &[], class)]),
+            Verdict::Allowed(Decision::FullAccess),
+            "{class:?}"
+        );
+    }
+
+    for mode in MODES.into_iter().chain([CeilingMode::FullAccess]) {
+        assert_eq!(
+            Inputs::worker(mode).decide(&[statement("SELECT 1", &[], StatementClass::Read)]),
+            Verdict::Refused(Refusal::NoDatabases),
+            "{mode:?}"
+        );
+    }
+}
+
+#[test]
+fn a_database_grant_covers_another_only_for_the_same_statement_on_the_same_database() {
+    let mut renamed = database_grant(UPDATE);
+    if let GrantScope::Database { name, .. } = &mut renamed {
+        "Stock".clone_into(name);
+    }
+    let mut other_database = database_grant(UPDATE);
+    if let GrantScope::Database { key, .. } = &mut other_database {
+        *key = DatabaseKey::parse(OTHER_DATABASE).unwrap();
+    }
+
+    assert!(super::scope_covers(&database_grant(UPDATE), &renamed));
+    assert!(!super::scope_covers(
+        &database_grant(UPDATE),
+        &database_grant("DELETE FROM parts")
+    ));
+    assert!(!super::scope_covers(
+        &database_grant(UPDATE),
+        &other_database
+    ));
+    assert!(!super::scope_covers(
+        &database_grant(UPDATE),
+        &command_grant(UPDATE, "/work")
     ));
 }

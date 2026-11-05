@@ -20,7 +20,7 @@ use mannie_plugin_sdk::BoxFuture;
 use mannie_plugin_sdk::context::HostProfile;
 use mannie_plugin_sdk::contributions::Contributions;
 use mannie_plugin_sdk::host::{PluginBinding, ServiceProvider};
-use mannie_plugin_sdk::ids::PluginId;
+use mannie_plugin_sdk::ids::{Contributor, PluginId};
 use mannie_plugin_sdk::manifest::Manifest;
 use mannie_plugin_sdk::points::terminal_hosts::{
     OpenTerminal, PluginTerminalHostSource, TerminalConnection, TerminalHostEntry,
@@ -286,7 +286,9 @@ async fn deleting_its_conversation_or_its_plugin_going_off_ends_a_terminal() {
         .await
         .unwrap();
     let mut output = terminal.output();
-    provider.release(&PluginId::parse(PLUGIN).unwrap()).await;
+    provider
+        .release(&Contributor::plugin(PluginId::parse(PLUGIN).unwrap()))
+        .await;
     let (_text, ended) = read_until(&mut output, "").await;
     assert_eq!(ended, Some(TerminalEnding::PluginOff));
 }
@@ -387,7 +389,7 @@ async fn a_host_that_a_plugin_offers_is_listed_and_opens_unless_it_changed() {
     let conversation = conversation(&harness).await;
     let source = Arc::new(EchoHosts::default());
     let shared: Arc<dyn TerminalHostSource> = Arc::<EchoHosts>::clone(&source);
-    let hosts_plugin = PluginId::parse(HOSTS).unwrap();
+    let hosts_plugin = Contributor::plugin(PluginId::parse(HOSTS).unwrap());
     let consumer = harness
         .runtime
         .contribution_consumers()

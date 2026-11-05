@@ -118,6 +118,7 @@ fn volume(access: &Access) -> Option<&str> {
         | Access::RemoteCommand { .. }
         | Access::Program { .. }
         | Access::ExternalTool { .. }
-        | Access::TerminalCommand { .. } => None,
+        | Access::TerminalCommand { .. }
+        | Access::Database { .. } => None,
     }
 }

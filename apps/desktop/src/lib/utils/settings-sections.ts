@@ -6,7 +6,7 @@ import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 
 import type { Slot } from '#lib/state/shell-slots.svelte.js';
-import type { SettingsSection } from '#lib/types/shell-slots.js';
+import type { SettingsSection, SlotOwner } from '#lib/types/shell-slots.js';
 
 import { sortedByOrder } from './order.js';
 
@@ -14,7 +14,7 @@ import { sortedByOrder } from './order.js';
 export type ActiveSettingsSection =
   | { readonly kind: 'missing'; readonly requested: string }
   | { readonly kind: 'none' }
-  | { readonly kind: 'plugin_off'; readonly plugin: string }
+  | { readonly kind: 'off'; readonly owner: SlotOwner }
   | { readonly kind: 'section'; readonly section: SettingsSection };
 
 /** The search parameter that names the settings section. */
@@ -36,9 +36,10 @@ export function activeSettingsSection(sections: Slot<SettingsSection>, url: Sect
   if (section !== undefined) {
     return { kind: 'section', section };
   }
-  // A section of a plugin that is off says so (ADR-0030, decision 11).
-  const plugin = sections.pluginOff(requested);
-  return plugin === null ? { kind: 'missing', requested } : { kind: 'plugin_off', plugin };
+  // A section of a plugin or a feature that is off says so (ADR-0030,
+  // decision 11; ADR-0055, decision 10).
+  const owner = sections.ownerOff(requested);
+  return owner === null ? { kind: 'missing', requested } : { kind: 'off', owner };
 }
 
 /** The search parameters of a settings section's page. */

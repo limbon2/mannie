@@ -20,6 +20,7 @@ import type {
 import {
   accessModeLabel,
   approvalReasonMessage,
+  databaseHomeText,
   decisionMessage,
   effectKeyPhrase,
   effectKeysText,
@@ -32,6 +33,7 @@ import {
   programEffectMessage,
   programRunText,
   refusalMessage,
+  statementClassLabel,
   toolFailureMessage,
   toolHintsMessage,
   toolServerEndpointText,
@@ -121,9 +123,19 @@ const NOT_RUN_REASONS: NotRunReason[] = [
   { reason: 'over_budget' },
   { reason: 'tools_off' },
   { plugin: 'workers', reason: 'plugin_off' },
+  { feature: 'databases', plugin: 'workers', reason: 'plugin_off' },
 ];
 
+const DATABASE_GRANT: GrantScope = {
+  key: '0199e0f2-0000-7000-8000-0000000000ee',
+  kind: 'database',
+  name: 'Inventory',
+  plugin: 'workers',
+  statement: 'UPDATE parts SET stock = ?1 WHERE name = ?2',
+};
+
 const GRANTS: GrantScope[] = [
+  DATABASE_GRANT,
   { folder: 'D:\\Projects\\app', kind: 'path', mode: 'read' },
   { folder: 'D:\\Projects\\app', kind: 'path', mode: 'write' },
   { folder: 'D:\\Projects\\app', kind: 'path', mode: 'create' },
@@ -162,6 +174,7 @@ const REFUSALS: Refusal[] = [
   'no_remote_commands',
   'no_programs_on_host',
   'no_external_tools',
+  'no_databases',
   'read_only_host',
 ];
 
@@ -185,7 +198,13 @@ const EFFECT_KEYS: ProgramEffectKey[] = [
   { effect: 'rewrites_published' },
 ];
 
-const INTERRUPTIONS: (Interruption | null)[] = [null, { reason: 'stopped' }, { plugin: 'ssh', reason: 'plugin_off' }];
+const INTERRUPTIONS: (Interruption | null)[] = [
+  null,
+  { reason: 'stopped' },
+  { plugin: 'ssh', reason: 'plugin_off' },
+  { feature: 'databases', plugin: 'workers', reason: 'plugin_off' },
+  { plugin: 'workers', reason: 'answer_lost' },
+];
 
 function expectDistinct(messages: string[]): void {
   for (const message of messages) {
@@ -242,6 +261,12 @@ describe('tools messages', () => {
     expectDistinct(INTERRUPTIONS.map((interruption) => uncertainMessage(interruption)));
     expect(uncertainMessage({ plugin: 'ssh', reason: 'plugin_off' })).toContain('ssh');
     expect(toolFailureMessage({ code: 'plugin_invalid', plugin: 'ssh' })).toContain('ssh');
+    // A record from before features reads as its plugin going off.
+    expect(uncertainMessage({ feature: null, plugin: 'ssh', reason: 'plugin_off' })).toBe(
+      uncertainMessage({ plugin: 'ssh', reason: 'plugin_off' }),
+    );
+    expect(uncertainMessage({ feature: 'databases', plugin: 'workers', reason: 'plugin_off' })).toContain('databases');
+    expect(notRunMessage({ feature: 'databases', plugin: 'workers', reason: 'plugin_off' })).toContain('databases');
   });
 
   it('describe every reason to ask, decision, access mode and grant', () => {
@@ -255,6 +280,8 @@ describe('tools messages', () => {
       'remote_command',
       'program',
       'external_tool',
+      'database_write',
+      'database_schema',
     ];
     const decisions: Decision[] = [
       'workspace',
@@ -273,6 +300,7 @@ describe('tools messages', () => {
       'host_rule',
       'full_access',
       'host_full_access',
+      'registered_database',
     ];
     const modes: AccessMode[] = ['read', 'write', 'create', 'delete'];
 
@@ -299,6 +327,28 @@ describe('tools messages', () => {
     expect(message).toContain('build-box');
     expect(message).toContain('deploy@build-box.lan:22');
     expect(message).not.toContain('0199e0f2');
+  });
+
+  it('name the statement and the database of a grant of a database’s statement, and never its key', () => {
+    const message = grantScopeMessage(DATABASE_GRANT);
+
+    expect(message).toContain('UPDATE parts SET stock = ?1 WHERE name = ?2');
+    expect(message).toContain('Inventory');
+    expect(message).not.toContain('0199e0f2');
+  });
+
+  it('label what each statement on a database does, and where the database lives', () => {
+    expectDistinct([statementClassLabel('read'), statementClassLabel('write'), statementClassLabel('schema')]);
+    expect(databaseHomeText({ kind: 'this_computer' }).trim()).not.toBe('');
+    expect(
+      databaseHomeText({
+        acceptsFullAccess: false,
+        kind: 'worker',
+        mode: 'ask',
+        name: 'build-box',
+        worker: '0199e0f2-0000-7000-8000-0000000000aa',
+      }),
+    ).toContain('build-box');
   });
 
   it('name the tool, the server and where it runs of a grant of a tool server’s tool', () => {

@@ -1,0 +1,24 @@
+[
+  {
+    "kind": "owner_action"
+  },
+  {
+    "kind": "allowed_once",
+    "digest": "6b1d8c2f0a9e4d3c7b5a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c"
+  },
+  {
+    "kind": "grants",
+    "scopes": [
+      {
+        "kind": "database",
+        "plugin": "workers",
+        "key": "0199e0f2-0000-7000-8000-0000000000ee",
+        "name": "Parts",
+        "statement": "UPDATE parts SET stock = ?1 WHERE name = ?2"
+      }
+    ]
+  },
+  {
+    "kind": "full_access"
+  }
+]

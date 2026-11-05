@@ -1,5 +1,7 @@
 //! The Workers plugin's tables (plugins/workers/docs/pairing-and-link.md,
-//! data; ADR-0030, decision 9): the workers that the master paired with.
+//! data; ADR-0030, decision 9): the workers that the master paired with,
+//! and the copy of the databases on each worker's host (plugins/workers/
+//! docs/databases.md; ADR-0057, decision 3).
 //!
 //! The module's migrations run at startup with the core's, whether or not
 //! Workers is on, so the schema never depends on the plugin's state. Before
@@ -12,8 +14,10 @@
 
 use std::sync::Arc;
 
+use mannie_link::databases::HostDatabase;
 use mannie_link::host::WorkerDetails;
-use mannie_plugin_sdk::contracts::{Clock, UtcMillis, WorkerId};
+use mannie_plugin_sdk::contracts::{Clock, DatabaseKey, UtcMillis, WorkerId};
+use mannie_plugin_sdk::services::sqlite_files::{DatabaseFile, FileState};
 use mannie_plugin_sdk::services::store::{
     Constraint, Durability, Expect, Migration, ModuleQueries, ModuleStoreApi, Row, Statement,
     StoreError, StoreModule, WriteBatch,
@@ -43,6 +47,11 @@ const MIGRATIONS: &[Migration] = &[
         "move the deletions that wait for a worker into the core's outbox",
         include_str!("store/migrations/0028_move_worker_deletions_to_the_outbox.sql"),
     ),
+    Migration::new(
+        5,
+        "create the copy of the databases on each worker's host",
+        include_str!("store/migrations/0029_create_worker_databases.sql"),
+    ),
 ];
 
 /// The version of the JSON documents this module writes.
@@ -59,6 +68,16 @@ const UPDATE_HELLO: &str = "UPDATE workers_paired SET name = ?2, version = ?3, d
 const UPDATE_CHOSEN_NAME: &str =
     "UPDATE workers_paired SET chosen_name = ?2, updated_at = ?3 WHERE id = ?1";
 const DELETE_WORKER: &str = "DELETE FROM workers_paired WHERE id = ?1";
+const SELECT_DATABASES: &str = "SELECT worker_id, key, name, file_name, read_only, state, \
+     identity FROM workers_databases ORDER BY worker_id, key";
+const DELETE_DATABASES: &str = "DELETE FROM workers_databases WHERE worker_id = ?1";
+const DELETE_DATABASE: &str = "DELETE FROM workers_databases WHERE worker_id = ?1 AND key = ?2";
+const PUT_DATABASE: &str = "INSERT INTO workers_databases \
+     (worker_id, key, name, file_name, read_only, state, identity, updated_at) \
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
+     ON CONFLICT (worker_id, key) DO UPDATE SET name = excluded.name, \
+     file_name = excluded.file_name, read_only = excluded.read_only, state = excluded.state, \
+     identity = excluded.identity, updated_at = excluded.updated_at";
 
 /// Every statement of this module, which the store prepares against the
 /// migrated schema when it registers the module (ADR-0009).
@@ -69,6 +88,10 @@ const STATEMENTS: &[&str] = &[
     UPDATE_HELLO,
     UPDATE_CHOSEN_NAME,
     DELETE_WORKER,
+    SELECT_DATABASES,
+    DELETE_DATABASES,
+    DELETE_DATABASE,
+    PUT_DATABASE,
 ];
 
 /// The plugin's module of the store: the tables that `workers_` prefixes.
@@ -208,6 +231,49 @@ impl RawWorker {
     }
 }
 
+/// A file's state as its row keeps it.
+fn state_text(state: FileState) -> &'static str {
+    match state {
+        FileState::Available => "available",
+        FileState::Missing => "missing",
+        FileState::Changed => "changed",
+        FileState::Unreadable => "unreadable",
+    }
+}
+
+/// A file's state from its row; a state that a later version wrote reads
+/// as unreadable, which the next list replaces.
+fn state_of(text: &str) -> FileState {
+    match text {
+        "available" => FileState::Available,
+        "missing" => FileState::Missing,
+        "changed" => FileState::Changed,
+        _other => FileState::Unreadable,
+    }
+}
+
+/// A row of `SELECT_DATABASES`.
+fn database_of(row: &Row) -> Result<(WorkerId, HostDatabase), WorkersStoreError> {
+    let worker: String = row.get(0)?;
+    let key: String = row.get(1)?;
+    let read_only: i64 = row.get(4)?;
+    let state: String = row.get(5)?;
+    Ok((
+        WorkerId::parse(&worker).map_err(|error| WorkersStoreError::invalid(error.to_string()))?,
+        HostDatabase {
+            file: DatabaseFile {
+                key: DatabaseKey::parse(&key)
+                    .map_err(|error| WorkersStoreError::invalid(error.to_string()))?,
+                name: row.get(2)?,
+                file_name: row.get(3)?,
+                read_only: read_only != 0,
+                state: state_of(&state),
+            },
+            identity: row.get(6)?,
+        },
+    ))
+}
+
 fn to_json<T: serde::Serialize>(value: &T) -> Result<String, WorkersStoreError> {
     serde_json::to_string(value).map_err(|error| {
         WorkersStoreError::invalid(format!("could not encode a document: {error}"))
@@ -323,6 +389,64 @@ impl WorkersStore {
         Ok(changes.first().is_some_and(|changed| *changed > 0))
     }
 
+    /// The databases on every paired worker's host, as each worker listed
+    /// them last.
+    pub async fn worker_databases(
+        &self,
+    ) -> Result<Vec<(WorkerId, HostDatabase)>, WorkersStoreError> {
+        let rows = self.store.query(Statement::new(SELECT_DATABASES)).await?;
+        rows.iter().map(database_of).collect()
+    }
+
+    /// Keeps a worker's list of its databases in place of the one before.
+    pub async fn replace_worker_databases(
+        &self,
+        worker: &WorkerId,
+        databases: &[HostDatabase],
+    ) -> Result<(), WorkersStoreError> {
+        let now = self.clock.now().as_millis();
+        let mut batch = WriteBatch::new().push(
+            Statement::new(DELETE_DATABASES).bind(worker.as_str()),
+            Expect::Any,
+        );
+        for database in databases {
+            batch = batch.push(put_database(worker, database, now), Expect::Changes(1));
+        }
+        self.store.write(batch, Durability::Normal).await?;
+        Ok(())
+    }
+
+    /// Keeps one database of a worker's list, after the worker answered a
+    /// change of it.
+    pub async fn put_worker_database(
+        &self,
+        worker: &WorkerId,
+        database: &HostDatabase,
+    ) -> Result<(), WorkersStoreError> {
+        let now = self.clock.now().as_millis();
+        let batch = WriteBatch::new().push(put_database(worker, database, now), Expect::Changes(1));
+        self.store.write(batch, Durability::Normal).await?;
+        Ok(())
+    }
+
+    /// Forgets one database of a worker's list.
+    pub async fn remove_worker_database(
+        &self,
+        worker: &WorkerId,
+        key: &DatabaseKey,
+    ) -> Result<(), WorkersStoreError> {
+        let delete = Statement::new(DELETE_DATABASE)
+            .bind(worker.as_str())
+            .bind(key.as_str());
+        self.store
+            .write(
+                WriteBatch::new().push(delete, Expect::Any),
+                Durability::Normal,
+            )
+            .await?;
+        Ok(())
+    }
+
     /// Runs a statement that changes one paired worker's row, and refuses
     /// with `WorkerNotFound` when the worker is not paired.
     async fn change_worker(
@@ -337,6 +461,20 @@ impl WorkersStore {
             Err(error) => Err(error.into()),
         }
     }
+}
+
+/// The statement that keeps one database of a worker's list.
+fn put_database(worker: &WorkerId, database: &HostDatabase, now: i64) -> Statement {
+    let file = &database.file;
+    Statement::new(PUT_DATABASE)
+        .bind(worker.as_str())
+        .bind(file.key.as_str())
+        .bind(file.name.clone())
+        .bind(file.file_name.clone())
+        .bind(i64::from(file.read_only))
+        .bind(state_text(file.state))
+        .bind(database.identity.clone())
+        .bind(now)
 }
 
 #[cfg(test)]

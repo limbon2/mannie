@@ -54,6 +54,9 @@ pub const RESERVED_IDS: &[&str] = &[
     "tests",
     "tools",
     "validation",
+    // The core's tables of the owner's SQLite files, `dbfiles_*` (ADR-0056,
+    // decision 10).
+    "dbfiles",
     // The core's settings section `interface`. The core's other sections are
     // reserved above or are prefixes of the core's message keys (`chat` and
     // `child_agents`), which the build checks.
@@ -100,8 +103,9 @@ pub const RESERVED_IDS: &[&str] = &[
 ];
 
 /// The prefixes, as `<prefix>_*`, of the tables in the store's database that
-/// are not a plugin's: the core's, the core's `validation_*` of validation
-/// builds, and SQLite's own `sqlite_*`. A plugin's prefix may not begin one
+/// are not a plugin's: the core's, among them the registrations of the
+/// owner's SQLite files `dbfiles_*` (ADR-0056, decision 10), the core's
+/// `validation_*` of validation builds, and SQLite's own `sqlite_*`. A plugin's prefix may not begin one
 /// of them, and none of them may begin a plugin's, so that the statements of
 /// a plugin confined to its own prefix never reach such a table (decision 7).
 /// The store's tests also create `tests_*` tables, which no shipped or
@@ -115,6 +119,7 @@ pub const CORE_TABLE_PREFIXES: &[&str] = &[
     "store",
     "validation",
     "sqlite",
+    "dbfiles",
 ];
 
 /// The start of the crate names of Tauri's plugins, which no plugin ID may
@@ -225,6 +230,120 @@ impl JsonSchema for PluginId {
     }
 }
 
+/// The ID of a plugin's optional feature (ADR-0055, decision 2), unique among
+/// the features of its plugin: lower-case words of letters and digits joined
+/// by single hyphens, starting with a letter, as a plugin ID, such as
+/// `databases`. With underscores in place of hyphens it names the feature's
+/// messages, `<prefix>_feature_<id>_name` and `_description`.
+///
+/// It crosses JSON as its text, and decoding checks the same rules as
+/// [`FeatureId::parse`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct FeatureId(String);
+
+impl FeatureId {
+    /// Checks an ID against the syntax of plugin IDs. A feature's ID needs no
+    /// other check: it names no table, folder or command of its own.
+    pub fn parse(id: &str) -> Result<Self, IdError> {
+        if !has_plugin_id_syntax(id) {
+            return Err(IdError::FeatureSyntax { id: echoed(id) });
+        }
+        Ok(Self(id.to_owned()))
+    }
+
+    /// The ID as text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// The part of the feature's message keys that names it: the ID with
+    /// underscores in place of hyphens.
+    pub fn message_name(&self) -> String {
+        prefix_of(&self.0)
+    }
+}
+
+impl fmt::Display for FeatureId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl TryFrom<String> for FeatureId {
+    type Error = IdError;
+
+    fn try_from(id: String) -> Result<Self, Self::Error> {
+        Self::parse(&id)
+    }
+}
+
+impl From<FeatureId> for String {
+    fn from(id: FeatureId) -> Self {
+        id.0
+    }
+}
+
+/// Who contributes to the core's extension points: a plugin, or one of its
+/// optional features (ADR-0055, decision 6). The contributions of each are a
+/// group of their own, which the core adds and drops all or none, and the
+/// entries of a feature still belong to its plugin.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Contributor {
+    plugin: PluginId,
+    feature: Option<FeatureId>,
+}
+
+impl Contributor {
+    /// The plugin itself.
+    pub fn plugin(plugin: PluginId) -> Self {
+        Self {
+            plugin,
+            feature: None,
+        }
+    }
+
+    /// One of the plugin's features.
+    pub fn feature(plugin: PluginId, feature: FeatureId) -> Self {
+        Self {
+            plugin,
+            feature: Some(feature),
+        }
+    }
+
+    /// The plugin, which the contributor is or belongs to.
+    pub fn plugin_id(&self) -> &PluginId {
+        &self.plugin
+    }
+
+    /// The feature, for a feature's contributions.
+    pub fn feature_id(&self) -> Option<&FeatureId> {
+        self.feature.as_ref()
+    }
+
+    /// The text that names the contributor in logs and the core's maps: the
+    /// plugin's ID, or the plugin's ID, a slash and the feature's ID. Neither
+    /// ID holds a slash, so two contributors never share it.
+    pub fn key(&self) -> String {
+        match &self.feature {
+            None => self.plugin.0.clone(),
+            Some(feature) => format!("{}/{}", self.plugin, feature),
+        }
+    }
+}
+
+impl fmt::Display for Contributor {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.key())
+    }
+}
+
+impl From<PluginId> for Contributor {
+    fn from(plugin: PluginId) -> Self {
+        Self::plugin(plugin)
+    }
+}
+
 /// Why a text is not a plugin ID. Each variant repeats the refused ID, cut to
 /// its first 64 characters.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -267,6 +386,15 @@ pub enum IdError {
         id: String,
         /// The table prefix that the plugin's prefix nests with.
         core: &'static str,
+    },
+    /// The text is not the ID of a feature, which follows the syntax of
+    /// plugin IDs.
+    #[error(
+        "{id:?} is not a feature's ID, which is lower-case words of letters and digits joined by single hyphens, starting with a letter"
+    )]
+    FeatureSyntax {
+        /// The refused ID.
+        id: String,
     },
 }
 
@@ -318,7 +446,10 @@ fn echoed(id: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{CORE_TABLE_PREFIXES, IdError, PluginId, RESERVED_IDS, owned_by, prefixes_nest};
+    use super::{
+        CORE_TABLE_PREFIXES, Contributor, FeatureId, IdError, PluginId, RESERVED_IDS, owned_by,
+        prefixes_nest,
+    };
 
     #[test]
     fn plugin_ids_are_lower_case_words_joined_by_hyphens() {
@@ -541,5 +672,55 @@ mod tests {
         assert!(!owned_by("fake", "other.notes"));
         assert!(!owned_by("fake", "notes.fake"));
         assert!(!owned_by("fake", ""));
+    }
+
+    #[test]
+    fn a_feature_id_follows_the_syntax_of_plugin_ids_and_nothing_else() {
+        for id in ["databases", "sqlite-files", "a1", "store"] {
+            assert_eq!(FeatureId::parse(id).unwrap().as_str(), id, "{id}");
+        }
+        for id in [
+            "",
+            "Databases",
+            "1db",
+            "data_bases",
+            "data--bases",
+            "databases-",
+            "a/b",
+        ] {
+            assert!(
+                matches!(FeatureId::parse(id), Err(IdError::FeatureSyntax { .. })),
+                "{id}"
+            );
+        }
+        assert_eq!(
+            FeatureId::parse("sqlite-files").unwrap().message_name(),
+            "sqlite_files"
+        );
+    }
+
+    #[test]
+    fn a_feature_id_crosses_json_as_its_text_and_decoding_checks_it() {
+        let id: FeatureId = serde_json::from_str(r#""databases""#).unwrap();
+
+        assert_eq!(serde_json::to_string(&id).unwrap(), r#""databases""#);
+        serde_json::from_str::<FeatureId>(r#""Data""#).unwrap_err();
+    }
+
+    #[test]
+    fn a_contributor_is_a_plugin_or_one_of_its_features_with_keys_that_never_meet() {
+        let workers = PluginId::parse("workers").unwrap();
+        let databases = FeatureId::parse("databases").unwrap();
+        let plugin = Contributor::plugin(workers.clone());
+        let feature = Contributor::feature(workers.clone(), databases.clone());
+
+        assert_eq!(plugin.key(), "workers");
+        assert_eq!(feature.key(), "workers/databases");
+        assert_eq!(feature.to_string(), "workers/databases");
+        assert_eq!(feature.plugin_id(), &workers);
+        assert_eq!(feature.feature_id(), Some(&databases));
+        assert_eq!(plugin.feature_id(), None);
+        assert_ne!(plugin, feature);
+        assert_eq!(Contributor::from(workers), plugin);
     }
 }

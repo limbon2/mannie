@@ -13,6 +13,7 @@ mod approval;
 mod background;
 mod call;
 mod commands;
+mod database;
 mod external;
 mod outcome;
 mod program;
@@ -38,6 +39,10 @@ pub use commands::{
     MAX_OUTPUT_VIEW_LINES, ProgramRule, ProgramRuleRef, ReadToolImage, ReadToolOutput,
     RemoteCommandRule, RemoteRuleRef, RuleRef, SetFullAccess, SharedGrant, SharedGrantRef,
     StopBackgroundCommand, SubscribeCommandOutput, ToolOutputPage, ToolsError,
+};
+pub use database::{
+    DatabaseHome, HostDatabaseRefusal, MAX_VIEW_PARAMETER_CHARS, MAX_VIEW_PARAMETERS,
+    StatementClass, WriteAuthority, WriteOrigin,
 };
 pub use external::{ToolHint, ToolServerEndpoint};
 pub use outcome::{

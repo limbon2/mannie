@@ -22,6 +22,8 @@ Each package of the link has a feature level, 1 for every package in v0.2.0. In 
 
 The events package has level 2 for complete saved conversation records ([ADR-0040](../../../docs/adr/0040-export-complete-conversation-records.md)). A level-1 worker still serves existing transcript reads; export identifies its complete record as unavailable.
 
+A package is required or optional ([ADR-0057](../../../docs/adr/0057-let-the-master-work-with-the-databases-on-a-workers-host.md), decision 4). The master refuses a worker whose agreed levels lack a required package, and connects to a worker that lacks an optional one, whose features then say that the worker needs an update. The six packages of v0.2.0 are required, and `mannie.link.databases.v1` is optional.
+
 ### Contract checks
 
 - `buf lint` with buf's STANDARD rules checks every change to `plugins/workers/proto/`, and `buf format` formats it.

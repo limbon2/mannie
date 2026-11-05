@@ -310,6 +310,13 @@ pub(crate) fn io_failure(error: &io::Error, path: &Path) -> ToolFailure {
     }
 }
 
+/// The ordinary form of a path that `std::fs::canonicalize` returned, such
+/// as a registered database's, which is verbatim on Windows, so it compares
+/// with the canonical folders of the tools.
+pub(crate) fn ordinary(path: &Path) -> PathBuf {
+    platform::ordinary(path)
+}
+
 /// Whether `path` is `folder` or lies below it. Both are canonical. Windows
 /// compares names without regard to case, as its file systems do.
 pub fn is_inside(path: &Path, folder: &Path) -> bool {

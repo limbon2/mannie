@@ -16,12 +16,14 @@ use std::time::Duration;
 
 use futures_util::{StreamExt, stream};
 use mannie_plugin_sdk::BoxFuture;
-use mannie_plugin_sdk::context::{DefaultContext, HostInfo, HostProfile, StartContext};
+use mannie_plugin_sdk::context::{
+    DefaultContext, FeatureContext, HostInfo, HostProfile, StartContext,
+};
 use mannie_plugin_sdk::contracts::WorkItem;
 use mannie_plugin_sdk::contributions::Contributions;
-use mannie_plugin_sdk::error::StartFailure;
+use mannie_plugin_sdk::error::{FEATURE_UNKNOWN, StartFailure};
 use mannie_plugin_sdk::ipc::{Handlers, Interface, PluginError, PluginStream};
-use mannie_plugin_sdk::plugin::{Instance, Plugin, Started};
+use mannie_plugin_sdk::plugin::{FeatureStarted, Instance, Plugin, Started};
 use mannie_plugin_sdk::points::executors::Executors;
 use mannie_plugin_sdk::services::credentials::Credentials;
 use mannie_plugin_sdk::services::executor_host::ExecutorHost;
@@ -33,6 +35,7 @@ use crate::commands::{
     PairWorker, PairWorkerCommand, RemoveWorkerCommand, RenameWorker, RenameWorkerCommand,
     SubscribeWorkersChannel, WorkerRef, WorkersError, interface,
 };
+use crate::databases::{self, DATABASES};
 use crate::executor::WorkersExecutor;
 use crate::hub::{Hub, HubConfig};
 use crate::keys::SecretsKeyStore;
@@ -197,6 +200,18 @@ impl Instance for WorkersInstance {
     /// The tasks of Workers' executor that have not ended.
     fn work(&self) -> BoxFuture<'static, Vec<WorkItem>> {
         self.executor.work()
+    }
+
+    /// Starts the feature Databases, the plugin's only optional feature.
+    fn start_feature(
+        &self,
+        context: FeatureContext,
+    ) -> BoxFuture<'static, Result<FeatureStarted, StartFailure>> {
+        if context.feature().as_str() == DATABASES {
+            databases::start(context, self.hub.clone())
+        } else {
+            Box::pin(std::future::ready(Err(StartFailure::new(FEATURE_UNKNOWN))))
+        }
     }
 
     fn stop(self: Box<Self>) -> BoxFuture<'static, ()> {

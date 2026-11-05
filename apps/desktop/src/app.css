@@ -208,6 +208,7 @@
 @source not inline("group-has-data-[slot=item-description]/item:self-start");
 @source not inline("group-has-data-[slot=item-description]/item:translate-y-0.5");
 @source not inline("group-has-data-horizontal/field:text-balance");
+@source not inline("group-has-disabled/field:opacity-50");
 @source not inline("group-has-[:focus-visible]/field-label:border-transparent");
 @source not inline("group-has-[:focus-visible]/field-label:ring-0");
 @source not inline("group-has-[:focus-visible]/field-label:data-checked:border-primary");

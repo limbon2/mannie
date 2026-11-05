@@ -19,6 +19,7 @@ use mannie_plugin_sdk::service::{BoundService, Service};
 use mannie_plugin_sdk::services::file_dialog::{
     ChosenFile, DialogError, FileDialog, FileDialogApi, FileFilter, FileHandle, MAX_CHOSEN_FILES,
 };
+use mannie_runtime::{DATABASE_EXTENSIONS, DatabaseChooser, DatabaseFilters};
 use tauri::{AppHandle, Manager};
 
 use crate::window::MAIN_WINDOW;
@@ -71,6 +72,43 @@ impl FileDialogProvider {
     #[cfg(feature = "validation")]
     pub(crate) fn set_choice(&self, files: Vec<String>) {
         self.shared.choice.set(files);
+    }
+
+    /// The dialog in which the owner chooses a SQLite file for the service
+    /// `sqlite-files` (ADR-0056, decision 2), which gives the runtime the
+    /// file's path and never the webview.
+    pub(crate) fn database_chooser(&self) -> Arc<dyn DatabaseChooser> {
+        Arc::new(DatabaseDialog {
+            shared: Arc::clone(&self.shared),
+        })
+    }
+}
+
+/// The dialog of SQLite files, over the main window.
+#[derive(Debug)]
+struct DatabaseDialog {
+    shared: Arc<Shared>,
+}
+
+impl DatabaseChooser for DatabaseDialog {
+    fn choose(&self, filters: DatabaseFilters) -> BoxFuture<'static, Option<PathBuf>> {
+        let shared = Arc::clone(&self.shared);
+        Box::pin(async move {
+            #[cfg(feature = "validation")]
+            if let Some(files) = shared.choice.take() {
+                return files.into_iter().next().map(PathBuf::from);
+            }
+            let mut dialog = rfd::AsyncFileDialog::new()
+                .add_filter(&filters.databases, DATABASE_EXTENSIONS)
+                .add_filter(&filters.all_files, &["*"]);
+            if let Some(window) = shared.app.get_webview_window(MAIN_WINDOW) {
+                dialog = dialog.set_parent(&window);
+            }
+            dialog
+                .pick_file()
+                .await
+                .map(|file| file.path().to_path_buf())
+        })
     }
 }
 

@@ -1,10 +1,12 @@
 // The registry behind the shell's slots (docs/architecture/extension-points.md,
 // UI shell slots): entries in the order they were registered, no duplicate
-// IDs, and a plugin's entries only while the core reports the plugin as on
-// (ADR-0030, decision 11).
+// IDs, a plugin's entries only while the core reports the plugin as on
+// (ADR-0030, decision 11), and a plugin's feature's entries only while the
+// feature is on too (ADR-0055, decision 10).
 import { describe, expect, it } from 'vitest';
 
 import { ShellSlots, Slot } from '../../../../../../apps/desktop/src/lib/state/shell-slots.svelte.js';
+import type { SlotOwner } from '../../../../../../apps/desktop/src/lib/types/shell-slots.js';
 
 interface Entry {
   readonly id: string;
@@ -15,10 +17,29 @@ function everyPluginOn(): boolean {
   return true;
 }
 
-/** Plugin states that the test changes: the plugins in `on` are on. */
-function pluginsOn(...plugins: string[]): { isOn: (plugin: string) => boolean; on: Set<string> } {
+/** The owner of a plugin's own entries. */
+function owner(plugin: string): SlotOwner {
+  return { feature: null, plugin };
+}
+
+/** The owner of the entries of a plugin's feature. */
+function featureOwner(plugin: string, feature: string): SlotOwner {
+  return { feature, plugin };
+}
+
+/**
+ * Plugin states that the test changes: the plugins in `on` are on, and a
+ * plugin's feature is on while `on` also holds `<plugin>/<feature>`.
+ */
+function pluginsOn(...plugins: string[]): { isOn: (owner: SlotOwner) => boolean; on: Set<string> } {
   const on = new Set(plugins);
-  return { isOn: (plugin) => on.has(plugin), on };
+  const isOn = ({ feature, plugin }: SlotOwner): boolean => {
+    if (!on.has(plugin)) {
+      return false;
+    }
+    return feature === null ? true : on.has(`${plugin}/${feature}`);
+  };
+  return { isOn, on };
 }
 
 describe('the commands slot (ADR-0053, decision 8)', () => {
@@ -76,7 +97,7 @@ describe('Slot', () => {
     const plugins = pluginsOn();
     const slot = new Slot<Entry>('test', plugins.isOn);
     slot.register({ id: 'core', order: 0 });
-    slot.register({ id: 'workers.panel', order: 1 }, 'workers');
+    slot.register({ id: 'workers.panel', order: 1 }, owner('workers'));
 
     const whileOff = slot.entries.map((entry) => entry.id);
     const foundWhileOff = slot.find('workers.panel');
@@ -92,21 +113,52 @@ describe('Slot', () => {
     const plugins = pluginsOn();
     const slot = new Slot<Entry>('test', plugins.isOn);
     slot.register({ id: 'core', order: 0 });
-    slot.register({ id: 'workers.panel', order: 1 }, 'workers');
+    slot.register({ id: 'workers.panel', order: 1 }, owner('workers'));
 
-    const whileOff = slot.pluginOff('workers.panel');
+    const whileOff = slot.ownerOff('workers.panel');
     plugins.on.add('workers');
 
-    expect(whileOff).toBe('workers');
-    expect(slot.pluginOff('workers.panel')).toBeNull();
-    expect(slot.pluginOff('core')).toBeNull();
-    expect(slot.pluginOff('missing')).toBeNull();
+    expect(whileOff).toEqual(owner('workers'));
+    expect(slot.ownerOff('workers.panel')).toBeNull();
+    expect(slot.ownerOff('core')).toBeNull();
+    expect(slot.ownerOff('missing')).toBeNull();
+  });
+
+  it('lists a feature’s entry only while its plugin and the feature are on, and names both while it does not', () => {
+    const plugins = pluginsOn();
+    const slot = new Slot<Entry>('test', plugins.isOn);
+    slot.register({ id: 'workers.panel', order: 0 }, owner('workers'));
+    slot.register({ id: 'workers.databases', order: 1 }, featureOwner('workers', 'databases'));
+
+    plugins.on.add('workers/databases');
+    const whilePluginOff = slot.entries.map((entry) => entry.id);
+    plugins.on.add('workers');
+    const whileBothOn = slot.entries.map((entry) => entry.id);
+    plugins.on.delete('workers/databases');
+
+    expect(whilePluginOff).toEqual([]);
+    expect(whileBothOn).toEqual(['workers.panel', 'workers.databases']);
+    expect(slot.entries.map((entry) => entry.id)).toEqual(['workers.panel']);
+    expect(slot.ownerOff('workers.databases')).toEqual(featureOwner('workers', 'databases'));
+    expect(slot.ownerOff('workers.panel')).toBeNull();
+  });
+
+  it('counts a feature’s entries among its plugin’s', () => {
+    const plugins = pluginsOn('workers', 'workers/databases');
+    const slot = new Slot<Entry>('tool kinds', plugins.isOn);
+    slot.register({ id: 'workers_task', order: 0 }, owner('workers'));
+    slot.register({ id: 'query_database', order: 1 }, featureOwner('workers', 'databases'));
+
+    expect(slot.findOf('query_database', 'workers')).toEqual({ id: 'query_database', order: 1 });
+    expect(slot.entriesOf('workers').map((entry) => entry.id)).toEqual(['workers_task', 'query_database']);
+    plugins.on.delete('workers/databases');
+    expect(slot.findOf('query_database', 'workers')).toBeUndefined();
   });
 
   it('finds an entry for one plugin only when that plugin registered it and is on', () => {
     const plugins = pluginsOn('git');
     const slot = new Slot<Entry>('tool kinds', plugins.isOn);
-    slot.register({ id: 'git_status', order: 0 }, 'git');
+    slot.register({ id: 'git_status', order: 0 }, owner('git'));
     slot.register({ id: 'read_file', order: 1 });
 
     expect(slot.findOf('git_status', 'git')).toEqual({ id: 'git_status', order: 0 });
@@ -122,9 +174,9 @@ describe('Slot', () => {
   it('lists the entries of one plugin while it is on', () => {
     const plugins = pluginsOn('mcp', 'git');
     const slot = new Slot<Entry>('tool kinds', plugins.isOn);
-    slot.register({ id: 'mcp_tools', order: 0 }, 'mcp');
-    slot.register({ id: 'git_status', order: 1 }, 'git');
-    slot.register({ id: 'mcp_read_resource', order: 2 }, 'mcp');
+    slot.register({ id: 'mcp_tools', order: 0 }, owner('mcp'));
+    slot.register({ id: 'git_status', order: 1 }, owner('git'));
+    slot.register({ id: 'mcp_read_resource', order: 2 }, owner('mcp'));
     slot.register({ id: 'read_file', order: 3 });
 
     expect(slot.entriesOf('mcp').map((entry) => entry.id)).toEqual(['mcp_tools', 'mcp_read_resource']);
@@ -134,7 +186,7 @@ describe('Slot', () => {
 
   it('refuses an ID that an entry of a plugin that is off has', () => {
     const slot = new Slot<Entry>('commands', pluginsOn().isOn);
-    slot.register({ id: 'workers.pair', order: 0 }, 'workers');
+    slot.register({ id: 'workers.pair', order: 0 }, owner('workers'));
 
     expect(() => {
       slot.register({ id: 'workers.pair', order: 1 });
@@ -164,7 +216,28 @@ describe('ShellSlots', () => {
     expect(slots.sidebarPanels.entries.map((panel) => panel.id)).toEqual(['workers.panel']);
     expect(slots.commands.find('workers.pair')).toBeDefined();
     plugins.on.delete('workers');
-    expect(slots.commands.pluginOff('workers.pair')).toBe('workers');
+    expect(slots.commands.ownerOff('workers.pair')).toEqual(owner('workers'));
+  });
+
+  it('registers a feature’s entries under its plugin and the feature', () => {
+    const plugins = pluginsOn('workers');
+    const slots = new ShellSlots(plugins.isOn);
+
+    slots.forFeature('workers', 'databases').settingsSections.register({
+      component: () => ({}),
+      description: () => '',
+      icon: () => ({}),
+      id: 'workers.databases',
+      order: 0,
+      title: () => 'Databases',
+    });
+    const whileOff = slots.settingsSections.find('workers.databases');
+    plugins.on.add('workers/databases');
+
+    expect(whileOff).toBeUndefined();
+    expect(slots.settingsSections.find('workers.databases')).toBeDefined();
+    plugins.on.delete('workers/databases');
+    expect(slots.settingsSections.ownerOff('workers.databases')).toEqual(featureOwner('workers', 'databases'));
   });
 
   it('lists a plugin’s kind of mention only while the plugin is on', () => {

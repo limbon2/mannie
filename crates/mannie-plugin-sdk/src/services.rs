@@ -11,6 +11,7 @@ pub mod local_servers;
 pub mod models;
 pub mod processes;
 pub mod secrets;
+pub mod sqlite_files;
 pub mod store;
 pub mod terminals;
 
@@ -28,6 +29,7 @@ pub const SERVICES: &[ServiceInfo] = &[
     ServiceInfo::of::<models::Models>(),
     ServiceInfo::of::<processes::Processes>(),
     ServiceInfo::of::<secrets::Secrets>(),
+    ServiceInfo::of::<sqlite_files::SqliteFiles>(),
     ServiceInfo::of::<store::Store>(),
     ServiceInfo::of::<terminals::Terminals>(),
 ];
@@ -54,6 +56,7 @@ mod tests {
     use crate::services::models::Models;
     use crate::services::processes::Processes;
     use crate::services::secrets::Secrets;
+    use crate::services::sqlite_files::SqliteFiles;
     use crate::services::store::Store;
 
     #[test]
@@ -76,6 +79,7 @@ mod tests {
                 ("models", 1, true),
                 ("processes", 1, true),
                 ("secrets", 1, true),
+                ("sqlite-files", 1, true),
                 ("store", 1, false),
                 ("terminals", 1, true)
             ]
@@ -93,6 +97,7 @@ mod tests {
             ServiceInfo::of::<Models>(),
             ServiceInfo::of::<Processes>(),
             ServiceInfo::of::<Secrets>(),
+            ServiceInfo::of::<SqliteFiles>(),
             ServiceInfo::of::<Store>(),
         ] {
             assert_eq!(service_info(marker.name), Some(marker), "{}", marker.name);
@@ -104,6 +109,7 @@ mod tests {
         assert_eq!(Models::NAME, "models");
         assert_eq!(Processes::NAME, "processes");
         assert_eq!(Secrets::NAME, "secrets");
+        assert_eq!(SqliteFiles::NAME, "sqlite-files");
         assert_eq!(Store::NAME, "store");
         assert_eq!(service_info("teleport"), None);
         assert_eq!(service_info("Executor-Host"), None);

@@ -142,13 +142,46 @@ fn the_exported_entry_carries_the_manifest_of_the_plugins_folder() {
     assert_eq!(WORKERS_MODULE.name, manifest.id.prefix());
     assert_eq!(entry.manifest, PLUGIN_MANIFEST);
     assert_eq!(entry.plugin.store_module(), Some(WORKERS_MODULE));
+    // The feature Databases declares the service sqlite-files, which the core
+    // binds only while the owner keeps it on (ADR-0055, decision 2).
+    let features: Vec<(&str, Vec<(&str, u16)>)> = manifest
+        .features
+        .iter()
+        .map(|(id, feature)| {
+            let services = feature
+                .services
+                .iter()
+                .map(|(name, major)| (name.as_str(), *major))
+                .collect();
+            (id.as_str(), services)
+        })
+        .collect();
+    assert_eq!(features, [("databases", vec![("sqlite-files", 1)])]);
     assert_eq!(
         entry.plugin.interface().command_names(),
-        ["pair_worker", "rename_worker", "remove_worker"]
+        [
+            "pair_worker",
+            "rename_worker",
+            "remove_worker",
+            "refresh_databases",
+            "add_database",
+            "add_worker_database",
+            "rename_database",
+            "mark_database",
+            "accept_database",
+            "remove_database",
+            "database_structure",
+            "count_database_rows",
+            "database_page",
+            "classify_database_statement",
+            "read_database",
+            "stop_database_read",
+            "run_database_change",
+        ]
     );
     assert_eq!(
         entry.plugin.interface().channel_names(),
-        ["subscribe_workers"]
+        ["subscribe_workers", "follow_databases"]
     );
 }
 

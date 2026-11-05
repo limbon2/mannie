@@ -121,6 +121,7 @@ impl Harness {
             process: None,
             part_id: Some(PartId::parse(CALL_PART).unwrap()),
             activity: None,
+            decision: None,
         })
         .await
     }
@@ -867,7 +868,8 @@ fn path_accesses(accesses: &[Access]) -> Vec<(String, AccessMode, bool)> {
             | Access::RemoteCommand { .. }
             | Access::Program { .. }
             | Access::ExternalTool { .. }
-            | Access::TerminalCommand { .. } => {
+            | Access::TerminalCommand { .. }
+            | Access::Database { .. } => {
                 panic!("not a path access: {access:?}")
             }
         })

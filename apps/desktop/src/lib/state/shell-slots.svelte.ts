@@ -4,10 +4,12 @@
 //
 // A plugin registers through `forPlugin`, which gives each of its entries
 // the plugin's ID, and a slot lists such an entry only while the core
-// reports the plugin as on (ADR-0030, decision 11). The shell changes when a
-// plugin turns on or off, without a reload. Both classes hold the slots of
-// the SDK's slot catalog, which the type checks compare (ADR-0034,
-// decision 11).
+// reports the plugin as on (ADR-0030, decision 11). An optional feature of a
+// plugin registers through `forFeature`, whose entries show only while the
+// core reports the plugin and the feature as on (ADR-0055, decision 10). The
+// shell changes when a plugin or a feature turns on or off, without a
+// reload. Both classes hold the slots of the SDK's slot catalog, which the
+// type checks compare (ADR-0034, decision 11).
 import { createContext } from 'svelte';
 
 import type { PluginSlots as SdkPluginSlots, SlotCatalog } from '#lib/sdk/slots.js';
@@ -25,6 +27,7 @@ import type {
   ShellView,
   SidebarPanel,
   SidePanelKind,
+  SlotOwner,
   TaskKind,
   ToolKind,
 } from '#lib/types/shell-slots.js';
@@ -33,13 +36,13 @@ interface SlotEntry {
   readonly id: string;
 }
 
-/** Whether the core reports a plugin as on. */
-export type PluginIsOn = (plugin: string) => boolean;
+/** Whether the core reports the owner of entries as on: the plugin, and the feature of a feature's entries. */
+export type OwnerIsOn = (owner: SlotOwner) => boolean;
 
 interface Registered<T> {
   readonly entry: T;
-  /** The plugin that registered the entry, or `null` for the core's. */
-  readonly plugin: string | null;
+  /** The plugin or feature that registered the entry, or `null` for the core's. */
+  readonly owner: SlotOwner | null;
 }
 
 /**
@@ -48,15 +51,16 @@ interface Registered<T> {
  */
 export class Slot<T extends SlotEntry> {
   readonly #check: ((entry: T, registered: readonly T[]) => string | null) | undefined;
-  readonly #isOn: PluginIsOn;
+  readonly #isOn: OwnerIsOn;
   readonly #name: string;
   readonly #registered: Registered<T>[] = $state([]);
 
   /**
-   * A slot. `isOn` tells whether a plugin's entries show; `check` returns why
-   * an entry cannot be registered beside those registered before, or null.
+   * A slot. `isOn` tells whether the entries of a plugin or a feature show;
+   * `check` returns why an entry cannot be registered beside those
+   * registered before, or null.
    */
-  constructor(name: string, isOn: PluginIsOn, check?: (entry: T, registered: readonly T[]) => string | null) {
+  constructor(name: string, isOn: OwnerIsOn, check?: (entry: T, registered: readonly T[]) => string | null) {
     this.#name = name;
     this.#isOn = isOn;
     this.#check = check;
@@ -77,14 +81,14 @@ export class Slot<T extends SlotEntry> {
   }
 
   /**
-   * The entry with this ID when the plugin `plugin` registered it and it
-   * shows, so that an entry describes only what its own plugin made, such as
-   * the calls of its tools (ADR-0039, decision 1).
+   * The entry with this ID when the plugin `plugin` or one of its features
+   * registered it and it shows, so that an entry describes only what its own
+   * plugin made, such as the calls of its tools (ADR-0039, decision 1).
    */
   findOf(id: string, plugin: string): T | undefined {
     const registered = this.#registered.find((candidate) => {
       const isEntry = candidate.entry.id === id;
-      const isTheirs = candidate.plugin === plugin;
+      const isTheirs = candidate.owner?.plugin === plugin;
       return isEntry && isTheirs;
     });
     if (registered === undefined) {
@@ -93,11 +97,14 @@ export class Slot<T extends SlotEntry> {
     return this.#shows(registered) ? registered.entry : undefined;
   }
 
-  /** The entries that the plugin `plugin` registered and that show, in the order they were registered. */
+  /**
+   * The entries that the plugin `plugin` or one of its features registered
+   * and that show, in the order they were registered.
+   */
   entriesOf(plugin: string): readonly T[] {
     return this.#registered
       .filter((registered) => {
-        const isTheirs = registered.plugin === plugin;
+        const isTheirs = registered.owner?.plugin === plugin;
         const shows = this.#shows(registered);
         return isTheirs && shows;
       })
@@ -105,21 +112,21 @@ export class Slot<T extends SlotEntry> {
   }
 
   /**
-   * The plugin of the entry with this ID while the plugin is off and the
+   * The plugin or feature of the entry with this ID while it is off and the
    * entry does not show, so that an address of it can say so; otherwise
    * `null`.
    */
-  pluginOff(id: string): string | null {
+  ownerOff(id: string): SlotOwner | null {
     const registered = this.#registered.find((candidate) => candidate.entry.id === id);
     if (registered === undefined) {
       return null;
     }
-    // The core's entries always show, so an entry that does not is a plugin's.
-    return this.#shows(registered) ? null : registered.plugin;
+    // The core's entries always show, so an entry that does not has an owner.
+    return this.#shows(registered) ? null : registered.owner;
   }
 
-  /** Adds an entry of the core's, or of the plugin `plugin`. */
-  register(entry: T, plugin: string | null = null): void {
+  /** Adds an entry of the core's, or of the plugin or feature `owner`. */
+  register(entry: T, owner: SlotOwner | null = null): void {
     const isDuplicate = this.#registered.some((existing) => existing.entry.id === entry.id);
     if (isDuplicate) {
       throw new Error(`The ${this.#name} slot already has an entry with the ID ${entry.id}.`);
@@ -132,30 +139,30 @@ export class Slot<T extends SlotEntry> {
     if (problem !== null) {
       throw new Error(problem);
     }
-    this.#registered.push({ entry, plugin });
+    this.#registered.push({ entry, owner });
   }
 
   #shows(registered: Registered<T>): boolean {
-    if (registered.plugin === null) {
+    if (registered.owner === null) {
       return true;
     }
-    return this.#isOn(registered.plugin);
+    return this.#isOn(registered.owner);
   }
 }
 
-/** A slot as a plugin registers in it: each entry belongs to the plugin. */
+/** A slot as a plugin or one of its features registers in it: each entry belongs to it. */
 export class PluginSlot<T extends SlotEntry> {
-  readonly #plugin: string;
+  readonly #owner: SlotOwner;
   readonly #slot: Slot<T>;
 
-  constructor(slot: Slot<T>, plugin: string) {
+  constructor(slot: Slot<T>, owner: SlotOwner) {
     this.#slot = slot;
-    this.#plugin = plugin;
+    this.#owner = owner;
   }
 
-  /** Adds an entry of the plugin. */
+  /** Adds an entry of the plugin or the feature. */
   register(entry: T): void {
-    this.#slot.register(entry, this.#plugin);
+    this.#slot.register(entry, this.#owner);
   }
 }
 
@@ -220,8 +227,11 @@ export class ShellSlots implements CatalogSlots {
   readonly toolKinds: Slot<ToolKind>;
   readonly views: Slot<ShellView>;
 
-  /** The slots; `isOn` tells whether a plugin's entries show, and every plugin's do without it. */
-  constructor(isOn: PluginIsOn = () => true) {
+  /**
+   * The slots; `isOn` tells whether the entries of a plugin or a feature
+   * show, and every plugin's and feature's do without it.
+   */
+  constructor(isOn: OwnerIsOn = () => true) {
     this.commands = new Slot('commands', isOn, checkCommand);
     this.contextKinds = new Slot('context kinds', isOn);
     this.conversationControls = new Slot('conversation controls', isOn);
@@ -240,11 +250,19 @@ export class ShellSlots implements CatalogSlots {
 
   /** The slots as the plugin `plugin` registers in them. */
   forPlugin(plugin: string): PluginSlots {
-    return new PluginSlots(this, plugin);
+    return new PluginSlots(this, { feature: null, plugin });
+  }
+
+  /** The slots as the optional feature `feature` of the plugin `plugin` registers in them. */
+  forFeature(plugin: string, feature: string): PluginSlots {
+    return new PluginSlots(this, { feature, plugin });
   }
 }
 
-/** Every slot of the shell as one plugin registers in it (ADR-0030, decision 11). */
+/**
+ * Every slot of the shell as one plugin, or one of its features, registers
+ * in it (ADR-0030, decision 11; ADR-0055, decision 10).
+ */
 export class PluginSlots implements SdkPluginSlots {
   readonly commands: PluginSlot<ShellCommand>;
   readonly contextKinds: PluginSlot<ContextKind>;
@@ -261,21 +279,21 @@ export class PluginSlots implements SdkPluginSlots {
   readonly toolKinds: PluginSlot<ToolKind>;
   readonly views: PluginSlot<ShellView>;
 
-  constructor(slots: ShellSlots, plugin: string) {
-    this.commands = new PluginSlot(slots.commands, plugin);
-    this.contextKinds = new PluginSlot(slots.contextKinds, plugin);
-    this.conversationControls = new PluginSlot(slots.conversationControls, plugin);
-    this.imageSources = new PluginSlot(slots.imageSources, plugin);
-    this.mentionKinds = new PluginSlot(slots.mentionKinds, plugin);
-    this.navigation = new PluginSlot(slots.navigation, plugin);
-    this.overlays = new PluginSlot(slots.overlays, plugin);
-    this.partRenderers = new PluginSlot(slots.partRenderers, plugin);
-    this.settingsSections = new PluginSlot(slots.settingsSections, plugin);
-    this.sidebarPanels = new PluginSlot(slots.sidebarPanels, plugin);
-    this.sidePanels = new PluginSlot(slots.sidePanels, plugin);
-    this.taskKinds = new PluginSlot(slots.taskKinds, plugin);
-    this.toolKinds = new PluginSlot(slots.toolKinds, plugin);
-    this.views = new PluginSlot(slots.views, plugin);
+  constructor(slots: ShellSlots, owner: SlotOwner) {
+    this.commands = new PluginSlot(slots.commands, owner);
+    this.contextKinds = new PluginSlot(slots.contextKinds, owner);
+    this.conversationControls = new PluginSlot(slots.conversationControls, owner);
+    this.imageSources = new PluginSlot(slots.imageSources, owner);
+    this.mentionKinds = new PluginSlot(slots.mentionKinds, owner);
+    this.navigation = new PluginSlot(slots.navigation, owner);
+    this.overlays = new PluginSlot(slots.overlays, owner);
+    this.partRenderers = new PluginSlot(slots.partRenderers, owner);
+    this.settingsSections = new PluginSlot(slots.settingsSections, owner);
+    this.sidebarPanels = new PluginSlot(slots.sidebarPanels, owner);
+    this.sidePanels = new PluginSlot(slots.sidePanels, owner);
+    this.taskKinds = new PluginSlot(slots.taskKinds, owner);
+    this.toolKinds = new PluginSlot(slots.toolKinds, owner);
+    this.views = new PluginSlot(slots.views, owner);
   }
 }
 

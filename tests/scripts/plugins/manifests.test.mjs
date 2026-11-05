@@ -285,6 +285,45 @@ describe('checkManifest', () => {
     // A program's own checks come before the service that it needs.
     assert.match(problemsOf(withMore('[processes."../git"]\nreason = "Runs it."'))[0], /is not the name/u);
   });
+
+  it('accepts features with the services that only they use', () => {
+    const checked = checkManifest(
+      withMore('[services]\nstore = 1\n\n[features.databases.services]\nterminals = 1\n\n[features.notes-history]'),
+      rules,
+    );
+
+    assert.deepEqual(checked.problems, []);
+    assert.deepEqual(Object.keys(checked.manifest?.features ?? {}), ['databases', 'notes-history']);
+    assert.deepEqual(Object.entries(checked.manifest?.features?.databases.services ?? {}), [['terminals', 1]]);
+  });
+
+  it('refuses what the SDK refuses in features, in its order', () => {
+    assert.deepEqual(problemsOf(withMore('[features."Data-Bases"]')), [
+      '"Data-Bases" is not a feature\'s ID, which is lower-case words of letters and digits joined by single hyphens, starting with a letter',
+    ]);
+    assert.deepEqual(problemsOf(withMore('[features.databases]\ndefault = true')), [
+      'features.databases has the unknown field default',
+    ]);
+    assert.deepEqual(problemsOf(withMore('[features.databases.services]\nweather = 1')), [
+      'the manifest declares the service "weather", which the plugin SDK does not have',
+    ]);
+    assert.deepEqual(problemsOf(withMore('[features.databases.services]\nterminals = 9')), [
+      'the manifest declares major 9 of the service terminals, which the plugin SDK does not have',
+    ]);
+    for (const name of rules.pluginOnlyServices) {
+      assert.deepEqual(problemsOf(withMore(`[features.databases.services]\n${name} = 1`)), [
+        `the feature databases declares the service ${name}, which only its plugin can declare`,
+      ]);
+    }
+    assert.deepEqual(
+      problemsOf(withMore('[services]\nterminals = 1\n\n[features.databases.services]\nterminals = 1')),
+      ['the service terminals is declared twice, by the plugin and a feature or by two features'],
+    );
+    assert.deepEqual(
+      problemsOf(withMore('[features.databases.services]\nterminals = 1\n\n[features.notes.services]\nterminals = 1')),
+      ['the service terminals is declared twice, by the plugin and a feature or by two features'],
+    );
+  });
 });
 
 describe('memberFolders', () => {

@@ -142,7 +142,8 @@ impl Tool for RemoteShell {
                 ToolAccess::Path(_)
                 | ToolAccess::Program(_)
                 | ToolAccess::ExternalTool(_)
-                | ToolAccess::TerminalCommand(_) => None,
+                | ToolAccess::TerminalCommand(_)
+                | ToolAccess::Database(_) => None,
             })
             .collect::<Vec<_>>()
             .join(" ");
@@ -310,6 +311,7 @@ async fn a_remote_command_asks_and_runs_what_was_authorized_once_allowed() {
             plugin: PLUGIN.to_owned(),
             data: None,
             failure: None,
+            uncertain: false,
         }
     );
     assert_eq!(result.output, "Ran systemctl status nginx.");
@@ -522,7 +524,8 @@ async fn turning_the_plugin_off_while_a_call_waits_for_the_owner_runs_nothing() 
     assert_eq!(
         call.not_run,
         Some(NotRunReason::PluginOff {
-            plugin: PLUGIN.to_owned()
+            plugin: PLUGIN.to_owned(),
+            feature: None,
         })
     );
     assert_eq!(shell.executions(), Vec::new());
@@ -553,7 +556,8 @@ async fn turning_the_plugin_off_makes_a_running_operation_uncertain_and_the_repl
     assert_eq!(
         call.interruption,
         Some(Interruption::PluginOff {
-            plugin: PLUGIN.to_owned()
+            plugin: PLUGIN.to_owned(),
+            feature: None,
         })
     );
 }

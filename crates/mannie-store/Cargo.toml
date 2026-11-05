@@ -28,7 +28,10 @@ mannie-plugin-sdk = { workspace = true, features = ["host"] }
 mannie-types = { workspace = true }
 # The authorizer that confines plugins' statements and migrations to their
 # tables needs the feature hooks, which adds no crate (ADR-0034, decision 7).
-rusqlite = { workspace = true, features = ["hooks"] }
+# The engine of the owner's SQLite files lowers SQLite's limits with the
+# feature limits and reads declared types with column_decltype, which add no
+# crate either (ADR-0056, decision 3).
+rusqlite = { workspace = true, features = ["column_decltype", "hooks", "limits"] }
 # The versioned JSON documents of the runtime's and the profiles' tables.
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -45,6 +48,12 @@ tracing = { workspace = true }
 mannie-plugin-sdk = { workspace = true, features = ["host", "manifest"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+
+[target."cfg(windows)".dependencies]
+# The identity of a registered SQLite file: its volume serial number and file
+# index, which std reads only on nightly (ADR-0056, decision 2).
+winapi-util = { workspace = true }
+windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem"] }
 
 [features]
 # Lets the tests of plugins create a database as 0.2.0 left it, with their

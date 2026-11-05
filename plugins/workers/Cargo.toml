@@ -55,6 +55,9 @@ protox = "0.10.0"
 ring = "0.17.14"
 rustix = "1.1.5"
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+# The JSON Schemas of the database tools' arguments, from the types that
+# read them.
+schemars = "1.2.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 specta = { version = "=2.0.0-rc.25", features = ["derive"] }

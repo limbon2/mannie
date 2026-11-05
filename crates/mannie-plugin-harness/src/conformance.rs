@@ -7,19 +7,27 @@
 //! handler for every command and channel of its interface and none beside
 //! them, inputs that refuse an unknown field, and its stop and second start.
 //!
+//! Each optional feature of the manifest is checked the same way while the
+//! plugin is on (ADR-0055, decision 11): its commands and channels answer
+//! `feature_off` while it is off, its start hands over exactly the handlers
+//! that the interface names for it, its inputs refuse an unknown field, it
+//! stops and starts again, and turning the plugin off stops it first.
+//!
 //! An input that refuses an unknown field may also refuse the probe because
 //! it lacks a field that it needs; the plugin's own tests check its inputs
 //! with valid values.
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use mannie_plugin_sdk::BoxFuture;
 use mannie_plugin_sdk::bindings::check_interface;
-use mannie_plugin_sdk::context::{DefaultContext, StartContext};
+use mannie_plugin_sdk::context::{DefaultContext, FeatureContext, StartContext};
+use mannie_plugin_sdk::contracts::WorkItem;
 use mannie_plugin_sdk::error::StartFailure;
-use mannie_plugin_sdk::ipc::{HostRefusal, Interface};
+use mannie_plugin_sdk::ipc::{Endpoint, HostRefusal, Interface};
 use mannie_plugin_sdk::manifest::Manifest;
-use mannie_plugin_sdk::plugin::{Plugin, PluginEntry, Started};
+use mannie_plugin_sdk::plugin::{FeatureStarted, Instance, Plugin, PluginEntry, Started};
 use mannie_plugin_sdk::services::store::StoreModule;
 use mannie_plugins::CallFailure;
 use mannie_types::plugins::PluginState;
@@ -32,7 +40,7 @@ const PROBE_FIELD: &str = "conformanceProbe";
 
 /// The names of the commands and of the channels of an interface or a start,
 /// each sorted.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct Names {
     commands: Vec<String>,
     channels: Vec<String>,
@@ -45,6 +53,19 @@ impl Names {
             channels: sorted(channels),
         }
     }
+
+    /// The names of the endpoints of the feature `feature`, or of the plugin
+    /// itself for `None`.
+    fn of(interface: &Interface, feature: Option<&str>) -> Self {
+        let names = |endpoints: &[Endpoint]| {
+            endpoints
+                .iter()
+                .filter(|endpoint| endpoint.feature == feature)
+                .map(|endpoint| endpoint.name)
+                .collect()
+        };
+        Self::new(names(interface.commands()), names(interface.channels()))
+    }
 }
 
 /// Names as owned strings, sorted.
@@ -54,11 +75,22 @@ fn sorted(names: Vec<&'static str>) -> Vec<String> {
     owned
 }
 
-/// The plugin, with the names of the handlers that its latest start returned.
+/// The names of the handlers that the latest starts returned: the plugin's,
+/// and each feature's by its ID.
+#[derive(Debug, Default)]
+struct Handed {
+    plugin: Option<Names>,
+    features: BTreeMap<String, Names>,
+}
+
+type Record = Arc<Mutex<Handed>>;
+
+/// The plugin, with the names of the handlers that its latest start and its
+/// features' latest starts returned.
 #[derive(Debug)]
 struct Recorder {
     plugin: Arc<dyn Plugin>,
-    handlers: Arc<Mutex<Option<Names>>>,
+    handed: Record,
 }
 
 impl Plugin for Recorder {
@@ -76,14 +108,58 @@ impl Plugin for Recorder {
 
     fn start(&self, context: StartContext) -> BoxFuture<'static, Result<Started, StartFailure>> {
         let start = self.plugin.start(context);
-        let handlers = Arc::clone(&self.handlers);
+        let handed = Arc::clone(&self.handed);
+        Box::pin(async move {
+            let mut started = start.await?;
+            let names = Names::new(
+                started.handlers.command_names(),
+                started.handlers.channel_names(),
+            );
+            handed.lock().unwrap_or_else(PoisonError::into_inner).plugin = Some(names);
+            started.instance = Box::new(RecordingInstance {
+                instance: started.instance,
+                handed,
+            });
+            Ok(started)
+        })
+    }
+}
+
+/// The plugin's running instance, which records the handlers of each feature
+/// that it starts.
+#[derive(Debug)]
+struct RecordingInstance {
+    instance: Box<dyn Instance>,
+    handed: Record,
+}
+
+impl Instance for RecordingInstance {
+    fn work(&self) -> BoxFuture<'static, Vec<WorkItem>> {
+        self.instance.work()
+    }
+
+    fn stop(self: Box<Self>) -> BoxFuture<'static, ()> {
+        self.instance.stop()
+    }
+
+    fn start_feature(
+        &self,
+        context: FeatureContext,
+    ) -> BoxFuture<'static, Result<FeatureStarted, StartFailure>> {
+        let feature = context.feature().to_string();
+        let start = self.instance.start_feature(context);
+        let handed = Arc::clone(&self.handed);
         Box::pin(async move {
             let started = start.await?;
             let names = Names::new(
                 started.handlers.command_names(),
                 started.handlers.channel_names(),
             );
-            *handlers.lock().unwrap_or_else(PoisonError::into_inner) = Some(names);
+            handed
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .features
+                .insert(feature, names);
             Ok(started)
         })
     }
@@ -109,10 +185,11 @@ pub async fn conformance(entry: PluginEntry, options: HostOptions) -> Vec<String
         problems.push(format!("the interface is refused: {error}"));
     }
     let declared = Names::new(interface.command_names(), interface.channel_names());
-    let handlers = Arc::new(Mutex::new(None));
+    let own = Names::of(&interface, None);
+    let handed = Record::default();
     let recorder = Recorder {
         plugin: Arc::clone(&entry.plugin),
-        handlers: Arc::clone(&handlers),
+        handed: Arc::clone(&handed),
     };
     let hosted = HostedPlugin::new(
         PluginEntry::new(entry.manifest, Arc::new(recorder)),
@@ -129,12 +206,17 @@ pub async fn conformance(entry: PluginEntry, options: HostOptions) -> Vec<String
         ));
         return problems;
     }
-    let started = handlers
+    let started = handed
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
+        .plugin
         .clone();
-    problems.extend(handler_problems(&declared, started.as_ref()));
-    problems.extend(refusals_of_unknown_fields(&hosted, &declared).await);
+    problems.extend(handler_problems("the start", &own, started.as_ref()));
+    problems.extend(refusals_of_unknown_fields(&hosted, &own).await);
+    for feature in manifest.features.keys() {
+        let names = Names::of(&interface, Some(feature));
+        problems.extend(feature_problems(&hosted, &handed, feature, &names).await);
+    }
     problems.extend(stop_and_second_start(&hosted).await);
     problems
 }
@@ -165,29 +247,114 @@ async fn refusals_while_off(hosted: &HostedPlugin, declared: &Names) -> Vec<Stri
     problems
 }
 
-/// The handlers of the start, for every command and channel of the interface
-/// and none beside them.
-fn handler_problems(declared: &Names, started: Option<&Names>) -> Vec<String> {
+/// One feature, while its plugin is on: its commands and channels refused
+/// with `feature_off` while it is off, its start, its handlers, its inputs,
+/// its stop and second start, and its stop before its plugin's.
+async fn feature_problems(
+    hosted: &HostedPlugin,
+    handed: &Record,
+    feature: &str,
+    names: &Names,
+) -> Vec<String> {
+    let mut problems = refusals_while_feature_off(hosted, feature, names).await;
+    let on = hosted.turn_feature_on(feature).await;
+    if on.state != PluginState::On {
+        problems.push(format!(
+            "the feature {feature} did not start: it is {:?} with the failure {:?}",
+            on.state, on.failure
+        ));
+        return problems;
+    }
+    let started = handed
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .features
+        .get(feature)
+        .cloned();
+    let subject = format!("the start of the feature {feature}");
+    problems.extend(handler_problems(&subject, names, started.as_ref()));
+    problems.extend(refusals_of_unknown_fields(hosted, names).await);
+    let off = hosted.turn_feature_off(feature).await;
+    if off.state != PluginState::Off {
+        problems.push(format!(
+            "the feature {feature} did not stop: it is {:?}",
+            off.state
+        ));
+    }
+    let again = hosted.turn_feature_on(feature).await;
+    if again.state != PluginState::On {
+        problems.push(format!(
+            "the feature {feature} did not start a second time: it is {:?} with the failure {:?}",
+            again.state, again.failure
+        ));
+    }
+    // Turning the plugin off stops the feature first; its choice stays.
+    hosted.turn_off().await;
+    let stopped = hosted.feature_view(feature);
+    if stopped.state != PluginState::Off {
+        problems.push(format!(
+            "the feature {feature} did not stop with its plugin: it is {:?}",
+            stopped.state
+        ));
+    }
+    hosted.turn_on().await;
+    hosted.turn_feature_off(feature).await;
+    problems
+}
+
+/// Every command and channel of a feature, refused with `feature_off` while
+/// the plugin is on and the feature is off.
+async fn refusals_while_feature_off(
+    hosted: &HostedPlugin,
+    feature: &str,
+    names: &Names,
+) -> Vec<String> {
+    let mut problems = Vec::new();
+    for command in &names.commands {
+        let answer = hosted.invoke(command, json!({})).await;
+        if !is_feature_off(&answer) {
+            problems.push(format!(
+                "the command {command} answered {answer:?} while the feature {feature} was off, not feature_off"
+            ));
+        }
+    }
+    for channel in &names.channels {
+        let answer = hosted
+            .open_channel(channel, Value::Null)
+            .await
+            .map(|_stream| ());
+        if !is_feature_off(&answer) {
+            problems.push(format!(
+                "the channel {channel} answered {answer:?} while the feature {feature} was off, not feature_off"
+            ));
+        }
+    }
+    problems
+}
+
+/// The handlers of a start, for every command and channel that the
+/// interface names for it and none beside them.
+fn handler_problems(subject: &str, declared: &Names, started: Option<&Names>) -> Vec<String> {
     let Some(started) = started else {
-        return vec!["the plugin started without handing the host its handlers".to_owned()];
+        return vec![format!("{subject} did not hand the host its handlers")];
     };
     let mut problems = Vec::new();
     if started.commands != declared.commands {
         problems.push(format!(
-            "the start handed over handlers of the commands {:?}, and the interface lists {:?}",
+            "{subject} handed over handlers of the commands {:?}, and the interface lists {:?}",
             started.commands, declared.commands
         ));
     }
     if started.channels != declared.channels {
         problems.push(format!(
-            "the start handed over handlers of the channels {:?}, and the interface lists {:?}",
+            "{subject} handed over handlers of the channels {:?}, and the interface lists {:?}",
             started.channels, declared.channels
         ));
     }
     problems
 }
 
-/// Every input of the plugin's commands and channels, refused with
+/// Every input of the commands and channels in `declared`, refused with
 /// `invalid_input` when it holds an unknown field.
 async fn refusals_of_unknown_fields(hosted: &HostedPlugin, declared: &Names) -> Vec<String> {
     let mut problems = Vec::new();
@@ -236,6 +403,14 @@ fn is_plugin_off<T>(answer: &Result<T, CallFailure>) -> bool {
     matches!(
         answer,
         Err(CallFailure::Host(HostRefusal::PluginOff { .. }))
+    )
+}
+
+/// Whether the host refused a call because its feature is off.
+fn is_feature_off<T>(answer: &Result<T, CallFailure>) -> bool {
+    matches!(
+        answer,
+        Err(CallFailure::Host(HostRefusal::FeatureOff { .. }))
     )
 }
 

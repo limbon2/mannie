@@ -2,7 +2,10 @@
 // adds its entries through its registration alone, next to the shell's own,
 // a plugin's entries show only while the core reports the plugin as on, and
 // a plugin follows its own state through its context (ADR-0030, decision 11;
-// ADR-0034, decision 11). The real plugins' entries are their own tests'.
+// ADR-0034, decision 11). A plugin's optional feature registers through the
+// context's `feature(id)`, whose entries show only while the feature is on
+// too (ADR-0055, decision 10). The real plugins' entries are their own
+// tests'.
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -65,13 +68,20 @@ const EXAMPLE_PLUGIN: PluginEntry = {
     },
   },
   description: () => 'Adds an example.',
+  features: [],
   id: 'example',
   name: () => 'Example',
 };
 
-/** Plugin states in which `isOn` tells which plugins are on, and that nothing follows. */
-function following(isOn: (plugin: string) => boolean): PluginFollowing {
-  return { isOn, whileOn: () => () => undefined };
+/**
+ * Plugin states in which `isOn` tells which plugins are on, `isFeatureOn`
+ * which of their features, and that nothing follows.
+ */
+function following(
+  isOn: (plugin: string) => boolean,
+  isFeatureOn: (plugin: string, feature: string) => boolean = () => false,
+): PluginFollowing {
+  return { isFeatureOn, isOn, whileFeatureOn: () => () => undefined, whileOn: () => () => undefined };
 }
 
 describe('composeShell', () => {
@@ -203,15 +213,75 @@ describe('composeShell', () => {
       },
     };
 
-    composeShell([], [followingPlugin], { isOn: () => false, whileOn });
+    composeShell([], [followingPlugin], { ...following(() => false), whileOn });
 
     expect(whileOn).toHaveBeenCalledWith('example', on, off);
+  });
+
+  it('shows a feature’s entries only while its plugin and the feature are on, and lets the feature follow its state', () => {
+    const whileFeatureOn = vi.fn(() => () => undefined);
+    const on = vi.fn();
+    const off = vi.fn();
+    const counting: PluginEntry = {
+      ...EXAMPLE_PLUGIN,
+      definition: {
+        register(context) {
+          const counts = context.feature('counts');
+          counts.slots.commands.register({
+            group: () => 'Example',
+            id: 'example.count',
+            label: () => 'Count',
+            order: 1,
+            run: vi.fn(),
+          });
+          counts.whileOn(on, off);
+        },
+      },
+      features: [{ description: () => 'Counts the notes.', id: 'counts', name: () => 'Counts' }],
+    };
+    const featureOn = { value: false };
+    const isCountsOn = (plugin: string, feature: string): boolean => {
+      const isCounts = `${plugin}/${feature}` === 'example/counts';
+      return isCounts && featureOn.value;
+    };
+
+    const slots = composeShell([], [counting], {
+      ...following(() => true, isCountsOn),
+      whileFeatureOn,
+    });
+    const whileOff = slots.commands.find('example.count');
+    featureOn.value = true;
+
+    expect(whileOff).toBeUndefined();
+    expect(slots.commands.find('example.count')).toBeDefined();
+    expect(whileFeatureOn).toHaveBeenCalledWith('example', 'counts', on, off);
+    expect(findPlugin('example')?.features.map((feature) => feature.id)).toEqual(['counts']);
+  });
+
+  it('refuses a feature that the plugin’s manifest does not list', () => {
+    const unlisted: PluginEntry = {
+      ...EXAMPLE_PLUGIN,
+      definition: {
+        register(context) {
+          context.feature('history');
+        },
+      },
+    };
+
+    expect(() =>
+      composeShell(
+        [],
+        [unlisted],
+        following(() => true),
+      ),
+    ).toThrow('The plugin example has no feature history in its manifest.');
   });
 
   it('names a plugin without UI on the Plugins page, without codes of its own', () => {
     const quiet: PluginEntry = {
       definition: null,
       description: () => 'Adds a service.',
+      features: [],
       id: 'quiet',
       name: () => 'Quiet',
     };

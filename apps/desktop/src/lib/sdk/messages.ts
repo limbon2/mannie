@@ -4,6 +4,7 @@
 // words those once (ADR-0019), and a plugin's UI words only its own codes.
 import type { HostRefusal } from '#lib/generated/plugin-sdk.js';
 import { m } from '#lib/paraglide/messages.js';
+import { featureName } from '#lib/state/plugin-catalog.js';
 import { formatCount } from '#lib/utils/chat-errors.js';
 
 /** What to tell the owner when a call got no answer, because the window could not reach the core. */
@@ -14,6 +15,9 @@ export function ipcFailureMessage(): string {
 /** What to tell the owner when the host refused a call of the plugin whose name is `name`. */
 export function hostRefusalMessage(refusal: HostRefusal, name: string): string {
   switch (refusal.code) {
+    case 'feature_off': {
+      return m.plugins_host_feature_off({ feature: featureName(refusal.plugin, refusal.feature), name });
+    }
     case 'host_service_failed': {
       return m.plugins_host_host_service_failed();
     }

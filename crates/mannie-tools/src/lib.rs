@@ -48,8 +48,8 @@ pub use background::{
     BackgroundCommands, CommandRead, CommandStop, MAX_WAIT_SECONDS, ReadRequest, StartRequest,
     Started, no_background_commands,
 };
-pub use ceiling::Ceiling;
-pub use digest::digest;
+pub use ceiling::{Ceiling, DatabaseRequest, HostDecision, HostWrite, decide_database_request};
+pub use digest::{WrittenStatement, digest, write_digest};
 pub use environment::{CommandEnvironment, ProgramEnvironmentError};
 pub use lock::MutationLock;
 pub use mentions::{

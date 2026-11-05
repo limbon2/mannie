@@ -1,17 +1,19 @@
 //! The worker's services over its runtime (ADR-0028): the session, the
-//! tasks, the events of their conversations, approvals and leases.
+//! tasks, the events of their conversations, approvals and leases. The
+//! databases of the host are in `databases`.
 //!
 //! `Submit`, `Cancel`, `Deliver` and `Decide` run on tasks of their own:
 //! tonic drops a handler when its connection closes, and these must run to
 //! their end, so that a call whose answer was lost has still happened once
 //! and calling it again finds what it did.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
-use mannie_host_kit::runtime::Runtime;
+use mannie_host_kit::runtime::{HostDatabases, Runtime};
 use mannie_host_kit::types::SubscribeConversation;
 use mannie_plugin_sdk::contracts::Secret;
 use mannie_plugin_sdk::contracts::{AssignedTaskState, TaskAssignment};
@@ -25,7 +27,6 @@ use zeroize::Zeroizing;
 use super::{Binding, LeaseVault, WorkerLink};
 use mannie_link::codec::{from_json, refused, refused_with, to_json};
 use mannie_link::host::WorkerDetails;
-use mannie_link::levels;
 use mannie_link::proto::approvals::approvals_service_server::ApprovalsService;
 use mannie_link::proto::approvals::{DecideRequest, DecideResponse};
 use mannie_link::proto::events::events_service_server::EventsService;
@@ -52,8 +53,11 @@ pub(crate) struct Services {
     name: Arc<str>,
     details: Arc<WorkerDetails>,
     version: Arc<str>,
+    levels: Arc<HashMap<String, u32>>,
     binding: Arc<Binding>,
     leases: Arc<LeaseVault>,
+    /// The databases of the host (ADR-0057).
+    pub(crate) databases: HostDatabases,
     /// Turns true when the link stops.
     stops: watch::Receiver<bool>,
 }
@@ -67,7 +71,7 @@ async fn link_stops(mut stops: watch::Receiver<bool>) {
 
 /// Runs `work` on a task of its own, so it ends even when the connection
 /// that asked for it closes.
-async fn to_the_end<T: Send + 'static>(
+pub(crate) async fn to_the_end<T: Send + 'static>(
     work: impl Future<Output = T> + Send + 'static,
 ) -> Result<T, Status> {
     tokio::spawn(work).await.map_err(|error| {
@@ -95,8 +99,10 @@ impl Services {
             name: Arc::from(link.name),
             details: Arc::new(link.details),
             version: Arc::from(link.version),
+            levels: Arc::new(link.levels),
             binding,
             leases: link.leases,
+            databases: link.databases,
             stops,
         }
     }
@@ -112,7 +118,7 @@ impl SessionService for Services {
         tracing::info!(master_version = %hello.version, "the master connected");
         Ok(Response::new(HelloResponse {
             version: self.version.to_string(),
-            levels: levels::levels(),
+            levels: self.levels.as_ref().clone(),
             name: self.name.to_string(),
             details_json: to_json(&*self.details)?,
         }))
@@ -125,9 +131,19 @@ impl SessionService for Services {
         let runtime = self.runtime.clone();
         let leases = Arc::clone(&self.leases);
         let binding = Arc::clone(&self.binding);
+        let databases = self.databases.clone();
         to_the_end(async move {
             runtime.release_assignments().await;
             leases.clear();
+            // The pin stays until the registrations are gone, so the master
+            // can unpair again, and a later master never sees them
+            // (ADR-0057, decision 3).
+            if let Err(error) = databases.forget_all().await {
+                tracing::error!(?error, "could not forget the host's databases");
+                return Err(Status::internal(
+                    "the host's databases could not be forgotten",
+                ));
+            }
             if let Err(error) = binding.clear() {
                 tracing::error!(%error, "could not forget the master's pin");
                 return Err(Status::internal("the master's pin could not be forgotten"));

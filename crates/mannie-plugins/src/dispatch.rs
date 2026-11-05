@@ -3,11 +3,13 @@
 //! inlined Tauri plugins as from the tests, with no Tauri code.
 //!
 //! A call is refused, in this order, while Mannie quits, while the plugin is
-//! not on, for a command or channel that the plugin does not have, for an
-//! input larger than the spec allows, and for an input that does not decode
-//! or that its checks refuse. Only then does the handler run, spawned into
-//! the plugin's calls in flight. The desktop app answers `store_unavailable`
-//! itself, since the host runs only once the store opened.
+//! not on, for a command or channel that the plugin does not have, while the
+//! optional feature of the command or channel is not on (ADR-0055, decision
+//! 8), for an input larger than the spec allows, and for an input that does
+//! not decode or that its checks refuse. Only then does the handler run,
+//! spawned into the calls in flight of the plugin or of its feature. The
+//! desktop app answers `store_unavailable` itself, since the host runs only
+//! once the store opened.
 //!
 //! Turning a plugin off refuses new calls, ends its channels, waits up to
 //! five seconds for its calls in flight and aborts the rest. A call that was
@@ -169,13 +171,15 @@ impl Drop for CallGuard {
     }
 }
 
-/// The calls of one plugin: its handlers while it is on, and the calls in
-/// flight.
+/// The calls of one plugin, or of one of its features: its handlers while it
+/// is on, and the calls in flight.
 #[derive(Default)]
 pub(crate) struct Calls {
     live: Mutex<Option<Arc<Live>>>,
     in_flight: Arc<InFlight>,
     next: AtomicU64,
+    /// How the last start ended, which a call that the end aborted answers.
+    last_end: Mutex<Option<SubscriptionEnd>>,
 }
 
 impl std::fmt::Debug for Calls {
@@ -208,6 +212,7 @@ impl Calls {
         let Some(live) = lock(&self.live).take() else {
             return;
         };
+        *lock(&self.last_end) = Some(end);
         live.ends.send_replace(Some(end));
         if self.in_flight.settle(Instant::now() + STOP_GRACE).await {
             return;
@@ -228,6 +233,11 @@ impl Calls {
 
     fn live(&self) -> Option<Arc<Live>> {
         lock(&self.live).clone()
+    }
+
+    /// How the last start ended, once one ended.
+    fn last_end(&self) -> Option<SubscriptionEnd> {
+        *lock(&self.last_end)
     }
 
     /// Spawns `call` into the calls in flight, unless the start that `live`
@@ -298,6 +308,22 @@ fn check_size(input: &Value, max_bytes: u32) -> Result<(), CallFailure> {
 
 fn plugin_off(plugin: &str) -> CallFailure {
     CallFailure::Host(HostRefusal::plugin_off(plugin))
+}
+
+fn feature_off(plugin: &str, feature: &str) -> CallFailure {
+    CallFailure::Host(HostRefusal::feature_off(plugin, feature))
+}
+
+/// The refusal of a call whose start went off after it was admitted: the
+/// feature's own end answers `feature_off`, and every other end of a
+/// feature's start, which its plugin's end caused, answers `plugin_off`.
+fn turned_off(plugin: &str, feature: Option<&str>, calls: &Calls) -> CallFailure {
+    match feature {
+        Some(feature) if calls.last_end() == Some(SubscriptionEnd::FeatureOff) => {
+            feature_off(plugin, feature)
+        }
+        _ => plugin_off(plugin),
+    }
 }
 
 /// The refusal of an input that did not reach the handler. A decoding
@@ -410,7 +436,7 @@ impl PluginHost {
         command: &str,
         input: Value,
     ) -> Result<Value, CallFailure> {
-        let (calls, live) = self.admit(plugin)?;
+        let (calls, live, feature) = self.admit(plugin, command)?;
         let handler = live
             .handlers
             .find_command(command)
@@ -419,13 +445,15 @@ impl PluginHost {
         let call = handler
             .prepare(input)
             .map_err(|failure| refused_input(plugin, command, failure))?;
-        let task = calls.spawn(&live, call).ok_or_else(|| plugin_off(plugin))?;
+        let task = calls
+            .spawn(&live, call)
+            .ok_or_else(|| turned_off(plugin, feature, calls))?;
         drop(live);
         match task.await {
             Ok(Answer::Output(output)) => Ok(output),
             Ok(Answer::Error(error)) => Err(CallFailure::Plugin(error)),
             Ok(_unserializable) => Err(HostRefusal::HostServiceFailed.into()),
-            Err(ended) => Err(self.ended_early(plugin, command, &ended)),
+            Err(ended) => Err(self.ended_early(plugin, feature, calls, command, &ended)),
         }
     }
 
@@ -435,7 +463,7 @@ impl PluginHost {
         channel: &str,
         input: Value,
     ) -> Result<PluginStream<ChannelMessage<Value>>, CallFailure> {
-        let (calls, live) = self.admit(plugin)?;
+        let (calls, live, feature) = self.admit(plugin, channel)?;
         let handler = live
             .handlers
             .find_channel(channel)
@@ -449,35 +477,55 @@ impl PluginHost {
         let ends = live.ends.subscribe();
         let task = calls
             .spawn(&live, opening)
-            .ok_or_else(|| plugin_off(plugin))?;
+            .ok_or_else(|| turned_off(plugin, feature, calls))?;
         drop(live);
         match task.await {
             Ok(Opened::Items(items)) => Ok(until_ended(items, ends)),
             Ok(Opened::Error(error)) => Err(CallFailure::Plugin(error)),
             Ok(_unserializable) => Err(HostRefusal::HostServiceFailed.into()),
-            Err(ended) => Err(self.ended_early(plugin, channel, &ended)),
+            Err(ended) => Err(self.ended_early(plugin, feature, calls, channel, &ended)),
         }
     }
 
-    /// The calls and the handlers of a plugin that is on, while Mannie does
-    /// not quit.
-    fn admit(&self, plugin: &str) -> Result<(&Calls, Arc<Live>), CallFailure> {
+    /// The calls and the handlers that serve the command or channel `name`
+    /// of a plugin that is on, while Mannie does not quit: the plugin's own,
+    /// or those of the feature that `name` belongs to, while the feature is
+    /// on, with the feature's ID.
+    fn admit(
+        &self,
+        plugin: &str,
+        name: &str,
+    ) -> Result<(&Calls, Arc<Live>, Option<&str>), CallFailure> {
         if self.shutting_down() {
             return Err(HostRefusal::ShuttingDown.into());
         }
         let calls = self.calls(plugin).ok_or_else(|| plugin_off(plugin))?;
         let live = calls.live().ok_or_else(|| plugin_off(plugin))?;
-        Ok((calls, live))
+        let Some((feature, feature_calls)) = self.feature_calls(plugin, name) else {
+            return Ok((calls, live, None));
+        };
+        let feature_live = feature_calls
+            .live()
+            .ok_or_else(|| feature_off(plugin, feature))?;
+        Ok((feature_calls, feature_live, Some(feature)))
     }
 
     /// The answer for a call whose task ended without answering: aborted,
-    /// because the plugin was turned off or Mannie quits, or panicked.
-    fn ended_early(&self, plugin: &str, name: &str, ended: &JoinError) -> CallFailure {
+    /// because the plugin or its feature was turned off or Mannie quits, or
+    /// panicked.
+    fn ended_early(
+        &self,
+        plugin: &str,
+        feature: Option<&str>,
+        calls: &Calls,
+        name: &str,
+        ended: &JoinError,
+    ) -> CallFailure {
         if ended.is_cancelled() {
             if self.shutting_down() {
                 return HostRefusal::ShuttingDown.into();
             }
-            return plugin_off(plugin);
+            return turned_off(plugin, feature, calls);
         }
         tracing::error!(plugin, command = name, "a plugin's handler panicked");
         HostRefusal::HostServiceFailed.into()

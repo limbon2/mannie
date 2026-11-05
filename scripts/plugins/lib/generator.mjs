@@ -188,6 +188,7 @@ export function generatedFiles(root, inputs) {
   const index = inputs.plugins.map((plugin) => ({
     crates: plugin.manifest.crates ?? {},
     entry: plugin.manifest.rust.entry,
+    features: plugin.manifest.features ?? {},
     folder: plugin.folder,
     id: plugin.id,
     order: plugin.manifest.order,

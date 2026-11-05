@@ -9,9 +9,15 @@ import { messageBarrel, uiPluginList, uiPluginLists, uiPlugins } from '../../../
 
 /** @type {import('../../../scripts/plugins/lib/ui.mjs').UiPlugin[]} */
 const PLUGINS = [
-  { folder: 'plugins/workers', hasUi: true, id: 'workers', validation: false },
-  { folder: 'plugins/log-viewer', hasUi: false, id: 'log-viewer', validation: false },
-  { folder: 'tests/fixtures/plugins/example', hasUi: true, id: 'example', validation: true },
+  {
+    features: ['databases', 'query-history'],
+    folder: 'plugins/workers',
+    hasUi: true,
+    id: 'workers',
+    validation: false,
+  },
+  { features: [], folder: 'plugins/log-viewer', hasUi: false, id: 'log-viewer', validation: false },
+  { features: ['counts'], folder: 'tests/fixtures/plugins/example', hasUi: true, id: 'example', validation: true },
 ];
 
 describe('uiPlugins', () => {
@@ -24,8 +30,8 @@ describe('uiPlugins', () => {
     mkdirSync(join(root, 'plugins', 'log-viewer', 'ui', 'generated'), { recursive: true });
 
     const plugins = uiPlugins(root, [
-      { folder: 'plugins/workers', id: 'workers', validation: false },
-      { folder: 'plugins/log-viewer', id: 'log-viewer', validation: false },
+      { folder: 'plugins/workers', id: 'workers', manifest: {}, validation: false },
+      { folder: 'plugins/log-viewer', id: 'log-viewer', manifest: {}, validation: false },
     ]);
 
     assert.deepEqual(
@@ -35,6 +41,19 @@ describe('uiPlugins', () => {
         ['log-viewer', false],
       ],
     );
+  });
+
+  it("lists a plugin's features in the order of their IDs", () => {
+    const [workers] = uiPlugins(root, [
+      {
+        folder: 'plugins/workers',
+        id: 'workers',
+        manifest: { features: { 'query-history': {}, databases: {} } },
+        validation: false,
+      },
+    ]);
+
+    assert.deepEqual(workers?.features, ['databases', 'query-history']);
   });
 });
 
@@ -47,13 +66,32 @@ describe('uiPluginList', () => {
     assert.ok(!text.includes('log-viewer/ui/index.js'), text);
     assert.ok(
       text.includes(
-        "  {\n    definition: workersPlugin,\n    description: m.workers_plugin_description,\n    id: 'workers',\n    name: m.workers_plugin_name,\n  },\n",
+        [
+          '  {\n',
+          '    definition: workersPlugin,\n',
+          '    description: m.workers_plugin_description,\n',
+          '    features: [\n',
+          '      {\n',
+          '        description: m.workers_feature_databases_description,\n',
+          "        id: 'databases',\n",
+          '        name: m.workers_feature_databases_name,\n',
+          '      },\n',
+          '      {\n',
+          '        description: m.workers_feature_query_history_description,\n',
+          "        id: 'query-history',\n",
+          '        name: m.workers_feature_query_history_name,\n',
+          '      },\n',
+          '    ],\n',
+          "    id: 'workers',\n",
+          '    name: m.workers_plugin_name,\n',
+          '  },\n',
+        ].join(''),
       ),
       text,
     );
     assert.ok(
       text.includes(
-        "  {\n    definition: null,\n    description: m.log_viewer_plugin_description,\n    id: 'log-viewer',\n    name: m.log_viewer_plugin_name,\n  },\n",
+        "  {\n    definition: null,\n    description: m.log_viewer_plugin_description,\n    features: [],\n    id: 'log-viewer',\n    name: m.log_viewer_plugin_name,\n  },\n",
       ),
       text,
     );

@@ -1,0 +1,154 @@
+// The databases that the owner registered on a worker's host
+// (plugins/workers/docs/databases.md; ADR-0057).
+//
+// The worker runs each request on its host and decides it under its
+// ceiling: a host whose configuration does not allow databases refuses every
+// request, a file outside the allowed folders is refused unless the host is
+// in full access, and a write runs only under an authority that the ceiling
+// accepts. A refusal travels as FAILED_PRECONDITION with the JSON of
+// `DatabaseRefusal`. The documents travel as JSON in fields named `*_json`;
+// their types are the plugin SDK's types of the service `sqlite-files` and
+// the documents of mannie-link, which change only by addition.
+//
+// The package is optional: a master connects to a worker that lacks it,
+// whose databases then say that the worker needs an update.
+syntax = "proto3";
+
+package mannie.link.databases.v1;
+
+// The databases of the worker's host.
+service DatabasesService {
+  // Registers the file at an absolute path that the owner typed.
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  // The registered databases, by name, with what the worker finds at each
+  // path.
+  rpc List(ListRequest) returns (ListResponse);
+  // Renames a database, marks it read-only or lifts the mark, or accepts the
+  // file that is at its path now.
+  rpc Update(UpdateRequest) returns (UpdateResponse);
+  // Forgets a database. The file stays.
+  rpc Forget(ForgetRequest) returns (ForgetResponse);
+  // A database's tables, views, indexes and triggers.
+  rpc Structure(StructureRequest) returns (StructureResponse);
+  // Counts the rows of a table or a view.
+  rpc Count(CountRequest) returns (CountResponse);
+  // A page of a table.
+  rpc Browse(BrowseRequest) returns (BrowseResponse);
+  // Runs one statement that changes nothing. Cancelling the call stops it.
+  rpc Read(ReadRequest) returns (ReadResponse);
+  // Runs a write with its evidence, once for its operation ID. A write that
+  // began runs to its end, even when the master stops waiting.
+  rpc Write(WriteRequest) returns (WriteResponse);
+}
+
+// A file to register.
+message RegisterRequest {
+  // The JSON of `RegisterDatabase`.
+  string register_json = 1;
+}
+
+// The registered database.
+message RegisterResponse {
+  // The JSON of `HostDatabase`.
+  string database_json = 1;
+}
+
+// Asks for the registered databases.
+message ListRequest {}
+
+// The registered databases.
+message ListResponse {
+  // The JSON of a list of `HostDatabase`.
+  string databases_json = 1;
+}
+
+// A change of a registration.
+message UpdateRequest {
+  // The database's key.
+  string key = 1;
+  // The JSON of `UpdateDatabase`.
+  string update_json = 2;
+}
+
+// The changed registration.
+message UpdateResponse {
+  // The JSON of `HostDatabase`.
+  string database_json = 1;
+}
+
+// A registration to forget.
+message ForgetRequest {
+  // The database's key.
+  string key = 1;
+}
+
+// The worker forgot the registration.
+message ForgetResponse {}
+
+// Asks for a database's structure.
+message StructureRequest {
+  // The database's key.
+  string key = 1;
+}
+
+// A database's structure.
+message StructureResponse {
+  // The JSON of `DatabaseStructure`.
+  string structure_json = 1;
+}
+
+// Asks how many rows a table or a view holds.
+message CountRequest {
+  // The database's key.
+  string key = 1;
+  // The table's or view's name.
+  string table = 2;
+}
+
+// The rows of a table or a view.
+message CountResponse {
+  // How many rows it holds.
+  uint64 rows = 1;
+}
+
+// Asks for a page of a table.
+message BrowseRequest {
+  // The database's key.
+  string key = 1;
+  // The JSON of `PageRequest`.
+  string request_json = 2;
+}
+
+// A page of a table.
+message BrowseResponse {
+  // The JSON of `Page`.
+  string page_json = 1;
+}
+
+// A statement that changes nothing.
+message ReadRequest {
+  // The database's key.
+  string key = 1;
+  // The JSON of `Statement`.
+  string statement_json = 2;
+  // The JSON of `ReadLimits`.
+  string limits_json = 3;
+}
+
+// The rows that the statement returned.
+message ReadResponse {
+  // The JSON of `StatementRows`.
+  string rows_json = 1;
+}
+
+// A write with its evidence.
+message WriteRequest {
+  // The JSON of `WriteEvidence`.
+  string evidence_json = 1;
+}
+
+// What the write did.
+message WriteResponse {
+  // The JSON of `WriteDone`.
+  string done_json = 1;
+}

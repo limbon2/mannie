@@ -141,6 +141,8 @@ macro_rules! app_commands {
             plugins::subscribe_plugins,
             plugins::set_plugin_enabled,
             plugins::plugin_work,
+            plugins::set_plugin_feature_enabled,
+            plugins::plugin_feature_work,
             $($extra)*
         ]
     };

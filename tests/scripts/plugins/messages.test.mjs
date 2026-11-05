@@ -5,8 +5,8 @@ import { describe, it } from 'node:test';
 import { inlangSettings, messageProblems, messageSources } from '../../../scripts/plugins/lib/messages.mjs';
 
 const SOURCES = messageSources([
-  { folder: 'plugins/workers', id: 'workers' },
-  { folder: 'plugins/log-viewer', id: 'log-viewer' },
+  { folder: 'plugins/workers', id: 'workers', manifest: { features: { databases: {}, 'query-history': {} } } },
+  { folder: 'plugins/log-viewer', id: 'log-viewer', manifest: {} },
 ]);
 
 /** The project's locales. */
@@ -27,16 +27,29 @@ const VALID = {
     en: { log_viewer_plugin_description: 'Shows the logs.', log_viewer_plugin_name: 'Log viewer' },
   },
   workers: {
-    en: { workers_pair: 'Pair', workers_plugin_description: 'Pairs workers.', workers_plugin_name: 'Workers' },
+    en: {
+      workers_feature_databases_description: 'Opens SQLite files.',
+      workers_feature_databases_name: 'Databases',
+      workers_feature_query_history_description: 'Keeps the queries.',
+      workers_feature_query_history_name: 'Query history',
+      workers_pair: 'Pair',
+      workers_plugin_description: 'Pairs workers.',
+      workers_plugin_name: 'Workers',
+    },
   },
 };
 
 describe('messageSources', () => {
   it("lists the core's catalogs, then each plugin's with its prefix", () => {
     assert.deepEqual(SOURCES, [
-      { folder: 'apps/desktop/messages', name: 'core', prefix: null },
-      { folder: 'plugins/workers/messages', name: 'workers', prefix: 'workers' },
-      { folder: 'plugins/log-viewer/messages', name: 'log-viewer', prefix: 'log_viewer' },
+      { features: [], folder: 'apps/desktop/messages', name: 'core', prefix: null },
+      {
+        features: ['databases', 'query-history'],
+        folder: 'plugins/workers/messages',
+        name: 'workers',
+        prefix: 'workers',
+      },
+      { features: [], folder: 'plugins/log-viewer/messages', name: 'log-viewer', prefix: 'log_viewer' },
     ]);
   });
 });
@@ -99,6 +112,20 @@ describe('messageProblems', () => {
       "plugins/log-viewer/messages/en.json: workers_pair is outside the plugin's prefix log_viewer_",
       'plugins/log-viewer/messages/en.json: workers_pair is also in the catalog of workers',
       'plugins/log-viewer/messages/en.json: the plugin needs the message log_viewer_plugin_name, which names it on the Plugins page',
+    ]);
+  });
+
+  it("refuses a feature without its name or description, with underscores in place of the ID's hyphens", () => {
+    const {
+      workers_feature_databases_name: _name,
+      workers_feature_query_history_description: _description,
+      ...rest
+    } = VALID.workers.en;
+    const planted = { ...VALID, workers: { en: rest } };
+
+    assert.deepEqual(messageProblems(SOURCES, catalogs(planted), SETTINGS), [
+      'plugins/workers/messages/en.json: the feature databases needs the message workers_feature_databases_name, which names it on the Plugins page',
+      'plugins/workers/messages/en.json: the feature query-history needs the message workers_feature_query_history_description, which names it on the Plugins page',
     ]);
   });
 });
