@@ -12,6 +12,8 @@ export const PROJECT_CONVERSATIONS_SHOWN = 5;
 export interface ProjectGroup {
   /** When the project was last active: its newest conversation's change, or its creation while it has none. */
   readonly activeAt: number;
+  /** Whether one of its conversations waits for the owner's answer to a question. */
+  readonly awaitingAnswer: boolean;
   /** Whether one of its conversations waits for the owner's approval. */
   readonly awaitingApproval: boolean;
   /** Its conversations, the most recent first. */
@@ -60,6 +62,7 @@ export function groupConversations(
     const members = byProject.get(project.id) ?? [];
     return {
       activeAt: members[0]?.updatedAt ?? project.createdAt,
+      awaitingAnswer: members.some((conversation) => conversation.awaitingAnswer ?? false),
       awaitingApproval: members.some((conversation) => conversation.awaitingApproval),
       conversations: members,
       project,

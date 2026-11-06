@@ -9,6 +9,7 @@ use crate::ids::ArchiveId;
 use crate::images::ImageFormat;
 
 use super::background::{BackgroundEnding, BackgroundLimit};
+use super::question::QuestionAnswer;
 
 /// The most images of one result that reach the model (ADR-0044, decision 1).
 pub const MAX_TOOL_IMAGES: usize = 4;
@@ -478,6 +479,13 @@ pub enum ToolOutcome {
         /// Its folder, the conversation's workspace from now on.
         folder: String,
     },
+    /// The owner answered the questions of a call of `ask_owner` (ADR-0058).
+    QuestionAnswered {
+        /// One answer for each question.
+        answers: Vec<QuestionAnswer>,
+    },
+    /// The owner chose not to answer the questions of a call of `ask_owner`.
+    QuestionDeclined,
     /// A plugin's tool ran (ADR-0034, decision 6). The model reads only its
     /// output; the data and the failure are for the call's card, which the
     /// plugin describes through the slot of tool kinds (ADR-0039).

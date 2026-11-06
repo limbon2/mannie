@@ -6,16 +6,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   ApprovalRequest,
   ArchiveRef,
+  QuestionReply,
   SharedGrant,
   ToolsError,
 } from '../../../../../../apps/desktop/src/lib/generated/bindings.js';
+import { questionDrafts } from '../../../../../../apps/desktop/src/lib/state/question-drafts.svelte.js';
 import {
   OutputRequest,
   PermissionsRequest,
   ToolsActions,
 } from '../../../../../../apps/desktop/src/lib/state/tools-actions.svelte.js';
+import { EMPTY_DRAFT } from '../../../../../../apps/desktop/src/lib/utils/question-answers.js';
 
 const core = vi.hoisted(() => ({
+  answerQuestion: vi.fn(),
   decideApproval: vi.fn(),
   listConversationGrants: vi.fn(),
   listSharedGrants: vi.fn(),
@@ -103,6 +107,67 @@ describe('approvals', () => {
     expect(second).toBe(false);
     expect(await first).toBe(true);
     expect(core.decideApproval).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('questions', () => {
+  const ANSWERED: QuestionReply = { answers: [{ ownWords: null, selected: [1] }], reply: 'answered' };
+
+  it('sends the reply and forgets what the owner chose once the core accepted it', async () => {
+    const actions = new ToolsActions();
+    core.answerQuestion.mockResolvedValue(ok(null));
+    questionDrafts.chooseOption(PART, 0, 1);
+
+    const accepted = await actions.answer(CONVERSATION, PART, ANSWERED);
+
+    expect(accepted).toBe(true);
+    expect(core.answerQuestion).toHaveBeenCalledWith({ conversationId: CONVERSATION, partId: PART, reply: ANSWERED });
+    expect(actions.deciding).toEqual([]);
+    expect(questionDrafts.draft(PART, 0)).toEqual(EMPTY_DRAFT);
+  });
+
+  it('keeps a refusal for the call’s card and what the owner chose, and clears it with the next reply', async () => {
+    const actions = new ToolsActions();
+    core.answerQuestion.mockResolvedValueOnce(refused({ code: 'answer_not_valid' }));
+    core.answerQuestion.mockResolvedValueOnce(ok(null));
+    questionDrafts.chooseOption(PART, 0, 1);
+
+    expect(await actions.answer(CONVERSATION, PART, ANSWERED)).toBe(false);
+    expect(actions.decisionFailures[PART]).toEqual({
+      error: { code: 'answer_not_valid', description: 'refused' },
+      kind: 'core',
+    });
+    expect(questionDrafts.draft(PART, 0).selected).toEqual([1]);
+
+    expect(await actions.answer(CONVERSATION, PART, { reply: 'declined' })).toBe(true);
+    expect(actions.decisionFailures[PART]).toBeUndefined();
+  });
+
+  it('counts a call that does not reach the core as a failure', async () => {
+    const actions = new ToolsActions();
+    core.answerQuestion.mockRejectedValue(new Error('the webview lost the core'));
+
+    expect(await actions.answer(CONVERSATION, PART, ANSWERED)).toBe(false);
+    expect(actions.decisionFailures[PART]).toEqual({ kind: 'ipc' });
+    expect(actions.deciding).toEqual([]);
+  });
+
+  it('sends one reply at a time for a call', async () => {
+    const actions = new ToolsActions();
+    let answer: (value: unknown) => void = () => undefined;
+    core.answerQuestion.mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+
+    const first = actions.answer(CONVERSATION, PART, ANSWERED);
+    const second = await actions.answer(CONVERSATION, PART, { reply: 'declined' });
+    answer(ok(null));
+
+    expect(second).toBe(false);
+    expect(await first).toBe(true);
+    expect(core.answerQuestion).toHaveBeenCalledTimes(1);
   });
 });
 

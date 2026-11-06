@@ -68,7 +68,7 @@ const START_RUN: &str = "UPDATE runtime_runs SET state = 'running', started_at =
      WHERE id = ?1 AND conversation_id = ?2 AND state = 'queued'";
 const SET_ACTIVITY: &str = "UPDATE runtime_runs SET activity = ?3 \
      WHERE id = ?1 AND conversation_id = ?2 AND state IN ('queued', 'running')";
-const SELECT_AWAITING_APPROVAL: &str = "SELECT json_extract(activity, '$.kind') = 'awaiting_approval' \
+const SELECT_ACTIVITY_KIND: &str = "SELECT json_extract(activity, '$.kind') \
      FROM runtime_runs WHERE id = ?1 AND conversation_id = ?2";
 const END_RUN: &str = "UPDATE runtime_runs SET state = ?3, outcome = ?4, activity = NULL, ended_at = ?5 \
      WHERE id = ?1 AND conversation_id = ?2 AND state IN ('queued', 'running')";
@@ -127,7 +127,7 @@ pub(crate) const STATEMENTS: &[&str] = &[
     KEEP_CURRENT_RUN,
     START_RUN,
     SET_ACTIVITY,
-    SELECT_AWAITING_APPROVAL,
+    SELECT_ACTIVITY_KIND,
     END_RUN,
     SELECT_ACTIVE_RUN_TURN,
     SELECT_NEXT_PART_POSITION,
@@ -147,6 +147,19 @@ pub(crate) const STATEMENTS: &[&str] = &[
     SET_FULL_ACCESS,
     SET_PROJECT,
 ];
+
+/// The kinds of a run's activity that wait for the owner, as a stored activity
+/// names them, which the conversation's summary shows.
+const OWNER_WAITS: [&str; 2] = ["awaiting_approval", "awaiting_answer"];
+
+/// What a run's activity waits for from the owner, by its stored kind.
+fn owner_wait(activity: &RunActivity) -> Option<&'static str> {
+    match activity {
+        RunActivity::AwaitingApproval { .. } => Some(OWNER_WAITS[0]),
+        RunActivity::AwaitingAnswer { .. } => Some(OWNER_WAITS[1]),
+        _ => None,
+    }
+}
 
 impl Store {
     /// Applies `changes` to a conversation in one transaction with the given
@@ -861,12 +874,14 @@ impl Batch<'_> {
         run_id: RunId,
         activity: &RunActivity,
     ) -> Result<(), RuntimeStoreError> {
-        // The conversation list shows whether a reply waits for the owner
+        // The conversation list shows what a reply waits for from the owner
         // (docs/features/system-tools/tool-activity.md, status), so the
-        // summary changes when a run starts or stops waiting.
-        let was_waiting: Option<bool> = self
+        // summary changes when a run starts or stops waiting, or when it
+        // waits for something else, as when a child's approval shows over the
+        // run's question.
+        let earlier_kind: Option<String> = self
             .transaction
-            .prepare_cached(SELECT_AWAITING_APPROVAL)?
+            .prepare_cached(SELECT_ACTIVITY_KIND)?
             .query_row(params![run_id.as_str(), self.conversation], |row| {
                 row.get(0)
             })
@@ -883,8 +898,10 @@ impl Batch<'_> {
         if updated == 0 {
             return Err(RuntimeStoreError::RunNotActive { run: run_id });
         }
-        let waits = matches!(activity, RunActivity::AwaitingApproval { .. });
-        if was_waiting.unwrap_or(false) != waits {
+        let waited_for = earlier_kind
+            .as_deref()
+            .filter(|kind| OWNER_WAITS.contains(kind));
+        if waited_for != owner_wait(activity) {
             self.summary_changed = true;
         }
         self.append_run_updated(run_id)

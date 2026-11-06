@@ -43,7 +43,7 @@ use crate::plugin_tools::{OfferedPluginTool, offered_tools};
 use crate::plugins::Snapshot;
 use crate::profiles::{VaultError, in_vault};
 use crate::retry::RetryDecision;
-use crate::{Runtime, lock, tasks, texts};
+use crate::{Runtime, lock, questions, tasks, texts};
 
 /// The newest tool results of the latest turn that stay in the context when
 /// older ones are left out to save space.
@@ -128,6 +128,11 @@ pub(crate) struct Setup {
     /// agent names, when its profile uses tools and it is not a task itself
     /// (ADR-0024, decision 1).
     pub(crate) task_definitions: Vec<ToolDefinition>,
+    /// The definition of `ask_owner`, for a run whose agent names it, whose
+    /// profile uses tools and that is not a task itself (ADR-0058,
+    /// decision 1). It stays apart from the task tools, whose list says
+    /// whether a run gives tasks and makes their calls `task` parts.
+    pub(crate) question_definition: Option<ToolDefinition>,
     /// The child agents that `start_task` can start.
     pub(crate) child_agents: Vec<&'static str>,
     /// For a run of an assigned task, what it works under.
@@ -226,12 +231,17 @@ impl Setup {
 
     /// Whether the run has tools.
     pub(crate) fn uses_tools(&self) -> bool {
-        !self.tools.is_empty() || self.offers_tasks()
+        !self.tools.is_empty() || self.offers_tasks() || self.offers_questions()
     }
 
     /// Whether the run is offered the task tools.
     pub(crate) fn offers_tasks(&self) -> bool {
         !self.task_definitions.is_empty()
+    }
+
+    /// Whether the run is offered `ask_owner`.
+    pub(crate) fn offers_questions(&self) -> bool {
+        self.question_definition.is_some()
     }
 
     /// Whom the run's agent answers to.
@@ -256,7 +266,7 @@ impl Setup {
     }
 
     /// The definitions of the tools that a call is offered where the run
-    /// works, followed by the task tools.
+    /// works, followed by `ask_owner` and the task tools.
     fn definitions_for(&self, availability: &Availability<'_>) -> Vec<ToolDefinition> {
         let mut definitions: Vec<ToolDefinition> = self
             .tools
@@ -265,6 +275,7 @@ impl Setup {
             .filter(|(tool, _definition)| tool.offered(availability))
             .map(|(_tool, definition)| definition.clone())
             .collect();
+        definitions.extend(self.question_definition.iter().cloned());
         definitions.extend(self.task_definitions.iter().cloned());
         definitions
     }
@@ -416,6 +427,11 @@ impl Runtime {
                 strict: tool.strict(),
             })
             .collect();
+        // A task's run never asks the owner: it reports open questions to the
+        // agent that gave it the task (ADR-0058, decision 9).
+        let question_definition =
+            (profile.use_tools && !task && agent.tools.contains(&questions::ASK_OWNER))
+                .then(questions::definition);
         let child_agents = self.child_agent_names(&snapshot);
         // A child never gives tasks of its own (T-22), and an agent without a
         // task budget or anyone to give tasks to is not offered the tools.
@@ -435,6 +451,7 @@ impl Runtime {
             let offered_names: Vec<String> = definitions
                 .iter()
                 .chain(&task_definitions)
+                .chain(&question_definition)
                 .map(|definition| definition.name.clone())
                 .collect();
             let offer = Self::executor_offer(&snapshot, offered_names);
@@ -460,6 +477,7 @@ impl Runtime {
             tools,
             definitions,
             task_definitions,
+            question_definition,
             child_agents,
             assigned: None,
             executors,
@@ -482,7 +500,8 @@ impl Runtime {
             .iter()
             .filter(|name| self.inner.tools.registry.get(name).is_some())
             .count();
-        let others = core + tasks::TASK_TOOLS.len() + snapshot.items::<Executors>().len();
+        let asks = usize::from(agent.tools.contains(&questions::ASK_OWNER));
+        let others = core + asks + tasks::TASK_TOOLS.len() + snapshot.items::<Executors>().len();
         within_request_room(offered_tools(snapshot, agent, self), others)
             .into_iter()
             .unzip()
@@ -1169,7 +1188,9 @@ fn chosen_tool_images(turns: &[ModelTurn], left_out: &HashSet<PartId>) -> Vec<(P
 
 /// The calls of the latest turn whose results can be left out: every
 /// completed tool call and every task call that returned reports, but the
-/// newest three.
+/// newest three. The owner's replies to questions always stay, because the
+/// note that replaces a result asks the model to run the tool again (ADR-0058,
+/// decision 7).
 fn older_results(turns: &[ModelTurn]) -> HashSet<PartId> {
     let Some(latest) = turns.last() else {
         return HashSet::new();
@@ -1183,12 +1204,85 @@ fn older_results(turns: &[ModelTurn]) -> HashSet<PartId> {
             _ => false,
         })
         .filter(|part| {
-            part.tool_call
-                .as_ref()
-                .is_some_and(|call| call.status == ToolCallStatus::Completed)
+            part.tool_call.as_ref().is_some_and(|call| {
+                call.status == ToolCallStatus::Completed && !questions::holds_reply(call)
+            })
         })
         .map(|part| &part.id)
         .collect();
     let older = completed.len().saturating_sub(KEPT_RESULTS);
     completed[..older].iter().map(|id| (*id).clone()).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use mannie_store::{ModelPart, ModelTurn};
+    use mannie_types::ids::{PartId, TurnId};
+    use mannie_types::tools::ToolResult;
+    use mannie_types::tools::{QuestionAnswer, ToolCallDocument, ToolCallStatus, ToolOutcome};
+    use mannie_types::transcript::{PartKind, PartState};
+
+    use super::older_results;
+
+    fn part_id(number: u32) -> PartId {
+        PartId::parse(&format!("0199e0f2-0000-7000-8000-{number:012}")).unwrap()
+    }
+
+    /// A completed call of the latest turn with this outcome.
+    fn completed(number: u32, outcome: ToolOutcome) -> ModelPart {
+        let mut call = ToolCallDocument::receiving(format!("call_{number}"), "tool".to_owned());
+        call.status = ToolCallStatus::Completed;
+        call.result = Some(ToolResult {
+            outcome,
+            output: "The result.".to_owned(),
+            archives: Vec::new(),
+            images: Vec::new(),
+        });
+        ModelPart {
+            id: part_id(number),
+            run_id: None,
+            kind: Some(PartKind::ToolCall),
+            kind_name: "tool_call".to_owned(),
+            state: PartState::Complete,
+            text: "{}".to_owned(),
+            provider_item: None,
+            tool_call: Some(call),
+            task: None,
+            attempt: 1,
+            image: None,
+            context: None,
+        }
+    }
+
+    #[test]
+    fn the_owners_replies_stay_while_older_results_are_left_out() {
+        let answered = ToolOutcome::QuestionAnswered {
+            answers: vec![QuestionAnswer {
+                selected: vec![0],
+                own_words: None,
+            }],
+        };
+        let turn = ModelTurn {
+            turn_id: TurnId::parse("0199e0f2-0000-7000-8000-000000000100").unwrap(),
+            position: 0,
+            run_id: None,
+            run_state: None,
+            kept_runs: Vec::new(),
+            parts: vec![
+                completed(1, answered),
+                completed(2, ToolOutcome::QuestionDeclined),
+                completed(3, ToolOutcome::Unknown),
+                completed(4, ToolOutcome::Unknown),
+                completed(5, ToolOutcome::Unknown),
+                completed(6, ToolOutcome::Unknown),
+                completed(7, ToolOutcome::Unknown),
+            ],
+        };
+
+        let left_out = older_results(&[turn]);
+
+        assert_eq!(left_out.len(), 2, "{left_out:?}");
+        assert!(left_out.contains(&part_id(3)));
+        assert!(left_out.contains(&part_id(4)));
+    }
 }

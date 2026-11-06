@@ -332,6 +332,40 @@ describe('callSummary', () => {
   });
 });
 
+describe('a call of ask_owner', () => {
+  it('has its own line and icon while it asks', () => {
+    const asks = call('ask_owner', { questions: [] }, { status: 'awaiting_answer' });
+
+    expect(callSummary(asks)).toBe('Ask you a question');
+    expect(toolIcon('ask_owner')).not.toBe(toolIcon('some_other_tool'));
+  });
+
+  it('waits for the owner, in words of its own', () => {
+    const status = callStatus(call('ask_owner', {}, { status: 'awaiting_answer' }), 0);
+
+    expect(status).toEqual({ label: 'Waiting for your answer', quiet: false, tone: 'attention' });
+  });
+
+  it('says how many questions the owner answered', () => {
+    const answer = { ownWords: null, selected: [0] };
+    const one = result({ answers: [answer], kind: 'question_answered' });
+    const two = result({ answers: [answer, answer], kind: 'question_answered' });
+
+    expect(callSummary(call('ask_owner', {}, { result: one, status: 'completed' }))).toBe('You answered its question');
+    expect(callSummary(call('ask_owner', {}, { result: two, status: 'completed' }))).toBe(
+      'You answered its 2 questions',
+    );
+    expect(callStatus(call('ask_owner', {}, { result: one, status: 'completed' }), 0).quiet).toBe(true);
+  });
+
+  it('names a question that the owner chose not to answer', () => {
+    const declined = call('ask_owner', {}, { result: result({ kind: 'question_declined' }), status: 'completed' });
+
+    expect(callSummary(declined)).toBe('You chose not to answer');
+    expect(callStatus(declined, 0)).toEqual({ label: 'Not answered', quiet: false, tone: 'ended' });
+  });
+});
+
 describe('callStatus', () => {
   it('asks for attention while the call waits for the owner', () => {
     expect(callStatus(call('write_file', {}, { status: 'awaiting_approval' }), 0).tone).toBe('attention');

@@ -1,0 +1,14 @@
+{
+  "taskId": "0199e0f2-0000-7000-a000-000000000001",
+  "conversationId": "0199e0f2-0000-7000-a000-000000000002",
+  "version": 3,
+  "state": "reported",
+  "startedAt": null,
+  "activity": null,
+  "toolCalls": 0,
+  "approval": null,
+  "waitsForLease": false,
+  "report": "Report: the marker is written.",
+  "failure": null,
+  "endedAt": 1792000000052
+}

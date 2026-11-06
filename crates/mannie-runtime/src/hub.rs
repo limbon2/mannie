@@ -341,6 +341,7 @@ pub(crate) fn localize_summary(
         profile_id: master.profile_id.clone(),
         has_active_run: worker.has_active_run,
         awaiting_approval: worker.awaiting_approval,
+        awaiting_answer: worker.awaiting_answer,
         full_access: master.full_access,
         project_id: master.project_id.clone(),
         workspace: master.workspace.clone(),

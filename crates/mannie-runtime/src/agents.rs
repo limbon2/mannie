@@ -18,6 +18,7 @@ use mannie_plugin_sdk::points::agents::{AgentSpec, Agents, Requester as SdkReque
 
 use crate::Runtime;
 use crate::plugins::Snapshot;
+use crate::questions::ASK_OWNER;
 use crate::tasks::TASK_TOOLS;
 use crate::texts;
 
@@ -124,8 +125,10 @@ pub const SYSTEM_TOOLS: [&str; 18] = [
     "move_to_project",
 ];
 
-/// The conversation agent's tools: the system tools and the task tools.
-const CONVERSATION_TOOLS: [&str; 21] = [
+/// The conversation agent's tools: the system tools, the task tools and the
+/// tool that asks the owner questions, which only the agent that answers to
+/// the owner has (ADR-0058, decision 9).
+const CONVERSATION_TOOLS: [&str; 22] = [
     SYSTEM_TOOLS[0],
     SYSTEM_TOOLS[1],
     SYSTEM_TOOLS[2],
@@ -147,6 +150,7 @@ const CONVERSATION_TOOLS: [&str; 21] = [
     TASK_TOOLS[0],
     TASK_TOOLS[1],
     TASK_TOOLS[2],
+    ASK_OWNER,
 ];
 
 /// The tools of an explore child: the system tools that only read. It has no
@@ -376,6 +380,7 @@ mod tests {
         AgentDefinition, AgentRegistry, CONVERSATION, CONVERSATION_AGENT, DuplicateAgent, EXPLORE,
         GENERAL, Requester,
     };
+    use crate::questions::ASK_OWNER;
     use crate::tasks::TASK_TOOLS;
 
     /// A plugin's agent whose budgets all differ, so a swapped budget shows.
@@ -471,5 +476,13 @@ mod tests {
             assert!(CONVERSATION.tools.contains(&task_tool));
         }
         assert_eq!(CONVERSATION.requester, Requester::Owner);
+    }
+
+    #[test]
+    fn only_the_conversation_agent_asks_the_owner_questions() {
+        assert!(CONVERSATION.tools.contains(&ASK_OWNER));
+        for child in [EXPLORE, GENERAL] {
+            assert!(!child.tools.contains(&ASK_OWNER), "{}", child.name);
+        }
     }
 }

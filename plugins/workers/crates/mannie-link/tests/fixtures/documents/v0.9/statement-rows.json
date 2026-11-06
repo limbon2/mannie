@@ -1,0 +1,35 @@
+{
+  "columns": [
+    {
+      "name": "name",
+      "declaredType": "TEXT"
+    },
+    {
+      "name": "count(*)",
+      "declaredType": null
+    }
+  ],
+  "rows": [
+    [
+      {
+        "type": "text",
+        "value": "bolt"
+      },
+      {
+        "type": "integer",
+        "value": "12"
+      }
+    ],
+    [
+      {
+        "type": "text",
+        "value": "nut"
+      },
+      {
+        "type": "integer",
+        "value": "40"
+      }
+    ]
+  ],
+  "cut": "rows"
+}

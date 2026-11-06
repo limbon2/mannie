@@ -15,6 +15,7 @@ import FolderInputIcon from '@lucide/svelte/icons/folder-input';
 import FolderOpenIcon from '@lucide/svelte/icons/folder-open';
 import FolderPlusIcon from '@lucide/svelte/icons/folder-plus';
 import InfoIcon from '@lucide/svelte/icons/info';
+import MessageCircleQuestionMarkIcon from '@lucide/svelte/icons/message-circle-question-mark';
 import MonitorIcon from '@lucide/svelte/icons/monitor';
 import MoveIcon from '@lucide/svelte/icons/move';
 import ScrollTextIcon from '@lucide/svelte/icons/scroll-text';
@@ -54,6 +55,7 @@ export interface CallStatus {
 type Arguments = Readonly<Record<string, unknown>>;
 
 const ICONS: Readonly<Record<string, Component>> = {
+  ask_owner: MessageCircleQuestionMarkIcon,
   copy_path: CopyIcon,
   create_directory: FolderPlusIcon,
   delete_path: Trash2Icon,
@@ -213,6 +215,9 @@ export function toolIcon(tool: string): Component {
 /** What a tool does, for a call whose target is not known yet. */
 function toolLabel(tool: string): string {
   switch (tool) {
+    case 'ask_owner': {
+      return m.tools_tool_ask_owner();
+    }
     case 'copy_path': {
       return m.tools_tool_copy_path();
     }
@@ -449,6 +454,12 @@ function outcomeSummary(outcome: ToolOutcome): string | null {
       // SDK 1's plugin tools report no outcome of their own, so the call is named by its tool.
       return null;
     }
+    case 'question_answered': {
+      return m.tools_done_question_answered({ count: outcome.answers.length });
+    }
+    case 'question_declined': {
+      return m.tools_done_question_declined();
+    }
     case 'read': {
       return outcome.totalLines === 0
         ? m.tools_done_read_empty({ path: outcome.path })
@@ -484,6 +495,9 @@ export function callSummary(call: ToolCallView): string {
 /** The call's status. A command that runs says how long it has run, measured to `now`. */
 export function callStatus(call: ToolCallView, now: number): CallStatus {
   switch (call.status) {
+    case 'awaiting_answer': {
+      return { label: m.tools_status_awaiting_answer(), quiet: false, tone: 'attention' };
+    }
     case 'awaiting_approval': {
       return { label: m.tools_status_awaiting_approval(), quiet: false, tone: 'attention' };
     }
@@ -492,6 +506,9 @@ export function callStatus(call: ToolCallView, now: number): CallStatus {
     }
     case 'completed': {
       const outcome = call.result?.outcome;
+      if (outcome?.kind === 'question_declined') {
+        return { label: m.tools_status_question_declined(), quiet: false, tone: 'ended' };
+      }
       // A plugin's call that failed names its code in its outcome (ADR-0039).
       const pluginFailed = outcome?.kind === 'plugin' && (outcome.failure ?? null) !== null;
       const failed = outcome?.kind === 'failed' || pluginFailed;

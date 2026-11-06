@@ -77,7 +77,7 @@ stateDiagram-v2
   Interrupted --> [*]
 ```
 
-- A run that waits for the owner's approval of an operation stays running. Its activity says that it waits, and it holds no model slot meanwhile.
+- A run that waits for the owner's approval of an operation, or for the owner's answer to a question, stays running. Its activity says what it waits for, and it holds no model slot meanwhile.
 - A retry of a failed, stopped or interrupted run starts a new run for the same turn. It reuses the results of operations that completed and never repeats an operation that may have run. When the earlier run made tool calls, its parts stay in the turn and the new run continues after them.
 - A run's state is stored before it is published, like every other event.
 

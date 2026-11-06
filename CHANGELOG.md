@@ -6,6 +6,7 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ### Added
 
+- Agents can ask the owner questions with options during a reply: the tool `ask_owner` pauses the run, a card in the transcript shows up to 4 questions of 2 to 6 options with a choice of the owner's own words, and the reply goes on with the answer. Only the conversation agent asks, an answer allows nothing, and Stop, a quit or a crash cancels the question (ADR-0058).
 - Plugins publish tools while they run, through the point `tool-sources`: each set replaces the source's tools, a run keeps the set that it started with, and a published tool gives way to any tool of the same name (ADR-0043).
 - A plugin's tool may call a tool server's tool as an external-tool access, which the owner allows once, for the conversation, for the project or for every conversation, covering the same tool of the same server at the same endpoint with any arguments; full access runs every call, a worker's ceiling refuses them, and the approval shows the server's hints as its claims (ADR-0043).
 - Plugins start the programs of local tool servers through the service `local-servers`, which finds the program on Mannie's `PATH`, runs it in the supervisor with the environment of commands and the server's own variables and secrets, and ends it when the plugin stops or Mannie quits (ADR-0043).

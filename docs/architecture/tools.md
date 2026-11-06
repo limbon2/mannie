@@ -33,6 +33,8 @@ A call's surroundings, which the runtime reads again for every call, hold the co
 
 The task tools of child agents are not in the registry. They act on runs rather than on the machine: they start, continue and wait for the runs of child agents, they have no operations of their own, and every side effect of a child is an operation of the child's own run. The runtime defines them, offers them only to runs that are not tasks themselves, and renders their results ([ADR-0024](../adr/0024-run-child-agent-tasks-in-the-parent-run.md)).
 
+The tool `ask_owner` is not in the registry either. It asks the owner questions on behalf of its run, it has no accesses and no operation, so the policy never sees it, and only the core writes its result, from the owner's checked reply ([ADR-0058](../adr/0058-let-agents-ask-the-owner-questions.md)).
+
 Every call also carries an activity: a few words in which the model says what the call does, for the owner to read. The runtime adds the argument `activity` to each schema that a model receives and takes it out of the arguments before the tool reads them, so a tool cannot have an argument of that name. The activity is the model's claim, and nothing that authorizes a call reads it ([tool calls](../features/system-tools/tool-calls.md#the-activity-of-a-call)).
 
 ## 3. Operations

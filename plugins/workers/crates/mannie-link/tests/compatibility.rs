@@ -35,7 +35,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
 /// The folder of the documents that this version writes.
-const NEWEST: &str = "v0.8";
+const NEWEST: &str = "v0.9";
 
 /// The codes of the refusals that cross the link without a document.
 const REFUSAL_CODES: &str = "refusal-codes.json";

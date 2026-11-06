@@ -67,9 +67,18 @@
   const cited = $derived(citedItems(transcript.turns));
   const latest = $derived(latestTurn(transcript));
   const checkpoint = $derived(transcript.checkpoint);
-  /** The part that waits for the owner, such as a tool call or the card of a child whose call waits. */
-  const waitingPart = $derived(latest?.run?.activity?.kind === 'awaiting_approval' ? latest.run.activity.partId : null);
-  const awaitingApproval = $derived(waitingPart !== null);
+  const activity = $derived(latest?.run?.activity);
+  /** The part that waits for the owner: a tool call, the card of a child whose call waits, or a question. */
+  const waitingPart = $derived.by(() => {
+    const waits = activity?.kind === 'awaiting_approval' || activity?.kind === 'awaiting_answer';
+    return waits ? activity.partId : null;
+  });
+  const jumpLabel = $derived.by(() => {
+    if (activity?.kind === 'awaiting_answer') {
+      return m.chat_jump_to_question();
+    }
+    return activity?.kind === 'awaiting_approval' ? m.chat_jump_to_approval() : m.chat_jump_to_newest();
+  });
 
   function endAnnouncement(run: RunView): string {
     switch (run.state) {
@@ -281,7 +290,7 @@
     <div class="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
       <Button class="pointer-events-auto shadow-sm" size="sm" variant="secondary" onclick={jump}>
         <ArrowDownIcon data-icon="inline-start" />
-        {awaitingApproval ? m.chat_jump_to_approval() : m.chat_jump_to_newest()}
+        {jumpLabel}
       </Button>
     </div>
   {/if}

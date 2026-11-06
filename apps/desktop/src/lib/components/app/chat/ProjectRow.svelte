@@ -2,6 +2,7 @@
   import EllipsisIcon from '@lucide/svelte/icons/ellipsis';
   import FolderIcon from '@lucide/svelte/icons/folder';
   import FolderOpenIcon from '@lucide/svelte/icons/folder-open';
+  import MessageCircleQuestionMarkIcon from '@lucide/svelte/icons/message-circle-question-mark';
   import ShieldAlertIcon from '@lucide/svelte/icons/shield-alert';
   import SquarePenIcon from '@lucide/svelte/icons/square-pen';
 
@@ -24,7 +25,8 @@
   // focus the row offers a new conversation in the project and a menu with
   // the folder, "Rename…" and "Remove…". Their buttons lie over room that the
   // row keeps free, so nothing moves when they show. A collapsed project still
-  // shows when one of its conversations waits for approval or writes a reply.
+  // shows when one of its conversations waits for an approval or an answer or
+  // writes a reply.
   let { group }: { group: ProjectGroup } = $props();
 
   const project = $derived(group.project);
@@ -59,6 +61,12 @@
               <span class="truncate" data-content>{project.name}</span>
               {#if !open && group.awaitingApproval}
                 <ShieldAlertIcon class="ms-auto" aria-label={m.chat_project_awaiting_approval()} role="img" />
+              {:else if !open && group.awaitingAnswer}
+                <MessageCircleQuestionMarkIcon
+                  class="ms-auto"
+                  aria-label={m.chat_project_awaiting_answer()}
+                  role="img"
+                />
               {:else if !open && group.replying}
                 <Spinner class="ms-auto" aria-label={m.chat_project_replying()} />
               {/if}

@@ -73,6 +73,18 @@ describe('groupConversations', () => {
     expect(byId.get('app')?.replying).toBe(false);
     expect(byId.get('other')?.replying).toBe(true);
   });
+
+  it('says when a conversation of a project waits for an answer, and a summary that leaves it out does not', () => {
+    const asking = { ...conversation('asking', 'app', 5), awaitingAnswer: true };
+    const quiet = conversation('quiet', 'other', 4);
+
+    const grouped = groupConversations([asking, quiet], [project('app', 1), project('other', 2)]);
+
+    const byId = new Map(grouped.projects.map((group) => [group.project.id, group]));
+    expect(byId.get('app')?.awaitingAnswer).toBe(true);
+    expect(byId.get('app')?.awaitingApproval).toBe(false);
+    expect(byId.get('other')?.awaitingAnswer).toBe(false);
+  });
 });
 
 describe('shownConversations', () => {

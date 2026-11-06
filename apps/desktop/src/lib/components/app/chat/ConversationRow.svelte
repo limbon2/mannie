@@ -1,6 +1,7 @@
 <script lang="ts">
   import EllipsisIcon from '@lucide/svelte/icons/ellipsis';
   import LockOpenIcon from '@lucide/svelte/icons/lock-open';
+  import MessageCircleQuestionMarkIcon from '@lucide/svelte/icons/message-circle-question-mark';
   import ShieldAlertIcon from '@lucide/svelte/icons/shield-alert';
 
   import { resolve } from '$app/paths';
@@ -16,9 +17,10 @@
 
   // One conversation in the sidebar (docs/features/chat/conversation-view.md,
   // layout; projects.md): its title, a mark while it is in full access
-  // (ADR-0029), a mark while its reply waits for the owner's approval or is
-  // being written, so the owner finds it from another conversation, and a
-  // menu to rename or delete it, which shows on hover and focus. The menu's
+  // (ADR-0029), a mark while its reply waits for the owner's approval or
+  // answer or is being written, so the owner finds it from another
+  // conversation, and a menu to rename or delete it, which shows on hover and
+  // focus. The menu's
   // button lies over room that the row keeps free, so nothing moves when it
   // shows, and the row stays highlighted while the pointer is on the button.
   interface Props {
@@ -31,6 +33,7 @@
 
   const isOpen = $derived(conversation.id === openConversationId());
   const hasFullAccess = $derived(conversation.fullAccess ?? false);
+  const awaitingAnswer = $derived(conversation.awaitingAnswer ?? false);
   // A project's conversations form a sub-list below the project's row.
   const Item = $derived(nested ? Sidebar.MenuSubItem : Sidebar.MenuItem);
   const RowButton = $derived(nested ? Sidebar.MenuSubButton : Sidebar.MenuButton);
@@ -58,6 +61,12 @@
         {/if}
         {#if conversation.awaitingApproval}
           <ShieldAlertIcon class="ms-auto" aria-label={m.chat_conversation_awaiting_approval()} role="img" />
+        {:else if awaitingAnswer}
+          <MessageCircleQuestionMarkIcon
+            class="ms-auto"
+            aria-label={m.chat_conversation_awaiting_answer()}
+            role="img"
+          />
         {:else if conversation.hasActiveRun}
           <Spinner class="ms-auto" aria-label={m.chat_conversation_replying()} />
         {/if}

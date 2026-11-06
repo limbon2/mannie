@@ -1,0 +1,22 @@
+[
+  {
+    "file": {
+      "key": "0199e0f2-0000-7000-8000-0000000000ee",
+      "name": "Parts",
+      "fileName": "parts.db",
+      "readOnly": false,
+      "state": "available"
+    },
+    "identity": "2049:131"
+  },
+  {
+    "file": {
+      "key": "0199e0f2-0000-7000-8000-0000000000ef",
+      "name": "Orders",
+      "fileName": "orders.sqlite",
+      "readOnly": true,
+      "state": "changed"
+    },
+    "identity": "2049:132"
+  }
+]

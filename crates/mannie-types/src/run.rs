@@ -98,6 +98,12 @@ pub enum RunActivity {
         /// The tool call's part.
         part_id: PartId,
     },
+    /// Waiting for the owner to answer the questions of a call of
+    /// `ask_owner`. The run holds no model slot meanwhile (ADR-0058).
+    AwaitingAnswer {
+        /// The call's part.
+        part_id: PartId,
+    },
     /// Running a tool, without a model slot.
     RunningTool {
         /// The tool call's part.

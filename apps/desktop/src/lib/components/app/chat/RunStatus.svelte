@@ -89,6 +89,9 @@
       return { busy: true, retryable: false, text: m.chat_status_writing() };
     }
     switch (activity.kind) {
+      case 'awaiting_answer': {
+        return { busy: false, retryable: false, text: m.chat_status_awaiting_answer() };
+      }
       case 'awaiting_approval': {
         return { busy: false, retryable: false, text: m.chat_status_awaiting_approval() };
       }

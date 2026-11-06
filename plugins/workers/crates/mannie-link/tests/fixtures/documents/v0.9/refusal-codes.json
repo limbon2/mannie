@@ -1,0 +1,12 @@
+{
+  "assign": [
+    "assign.not_a_worker",
+    "assign.conflict",
+    "assign.conversation_not_found",
+    "assign.still_running",
+    "assign.invalid",
+    "assign.shutting_down",
+    "assign.storage_failed"
+  ],
+  "lease": ["lease.task_not_active", "lease.binding_mismatch", "lease.vault_unavailable", "lease.storage_failed"]
+}

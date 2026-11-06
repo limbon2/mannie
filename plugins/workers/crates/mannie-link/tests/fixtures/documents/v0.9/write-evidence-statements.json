@@ -1,0 +1,32 @@
+{
+  "operation": "0199e0f2-0000-7000-8000-000000000101",
+  "key": "0199e0f2-0000-7000-8000-0000000000ee",
+  "identity": "2049:131",
+  "write": {
+    "kind": "statements",
+    "statements": [
+      {
+        "text": "UPDATE parts SET stock = ?1 WHERE name = ?2",
+        "parameters": [
+          {
+            "type": "integer",
+            "value": "11"
+          },
+          {
+            "type": "text",
+            "value": "bolt"
+          }
+        ]
+      }
+    ]
+  },
+  "origin": {
+    "kind": "call",
+    "conversation": "0199e0f2-0000-7000-8000-000000000301",
+    "part": "0199e0f2-0000-7000-8000-000000000302"
+  },
+  "authority": {
+    "kind": "allowed_once",
+    "digest": "6b1d8c2f0a9e4d3c7b5a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c"
+  }
+}

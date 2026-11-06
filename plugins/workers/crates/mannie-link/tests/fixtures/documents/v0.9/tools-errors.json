@@ -1,0 +1,27 @@
+[
+  {
+    "code": "conversation_not_found"
+  },
+  {
+    "code": "approval_not_pending"
+  },
+  {
+    "code": "approval_changed"
+  },
+  {
+    "code": "output_not_found"
+  },
+  {
+    "code": "environment_name_invalid",
+    "name": "PATH="
+  },
+  {
+    "code": "storage_failed"
+  },
+  {
+    "code": "shutting_down"
+  },
+  {
+    "code": "full_access_refused"
+  }
+]

@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                      |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                     |
-| Last updated | 2026-11-01                                                                                                                                                           |
+| Last updated | 2026-11-06                                                                                                                                                           |
 | Related      | [Goals and scope](../product/goals-and-scope.md), [Feature protocol](../features/README.md), [Releasing](../engineering/releasing.md), [ADR index](../adr/README.md) |
 
 ## 1. Delivery approach
@@ -34,6 +34,7 @@
 | M13 Notebooks           | The owner asks questions over notebooks of documents, and any conversation uses them as cited context, through the plugin Notebooks | The plugin Notebooks in `plugins/notebooks/`                                                                             | Next release |
 | M14 Terminals           | The owner and agents use terminals of this machine and SSH hosts, and replies cite their output, through the plugin Terminal        | The plugin Terminal in `plugins/terminal/`                                                                               | After M13's  |
 | M15 Databases           | The owner and agents work with SQLite files on this computer and on workers, through Databases, an optional feature of Workers      | [Databases](../../plugins/workers/docs/databases.md)                                                                     | After M14's  |
+| M16 Questions           | The conversation agent asks the owner questions with options during a reply, and the reply goes on with the answer                  | [Questions to the owner](../features/questions.md)                                                                       | After M15's  |
 
 ```mermaid
 flowchart LR
@@ -52,7 +53,8 @@ flowchart LR
   M12 --> M13[M13 Notebooks]
   M13 --> M14[M14 Terminals]
   M14 --> M15[M15 Databases]
-  M15 --> Later[Later features as they are accepted]
+  M15 --> M16[M16 Questions]
+  M16 --> Later[Later features as they are accepted]
 ```
 
 ## 3. Milestones
@@ -369,6 +371,29 @@ Exit criteria:
 - Axe finds no WCAG 2.1 AA violation in the feature's switch, the view, its dialogs and sheets, and the tool cards, on WebView2 and WebKitGTK.
 - ADR-0055, ADR-0056 and ADR-0057 are Accepted (D47), and the release ships.
 
+### M16: Questions to the owner
+
+Goal: the conversation agent asks the owner questions with options during a reply, the run waits, and the model reads the answer ([ADR-0058](../adr/0058-let-agents-ask-the-owner-questions.md)). It ends with the release after the one that carries M15 (D48).
+
+Features: [Questions to the owner](../features/questions.md).
+
+Scope:
+
+- the tool `ask_owner` of the runtime, with its checks of the model's arguments, its schema and its text for the model;
+- the wait for the owner's reply, the command `answer_question` with its checks of the reply, and calls after a question that do not run;
+- answers that stay in the model's context, also through compaction;
+- the card in the transcript, the answers below the call's row, and the marks of a conversation and a project that wait for an answer.
+
+Exit criteria:
+
+- The model asks, the card shows the questions and their options, and the reply goes on with what the owner chose, wrote or declined.
+- The card works fully from the keyboard, takes no focus by itself, and gives the focus back to the call's row after an answer.
+- Stop, a quit and a crash cancel a question, a late answer is refused, and a retry asks again.
+- A change after an answer asks for approval as it would otherwise, and an answer never stands in for the owner's words about a project.
+- Child agents and workers are not offered the tool.
+- Axe finds no WCAG 2.1 AA violation in the card and the answers, on WebView2 and WebKitGTK.
+- ADR-0058 is Accepted (D48), and the release ships.
+
 ### Later
 
 Accepted features go into new milestones as they arrive, and each of those milestones ends with a 0.x release. A later decision declares 1.0, with its own gate: desktop auto-update, a security review, user documentation, and another look at code signing (D16).
@@ -444,6 +469,7 @@ One decision is open: whether to accept [ADR-0048](../adr/0048-erase-what-plugin
 | D45 | Terminals (2026-10-30)                                  | The owner asked for a terminal plugin: terminals that open in a side area, reach this machine, workers and SSH hosts, run agents' commands that a reply can point to as evidence, and let the owner point an agent at a command and its output. The owner's answers of 2026-10-30: version 1 opens terminals on this machine and on SSH hosts, and terminals on a worker's host become an idea, since they need an ADR that supersedes ADR-0015 d2 in part; terminals open as tabs of the side panel area beside the conversation, each belongs to the conversation that opened it, and only that conversation's agent uses it; an agent reads only the output of the commands that it ran and what the owner mentions. The owner then asked that terminals cause no lag on low-end PCs and laptops, so terminals get budgets of their own, NFR-PERF-06 to 10, on the reference machine and on a low-end laptop profile. The owner accepts ADR-0053, ADR-0054 and the first two ADRs of the plugin Terminal, which mark commands with shell integration and keep a headless emulator of each terminal in Rust, by approving the plan. M14 ships in the release after the one that carries M12 and M13. Building starts with the spikes and the documents.                          | [ADR-0053](../adr/0053-let-plugins-offer-terminals.md), [ADR-0054](../adr/0054-let-tool-results-keep-what-they-cite-and-let-plugin-views-add-mentions.md), [M14 validation results](m14-validation.md)                                                                                                     |
 | D46 | Databases (2026-11-01)                                  | The owner asked for "first class support for an sqlite database for the harness", "something of adminer", as "an optional subplugin for workers", and asked whether rqlite or an implementation of Mannie's own should spread a database across machines. The owner's answers of 2026-11-01: databases are SQLite files that already exist and that the owner registers, and Mannie creates none; each database has one home, this computer or a paired worker, which the master's view and agents reach through the link under the host's ceiling, and nothing replicates it; Databases is an optional feature inside Workers, with its switch under Workers on the Plugins page, which needs optional features of plugins; every conversation and the general child agent see every registered database, and their reads run without asking; the first version changes rows and schema, the view runs a schema statement after a confirmation, and an agent's schema change always asks, with no grant that covers it. ADR-0055, ADR-0056 and ADR-0057 are Proposed for the owner. The documents were written after M14's commit, and building starts after M14's release, as M15.                                                                                               | [ADR-0055](../adr/0055-let-plugins-have-optional-features.md), [ADR-0056](../adr/0056-let-plugins-work-with-the-owners-sqlite-files-through-the-core.md), [ADR-0057](../adr/0057-let-the-master-work-with-the-databases-on-a-workers-host.md), [Databases](../../plugins/workers/docs/databases.md)        |
 | D47 | Databases accepted (2026-11-01)                         | The owner accepts ADR-0055, ADR-0056 and ADR-0057 and the defaults chosen while shaping Databases: registration on this computer only through the system's file dialog, names unique among all registered databases, pages of 100 rows, up to 200 rows of a query for the model and up to 16 statements in a change, and full access running an agent's schema change, as ADR-0056 decision 7 asks. The owner asks to continue, so building M15 starts with the spikes, on its own branch, while M14 waits for its release.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | [ADR-0055](../adr/0055-let-plugins-have-optional-features.md), [ADR-0056](../adr/0056-let-plugins-work-with-the-owners-sqlite-files-through-the-core.md), [ADR-0057](../adr/0057-let-the-master-work-with-the-databases-on-a-workers-host.md), [Databases](../../plugins/workers/docs/databases.md)        |
+| D48 | Questions to the owner (2026-11-06)                     | The owner asked for "a feature of making AI agents ask questions and give options to the user", similar to how other harnesses do it. The owner's answers of 2026-11-06: in this version only the conversation agent asks, while child agents and workers keep reporting open questions, and a question shows in the transcript, where approvals show. The owner accepts ADR-0058 by approving the plan, with its defaults: a question also waits in a conversation in full access, it has no timeout, a restart cancels it and a retry asks again, and questions and options show as plain text. M16 ships in the release after the one that carries M15.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | [ADR-0058](../adr/0058-let-agents-ask-the-owner-questions.md), [Questions to the owner](../features/questions.md)                                                                                                                                                                                          |
 
 ## 6. Risk register
 

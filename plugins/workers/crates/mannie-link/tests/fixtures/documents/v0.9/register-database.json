@@ -1,0 +1,5 @@
+{
+  "path": "/srv/app/parts.db",
+  "name": "Parts",
+  "readOnly": false
+}

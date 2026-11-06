@@ -17,6 +17,7 @@ mod database;
 mod external;
 mod outcome;
 mod program;
+mod question;
 mod settings;
 mod terminal;
 
@@ -51,6 +52,11 @@ pub use outcome::{
 };
 pub use program::{
     DiscardedWork, MAX_EFFECT_ITEMS, ProgramEffect, ProgramEffectKey, ProgramTarget, effect_keys,
+};
+pub use question::{
+    AnswerQuestion, MAX_OPTION_DESCRIPTION_CHARS, MAX_OPTION_LABEL_CHARS, MAX_OPTIONS,
+    MAX_OWN_WORDS_BYTES, MAX_QUESTION_CHARS, MAX_QUESTIONS, MIN_OPTIONS, Question, QuestionAnswer,
+    QuestionOption, QuestionReply,
 };
 pub use settings::{
     EnvName, LOADER_NAME_PREFIXES, MAX_ENVIRONMENT_NAMES, SECRET_NAME_PARTS, ToolsSettings,

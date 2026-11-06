@@ -1,0 +1,54 @@
+{
+  "description": "Asks the owner up to 4 questions, each with 2 to 6 options, and waits for the answers. The owner can also answer in their own words or decline. Say what the owner needs to know in your text before the call, and put the option you recommend first and say so in its description. Never ask for passwords, keys or other secrets. Other calls after it in the same step do not run.",
+  "name": "ask_owner",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "activity": {
+        "description": "A few words for the owner that say what this call does, as an ongoing action, such as \"Reading package.json\" or \"Counting the failed tests\".",
+        "type": "string"
+      },
+      "questions": {
+        "description": "The questions, 1 to 4 of them, in the order to ask them.",
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "multiple": {
+              "description": "True when the owner can choose several options, false for one.",
+              "type": "boolean"
+            },
+            "options": {
+              "description": "The options, 2 to 6 of them, each with its own label. Do not add an option for another answer: the owner can always write one.",
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "description": {
+                    "description": "What choosing the option means, at most 300 characters. Leave it empty when the label says it all.",
+                    "type": "string"
+                  },
+                  "label": {
+                    "description": "What the option is called, at most 100 characters.",
+                    "type": "string"
+                  }
+                },
+                "required": ["description", "label"],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "question": {
+              "description": "The question as plain text on one line, at most 1000 characters.",
+              "type": "string"
+            }
+          },
+          "required": ["multiple", "options", "question"],
+          "type": "object"
+        },
+        "type": "array"
+      }
+    },
+    "required": ["activity", "questions"],
+    "type": "object"
+  },
+  "strict": true
+}

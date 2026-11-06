@@ -85,6 +85,9 @@ export function toolsFailureMessage(failure: ToolsFailure): string {
   }
   const { error } = failure;
   switch (error.code) {
+    case 'answer_not_valid': {
+      return m.tools_error_answer_not_valid();
+    }
     case 'approval_changed': {
       return m.tools_error_approval_changed();
     }
@@ -126,6 +129,9 @@ export function toolsFailureMessage(failure: ToolsFailure): string {
     }
     case 'plugin_off': {
       return m.tools_error_plugin_off({ plugin: pluginName(error.plugin) });
+    }
+    case 'question_not_pending': {
+      return m.tools_error_question_not_pending();
     }
     case 'rule_not_found': {
       return m.tools_error_rule_not_found();
@@ -266,6 +272,9 @@ export function toolFailureMessage(failure: ToolFailure): string {
 /** Why a tool call never started. */
 export function notRunMessage(reason: NotRunReason): string {
   switch (reason.reason) {
+    case 'after_question': {
+      return m.tools_not_run_after_question();
+    }
     case 'cut_off': {
       return m.tools_not_run_cut_off();
     }

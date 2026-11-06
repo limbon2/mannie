@@ -514,6 +514,7 @@ mod record_tests {
                 profile_id: None,
                 has_active_run: true,
                 awaiting_approval: false,
+                awaiting_answer: false,
                 full_access: false,
                 project_id: None,
                 workspace: None,

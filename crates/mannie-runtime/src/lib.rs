@@ -41,6 +41,7 @@ mod policy;
 mod processes;
 mod profiles;
 mod projects;
+mod questions;
 mod retry;
 mod search_profiles;
 mod sqlite_files;
@@ -104,6 +105,7 @@ use crate::local_servers::{LocalServersProvider, Servers};
 use crate::plugin_executions::PluginExecutions;
 use crate::plugins::Registry;
 use crate::processes::{ProcessesProvider, Programs};
+use crate::questions::PendingQuestions;
 use crate::search_profiles::ModelsProvider;
 use crate::sqlite_files::DatabaseTickets;
 use crate::tasks::ChildSlots;
@@ -271,6 +273,9 @@ struct Inner {
     /// The approvals that runs wait for, one per conversation at most, since
     /// a conversation runs its tool calls one at a time.
     approvals: Mutex<HashMap<ConversationId, Pending>>,
+    /// The questions that runs wait for a reply to, one call per conversation
+    /// at most, for the same reason (ADR-0058).
+    questions: Mutex<HashMap<ConversationId, PendingQuestions>>,
     /// The commands that run in the background on this machine (ADR-0041).
     background: CommandRegistry,
     /// The servers that plugins started (ADR-0043, decision 5).
@@ -427,6 +432,7 @@ impl Runtime {
             assigned: Arc::default(),
             assigning: tokio::sync::Mutex::new(()),
             approvals: Mutex::default(),
+            questions: Mutex::default(),
             background: CommandRegistry::default(),
             local_servers: Servers::default(),
             terminals: Terminals::default(),

@@ -15,6 +15,7 @@ use sha2::{Digest, Sha256};
 use crate::agents::Requester;
 use crate::budget::{estimate_image, estimate_message, estimate_text};
 use crate::context::{part_result, with_unsent_images};
+use crate::questions::compaction_lines;
 use crate::{tasks, texts};
 
 /// The most characters of a tool call's arguments, and of its result, that a
@@ -189,6 +190,13 @@ pub(crate) fn render_turns(turns: &[ModelTurn], requester: Requester) -> Vec<Str
                     Some(PartKind::UserText) => texts::COMPACTION_OWNER,
                     Some(PartKind::Text) => texts::COMPACTION_ASSISTANT,
                     Some(kind @ (PartKind::ToolCall | PartKind::Task)) => {
+                        // The owner's answers to questions stay whole, as the
+                        // owner's messages do (ADR-0058, decision 7).
+                        let answers = part.tool_call.as_ref().and_then(compaction_lines);
+                        if let Some(answers) = answers {
+                            lines.extend(answers);
+                            continue;
+                        }
                         let result = call_result(part, requester);
                         if let (Some(call), Some(result)) = (&part.tool_call, result) {
                             let render = if kind == PartKind::Task {
