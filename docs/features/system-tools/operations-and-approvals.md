@@ -126,6 +126,7 @@ At startup, before any command is accepted, the runtime finishes every tool call
 | Status when Mannie ended                    | Status after the start | What the model sees on a retry |
 | ------------------------------------------- | ---------------------- | ------------------------------ |
 | `receiving`, `pending`, `awaiting_approval` | `canceled`             | Not run                        |
+| `awaiting_answer`                           | `canceled`             | The owner did not answer       |
 | `running`                                   | `canceled`             | Not run                        |
 | `executing`                                 | `uncertain`            | It may have taken effect       |
 
@@ -133,9 +134,9 @@ The statuses are stored before the runs end as interrupted, so a crash during th
 
 ### Contracts
 
-- Commands (`apps/desktop/core/src/commands/tools.rs`): `decide_approval`, `set_full_access`, `get_tools_settings`, `update_tools_settings`, `list_command_rules`, `delete_command_rule`, `list_remote_command_rules`, `delete_remote_command_rule`, `list_program_rules`, `delete_program_rule`, `list_conversation_grants`, `revoke_conversation_grant`, `list_shared_grants`, `revoke_shared_grant` and `read_tool_output`. `list_conversation_grants` returns the grants of one conversation, and `list_shared_grants` the grants for a project, which name it, and those for every conversation.
-- Errors use `ToolsError`: `conversation_not_found`, `approval_not_pending`, `approval_changed`, `rule_not_possible`, `rule_prefix_invalid`, `not_in_a_project`, `grant_not_possible`, `rule_not_found`, `grant_not_found`, `output_not_found`, `environment_name_invalid`, `environment_name_secret`, `too_many_environment_names`, `written_by_newer_version`, `storage_failed`, `store_unavailable`, `shutting_down`, `full_access_follows_parent` and `full_access_refused`.
-- The conversation summary carries the workspace, the project, whether the conversation is in full access and whether it waits for an approval. The conversation list receives a new summary when a reply starts or stops waiting, so the list marks it at once.
+- Commands (`apps/desktop/core/src/commands/tools.rs`): `decide_approval`, `answer_question` ([questions to the owner](../questions.md)), `set_full_access`, `get_tools_settings`, `update_tools_settings`, `list_command_rules`, `delete_command_rule`, `list_remote_command_rules`, `delete_remote_command_rule`, `list_program_rules`, `delete_program_rule`, `list_conversation_grants`, `revoke_conversation_grant`, `list_shared_grants`, `revoke_shared_grant` and `read_tool_output`. `list_conversation_grants` returns the grants of one conversation, and `list_shared_grants` the grants for a project, which name it, and those for every conversation.
+- Errors use `ToolsError`: `conversation_not_found`, `approval_not_pending`, `approval_changed`, `question_not_pending`, `answer_not_valid`, `rule_not_possible`, `rule_prefix_invalid`, `not_in_a_project`, `grant_not_possible`, `rule_not_found`, `grant_not_found`, `output_not_found`, `environment_name_invalid`, `environment_name_secret`, `too_many_environment_names`, `written_by_newer_version`, `storage_failed`, `store_unavailable`, `shutting_down`, `full_access_follows_parent` and `full_access_refused`.
+- The conversation summary carries the workspace, the project, whether the conversation is in full access and whether it waits for an approval or an answer. The conversation list receives a new summary when a reply starts or stops waiting, or waits for something else, so the list marks it at once.
 
 ### Settings
 

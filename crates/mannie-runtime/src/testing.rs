@@ -1527,6 +1527,8 @@ struct FakeExecutorState {
     decisions: Vec<DecideApproval>,
     /// Whether the target can be reached for the reads of its conversations.
     unreachable: bool,
+    /// The name of the tool, in place of [`FAKE_EXECUTOR_TOOL`].
+    tool_name: Option<String>,
 }
 
 /// An executor of a plugin for the tests of the runtime's side of executors
@@ -1542,6 +1544,11 @@ impl FakeExecutor {
     /// An executor that takes every call.
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
+    }
+
+    /// Names the executor's tool `name`, as an executor can anew for each run.
+    pub fn name_tool(&self, name: &str) {
+        lock(&self.state).tool_name = Some(name.to_owned());
     }
 
     /// Refuses the next calls of the tool with `refusal`.
@@ -1644,8 +1651,12 @@ impl TaskExecutor for FakeExecutor {
 
     /// The spec leaves out the activity argument, which the runtime adds.
     fn tool(&self) -> Option<ToolSpec> {
+        let name = lock(&self.state)
+            .tool_name
+            .clone()
+            .unwrap_or_else(|| FAKE_EXECUTOR_TOOL.to_owned());
         Some(ToolSpec::new(
-            FAKE_EXECUTOR_TOOL,
+            name,
             "Gives a task to a box.",
             serde_json::json!({
                 "additionalProperties": false,

@@ -155,6 +155,55 @@ describe('the chat and window views in the pseudo-locale', () => {
     expect(await uncataloguedText()).toEqual([]);
   });
 
+  it('shows only catalog text in a question, its choice of the owner’s own words and its answers', async () => {
+    // The previous test left the Tools profile on. The question and its
+    // options are the model's content, outside the catalog.
+    await sendMessage(
+      callMessage('ask_owner', {
+        questions: [
+          {
+            multiple: false,
+            options: [
+              { description: 'Described by the model', label: 'First' },
+              { description: '', label: 'Second' },
+            ],
+            question: 'A question of one choice',
+          },
+          {
+            multiple: true,
+            options: [
+              { description: '', label: 'Third' },
+              { description: '', label: 'Fourth' },
+            ],
+            question: 'A question of several choices',
+          },
+        ],
+      }),
+    );
+    const card = `${LATEST_MAIN_TURN} [data-question-card]`;
+    await $(card).waitForDisplayed({ timeout: 30_000 });
+    await waitForAnimations();
+    expect(await uncataloguedText()).toEqual([]);
+    expect(await overflowsHorizontally()).toBe(false);
+    expect(await axeViolations()).toEqual([]);
+
+    // The last radio button is the choice of the owner's own words.
+    const radios = await $$(`${card} [role="radio"]`);
+    await radios[2]?.click();
+    await $(`${card} textarea`).waitForDisplayed();
+    expect(await uncataloguedText()).toEqual([]);
+    await $(`${card} textarea`).setValue('Words of the owner');
+    const checkboxes = await $$(`${card} [role="checkbox"]`);
+    await checkboxes[0]?.click();
+
+    await $(`${card} button[type="submit"]`).click();
+    await $(`${LATEST_MAIN_TURN} [data-question-answers]`).waitForDisplayed({ timeout: 30_000 });
+    await waitForCompleteReply();
+    expect(await uncataloguedText()).toEqual([]);
+    expect(await overflowsHorizontally()).toBe(false);
+    expect(await axeViolations()).toEqual([]);
+  });
+
   it('shows only catalog text in a task’s card, its child’s request and the child’s side panel', async () => {
     // The previous test left the Tools profile on. Without a workspace, the
     // child's change asks the owner, in its task's card.

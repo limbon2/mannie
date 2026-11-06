@@ -72,6 +72,7 @@ use crate::Runtime;
 use crate::agents::{AgentDefinition, EXPLORE_AGENT, Requester};
 use crate::attachments;
 use crate::plugins::Snapshot;
+use crate::questions::ASK_OWNER;
 use crate::sqlite_files::{
     checked_worker_database, engine_error, engine_values, parameters_digest,
 };
@@ -236,11 +237,14 @@ fn adapted(
 }
 
 /// The names that a published tool gives way to: the core's tools, the task
-/// tools, the tools that the executors offer now, and the plugins' static
-/// tools.
+/// tools, `ask_owner`, the tools that the executors offer now, and the plugins'
+/// static tools.
 fn fixed_names(registry: &ToolRegistry, snapshot: &Snapshot) -> HashSet<String> {
     let core = registry.tools().iter().map(|tool| tool.name().to_owned());
-    let tasks = TASK_TOOLS.iter().map(|name| (*name).to_owned());
+    let tasks = TASK_TOOLS
+        .iter()
+        .chain([&ASK_OWNER])
+        .map(|name| (*name).to_owned());
     let executors = snapshot
         .items::<Executors>()
         .iter()
@@ -396,6 +400,7 @@ pub(crate) fn check_plugin_tools<'a>(
         }
         let taken = registry.get(name).is_some()
             || TASK_TOOLS.contains(&name)
+            || name == ASK_OWNER
             || plugin_tools.contains(&name)
             || executor_tools.contains(&name)
             || names.contains(&name);
@@ -2675,6 +2680,7 @@ mod tests {
             check(&[tool("wait_for_tasks")]),
             duplicate("wait_for_tasks")
         );
+        assert_eq!(check(&[tool("ask_owner")]), duplicate("ask_owner"));
         assert_eq!(check(&[tool("echo_text")]), duplicate("echo_text"));
         assert_eq!(check(&[tool("delegate_task")]), duplicate("delegate_task"));
         assert_eq!(

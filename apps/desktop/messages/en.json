@@ -110,6 +110,7 @@
   "chat_project_new_conversation": "New conversation in {project}",
   "chat_project_menu": "More actions for {project}",
   "chat_project_awaiting_approval": "A conversation waits for your approval",
+  "chat_project_awaiting_answer": "A conversation waits for your answer",
   "chat_project_replying": "A reply is being written",
   "chat_project_empty": "No conversations yet.",
   "chat_project_show_more": "Show more",
@@ -120,6 +121,7 @@
   "chat_conversation_menu": "More actions for {title}",
   "chat_conversation_replying": "Writing a reply",
   "chat_conversation_awaiting_approval": "Waiting for your approval",
+  "chat_conversation_awaiting_answer": "Waiting for your answer",
   "chat_conversation_full_access": "Full access",
   "chat_command_group": "Conversation",
   "chat_command_rename": "Rename the conversation",
@@ -160,6 +162,7 @@
   "chat_loading_earlier": "Loading earlier messages…",
   "chat_jump_to_newest": "Jump to the newest message",
   "chat_jump_to_approval": "Jump to the approval request",
+  "chat_jump_to_question": "Jump to the question",
   "chat_checkpoint_marker": "Messages above this line are summarized for the model.",
   "chat_checkpoint_show": "Show the summary",
   "chat_checkpoint_title": "Summary of earlier messages",
@@ -345,6 +348,7 @@
   "chat_status_compacting": "Summarizing older messages for the model…",
   "chat_status_writing": "Writing…",
   "chat_status_awaiting_approval": "Waiting for your approval.",
+  "chat_status_awaiting_answer": "Waiting for your answer.",
   "chat_status_running_command": "Running a command…",
   "chat_status_running_tool": "Running a tool…",
   "chat_status_retrying": "{cause} Trying again in {wait} (attempt {attempt} of {maxAttempts}).",
@@ -691,8 +695,20 @@
   "tools_call_list_directory": "List {path}",
   "tools_call_list_workspace": "List the workspace",
   "tools_tool_move_to_project": "Move to a project",
+  "tools_tool_ask_owner": "Ask you a question",
   "tools_call_move_to_project": "Move to {project}",
   "tools_done_moved_to_project": "Moved to {project}",
+  "tools_done_question_answered": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "You answered its question",
+        "countPlural=other": "You answered its {count: number} questions"
+      }
+    }
+  ],
+  "tools_done_question_declined": "You chose not to answer",
   "tools_call_file_info": "Read the details of {path}",
   "tools_call_find_files": "Find {pattern} in {path}",
   "tools_call_find_files_workspace": "Find {pattern} in the workspace",
@@ -784,6 +800,8 @@
   "tools_status_receiving": "Preparing the call",
   "tools_status_pending": "Waiting to run",
   "tools_status_awaiting_approval": "Waiting for your approval",
+  "tools_status_awaiting_answer": "Waiting for your answer",
+  "tools_status_question_declined": "Not answered",
   "tools_status_running": "Running",
   "tools_status_running_for": "Running for {duration}",
   "tools_status_done": "Done",
@@ -803,6 +821,7 @@
   "tools_not_run_invalid_arguments": "The model's arguments do not fit the tool. The model was told what is wrong.",
   "tools_not_run_cut_off": "The reply reached its output limit before the call was complete.",
   "tools_not_run_earlier_call_denied": "You denied an earlier call of the same step, so this one did not run.",
+  "tools_not_run_after_question": "It came after a question in the same step, so the agent reads your answer first and can call it again.",
   "tools_not_run_over_budget": "The reply used up its tool calls.",
   "tools_not_run_tools_off": "The provider profile does not use tools.",
   "tools_not_run_plugin_off": "The {plugin} plugin was turned off after the reply started, so this did not run.",
@@ -976,6 +995,25 @@
   "tools_approval_why": "Why Mannie asks",
   "tools_approval_host": "Runs on",
   "tools_approval_covers": "\"Allow for…\" also allows",
+  "tools_question_title": "The agent asks",
+  "tools_question_announce": "The agent asks you a question and waits for your answer:",
+  "tools_question_other": "Something else",
+  "tools_question_own_words": "Your answer",
+  "tools_question_own_words_note": "The model reads this. Do not write passwords or keys here.",
+  "tools_question_send": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Send answer",
+        "countPlural=other": "Send answers"
+      }
+    }
+  ],
+  "tools_question_decline": "Don't answer",
+  "tools_question_answers": "Your answers",
+  "tools_question_declined_description": "You chose not to answer, so the agent goes on without your answer.",
+  "tools_question_canceled_description": "The reply stopped before you answered.",
   "tools_reason_outside_workspace": "It reaches outside the conversation's workspace.",
   "tools_reason_change_in_workspace": "It changes the workspace, and the settings ask before changes.",
   "tools_reason_mannie_folder": "It reaches into Mannie's own data or logs.",
@@ -1159,6 +1197,8 @@
   "tools_error_conversation_not_found": "The conversation no longer exists.",
   "tools_error_approval_not_pending": "This request no longer waits for a decision.",
   "tools_error_approval_changed": "The request changed while you decided. Check it again, then choose.",
+  "tools_error_question_not_pending": "This question no longer waits for an answer.",
+  "tools_error_answer_not_valid": "This answer does not fit the question. Check your choices and send it again.",
   "tools_error_rule_not_possible": "A rule cannot cover this command, because it contains shell operators.",
   "tools_error_rule_prefix_invalid": "Choose how many of the command's words the rule keeps.",
   "tools_error_not_in_a_project": "This conversation belongs to no project.",

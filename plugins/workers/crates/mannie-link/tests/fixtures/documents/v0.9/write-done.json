@@ -1,0 +1,39 @@
+[
+  {
+    "kind": "statements",
+    "outcomes": [
+      {
+        "changes": 1,
+        "rows": null
+      },
+      {
+        "changes": 0,
+        "rows": {
+          "columns": [
+            {
+              "name": "stock",
+              "declaredType": "INTEGER"
+            }
+          ],
+          "rows": [
+            [
+              {
+                "type": "integer",
+                "value": "11"
+              }
+            ]
+          ],
+          "cut": null
+        }
+      }
+    ]
+  },
+  {
+    "kind": "change",
+    "outcome": {
+      "changes": 1,
+      "rowid": 42,
+      "rows": null
+    }
+  }
+]

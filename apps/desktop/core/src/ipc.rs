@@ -117,6 +117,7 @@ macro_rules! app_commands {
             window::update_window_settings,
             window::set_tray_labels,
             tools::decide_approval,
+            tools::answer_question,
             tools::set_full_access,
             tools::get_tools_settings,
             tools::update_tools_settings,

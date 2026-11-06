@@ -12,10 +12,12 @@ import {
   type GrantId,
   type PartId,
   type ProjectId,
+  type QuestionReply,
   type RuleProposal,
   type SharedGrant,
   type ToolsError,
 } from '#lib/generated/bindings.js';
+import { questionDrafts } from '#lib/state/question-drafts.svelte.js';
 import type { Outcome } from '#lib/types/calls.js';
 import type { ToolsFailure } from '#lib/types/tools.js';
 import { call } from '#lib/utils/calls.js';
@@ -286,6 +288,29 @@ export class ToolsActions {
       this.decisionFailures = { ...this.decisionFailures, [partId]: outcome.failure };
       return false;
     }
+    return true;
+  }
+
+  /**
+   * Sends the owner's reply to the questions of a call of `ask_owner`
+   * (ADR-0058), forgets what they chose once the core accepted it, and returns
+   * whether it did. A refusal is kept for the call's card, as it is for a
+   * decision.
+   */
+  async answer(conversationId: ConversationId, partId: PartId, reply: QuestionReply): Promise<boolean> {
+    if (this.deciding.includes(partId)) {
+      return false;
+    }
+    this.deciding = [...this.deciding, partId];
+    const { [partId]: _previous, ...others } = this.decisionFailures;
+    this.decisionFailures = others;
+    const outcome = await call(() => commands.answerQuestion({ conversationId, partId, reply }));
+    this.deciding = this.deciding.filter((deciding) => deciding !== partId);
+    if (!outcome.ok) {
+      this.decisionFailures = { ...this.decisionFailures, [partId]: outcome.failure };
+      return false;
+    }
+    questionDrafts.forget(partId);
     return true;
   }
 

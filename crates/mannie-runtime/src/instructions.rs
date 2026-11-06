@@ -26,6 +26,7 @@ use mannie_types::projects::ProjectView;
 
 use crate::agents::AgentDefinition;
 use crate::plugins::Snapshot;
+use crate::questions::ASK_OWNER;
 use crate::texts;
 
 /// What the sections of one call can draw on.
@@ -249,11 +250,16 @@ pub fn builtin_sections() -> Vec<InstructionSection> {
                 } else {
                     texts::TOOL_GUIDANCE
                 };
+                let mut text = guidance.to_owned();
                 if tools.offered.contains(&"start_command") {
-                    format!("{guidance} {}", texts::BACKGROUND_GUIDANCE)
-                } else {
-                    guidance.to_owned()
+                    text.push(' ');
+                    text.push_str(texts::BACKGROUND_GUIDANCE);
                 }
+                if tools.offered.contains(&ASK_OWNER) {
+                    text.push(' ');
+                    text.push_str(texts::QUESTION_GUIDANCE);
+                }
+                text
             })
         }),
         InstructionSection::new("tasks", 160, |context| {

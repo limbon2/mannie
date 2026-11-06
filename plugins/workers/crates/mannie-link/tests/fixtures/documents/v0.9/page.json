@@ -1,0 +1,44 @@
+{
+  "key": ["name"],
+  "columns": [
+    {
+      "name": "name",
+      "declaredType": "TEXT"
+    },
+    {
+      "name": "stock",
+      "declaredType": "INTEGER"
+    },
+    {
+      "name": "bin",
+      "declaredType": null
+    }
+  ],
+  "rows": [
+    {
+      "key": [
+        {
+          "type": "text",
+          "value": "nut"
+        }
+      ],
+      "values": [
+        {
+          "type": "text",
+          "value": "nut"
+        },
+        {
+          "type": "integer",
+          "value": "2"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  ],
+  "next": {
+    "kind": "offset",
+    "rows": 100
+  }
+}

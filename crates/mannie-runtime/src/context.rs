@@ -463,13 +463,24 @@ pub(crate) fn call_result(
         },
         ToolCallStatus::NotRun | ToolCallStatus::Canceled => match &call.not_run {
             Some(reason) => not_run(reason, &call.tool),
-            None => texts::CANCELED.to_owned(),
+            None => canceled(call).to_owned(),
         },
         ToolCallStatus::Receiving
         | ToolCallStatus::Pending
         | ToolCallStatus::AwaitingApproval
+        | ToolCallStatus::AwaitingAnswer
         | ToolCallStatus::Executing
-        | ToolCallStatus::Running => texts::CANCELED.to_owned(),
+        | ToolCallStatus::Running => canceled(call).to_owned(),
+    }
+}
+
+/// What the model reads of a call that its reply's end left without a result.
+/// A question was asked, so it says that the owner did not answer.
+fn canceled(call: &ToolCallDocument) -> &'static str {
+    if call.questions.is_empty() {
+        texts::CANCELED
+    } else {
+        texts::QUESTION_CANCELED
     }
 }
 
@@ -480,6 +491,7 @@ fn not_run(reason: &NotRunReason, tool: &str) -> String {
         NotRunReason::InvalidArguments { detail } => texts::invalid_arguments(detail),
         NotRunReason::CutOff => texts::CUT_OFF.to_owned(),
         NotRunReason::EarlierCallDenied => texts::SKIPPED_AFTER_DENIAL.to_owned(),
+        NotRunReason::AfterQuestion => texts::AFTER_QUESTION.to_owned(),
         NotRunReason::OverBudget => texts::OVER_BUDGET.to_owned(),
         NotRunReason::ToolsOff => texts::TOOLS_OFF.to_owned(),
         NotRunReason::Refused { refusal } => match refusal {

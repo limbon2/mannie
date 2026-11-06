@@ -42,7 +42,10 @@ macro_rules! summary_columns {
          (SELECT json_group_array(json_object('provider', a.provider, 'key', a.attachment_key, \
          'label', a.label) ORDER BY a.position) \
          FROM runtime_conversation_attachments a WHERE a.conversation_id = c.id), \
-         c.home_provider, c.home_key"
+         c.home_provider, c.home_key, \
+         EXISTS (SELECT 1 FROM runtime_runs r WHERE r.conversation_id = c.id \
+         AND r.state IN ('queued', 'running') \
+         AND json_extract(r.activity, '$.kind') = 'awaiting_answer')"
     };
 }
 pub(crate) use summary_columns;
@@ -479,6 +482,10 @@ pub(crate) fn conversation_summary(
     raw.map(RawSummary::into_summary).transpose()
 }
 
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is a column of the summary's query, and the summary itself keeps them apart"
+)]
 pub(crate) struct RawSummary {
     id: String,
     title: String,
@@ -503,6 +510,7 @@ pub(crate) struct RawSummary {
     attachments: String,
     home_provider: Option<String>,
     home_key: Option<String>,
+    awaiting_answer: bool,
 }
 
 /// Reads the columns of [`summary_columns`].
@@ -529,6 +537,7 @@ pub(crate) fn summary_from_row(row: &Row<'_>) -> rusqlite::Result<RawSummary> {
         attachments: row.get(18)?,
         home_provider: row.get(19)?,
         home_key: row.get(20)?,
+        awaiting_answer: row.get(21)?,
     })
 }
 
@@ -564,6 +573,7 @@ impl RawSummary {
                 .transpose()?,
             has_active_run: self.has_active_run,
             awaiting_approval: self.awaiting_approval,
+            awaiting_answer: self.awaiting_answer,
             full_access: self.full_access,
             project_id: self
                 .project_id

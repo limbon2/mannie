@@ -68,8 +68,8 @@ use mannie_types::run::{FinishReason, RunState};
 use mannie_types::secret::Secret;
 use mannie_types::tasks::{TaskState, TaskView};
 use mannie_types::tools::{
-    Access, AccessMode, ApprovalChoice, DecideApproval, ToolCallDocument, ToolCallStatus,
-    ToolCallView, ToolOutcome, UpdateToolsSettings,
+    Access, AccessMode, AnswerQuestion, ApprovalChoice, DecideApproval, QuestionReply,
+    ToolCallDocument, ToolCallStatus, ToolCallView, ToolOutcome, UpdateToolsSettings,
 };
 use mannie_types::transcript::PartContent;
 use serde_json::{Value, json};
@@ -695,6 +695,21 @@ fn waiting(
         .collect()
 }
 
+/// The parts of the calls of the conversation's own run that wait for an
+/// answer. Children and workers are not offered the tool.
+fn waiting_questions(transcript: &Transcript) -> Vec<PartId> {
+    transcript
+        .parts(0)
+        .into_iter()
+        .filter_map(|part| match part.content {
+            PartContent::ToolCall { call } if call.status == ToolCallStatus::AwaitingAnswer => {
+                Some(part.id)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 /// A runtime for one task: the subject's model behind a profile, and the
 /// workspace as a project that the task's conversation starts in.
 async fn start(
@@ -825,6 +840,16 @@ async fn follow(
                     })
                     .await;
             }
+        }
+        // The scripted owner answers no question, so a model that asks goes on
+        // with what it can instead of waiting out the task's timeout
+        // (ADR-0058). A refusal means that the question no longer waits.
+        for part_id in waiting_questions(&transcript) {
+            let _refused = runtime.answer_question(AnswerQuestion {
+                conversation_id: conversation.clone(),
+                part_id,
+                reply: QuestionReply::Declined,
+            });
         }
         let ended = transcript
             .run(run)

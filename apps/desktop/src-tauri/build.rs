@@ -219,6 +219,7 @@ const APP_COMMANDS: &[&str] = &[
     "create_provider_profile",
     "create_search_profile",
     "decide_approval",
+    "answer_question",
     "delete_command_rule",
     "delete_conversation",
     "delete_program_rule",

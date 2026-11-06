@@ -10,6 +10,7 @@ use crate::clock::UtcMillis;
 use super::access::Access;
 use super::approval::{ApprovalRequest, Decision};
 use super::outcome::{ArchiveRef, CitedItemView, ToolImageRef, ToolOutcome, ToolResult};
+use super::question::Question;
 
 /// The largest arguments of one tool call, in bytes: the size of one event of
 /// a provider's stream.
@@ -31,6 +32,8 @@ pub enum ToolCallStatus {
     Pending,
     /// The owner decides.
     AwaitingApproval,
+    /// A call of `ask_owner` waits for the owner's reply (ADR-0058).
+    AwaitingAnswer,
     /// An operation with side effects runs. This status was stored before the
     /// operation started.
     Executing,
@@ -51,10 +54,11 @@ pub enum ToolCallStatus {
 
 impl ToolCallStatus {
     /// Every status.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Receiving,
         Self::Pending,
         Self::AwaitingApproval,
+        Self::AwaitingAnswer,
         Self::Executing,
         Self::Running,
         Self::Completed,
@@ -105,6 +109,9 @@ pub enum NotRunReason {
     CutOff,
     /// The owner denied an earlier call of the same step.
     EarlierCallDenied,
+    /// It came after a question in the same step, so the model wrote it
+    /// before it saw the answer (ADR-0058, decision 6).
+    AfterQuestion,
     /// The reply used up its tool calls.
     OverBudget,
     /// The provider profile does not use tools.
@@ -261,6 +268,12 @@ pub struct ToolCallDocument {
     /// that cite nothing and older calls.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cited: Vec<CitedItemView>,
+    /// The questions of a call of `ask_owner`, as the core checked and
+    /// cleaned them, while the call waits and afterwards as a record of what
+    /// the owner saw (ADR-0058, decision 2); none for other calls and older
+    /// calls.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub questions: Vec<Question>,
 }
 
 /// Reads the result of a stored call. An outcome that this version cannot
@@ -330,6 +343,7 @@ impl ToolCallDocument {
             interruption: None,
             plugin: None,
             cited: Vec::new(),
+            questions: Vec::new(),
         }
     }
 
@@ -356,6 +370,7 @@ impl ToolCallDocument {
             interruption: self.interruption.clone(),
             plugin: self.plugin.clone(),
             cited: self.cited.clone(),
+            questions: self.questions.clone(),
         }
     }
 }
@@ -446,16 +461,24 @@ pub struct ToolCallView {
     /// 1).
     #[serde(default)]
     pub cited: Vec<CitedItemView>,
+    /// The questions of a call of `ask_owner`, which the UI reads instead of
+    /// the call's arguments (ADR-0058, decision 2). They are content, within
+    /// limits that the core checked, so they are never cut.
+    #[serde(default)]
+    pub questions: Vec<Question>,
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Interruption, MAX_VIEW_ARGUMENTS_BYTES, ToolCallDocument, ToolCallStatus};
+    use super::{
+        Interruption, MAX_VIEW_ARGUMENTS_BYTES, NotRunReason, ToolCallDocument, ToolCallStatus,
+    };
     use crate::ids::DatabaseKey;
     use crate::tools::access::Access;
     use crate::tools::database::{DatabaseHome, StatementClass};
     use crate::tools::external::ToolServerEndpoint;
     use crate::tools::outcome::ToolOutcome;
+    use crate::tools::question::{Question, QuestionAnswer, QuestionOption};
 
     #[test]
     fn an_interruption_serializes_with_its_reason_and_older_documents_have_none() {
@@ -630,6 +653,79 @@ mod tests {
         assert_eq!(document.activity, None);
         assert_eq!(document.accesses, Vec::new());
         assert_eq!(document.result, None);
+        assert_eq!(document.questions, Vec::new());
+    }
+
+    #[test]
+    fn a_call_without_questions_stores_none_and_its_view_lists_none() {
+        let document = ToolCallDocument::receiving("call_1".to_owned(), "read_file".to_owned());
+
+        let stored = serde_json::to_value(&document).unwrap();
+
+        assert!(stored.get("questions").is_none(), "{stored}");
+        assert_eq!(
+            serde_json::to_value(document.view("{}")).unwrap()["questions"],
+            serde_json::json!([])
+        );
+    }
+
+    #[test]
+    fn a_question_and_its_answers_round_trip_through_the_document() {
+        let mut document = ToolCallDocument::receiving("call_1".to_owned(), "ask_owner".to_owned());
+        document.status = ToolCallStatus::Completed;
+        document.questions = vec![Question {
+            text: "Which database?".to_owned(),
+            multiple: false,
+            options: vec![
+                QuestionOption {
+                    label: "PostgreSQL".to_owned(),
+                    description: Some("It has the JSON queries.".to_owned()),
+                },
+                QuestionOption {
+                    label: "SQLite".to_owned(),
+                    description: None,
+                },
+            ],
+        }];
+        document.result = Some(super::ToolResult {
+            outcome: ToolOutcome::QuestionAnswered {
+                answers: vec![QuestionAnswer {
+                    selected: vec![0],
+                    own_words: None,
+                }],
+            },
+            output: "The owner answered.".to_owned(),
+            archives: Vec::new(),
+            images: Vec::new(),
+        });
+
+        let text = serde_json::to_string(&document).unwrap();
+        let read: ToolCallDocument = serde_json::from_str(&text).unwrap();
+
+        assert_eq!(read, document);
+        assert_eq!(document.view("{}").questions, document.questions);
+    }
+
+    #[test]
+    fn a_call_that_waits_for_an_answer_ends_as_canceled_and_is_not_final_before() {
+        assert!(ToolCallStatus::ALL.contains(&ToolCallStatus::AwaitingAnswer));
+        assert!(!ToolCallStatus::AwaitingAnswer.is_final());
+        assert_eq!(
+            ToolCallStatus::AwaitingAnswer.after_interruption(),
+            ToolCallStatus::Canceled
+        );
+        assert_eq!(
+            serde_json::to_value(ToolCallStatus::AwaitingAnswer).unwrap(),
+            serde_json::json!("awaiting_answer")
+        );
+    }
+
+    #[test]
+    fn a_call_after_a_question_names_its_reason() {
+        assert_eq!(
+            serde_json::to_value(NotRunReason::AfterQuestion).unwrap(),
+            serde_json::json!({ "reason": "after_question" })
+        );
     }
 
     #[test]

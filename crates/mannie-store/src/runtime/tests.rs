@@ -2491,6 +2491,122 @@ async fn the_summary_changes_when_a_reply_starts_or_stops_waiting_for_the_owner(
 }
 
 #[tokio::test]
+async fn the_summary_says_whether_a_reply_waits_for_an_answer_or_an_approval() {
+    use mannie_types::run::RunActivity;
+
+    let fixture = Fixture::new();
+    let (conversation, _turn, run_id, _started) = fixture.start("Hello").await;
+    fixture
+        .apply(
+            &conversation,
+            vec![Change::StartRun {
+                run_id: run_id.clone(),
+            }],
+        )
+        .await;
+    let activity = |activity: RunActivity| {
+        vec![Change::SetActivity {
+            run_id: run_id.clone(),
+            activity,
+        }]
+    };
+    let question = RunActivity::AwaitingAnswer {
+        part_id: fixture.part_id(),
+    };
+
+    let asking = fixture
+        .apply(&conversation, activity(question.clone()))
+        .await;
+    let listed = fixture.store.list_conversations().await.unwrap();
+    let same_question = fixture
+        .apply(&conversation, activity(question.clone()))
+        .await;
+    // A child's approval shows over the run's question, and the question
+    // shows again once the child's call is decided.
+    let child_asks = fixture
+        .apply(
+            &conversation,
+            activity(RunActivity::AwaitingApproval {
+                part_id: fixture.part_id(),
+            }),
+        )
+        .await;
+    let asking_again = fixture.apply(&conversation, activity(question)).await;
+    let answered = fixture
+        .apply(&conversation, activity(RunActivity::Preparing))
+        .await;
+
+    let asking = asking.summary.unwrap();
+    assert!(asking.awaiting_answer);
+    assert!(!asking.awaiting_approval);
+    assert!(listed[0].awaiting_answer);
+    assert_eq!(same_question.summary, None);
+    let child_asks = child_asks.summary.unwrap();
+    assert!(!child_asks.awaiting_answer);
+    assert!(child_asks.awaiting_approval);
+    assert!(asking_again.summary.unwrap().awaiting_answer);
+    assert!(!answered.summary.unwrap().awaiting_answer);
+}
+
+#[tokio::test]
+async fn recovery_cancels_a_call_that_waits_for_an_answer() {
+    use mannie_types::run::RunActivity;
+    use mannie_types::tools::ToolCallStatus;
+
+    let fixture = Fixture::new();
+    let (conversation, turn, run, _) = fixture.start("Ask me").await;
+    let asking = fixture.tool_part(&turn, &run, 1, "call_1");
+    fixture
+        .apply(
+            &conversation,
+            vec![
+                Change::StartRun {
+                    run_id: run.clone(),
+                },
+                Change::StartPart {
+                    part: asking.clone(),
+                },
+                Change::UpdatePart {
+                    part_id: asking.id.clone(),
+                    tool_call: with_status(
+                        asking.tool_call.as_ref().unwrap(),
+                        ToolCallStatus::AwaitingAnswer,
+                    ),
+                    archives: Vec::new(),
+                },
+                Change::SetActivity {
+                    run_id: run.clone(),
+                    activity: RunActivity::AwaitingAnswer {
+                        part_id: asking.id.clone(),
+                    },
+                },
+            ],
+        )
+        .await;
+
+    fixture.store.recover_interrupted_runs().await.unwrap();
+
+    let turns = fixture
+        .store
+        .model_turns(&conversation, None)
+        .await
+        .unwrap();
+    let call = turns[0]
+        .parts
+        .iter()
+        .find_map(|part| part.tool_call.as_ref())
+        .unwrap();
+    assert_eq!(call.status, ToolCallStatus::Canceled);
+    let summary = fixture
+        .store
+        .conversation_summary(&conversation)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!summary.awaiting_answer);
+}
+
+#[tokio::test]
 async fn a_deleted_conversation_leaves_no_archive_or_grant_behind() {
     use mannie_types::ids::{ArchiveId, GrantId};
     use mannie_types::tools::{AccessMode, GrantScope};

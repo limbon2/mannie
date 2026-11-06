@@ -273,6 +273,12 @@ pub enum ToolsError {
     /// decision names.
     #[error("the approval request changed")]
     ApprovalChanged,
+    /// The call does not wait for an answer any more (ADR-0058).
+    #[error("the call does not wait for an answer")]
+    QuestionNotPending,
+    /// The answer does not fit the questions that wait for it (ADR-0058).
+    #[error("the answer does not fit the questions")]
+    AnswerNotValid,
     /// A rule cannot cover this command, because it has shell metacharacters.
     #[error("a rule cannot cover this command")]
     RuleNotPossible,
@@ -373,6 +379,8 @@ impl ToolsError {
             Self::ConversationNotFound => "tools.conversation_not_found",
             Self::ApprovalNotPending => "tools.approval_not_pending",
             Self::ApprovalChanged => "tools.approval_changed",
+            Self::QuestionNotPending => "tools.question_not_pending",
+            Self::AnswerNotValid => "tools.answer_not_valid",
             Self::RuleNotPossible => "tools.rule_not_possible",
             Self::RulePrefixInvalid => "tools.rule_prefix_invalid",
             Self::NotInAProject => "tools.not_in_a_project",

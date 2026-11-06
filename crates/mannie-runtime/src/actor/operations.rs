@@ -37,6 +37,7 @@ use crate::budget::budget_bytes;
 use crate::calls::Setup;
 use crate::policy::PolicyGrants;
 use crate::projects::Moves;
+use crate::questions::{self, ASK_OWNER};
 use crate::tool_images;
 
 /// How a tool call ended, for the calls after it in the same step.
@@ -150,17 +151,23 @@ impl RunActor {
     /// runs to its end before the next call starts; a start or a follow-up
     /// of a task does not hold up the step, and the step ends when its tasks
     /// that do not run in the background reported (ADR-0024, decision 5). A
-    /// denial skips the rest of the calls, and calls beyond the reply's
-    /// budget do not run.
+    /// denial skips the rest of the calls, and so does a question, because the
+    /// model wrote the calls after it before it saw the answer (ADR-0058,
+    /// decision 6). Calls beyond the reply's budget do not run.
     pub(super) async fn run_calls(
         &mut self,
         setup: &Setup,
         calls: Vec<StepCall>,
     ) -> Result<(), Ending> {
         let mut denied = false;
+        let mut asked = false;
         for call in calls {
             if denied {
                 self.end_call(call, NotRunReason::EarlierCallDenied);
+                continue;
+            }
+            if asked {
+                self.end_call(call, NotRunReason::AfterQuestion);
                 continue;
             }
             if self.tool_calls >= setup.agent.max_tool_calls {
@@ -171,6 +178,11 @@ impl RunActor {
             self.publish_progress(call.document.activity.clone());
             if call.task.is_some() {
                 Box::pin(self.run_task_call(setup, call)).await?;
+            } else if setup.offers_questions() && call.document.tool == ASK_OWNER {
+                // Set before the call is parsed: a question with bad arguments
+                // has no answer either, so nothing after it runs.
+                asked = true;
+                self.run_question_call(call).await?;
             } else if self.run_call(setup, call).await? == CallEnd::Denied {
                 denied = true;
             }
@@ -542,6 +554,42 @@ impl RunActor {
         drop(waiting);
         self.withdraw_approval();
         answer?.map_err(|_withdrawn| Ending::Interrupted)
+    }
+
+    /// Asks the owner the questions of a call of `ask_owner` and completes the
+    /// call with the reply (ADR-0058). Stop and Shutdown end the wait, and the
+    /// questions are withdrawn. The call has no accesses, so it never meets
+    /// the policy, and full access does not skip it.
+    async fn run_question_call(&mut self, mut call: StepCall) -> Result<(), Ending> {
+        let arguments = call.arguments.clone().unwrap_or_default();
+        let questions = match questions::parse_call(&arguments) {
+            Ok(questions) => questions,
+            Err(detail) => {
+                let detail = detail.chars().take(MAX_DETAIL_CHARS).collect();
+                self.end_call(call, NotRunReason::InvalidArguments { detail });
+                return Ok(());
+            }
+        };
+        call.document.status = ToolCallStatus::AwaitingAnswer;
+        call.document.started_at = Some(self.now());
+        call.document.questions.clone_from(&questions);
+        // The questions are registered before any window can see them, so a
+        // reply never arrives before them.
+        let (waiting, reply) =
+            self.runtime
+                .open_questions(&self.conversation, &call.part_id, &questions);
+        self.pending.push(call.update(Vec::new()));
+        let awaiting = self.activity(RunActivity::AwaitingAnswer {
+            part_id: call.part_id.clone(),
+        });
+        self.pending.push(awaiting);
+        self.flush(Durability::Full).await?;
+        tracing::info!(run = %self.run, part = %call.part_id, questions = questions.len(), "a call waits for the owner's answer");
+        let reply = self.wait(reply).await;
+        drop(waiting);
+        let reply = reply?.map_err(|_withdrawn| Ending::Interrupted)?;
+        self.complete_call(call, questions::done(&questions, reply));
+        self.flush(Durability::Full).await
     }
 
     /// The owner's message of the turn, while no tool call of the turn came

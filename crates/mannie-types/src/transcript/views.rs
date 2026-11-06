@@ -42,6 +42,10 @@ impl TitleSource {
 /// A conversation as the conversation list shows it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is a field of a contract that grows only by addition, so they cannot become one enum"
+)]
 pub struct ConversationSummary {
     /// The conversation.
     pub id: ConversationId,
@@ -56,6 +60,12 @@ pub struct ConversationSummary {
     pub has_active_run: bool,
     /// Whether the reply waits for the owner to decide about a tool call.
     pub awaiting_approval: bool,
+    /// Whether the reply waits for the owner to answer a question
+    /// (ADR-0058). A summary of a version before questions reads as false,
+    /// and a summary that waits for no answer leaves the field out, so the
+    /// documents of the Workers link stay as they were.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub awaiting_answer: bool,
     /// Whether every operation of the conversation runs without asking
     /// (ADR-0029). A task conversation follows its parent's switch, so its
     /// own stays off.

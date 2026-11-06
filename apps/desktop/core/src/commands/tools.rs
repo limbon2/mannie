@@ -8,11 +8,11 @@ use mannie_types::chat::ConversationRef;
 use mannie_types::images::ImageData;
 use mannie_types::ipc::{ChannelBatch, CommandError};
 use mannie_types::tools::{
-    BackgroundCommandView, CommandOutputUpdate, CommandRule, ConversationGrant, DecideApproval,
-    GrantRef, ProgramRule, ProgramRuleRef, ReadToolImage, ReadToolOutput, RemoteCommandRule,
-    RemoteRuleRef, RuleRef, SetFullAccess, SharedGrant, SharedGrantRef, StopBackgroundCommand,
-    SubscribeCommandOutput, TerminalCommandRule, TerminalRuleRef, ToolOutputPage, ToolsError,
-    ToolsSettings, UpdateToolsSettings,
+    AnswerQuestion, BackgroundCommandView, CommandOutputUpdate, CommandRule, ConversationGrant,
+    DecideApproval, GrantRef, ProgramRule, ProgramRuleRef, ReadToolImage, ReadToolOutput,
+    RemoteCommandRule, RemoteRuleRef, RuleRef, SetFullAccess, SharedGrant, SharedGrantRef,
+    StopBackgroundCommand, SubscribeCommandOutput, TerminalCommandRule, TerminalRuleRef,
+    ToolOutputPage, ToolsError, ToolsSettings, UpdateToolsSettings,
 };
 use mannie_types::transcript::SubscriptionId;
 use tauri::State;
@@ -50,6 +50,20 @@ pub(crate) async fn decide_approval(
         .decide_approval(input)
         .await
         .map_err(refused("decide_approval"))
+}
+
+/// The owner's reply to the questions of a call of `ask_owner` (ADR-0058). The
+/// runtime checks it against the questions that wait for it.
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn answer_question(
+    core: State<'_, Core>,
+    input: AnswerQuestion,
+) -> Result<(), CommandError<ToolsError>> {
+    runtime(&core)
+        .map_err(refused("answer_question"))?
+        .answer_question(input)
+        .map_err(refused("answer_question"))
 }
 
 /// The tools settings.
