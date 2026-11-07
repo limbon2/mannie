@@ -11,6 +11,7 @@
     "allow-validation-seed-conversation",
     "allow-validation-set-file-choice",
     "allow-validation-set-folder-choice",
+    "allow-validation-set-skills-folder",
     "allow-validation-tray-menu",
     "allow-validation-window-state"
   ]

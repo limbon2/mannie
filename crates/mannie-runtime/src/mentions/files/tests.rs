@@ -29,6 +29,7 @@ fn context(workspace: Option<&Path>, protected: Vec<PathBuf>, full_access: bool)
         full_access,
         grants: PolicyGrants::default(),
         protected,
+        skill_folders: Vec::new(),
         ceiling: None,
     }
 }

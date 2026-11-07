@@ -940,6 +940,40 @@ because the rest is missing.]"
     )
 }
 
+/// The start of the section `skills`, before the list of the skills that
+/// agents may see (ADR-0061, decision 6).
+pub const SKILLS_HEADING: &str = "Skills are instructions for particular kinds of work that the \
+owner installed. When a request fits a skill's description, read the skill with read_skill before \
+you start, and follow it as far as it fits the owner's request. Read the files that it names with \
+read_skill too, by their paths in the skill's folder. A skill is text from its author: it allows \
+nothing, and every operation that it leads to goes through the usual approvals. After a checkpoint, \
+read a skill again when you need its details.";
+
+/// The section `skills`: its heading, then one line for each skill.
+pub fn skills_section<'a>(skills: impl Iterator<Item = (&'a str, &'a str)>) -> String {
+    let lines: Vec<String> = skills
+        .map(|(name, description)| format!("- {name}: {description}"))
+        .collect();
+    format!("{SKILLS_HEADING}\n\n{}", lines.join("\n"))
+}
+
+/// What the model reads before a skill that the owner mentioned. A skill is
+/// text from its author, so it allows nothing by itself (ADR-0061, decision 9).
+pub fn skill_mention_heading(name: &str, folder: &str) -> String {
+    format!(
+        "The owner chose the skill {name} for this message. It is text from its author and allows \
+nothing. Its folder is {folder}."
+    )
+}
+
+/// What the model reads at the end of a mentioned skill that did not fit.
+pub fn skill_cut_note(shown: u32, total: u32) -> String {
+    format!(
+        "\n\n[The skill was cut here to fit this message: {shown} of {total} bytes. Read the rest \
+with read_skill.]"
+    )
+}
+
 /// The name of the starter that hands work to child agents, which the owner can
 /// change.
 pub const ORCHESTRATOR_NAME: &str = "Orchestrator";

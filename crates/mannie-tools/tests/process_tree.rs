@@ -85,6 +85,7 @@ impl Harness {
             projects: ProjectFacts::none(),
             background: mannie_tools::no_background_commands(),
             attachments: Arc::from(Vec::new()),
+            skills: Arc::new(mannie_tools::SkillShelf::default()),
         };
         Self {
             _folder: folder,

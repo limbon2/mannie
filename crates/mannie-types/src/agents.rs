@@ -315,6 +315,8 @@ pub enum AgentToolGroupId {
     Tasks,
     /// The tool that saves plans.
     Plans,
+    /// The tool that reads skills (ADR-0061, decision 10).
+    Skills,
 }
 
 /// A group of the core's tools, with who can have it.

@@ -4,6 +4,7 @@
 
 #![cfg(test)]
 
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -65,6 +66,7 @@ impl Harness {
             projects: ProjectFacts::none(),
             background: mannie_tools::no_background_commands(),
             attachments: Arc::from(Vec::new()),
+            skills: Arc::new(mannie_tools::SkillShelf::default()),
         };
         Self {
             _folder: folder,
@@ -2298,5 +2300,250 @@ async fn read_command_output_says_when_mannie_lost_the_output() {
         ),
         "{}",
         done.output
+    );
+}
+
+// Skills (ADR-0061; docs/features/skills.md): `read_skill` reads the skills
+// of its call's shelf, through path accesses that the policy decides.
+
+impl Harness {
+    /// A skill of this computer, outside the workspace, with its files, and
+    /// its canonical folder.
+    fn computer_skill(&self, name: &str, files: &[(&str, &[u8])]) -> PathBuf {
+        // The home folder lies beside the workspace, outside it.
+        let home = self.root.parent().expect("the workspace has a parent");
+        let folder = home.join("home").join(".agents").join("skills").join(name);
+        for (relative, content) in files {
+            let path = folder.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, content).unwrap();
+        }
+        PathBuf::from(mannie_tools::canonical_folder(&folder).unwrap())
+    }
+
+    /// The same harness, with `read_skill` and a shelf of these skills, each
+    /// with its folder and whether it is on.
+    fn with_skills(mut self, skills: &[(&str, &Path, bool)]) -> Self {
+        self.registry
+            .register(mannie_tools::read_skill_tool())
+            .unwrap();
+        let shelved = skills
+            .iter()
+            .map(|(name, folder, is_on)| mannie_tools::ShelvedSkill {
+                name: (*name).to_owned(),
+                folder: folder.to_path_buf(),
+                is_on: *is_on,
+            })
+            .collect();
+        self.context.skills = Arc::new(mannie_tools::SkillShelf::new(shelved));
+        self
+    }
+}
+
+const PDF_SKILL: &[u8] =
+    b"---\nname: pdf\ndescription: Fills PDF forms.\n---\n# Forms\nRead references/forms.md.\n";
+
+#[tokio::test]
+async fn read_skill_reads_instructions_without_their_frontmatter_and_lists_the_other_files() {
+    let harness = Harness::new();
+    let folder = harness.computer_skill(
+        "pdf",
+        &[
+            ("SKILL.md", PDF_SKILL),
+            ("references/forms.md", b"Fields.\n"),
+            ("scripts/fill.py", b"print('fill')\n"),
+            (".env", b"TOKEN=planted"),
+            ("credentials.json", b"{}"),
+            (".git/config", b"[core]\n"),
+        ],
+    );
+    let harness = harness.with_skills(&[("pdf", &folder, true)]);
+
+    let prepared = harness
+        .prepare(
+            "read_skill",
+            &json!({ "name": "pdf", "path": null, "offset": null, "limit": null }),
+        )
+        .await
+        .unwrap();
+    let done = harness
+        .done(
+            "read_skill",
+            json!({ "name": "pdf", "path": null, "offset": null, "limit": null }),
+        )
+        .await;
+
+    let skill_file = folder.join("SKILL.md");
+    assert!(
+        matches!(
+            prepared.accesses.as_slice(),
+            [Access::Path { path, mode: AccessMode::Read, .. }] if Path::new(path) == skill_file
+        ),
+        "{:?}",
+        prepared.accesses
+    );
+    assert!(
+        done.output.starts_with("Skill: pdf\nFolder: "),
+        "{}",
+        done.output
+    );
+    assert!(
+        done.output.contains("Lines 1 to 2 of 2."),
+        "{}",
+        done.output
+    );
+    assert!(done.output.contains("     1\t# Forms\n"), "{}", done.output);
+    assert!(
+        !done.output.contains("description: Fills"),
+        "{}",
+        done.output
+    );
+    assert!(
+        done.output.ends_with(
+            "Other files in the skill's folder:\n- references/forms.md\n- scripts/fill.py\n"
+        ),
+        "{}",
+        done.output
+    );
+    assert!(!done.output.contains("planted"), "{}", done.output);
+    assert_eq!(
+        done.outcome,
+        ToolOutcome::SkillRead {
+            skill: "pdf".to_owned(),
+            path: "SKILL.md".to_owned(),
+            first_line: 1,
+            last_line: 2,
+            total_lines: 2,
+        }
+    );
+}
+
+#[tokio::test]
+async fn read_skill_reads_another_file_of_a_skill_in_pages() {
+    let harness = Harness::new();
+    let long = (1..=2_500).fold(String::new(), |mut text, line| {
+        writeln!(text, "line {line}").expect("writing to a String cannot fail");
+        text
+    });
+    let folder = harness.computer_skill(
+        "pdf",
+        &[
+            ("SKILL.md", PDF_SKILL),
+            ("references/long.md", long.as_bytes()),
+        ],
+    );
+    let harness = harness.with_skills(&[("pdf", &folder, true)]);
+
+    let first = harness
+        .done(
+            "read_skill",
+            json!({ "name": "pdf", "path": "references/long.md", "offset": null, "limit": null }),
+        )
+        .await;
+    let rest = harness
+        .done(
+            "read_skill",
+            json!({ "name": "pdf", "path": "references/long.md", "offset": 2001, "limit": null }),
+        )
+        .await;
+
+    assert!(
+        first.output.contains("Lines 1 to 2000 of 2500."),
+        "{}",
+        first.output
+    );
+    assert!(
+        first
+            .output
+            .ends_with("More follows: call again with offset 2001.\n"),
+        "{}",
+        first.output
+    );
+    assert!(
+        rest.output.contains("  2500\tline 2500\n"),
+        "{}",
+        rest.output
+    );
+    assert_eq!(
+        rest.outcome,
+        ToolOutcome::SkillRead {
+            skill: "pdf".to_owned(),
+            path: "references/long.md".to_owned(),
+            first_line: 2001,
+            last_line: 2500,
+            total_lines: 2500,
+        }
+    );
+}
+
+#[tokio::test]
+async fn read_skill_refuses_unknown_skills_paths_that_leave_the_skill_and_secret_names() {
+    let harness = Harness::new();
+    let folder = harness.computer_skill(
+        "pdf",
+        &[
+            ("SKILL.md", PDF_SKILL),
+            (".env", b"TOKEN=planted"),
+            ("image.bin", b"\x00\x01\x02\x00binary"),
+        ],
+    );
+    fs::write(folder.parent().unwrap().join("outside.md"), "Outside.\n").unwrap();
+    let harness = harness.with_skills(&[("pdf", &folder, true)]);
+    let read = |path: Value| json!({ "name": "pdf", "path": path, "offset": null, "limit": null });
+
+    assert_eq!(
+        harness
+            .failure(
+                "read_skill",
+                json!({ "name": "docx", "path": null, "offset": null, "limit": null })
+            )
+            .await,
+        ToolFailure::SkillNotFound {
+            name: "docx".to_owned()
+        }
+    );
+    assert_eq!(
+        harness
+            .failure("read_skill", read(json!("../outside.md")))
+            .await,
+        ToolFailure::SkillFileRefused {
+            path: "../outside.md".to_owned(),
+            reason: mannie_types::tools::SkillFileRefusal::OutsideSkill,
+        }
+    );
+    assert_eq!(
+        harness.failure("read_skill", read(json!(".env"))).await,
+        ToolFailure::SkillFileRefused {
+            path: ".env".to_owned(),
+            reason: mannie_types::tools::SkillFileRefusal::MayHoldSecrets,
+        }
+    );
+    assert!(matches!(
+        harness
+            .failure("read_skill", read(json!("missing.md")))
+            .await,
+        ToolFailure::NotFound { .. }
+    ));
+    assert!(matches!(
+        harness
+            .failure("read_skill", read(json!("image.bin")))
+            .await,
+        ToolFailure::BinaryFile { .. }
+    ));
+}
+
+#[test]
+fn read_skill_is_offered_only_where_a_skill_is_on_and_never_among_the_system_tools() {
+    let tool = mannie_tools::read_skill_tool();
+
+    assert!(tool.offered(&Availability {
+        skills: true,
+        ..Availability::of_projects(None, &[])
+    }));
+    assert!(!tool.offered(&Availability::of_projects(None, &[])));
+    assert!(
+        ToolRegistry::with_system_tools()
+            .get("read_skill")
+            .is_none()
     );
 }

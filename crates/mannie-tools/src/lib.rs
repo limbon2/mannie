@@ -32,6 +32,7 @@ mod results;
 mod rules;
 mod schema;
 mod shells;
+mod skills;
 mod stop;
 mod supervisor;
 mod system;
@@ -49,7 +50,7 @@ pub use background::{
     Started, no_background_commands,
 };
 pub use ceiling::{Ceiling, DatabaseRequest, HostDecision, HostWrite, decide_database_request};
-pub use digest::{WrittenStatement, digest, write_digest};
+pub use digest::{WrittenStatement, digest, skill_digest, write_digest};
 pub use environment::{CommandEnvironment, ProgramEnvironmentError};
 pub use lock::MutationLock;
 pub use mentions::{
@@ -72,6 +73,11 @@ pub use rules::{command_words, remote_command_words, terminal_command_words};
 pub use shells::{
     LocalShell, MAX_SETUP_BYTES, SetupRefused, ShellKind, ShellStart, local_shells, shell_start,
 };
+pub use skills::{
+    FoundSkill, MAX_PLACE_ENTRIES, MAX_PLACE_SKILLS, MAX_SKILL_HEAD_BYTES, PlaceBounds, PlaceScan,
+    ShelvedSkill, SkillInstructions, SkillShelf, read_skill_instructions, scan_place,
+    skills_folder_in,
+};
 pub use stop::{StopReason, StopSignal};
 pub use supervisor::{
     ArchivedLog, BackgroundProcess, BackgroundSpec, LiveLog, LogLines, LogMark, MAX_LINE_BYTES,
@@ -82,4 +88,4 @@ pub use system::{ShellFacts, SystemFacts};
 pub use tool::{
     ArchivedOutput, Done, Execution, PermissionClass, PrepareError, Prepared, Tool, ToolContext,
 };
-pub use tools::{plugin_path_access, spawn_failure, stopped};
+pub use tools::{plugin_path_access, read_skill_tool, spawn_failure, stopped};

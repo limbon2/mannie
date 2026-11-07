@@ -3,6 +3,7 @@
 // does or did, its status, and its tool's icon. The line names paths and
 // commands as the result reports them, or as the model wrote them while the
 // call has no result.
+import BookOpenIcon from '@lucide/svelte/icons/book-open';
 import CirclePlayIcon from '@lucide/svelte/icons/circle-play';
 import CircleStopIcon from '@lucide/svelte/icons/circle-stop';
 import ClipboardListIcon from '@lucide/svelte/icons/clipboard-list';
@@ -69,6 +70,7 @@ const ICONS: Readonly<Record<string, Component>> = {
   move_to_project: FolderInputIcon,
   read_file: FileTextIcon,
   read_command_output: ScrollTextIcon,
+  read_skill: BookOpenIcon,
   read_tool_output: FileOutputIcon,
   run_command: SquareTerminalIcon,
   search_text: TextSearchIcon,
@@ -256,6 +258,9 @@ function toolLabel(tool: string): string {
     case 'read_file': {
       return m.tools_tool_read_file();
     }
+    case 'read_skill': {
+      return m.tools_tool_read_skill();
+    }
     case 'read_tool_output': {
       return m.tools_call_read_tool_output();
     }
@@ -336,6 +341,9 @@ function intentSummary(call: ToolCallView): string {
     case 'read_file': {
       return path === null ? toolLabel(call.tool) : m.tools_call_read_file({ path });
     }
+    case 'read_skill': {
+      return skillIntent(values);
+    }
     case RUN_COMMAND: {
       return command === null ? toolLabel(call.tool) : m.tools_call_run_command({ command: firstLine(command) });
     }
@@ -376,6 +384,16 @@ function intentSummary(call: ToolCallView): string {
       return external === null ? toolLabel(call.tool) : m.tools_call_external_tool(external);
     }
   }
+}
+
+/** What a call of `read_skill` reads: a skill's instructions, or one of its files (ADR-0061). */
+function skillIntent(values: Arguments): string {
+  const name = argumentText(values, 'name');
+  if (name === null) {
+    return toolLabel('read_skill');
+  }
+  const file = argumentText(values, 'path');
+  return file === null ? m.tools_call_read_skill({ name }) : m.tools_call_read_skill_file({ name, path: file });
 }
 
 function commandSummary(outcome: Extract<ToolOutcome, { kind: 'command_ran' }>): string {
@@ -483,6 +501,11 @@ function outcomeSummary(outcome: ToolOutcome): string | null {
     }
     case 'searched': {
       return m.tools_done_searched({ path: outcome.path, shown: outcome.shown });
+    }
+    case 'skill_read': {
+      return outcome.path === 'SKILL.md'
+        ? m.tools_done_skill_read({ name: outcome.skill })
+        : m.tools_done_skill_file_read({ name: outcome.skill, path: outcome.path });
     }
     case 'system_info': {
       return m.tools_call_system_info();

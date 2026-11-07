@@ -419,7 +419,8 @@ fn authority_of(
         | Decision::AllowedFolder
         | Decision::HostRule
         | Decision::HostFullAccess
-        | Decision::RegisteredDatabase => None,
+        | Decision::RegisteredDatabase
+        | Decision::Skill => None,
     }
 }
 

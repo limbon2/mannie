@@ -105,6 +105,7 @@ struct Inputs {
     workspace: Option<PathBuf>,
     allow_changes_in_workspace: bool,
     protected: Vec<PathBuf>,
+    skill_folders: Vec<PathBuf>,
     grants: Vec<GrantScope>,
     project_grants: Vec<GrantScope>,
     always_grants: Vec<GrantScope>,
@@ -126,6 +127,7 @@ impl Inputs {
             workspace: Some(PathBuf::from(at("/work"))),
             allow_changes_in_workspace: false,
             protected: vec![PathBuf::from(at("/data/mannie"))],
+            skill_folders: Vec::new(),
             grants: Vec::new(),
             project_grants: Vec::new(),
             always_grants: Vec::new(),
@@ -164,6 +166,7 @@ impl Inputs {
                 workspace: self.workspace.as_deref(),
                 allow_changes_in_workspace: self.allow_changes_in_workspace,
                 protected: &self.protected,
+                skill_folders: &self.skill_folders,
                 grants: Grants {
                     conversation: &self.grants,
                     project: &self.project_grants,
@@ -2599,4 +2602,81 @@ fn a_database_grant_covers_another_only_for_the_same_statement_on_the_same_datab
         &database_grant(UPDATE),
         &command_grant(UPDATE, "/work")
     ));
+}
+
+/// The folder of the skill `pdf` of this computer.
+const PDF_SKILL: &str = "/home/owner/.agents/skills/pdf";
+
+#[test]
+fn a_read_inside_a_skill_that_is_on_runs_without_asking_and_names_its_source() {
+    let inputs = Inputs {
+        skill_folders: vec![PathBuf::from(at(PDF_SKILL))],
+        ..Inputs::new()
+    };
+
+    for path in [
+        format!("{PDF_SKILL}/SKILL.md"),
+        format!("{PDF_SKILL}/references/forms.md"),
+    ] {
+        assert_eq!(
+            inputs.decide(&[read(&path)]),
+            Verdict::Allowed(Decision::Skill),
+            "{path}"
+        );
+    }
+    // Another skill's folder, and one whose name only starts the same way,
+    // still ask.
+    for path in [
+        "/home/owner/.agents/skills/docx/SKILL.md",
+        "/home/owner/.agents/skills/pdf-tools/SKILL.md",
+    ] {
+        assert!(
+            matches!(inputs.decide(&[read(path)]), Verdict::Ask(_)),
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn a_change_inside_a_skill_asks_as_any_other_change() {
+    let inputs = Inputs {
+        skill_folders: vec![PathBuf::from(at(PDF_SKILL))],
+        ..Inputs::new()
+    };
+
+    let verdict = inputs.decide(&[write(&format!("{PDF_SKILL}/SKILL.md"))]);
+
+    let Verdict::Ask(request) = verdict else {
+        panic!("a change asks: {verdict:?}");
+    };
+    assert_eq!(request.reasons, [ApprovalReason::OutsideWorkspace]);
+}
+
+#[test]
+fn a_skill_inside_mannie_s_own_folders_still_asks_without_a_grant() {
+    let inputs = Inputs {
+        skill_folders: vec![PathBuf::from(at("/data/mannie/skills/pdf"))],
+        ..Inputs::new()
+    };
+
+    let verdict = inputs.decide(&[read("/data/mannie/skills/pdf/SKILL.md")]);
+
+    let Verdict::Ask(request) = verdict else {
+        panic!("Mannie's own folders ask: {verdict:?}");
+    };
+    assert_eq!(request.reasons, [ApprovalReason::MannieFolder]);
+    assert_eq!(request.grants, Vec::<GrantScope>::new());
+}
+
+#[test]
+fn a_read_of_a_project_s_skill_keeps_the_workspace_as_its_source() {
+    let inputs = Inputs {
+        skill_folders: vec![PathBuf::from(at("/work/.agents/skills/pdf"))],
+        ..Inputs::new()
+    };
+
+    assert_eq!(
+        inputs.decide(&[read("/work/.agents/skills/pdf/SKILL.md")]),
+        Verdict::Allowed(Decision::Workspace)
+    );
 }

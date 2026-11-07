@@ -75,6 +75,7 @@ interface Harness {
   seedConversation(turns: number): Promise<string>;
   setFileChoice(files: string[]): Promise<void>;
   setFolderChoice(folder: string | null): Promise<void>;
+  setSkillsFolder(folder: string | null): Promise<void>;
   trayMenu(item: 'open' | 'quit'): Promise<void>;
   windowState(): Promise<WindowState>;
 }
@@ -255,6 +256,20 @@ export async function setFolderChoice(folder: string | null): Promise<void> {
       throw new Error('the validation harness is missing: run the validation build');
     }
     await harness.setFolderChoice(chosen);
+  }, folder);
+}
+
+/**
+ * Names the folder of this computer's skills, or `null` for none, since a
+ * validation build never reads the owner's `~/.agents/skills`.
+ */
+export async function setSkillsFolder(folder: string | null): Promise<void> {
+  await browser.execute(async (chosen) => {
+    const harness = window.mannieValidation;
+    if (harness === undefined) {
+      throw new Error('the validation harness is missing: run the validation build');
+    }
+    await harness.setSkillsFolder(chosen);
   }, folder);
 }
 

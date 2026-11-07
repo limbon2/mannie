@@ -46,6 +46,7 @@ mod projects;
 mod questions;
 mod retry;
 mod search_profiles;
+mod skills;
 mod sqlite_files;
 mod tasks;
 mod terminals;
@@ -92,6 +93,7 @@ pub use mentions::{
 pub use plans::PlanMentions;
 pub use profiles::{CredentialVault, VaultError};
 pub use retry::RetryPolicy;
+pub use skills::{READ_SKILL, SKILLS, SkillCatalog, SkillMentions, skill_token};
 pub use sqlite_files::{
     DATABASE_EXTENSIONS, DatabaseChooser, DatabaseFilters, HostDatabaseError, HostDatabaseSettings,
     HostDatabases, HostFile, HostWritten,
@@ -183,6 +185,9 @@ pub struct RuntimeDeps {
     /// The core's mention providers (ADR-0032), which a machine without a
     /// message box leaves empty.
     pub mentions: MentionRegistry,
+    /// The skills of the master (ADR-0061), which a machine that offers none,
+    /// such as a worker, leaves out.
+    pub skills: Option<Arc<SkillCatalog>>,
 }
 
 /// The runtime's limits and timings.
@@ -256,6 +261,9 @@ struct Inner {
     tools: ToolsDeps,
     machine: MachineSettings,
     mentions: MentionRegistry,
+    /// The skills of the master, or `None` on a machine that offers none
+    /// (ADR-0061, decision 1).
+    skills: Option<Arc<SkillCatalog>>,
     /// The runs that follow the tasks of plugins' executors, and the changes
     /// of the executors' outbox.
     executors: ExecutorFollows,
@@ -401,6 +409,9 @@ impl Runtime {
                 }
             });
         }
+        if let Some(skills) = &deps.skills {
+            skills.load(&deps.store).await?;
+        }
         let random = config
             .random_seed
             .map_or_else(fastrand::Rng::new, fastrand::Rng::with_seed);
@@ -432,6 +443,7 @@ impl Runtime {
             tools: deps.tools,
             machine: deps.machine,
             mentions: deps.mentions,
+            skills: deps.skills,
             executors: ExecutorFollows::default(),
             contributions: Registry::default(),
             agent_plugins: AgentPlugins::default(),

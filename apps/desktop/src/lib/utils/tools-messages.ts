@@ -249,6 +249,14 @@ export function toolFailureMessage(failure: ToolFailure): string {
     case 'shell_missing': {
       return m.tools_failure_shell_missing({ path: failure.path });
     }
+    case 'skill_file_refused': {
+      return failure.reason === 'may_hold_secrets'
+        ? m.tools_failure_skill_file_secret({ path: failure.path })
+        : m.tools_failure_skill_file_outside({ path: failure.path });
+    }
+    case 'skill_not_found': {
+      return m.tools_failure_skill_not_found({ name: failure.name });
+    }
     case 'spawn_failed': {
       return m.tools_failure_spawn_failed();
     }
@@ -436,6 +444,9 @@ export function decisionMessage(decision: Decision): string {
     }
     case 'rule_saved': {
       return m.tools_decision_rule_saved();
+    }
+    case 'skill': {
+      return m.tools_decision_skill();
     }
     case 'workspace': {
       return m.tools_decision_workspace();

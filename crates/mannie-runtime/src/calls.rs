@@ -756,14 +756,7 @@ impl Runtime {
         setup: &Setup,
         options: CallOptions,
     ) -> Result<Prepared, CallError> {
-        // An assigned task never receives the owner's global instructions,
-        // which belong to the conversations of the machine that the owner
-        // works on.
-        let owner = if setup.assigned.is_some() {
-            String::new()
-        } else {
-            self.owner_instructions().await?
-        };
+        let owner = self.owner_instructions_of(setup).await?;
         let checkpoint = self.current_checkpoint(conversation).await?;
         let covered = checkpoint
             .as_ref()
@@ -779,6 +772,7 @@ impl Runtime {
         let project = project_id
             .as_ref()
             .and_then(|id| projects.iter().find(|project| project.id == *id));
+        let skills = self.run_skills(setup, project).await;
         // Which tools a call is offered depends on the conversation: a
         // general conversation can move into a project, one in a project
         // cannot (docs/architecture/tools.md, availability), and plugins'
@@ -788,6 +782,7 @@ impl Runtime {
             projects: &projects,
             attachments: &attachments,
             has_home: home.is_some(),
+            skills: skills.shelf.has_skills_on(),
         };
         let definitions = setup.definitions_for(&availability);
         let offered: Vec<&str> = definitions
@@ -804,6 +799,7 @@ impl Runtime {
         let system = &self.inner.tools.system;
         let full_context = chosen_context(&turns);
         let attached = self.attached_sources(&attachments, home.as_ref()).await;
+        let skills_section = skills.section();
         let context = InstructionContext {
             agent: &setup.agent,
             owner_instructions: owner.as_str(),
@@ -821,6 +817,7 @@ impl Runtime {
             offers_tasks: setup.offers_tasks(),
             machine: self.machine_context(setup),
             sources: attached.context(!full_context.is_empty()),
+            skills: skills_section.as_deref(),
         };
         let instructions = self
             .inner
@@ -954,6 +951,16 @@ impl Runtime {
             allowed_folders: &ceiling.allowed_folders,
             instructions: assigned.instructions.as_deref(),
         })
+    }
+
+    /// The owner's global instructions for a run. An assigned task never
+    /// receives them, because they belong to the conversations of the machine
+    /// that the owner works on.
+    async fn owner_instructions_of(&self, setup: &Setup) -> Result<String, CallError> {
+        if setup.assigned.is_some() {
+            return Ok(String::new());
+        }
+        self.owner_instructions().await
     }
 
     async fn owner_instructions(&self) -> Result<String, CallError> {

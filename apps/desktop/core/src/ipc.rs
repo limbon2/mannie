@@ -23,7 +23,7 @@ use tauri_specta::{Builder, ErrorHandlingMode, collect_commands};
 
 use crate::commands::{
     agents, chat, child_agents, export, interface, links, plans, plugins, projects, providers,
-    startup, tools, window,
+    skills, startup, tools, window,
 };
 
 /// The first line of every generated file.
@@ -149,6 +149,8 @@ macro_rules! app_commands {
             plans::get_plan,
             plans::update_plan,
             plans::delete_plan,
+            skills::list_skills,
+            skills::set_skill_on,
             plugins::subscribe_plugins,
             plugins::set_plugin_enabled,
             plugins::plugin_work,
@@ -190,6 +192,7 @@ fn validation_builder() -> Builder<Wry> {
             crate::commands::validation::validation_opened_links,
             crate::commands::validation::validation_set_folder_choice,
             crate::commands::validation::validation_set_file_choice,
+            crate::commands::validation::validation_set_skills_folder,
         ])
 }
 
@@ -222,6 +225,7 @@ pub(crate) fn runtime_builder() -> Builder<Wry> {
                 crate::commands::validation::validation_opened_links,
                 crate::commands::validation::validation_set_folder_choice,
                 crate::commands::validation::validation_set_file_choice,
+                crate::commands::validation::validation_set_skills_folder,
             ])
     }
 }

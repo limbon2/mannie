@@ -20,6 +20,7 @@ mod projects;
 mod reads;
 mod recovery;
 mod rows;
+mod skills;
 mod tasks;
 mod tool_images;
 
@@ -48,6 +49,7 @@ pub use plans::StoredPlan;
 pub use projects::{AddedProject, ConversationList, ProjectDeletion};
 pub use reads::{EventsAfter, KeptRun, ModelImage, ModelPart, ModelTurn, StoredCheckpoint};
 pub use recovery::{Recovered, UncertainCall};
+pub use skills::StoredSkillSwitch;
 pub use tasks::{ExecutorTaskProfile, NewExecutorTask, OutboxEntry};
 pub use tool_images::StoredToolImage;
 
@@ -741,6 +743,7 @@ pub(crate) fn statements() -> impl Iterator<Item = &'static str> {
         .chain(reads::STATEMENTS)
         .chain(recovery::STATEMENTS)
         .chain(rows::STATEMENTS)
+        .chain(skills::STATEMENTS)
         .chain(tasks::STATEMENTS)
         .chain(tool_images::STATEMENTS)
         .copied()

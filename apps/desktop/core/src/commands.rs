@@ -14,6 +14,7 @@ pub(crate) mod plans;
 pub(crate) mod plugins;
 pub(crate) mod projects;
 pub(crate) mod providers;
+pub(crate) mod skills;
 pub(crate) mod startup;
 pub(crate) mod tools;
 #[cfg(feature = "validation")]

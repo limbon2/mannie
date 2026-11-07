@@ -23,6 +23,7 @@ use crate::agents::{
 };
 use crate::plans::SAVE_PLAN;
 use crate::questions::ASK_OWNER;
+use crate::skills::READ_SKILL;
 use crate::tasks::{START_TASK, TASK_TOOLS};
 use crate::texts;
 
@@ -75,6 +76,8 @@ fn allowed_tools(kind: AgentKind, read_only: bool) -> Vec<&'static str> {
         allowed.extend(TASK_TOOLS);
         allowed.push(SAVE_PLAN);
     }
+    // Every kind may read skills, which only reads (ADR-0061, decision 10).
+    allowed.push(READ_SKILL);
     allowed
 }
 
@@ -267,6 +270,13 @@ fn tool_groups() -> Vec<AgentToolGroup> {
             for_child: false,
             for_read_only: true,
         },
+        AgentToolGroup {
+            id: AgentToolGroupId::Skills,
+            tools: names(&[READ_SKILL]),
+            for_conversation: true,
+            for_child: true,
+            for_read_only: true,
+        },
     ]
 }
 
@@ -286,8 +296,11 @@ fn blank(kind: AgentKind) -> AgentDraft {
             &COMMAND_TOOLS,
             &[ASK_OWNER],
             &TASK_TOOLS,
+            &[READ_SKILL],
         ]),
-        AgentKind::Child => owned_names(&[&EXPLORE_TOOLS, &CHANGE_TOOLS, &COMMAND_TOOLS]),
+        AgentKind::Child => {
+            owned_names(&[&EXPLORE_TOOLS, &CHANGE_TOOLS, &COMMAND_TOOLS, &[READ_SKILL]])
+        }
     };
     AgentDraft {
         name: String::new(),
@@ -346,7 +359,7 @@ fn orchestrator() -> AgentDraft {
                 false,
             ),
         ],
-        tools: owned_names(&[&EXPLORE_TOOLS, &[ASK_OWNER], &TASK_TOOLS]),
+        tools: owned_names(&[&EXPLORE_TOOLS, &[ASK_OWNER], &TASK_TOOLS, &[READ_SKILL]]),
         plugins: Some(Vec::new()),
         children: None,
         max_tasks: 50,
@@ -365,7 +378,13 @@ fn plan() -> AgentDraft {
         profile_id: None,
         instructions: texts::PLAN_INSTRUCTIONS.to_owned(),
         steps: Vec::new(),
-        tools: owned_names(&[&EXPLORE_TOOLS, &[ASK_OWNER], &TASK_TOOLS, &[SAVE_PLAN]]),
+        tools: owned_names(&[
+            &EXPLORE_TOOLS,
+            &[ASK_OWNER],
+            &TASK_TOOLS,
+            &[SAVE_PLAN],
+            &[READ_SKILL],
+        ]),
         plugins: None,
         children: None,
         max_tasks: 20,

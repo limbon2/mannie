@@ -93,6 +93,11 @@ export interface ValidationHarness {
    * `null` for a dialog that the owner closed.
    */
   setFolderChoice(folder: string | null): Promise<void>;
+  /**
+   * Names the folder of this computer's skills, or none, in place of the
+   * owner's `~/.agents/skills`, which a validation build never reads.
+   */
+  setSkillsFolder(folder: string | null): Promise<void>;
   /** Chooses an item of the tray's menu. */
   trayMenu(item: ValidationTrayItem): Promise<void>;
   /** Whether the main window is visible and the tray exists. */
@@ -321,6 +326,9 @@ window.mannieValidation = {
   },
   setFolderChoice: async (folder) => {
     await commands.validationSetFolderChoice(folder);
+  },
+  setSkillsFolder: async (folder) => {
+    await commands.validationSetSkillsFolder(folder);
   },
   trayMenu: async (item) => {
     await commands.validationTrayMenu(item);

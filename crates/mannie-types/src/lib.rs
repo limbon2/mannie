@@ -27,6 +27,7 @@ pub mod provider;
 pub mod run;
 pub mod secret;
 pub mod settings;
+pub mod skills;
 pub mod startup;
 pub mod tasks;
 pub mod tools;

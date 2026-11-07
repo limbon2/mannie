@@ -14,6 +14,7 @@ pub(crate) mod move_to_project;
 #[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 pub(crate) mod read_command_output;
 pub(crate) mod read_file;
+pub(crate) mod read_skill;
 pub(crate) mod read_tool_output;
 #[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 pub(crate) mod run_command;
@@ -68,6 +69,12 @@ pub(crate) fn system_tools() -> Vec<Arc<dyn Tool>> {
     ));
     tools.push(Arc::new(Registered::<move_to_project::MoveToProject>::new()));
     tools
+}
+
+/// The tool `read_skill`, which only the desktop app's composition root
+/// registers, so a worker never offers it (ADR-0061, decision 1).
+pub fn read_skill_tool() -> Arc<dyn Tool> {
+    Arc::new(Registered::<read_skill::ReadSkill>::new())
 }
 
 /// The access of a resolved path.

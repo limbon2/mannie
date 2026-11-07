@@ -6,7 +6,8 @@
 use std::time::Duration;
 
 use mannie_types::tools::{
-    BackgroundCommandView, BackgroundEnding, BackgroundLimit, PathRefusal, ToolFailure,
+    BackgroundCommandView, BackgroundEnding, BackgroundLimit, PathRefusal, SkillFileRefusal,
+    ToolFailure,
 };
 
 /// The description of the argument that every call carries for the owner
@@ -69,6 +70,32 @@ pub(crate) const STOP_COMMAND: &str = "Stops a command that start_command starte
 pub(crate) const READ_TOOL_OUTPUT: &str =
     "Reads lines of an archived tool output by its reference.";
 
+/// The description of `read_skill` (ADR-0061, decision 7).
+pub(crate) const READ_SKILL: &str = "Reads a skill that your instructions list or that the owner mentioned. With path null, it returns the skill's instructions, its folder and the paths of its other files. With a path in the skill's folder, such as references/forms.md, it returns that file's numbered lines. offset and limit page through long files as with read_file.";
+
+/// The first line of a page of `read_skill`, which names the skill.
+pub(crate) fn skill_heading(name: &str) -> String {
+    format!("Skill: {name}")
+}
+
+/// The line of a page of `read_skill` that names the skill's folder, against
+/// which the paths in its text resolve.
+pub(crate) fn skill_folder(folder: &str) -> String {
+    format!("Folder: {folder} (paths in the skill are relative to it; read them with read_skill)")
+}
+
+/// Introduces the other files of a skill, after the first page of its
+/// instructions.
+pub(crate) const SKILL_FILES: &str = "Other files in the skill's folder:";
+
+/// Says that a skill has no other files.
+pub(crate) const SKILL_NO_FILES: &str = "The skill's folder holds no other files.";
+
+/// Says how many other files of a skill the list leaves out.
+pub(crate) fn skill_files_left_out(count: usize) -> String {
+    format!("…and {count} more not listed.")
+}
+
 /// The description of `move_to_project`.
 pub(crate) const MOVE_TO_PROJECT: &str = "Moves this conversation into one of the owner's projects, so that the tools work in the project's folder from the next call on. Call it first when the owner's request is about a project that the environment lists. A conversation moves once and never leaves its project.";
 
@@ -121,6 +148,11 @@ pub(crate) fn failure(failure: &ToolFailure) -> String {
             };
             format!("{limit} background commands run {place} already, the most allowed. Stop one that you no longer need with stop_command, then start this one again.")
         }
+        ToolFailure::SkillNotFound { name } => format!("There is no skill {name} that you can read. Use the name of a skill that your instructions list, or of one that the owner mentioned."),
+        ToolFailure::SkillFileRefused { path, reason } => match reason {
+            SkillFileRefusal::OutsideSkill => format!("{path} is not inside the skill's folder. Name a file of the skill by its path in the folder, such as references/forms.md."),
+            SkillFileRefusal::MayHoldSecrets => format!("{path} may hold secrets, so read_skill does not read it."),
+        },
     };
     format!("Error {code}: {explanation}")
 }
