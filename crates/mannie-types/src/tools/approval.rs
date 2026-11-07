@@ -323,6 +323,10 @@ pub enum Decision {
     /// A read of a database that the owner registered, which runs without
     /// asking in every conversation (ADR-0056, decision 7).
     RegisteredDatabase,
+    /// A read inside the folder of a skill that is on, in one of the
+    /// conversation's places, which runs without asking (ADR-0061,
+    /// decision 8).
+    Skill,
 }
 
 impl Decision {

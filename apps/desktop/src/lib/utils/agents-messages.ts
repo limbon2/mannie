@@ -68,6 +68,9 @@ export function groupName(group: AgentToolGroupId): string {
     case 'read': {
       return m.agents_group_read();
     }
+    case 'skills': {
+      return m.agents_group_skills();
+    }
     case 'tasks': {
       return m.agents_group_tasks();
     }
@@ -91,6 +94,9 @@ export function groupDescription(group: AgentToolGroupId): string {
     }
     case 'read': {
       return m.agents_group_read_description();
+    }
+    case 'skills': {
+      return m.agents_group_skills_description();
     }
     case 'tasks': {
       return m.agents_group_tasks_description();

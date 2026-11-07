@@ -255,6 +255,12 @@ const RUNTIME: StoreModule = StoreModule {
             description: "create the table of plans",
             sql: include_str!("runtime/migrations/0041_create_plans.sql"),
         },
+        Migration {
+            version: 28,
+            legacy_version: None,
+            description: "create the table of the switches of skills",
+            sql: include_str!("runtime/migrations/0042_create_skill_switches.sql"),
+        },
     ]),
     confined: false,
 };

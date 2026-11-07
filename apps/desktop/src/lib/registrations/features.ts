@@ -11,6 +11,7 @@ import { registerChildAgents } from './child-agents.js';
 import { registerExport } from './export.js';
 import { registerPlans } from './plans.js';
 import { registerPlugins } from './plugins.js';
+import { registerSkills } from './skills.js';
 import { registerTools } from './tools.js';
 import { registerWindowAndTray } from './window-and-tray.js';
 
@@ -25,6 +26,7 @@ export const features: readonly FeatureRegistration[] = [
   registerChildAgents,
   registerAgents,
   registerPlans,
+  registerSkills,
   registerExport,
   registerPlugins,
 ];

@@ -73,6 +73,16 @@ pub enum PathRefusal {
     NotAbsolute,
 }
 
+/// Why `read_skill` refused a file of a skill (ADR-0061, decision 7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillFileRefusal {
+    /// The path leaves the skill's folder, by its text or through a link.
+    OutsideSkill,
+    /// The file's name may hold secrets, such as `.env`.
+    MayHoldSecrets,
+}
+
 /// Why a tool call failed. The model reads the rendering of the failure, and
 /// the UI shows the message for the code (ADR-0019).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type, thiserror::Error)]
@@ -270,6 +280,21 @@ pub enum ToolFailure {
         /// The limit.
         limit: u32,
     },
+    /// `read_skill` named no skill that the conversation can read
+    /// (ADR-0061).
+    #[error("there is no skill {name:?}")]
+    SkillNotFound {
+        /// The name as the call gave it, cut to 200 characters.
+        name: String,
+    },
+    /// `read_skill` refused a file of a skill.
+    #[error("the file {path:?} of the skill is refused: {reason:?}")]
+    SkillFileRefused {
+        /// The path as the call gave it, cut to 200 characters.
+        path: String,
+        /// Why.
+        reason: SkillFileRefusal,
+    },
 }
 
 impl ToolFailure {
@@ -307,6 +332,8 @@ impl ToolFailure {
             Self::PluginInvalid { .. } => "tool.plugin_invalid",
             Self::CommandNotFound { .. } => "tool.command_not_found",
             Self::TooManyBackgroundCommands { .. } => "tool.too_many_background_commands",
+            Self::SkillNotFound { .. } => "tool.skill_not_found",
+            Self::SkillFileRefused { .. } => "tool.skill_file_refused",
         }
     }
 }
@@ -494,6 +521,21 @@ pub enum ToolOutcome {
     /// `save_plan` saved nothing, because the owner edited the plan since the
     /// model last saved it, and the model read the plan as it stands.
     PlanKept,
+    /// `read_skill` read lines of a skill's file (ADR-0061).
+    SkillRead {
+        /// The skill's name.
+        skill: String,
+        /// The file's path in the skill's folder, `SKILL.md` for the skill's
+        /// instructions.
+        path: String,
+        /// The first line shown, from 1, or 0 when no line was.
+        first_line: u32,
+        /// The last line shown, or 0 when no line was.
+        last_line: u32,
+        /// The lines of the file, or of the instructions without their
+        /// frontmatter.
+        total_lines: u32,
+    },
     /// A plugin's tool ran (ADR-0034, decision 6). The model reads only its
     /// output; the data and the failure are for the call's card, which the
     /// plugin describes through the slot of tool kinds (ADR-0039).

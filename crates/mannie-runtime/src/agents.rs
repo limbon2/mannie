@@ -22,6 +22,7 @@ use mannie_types::ids::ProfileId;
 use crate::Runtime;
 use crate::plugins::Snapshot;
 use crate::questions::ASK_OWNER;
+use crate::skills::READ_SKILL;
 use crate::tasks::TASK_TOOLS;
 use crate::texts;
 
@@ -161,10 +162,11 @@ pub const SYSTEM_TOOLS: [&str; 18] = [
     "move_to_project",
 ];
 
-/// The conversation agent's tools: the system tools, the task tools and the
+/// The conversation agent's tools: the system tools, the task tools, the
 /// tool that asks the owner questions, which only the agent that answers to
-/// the owner has (ADR-0058, decision 9).
-const CONVERSATION_TOOLS: [&str; 22] = [
+/// the owner has (ADR-0058, decision 9), and the tool that reads skills, which
+/// only the desktop app registers (ADR-0061, decision 1).
+const CONVERSATION_TOOLS: [&str; 23] = [
     SYSTEM_TOOLS[0],
     SYSTEM_TOOLS[1],
     SYSTEM_TOOLS[2],
@@ -187,6 +189,7 @@ const CONVERSATION_TOOLS: [&str; 22] = [
     TASK_TOOLS[1],
     TASK_TOOLS[2],
     ASK_OWNER,
+    READ_SKILL,
 ];
 
 /// The tools of an explore child: the system tools that only read. It has no
@@ -224,6 +227,42 @@ pub const GENERAL_TOOLS: [&str; 17] = [
     "read_tool_output",
 ];
 
+/// The explore child's tools: those that read, with `read_skill`, which reads
+/// only and is offered where the conversation has skills (ADR-0061, decision
+/// 10). [`EXPLORE_TOOLS`] stays the group of reads that custom agents choose.
+const EXPLORE_AGENT_TOOLS: [&str; 8] = [
+    EXPLORE_TOOLS[0],
+    EXPLORE_TOOLS[1],
+    EXPLORE_TOOLS[2],
+    EXPLORE_TOOLS[3],
+    EXPLORE_TOOLS[4],
+    EXPLORE_TOOLS[5],
+    EXPLORE_TOOLS[6],
+    READ_SKILL,
+];
+
+/// The general child's tools: those of [`GENERAL_TOOLS`], with `read_skill`.
+const GENERAL_AGENT_TOOLS: [&str; 18] = [
+    GENERAL_TOOLS[0],
+    GENERAL_TOOLS[1],
+    GENERAL_TOOLS[2],
+    GENERAL_TOOLS[3],
+    GENERAL_TOOLS[4],
+    GENERAL_TOOLS[5],
+    GENERAL_TOOLS[6],
+    GENERAL_TOOLS[7],
+    GENERAL_TOOLS[8],
+    GENERAL_TOOLS[9],
+    GENERAL_TOOLS[10],
+    GENERAL_TOOLS[11],
+    GENERAL_TOOLS[12],
+    GENERAL_TOOLS[13],
+    GENERAL_TOOLS[14],
+    GENERAL_TOOLS[15],
+    GENERAL_TOOLS[16],
+    READ_SKILL,
+];
+
 /// The conversation agent: the base instructions, the system tools and the
 /// task tools, with 100 rounds and 250 calls of tools in one reply (owner
 /// decision of 2026-10-14) and 20 tasks.
@@ -253,7 +292,7 @@ pub const EXPLORE: AgentDefinition = AgentDefinition {
     read_only: true,
     description: Cow::Borrowed(texts::EXPLORE_DESCRIPTION),
     instructions: Cow::Borrowed(texts::EXPLORE_INSTRUCTIONS),
-    tools: Cow::Borrowed(&EXPLORE_TOOLS),
+    tools: Cow::Borrowed(&EXPLORE_AGENT_TOOLS),
     plugins: None,
     children: None,
     profile: None,
@@ -272,7 +311,7 @@ pub const GENERAL: AgentDefinition = AgentDefinition {
     read_only: false,
     description: Cow::Borrowed(texts::GENERAL_DESCRIPTION),
     instructions: Cow::Borrowed(texts::GENERAL_INSTRUCTIONS),
-    tools: Cow::Borrowed(&GENERAL_TOOLS),
+    tools: Cow::Borrowed(&GENERAL_AGENT_TOOLS),
     plugins: None,
     children: None,
     profile: None,
@@ -580,7 +619,8 @@ mod tests {
 
     #[test]
     fn an_explore_child_has_only_tools_that_read() {
-        let registry = ToolRegistry::with_system_tools();
+        let mut registry = ToolRegistry::with_system_tools();
+        registry.register(mannie_tools::read_skill_tool()).unwrap();
 
         for name in EXPLORE.tools.iter() {
             let tool = registry

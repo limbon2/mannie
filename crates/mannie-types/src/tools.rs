@@ -48,7 +48,8 @@ pub use database::{
 pub use external::{ToolHint, ToolServerEndpoint};
 pub use outcome::{
     ArchiveRef, CitedItemView, CommandEnding, EntryKind, MAX_TOOL_IMAGE_BYTES, MAX_TOOL_IMAGE_SIDE,
-    MAX_TOOL_IMAGES, PathRefusal, ToolFailure, ToolImageRef, ToolOutcome, ToolResult,
+    MAX_TOOL_IMAGES, PathRefusal, SkillFileRefusal, ToolFailure, ToolImageRef, ToolOutcome,
+    ToolResult,
 };
 pub use program::{
     DiscardedWork, MAX_EFFECT_ITEMS, ProgramEffect, ProgramEffectKey, ProgramTarget, effect_keys,

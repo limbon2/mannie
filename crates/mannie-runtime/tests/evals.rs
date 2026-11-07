@@ -56,7 +56,7 @@ use mannie_provider::{
 };
 use mannie_runtime::testing::{MemoryVault, Transcript, fast_config, open_store, test_tools};
 use mannie_runtime::{
-    AgentRegistry, InstructionRegistry, Runtime, RuntimeConfig, RuntimeDeps, texts,
+    AgentRegistry, InstructionRegistry, Runtime, RuntimeConfig, RuntimeDeps, SkillCatalog, texts,
 };
 use mannie_store::Store;
 use mannie_tools::{ACTIVITY_ARGUMENT, split_activity};
@@ -717,6 +717,7 @@ async fn start(
     task: &Task,
     data: &Path,
     workspace: &Path,
+    home: &Path,
 ) -> (Runtime, Store, PathBuf, ProjectId) {
     let store = open_store(&data.join("mannie.sqlite"));
     let kept = store.clone();
@@ -741,6 +742,13 @@ async fn start(
         Subject::Live(_) => RuntimeConfig::default(),
         Subject::Oracle => fast_config(),
     };
+    let tools = test_tools(data);
+    // The skills of this computer live in a home folder of the task's, as the
+    // desktop app reads `~/.agents/skills` (ADR-0061).
+    let skills = Arc::new(SkillCatalog::new(
+        Some(mannie_tools::skills_folder_in(home)),
+        tools.protected.clone(),
+    ));
     let deps = RuntimeDeps {
         store,
         client,
@@ -749,9 +757,10 @@ async fn start(
         clock,
         agents: AgentRegistry::with_builtin(),
         instructions: InstructionRegistry::with_builtin(),
-        tools: test_tools(data),
+        tools,
         machine: mannie_runtime::MachineSettings::default(),
         mentions: mannie_runtime::MentionRegistry::new(),
+        skills: Some(skills),
     };
     let runtime = Runtime::start(deps, config)
         .await
@@ -906,7 +915,14 @@ async fn run_task(subject: &Subject, task: &Task, run_number: u32) -> TaskReport
         fs::write(&path, content).expect("the file");
     }
     fs::create_dir_all(&workspace).expect("the workspace");
-    let (runtime, store, root, project) = start(subject, task, data.path(), &workspace).await;
+    let home = tempfile::tempdir().expect("a home folder");
+    for (name, text) in &task.skills {
+        let folder = mannie_tools::skills_folder_in(home.path()).join(name);
+        fs::create_dir_all(&folder).expect("the skill's folder");
+        fs::write(folder.join("SKILL.md"), text).expect("the skill");
+    }
+    let (runtime, store, root, project) =
+        start(subject, task, data.path(), &workspace, home.path()).await;
     let started_conversation = runtime
         .start_conversation(
             StartConversation::new(task.prompt.clone())

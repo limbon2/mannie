@@ -67,7 +67,8 @@ use tokio::sync::watch;
 use crate::{
     AgentDefinition, AgentRegistry, CredentialVault, FileMentions, GENERAL, InstructionRegistry,
     InstructionSection, MachineSettings, MentionRegistry, PlanMentions, RetryPolicy, Runtime,
-    RuntimeConfig, RuntimeDeps, ToolsDeps, VaultError, checkpoint_section, texts,
+    RuntimeConfig, RuntimeDeps, SkillCatalog, SkillMentions, ToolsDeps, VaultError,
+    checkpoint_section, texts,
 };
 
 /// How long a helper waits for a state before it fails the test. Shared CI
@@ -408,8 +409,14 @@ pub fn tool_calls(calls: &[(&str, &str, &str)]) -> Vec<Step> {
 /// When the folder cannot be resolved, which fails the test.
 pub fn test_tools(protected: &Path) -> ToolsDeps {
     let protected = mannie_tools::canonical_folder(protected).expect("the data folder exists");
+    // As the desktop app, which alone registers `read_skill` (ADR-0061,
+    // decision 1). A run without skills is never offered it.
+    let mut registry = ToolRegistry::with_system_tools();
+    registry
+        .register(mannie_tools::read_skill_tool())
+        .expect("read_skill is no system tool");
     ToolsDeps {
-        registry: ToolRegistry::with_system_tools(),
+        registry,
         protected: vec![PathBuf::from(protected)],
         mutations: MutationLock::new(),
         system: Arc::new(SystemFacts::detect()),
@@ -498,6 +505,10 @@ impl Provider for FakeModel {
 
 /// How a test runtime is set up.
 #[derive(Debug, Clone)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each switch is an option that a test sets on its own"
+)]
 pub struct HarnessOptions {
     /// The interface of the profile and the fake model.
     pub interface: ApiInterface,
@@ -526,6 +537,11 @@ pub struct HarnessOptions {
     /// What the "@" list offers: [`core_mentions`] by default, so the tests of
     /// mentions see one kind, or [`mentions_with_plans`].
     pub mentions: fn(&Store) -> MentionRegistry,
+    /// Whether the runtime has skills (ADR-0061), as the desktop app does: a
+    /// catalog whose folder of this computer is
+    /// [`Harness::computer_skills`], and the mentions of skills. Off by
+    /// default, so the other tests see a runtime without skills.
+    pub skills: bool,
 }
 
 impl Default for HarnessOptions {
@@ -542,6 +558,7 @@ impl Default for HarnessOptions {
             config: fast_config(),
             store_modules: Vec::new(),
             mentions: |_store| core_mentions(),
+            skills: false,
         }
     }
 }
@@ -575,8 +592,34 @@ pub struct Harness {
     pub vault: Arc<MemoryVault>,
     /// The profile, which is the default.
     pub profile: ProviderProfile,
+    /// The catalog of skills, when the options asked for skills.
+    pub skills: Option<Arc<SkillCatalog>>,
     options: HarnessOptions,
     directory: tempfile::TempDir,
+    /// The home folder of this computer's skills, outside the data folder
+    /// that the policy protects.
+    home: tempfile::TempDir,
+}
+
+/// The catalog of skills and the mention providers of a harness: the
+/// options' providers, with the mentions of skills when the options ask for
+/// skills.
+fn harness_skills(
+    options: &HarnessOptions,
+    store: &Store,
+    tools: &ToolsDeps,
+    home: &Path,
+) -> (Option<Arc<SkillCatalog>>, MentionRegistry) {
+    let mut mentions = (options.mentions)(store);
+    if !options.skills {
+        return (None, mentions);
+    }
+    let folder = mannie_tools::skills_folder_in(home);
+    let catalog = Arc::new(SkillCatalog::new(Some(folder), tools.protected.clone()));
+    mentions
+        .register(Arc::new(SkillMentions::new(Arc::clone(&catalog))))
+        .expect("the skills' provider has an ID of its own");
+    (Some(catalog), mentions)
 }
 
 /// Opens the store of a harness directory.
@@ -740,6 +783,32 @@ pub async fn start_master_with_mentions(
     agents: AgentRegistry,
     mentions: MentionRegistry,
 ) -> Runtime {
+    start_master_with_skills(
+        store, provider, vault, config, tools, agents, mentions, None,
+    )
+    .await
+}
+
+/// Starts the runtime as [`start_master_with_mentions`] does, with the skills
+/// of this catalog (ADR-0061), as the desktop app gives them.
+///
+/// # Panics
+///
+/// When the runtime cannot start, which fails the test.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the harness passes each dependency that a test chooses on its own"
+)]
+pub async fn start_master_with_skills(
+    store: Store,
+    provider: Arc<dyn Provider>,
+    vault: Arc<MemoryVault>,
+    config: RuntimeConfig,
+    tools: ToolsDeps,
+    agents: AgentRegistry,
+    mentions: MentionRegistry,
+    skills: Option<Arc<SkillCatalog>>,
+) -> Runtime {
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let client = HttpClient::new(Arc::clone(&clock)).expect("the HTTP client builds");
     let mut registry = ProviderRegistry::new();
@@ -757,6 +826,7 @@ pub async fn start_master_with_mentions(
         tools,
         machine: MachineSettings::default(),
         mentions,
+        skills,
     };
     Runtime::start(deps, config)
         .await
@@ -804,14 +874,18 @@ impl Harness {
             model.write_full_summaries();
         }
         let vault = Arc::new(MemoryVault::new());
-        let runtime = start_master_with_mentions(
+        let home = tempfile::tempdir().expect("a temporary home folder");
+        let tools = test_tools(directory.path());
+        let (skills, mentions) = harness_skills(&options, &store, &tools, home.path());
+        let runtime = start_master_with_skills(
             store.clone(),
             Arc::new(model.clone()),
             Arc::clone(&vault),
             options.config.clone(),
-            test_tools(directory.path()),
+            tools,
             options.agents.clone(),
-            (options.mentions)(&store),
+            mentions,
+            skills.clone(),
         )
         .await;
         let profile = runtime
@@ -836,9 +910,17 @@ impl Harness {
             model,
             vault,
             profile,
+            skills,
             options,
             directory,
+            home,
         }
+    }
+
+    /// The folder of this computer's skills, `~/.agents/skills` in a home
+    /// folder of the harness, which exists once a test writes into it.
+    pub fn computer_skills(&self) -> PathBuf {
+        mannie_tools::skills_folder_in(self.home.path())
     }
 
     /// The database file.
@@ -850,16 +932,21 @@ impl Harness {
     /// restart of Mannie does.
     pub async fn restart(mut self) -> Self {
         self.runtime.shutdown().await;
-        self.runtime = start_master_with_mentions(
+        let tools = test_tools(self.directory.path());
+        let (skills, mentions) =
+            harness_skills(&self.options, &self.store, &tools, self.home.path());
+        self.runtime = start_master_with_skills(
             self.store.clone(),
             Arc::new(self.model.clone()),
             Arc::clone(&self.vault),
             self.options.config.clone(),
-            test_tools(self.directory.path()),
+            tools,
             self.options.agents.clone(),
-            (self.options.mentions)(&self.store),
+            mentions,
+            skills.clone(),
         )
         .await;
+        self.skills = skills;
         self
     }
 
@@ -1348,8 +1435,9 @@ async fn start_worker_runtime(
         instructions: harness_worker_sections(),
         tools,
         machine,
-        // A worker has no message box.
+        // A worker has no message box and no skills.
         mentions: MentionRegistry::new(),
+        skills: None,
     };
     Runtime::start(deps, options.config.clone())
         .await

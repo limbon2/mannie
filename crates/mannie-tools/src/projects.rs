@@ -99,16 +99,21 @@ pub struct Availability<'a> {
     /// Whether the conversation belongs to an attachment, which keeps it out
     /// of every project (ADR-0051).
     pub has_home: bool,
+    /// Whether the conversation has a skill that is on, which offers
+    /// `read_skill` (ADR-0061, decision 7).
+    pub skills: bool,
 }
 
 impl<'a> Availability<'a> {
-    /// The availability of a conversation without attachments or a home.
+    /// The availability of a conversation without attachments, a home or
+    /// skills.
     pub fn of_projects(project: Option<&'a ProjectView>, projects: &'a [ProjectView]) -> Self {
         Self {
             project,
             projects,
             attachments: &[],
             has_home: false,
+            skills: false,
         }
     }
 }

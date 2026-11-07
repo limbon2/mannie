@@ -37,6 +37,9 @@ pub(crate) struct Task {
     /// The starter agent that answers in the conversation, or `None` for the
     /// built-in one (ADR-0059).
     pub(crate) agent: Option<&'static str>,
+    /// The skills of this computer, by their folders' names, with the text of
+    /// each `SKILL.md` (ADR-0061).
+    pub(crate) skills: Vec<(&'static str, String)>,
     /// Whether the task succeeded, and why not.
     pub(crate) check: fn(&Outcome) -> Result<(), String>,
     /// How the oracle answers a request of the task.
@@ -62,9 +65,15 @@ impl Task {
             general: false,
             change: None,
             agent: None,
+            skills: Vec::new(),
             check,
             oracle,
         }
+    }
+
+    fn skill(mut self, name: &'static str, text: impl Into<String>) -> Self {
+        self.skills.push((name, text.into()));
+        self
     }
 
     fn agent(mut self, agent: &'static str) -> Self {
@@ -120,6 +129,7 @@ pub(crate) fn all() -> Vec<Task> {
         research_through_an_explore_child(),
         orchestrator_hands_the_fix_to_a_child(),
         plan_agent_saves_and_changes_nothing(),
+        follows_a_skill(),
         background_counts_then_wait(),
         server_in_the_background(),
         tests_in_the_background_while_reading(),
@@ -246,6 +256,59 @@ fn rename_across_files() -> Task {
     )
     .file("src/main.txt", "call old_name(1)\nold_name = 2\n")
     .file("src/util.txt", "def old_name():\n    pass\n")
+}
+
+/// A skill of this computer whose text alone gives the format of the result,
+/// so the task passes only when the model reads the skill and follows it
+/// (ADR-0061).
+fn follows_a_skill() -> Task {
+    Task::new(
+        "follows_a_skill",
+        "Write the release notes for the change \"Add dark mode\".",
+        |outcome| {
+            outcome.used("read_skill")?;
+            let text = outcome
+                .file("RELEASE_NOTES.md")
+                .ok_or("RELEASE_NOTES.md is missing")?;
+            let has_heading = text.starts_with("# Release notes");
+            let has_change = text.contains("- [change] ");
+            let names_it = text.to_lowercase().contains("dark mode");
+            if has_heading && has_change && names_it {
+                Ok(())
+            } else {
+                Err(format!("RELEASE_NOTES.md is {text:?}"))
+            }
+        },
+        |view| match view.steps() {
+            0 => call(
+                "read_skill",
+                &json!({ "name": "release-notes", "path": null, "offset": null, "limit": null }),
+            ),
+            1 => call(
+                "write_file",
+                &json!({
+                    "path": "RELEASE_NOTES.md",
+                    "content": "# Release notes
+
+- [change] Add dark mode
+",
+                }),
+            ),
+            _ => answer("I wrote RELEASE_NOTES.md in the team's format."),
+        },
+    )
+    .skill(
+        "release-notes",
+        "---
+name: release-notes
+description: Writes the release notes of the owner's projects in the team's format. Use it whenever the owner asks for release notes.
+---
+
+# Release notes
+
+Write the notes to RELEASE_NOTES.md in the workspace. The file starts with the line `# Release notes`, then an empty line, then one line for each change, which starts with `- [change] ` and names the change.
+",
+    )
 }
 
 fn create_a_file() -> Task {

@@ -25,6 +25,7 @@ use crate::environment::CommandEnvironment;
 use crate::lock::MutationLock;
 use crate::projects::{Availability, ProjectFacts};
 use crate::schema;
+use crate::skills::SkillShelf;
 use crate::stop::StopSignal;
 use crate::system::SystemFacts;
 use crate::texts;
@@ -68,6 +69,9 @@ pub struct ToolContext {
     /// gave a child its task, whose keys a plugin's tool that is offered
     /// where they are reaches (ADR-0052).
     pub attachments: Arc<[Attachment]>,
+    /// The skills that the call can read, which `read_skill` reads from
+    /// (ADR-0061, decision 7). Empty on a worker.
+    pub skills: Arc<SkillShelf>,
 }
 
 impl fmt::Debug for ToolContext {

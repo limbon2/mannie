@@ -21,7 +21,7 @@ use mannie_plugins::{PluginHost, PluginHostDeps, PluginList};
 use mannie_provider::{HttpClient, ProviderRegistry};
 use mannie_runtime::{
     AgentRegistry, FileMentions, InstructionRegistry, MachineSettings, MentionRegistry,
-    PlanMentions, Runtime, RuntimeConfig, RuntimeDeps, ToolsDeps,
+    PlanMentions, Runtime, RuntimeConfig, RuntimeDeps, SkillCatalog, SkillMentions, ToolsDeps,
 };
 use mannie_store::{Store, StoreError, StoreOptions};
 use mannie_tools::{MutationLock, SystemFacts, ToolRegistry};
@@ -364,6 +364,11 @@ fn start_runtime(
         &app.config().identifier,
         redactor.clone(),
     ));
+    let tools = tools(app);
+    let skills = Arc::new(SkillCatalog::new(
+        computer_skills(app),
+        tools.protected.clone(),
+    ));
     let deps = RuntimeDeps {
         store: store.clone(),
         client,
@@ -372,9 +377,10 @@ fn start_runtime(
         clock: Arc::clone(&clock),
         agents: AgentRegistry::with_builtin(),
         instructions: InstructionRegistry::with_builtin(),
-        tools: tools(app),
+        tools,
         machine: MachineSettings::default(),
-        mentions: mentions(&store),
+        mentions: mentions(&store, &skills),
+        skills: Some(skills),
     };
     let runtime = tauri::async_runtime::block_on(Runtime::start(deps, RuntimeConfig::default()))
         .map_err(|error| {
@@ -428,8 +434,9 @@ fn start_runtime(
 }
 
 /// The core's mention providers: the files and folders of a conversation's
-/// project (ADR-0032, decision 9), and the owner's plans (ADR-0060, decision 6).
-fn mentions(store: &Store) -> MentionRegistry {
+/// project (ADR-0032, decision 9), the owner's plans (ADR-0060, decision 6),
+/// and the skills (ADR-0061, decision 9).
+fn mentions(store: &Store, skills: &Arc<SkillCatalog>) -> MentionRegistry {
     let mut mentions = MentionRegistry::new();
     // The registry starts empty and the IDs differ, so each ID is free.
     if let Err(error) = mentions.register(Arc::new(FileMentions::new())) {
@@ -438,12 +445,31 @@ fn mentions(store: &Store) -> MentionRegistry {
     if let Err(error) = mentions.register(Arc::new(PlanMentions::new(store.clone()))) {
         tracing::error!(%error, "could not register the mentions of plans");
     }
+    if let Err(error) = mentions.register(Arc::new(SkillMentions::new(Arc::clone(skills)))) {
+        tracing::error!(%error, "could not register the mentions of skills");
+    }
     mentions
+}
+
+/// The folder of this computer's skills, `~/.agents/skills`, where the
+/// `skills` CLI installs with `--agent universal -g` (ADR-0061, decision 2).
+/// A validation build reads none until a test names a folder, so the
+/// end-to-end tests never read the owner's own skills.
+fn computer_skills(app: &App) -> Option<PathBuf> {
+    if cfg!(feature = "validation") {
+        return None;
+    }
+    app.path()
+        .home_dir()
+        .inspect_err(|error| tracing::warn!(%error, "the home folder is unknown, so this computer has no skills"))
+        .ok()
+        .map(|home| mannie_tools::skills_folder_in(&home))
 }
 
 /// The system tools of the master. Mannie's data and log folders are
 /// protected: every access inside them asks the owner, so no grant or setting
-/// lets the model change the data that holds the policy (T-18).
+/// lets the model change the data that holds the policy (T-18). `read_skill`
+/// is the master's alone, so a worker never offers it (ADR-0061, decision 1).
 fn tools(app: &App) -> ToolsDeps {
     let folders = [app.path().app_local_data_dir(), app.path().app_log_dir()];
     let protected = folders
@@ -455,8 +481,12 @@ fn tools(app: &App) -> ToolsDeps {
         })
         .map(|folder| protected_folder(&folder))
         .collect();
+    let mut registry = ToolRegistry::with_system_tools();
+    if let Err(error) = registry.register(mannie_tools::read_skill_tool()) {
+        tracing::error!(%error, "could not register read_skill");
+    }
     ToolsDeps {
-        registry: ToolRegistry::with_system_tools(),
+        registry,
         protected,
         mutations: MutationLock::new(),
         system: Arc::new(SystemFacts::detect()),

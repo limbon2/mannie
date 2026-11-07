@@ -352,6 +352,8 @@ async fn start_runtime(
         machine,
         // A worker has no message box, so nothing is mentioned there.
         mentions: MentionRegistry::new(),
+        // A worker neither finds nor offers skills (ADR-0061, decision 1).
+        skills: None,
     };
     Runtime::start(deps, RuntimeConfig::default())
         .await

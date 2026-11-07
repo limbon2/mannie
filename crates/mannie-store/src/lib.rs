@@ -42,8 +42,8 @@ pub use runtime::{
     NewConversation, NewExecutorTask, NewImage, NewMention, NewPart, NewRun, NewTask, NewToolImage,
     OutboxEntry, ProjectDeletion, ProviderItem, Recovered, RecoveredCommand, RuntimeStoreError,
     StoredAgent, StoredArchive, StoredBackgroundCommand, StoredCheckpoint, StoredChild,
-    StoredImage, StoredPlan, StoredTask, StoredToolImage, TaskEnding, TaskExecution, TaskOrigin,
-    UncertainCall,
+    StoredImage, StoredPlan, StoredSkillSwitch, StoredTask, StoredToolImage, TaskEnding,
+    TaskExecution, TaskOrigin, UncertainCall,
 };
 pub use settings::SettingsStoreError;
 pub use store::{Store, StoreOptions};

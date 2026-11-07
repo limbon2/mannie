@@ -122,6 +122,9 @@ struct Surroundings {
     /// Whether the conversation, or a child's parent, is in full access
     /// (ADR-0029). The switch is read again for every call.
     full_access: bool,
+    /// The canonical folders of the skills that are on in the conversation's
+    /// places, inside which the policy allows reads (ADR-0061, decision 8).
+    skill_folders: Vec<PathBuf>,
 }
 
 /// Why a call of a tool that the run does not have does not run. A read-only
@@ -338,6 +341,7 @@ impl RunActor {
                 workspace: surroundings.context.workspace.as_deref(),
                 allow_changes_in_workspace: surroundings.settings.allow_changes_in_workspace,
                 protected: &self.runtime.inner.tools.protected,
+                skill_folders: &surroundings.skill_folders,
                 grants: Grants {
                     conversation: &surroundings.grants,
                     project: &surroundings.project_grants,
@@ -787,6 +791,10 @@ impl RunActor {
             .as_ref()
             .and_then(|id| projects.iter().find(|candidate| candidate.id == *id))
             .cloned();
+        // A run that reads skills reads the shelf of its conversation's places
+        // (ADR-0061, decision 7).
+        let skills = self.runtime.run_skills(setup, current.as_ref()).await;
+        let skill_folders = skills.shelf.on_folders();
         // A child knows only its parent's project and never moves a
         // conversation.
         let projects = if self.child.is_some() {
@@ -832,6 +840,7 @@ impl RunActor {
                 runtime: self.runtime.clone(),
             }),
             attachments,
+            skills: Arc::new(skills.shelf),
         };
         Ok(Surroundings {
             context,
@@ -847,6 +856,7 @@ impl RunActor {
             ceiling,
             host,
             full_access,
+            skill_folders,
         })
     }
 

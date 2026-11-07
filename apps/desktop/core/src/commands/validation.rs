@@ -53,6 +53,21 @@ pub(crate) fn validation_set_file_choice(core: State<'_, Core>, files: Vec<Strin
     core.set_file_choice(files);
 }
 
+/// Names the folder of this computer's skills, or none, in place of the
+/// owner's `~/.agents/skills`, which a validation build never reads
+/// (docs/features/skills.md, places).
+#[tauri::command]
+#[specta::specta]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri hands command arguments over by value"
+)]
+pub(crate) fn validation_set_skills_folder(core: State<'_, Core>, folder: Option<String>) {
+    if let Some(runtime) = core.runtime() {
+        runtime.set_skills_folder(folder.map(std::path::PathBuf::from));
+    }
+}
+
 /// Streams a synthetic load to the webview: `load.runs` simulated runs that
 /// each send `load.deltas_per_second` deltas for `load.duration_millis`, over
 /// one batched channel (V2, V3).

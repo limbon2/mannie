@@ -28,6 +28,7 @@ use crate::agents::AgentDefinition;
 use crate::plans::SAVE_PLAN;
 use crate::plugins::Snapshot;
 use crate::questions::ASK_OWNER;
+use crate::skills::READ_SKILL;
 use crate::texts;
 
 /// What the sections of one call can draw on.
@@ -50,6 +51,9 @@ pub struct InstructionContext<'a> {
     /// The sources of a conversation with attachments, or of the conversation
     /// that gave a child its task (ADR-0049, decision 6), or `None`.
     pub sources: Option<SourcesContext<'a>>,
+    /// The list of the skills that the call's agent may see, as the section
+    /// `skills` shows it, or `None` without one (ADR-0061, decision 6).
+    pub skills: Option<&'a str>,
 }
 
 /// What a conversation's attachments give its instructions (ADR-0049).
@@ -236,12 +240,13 @@ pub struct InstructionRegistry {
 
 /// Mannie's sections: the base instructions for whom the agent answers to,
 /// the agent's instructions, the guidance on tools, on tasks and on sources,
-/// the owner's instructions, where the tools work, and the checkpoint. The
-/// sections of tools appear only in runs with tools, the guidance on tasks
-/// only in runs that are offered the task tools, and the guidance on sources
-/// only in conversations with attachments (ADR-0049). The executors of
-/// plugins add their sections to the runs that are offered their tools
-/// (ADR-0031).
+/// the skills, the owner's instructions, where the tools work, and the
+/// checkpoint. The sections of tools appear only in runs with tools, the
+/// guidance on tasks only in runs that are offered the task tools, the
+/// guidance on sources only in conversations with attachments (ADR-0049), and
+/// the skills only in calls that are offered `read_skill` (ADR-0061). The
+/// executors of plugins add their sections to the runs that are offered their
+/// tools (ADR-0031).
 pub fn builtin_sections() -> Vec<InstructionSection> {
     vec![
         InstructionSection::new("base", 0, |context| {
@@ -287,6 +292,15 @@ pub fn builtin_sections() -> Vec<InstructionSection> {
             context
                 .sources
                 .map(|sources| texts::sources_guidance(&sources))
+        }),
+        // The skills come before the owner's instructions, whose words then
+        // come last among what the owner installed and wrote (ADR-0061,
+        // decision 6).
+        InstructionSection::new("skills", 180, |context| {
+            let offered = context
+                .tools
+                .is_some_and(|tools| tools.offered.contains(&READ_SKILL));
+            context.skills.filter(|_list| offered).map(str::to_owned)
         }),
         InstructionSection::new("owner", 200, |context| {
             non_empty(context.owner_instructions).map(|instructions| {
@@ -443,6 +457,7 @@ mod tests {
             offers_tasks: false,
             machine: None,
             sources: None,
+            skills: None,
         };
         let full = InstructionContext {
             agent: &CONVERSATION,
@@ -452,6 +467,7 @@ mod tests {
             offers_tasks: false,
             machine: None,
             sources: None,
+            skills: None,
         };
 
         assert_eq!(registry.assemble(&plain), texts::BASE_INSTRUCTIONS);
@@ -479,6 +495,7 @@ mod tests {
             offers_tasks: false,
             machine: None,
             sources: None,
+            skills: None,
         };
 
         let assembled = registry.assemble(&context);
@@ -511,6 +528,7 @@ mod tests {
             offers_tasks: true,
             machine: None,
             sources: None,
+            skills: None,
         };
         let without_tools = InstructionContext {
             tools: None,
@@ -545,6 +563,7 @@ mod tests {
             offers_tasks: true,
             machine: None,
             sources: None,
+            skills: None,
         };
         let child_in_full_access = InstructionContext {
             agent: &EXPLORE,
@@ -611,6 +630,7 @@ mod tests {
             offers_tasks: false,
             machine: None,
             sources: None,
+            skills: None,
         };
 
         let assembled = registry.assemble(&context);
@@ -650,6 +670,7 @@ mod tests {
             offers_tasks: true,
             machine: None,
             sources: None,
+            skills: None,
         };
         let child = InstructionContext {
             agent: &EXPLORE,

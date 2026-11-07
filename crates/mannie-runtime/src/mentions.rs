@@ -54,6 +54,9 @@ pub struct MentionContext {
     full_access: bool,
     grants: PolicyGrants,
     protected: Vec<PathBuf>,
+    /// The folders of the skills that are on in the place, which the policy
+    /// allows reads in (ADR-0061, decision 8).
+    skill_folders: Vec<PathBuf>,
     ceiling: Option<Ceiling>,
 }
 
@@ -86,6 +89,7 @@ impl MentionContext {
                 workspace: self.workspace.as_deref(),
                 allow_changes_in_workspace: self.grants.settings.allow_changes_in_workspace,
                 protected: &self.protected,
+                skill_folders: &self.skill_folders,
                 grants: Grants {
                     conversation: &self.grants.conversation,
                     project: &self.grants.project,
@@ -504,6 +508,15 @@ impl Runtime {
                 tracing::error!(error = %failure.error, "could not read {} for mentions", failure.what);
                 ChatError::StorageFailed
             })?;
+        // A mention of a skill that is on reads it as the model's read would
+        // (ADR-0061, decision 9).
+        let skill_folders = match &self.inner.skills {
+            Some(catalog) => {
+                let place = project.zip(workspace.map(Path::new));
+                catalog.for_conversation(place).await.shelf.on_folders()
+            }
+            None => Vec::new(),
+        };
         Ok(MentionContext {
             conversation: conversation.cloned(),
             project: project.cloned(),
@@ -511,6 +524,7 @@ impl Runtime {
             full_access,
             grants,
             protected: self.inner.tools.protected.clone(),
+            skill_folders,
             ceiling: self.inner.machine.ceiling.clone(),
         })
     }
@@ -665,6 +679,7 @@ mod tests {
             full_access: false,
             grants: PolicyGrants::default(),
             protected: Vec::new(),
+            skill_folders: Vec::new(),
             ceiling: None,
         }
     }

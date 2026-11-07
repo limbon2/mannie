@@ -135,6 +135,7 @@ None.
 | `questions` | `ask_owner`                                                                                                | Conversation    |
 | `tasks`     | `start_task`, `follow_up_task`, `wait_for_tasks`, and the plugins' executors                               | Conversation    |
 | `plans`     | `save_plan`                                                                                                | Conversation    |
+| `skills`    | `read_skill`, which is offered only where the conversation has skills that are on ([Skills](skills.md))    | Both kinds      |
 
 `move_to_project` comes with every conversation agent that is not read-only.
 

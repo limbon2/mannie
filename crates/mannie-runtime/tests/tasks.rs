@@ -21,7 +21,7 @@ use mannie_provider::testing::Step;
 use mannie_provider::{Content, ModelRequest, Role};
 use mannie_runtime::testing::{Harness, HarnessOptions, Transcript, reply, tool_calls};
 use mannie_runtime::{
-    AgentDefinition, AgentRegistry, CONVERSATION, EXPLORE, GENERAL, TASK_TOOLS, texts,
+    AgentDefinition, AgentRegistry, CONVERSATION, EXPLORE, GENERAL, READ_SKILL, TASK_TOOLS, texts,
 };
 use mannie_types::chat::{
     ChatError, RenameConversation, SendMessage, SetConversationProfile, StartConversation,
@@ -365,9 +365,12 @@ async fn children_get_only_their_agents_tools_and_never_the_task_tools() {
     assert_eq!(transcript.run_state(&run), Some(RunState::Completed));
     let explore = setup.harness.model.requests_for("CHILD-E");
     let general = setup.harness.model.requests_for("CHILD-G");
+    // `read_skill` is offered only where a skill is on (ADR-0061), so an
+    // explore child without skills gets the tools that read.
     let explore_tools: BTreeSet<String> = EXPLORE
         .tools
         .iter()
+        .filter(|name| **name != READ_SKILL)
         .map(|name| (*name).to_owned())
         .collect();
     assert_eq!(tool_names(&explore[0]), explore_tools);

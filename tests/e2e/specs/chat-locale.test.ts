@@ -2,7 +2,7 @@
 // string they show comes from the catalog, apart from the owner's and the
 // model's content, and the layout survives the longer text. The selectors use
 // structure only, because every catalog string is pseudo-localized.
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -23,7 +23,7 @@ import {
   waitForCompleteReply,
   waitForPointerInput,
 } from '../support/chat.ts';
-import { closeMainWindow, deleteProviderProfiles, setFolderChoice } from '../support/harness.ts';
+import { closeMainWindow, deleteProviderProfiles, setFolderChoice, setSkillsFolder } from '../support/harness.ts';
 import {
   axeViolations,
   openSettings,
@@ -310,6 +310,7 @@ describe('the chat and window views in the pseudo-locale', () => {
       'window.behavior',
       'tools.settings',
       'child-agents.settings',
+      'skills.settings',
       'plugins.settings',
       'example.settings',
     ]) {
@@ -317,6 +318,32 @@ describe('the chat and window views in the pseudo-locale', () => {
 
       expect(await uncataloguedText()).toEqual([]);
       expect(await overflowsHorizontally()).toBe(false);
+    }
+  });
+
+  it('shows only catalog text in the skills settings, with a skill and a folder that is not one', async () => {
+    // The names, descriptions and folders of skills are content.
+    const home = realpathSync(mkdtempSync(join(tmpdir(), 'mannie-e2e-skills-')));
+    const skills = join(home, '.agents', 'skills');
+    mkdirSync(join(skills, 'pdf-forms'), { recursive: true });
+    writeFileSync(
+      join(skills, 'pdf-forms', 'SKILL.md'),
+      '---\nname: pdf-forms\ndescription: Fills PDF forms.\ndisable-model-invocation: true\n---\nBody.\n',
+    );
+    mkdirSync(join(skills, 'broken'), { recursive: true });
+    writeFileSync(join(skills, 'broken', 'SKILL.md'), '# No frontmatter\n');
+    await setSkillsFolder(skills);
+    try {
+      await openSettings('skills.settings');
+      await $('[data-skill="pdf-forms"]').waitForDisplayed();
+      await $('[data-skill-problems]').click();
+      await waitForAnimations();
+
+      expect(await uncataloguedText()).toEqual([]);
+      expect(await overflowsHorizontally()).toBe(false);
+    } finally {
+      await setSkillsFolder(null);
+      rmSync(home, { force: true, recursive: true });
     }
   });
 

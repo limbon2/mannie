@@ -36,6 +36,7 @@
 | M15 Databases           | The owner and agents work with SQLite files on this computer and on workers, through Databases, an optional feature of Workers                        | [Databases](../../plugins/workers/docs/databases.md)                                                                     | After M14's  |
 | M16 Questions           | The conversation agent asks the owner questions with options during a reply, and the reply goes on with the answer                                    | [Questions to the owner](../features/questions.md)                                                                       | After M15's  |
 | M17 Custom agents       | The owner creates and edits agents without code, with an Orchestrator that hands work to child agents, and a Plan agent that saves plans to run later | [Custom agents](../features/custom-agents.md), [Plans](../features/plans.md)                                             | After M16's  |
+| M18 Skills              | Agents use the skills that the owner installs with the `skills` CLI, and the owner decides which ones they see                                        | [Skills](../features/skills.md)                                                                                          | After M17's  |
 
 ```mermaid
 flowchart LR
@@ -56,7 +57,8 @@ flowchart LR
   M14 --> M15[M15 Databases]
   M15 --> M16[M16 Questions]
   M16 --> M17[M17 Custom agents]
-  M17 --> Later[Later features as they are accepted]
+  M17 --> M18[M18 Skills]
+  M18 --> Later[Later features as they are accepted]
 ```
 
 ## 3. Milestones
@@ -424,6 +426,29 @@ Exit criteria:
 - Axe finds no WCAG 2.1 AA violation in the new views, on WebView2 and WebKitGTK.
 - ADR-0059 and ADR-0060 are Accepted (D49), and the release ships.
 
+### M18: Skills
+
+Goal: agents use the skills that the owner installs with the `skills` CLI in `~/.agents/skills` and in a project's `.agents/skills`, and the owner decides which ones they see ([ADR-0061](../adr/0061-let-agents-use-the-skills-that-the-owner-installs.md)). It ends with the release after the one that carries M17 (D50).
+
+Features: [Skills](../features/skills.md).
+
+Scope:
+
+- the scan of both places, the reader of frontmatter and their refusals;
+- the switches, with their defaults for each place and the digest of a project's skill, in the table `runtime_skill_switches`;
+- the section `skills`, the tool `read_skill`, the policy's source `skill`, and the agents and the group of custom agents that get them;
+- the mention provider `skills`;
+- the settings section, the tool's card and the commands `list_skills` and `set_skill_on`.
+
+Exit criteria:
+
+- A skill that the CLI installs with `--agent universal`, with and without `-g`, shows in the settings, and a request that fits it makes the model read it and follow it.
+- A project's skill reaches agents only after the owner turned it on, and a change of its name or description turns it off again.
+- `read_skill` reads inside a skill that is on without asking, refuses paths that leave the skill and files that may hold secrets, and every operation that a skill leads to asks as before.
+- A conversation without skills sends the same requests as before, and workers never offer `read_skill`.
+- The settings section works fully from the keyboard, and axe finds no WCAG 2.1 AA violation in it on WebView2 and WebKitGTK.
+- ADR-0061 is Accepted (D50), and the release ships.
+
 ### Later
 
 Accepted features go into new milestones as they arrive, and each of those milestones ends with a 0.x release. A later decision declares 1.0, with its own gate: desktop auto-update, a security review, user documentation, and another look at code signing (D16).
@@ -501,6 +526,7 @@ One decision is open: whether to accept [ADR-0048](../adr/0048-erase-what-plugin
 | D47 | Databases accepted (2026-11-01)                         | The owner accepts ADR-0055, ADR-0056 and ADR-0057 and the defaults chosen while shaping Databases: registration on this computer only through the system's file dialog, names unique among all registered databases, pages of 100 rows, up to 200 rows of a query for the model and up to 16 statements in a change, and full access running an agent's schema change, as ADR-0056 decision 7 asks. The owner asks to continue, so building M15 starts with the spikes, on its own branch, while M14 waits for its release.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | [ADR-0055](../adr/0055-let-plugins-have-optional-features.md), [ADR-0056](../adr/0056-let-plugins-work-with-the-owners-sqlite-files-through-the-core.md), [ADR-0057](../adr/0057-let-the-master-work-with-the-databases-on-a-workers-host.md), [Databases](../../plugins/workers/docs/databases.md)        |
 | D48 | Questions to the owner (2026-11-06)                     | The owner asked for "a feature of making AI agents ask questions and give options to the user", similar to how other harnesses do it. The owner's answers of 2026-11-06: in this version only the conversation agent asks, while child agents and workers keep reporting open questions, and a question shows in the transcript, where approvals show. The owner accepts ADR-0058 by approving the plan, with its defaults: a question also waits in a conversation in full access, it has no timeout, a restart cancels it and a retry asks again, and questions and options show as plain text. M16 ships in the release after the one that carries M15.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | [ADR-0058](../adr/0058-let-agents-ask-the-owner-questions.md), [Questions to the owner](../features/questions.md)                                                                                                                                                                                          |
 | D49 | Custom agents and plans (2026-11-07)                    | The owner asked to create custom agents "easily created and edited by the user instead of writing custom js code", the first one like Codex's Ultra, which does little on its own and uses child agents for different tasks, and for "a plan agent that will focus on creating readonly plans that can later be used to execute them". The owner's answers of 2026-11-07: steps in the editor guide the model, so there is no workflow engine, and a plan runs in a new conversation or in its own, chosen each time. The owner accepts ADR-0059 and ADR-0060 by approving the plan, with its defaults: the feature is in the core, a custom child agent may name its own model, which reverses the decision of 2026-10-15 for custom children only, any conversation agent may use `ask_owner`, `save_plan` asks for no approval, plans live in Mannie's database, and child agents still give no tasks. M17 ships in the release after the one that carries M16.                                                                                                                                                                                                                                                                                                                 | [ADR-0059](../adr/0059-let-the-owner-define-agents.md), [ADR-0060](../adr/0060-let-agents-save-plans-that-the-owner-runs.md), [Custom agents](../features/custom-agents.md), [Plans](../features/plans.md)                                                                                                 |
+| D50 | Skills (2026-11-07)                                     | The owner asked for Mannie "to support skills that can be added via npx skill commands", the CLI `skills` of vercel-labs. The owner's answers of 2026-11-07: skills are a feature of the core; the skills of this computer, in `~/.agents/skills`, are on until the owner turns one off, and a project's skills, in its `.agents/skills`, are off until the owner turns each on, so a repository or a pull cannot write into the instructions by itself; and the owner adds skills in a terminal with `npx skills add <source> --agent universal`, while Mannie installs nothing. The owner accepts ADR-0061 by approving the plan, with its defaults: only the two `.agents/skills` folders, a digest of a project skill's listed text, "@" for the skills that are on and the project's skills that are off, every built-in agent with skills, a group Skills for custom agents, and no skills on workers. M18 ships in the release after the one that carries M17.                                                                                                                                                                                                                                                                                                              | [ADR-0061](../adr/0061-let-agents-use-the-skills-that-the-owner-installs.md), [Skills](../features/skills.md)                                                                                                                                                                                              |
 
 ## 6. Risk register
 

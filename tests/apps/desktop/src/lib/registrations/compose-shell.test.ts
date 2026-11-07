@@ -181,7 +181,7 @@ describe('composeShell', () => {
       'command_note',
       'task',
     ]);
-    expect(slots.mentionKinds.entries.map((kind) => kind.id)).toEqual(['files', 'plans']);
+    expect(slots.mentionKinds.entries.map((kind) => kind.id)).toEqual(['files', 'plans', 'skills']);
     expect(slots.imageSources.entries).toEqual([]);
     // The core has no context provider of its own, so no kind of context.
     expect(slots.contextKinds.entries).toEqual([]);
@@ -192,6 +192,7 @@ describe('composeShell', () => {
       'window.behavior',
       'tools.settings',
       'child-agents.settings',
+      'skills.settings',
       'plugins.settings',
     ]);
     expect(slots.taskKinds.entries).toEqual([]);

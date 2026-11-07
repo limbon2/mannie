@@ -133,6 +133,7 @@ async fn start_with_adapters(store: mannie_store::Store, base_url: &str) -> Runt
             },
             machine: mannie_runtime::MachineSettings::default(),
             mentions: mannie_runtime::MentionRegistry::new(),
+            skills: None,
         },
         fast_config(),
     )

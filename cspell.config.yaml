@@ -33,6 +33,7 @@ words:
   - clippy
   - cmap
   - cmark
+  - codebuddy
   - COLORTERM
   - conpty
   - Crockford
@@ -59,6 +60,7 @@ words:
   - flate
   - fpid
   - freelist
+  - frontmatter
   - fsmonitor
   - getrandom
   - globset

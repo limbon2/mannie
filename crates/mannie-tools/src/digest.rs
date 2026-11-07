@@ -88,6 +88,20 @@ fn canonical(json: &[u8]) -> Vec<u8> {
     kept
 }
 
+/// The digest of what agents' list shows of a skill: the SHA-256 of its name,
+/// its description and whether agents may see it, in JSON, in hexadecimal. A
+/// project's skill that the owner turned on keeps it, and a skill whose
+/// digest changed reads as off (ADR-0061, decision 5).
+///
+/// # Panics
+///
+/// Never: the values are strings and a boolean, which always serialize.
+pub fn skill_digest(name: &str, description: &str, listed: bool) -> String {
+    let json = serde_json::to_vec(&(name, description, listed))
+        .expect("strings and a boolean always serialize");
+    hexadecimal(&Sha256::digest(json))
+}
+
 /// The revision of a file's bytes: `sha256:` and the hexadecimal digest.
 pub(crate) fn revision(bytes: &[u8]) -> String {
     format!("sha256:{}", hexadecimal(&Sha256::digest(bytes)))

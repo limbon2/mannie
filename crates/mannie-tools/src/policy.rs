@@ -45,6 +45,10 @@ pub struct PolicyInputs<'a> {
     /// them asks, so no grant or setting lets the model change the data that
     /// holds the policy (T-18).
     pub protected: &'a [PathBuf],
+    /// The canonical folders of the skills that are on in the conversation's
+    /// places, inside which reads run without asking (ADR-0061, decision 8).
+    /// Empty on a worker, which offers no skills.
+    pub skill_folders: &'a [PathBuf],
     /// The grants that apply to the conversation.
     pub grants: Grants<'a>,
     /// The command rules.
@@ -103,14 +107,16 @@ pub enum Verdict {
 /// 1. an access inside Mannie's data or log folders asks;
 /// 2. a read inside the workspace is allowed;
 /// 3. a change inside the workspace is allowed when the settings say so;
-/// 4. a grant of the conversation, of its project or for every conversation
+/// 4. a read inside the folder of a skill that is on is allowed (ADR-0061,
+///    decision 8);
+/// 5. a grant of the conversation, of its project or for every conversation
 ///    allows what it covers;
-/// 5. a rule allows a command it matches, a rule of a remote host a command
+/// 6. a rule allows a command it matches, a rule of a remote host a command
 ///    on that host, and a rule of an installed program a run of that
 ///    program with the effects that the rule covers;
-/// 6. a move into a project that the owner's request names is allowed;
-/// 7. a read of a registered database is allowed (ADR-0056, decision 7);
-/// 8. everything else asks.
+/// 7. a move into a project that the owner's request names is allowed;
+/// 8. a read of a registered database is allowed (ADR-0056, decision 7);
+/// 9. everything else asks.
 ///
 /// Commands, here or on a remote host, runs of installed programs and calls
 /// of a tool server's tools are never allowed by the workspace, a command
@@ -327,30 +333,45 @@ fn decide_under_ceiling(
     }
 }
 
+/// What allows an access of a path on the master, or why it asks.
+fn decide_path(
+    path: &str,
+    mode: AccessMode,
+    inputs: &PolicyInputs<'_>,
+) -> Result<Decision, ApprovalReason> {
+    let path = Path::new(path);
+    if is_protected(path, inputs) {
+        return Err(ApprovalReason::MannieFolder);
+    }
+    let in_workspace = inputs
+        .workspace
+        .is_some_and(|workspace| is_inside(path, workspace));
+    if in_workspace && (!mode.changes() || inputs.allow_changes_in_workspace) {
+        return Ok(Decision::Workspace);
+    }
+    // The owner installed or turned on the skill, and only reads pass: a
+    // change in a skill's folder asks as any other change does.
+    let in_skill = inputs
+        .skill_folders
+        .iter()
+        .any(|folder| is_inside(path, folder));
+    if in_skill && !mode.changes() {
+        return Ok(Decision::Skill);
+    }
+    if let Some(decision) = granted(&inputs.grants, |grant| covers_path(grant, path, mode)) {
+        return Ok(decision);
+    }
+    Err(match (inputs.workspace, in_workspace) {
+        (None, _) => ApprovalReason::NoWorkspace,
+        (Some(_), true) => ApprovalReason::ChangeInWorkspace,
+        (Some(_), false) => ApprovalReason::OutsideWorkspace,
+    })
+}
+
 /// What allows one access, or why it asks.
 fn decide_access(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decision, ApprovalReason> {
     match access {
-        Access::Path { path, mode, .. } => {
-            let path = Path::new(path);
-            if is_protected(path, inputs) {
-                return Err(ApprovalReason::MannieFolder);
-            }
-            let in_workspace = inputs
-                .workspace
-                .is_some_and(|workspace| is_inside(path, workspace));
-            if in_workspace && (!mode.changes() || inputs.allow_changes_in_workspace) {
-                return Ok(Decision::Workspace);
-            }
-            if let Some(decision) = granted(&inputs.grants, |grant| covers_path(grant, path, *mode))
-            {
-                return Ok(decision);
-            }
-            Err(match (inputs.workspace, in_workspace) {
-                (None, _) => ApprovalReason::NoWorkspace,
-                (Some(_), true) => ApprovalReason::ChangeInWorkspace,
-                (Some(_), false) => ApprovalReason::OutsideWorkspace,
-            })
-        }
+        Access::Path { path, mode, .. } => decide_path(path, *mode, inputs),
         Access::Command {
             command,
             working_directory,
@@ -694,7 +715,7 @@ fn stronger(current: Decision, source: Decision) -> Decision {
         Decision::AlwaysGrant => 4,
         Decision::ProjectGrant => 3,
         Decision::Grant => 2,
-        Decision::OwnerNamedProject | Decision::RegisteredDatabase => 1,
+        Decision::OwnerNamedProject | Decision::RegisteredDatabase | Decision::Skill => 1,
         _ => 0,
     };
     if rank(source) > rank(current) {
