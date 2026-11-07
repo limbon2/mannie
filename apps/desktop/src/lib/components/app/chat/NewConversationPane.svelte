@@ -51,6 +51,12 @@
   );
 
   const draft: ConversationDraft = {
+    get agentKey() {
+      return conversationDraft.agentKey;
+    },
+    chooseAgent: (agentKey) => {
+      conversationDraft.agentKey = agentKey;
+    },
     attach: (attachment) => {
       conversationDraft.attach(attachment);
     },
@@ -69,7 +75,16 @@
     const attachments = conversationDraft.refs();
     const home = conversationDraft.home;
     const outcome = await call(() =>
-      commands.startConversation({ attachments, home, images, mentions, profileId: null, projectId, text }),
+      commands.startConversation({
+        agentKey: conversationDraft.agentKey,
+        attachments,
+        home,
+        images,
+        mentions,
+        profileId: null,
+        projectId,
+        text,
+      }),
     );
     if (!outcome.ok) {
       return outcome.failure;

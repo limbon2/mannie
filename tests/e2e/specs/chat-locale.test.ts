@@ -285,6 +285,20 @@ describe('the chat and window views in the pseudo-locale', () => {
     }
   });
 
+  it('shows only catalog text on the Agents page', async () => {
+    await $('a[href*="view=agents"]').click();
+    await $('[data-agents-view]').waitForDisplayed();
+    await $('[data-agent-row="explore"]').click();
+    await $('[data-agent-editor]').waitForDisplayed();
+    expect(await uncataloguedText()).toEqual([]);
+    expect(await overflowsHorizontally()).toBe(false);
+    await $('[data-agents-new]').click();
+    await $('[data-agents-template="child"]').click();
+    await $('[data-agent-save]').waitForDisplayed();
+    expect(await uncataloguedText()).toEqual([]);
+    expect(await overflowsHorizontally()).toBe(false);
+  });
+
   it('shows only catalog text on every page of the settings', async () => {
     // A plugin's settings show while the plugin is on; the fixture plugin
     // stands for the plugins, whose own specs check their pages.

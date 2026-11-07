@@ -262,7 +262,12 @@ impl Runtime {
         }
         let profile = self.profile_for(summary.profile_id.as_ref()).await?;
         let turn_id = self.inner.ids.turn();
-        let run = self.new_run(&profile);
+        let run = self.new_run(&profile, summary.agent_key.as_deref());
+        // The end waits for the next reply: an agent that cannot read the
+        // output would pay for a reply that can do nothing with it.
+        if !self.agent_reads_commands(&run.agent) {
+            return Ok(Woke::Held);
+        }
         let numbers: Vec<u32> = ended.iter().map(|command| command.number).collect();
         let changes = vec![
             Change::StartCommandTurn {

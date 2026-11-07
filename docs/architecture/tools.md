@@ -35,6 +35,8 @@ The task tools of child agents are not in the registry. They act on runs rather 
 
 The tool `ask_owner` is not in the registry either. It asks the owner questions on behalf of its run, it has no accesses and no operation, so the policy never sees it, and only the core writes its result, from the owner's checked reply ([ADR-0058](../adr/0058-let-agents-ask-the-owner-questions.md)).
 
+The tool `save_plan` is not in the registry either. It saves a plan in Mannie's database on behalf of its run, it has no accesses and no operation, and its part records it in the same transaction ([ADR-0060](../adr/0060-let-agents-save-plans-that-the-owner-runs.md)).
+
 Every call also carries an activity: a few words in which the model says what the call does, for the owner to read. The runtime adds the argument `activity` to each schema that a model receives and takes it out of the arguments before the tool reads them, so a tool cannot have an argument of that name. The activity is the model's claim, and nothing that authorizes a call reads it ([tool calls](../features/system-tools/tool-calls.md#the-activity-of-a-call)).
 
 ## 3. Operations

@@ -26,6 +26,7 @@ mod calls;
 mod compaction;
 mod context;
 mod conversations;
+mod custom_agents;
 mod executors;
 mod export;
 mod hub;
@@ -34,6 +35,7 @@ mod images;
 mod instructions;
 mod local_servers;
 mod mentions;
+pub mod plans;
 mod plugin_executions;
 mod plugin_tools;
 mod plugins;
@@ -73,10 +75,12 @@ use tokio::sync::{Semaphore, mpsc, watch};
 
 pub use agents::{
     AgentDefinition, AgentRegistry, CONVERSATION, CONVERSATION_AGENT, DuplicateAgent, EXPLORE,
-    EXPLORE_AGENT, GENERAL, GENERAL_AGENT, Requester, SYSTEM_TOOLS,
+    EXPLORE_AGENT, EXPLORE_TOOLS, GENERAL, GENERAL_AGENT, GENERAL_TOOLS, Requester, SYSTEM_TOOLS,
 };
 pub use assigned::{AssignError, AssignedTaskWatch, LeaseError};
 pub use background::CommandOutput;
+use custom_agents::CustomAgents;
+pub use custom_agents::{ORCHESTRATOR_KEY, PLAN_KEY};
 pub use hub::{ConversationSubscription, ListSubscription, SubscriptionLimits};
 pub use instructions::{
     DuplicateSection, InstructionContext, InstructionRegistry, InstructionSection, MachineContext,
@@ -85,6 +89,7 @@ pub use instructions::{
 pub use mentions::{
     DuplicateMentionProvider, FILES, FileMentions, MentionContext, MentionProvider, MentionRegistry,
 };
+pub use plans::PlanMentions;
 pub use profiles::{CredentialVault, VaultError};
 pub use retry::RetryPolicy;
 pub use sqlite_files::{
@@ -245,6 +250,8 @@ struct Inner {
     clock: Arc<dyn Clock>,
     ids: IdGenerator,
     agents: AgentRegistry,
+    /// The owner's agents (ADR-0059).
+    custom_agents: CustomAgents,
     instructions: InstructionRegistry,
     tools: ToolsDeps,
     machine: MachineSettings,
@@ -420,6 +427,7 @@ impl Runtime {
             vault: deps.vault,
             clock: deps.clock,
             agents: deps.agents,
+            custom_agents: CustomAgents::default(),
             instructions: deps.instructions,
             tools: deps.tools,
             machine: deps.machine,
@@ -450,9 +458,11 @@ impl Runtime {
             shutting_down: AtomicBool::new(false),
             random: Mutex::new(random),
         };
-        Ok(Self {
+        let runtime = Self {
             inner: Arc::new(inner),
-        })
+        };
+        runtime.load_custom_agents().await?;
+        Ok(runtime)
     }
 
     /// The providers of the services that the runtime owns, which the plugin

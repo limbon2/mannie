@@ -279,6 +279,10 @@ pub enum RunFailure {
     /// The conversation's provider profile no longer exists.
     #[error("the provider profile no longer exists")]
     ProfileMissing,
+    /// The agent of the run no longer exists, because the owner deleted it
+    /// while the run waited (ADR-0059, decision 12).
+    #[error("the agent no longer exists")]
+    AgentMissing,
     /// No provider profile exists.
     #[error("no provider profile exists")]
     NoProfile,
@@ -321,6 +325,7 @@ impl RunFailure {
             Self::CredentialMissing => "run.credential_missing",
             Self::CredentialStoreUnavailable => "run.credential_store_unavailable",
             Self::ProfileMissing => "run.profile_missing",
+            Self::AgentMissing => "run.agent_missing",
             Self::NoProfile => "run.no_profile",
             Self::ToolsUnsupported => "run.tools_unsupported",
             Self::LeaseRevoked => "run.lease_revoked",

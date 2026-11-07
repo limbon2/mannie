@@ -8,6 +8,7 @@
 //! their names, finds them in a snapshot of the registry, and keeps which
 //! plugin each one came from.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{PoisonError, RwLock};
 
@@ -15,6 +16,8 @@ use mannie_plugin_sdk::contributions::{Contributions, ExtensionPoint};
 use mannie_plugin_sdk::host::{ContributionRefusal, ID_TAKEN};
 use mannie_plugin_sdk::ids::PluginId;
 use mannie_plugin_sdk::points::agents::{AgentSpec, Agents, Requester as SdkRequester};
+use mannie_types::agents::CUSTOM_AGENT_PREFIX;
+use mannie_types::ids::ProfileId;
 
 use crate::Runtime;
 use crate::plugins::Snapshot;
@@ -59,19 +62,36 @@ impl From<Requester> for SdkRequester {
     }
 }
 
-/// A kind of agent.
+/// A kind of agent. The built-in ones are constants, and the owner's are read
+/// from the store (ADR-0059).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentDefinition {
     /// Its unique name, as runs record it.
-    pub name: &'static str,
+    pub name: Cow<'static, str>,
+    /// The built-in agent that plugins see it as, its own name for a built-in
+    /// agent, so a plugin's selectors and sections need no change for a custom
+    /// agent (ADR-0059, decision 3).
+    pub base: &'static str,
     /// Whom it answers to.
     pub requester: Requester,
+    /// Whether it is offered only what reads (ADR-0059, decision 5).
+    pub read_only: bool,
+    /// What other agents read when they choose a child. Empty for none.
+    pub description: Cow<'static, str>,
     /// Its own instruction section, after the base instructions. Empty for
     /// none.
-    pub instructions: &'static str,
+    pub instructions: Cow<'static, str>,
     /// The names of the tools it may use: of those the registry holds, and
     /// the runtime's task tools.
-    pub tools: &'static [&'static str],
+    pub tools: Cow<'static, [&'static str]>,
+    /// The plugins whose tools and sections it gets, or `None` for every
+    /// plugin.
+    pub plugins: Option<Vec<String>>,
+    /// The child agents it may give tasks to, or `None` for every one.
+    pub children: Option<Vec<String>>,
+    /// Its own provider profile, or `None` to use the conversation's or the
+    /// parent's.
+    pub profile: Option<ProfileId>,
     /// The most continuation notes in one turn (docs/architecture/
     /// agent-runtime.md, model quirks and early stops).
     pub max_continuation_notes: u32,
@@ -83,14 +103,30 @@ pub struct AgentDefinition {
     pub max_tasks: u32,
 }
 
+impl AgentDefinition {
+    /// Whether it gets the tools and sections of this plugin (ADR-0059,
+    /// decision 4).
+    pub(crate) fn gets_plugin(&self, plugin: &str) -> bool {
+        self.plugins
+            .as_ref()
+            .is_none_or(|plugins| plugins.iter().any(|name| name == plugin))
+    }
+}
+
 /// A plugin's kind of agent, as the runtime runs it (ADR-0034, decision 6).
 impl From<&AgentSpec> for AgentDefinition {
     fn from(spec: &AgentSpec) -> Self {
         Self {
-            name: spec.name,
+            name: Cow::Borrowed(spec.name),
+            base: spec.name,
             requester: spec.requester.into(),
-            instructions: spec.instructions,
-            tools: spec.tools,
+            read_only: false,
+            description: Cow::Borrowed(""),
+            instructions: Cow::Borrowed(spec.instructions),
+            tools: Cow::Borrowed(spec.tools),
+            plugins: None,
+            children: None,
+            profile: None,
             max_continuation_notes: spec.budgets.continuation_notes,
             max_tool_rounds: spec.budgets.tool_rounds,
             max_tool_calls: spec.budgets.tool_calls,
@@ -155,7 +191,7 @@ const CONVERSATION_TOOLS: [&str; 22] = [
 
 /// The tools of an explore child: the system tools that only read. It has no
 /// `run_command`, since a command can change anything.
-const EXPLORE_TOOLS: [&str; 7] = [
+pub const EXPLORE_TOOLS: [&str; 7] = [
     "system_info",
     "list_directory",
     "file_info",
@@ -168,7 +204,7 @@ const EXPLORE_TOOLS: [&str; 7] = [
 /// The tools of a general child: every system tool but `move_to_project`,
 /// since a child never moves its parent's conversation. Its background
 /// commands end with its task (ADR-0041, decision 9).
-const GENERAL_TOOLS: [&str; 17] = [
+pub const GENERAL_TOOLS: [&str; 17] = [
     "system_info",
     "list_directory",
     "file_info",
@@ -192,10 +228,16 @@ const GENERAL_TOOLS: [&str; 17] = [
 /// task tools, with 100 rounds and 250 calls of tools in one reply (owner
 /// decision of 2026-10-14) and 20 tasks.
 pub const CONVERSATION: AgentDefinition = AgentDefinition {
-    name: CONVERSATION_AGENT,
+    name: Cow::Borrowed(CONVERSATION_AGENT),
+    base: CONVERSATION_AGENT,
     requester: Requester::Owner,
-    instructions: "",
-    tools: &CONVERSATION_TOOLS,
+    read_only: false,
+    description: Cow::Borrowed(""),
+    instructions: Cow::Borrowed(""),
+    tools: Cow::Borrowed(&CONVERSATION_TOOLS),
+    plugins: None,
+    children: None,
+    profile: None,
     max_continuation_notes: 2,
     max_tool_rounds: 100,
     max_tool_calls: 250,
@@ -205,10 +247,16 @@ pub const CONVERSATION: AgentDefinition = AgentDefinition {
 /// The explore child agent: the read-only tools, with 50 rounds and 150 calls
 /// of tools for one task.
 pub const EXPLORE: AgentDefinition = AgentDefinition {
-    name: EXPLORE_AGENT,
+    name: Cow::Borrowed(EXPLORE_AGENT),
+    base: EXPLORE_AGENT,
     requester: Requester::Agent,
-    instructions: texts::EXPLORE_INSTRUCTIONS,
-    tools: &EXPLORE_TOOLS,
+    read_only: true,
+    description: Cow::Borrowed(texts::EXPLORE_DESCRIPTION),
+    instructions: Cow::Borrowed(texts::EXPLORE_INSTRUCTIONS),
+    tools: Cow::Borrowed(&EXPLORE_TOOLS),
+    plugins: None,
+    children: None,
+    profile: None,
     max_continuation_notes: 2,
     max_tool_rounds: 50,
     max_tool_calls: 150,
@@ -218,10 +266,16 @@ pub const EXPLORE: AgentDefinition = AgentDefinition {
 /// The general child agent: every system tool but the move into a project,
 /// with the conversation agent's budgets of tools.
 pub const GENERAL: AgentDefinition = AgentDefinition {
-    name: GENERAL_AGENT,
+    name: Cow::Borrowed(GENERAL_AGENT),
+    base: GENERAL_AGENT,
     requester: Requester::Agent,
-    instructions: texts::GENERAL_INSTRUCTIONS,
-    tools: &GENERAL_TOOLS,
+    read_only: false,
+    description: Cow::Borrowed(texts::GENERAL_DESCRIPTION),
+    instructions: Cow::Borrowed(texts::GENERAL_INSTRUCTIONS),
+    tools: Cow::Borrowed(&GENERAL_TOOLS),
+    plugins: None,
+    children: None,
+    profile: None,
     max_continuation_notes: 2,
     max_tool_rounds: 100,
     max_tool_calls: 250,
@@ -233,7 +287,7 @@ pub const GENERAL: AgentDefinition = AgentDefinition {
 #[error("the agent {name} is already registered")]
 pub struct DuplicateAgent {
     /// The name.
-    pub name: &'static str,
+    pub name: String,
 }
 
 /// The registered agent definitions.
@@ -258,9 +312,9 @@ impl AgentRegistry {
 
     /// Registers a definition. Names are unique.
     pub fn register(&mut self, definition: AgentDefinition) -> Result<(), DuplicateAgent> {
-        if self.get(definition.name).is_some() {
+        if self.get(&definition.name).is_some() {
             return Err(DuplicateAgent {
-                name: definition.name,
+                name: definition.name.into_owned(),
             });
         }
         self.definitions.push(definition);
@@ -272,6 +326,11 @@ impl AgentRegistry {
         self.definitions
             .iter()
             .find(|definition| definition.name == name)
+    }
+
+    /// Every definition, in the order of registration.
+    pub fn definitions(&self) -> impl Iterator<Item = &AgentDefinition> {
+        self.definitions.iter()
     }
 
     /// The definitions that can be given tasks: those of agents that answer
@@ -312,14 +371,17 @@ impl AgentPlugins {
 
 impl Runtime {
     /// Refuses a plugin's agents whose names the core or another plugin has
-    /// (the rule `Global`).
+    /// (the rule `Global`), and those with the prefix of the owner's agents, so
+    /// a plugin that is turned on later cannot take over a stored agent, whose
+    /// tools may have been chosen to be narrow (T-85).
     pub(crate) fn check_agents(
         &self,
         snapshot: &Snapshot,
         contributions: &Contributions,
     ) -> Result<(), ContributionRefusal> {
         for agent in contributions.entries::<Agents>() {
-            let taken = self.inner.agents.get(agent.name).is_some()
+            let taken = agent.name.starts_with(CUSTOM_AGENT_PREFIX)
+                || self.inner.agents.get(agent.name).is_some()
                 || snapshot.find::<Agents>(agent.name).is_some();
             if taken {
                 return Err(ContributionRefusal::new(
@@ -337,30 +399,77 @@ impl Runtime {
         self.agent_in(&self.contributions(), name)
     }
 
-    /// The definition of an agent: the core's or that of a plugin in the
-    /// snapshot.
+    /// The definition of an agent: the core's, that of a plugin in the
+    /// snapshot, or the owner's (ADR-0059, decision 1).
     pub(crate) fn agent_in(&self, snapshot: &Snapshot, name: &str) -> Option<AgentDefinition> {
         if let Some(definition) = self.inner.agents.get(name) {
             return Some(definition.clone());
         }
-        snapshot
-            .find::<Agents>(name)
-            .map(|registered| AgentDefinition::from(&registered.entry))
+        if let Some(registered) = snapshot.find::<Agents>(name) {
+            return Some(AgentDefinition::from(&registered.entry));
+        }
+        self.inner.custom_agents.get(name)
     }
 
-    /// The kinds of child agents that `start_task` can start: the core's
-    /// and those of the plugins in the snapshot.
-    pub(crate) fn child_agent_names(&self, snapshot: &Snapshot) -> Vec<&'static str> {
+    /// The agent that answers to the owner with this key, or `None`.
+    pub(crate) fn conversation_agent(&self, key: &str) -> Option<AgentDefinition> {
+        self.agent(key)
+            .filter(|definition| definition.requester == Requester::Owner)
+    }
+
+    /// The name of the agent of a conversation's replies: the one that it
+    /// names, or the built-in one for none and for a key that no conversation
+    /// agent has, such as a deleted agent's (ADR-0059, decision 6).
+    pub(crate) fn conversation_agent_name(&self, agent_key: Option<&str>) -> String {
+        agent_key
+            .filter(|key| self.conversation_agent(key).is_some())
+            .unwrap_or(CONVERSATION_AGENT)
+            .to_owned()
+    }
+
+    /// Whether an agent of this name can start and read background commands. A
+    /// conversation's commands outlive a switch of agents, so one that cannot
+    /// reads no word of a tool that it lacks, and no end wakes it (ADR-0059,
+    /// decision 13).
+    pub(crate) fn agent_reads_commands(&self, agent: &str) -> bool {
+        self.agent(agent)
+            .is_some_and(|definition| definition.tools.contains(&"start_command"))
+    }
+
+    /// The child agents that a run of this agent may give tasks to: the ones it
+    /// names, and for an agent that only reads, only those that only read.
+    pub(crate) fn roster_of(&self, snapshot: &Snapshot, agent: &AgentDefinition) -> Vec<String> {
+        self.child_agent_names(snapshot)
+            .into_iter()
+            .filter(|name| {
+                agent
+                    .children
+                    .as_ref()
+                    .is_none_or(|children| children.contains(name))
+            })
+            .filter(|name| {
+                !agent.read_only
+                    || self
+                        .agent_in(snapshot, name)
+                        .is_some_and(|definition| definition.read_only)
+            })
+            .collect()
+    }
+
+    /// The kinds of child agents that `start_task` can start: the core's,
+    /// those of the plugins in the snapshot and the owner's.
+    pub(crate) fn child_agent_names(&self, snapshot: &Snapshot) -> Vec<String> {
         let plugin_children = snapshot
             .items::<Agents>()
             .iter()
             .filter(|registered| registered.entry.requester == SdkRequester::Agent)
-            .map(|registered| registered.entry.name);
+            .map(|registered| registered.entry.name.to_owned());
         self.inner
             .agents
             .child_agents()
-            .map(|definition| definition.name)
+            .map(|definition| definition.name.clone().into_owned())
             .chain(plugin_children)
+            .chain(self.inner.custom_agents.child_keys())
             .collect()
     }
 
@@ -373,6 +482,8 @@ impl Runtime {
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
+
     use mannie_plugin_sdk::points::agents::{AgentBudgets, AgentSpec, Requester as SdkRequester};
     use mannie_tools::{PermissionClass, ToolRegistry};
 
@@ -396,10 +507,16 @@ mod tests {
     fn a_registered_definition_is_found_and_names_are_unique() {
         let mut registry = AgentRegistry::with_builtin();
         let fake = AgentDefinition {
-            name: "fake",
+            name: Cow::Borrowed("fake"),
+            base: "fake",
             requester: Requester::Agent,
-            instructions: "Do fake things.",
-            tools: &[],
+            read_only: false,
+            description: Cow::Borrowed(""),
+            instructions: Cow::Borrowed("Do fake things."),
+            tools: Cow::Borrowed(&[]),
+            plugins: None,
+            children: None,
+            profile: None,
             max_continuation_notes: 0,
             max_tool_rounds: 0,
             max_tool_calls: 0,
@@ -412,14 +529,19 @@ mod tests {
         assert_eq!(
             registry
                 .get("fake")
-                .map(|definition| definition.instructions),
+                .map(|definition| definition.instructions.as_ref()),
             Some("Do fake things.")
         );
         assert!(registry.get(CONVERSATION_AGENT).is_some());
-        assert_eq!(duplicate, Err(DuplicateAgent { name: "fake" }));
+        assert_eq!(
+            duplicate,
+            Err(DuplicateAgent {
+                name: "fake".to_owned()
+            })
+        );
         let children: Vec<_> = registry
             .child_agents()
-            .map(|definition| definition.name)
+            .map(|definition| definition.name.as_ref())
             .collect();
         assert_eq!(children, ["explore", "general", "fake"]);
     }
@@ -431,10 +553,16 @@ mod tests {
         assert_eq!(
             definition,
             AgentDefinition {
-                name: "helper",
+                name: Cow::Borrowed("helper"),
+                base: "helper",
                 requester: Requester::Agent,
-                instructions: "Help with it.",
-                tools: &["read_file"],
+                read_only: false,
+                description: Cow::Borrowed(""),
+                instructions: Cow::Borrowed("Help with it."),
+                tools: Cow::Borrowed(&["read_file"]),
+                plugins: None,
+                children: None,
+                profile: None,
                 max_continuation_notes: 1,
                 max_tool_rounds: 2,
                 max_tool_calls: 3,
@@ -454,7 +582,7 @@ mod tests {
     fn an_explore_child_has_only_tools_that_read() {
         let registry = ToolRegistry::with_system_tools();
 
-        for name in EXPLORE.tools {
+        for name in EXPLORE.tools.iter() {
             let tool = registry
                 .get(name)
                 .expect("an explore tool is a system tool");

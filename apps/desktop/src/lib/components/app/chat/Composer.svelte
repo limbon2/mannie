@@ -9,7 +9,7 @@
   import * as Tooltip from '#lib/components/ui/tooltip/index.js';
   import type { ImageRef, MentionPlace, MentionRef } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
-  import { messageBoxes } from '#lib/state/message-boxes.svelte.js';
+  import { messageBoxes, NEW_CONVERSATION_BOX } from '#lib/state/message-boxes.svelte.js';
   import { MessageImages } from '#lib/state/message-images.svelte.js';
   import { type MentionChoice, type MentionOption, MessageMentions } from '#lib/state/message-mentions.svelte.js';
   import { getShellSlots } from '#lib/state/shell-slots.svelte.js';
@@ -125,6 +125,15 @@
       box.setSelectionRange(inserted.caret, inserted.caret);
     }
     return 'added';
+  }
+
+  /** Puts a text and a mention that a view outside the box adds after the owner's own text. */
+  function fillFromOutside(added: string, choice: MentionChoice): void {
+    text = text === '' ? added : `${text} ${added}`;
+    if (box !== null) {
+      box.value = text;
+    }
+    mentionFromOutside(choice);
   }
 
   function choose(choice: MentionChoice): void {
@@ -320,12 +329,12 @@
   };
 
   // The box of a conversation takes mentions from views outside it while it
-  // shows (ADR-0054, decision 4).
+  // shows (ADR-0054, decision 4), and the box of a new conversation takes a
+  // plan to run (ADR-0060, decision 10). `untrack` keeps a box from registering
+  // again as the owner types, because a filled box reads its own text.
   $effect(() => {
-    if (mentionPlace.kind !== 'conversation') {
-      return;
-    }
-    return messageBoxes.register(mentionPlace.conversationId, { mention: mentionFromOutside });
+    const target = mentionPlace.kind === 'conversation' ? mentionPlace.conversationId : NEW_CONVERSATION_BOX;
+    return untrack(() => messageBoxes.register(target, { fill: fillFromOutside, mention: mentionFromOutside }));
   });
 </script>
 

@@ -43,6 +43,7 @@ impl Fixture {
                         project_id: None,
                         task: None,
                         home: None,
+                        agent_key: None,
                     },
                 }],
                 Durability::Full,

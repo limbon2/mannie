@@ -8,12 +8,14 @@
 //! to publish. The reads serve subscribers ([`Store::snapshot`] and
 //! [`Store::events_after`]), the conversation list and the model's context.
 
+mod agents;
 mod apply;
 mod archives;
 mod attachments;
 mod background;
 mod export;
 mod images;
+mod plans;
 mod projects;
 mod reads;
 mod recovery;
@@ -38,9 +40,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::StoreError;
 
+pub use agents::StoredAgent;
 pub use archives::StoredArchive;
 pub use background::{LOCAL_SOURCE, RecoveredCommand, StoredBackgroundCommand};
 pub use images::StoredImage;
+pub use plans::StoredPlan;
 pub use projects::{AddedProject, ConversationList, ProjectDeletion};
 pub use reads::{EventsAfter, KeptRun, ModelImage, ModelPart, ModelTurn, StoredCheckpoint};
 pub use recovery::{Recovered, UncertainCall};
@@ -67,6 +71,9 @@ pub struct NewConversation {
     /// The attachment that it belongs to (ADR-0051), which the batch
     /// attaches too, or `None`.
     pub home: Option<AttachmentRef>,
+    /// The custom agent that answers in it, or `None` for the built-in one
+    /// (ADR-0059, decision 6).
+    pub agent_key: Option<String>,
 }
 
 /// The parent, number and agent of a task conversation
@@ -466,6 +473,22 @@ pub enum Change {
         /// The profile, or `None` for the default.
         profile_id: Option<ProfileId>,
     },
+    /// `save_plan` saved the conversation's plan, which replaces the one it
+    /// held (ADR-0060). In one batch with the end of the call that records it.
+    SavePlan {
+        /// The title, already checked.
+        title: String,
+        /// The text, already checked.
+        body: String,
+    },
+    /// The model read the owner's edit of the conversation's plan, so its next
+    /// save goes through.
+    PlanEditSeen,
+    /// The owner chose another agent, or the built-in one (ADR-0059).
+    SetAgent {
+        /// The custom agent's key, or `None` for the built-in one.
+        agent_key: Option<String>,
+    },
     /// The owner switched the conversation's full access (ADR-0029).
     SetFullAccess {
         /// Whether every operation runs without asking.
@@ -650,6 +673,12 @@ pub enum RuntimeStoreError {
     /// The sequence numbers of the conversation ran out.
     #[error("the conversation has no sequence numbers left")]
     SequenceExhausted,
+    /// An agent with this key exists already.
+    #[error("an agent with this key exists already")]
+    AgentKeyTaken,
+    /// The agent does not exist.
+    #[error("the agent does not exist")]
+    AgentNotFound,
     /// The store failed.
     #[error(transparent)]
     Store(#[from] StoreError),
@@ -673,6 +702,8 @@ impl RuntimeStoreError {
             Self::TooManyAttachments => "runtime_store.too_many_attachments",
             Self::InvalidData { .. } => "runtime_store.invalid_data",
             Self::SequenceExhausted => "runtime_store.sequence_exhausted",
+            Self::AgentKeyTaken => "runtime_store.agent_key_taken",
+            Self::AgentNotFound => "runtime_store.agent_not_found",
             Self::Store(error) => error.code(),
         }
     }
@@ -699,11 +730,13 @@ impl From<rusqlite::Error> for RuntimeStoreError {
 pub(crate) fn statements() -> impl Iterator<Item = &'static str> {
     apply::STATEMENTS
         .iter()
+        .chain(agents::STATEMENTS)
         .chain(archives::STATEMENTS)
         .chain(attachments::STATEMENTS)
         .chain(background::STATEMENTS)
         .chain(export::STATEMENTS)
         .chain(images::STATEMENTS)
+        .chain(plans::STATEMENTS)
         .chain(projects::STATEMENTS)
         .chain(reads::STATEMENTS)
         .chain(recovery::STATEMENTS)

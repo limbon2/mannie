@@ -8,11 +8,12 @@
 //! said when the run started. What the host is stays the same while the
 //! worker runs, so the sections hold it.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use mannie_host_kit::runtime::{
     AgentDefinition, AgentRegistry, GENERAL, InstructionContext, InstructionRegistry,
-    InstructionSection, MachineContext, Requester, ToolEnvironment, checkpoint_section, texts,
+    InstructionSection, MachineContext, ToolEnvironment, checkpoint_section, texts,
 };
 use mannie_link::host::HostFacts;
 use mannie_plugin_sdk::contracts::CeilingMode;
@@ -25,14 +26,11 @@ pub(crate) const WORKER_AGENT: &str = "worker";
 /// budgets of tools. Only the worker registers it, so the agents that
 /// `start_task` offers on the master stay the same.
 pub(crate) const WORKER: AgentDefinition = AgentDefinition {
-    name: WORKER_AGENT,
-    requester: Requester::Agent,
-    instructions: "",
-    tools: GENERAL.tools,
-    max_continuation_notes: 2,
-    max_tool_rounds: 100,
-    max_tool_calls: 250,
-    max_tasks: 0,
+    name: Cow::Borrowed(WORKER_AGENT),
+    base: WORKER_AGENT,
+    description: Cow::Borrowed(""),
+    instructions: Cow::Borrowed(""),
+    ..GENERAL
 };
 
 /// What the sections say about the host, from the configuration and the
@@ -68,7 +66,7 @@ pub(crate) fn instructions(host: &Arc<Host>) -> InstructionRegistry {
             Some(worker_base_instructions(&base.name))
         }),
         InstructionSection::new("agent", 100, |context| {
-            non_empty(context.agent.instructions).map(str::to_owned)
+            non_empty(&context.agent.instructions).map(str::to_owned)
         }),
         InstructionSection::new("tools", 150, |context| {
             context.tools.map(|_tools| {

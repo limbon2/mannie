@@ -88,10 +88,17 @@ pub(crate) enum TaskCall {
 /// The definitions of the task tools, as a model receives them. `agents` are
 /// the child agents that `start_task` can start.
 pub(crate) fn definitions(agents: &[&str]) -> Vec<ToolDefinition> {
+    // The default roster keeps its words, byte for byte, so a run with the
+    // built-in agents sends what it sent before (ADR-0059, decision 11).
+    let description = if is_default_roster(agents) {
+        texts::START_TASK
+    } else {
+        texts::START_TASK_ANY_ROSTER
+    };
     vec![
         ToolDefinition {
             name: START_TASK.to_owned(),
-            description: texts::START_TASK.to_owned(),
+            description: description.to_owned(),
             parameters: with_activity(&start_parameters(agents)),
             strict: true,
         },
@@ -110,12 +117,22 @@ pub(crate) fn definitions(agents: &[&str]) -> Vec<ToolDefinition> {
     ]
 }
 
+/// Whether these are exactly the built-in child agents.
+pub(crate) fn is_default_roster(agents: &[&str]) -> bool {
+    agents == ["explore", "general"]
+}
+
 fn start_parameters(agents: &[&str]) -> Value {
+    let argument = if is_default_roster(agents) {
+        texts::TASK_AGENT_ARGUMENT
+    } else {
+        texts::TASK_AGENT_ARGUMENT_ANY_ROSTER
+    };
     json!({
         "additionalProperties": false,
         "properties": {
             "agent": {
-                "description": texts::TASK_AGENT_ARGUMENT,
+                "description": argument,
                 "enum": agents,
                 "type": "string",
             },

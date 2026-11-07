@@ -22,8 +22,8 @@ use tauri::Wry;
 use tauri_specta::{Builder, ErrorHandlingMode, collect_commands};
 
 use crate::commands::{
-    chat, child_agents, export, interface, links, plugins, projects, providers, startup, tools,
-    window,
+    agents, chat, child_agents, export, interface, links, plans, plugins, projects, providers,
+    startup, tools, window,
 };
 
 /// The first line of every generated file.
@@ -87,6 +87,7 @@ macro_rules! app_commands {
             chat::rename_conversation,
             chat::delete_conversation,
             chat::set_conversation_profile,
+            chat::set_conversation_agent,
             chat::compact_conversation,
             chat::get_checkpoint,
             chat::get_chat_settings,
@@ -139,6 +140,15 @@ macro_rules! app_commands {
             tools::subscribe_command_output,
             child_agents::get_child_agents_settings,
             child_agents::update_child_agents_settings,
+            agents::list_agents,
+            agents::agent_options,
+            agents::create_agent,
+            agents::update_agent,
+            agents::delete_agent,
+            plans::list_plans,
+            plans::get_plan,
+            plans::update_plan,
+            plans::delete_plan,
             plugins::subscribe_plugins,
             plugins::set_plugin_enabled,
             plugins::plugin_work,

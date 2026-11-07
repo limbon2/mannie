@@ -125,6 +125,7 @@ impl RunActor {
                 executor: Some(plan.target),
             }),
             home: None,
+            agent_key: None,
         };
         let given = Given {
             document,

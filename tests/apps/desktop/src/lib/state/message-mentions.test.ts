@@ -587,12 +587,13 @@ describe('mentions from views outside the message box (ADR-0054, decision 4)', (
   it('reach the box of a conversation that shows, the latest one first', () => {
     const added: string[] = [];
     const first = messageBoxes.register('c1', {
+      fill: () => undefined,
       mention: (choice) => {
         added.push(`first ${choice.entry.key}`);
         return 'added';
       },
     });
-    const second = messageBoxes.register('c1', { mention: () => 'full' });
+    const second = messageBoxes.register('c1', { fill: () => undefined, mention: () => 'full' });
 
     expect(messageBoxes.mention('c1', block('1.1'))).toBe('full');
     second();
@@ -601,5 +602,29 @@ describe('mentions from views outside the message box (ADR-0054, decision 4)', (
     expect(messageBoxes.mention('c1', block('1.3'))).toBe('not_shown');
     expect(messageBoxes.mention('c2', block('1.3'))).toBe('not_shown');
     expect(added).toEqual(['first 1.2']);
+  });
+
+  it('take a text with a mention at once, or when their box first shows, and only once', () => {
+    const filled: string[] = [];
+    const box = {
+      fill: (text: string, choice: MentionChoice) => {
+        filled.push(`${text} ${choice.entry.key}`);
+      },
+      mention: () => 'added' as const,
+    };
+
+    messageBoxes.fill('later', 'Carry out this plan.', block('2.1'));
+    expect(filled).toEqual([]);
+
+    const later = messageBoxes.register('later', box);
+    expect(filled).toEqual(['Carry out this plan. 2.1']);
+
+    messageBoxes.fill('later', 'Again.', block('2.2'));
+    expect(filled).toEqual(['Carry out this plan. 2.1', 'Again. 2.2']);
+    later();
+
+    const shownAgain = messageBoxes.register('later', box);
+    expect(filled).toHaveLength(2);
+    shownAgain();
   });
 });

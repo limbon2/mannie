@@ -2,6 +2,7 @@
 //! a run reads once at its start, the context of each call, and the calls
 //! that write checkpoints.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -43,7 +44,7 @@ use crate::plugin_tools::{OfferedPluginTool, offered_tools};
 use crate::plugins::Snapshot;
 use crate::profiles::{VaultError, in_vault};
 use crate::retry::RetryDecision;
-use crate::{Runtime, lock, questions, tasks, texts};
+use crate::{Runtime, lock, plans, questions, tasks, texts};
 
 /// The newest tool results of the latest turn that stay in the context when
 /// older ones are left out to save space.
@@ -70,6 +71,12 @@ fn with_follow_ups_only_with_starts(tools: Vec<Arc<dyn Tool>>) -> Vec<Arc<dyn To
         .into_iter()
         .filter(|tool| !COMMAND_FOLLOW_UPS.contains(&tool.name()))
         .collect()
+}
+
+/// Whether a tool only reads, for a run that is offered only what reads. It
+/// starts no background command, so it reads none either (ADR-0041).
+fn only_reads(tool: &Arc<dyn Tool>) -> bool {
+    tool.class() == PermissionClass::ReadOnly && !COMMAND_FOLLOW_UPS.contains(&tool.name())
 }
 
 /// The most bytes of the machine's instructions that a run of an assigned
@@ -133,8 +140,11 @@ pub(crate) struct Setup {
     /// decision 1). It stays apart from the task tools, whose list says
     /// whether a run gives tasks and makes their calls `task` parts.
     pub(crate) question_definition: Option<ToolDefinition>,
+    /// The definition of `save_plan`, for a run whose agent names it, whose
+    /// profile uses tools and that is not a task itself (ADR-0060, decision 2).
+    pub(crate) plan_definition: Option<ToolDefinition>,
     /// The child agents that `start_task` can start.
-    pub(crate) child_agents: Vec<&'static str>,
+    pub(crate) child_agents: Vec<String>,
     /// For a run of an assigned task, what it works under.
     pub(crate) assigned: Option<AssignedSetup>,
     /// The executors whose tools the run is offered, as they were when the
@@ -231,7 +241,10 @@ impl Setup {
 
     /// Whether the run has tools.
     pub(crate) fn uses_tools(&self) -> bool {
-        !self.tools.is_empty() || self.offers_tasks() || self.offers_questions()
+        !self.tools.is_empty()
+            || self.offers_tasks()
+            || self.offers_questions()
+            || self.offers_plans()
     }
 
     /// Whether the run is offered the task tools.
@@ -242,6 +255,16 @@ impl Setup {
     /// Whether the run is offered `ask_owner`.
     pub(crate) fn offers_questions(&self) -> bool {
         self.question_definition.is_some()
+    }
+
+    /// Whether the run is offered `save_plan`.
+    pub(crate) fn offers_plans(&self) -> bool {
+        self.plan_definition.is_some()
+    }
+
+    /// The child agents that `start_task` can start, as a call reads them.
+    pub(crate) fn child_agent_names(&self) -> Vec<&str> {
+        self.child_agents.iter().map(String::as_str).collect()
     }
 
     /// Whom the run's agent answers to.
@@ -276,6 +299,7 @@ impl Setup {
             .map(|(_tool, definition)| definition.clone())
             .collect();
         definitions.extend(self.question_definition.iter().cloned());
+        definitions.extend(self.plan_definition.iter().cloned());
         definitions.extend(self.task_definitions.iter().cloned());
         definitions
     }
@@ -385,8 +409,10 @@ impl Runtime {
     ) -> Result<Setup, RunFailure> {
         let snapshot = self.contributions();
         let Some(agent) = self.agent_in(&snapshot, agent) else {
-            tracing::error!(agent, "a run names an agent that is not registered");
-            return Err(RunFailure::Internal);
+            // The owner deleted a custom agent after the run was queued, or a
+            // plugin's agent is gone (ADR-0059, decision 12).
+            tracing::warn!(agent, "a run names an agent that is not registered");
+            return Err(RunFailure::AgentMissing);
         };
         let Some(adapter) = self.inner.registry.adapter(profile.interface) else {
             tracing::error!(
@@ -404,15 +430,8 @@ impl Runtime {
         } else {
             (Vec::new(), Vec::new())
         };
-        let tools: Vec<Arc<dyn Tool>> = if profile.use_tools {
-            with_follow_ups_only_with_starts(
-                agent
-                    .tools
-                    .iter()
-                    .filter_map(|name| self.inner.tools.registry.get(name))
-                    .chain(adapters)
-                    .collect(),
-            )
+        let tools = if profile.use_tools {
+            self.tools_of(&agent, adapters)
         } else {
             Vec::new()
         };
@@ -432,13 +451,18 @@ impl Runtime {
         let question_definition =
             (profile.use_tools && !task && agent.tools.contains(&questions::ASK_OWNER))
                 .then(questions::definition);
-        let child_agents = self.child_agent_names(&snapshot);
+        // A task's run saves no plan: only an agent that answers to the owner
+        // has someone to read it.
+        let plan_definition =
+            (profile.use_tools && !task && agent.tools.contains(&plans::SAVE_PLAN))
+                .then(plans::definition);
+        let child_agents = self.roster_of(&snapshot, &agent);
         // A child never gives tasks of its own (T-22), and an agent without a
         // task budget or anyone to give tasks to is not offered the tools.
         let offers_tasks =
             profile.use_tools && !task && agent.max_tasks > 0 && !child_agents.is_empty();
         let mut task_definitions: Vec<ToolDefinition> = if offers_tasks {
-            tasks::definitions(&child_agents)
+            tasks::definitions(&child_agents.iter().map(String::as_str).collect::<Vec<_>>())
                 .into_iter()
                 .filter(|definition| agent.tools.contains(&definition.name.as_str()))
                 .collect()
@@ -446,12 +470,15 @@ impl Runtime {
             Vec::new()
         };
         let mut executors = Vec::new();
-        let mut plugin_sections = plugin_sections(&snapshot);
-        if offers_tasks {
+        let mut plugin_sections = plugin_sections(&snapshot, &agent);
+        // An executor's task runs elsewhere with tools of its own, so an agent
+        // that only reads gives it none.
+        if offers_tasks && !agent.read_only {
             let offered_names: Vec<String> = definitions
                 .iter()
                 .chain(&task_definitions)
                 .chain(&question_definition)
+                .chain(&plan_definition)
                 .map(|definition| definition.name.clone())
                 .collect();
             let offer = Self::executor_offer(&snapshot, offered_names);
@@ -460,6 +487,7 @@ impl Runtime {
             plugin_sections.extend(offer.sections);
         }
         let credential = self.read_credential(profile).await?;
+        let agent = self.with_roster_named(&snapshot, agent, &child_agents, offers_tasks);
         Ok(Setup {
             agent,
             adapter,
@@ -478,12 +506,74 @@ impl Runtime {
             definitions,
             task_definitions,
             question_definition,
+            plan_definition,
             child_agents,
             assigned: None,
             executors,
             plugin_tools,
             plugin_sections,
         })
+    }
+
+    /// The tools that a run of this agent may call, from the registry and the
+    /// plugins' adapters.
+    fn tools_of(
+        &self,
+        agent: &AgentDefinition,
+        adapters: Vec<Arc<dyn Tool>>,
+    ) -> Vec<Arc<dyn Tool>> {
+        let mut tools = with_follow_ups_only_with_starts(
+            agent
+                .tools
+                .iter()
+                .filter_map(|name| self.inner.tools.registry.get(name))
+                .chain(adapters)
+                .collect(),
+        );
+        // For every run, because a stored definition or a plugin's tool can
+        // change after the definition was saved (ADR-0059, decision 5; T-86).
+        if agent.read_only {
+            tools.retain(only_reads);
+        }
+        tools
+    }
+
+    /// The agent, with its roster in its instructions when it gives tasks and
+    /// the roster is not the default one, which the tool's words cover
+    /// (ADR-0059, decision 11). A plugin's agent may have no description.
+    fn with_roster_named(
+        &self,
+        snapshot: &Snapshot,
+        mut agent: AgentDefinition,
+        roster: &[String],
+        offers_tasks: bool,
+    ) -> AgentDefinition {
+        let names: Vec<&str> = roster.iter().map(String::as_str).collect();
+        if !offers_tasks || tasks::is_default_roster(&names) {
+            return agent;
+        }
+        let definitions: Vec<(&str, String)> = names
+            .iter()
+            .map(|name| {
+                let description = self
+                    .agent_in(snapshot, name)
+                    .map(|definition| definition.description.into_owned())
+                    .unwrap_or_default();
+                (*name, description)
+            })
+            .collect();
+        let entries: Vec<(&str, &str)> = definitions
+            .iter()
+            .map(|(name, description)| (*name, description.as_str()))
+            .collect();
+        let roster = texts::roster_section(&entries);
+        let instructions = if agent.instructions.is_empty() {
+            roster
+        } else {
+            format!("{}\n\n{roster}", agent.instructions)
+        };
+        agent.instructions = Cow::Owned(instructions);
+        agent
     }
 
     /// The plugins' tools that join the core's that the agent names, each
@@ -501,7 +591,9 @@ impl Runtime {
             .filter(|name| self.inner.tools.registry.get(name).is_some())
             .count();
         let asks = usize::from(agent.tools.contains(&questions::ASK_OWNER));
-        let others = core + asks + tasks::TASK_TOOLS.len() + snapshot.items::<Executors>().len();
+        let saves = usize::from(agent.tools.contains(&plans::SAVE_PLAN));
+        let others =
+            core + asks + saves + tasks::TASK_TOOLS.len() + snapshot.items::<Executors>().len();
         within_request_room(offered_tools(snapshot, agent, self), others)
             .into_iter()
             .unzip()
@@ -606,14 +698,12 @@ impl Runtime {
         let mode = ceiling.mode.narrowed_by(narrower);
         if mode == CeilingMode::ReadOnly {
             // A read-only task is offered only the tools that read, so the
-            // model rarely meets a refusal (ADR-0028, decision 5). It starts
-            // no background command, so it reads none either (ADR-0041).
+            // model rarely meets a refusal (ADR-0028, decision 5).
             let (tools, definitions): (Vec<_>, Vec<_>) = setup
                 .tools
                 .into_iter()
                 .zip(setup.definitions)
-                .filter(|(tool, _definition)| tool.class() == PermissionClass::ReadOnly)
-                .filter(|(tool, _definition)| !COMMAND_FOLLOW_UPS.contains(&tool.name()))
+                .filter(|(tool, _definition)| only_reads(tool))
                 .unzip();
             setup.tools = tools;
             setup.definitions = definitions;
@@ -1205,7 +1295,9 @@ fn older_results(turns: &[ModelTurn]) -> HashSet<PartId> {
         })
         .filter(|part| {
             part.tool_call.as_ref().is_some_and(|call| {
-                call.status == ToolCallStatus::Completed && !questions::holds_reply(call)
+                call.status == ToolCallStatus::Completed
+                    && !questions::holds_reply(call)
+                    && !plans::holds_plan(call)
             })
         })
         .map(|part| &part.id)

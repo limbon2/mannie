@@ -192,6 +192,10 @@ pub struct StartConversation {
     /// A conversation with a home has no project.
     #[serde(default)]
     pub home: Option<AttachmentRef>,
+    /// The agent that answers in it, or `None` for the built-in one
+    /// (ADR-0059, decision 6).
+    #[serde(default)]
+    pub agent_key: Option<String>,
 }
 
 impl StartConversation {
@@ -206,7 +210,16 @@ impl StartConversation {
             images: Vec::new(),
             attachments: Vec::new(),
             home: None,
+            agent_key: None,
         }
+    }
+
+    /// Sets the agent that answers in the conversation, or `None` for the
+    /// built-in one.
+    #[must_use]
+    pub fn with_agent(mut self, agent_key: Option<String>) -> Self {
+        self.agent_key = agent_key;
+        self
     }
 
     /// Sets the attachment that the conversation belongs to.
@@ -355,6 +368,16 @@ pub struct SetConversationProfile {
     pub conversation_id: ConversationId,
     /// The profile, or `None` for the default profile.
     pub profile_id: Option<ProfileId>,
+}
+
+/// The argument of `set_conversation_agent`.
+#[derive(Debug, Clone, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SetConversationAgent {
+    /// The conversation.
+    pub conversation_id: ConversationId,
+    /// The agent of its next replies, or `None` for the built-in one.
+    pub agent_key: Option<String>,
 }
 
 /// The argument of `get_checkpoint`.
@@ -638,12 +661,16 @@ pub enum ChatError {
     /// The attachment is the conversation's home, which stays attached.
     #[error("the attachment that the conversation belongs to cannot be detached")]
     HomeAttachment,
+    /// No conversation agent has this key (ADR-0059, decision 6).
+    #[error("no conversation agent has this key")]
+    AgentNotFound,
 }
 
 impl ChatError {
     /// The stable code of the error, for logs.
     pub fn code(&self) -> &'static str {
         match self {
+            Self::AgentNotFound => "chat.agent_not_found",
             Self::MessageEmpty => "chat.message_empty",
             Self::MessageTooLong { .. } => "chat.message_too_long",
             Self::TitleEmpty => "chat.title_empty",
@@ -740,6 +767,7 @@ mod tests {
                 images: Vec::new(),
                 attachments: Vec::new(),
                 home: None,
+                agent_key: None,
             }
         );
         assert_eq!(

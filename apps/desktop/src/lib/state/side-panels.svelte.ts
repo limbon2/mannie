@@ -39,6 +39,11 @@ export interface OpenPanelOptions {
   readonly label?: PanelLabel;
   /** The control that opened the panel, where the focus returns when it closes. */
   readonly opener?: HTMLElement | null;
+  /**
+   * Whether the panel's heading takes the focus once it shows; true unless
+   * nothing that the owner did opened the panel.
+   */
+  readonly takesFocus?: boolean;
 }
 
 /** How a panel closes. */
@@ -117,7 +122,7 @@ export class SidePanels {
    */
   async open(kind: string, argument: string, options: OpenPanelOptions = {}): Promise<void> {
     const panel = openPanel(kind, argument);
-    const { label, opener } = options;
+    const { label, opener, takesFocus = true } = options;
     // A panel that named itself keeps its name over the opener's hint.
     const hasHint = label !== undefined;
     const isNamed = this.#labels.has(panel.key);
@@ -127,7 +132,9 @@ export class SidePanels {
     if (opener) {
       this.#openers.set(panel.key, opener);
     }
-    this.focusRequest = panel.key;
+    if (takesFocus) {
+      this.focusRequest = panel.key;
+    }
     await this.#navigate(withPanelOpened(this.state, panel));
   }
 

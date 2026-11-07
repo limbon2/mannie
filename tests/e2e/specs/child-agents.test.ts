@@ -439,10 +439,11 @@ describe('child agents', () => {
     await expect($(`${CONVERSATION_MENU} ${CHILD_AGENTS}`)).toHaveAttribute('aria-label', 'Child agents');
 
     const items = await $$(MENU_ITEMS).map(async (item) => shownText(item));
-    expect(items).toHaveLength(2);
-    expect(items[0]).toContain('Task 1: Watch the first');
-    expect(items[0]).toContain('Stopped');
-    expect(items[1]).toContain('Task 2: Watch the second');
+    expect(items).toHaveLength(3);
+    expect(items[0]).toBe('Show all in a side panel');
+    expect(items[1]).toContain('Task 1: Watch the first');
+    expect(items[1]).toContain('Stopped');
+    expect(items[2]).toContain('Task 2: Watch the second');
     await axeInBothThemes();
 
     await clickWithText(`${MENU_ITEMS} [data-content]`, 'Task 2: Watch the second');

@@ -486,6 +486,14 @@ pub enum ToolOutcome {
     },
     /// The owner chose not to answer the questions of a call of `ask_owner`.
     QuestionDeclined,
+    /// `save_plan` saved the conversation's plan (ADR-0060).
+    PlanSaved {
+        /// The plan's title.
+        title: String,
+    },
+    /// `save_plan` saved nothing, because the owner edited the plan since the
+    /// model last saved it, and the model read the plan as it stands.
+    PlanKept,
     /// A plugin's tool ran (ADR-0034, decision 6). The model reads only its
     /// output; the data and the failure are for the call's card, which the
     /// plugin describes through the slot of tool kinds (ADR-0039).

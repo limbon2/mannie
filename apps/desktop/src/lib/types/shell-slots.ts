@@ -222,10 +222,14 @@ export type ConversationControlPlace = 'menu' | 'message-box' | 'toolbar';
  * sent.
  */
 export interface ConversationDraft {
+  /** The agent of the conversation's replies, or `null` for the built-in one (ADR-0059, decision 6). */
+  readonly agentKey: string | null;
   /** Adds an attachment with the label that its plugin knows, or gives one that the draft holds that label. */
   readonly attach: (attachment: Attachment) => void;
   /** What the conversation starts with attached, in the order the owner attached them. */
   readonly attachments: readonly Attachment[];
+  /** Chooses the agent of the conversation's replies, or `null` for the built-in one. */
+  readonly chooseAgent: (agentKey: string | null) => void;
   /** Removes an attachment; one that the draft does not hold changes nothing. */
   readonly detach: (attachment: AttachmentRef) => void;
   /** The project that the conversation starts in, or `null` for a general conversation. */

@@ -120,15 +120,30 @@ describe('composeShell', () => {
     );
 
     expect(pluginCatalog()).toEqual([]);
-    expect(slots.views.entries.map((view) => view.id)).toEqual(['chat']);
+    expect(slots.views.entries.map((view) => view.id)).toEqual(['chat', 'agents']);
     // Chat is the activity bar's first entry, so its panels name no entry (ADR-0045).
-    expect(slots.navigation.entries.map((entry) => [entry.id, entry.view, entry.order])).toEqual([['chat', 'chat', 0]]);
-    expect(slots.sidebarPanels.entries.map((panel) => panel.id)).toEqual(['chat.projects', 'chat.conversations']);
-    expect(slots.sidePanels.entries.map((kind) => kind.id)).toEqual(['chat.conversation', 'tools.command-output']);
+    expect(slots.navigation.entries.map((entry) => [entry.id, entry.view, entry.order])).toEqual([
+      ['chat', 'chat', 0],
+      ['agents', 'agents', 5],
+    ]);
+    expect(slots.sidebarPanels.entries.map((panel) => panel.id)).toEqual([
+      'chat.projects',
+      'chat.conversations',
+      'agents.agents',
+      'chat.plans',
+    ]);
+    expect(slots.sidePanels.entries.map((kind) => kind.id)).toEqual([
+      'chat.conversation',
+      'tools.command-output',
+      'child-agents.list',
+      'plans.plan',
+    ]);
     expect(slots.conversationControls.entries.map((control) => control.id)).toEqual([
       'tools.full-access',
       'tools.background-commands',
       'child-agents.control',
+      'child-agents.auto-open',
+      'agents.picker',
       'export.conversation',
     ]);
     // Full access sits in the message box, and the rest in the conversation's
@@ -138,6 +153,8 @@ describe('composeShell', () => {
       ['tools.full-access', 'message-box'],
       ['tools.background-commands', 'menu'],
       ['child-agents.control', 'menu'],
+      ['child-agents.auto-open', 'message-box'],
+      ['agents.picker', 'message-box'],
       ['export.conversation', 'menu'],
     ]);
     expect(
@@ -164,7 +181,7 @@ describe('composeShell', () => {
       'command_note',
       'task',
     ]);
-    expect(slots.mentionKinds.entries.map((kind) => kind.id)).toEqual(['files']);
+    expect(slots.mentionKinds.entries.map((kind) => kind.id)).toEqual(['files', 'plans']);
     expect(slots.imageSources.entries).toEqual([]);
     // The core has no context provider of its own, so no kind of context.
     expect(slots.contextKinds.entries).toEqual([]);

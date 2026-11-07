@@ -19,7 +19,7 @@ use super::rows::{
 use super::{
     Applied, Change, DOCUMENT_VERSION, NewArchive, NewCheckpoint, NewContext, NewConversation,
     NewImage, NewMention, NewPart, NewRun, NewTask, NewToolImage, ProviderItem, RuntimeStoreError,
-    TaskEnding, archives, attachments, background, images, tasks, tool_images,
+    TaskEnding, archives, attachments, background, images, plans, tasks, tool_images,
 };
 use crate::writer::TransactError;
 use crate::{Durability, Store};
@@ -28,10 +28,10 @@ const SELECT_CONVERSATION_EXISTS: &str = "SELECT 1 FROM runtime_conversations WH
 const INSERT_CONVERSATION: &str = "INSERT INTO runtime_conversations \
      (id, title, title_source, profile_id, project_id, workspace, parent_conversation_id, \
      task_number, task_agent, task_executor_kind, task_executor_target, task_executor_name, \
-     task_executor_noun, home_provider, home_key, created_at, updated_at) \
+     task_executor_noun, home_provider, home_key, agent_key, created_at, updated_at) \
      VALUES (?1, ?2, 'first_message', ?3, ?5, \
      (SELECT folder FROM runtime_projects WHERE id = ?5), ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, \
-     ?4, ?4)";
+     ?15, ?4, ?4)";
 const SELECT_PROJECT_EXISTS: &str = "SELECT 1 FROM runtime_projects WHERE id = ?1";
 const SELECT_CONVERSATION_PROJECT: &str =
     "SELECT project_id FROM runtime_conversations WHERE id = ?1";
@@ -101,6 +101,7 @@ const UPDATE_CONTEXT: &str = "UPDATE runtime_conversations \
 const RENAME: &str =
     "UPDATE runtime_conversations SET title = ?2, title_source = 'owner' WHERE id = ?1";
 const SET_PROFILE: &str = "UPDATE runtime_conversations SET profile_id = ?2 WHERE id = ?1";
+const SET_AGENT: &str = "UPDATE runtime_conversations SET agent_key = ?2 WHERE id = ?1";
 const SET_FULL_ACCESS: &str = "UPDATE runtime_conversations SET full_access = ?2 WHERE id = ?1";
 const SET_PROJECT: &str = "UPDATE runtime_conversations \
      SET project_id = ?2, workspace = (SELECT folder FROM runtime_projects WHERE id = ?2) \
@@ -216,7 +217,8 @@ pub(super) fn insert_conversation(
             executor.map(|executor| executor.target_name.as_str()),
             executor.map(|executor| executor.noun.as_str()),
             home.map(|home| home.provider.as_str()),
-            home.map(|home| home.key.as_str())
+            home.map(|home| home.key.as_str()),
+            conversation.agent_key.as_deref()
         ])?;
     Ok(())
 }
@@ -347,10 +349,10 @@ impl Batch<'_> {
             Change::AddCheckpoint { checkpoint } => self.add_checkpoint(checkpoint),
             Change::UpdateContext { ledger, usage } => self.update_context(&ledger, usage),
             Change::Rename { title } => self.set_summary_field(RENAME, &title),
-            Change::SetProfile { profile_id } => {
-                let profile = profile_id.as_ref().map(|id| id.as_str().to_owned());
-                self.set_summary_field(SET_PROFILE, &profile)
-            }
+            Change::SetProfile { profile_id } => self.set_profile(profile_id.as_ref()),
+            Change::SetAgent { agent_key } => self.set_summary_field(SET_AGENT, &agent_key),
+            Change::SavePlan { title, body } => self.save_plan(&title, &body),
+            Change::PlanEditSeen => self.plan_edit_seen(),
             Change::SetFullAccess { enabled } => self.set_summary_field(SET_FULL_ACCESS, &enabled),
             Change::SetProject { project_id } => self.set_project(&project_id),
             Change::StartBackgroundCommand {
@@ -534,6 +536,11 @@ impl Batch<'_> {
 
     /// Sets a field of the conversation that its summary shows, with one of
     /// the statements that take the conversation and the value.
+    fn set_profile(&mut self, profile_id: Option<&ProfileId>) -> Result<(), RuntimeStoreError> {
+        let profile = profile_id.map(|id| id.as_str().to_owned());
+        self.set_summary_field(SET_PROFILE, &profile)
+    }
+
     fn set_summary_field(
         &mut self,
         statement: &str,
@@ -635,8 +642,28 @@ impl Batch<'_> {
         self.transaction
             .prepare_cached(SET_PROJECT)?
             .execute(params![self.conversation, project_id.as_str()])?;
+        self.transaction
+            .prepare_cached(plans::MOVE_PLAN)?
+            .execute(params![self.conversation, project_id.as_str()])?;
         self.append(kinds::CONVERSATION_CHANGED, None, &EventBody::empty())?;
         self.summary_changed = true;
+        Ok(())
+    }
+
+    /// Saves the conversation's plan, in the conversation's project. The list
+    /// hears of it, so the UI's list of plans can follow.
+    fn save_plan(&mut self, title: &str, body: &str) -> Result<(), RuntimeStoreError> {
+        self.transaction
+            .prepare_cached(plans::SAVE_PLAN)?
+            .execute(params![self.conversation, title, body, self.now])?;
+        self.summary_changed = true;
+        Ok(())
+    }
+
+    fn plan_edit_seen(&self) -> Result<(), RuntimeStoreError> {
+        self.transaction
+            .prepare_cached(plans::PLAN_EDIT_SEEN)?
+            .execute([self.conversation])?;
         Ok(())
     }
 

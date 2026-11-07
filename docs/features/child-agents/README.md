@@ -21,10 +21,10 @@ The owner wants the conversation agent to split larger work into focused tasks f
 - Background tasks: the parent can let a child work in the background and continue. It reads the report later, and its own reply does not finish while background tasks are still running.
 - Follow-ups: the parent can send a follow-up task to a child whose task ended. The child keeps its context.
 - Reports: before a child reports, it confirms that it has finished, and it writes the report in sections that keep its evidence apart from what it did not check. Only the report enters the parent's context. The parent treats what a report backs with evidence as established, and checks only what its next step depends on.
-- Visibility: each child appears in the parent's reply as a card with its state and what it is doing. "Open conversation" shows the child's whole conversation in a side panel beside the parent's conversation. A submenu of the conversation's menu lists its child agents, says how many work, and opens a child's conversation the same way, and the menu's button counts the working ones ([ADR-0042](../../adr/0042-place-conversation-controls-in-a-menu-and-the-message-box.md)). Several open conversations show as tabs, and they close when the owner opens another conversation.
+- Visibility: each child appears in the parent's reply as a card with its state and what it is doing. "Open conversation" shows the child's whole conversation in a side panel beside the parent's conversation. A submenu of the conversation's menu lists its child agents, says how many work, and opens a child's conversation the same way, and the menu's button counts the working ones ([ADR-0042](../../adr/0042-place-conversation-controls-in-a-menu-and-the-message-box.md)). The submenu also opens a side panel that lists every child under Working and Ended, with its title, state, agent and time, which opens by itself without taking the focus on the first task of a conversation whose agent is a [custom agent](../custom-agents.md). Several open conversations show as tabs, and they close when the owner opens another conversation.
 - Stopping: stopping the parent's reply stops its children, and the owner can also stop a single child from its card or its panel.
 - Limits: children cannot start children of their own, and per-reply budgets limit how many tasks a reply can start.
-- Not included: child agents on workers, agent definitions written by the owner, a provider profile chosen for children, and messages from the owner to a child. Each would be a feature of its own.
+- Not included: child agents on workers and messages from the owner to a child. Each would be a feature of its own. Definitions that the owner writes, with a provider profile of their own, are [custom agents](../custom-agents.md).
 
 ## Fit
 
@@ -42,7 +42,7 @@ None.
 - 2026-10-15: the owner decided:
   - A child's conversation opens in a side panel docked beside the parent's conversation, and side panels become an extension point of the shell that later features use too, as in the Claude app and Codex ([D18](../../roadmap/milestones.md#5-decisions), [ADR-0025](../../adr/0025-add-side-panels-to-the-shell.md)).
   - Open side panels show as tabs, and they belong to the conversation: opening another conversation leaves them behind.
-  - Children use the provider profile of the reply that started them. There is no setting for a profile of children.
+  - Children use the provider profile of the reply that started them. There is no setting for a profile of children. D49 reverses this for [custom child agents](../custom-agents.md), which may name their own; explore and general still follow the parent.
   - After reviewing the interface, a button in the conversation's toolbar lists the conversation's child agents and opens their conversations, through a slot for conversation controls that the shell gets again ([D19](../../roadmap/milestones.md#5-decisions), [ADR-0026](../../adr/0026-add-conversation-controls-back-for-child-agents.md)).
 - 2026-10-15: the defaults below were chosen when building started. Each one waits for the owner's review, and the part documents give the details.
   - The task tools belong to the runtime and write parts of their own kind ([ADR-0024](../../adr/0024-run-child-agent-tasks-in-the-parent-run.md)).

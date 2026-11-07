@@ -58,7 +58,9 @@ A plugin's tool with side effects may return the access `TerminalCommand`, a com
 
 ### 3.2 Agent definitions
 
-An agent definition names an agent's instructions, its tool set (tool names from the registry), its budgets and its default provider profile. It also says who the agent answers to, the owner or another agent, which chooses the wording of its base instructions, its notes and its denials, and how many tasks a reply may give to child agents. Built-in definitions include the conversation agent and the explore and general child agents. A plugin can add definitions while it is on, and a composition root can register its own, as the Workers plugin's service registers the worker agent, which the master never offers to `start_task`. A run names the definition it runs with, and a feature that needs a new kind of agent registers a definition. It does not change the loop.
+An agent definition names an agent's instructions, its tool set (tool names from the registry) and its budgets. It also says who the agent answers to, the owner or another agent, which chooses the wording of its base instructions, its notes and its denials, and how many tasks a reply may give to child agents. Built-in definitions include the conversation agent and the explore and general child agents. A plugin can add definitions while it is on, and a composition root can register its own, as the Workers plugin's service registers the worker agent, which the master never offers to `start_task`. A run names the definition it runs with, and a feature that needs a new kind of agent registers a definition. It does not change the loop.
+
+The owner can also write definitions, which the store keeps under keys that start with `custom.` and which plugins may not take ([ADR-0059](../adr/0059-let-the-owner-define-agents.md)). A custom definition can only narrow what its base has, and it may also name a description, the plugins and child agents it may use, a provider profile, and whether it only reads. Plugins see a custom agent as its base, the built-in agent that it is shaped like, so a plugin's selectors and sections need no change. Each of the owner's conversations names the definition of its replies.
 
 ### 3.3 Provider adapters and quirk profiles
 
@@ -93,6 +95,8 @@ M12 adds the images of a tool call's result, which the stored result names and t
 M13 adds the part `context`: what one context provider gave for an owner's message, its items or its failure code, stored as a part of the message before the reply's first model call, and the run activity `gathering_context` with the providers that it waits for ([ADR-0046](../adr/0046-let-plugins-attach-context-to-conversations.md), decision 3). A conversation's summary names its attachments; a summary of a version before them names none. A conversation may belong to one of its attachments, its home, which its summary names and which leaves it out of the Chat activity's lists ([ADR-0051](../adr/0051-let-a-plugin-keep-conversations-of-its-own.md)).
 
 M16 adds the call status and the run activity `awaiting_answer`, the questions of a call of `ask_owner` in its document and its view, the reason `after_question` for a call that did not run, the outcomes `question_answered` and `question_declined`, and whether a conversation's summary waits for an answer, which a summary that waits for none leaves out ([ADR-0058](../adr/0058-let-agents-ask-the-owner-questions.md), decisions 2 and 6).
+
+M17 adds the run failure `agent_missing`, the task refusals for an agent that vanished and a follow-up outside the roster, a conversation's agent in its summary, which a summary without one leaves out ([ADR-0059](../adr/0059-let-the-owner-define-agents.md), decisions 6, 12 and 15), and the outcome `plan_saved` ([ADR-0060](../adr/0060-let-agents-save-plans-that-the-owner-runs.md), decision 11).
 
 ### 3.6 IPC commands and channels
 

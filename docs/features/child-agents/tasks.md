@@ -18,9 +18,9 @@ The task and report contract of [orchestration](../../architecture/orchestration
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Task ID          | A UUIDv7 that the parent's runtime chooses and stores in the parent's part before the task exists. Creating a task with an existing ID returns that task. |
 | Instruction      | The text that the conversation agent wrote. It becomes the first message of the child's turn.                                                             |
-| Agent definition | `explore` or `general`                                                                                                                                    |
+| Agent definition | `explore`, `general` or a [custom child agent](../custom-agents.md) that the parent's definition may use                                                  |
 | Constraints      | The definition's budgets. Children have no deadline and no narrower policy.                                                                               |
-| Provider profile | The profile of the parent's run                                                                                                                           |
+| Provider profile | The profile of the parent's run, or a custom child's own while it exists and uses tools                                                                   |
 | Continuation     | A follow-up continues the child's conversation, which keeps the child's number                                                                            |
 | Background       | Whether the parent waits for the report in the same step                                                                                                  |
 
@@ -51,11 +51,11 @@ Explore has no `run_command`, because a command has side effects. Every definiti
 
 The task tools belong to the runtime, outside the tool registry ([ADR-0024](../../adr/0024-run-child-agent-tasks-in-the-parent-run.md)). They have no accesses and no operations of their own, since every side effect of a child is an operation of the child's run. The runtime offers them to a run whose definition names them, whose profile uses tools, and which is not a task itself. Their schemas are strict JSON, written by hand, and a test checks them against the types that parse their arguments.
 
-| Tool             | Arguments                                                                                                                    |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `start_task`     | `title` (a few words, at most 80 characters), `agent` (`explore` or `general`), `instruction` (at most 64 KiB), `background` |
-| `follow_up_task` | `task` (the child's number), `instruction`, `background`                                                                     |
-| `wait_for_tasks` | `tasks` (the children's numbers; an empty list waits for every task of the reply whose report is unread)                     |
+| Tool             | Arguments                                                                                                                                                 |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `start_task`     | `title` (a few words, at most 80 characters), `agent` (the run's roster, by default `explore` or `general`), `instruction` (at most 64 KiB), `background` |
+| `follow_up_task` | `task` (the child's number), `instruction`, `background`                                                                                                  |
+| `wait_for_tasks` | `tasks` (the children's numbers; an empty list waits for every task of the reply whose report is unread)                                                  |
 
 Like every tool, the model also names each call in a few words, its activity. The title is cleaned as an activity is: no control characters, no controls of bidirectional text and no invisible characters, with its white space collapsed.
 

@@ -45,7 +45,8 @@ macro_rules! summary_columns {
          c.home_provider, c.home_key, \
          EXISTS (SELECT 1 FROM runtime_runs r WHERE r.conversation_id = c.id \
          AND r.state IN ('queued', 'running') \
-         AND json_extract(r.activity, '$.kind') = 'awaiting_answer')"
+         AND json_extract(r.activity, '$.kind') = 'awaiting_answer'), \
+         c.agent_key"
     };
 }
 pub(crate) use summary_columns;
@@ -511,6 +512,7 @@ pub(crate) struct RawSummary {
     home_provider: Option<String>,
     home_key: Option<String>,
     awaiting_answer: bool,
+    agent_key: Option<String>,
 }
 
 /// Reads the columns of [`summary_columns`].
@@ -538,6 +540,7 @@ pub(crate) fn summary_from_row(row: &Row<'_>) -> rusqlite::Result<RawSummary> {
         home_provider: row.get(19)?,
         home_key: row.get(20)?,
         awaiting_answer: row.get(21)?,
+        agent_key: row.get(22)?,
     })
 }
 
@@ -587,6 +590,7 @@ impl RawSummary {
                 .home_provider
                 .zip(self.home_key)
                 .map(|(provider, key)| AttachmentRef { provider, key }),
+            agent_key: self.agent_key,
             created_at: millis(self.created_at),
             updated_at: millis(self.updated_at),
         })

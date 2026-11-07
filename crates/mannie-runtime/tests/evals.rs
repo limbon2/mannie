@@ -787,6 +787,10 @@ async fn start(
         .await
         .expect("the profile is valid");
     runtime
+        .write_starter_agents()
+        .await
+        .expect("the starters are written");
+    runtime
         .update_tools_settings(UpdateToolsSettings {
             allow_changes_in_workspace: task.allow_changes,
             command_environment: Vec::new(),
@@ -906,7 +910,8 @@ async fn run_task(subject: &Subject, task: &Task, run_number: u32) -> TaskReport
     let started_conversation = runtime
         .start_conversation(
             StartConversation::new(task.prompt.clone())
-                .with_project((!task.general).then_some(project)),
+                .with_project((!task.general).then_some(project))
+                .with_agent(task.agent.map(str::to_owned)),
         )
         .await
         .expect("the conversation starts");

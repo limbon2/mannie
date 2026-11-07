@@ -237,6 +237,24 @@ const RUNTIME: StoreModule = StoreModule {
             description: "add the homes of conversations",
             sql: include_str!("runtime/migrations/0037_add_conversation_homes.sql"),
         },
+        Migration {
+            version: 25,
+            legacy_version: None,
+            description: "create the table of the owner's agents",
+            sql: include_str!("runtime/migrations/0039_create_agents.sql"),
+        },
+        Migration {
+            version: 26,
+            legacy_version: None,
+            description: "add the agents of conversations",
+            sql: include_str!("runtime/migrations/0040_add_conversation_agents.sql"),
+        },
+        Migration {
+            version: 27,
+            legacy_version: None,
+            description: "create the table of plans",
+            sql: include_str!("runtime/migrations/0041_create_plans.sql"),
+        },
     ]),
     confined: false,
 };

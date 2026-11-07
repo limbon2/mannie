@@ -5,6 +5,7 @@
 // call has no result.
 import CirclePlayIcon from '@lucide/svelte/icons/circle-play';
 import CircleStopIcon from '@lucide/svelte/icons/circle-stop';
+import ClipboardListIcon from '@lucide/svelte/icons/clipboard-list';
 import CopyIcon from '@lucide/svelte/icons/copy';
 import FileOutputIcon from '@lucide/svelte/icons/file-output';
 import FilePenIcon from '@lucide/svelte/icons/file-pen';
@@ -56,6 +57,7 @@ type Arguments = Readonly<Record<string, unknown>>;
 
 const ICONS: Readonly<Record<string, Component>> = {
   ask_owner: MessageCircleQuestionMarkIcon,
+  save_plan: ClipboardListIcon,
   copy_path: CopyIcon,
   create_directory: FolderPlusIcon,
   delete_path: Trash2Icon,
@@ -217,6 +219,9 @@ function toolLabel(tool: string): string {
   switch (tool) {
     case 'ask_owner': {
       return m.tools_tool_ask_owner();
+    }
+    case 'save_plan': {
+      return m.tools_tool_save_plan();
     }
     case 'copy_path': {
       return m.tools_tool_copy_path();
@@ -453,6 +458,12 @@ function outcomeSummary(outcome: ToolOutcome): string | null {
     case 'plugin': {
       // SDK 1's plugin tools report no outcome of their own, so the call is named by its tool.
       return null;
+    }
+    case 'plan_kept': {
+      return m.tools_done_plan_kept();
+    }
+    case 'plan_saved': {
+      return m.tools_done_plan_saved({ title: outcome.title });
     }
     case 'question_answered': {
       return m.tools_done_question_answered({ count: outcome.answers.length });

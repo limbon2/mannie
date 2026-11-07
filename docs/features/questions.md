@@ -13,7 +13,7 @@ The owner asked for "a feature of making AI agents ask questions and give option
 
 ## Behavior
 
-- The conversation agent asks through the tool `ask_owner`, with 1 to 4 questions in one call. Each question offers 2 to 6 options with a label and a description, and either one choice or several. The context that the owner needs is the reply's own text before the call.
+- A conversation agent asks through the tool `ask_owner`, with 1 to 4 questions in one call. The built-in one always can, and a [custom one](custom-agents.md) can when the owner gives it the tool. Each question offers 2 to 6 options with a label and a description, and either one choice or several. The context that the owner needs is the reply's own text before the call.
 - The call's row says "Waiting for your answer". Below it, a card titled "The agent asks" shows each question with radio buttons or checkboxes, a choice "Something else" with a text box, and the buttons "Send answer" and "Don't answer". Nothing takes the focus when the card appears, and a status region announces it. The card works fully from the keyboard.
 - The conversation list shows a question icon on the conversation, and on its project while the project is collapsed. The status line says "Waiting for your answer.", and the jump button says "Jump to the question".
 - "Send answer" needs an answer to every question. After it, the card goes, the row stays, and the answers show below the row without opening it. The focus returns to the row if it was in the card. The model reads the answers, and the reply continues.
@@ -63,6 +63,7 @@ None.
 ## Decisions
 
 - 2026-11-06: the owner chose that only the conversation agent asks in this version, and that the card shows in the transcript, where approvals show.
+- 2026-11-07: ADR-0059 lets any agent that answers to the owner ask (D49). Child agents and workers still do not.
 - 2026-11-06: the owner accepted ADR-0058 by approving the plan (D48), with these defaults: a question waits in full access, it has no timeout, a restart cancels it, and questions and options show as plain text.
 
 ## Design

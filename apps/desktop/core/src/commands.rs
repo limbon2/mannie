@@ -4,11 +4,13 @@
 //! are not here: they reach the host's dispatch through `plugin_ipc`
 //! (ADR-0034, decision 8).
 
+pub(crate) mod agents;
 pub(crate) mod chat;
 pub(crate) mod child_agents;
 pub(crate) mod export;
 pub(crate) mod interface;
 pub(crate) mod links;
+pub(crate) mod plans;
 pub(crate) mod plugins;
 pub(crate) mod projects;
 pub(crate) mod providers;

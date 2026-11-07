@@ -103,6 +103,12 @@ pub enum TaskRefusal {
     BudgetUsed,
     /// Mannie ended after the call was stored and before its task was.
     NotStarted,
+    /// The owner deleted the child's kind of agent (ADR-0059, decision 12).
+    AgentGone,
+    /// The run may not give tasks to the child's kind of agent, because the
+    /// conversation holds a child from before it switched agents (ADR-0059,
+    /// decision 5).
+    NotOffered,
     /// The worker that a delegation named is not connected
     /// (plugins/workers/docs/delegation.md).
     WorkerOffline {

@@ -15,6 +15,7 @@ use sha2::{Digest, Sha256};
 use crate::agents::Requester;
 use crate::budget::{estimate_image, estimate_message, estimate_text};
 use crate::context::{part_result, with_unsent_images};
+use crate::plans::holds_saved_plan;
 use crate::questions::compaction_lines;
 use crate::{tasks, texts};
 
@@ -181,6 +182,14 @@ fn call_result(part: &ModelPart, requester: Requester) -> Option<String> {
 /// The covered turns as the summary call reads them: the owner's lines and
 /// the assistant's, in order. Reasoning stays out; it was the model's own.
 pub(crate) fn render_turns(turns: &[ModelTurn], requester: Requester) -> Vec<String> {
+    // The model edits a plan from its newest text, so that call stays whole, as
+    // an answer does (ADR-0060, decision 9).
+    let newest_plan = turns
+        .iter()
+        .rev()
+        .flat_map(|turn| turn.parts.iter().rev())
+        .find(|part| part.tool_call.as_ref().is_some_and(holds_saved_plan))
+        .map(|part| part.id.clone());
     turns
         .iter()
         .map(|turn| {
@@ -204,7 +213,12 @@ pub(crate) fn render_turns(turns: &[ModelTurn], requester: Requester) -> Vec<Str
                             } else {
                                 texts::compaction_tool_call
                             };
-                            lines.push(render(&call.tool, &cut(&part.text), &cut(&result)));
+                            let arguments = if newest_plan.as_ref() == Some(&part.id) {
+                                part.text.clone()
+                            } else {
+                                cut(&part.text)
+                            };
+                            lines.push(render(&call.tool, &arguments, &cut(&result)));
                         }
                         continue;
                     }
