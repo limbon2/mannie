@@ -20,8 +20,8 @@ use mannie_plugin_sdk::plugin::PluginEntry;
 use mannie_plugins::{PluginHost, PluginHostDeps, PluginList};
 use mannie_provider::{HttpClient, ProviderRegistry};
 use mannie_runtime::{
-    AgentRegistry, FileMentions, InstructionRegistry, MachineSettings, MentionRegistry, Runtime,
-    RuntimeConfig, RuntimeDeps, ToolsDeps,
+    AgentRegistry, FileMentions, InstructionRegistry, MachineSettings, MentionRegistry,
+    PlanMentions, Runtime, RuntimeConfig, RuntimeDeps, ToolsDeps,
 };
 use mannie_store::{Store, StoreError, StoreOptions};
 use mannie_tools::{MutationLock, SystemFacts, ToolRegistry};
@@ -374,7 +374,7 @@ fn start_runtime(
         instructions: InstructionRegistry::with_builtin(),
         tools: tools(app),
         machine: MachineSettings::default(),
-        mentions: mentions(),
+        mentions: mentions(&store),
     };
     let runtime = tauri::async_runtime::block_on(Runtime::start(deps, RuntimeConfig::default()))
         .map_err(|error| {
@@ -383,6 +383,14 @@ fn start_runtime(
                 path: store.path().display().to_string(),
             }
         })?;
+    // A failure leaves the app working without the starters, and the next start
+    // tries again (ADR-0059, decision 14).
+    if let Err(error) = tauri::async_runtime::block_on(runtime.write_starter_agents()) {
+        tracing::warn!(
+            error.code = error.code(),
+            "could not write the starter agents"
+        );
+    }
     // Each plugin gets the services that its manifest declares and no other,
     // which these providers bind to it (ADR-0034, decision 5): the
     // runtime's executor host and credentials, the store's modules, the
@@ -419,13 +427,16 @@ fn start_runtime(
     })
 }
 
-/// The core's mention providers (ADR-0032, decision 9): the files and folders
-/// of a conversation's project.
-fn mentions() -> MentionRegistry {
+/// The core's mention providers: the files and folders of a conversation's
+/// project (ADR-0032, decision 9), and the owner's plans (ADR-0060, decision 6).
+fn mentions(store: &Store) -> MentionRegistry {
     let mut mentions = MentionRegistry::new();
-    // The registry starts empty, so the ID is free.
+    // The registry starts empty and the IDs differ, so each ID is free.
     if let Err(error) = mentions.register(Arc::new(FileMentions::new())) {
         tracing::error!(%error, "could not register the mentions of files");
+    }
+    if let Err(error) = mentions.register(Arc::new(PlanMentions::new(store.clone()))) {
+        tracing::error!(%error, "could not register the mentions of plans");
     }
     mentions
 }

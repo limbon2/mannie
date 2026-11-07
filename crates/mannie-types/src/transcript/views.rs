@@ -93,6 +93,11 @@ pub struct ConversationSummary {
     /// the field out, so the documents of the Workers link stay as they were.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<AttachmentRef>,
+    /// The custom agent that answers in it, or `None` for the built-in one
+    /// (ADR-0059, decision 6). A summary without one leaves the field out, so
+    /// the documents of the Workers link stay as they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_key: Option<String>,
     /// When it was created.
     pub created_at: UtcMillis,
     /// When it last changed. The list shows the most recent first.

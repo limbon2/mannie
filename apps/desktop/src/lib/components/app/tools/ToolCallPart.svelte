@@ -3,6 +3,7 @@
   import LoaderCircleIcon from '@lucide/svelte/icons/loader-circle';
   import { untrack } from 'svelte';
 
+  import PlanCard from '#lib/components/app/plans/PlanCard.svelte';
   import PluginsSettingsLink from '#lib/components/app/plugins/PluginsSettingsLink.svelte';
   import { Button } from '#lib/components/ui/button/index.js';
   import * as Collapsible from '#lib/components/ui/collapsible/index.js';
@@ -85,6 +86,11 @@
   const answers = $derived.by(() => {
     const outcome = call?.result?.outcome;
     return outcome?.kind === 'question_answered' ? outcome.answers : null;
+  });
+  /** The title of the plan that the call saved, if it saved one. */
+  const savedPlan = $derived.by(() => {
+    const outcome = call?.result?.outcome;
+    return outcome?.kind === 'plan_saved' ? outcome.title : null;
   });
   const decisionFailure = $derived(toolsActions.decisionFailures[part.id] ?? null);
   const explanation = $derived(call === null ? null : explain(call));
@@ -228,6 +234,9 @@
       <QuestionCard {conversationId} partId={part.id} {questions} returnFocus={returnFocusToRow} />
     {:else if answers !== null}
       <QuestionAnswers {answers} {questions} />
+    {/if}
+    {#if savedPlan !== null}
+      <PlanCard {conversationId} title={savedPlan} />
     {/if}
   </div>
   <!-- Announces a request when the call starts to wait for the owner. -->

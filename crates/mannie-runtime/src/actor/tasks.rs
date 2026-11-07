@@ -18,7 +18,7 @@ use mannie_store::{
     TaskEnding, TaskOrigin,
 };
 use mannie_types::clock::UtcMillis;
-use mannie_types::ids::{ConversationId, PartId, RunId, TaskId, TurnId};
+use mannie_types::ids::{ConversationId, PartId, ProfileId, RunId, TaskId, TurnId};
 use mannie_types::run::{FinishReason, RunActivity, RunFailure, TaskKindCount};
 use mannie_types::tasks::{
     AwaitedTask, INSTRUCTION_PREVIEW_CHARS, MAX_REPORT_VIEW_BYTES, TaskDocument, TaskPartDocument,
@@ -40,6 +40,12 @@ use crate::{Runtime, lock, texts};
 
 /// The least bytes of the result limit that each report of a wait gets.
 const MIN_REPORT_BYTES: usize = 2_048;
+
+/// The provider profile that a child's task runs with.
+struct ChildProfile {
+    id: ProfileId,
+    binding: String,
+}
 
 /// A task that the run gave, while its part is open.
 #[derive(Debug)]
@@ -678,7 +684,7 @@ impl RunActor {
             return Box::pin(self.give_task(setup, call, executor)).await;
         }
         let arguments = call.arguments.clone().unwrap_or_default();
-        let parsed = match parse_call(&call.document.tool, &arguments, &setup.child_agents) {
+        let parsed = match parse_call(&call.document.tool, &arguments, &setup.child_agent_names()) {
             Ok(parsed) => parsed,
             Err(detail) => {
                 let detail = detail.chars().take(MAX_DETAIL_CHARS).collect();
@@ -722,6 +728,12 @@ impl RunActor {
         let Some(call) = self.unless_plugin_off(call, &agent) else {
             return Ok(());
         };
+        // The roster was read when the run started, and the owner may have
+        // deleted the agent since.
+        if self.runtime.agent(&agent).is_none() {
+            self.refuse_task(call, TaskRefusal::AgentGone);
+            return Ok(());
+        }
         if self.task_budget_used(setup) {
             self.refuse_task(call, TaskRefusal::BudgetUsed);
             return Ok(());
@@ -795,6 +807,14 @@ impl RunActor {
             return Ok(());
         };
         if child.executor.is_some() {
+            // A conversation that switched agents still holds the tasks of its
+            // earlier replies, and an executor's task runs elsewhere with tools
+            // of its own, so an agent that only reads does not continue one
+            // (T-86).
+            if setup.agent.read_only {
+                self.refuse_task(call, TaskRefusal::NotOffered);
+                return Ok(());
+            }
             // The follow-up's future is large, so it waits on the heap.
             return Box::pin(self.follow_up_on_executor(call, child, instruction, background))
                 .await;
@@ -802,6 +822,16 @@ impl RunActor {
         let Some(call) = self.unless_plugin_off(call, &child.agent) else {
             return Ok(());
         };
+        if self.runtime.agent(&child.agent).is_none() {
+            self.refuse_task(call, TaskRefusal::AgentGone);
+            return Ok(());
+        }
+        // Also when this run is offered less than the reply that started the
+        // child (ADR-0059, decision 5).
+        if !setup.child_agents.contains(&child.agent) {
+            self.refuse_task(call, TaskRefusal::NotOffered);
+            return Ok(());
+        }
         let running = child
             .latest
             .as_ref()
@@ -849,6 +879,8 @@ impl RunActor {
         instruction: String,
         origin: Option<TaskOrigin>,
     ) -> Result<(), Ending> {
+        // Before the part is stored, so a task that is stored has its profile.
+        let child_profile = self.child_profile(setup, &document.agent).await;
         self.tasks.assigned += 1;
         call.document.status = ToolCallStatus::Running;
         call.document.started_at = Some(self.now());
@@ -857,8 +889,13 @@ impl RunActor {
         call.task = Some(section);
         self.pending.push(call.update(Vec::new()));
         self.flush(Durability::Full).await?;
-        let (changes, turn, run) =
-            self.child_batch(setup, &document, &call.part_id, instruction, origin);
+        let (changes, turn, run) = self.child_batch(
+            &child_profile,
+            &document,
+            &call.part_id,
+            instruction,
+            origin,
+        );
         let stored = self
             .runtime
             .inner
@@ -890,17 +927,41 @@ impl RunActor {
                 return Err(Ending::Failed(RunFailure::Internal));
             }
         }
-        self.start_child(call, document, turn, run);
+        self.start_child(call, document, turn, run, child_profile.id);
         self.flush(Durability::Full).await
+    }
+
+    /// The profile of a child's task: a custom child's own while it exists and
+    /// uses tools, because a child without tools reports without evidence, and
+    /// otherwise the parent's (ADR-0059, decision 7).
+    async fn child_profile(&self, setup: &Setup, agent: &str) -> ChildProfile {
+        let parent = ChildProfile {
+            id: self.profile.clone(),
+            binding: setup.binding.clone(),
+        };
+        let Some(own) = self.runtime.agent(agent).and_then(|agent| agent.profile) else {
+            return parent;
+        };
+        match self.runtime.inner.store.profile(&own).await {
+            Ok(Some(profile)) if profile.use_tools => ChildProfile {
+                binding: profile.binding(),
+                id: profile.id,
+            },
+            Ok(_) => parent,
+            Err(error) => {
+                tracing::warn!(%error, error.code = error.code(), agent, "could not read a child's profile; using the parent's");
+                parent
+            }
+        }
     }
 
     /// The batch that stores a child's task in the child's conversation: the
     /// conversation, when it is new, and the turn with the instruction, the
-    /// child's queued run, with the parent's profile, and the task. Returns
+    /// child's queued run, with the child's profile, and the task. Returns
     /// the turn and the run too.
     fn child_batch(
         &self,
-        setup: &Setup,
+        profile: &ChildProfile,
         document: &TaskDocument,
         part_id: &PartId,
         instruction: String,
@@ -915,10 +976,11 @@ impl RunActor {
                 conversation: NewConversation {
                     id: document.conversation_id.clone(),
                     title: document.title.clone(),
-                    profile_id: Some(self.profile.clone()),
+                    profile_id: Some(profile.id.clone()),
                     project_id: None,
                     task: Some(origin),
                     home: None,
+                    agent_key: None,
                 },
             });
         }
@@ -931,8 +993,8 @@ impl RunActor {
             run: NewRun {
                 id: run.clone(),
                 agent: document.agent.clone(),
-                profile_id: self.profile.clone(),
-                binding: setup.binding.clone(),
+                profile_id: profile.id.clone(),
+                binding: profile.binding.clone(),
             },
             task: Some(NewTask {
                 id: document.task_id.clone(),
@@ -953,6 +1015,7 @@ impl RunActor {
         document: TaskDocument,
         turn: TurnId,
         run: RunId,
+        profile: ProfileId,
     ) {
         let guard = ChildGuard::new(
             TaskSink::Board(Arc::clone(&self.tasks.board)),
@@ -963,7 +1026,7 @@ impl RunActor {
             document.conversation_id.clone(),
             turn,
             run,
-            self.profile.clone(),
+            profile,
             document.agent.clone(),
             Some(ChildLink {
                 parent: Some(self.conversation.clone()),

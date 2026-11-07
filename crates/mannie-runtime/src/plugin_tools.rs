@@ -69,8 +69,9 @@ use mannie_types::tools::{
 use url::Url;
 
 use crate::Runtime;
-use crate::agents::{AgentDefinition, EXPLORE_AGENT, Requester};
+use crate::agents::{AgentDefinition, Requester};
 use crate::attachments;
+use crate::plans::SAVE_PLAN;
 use crate::plugins::Snapshot;
 use crate::questions::ASK_OWNER;
 use crate::sqlite_files::{
@@ -172,7 +173,7 @@ pub(crate) fn offered_tools(
 ) -> Vec<(OfferedPluginTool, Arc<dyn Tool>)> {
     let mut offered = Vec::new();
     for registered in snapshot.items::<Tools>() {
-        if offers(&registered.entry, agent) {
+        if agent.gets_plugin(registered.plugin.as_str()) && offers(&registered.entry, agent) {
             offered.push(adapted(
                 registered.plugin.as_str(),
                 registered.feature.as_ref().map(FeatureId::as_str),
@@ -191,7 +192,7 @@ pub(crate) fn offered_tools(
             if fixed.contains(name) || !seen.insert(name) {
                 continue;
             }
-            if offers(tool, agent) {
+            if agent.gets_plugin(set.plugin.as_str()) && offers(tool, agent) {
                 offered.push(adapted(
                     set.plugin.as_str(),
                     set.feature.as_ref().map(FeatureId::as_str),
@@ -243,7 +244,7 @@ fn fixed_names(registry: &ToolRegistry, snapshot: &Snapshot) -> HashSet<String> 
     let core = registry.tools().iter().map(|tool| tool.name().to_owned());
     let tasks = TASK_TOOLS
         .iter()
-        .chain([&ASK_OWNER])
+        .chain([&ASK_OWNER, &SAVE_PLAN])
         .map(|name| (*name).to_owned());
     let executors = snapshot
         .items::<Executors>()
@@ -313,12 +314,11 @@ pub(crate) fn kept_published(
 }
 
 /// Whether a plugin's tool is offered to the runs of `agent`: its selector
-/// names the agent, and a tool with side effects never reaches the explore
-/// agent, which only reads, whatever the selector says.
+/// names the agent, and a tool with side effects never reaches an agent that
+/// only reads, whatever the selector says.
 fn offers(entry: &PluginTool, agent: &AgentDefinition) -> bool {
-    let reads_only = agent.name == EXPLORE_AGENT;
     let acts = entry.effect == ToolEffect::SideEffects;
-    offered_to(&entry.offered_to, agent) && !(reads_only && acts)
+    offered_to(&entry.offered_to, agent) && !(agent.read_only && acts)
 }
 
 /// Whether a tool's selector offers it to the runs of `agent`.
@@ -327,7 +327,8 @@ pub(crate) fn offered_to(selector: &AgentSelector, agent: &AgentDefinition) -> b
         AgentSelector::Conversations => agent.requester == Requester::Owner,
         AgentSelector::ChildAgents => agent.requester == Requester::Agent,
         AgentSelector::Every => true,
-        AgentSelector::Agents(names) => names.iter().any(|name| name == agent.name),
+        // A custom agent is offered what its base is (ADR-0059, decision 3).
+        AgentSelector::Agents(names) => names.iter().any(|name| name == agent.base),
     }
 }
 
@@ -401,6 +402,7 @@ pub(crate) fn check_plugin_tools<'a>(
         let taken = registry.get(name).is_some()
             || TASK_TOOLS.contains(&name)
             || name == ASK_OWNER
+            || name == SAVE_PLAN
             || plugin_tools.contains(&name)
             || executor_tools.contains(&name)
             || names.contains(&name);
@@ -1749,6 +1751,8 @@ mod tests {
         is_valid_marker, kept_archives, kept_code, offered_to, offering_is_owned, offers,
         reached_keys, refused, sdk_accesses, within_limit,
     };
+    use std::borrow::Cow;
+
     use crate::agents::{AgentDefinition, CONVERSATION, EXPLORE, GENERAL};
     use crate::texts;
 
@@ -2245,7 +2249,7 @@ mod tests {
             [CONVERSATION, EXPLORE, GENERAL]
                 .iter()
                 .filter(|agent| offers(entry, agent))
-                .map(|agent| agent.name)
+                .map(|agent| agent.base)
                 .collect()
         };
 
@@ -2612,7 +2616,8 @@ mod tests {
 
     /// A plugin's child agent, which the core does not know.
     const REVIEWER: AgentDefinition = AgentDefinition {
-        name: "reviewer",
+        name: Cow::Borrowed("reviewer"),
+        base: "reviewer",
         ..EXPLORE
     };
 
@@ -2623,7 +2628,7 @@ mod tests {
             agents
                 .iter()
                 .filter(|agent| offered_to(&selector, agent))
-                .map(|agent| agent.name)
+                .map(|agent| agent.base)
                 .collect()
         };
 

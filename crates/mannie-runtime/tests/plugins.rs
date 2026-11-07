@@ -57,7 +57,7 @@ use mannie_runtime::testing::{
     FAKE_EXECUTOR_KIND, FAKE_EXECUTOR_SECTION, FAKE_EXECUTOR_TOOL, FakeExecutor, Harness,
     HarnessOptions, add_plugin, remove_plugin, reply, tool_calls,
 };
-use mannie_runtime::{GENERAL, texts};
+use mannie_runtime::{GENERAL, GENERAL_TOOLS, texts};
 use mannie_tools::{MIN_RESULT_LIMIT_BYTES, RESULT_LIMIT_BYTES, result_limit};
 use mannie_types::chat::{ChatError, StartConversation};
 use mannie_types::context::{AttachmentRef, ChangeAttachment};
@@ -290,8 +290,8 @@ const fn like_general(name: &'static str) -> AgentSpec {
     AgentSpec::new(
         name,
         Requester::Agent,
-        GENERAL.instructions,
-        GENERAL.tools,
+        texts::GENERAL_INSTRUCTIONS,
+        &GENERAL_TOOLS,
         AgentBudgets::new(
             GENERAL.max_continuation_notes,
             GENERAL.max_tool_rounds,

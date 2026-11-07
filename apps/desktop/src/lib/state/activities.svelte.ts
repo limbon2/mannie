@@ -142,6 +142,17 @@ export class Activities {
     await this.#navigate(viewSearch(view, parameters), options);
   }
 
+  /**
+   * Selects a view's entry without navigating, as when the owner stays on a page
+   * after a navigation that selected another entry was stopped.
+   */
+  selectView(view: string): void {
+    const entry = this.entries.find((candidate) => candidate.view === view);
+    if (entry !== undefined) {
+      this.#choose(entry.id);
+    }
+  }
+
   /** Whether a sidebar panel that names `activity`, or none, belongs to the entry. */
   owns(entry: NavigationEntry, activity: string | undefined): boolean {
     const owner = activity ?? this.first?.id;

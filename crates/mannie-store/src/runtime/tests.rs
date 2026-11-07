@@ -126,6 +126,7 @@ impl Fixture {
                             project_id: None,
                             task: None,
                             home: None,
+                            agent_key: None,
                         },
                     },
                     Change::StartTurn {
@@ -163,6 +164,7 @@ impl Fixture {
                     project_id: Some(project.clone()),
                     task: None,
                     home: None,
+                    agent_key: None,
                 },
             }],
         )
@@ -397,6 +399,7 @@ async fn start_with_images(fixture: &Fixture, images: Vec<NewImage>) -> (Convers
                         project_id: None,
                         task: None,
                         home: None,
+                        agent_key: None,
                     },
                 },
                 Change::StartTurn {
@@ -588,6 +591,7 @@ async fn a_turn_keeps_its_mentions_after_the_owner_s_text() {
                         project_id: None,
                         task: None,
                         home: None,
+                        agent_key: None,
                     },
                 },
                 Change::StartTurn {
@@ -2095,6 +2099,7 @@ async fn a_conversation_in_a_project_works_in_its_folder_and_shows_a_waiting_app
                         project_id: Some(project.clone()),
                         task: None,
                         home: None,
+                        agent_key: None,
                     },
                 },
                 Change::StartTurn {
@@ -2216,6 +2221,7 @@ async fn a_conversation_with_a_home_keeps_it_and_never_joins_a_project() {
         project_id,
         task: None,
         home: Some(home.clone()),
+        agent_key: None,
     };
     let conversation = fixture.conversation_id();
     let in_project = fixture.conversation_id();
@@ -2275,6 +2281,7 @@ async fn a_conversation_cannot_start_in_a_project_that_does_not_exist() {
                     project_id: Some(ProjectId::parse(&fixture.uuid()).unwrap()),
                     task: None,
                     home: None,
+                    agent_key: None,
                 },
             }],
             Durability::Full,
@@ -2663,6 +2670,8 @@ async fn a_deleted_conversation_leaves_no_archive_or_grant_behind() {
     assert!(!fixture.files_contain(granted), "the grant is gone");
 }
 
+/// The tests of custom agents and plans (ADR-0059, ADR-0060).
+mod agents_and_plans;
 /// The tests of background commands (ADR-0041).
 mod background_commands;
 mod executor_tasks;

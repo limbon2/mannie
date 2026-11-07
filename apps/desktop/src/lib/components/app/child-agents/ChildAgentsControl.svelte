@@ -8,7 +8,7 @@
   import { sidePanels } from '#lib/state/side-panels.svelte.js';
   import type { ConversationControlProps } from '#lib/types/shell-slots.js';
   import { CONVERSATION_PANEL } from '#lib/utils/chat-urls.js';
-  import { taskStateLabel } from '#lib/utils/child-agents-messages.js';
+  import { CHILD_AGENTS_PANEL, taskStateLabel } from '#lib/utils/child-agents-messages.js';
   import { childAgentsOf, isTaskActive } from '#lib/utils/task-parts.js';
 
   // The child agents' submenu in the conversation's menu (ADR-0026,
@@ -23,7 +23,7 @@
     readonly tasks: readonly TaskView[];
   }
 
-  let { opener, turns }: ConversationControlProps = $props();
+  let { conversation, opener, turns }: ConversationControlProps = $props();
 
   const numbers = new Intl.NumberFormat();
 
@@ -63,6 +63,13 @@
       {/if}
     </DropdownMenu.SubTrigger>
     <DropdownMenu.SubContent class="w-80">
+      <DropdownMenu.Item
+        data-child-agents-panel-open=""
+        onSelect={() => void sidePanels.open(CHILD_AGENTS_PANEL, conversation.id, { opener })}
+      >
+        {m.child_agents_panel_show()}
+      </DropdownMenu.Item>
+      <DropdownMenu.Separator />
       {#each groups as group, index (group.id)}
         {#if index > 0}
           <DropdownMenu.Separator />

@@ -143,6 +143,7 @@ impl Fixture {
                                 executor: None,
                             }),
                             home: None,
+                            agent_key: None,
                         },
                     },
                     Change::StartTurn {

@@ -6,9 +6,9 @@
 use mannie_runtime::Runtime;
 use mannie_types::chat::{
     ChatError, ChatSettings, CheckpointRef, ConversationRef, EarlierTurns, LoadEarlierTurns,
-    RenameConversation, SendMessage, SetConversationProfile, StartConversation,
-    StartedConversation, StartedReply, StopOutcome, SubscribeConversation, Unsubscribe,
-    UpdateChatSettings,
+    RenameConversation, SendMessage, SetConversationAgent, SetConversationProfile,
+    StartConversation, StartedConversation, StartedReply, StopOutcome, SubscribeConversation,
+    Unsubscribe, UpdateChatSettings,
 };
 use mannie_types::context::ChangeAttachment;
 use mannie_types::images::{ImageData, ReadImage};
@@ -275,6 +275,19 @@ pub(crate) async fn set_conversation_profile(
         .set_conversation_profile(input)
         .await
         .map_err(refused("set_conversation_profile"))
+}
+
+/// Chooses the agent of a conversation's next replies, or the built-in one.
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn set_conversation_agent(
+    core: State<'_, Core>,
+    input: SetConversationAgent,
+) -> Result<(), CommandError<ChatError>> {
+    runtime(&core)?
+        .set_conversation_agent(input)
+        .await
+        .map_err(refused("set_conversation_agent"))
 }
 
 /// Compacts a conversation now.

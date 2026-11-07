@@ -41,8 +41,9 @@ pub use runtime::{
     LOCAL_SOURCE, ModelImage, ModelPart, ModelTurn, NewArchive, NewCheckpoint, NewContext,
     NewConversation, NewExecutorTask, NewImage, NewMention, NewPart, NewRun, NewTask, NewToolImage,
     OutboxEntry, ProjectDeletion, ProviderItem, Recovered, RecoveredCommand, RuntimeStoreError,
-    StoredArchive, StoredBackgroundCommand, StoredCheckpoint, StoredChild, StoredImage, StoredTask,
-    StoredToolImage, TaskEnding, TaskExecution, TaskOrigin, UncertainCall,
+    StoredAgent, StoredArchive, StoredBackgroundCommand, StoredCheckpoint, StoredChild,
+    StoredImage, StoredPlan, StoredTask, StoredToolImage, TaskEnding, TaskExecution, TaskOrigin,
+    UncertainCall,
 };
 pub use settings::SettingsStoreError;
 pub use store::{Store, StoreOptions};

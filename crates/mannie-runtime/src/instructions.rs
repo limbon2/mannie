@@ -25,6 +25,7 @@ use mannie_types::ceiling::CeilingMode;
 use mannie_types::projects::ProjectView;
 
 use crate::agents::AgentDefinition;
+use crate::plans::SAVE_PLAN;
 use crate::plugins::Snapshot;
 use crate::questions::ASK_OWNER;
 use crate::texts;
@@ -157,12 +158,16 @@ pub(crate) fn instruction_section(section: &Section) -> InstructionSection {
     }
 }
 
-/// The sections of the plugins in a snapshot, as the runtime assembles them,
-/// in the order in which their plugins started.
-pub(crate) fn plugin_sections(snapshot: &Snapshot) -> Vec<InstructionSection> {
+/// The sections of the plugins in a snapshot that an agent gets, as the runtime
+/// assembles them, in the order in which their plugins started.
+pub(crate) fn plugin_sections(
+    snapshot: &Snapshot,
+    agent: &AgentDefinition,
+) -> Vec<InstructionSection> {
     snapshot
         .items::<Sections>()
         .iter()
+        .filter(|registered| agent.gets_plugin(registered.plugin.as_str()))
         .map(|registered| instruction_section(&registered.entry))
         .collect()
 }
@@ -192,7 +197,9 @@ pub(crate) fn check_sections(
 /// instructions, projects and machine, stays in the core (ADR-0034, decision
 /// 3).
 pub(crate) fn section_context(context: &InstructionContext<'_>) -> SectionContext {
-    let agent = context.agent.name.to_owned();
+    // A plugin compares this with the built-in agents' names, so a custom agent
+    // reads as the agent that it is shaped like (ADR-0059, decision 3).
+    let agent = context.agent.base.to_owned();
     let requester = context.agent.requester.into();
     let uses_tools = context.tools.is_some();
     let offers_tasks = context.offers_tasks;
@@ -241,7 +248,7 @@ pub fn builtin_sections() -> Vec<InstructionSection> {
             Some(texts::base_instructions(context.agent.requester).to_owned())
         }),
         InstructionSection::new("agent", 100, |context| {
-            non_empty(context.agent.instructions).map(str::to_owned)
+            non_empty(&context.agent.instructions).map(str::to_owned)
         }),
         InstructionSection::new("tools", 150, |context| {
             context.tools.map(|tools| {
@@ -259,13 +266,22 @@ pub fn builtin_sections() -> Vec<InstructionSection> {
                     text.push(' ');
                     text.push_str(texts::QUESTION_GUIDANCE);
                 }
+                if tools.offered.contains(&SAVE_PLAN) {
+                    text.push(' ');
+                    text.push_str(texts::PLAN_GUIDANCE);
+                }
                 text
             })
         }),
         InstructionSection::new("tasks", 160, |context| {
-            context
-                .offers_tasks
-                .then(|| texts::TASKS_GUIDANCE.to_owned())
+            context.offers_tasks.then(|| {
+                let guidance = if context.agent.tools.contains(&"run_command") {
+                    texts::TASKS_GUIDANCE
+                } else {
+                    texts::TASKS_GUIDANCE_WITHOUT_COMMANDS
+                };
+                guidance.to_owned()
+            })
         }),
         InstructionSection::new("context", 170, |context| {
             context

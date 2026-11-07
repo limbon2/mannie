@@ -17,7 +17,7 @@ impl RunActor {
     /// Adds a note with the ends of background commands that the model was
     /// not told, so it reads them in its next call, and returns whether it
     /// did. The note does not count against the reply's continuation notes.
-    pub(super) async fn note_command_ends(&mut self) -> Result<bool, Ending> {
+    pub(super) async fn note_command_ends(&mut self, setup: &Setup) -> Result<bool, Ending> {
         let ended = self.runtime.untold_ends(&self.conversation).await?;
         if ended.is_empty() {
             return Ok(false);
@@ -27,8 +27,12 @@ impl RunActor {
         // The note and the mark are stored in one batch, so an end is told
         // once.
         self.pending.push(Change::TellBackgroundEnds { numbers });
-        self.add_note(&texts::background_note(&ended), false)
-            .await?;
+        let note = if setup.tool("read_command_output").is_some() {
+            texts::background_note(&ended)
+        } else {
+            texts::background_note_without_read(&ended)
+        };
+        self.add_note(&note, false).await?;
         Ok(true)
     }
 
@@ -48,7 +52,7 @@ impl RunActor {
         {
             return Ok(false);
         }
-        let noted = self.note_command_ends().await?;
+        let noted = self.note_command_ends(setup).await?;
         if noted {
             self.end_notes += 1;
         }

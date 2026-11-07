@@ -7,6 +7,7 @@
 // decision 7).
 import type { TaskRefusal, TaskState, TaskView } from '#lib/generated/bindings.js';
 import { m } from '#lib/paraglide/messages.js';
+import { agents } from '#lib/state/agents.svelte.js';
 import { pluginName } from '#lib/state/plugin-catalog.js';
 import type { ChildAgentsFailure } from '#lib/types/child-agents.js';
 import type { TaskKind } from '#lib/types/shell-slots.js';
@@ -63,6 +64,12 @@ export function taskStateLabel(task: TaskView): string {
   return waitsForOwner ? m.child_agents_state_awaiting_approval() : taskStateName(task.state);
 }
 
+/**
+ * The kind of side panel that lists a conversation's child agents, with the
+ * conversation's ID as its argument.
+ */
+export const CHILD_AGENTS_PANEL = 'child-agents.list';
+
 /** The name of a child's kind of agent. A kind that this version does not know shows by its name. */
 export function agentLabel(agent: string): string {
   switch (agent) {
@@ -73,7 +80,8 @@ export function agentLabel(agent: string): string {
       return m.child_agents_agent_general();
     }
     default: {
-      return m.child_agents_agent_other({ agent });
+      // A custom agent shows by the name that the owner gave it.
+      return m.child_agents_agent_other({ agent: agents.find(agent)?.draft.name ?? agent });
     }
   }
 }
@@ -93,8 +101,14 @@ export function taskRefusalMessage(
   kindOf: (kind: string) => TaskKind | undefined = () => undefined,
 ): string {
   switch (refusal.reason) {
+    case 'agent_gone': {
+      return m.child_agents_refusal_agent_gone();
+    }
     case 'budget_used': {
       return m.child_agents_refusal_budget_used();
+    }
+    case 'not_offered': {
+      return m.child_agents_refusal_not_offered();
     }
     case 'executor': {
       if (refusal.code === 'plugin_off') {

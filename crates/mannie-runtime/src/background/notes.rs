@@ -69,6 +69,7 @@ impl Runtime {
     pub(crate) async fn opening_note(
         &self,
         conversation: &ConversationId,
+        reads_commands: bool,
     ) -> Result<Option<OpeningNote>, RuntimeStoreError> {
         let now = self.inner.clock.now();
         let mut running = Vec::new();
@@ -93,7 +94,11 @@ impl Runtime {
         commands.extend(running);
         commands.sort_by_key(|command| command.number);
         Ok(Some(OpeningNote {
-            text: texts::background_note(&commands),
+            text: if reads_commands {
+                texts::background_note(&commands)
+            } else {
+                texts::background_note_without_read(&commands)
+            },
             told,
         }))
     }

@@ -9,9 +9,9 @@ use mannie_store::{
 };
 use mannie_types::chat::{
     ChatError, ChatSettings, CheckpointRef, EarlierTurns, LoadEarlierTurns, MAX_EARLIER_TURNS,
-    RenameConversation, SendMessage, SetConversationProfile, StartConversation,
-    StartedConversation, StartedReply, StopOutcome, SubscribeConversation, UpdateChatSettings,
-    check_message, check_title, title_from_message,
+    RenameConversation, SendMessage, SetConversationAgent, SetConversationProfile,
+    StartConversation, StartedConversation, StartedReply, StopOutcome, SubscribeConversation,
+    UpdateChatSettings, check_message, check_title, title_from_message,
 };
 use mannie_types::context::{Attachment, AttachmentRef};
 use mannie_types::ids::{ConversationId, ProfileId, ProjectId};
@@ -146,10 +146,12 @@ impl Runtime {
             .ok_or(ChatError::NoProfile)
     }
 
-    pub(crate) fn new_run(&self, profile: &StoredProfile) -> NewRun {
+    /// A new run of a conversation's replies, with the agent that it names
+    /// (ADR-0059, decision 6).
+    pub(crate) fn new_run(&self, profile: &StoredProfile, agent_key: Option<&str>) -> NewRun {
         NewRun {
             id: self.inner.ids.run(),
-            agent: CONVERSATION_AGENT.to_owned(),
+            agent: self.conversation_agent_name(agent_key),
             profile_id: profile.id.clone(),
             binding: profile.binding(),
         }
@@ -211,6 +213,39 @@ impl Runtime {
         Ok((described, named_mentions))
     }
 
+    /// The profile that a new conversation's reply uses, and the one that the
+    /// conversation records: the owner's choice, or else the profile of its
+    /// agent, or else none, for the default.
+    async fn starting_profile(
+        &self,
+        chosen: Option<ProfileId>,
+        agent_key: Option<&str>,
+    ) -> Result<(StoredProfile, Option<ProfileId>), ChatError> {
+        let agent_profile = match agent_key {
+            Some(key) => {
+                self.conversation_agent(key)
+                    .ok_or(ChatError::AgentNotFound)?
+                    .profile
+            }
+            None => None,
+        };
+        if let Some(id) = chosen {
+            let profile = self
+                .inner
+                .store
+                .profile(&id)
+                .await
+                .map_err(|error| profile_store_failure(&error))?
+                .ok_or(ChatError::ProfileNotFound)?;
+            return Ok((profile, Some(id)));
+        }
+        let profile = self.profile_for(agent_profile.as_ref()).await?;
+        // The agent's profile only when it still exists, which `profile_for`
+        // found out.
+        let recorded = agent_profile.filter(|id| *id == profile.id);
+        Ok((profile, recorded))
+    }
+
     /// Creates a conversation with the owner's first message and starts the
     /// reply. A conversation in a project works in the project's folder, and
     /// one that belongs to an attachment starts with it attached first and
@@ -226,16 +261,12 @@ impl Runtime {
         }
         let (attaching, mentions) = self.split_attaching(check_mentions(input.mentions)?);
         let image_refs = check_images(input.images)?;
-        let profile = match &input.profile_id {
-            Some(id) => self
-                .inner
-                .store
-                .profile(id)
-                .await
-                .map_err(|error| profile_store_failure(&error))?
-                .ok_or(ChatError::ProfileNotFound)?,
-            None => self.profile_for(None).await?,
-        };
+        // The built-in agent is what no key means, so its name is stored as
+        // none.
+        let agent_key = input.agent_key.filter(|key| key != CONVERSATION_AGENT);
+        let (profile, chosen_profile) = self
+            .starting_profile(input.profile_id, agent_key.as_deref())
+            .await?;
         self.refuse_project_being_removed(input.project_id.as_ref())?;
         let full_access = self.full_access_for_new_conversations().await;
         let home = input.home;
@@ -274,15 +305,16 @@ impl Runtime {
             title = title_from_message(&first.view.name);
         }
         let turn_id = self.inner.ids.turn();
-        let run = self.new_run(&profile);
+        let run = self.new_run(&profile, agent_key.as_deref());
         let mut changes = vec![Change::CreateConversation {
             conversation: NewConversation {
                 id: conversation_id.clone(),
                 title,
-                profile_id: input.profile_id,
+                profile_id: chosen_profile,
                 project_id: input.project_id,
                 task: None,
                 home,
+                agent_key,
             },
         }];
         // In the same transaction, so the reply's first call already follows
@@ -363,12 +395,15 @@ impl Runtime {
         let mut mentions = mentions;
         mentions.extend(named_mentions);
         let images = self.resolve_images(&image_refs).await?;
+        let run = self.new_run(&profile, summary.agent_key.as_deref());
         let opening = self
-            .opening_note(&input.conversation_id)
+            .opening_note(
+                &input.conversation_id,
+                self.agent_reads_commands(&run.agent),
+            )
             .await
             .map_err(store_failure)?;
         let turn_id = self.inner.ids.turn();
-        let run = self.new_run(&profile);
         // Before the turn, so the run that answers it gathers from them.
         let mut changes: Vec<Change> = named
             .into_iter()
@@ -447,7 +482,7 @@ impl Runtime {
             return Err(ChatError::NothingToRetry);
         }
         let profile = self.profile_for(summary.profile_id.as_ref()).await?;
-        let run = self.new_run(&profile);
+        let run = self.new_run(&profile, summary.agent_key.as_deref());
         let change = Change::RetryTurn {
             turn_id: turn_id.clone(),
             run: run.clone(),
@@ -544,6 +579,51 @@ impl Runtime {
                 vec![Change::SetProfile {
                     profile_id: input.profile_id,
                 }],
+                Durability::Full,
+            )
+            .await
+            .map_err(store_failure)?;
+        Ok(())
+    }
+
+    /// Chooses the agent of a conversation's next replies, or the built-in one.
+    /// An agent that names a profile sets the conversation's too, which the
+    /// owner can still change (ADR-0059, decision 7).
+    pub async fn set_conversation_agent(
+        &self,
+        input: SetConversationAgent,
+    ) -> Result<(), ChatError> {
+        self.refuse_when_task_conversation(&input.conversation_id)
+            .await?;
+        let agent_key = input.agent_key.filter(|key| key != CONVERSATION_AGENT);
+        let mut profile_change = None;
+        if let Some(key) = &agent_key {
+            let agent = self
+                .conversation_agent(key)
+                .ok_or(ChatError::AgentNotFound)?;
+            if let Some(profile) = agent.profile {
+                let exists = self
+                    .inner
+                    .store
+                    .profile(&profile)
+                    .await
+                    .map_err(|error| profile_store_failure(&error))?
+                    .is_some();
+                if exists {
+                    profile_change = Some(Change::SetProfile {
+                        profile_id: Some(profile),
+                    });
+                }
+            }
+        }
+        let mut changes = vec![Change::SetAgent { agent_key }];
+        changes.extend(profile_change);
+        self.inner
+            .hubs
+            .apply(
+                &self.inner.store,
+                &input.conversation_id,
+                changes,
                 Durability::Full,
             )
             .await

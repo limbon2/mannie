@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { repository } from '../support/app.ts';
 import {
   addProfile,
+  callMessage,
   COMPOSER,
   sendMessage,
   startNewConversation,
@@ -31,6 +32,13 @@ const CONCURRENT_REPLIES = 8;
 /** Turns of the long conversation, each with the owner's message and a reply: 10,000 parts. */
 const SEEDED_TURNS = 5_000;
 
+/**
+ * How long the child agents panel may take to read the long conversation. It
+ * shows its newest turns at once and reads the rest in the background, so this
+ * is more than NFR-PERF-04's second for opening a conversation.
+ */
+const PANEL_READ_TARGET_MS = 5_000;
+
 interface Figure {
   readonly limit: number;
   readonly samples: number;
@@ -46,6 +54,8 @@ declare global {
     inputLatencies?: number[];
     /** When the owner clicked the long conversation, and when its turns showed. */
     openTiming?: { clicked: number; shown: number };
+    /** When the child agents panel showed, and when it had read the long conversation. */
+    panelTiming?: { opened: number; read: number };
     /** Ends the sampling of input latencies. */
     samplingStopped?: boolean;
   }
@@ -103,6 +113,7 @@ describe('performance (NFR-PERF-01 to 04)', () => {
     await addProfile(provider.baseUrl, { model: MODELS.slow, name: 'Slow' });
     await addProfile(provider.baseUrl, { model: MODELS.timed, name: 'Timed' });
     await addProfile(provider.baseUrl, { model: MODELS.fast, name: 'Fast' });
+    await addProfile(provider.baseUrl, { model: MODELS.tools, name: 'Tools', useTools: true });
   });
 
   after(async () => {
@@ -290,5 +301,63 @@ describe('performance (NFR-PERF-01 to 04)', () => {
     });
     const timing = await browser.execute(() => window.openTiming);
     check('NFR-PERF-04 open a conversation of 10,000 parts', (timing?.shown ?? 0) - (timing?.clicked ?? 0), 1_000);
+  });
+
+  it('the child agents panel reads a conversation of 10,000 parts, and the view answers input meanwhile', async () => {
+    // The long conversation from the test above is open. A custom agent's first
+    // task opens the panel, which then reads every earlier turn.
+    await useProfile('Tools');
+    await $('main [data-agent-picker]').click();
+    await $('[data-agent-option="custom.orchestrator"]').click();
+    await browser.execute(() => {
+      const box = document.querySelector<HTMLTextAreaElement>('textarea[aria-describedby="composer-hint"]');
+      if (box === null) {
+        throw new Error('the page has no message box');
+      }
+      const timing = { opened: 0, read: 0 };
+      const samples: number[] = [];
+      window.panelTiming = timing;
+      window.inputLatencies = samples;
+      const watch = (): void => {
+        const panel = document.querySelector('[data-child-agents-panel]');
+        const showsNow = panel !== null;
+        const hadNotShown = timing.opened === 0;
+        if (showsNow && hadNotShown) {
+          timing.opened = performance.now();
+        }
+        if (panel?.getAttribute('aria-busy') === 'false') {
+          timing.read = performance.now();
+          return;
+        }
+        // While the panel reads, input timed to the next frame.
+        if (timing.opened > 0) {
+          const start = performance.now();
+          box.dispatchEvent(new Event('input', { bubbles: true }));
+          requestAnimationFrame(() => {
+            setTimeout(() => {
+              samples.push(performance.now() - start);
+              setTimeout(watch, 50);
+            }, 0);
+          });
+          return;
+        }
+        setTimeout(watch, 10);
+      };
+      watch();
+    });
+
+    await sendMessage(
+      callMessage('start_task', { agent: 'explore', background: false, instruction: 'Look.', title: 'Look' }),
+    );
+
+    await browser.waitUntil(async () => ((await browser.execute(() => window.panelTiming?.read)) ?? 0) > 0, {
+      timeout: 120_000,
+      timeoutMsg: 'the panel did not read the conversation',
+    });
+    const timing = await browser.execute(() => window.panelTiming);
+    const latencies = await browser.execute(() => window.inputLatencies ?? []);
+    await waitForCompleteReply(60_000);
+    check('child agents panel reads 10,000 parts', (timing?.read ?? 0) - (timing?.opened ?? 0), PANEL_READ_TARGET_MS);
+    check('child agents panel, input latency p95', percentile(latencies, 0.95), 50, latencies.length);
   });
 });

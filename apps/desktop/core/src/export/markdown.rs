@@ -521,6 +521,7 @@ mod record_tests {
                 task: None,
                 attachments: Vec::new(),
                 home: None,
+                agent_key: None,
                 created_at: UtcMillis::EPOCH,
                 updated_at: UtcMillis::EPOCH,
             },

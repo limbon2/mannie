@@ -35,6 +35,7 @@ use crate::approvals::Answer;
 use crate::background::BackgroundPort;
 use crate::budget::budget_bytes;
 use crate::calls::Setup;
+use crate::plans::{self, SAVE_PLAN};
 use crate::policy::PolicyGrants;
 use crate::projects::Moves;
 use crate::questions::{self, ASK_OWNER};
@@ -183,6 +184,8 @@ impl RunActor {
                 // has no answer either, so nothing after it runs.
                 asked = true;
                 self.run_question_call(call).await?;
+            } else if setup.offers_plans() && call.document.tool == SAVE_PLAN {
+                self.run_plan_call(call).await?;
             } else if self.run_call(setup, call).await? == CallEnd::Denied {
                 denied = true;
             }
@@ -190,7 +193,7 @@ impl RunActor {
         self.await_foreground_tasks().await?;
         // The ends of background commands reach the model before its next
         // call (ADR-0041).
-        self.note_command_ends().await?;
+        self.note_command_ends(setup).await?;
         self.publish_progress(None);
         let preparing = self.activity(RunActivity::Preparing);
         self.pending.push(preparing);
@@ -589,6 +592,41 @@ impl RunActor {
         drop(waiting);
         let reply = reply?.map_err(|_withdrawn| Ending::Interrupted)?;
         self.complete_call(call, questions::done(&questions, reply));
+        self.flush(Durability::Full).await
+    }
+
+    /// Saves the conversation's plan, in one transaction with the end of the
+    /// call, which records it (ADR-0060, decision 3). When the owner edited the
+    /// plan, the call saves nothing and the model reads the plan as it stands,
+    /// once, so its copy never overwrites an edit that it has not read.
+    async fn run_plan_call(&mut self, mut call: StepCall) -> Result<(), Ending> {
+        let arguments = call.arguments.clone().unwrap_or_default();
+        let plan = match plans::parse_call(&arguments) {
+            Ok(plan) => plan,
+            Err(detail) => {
+                let detail = detail.chars().take(MAX_DETAIL_CHARS).collect();
+                self.end_call(call, NotRunReason::InvalidArguments { detail });
+                return Ok(());
+            }
+        };
+        call.document.started_at = Some(self.now());
+        let stored = self
+            .runtime
+            .inner
+            .store
+            .conversation_plan(&self.conversation)
+            .await?;
+        let done = if let Some(edited) = stored.filter(|stored| stored.owner_edited) {
+            self.pending.push(Change::PlanEditSeen);
+            plans::kept(&edited)
+        } else {
+            self.pending.push(Change::SavePlan {
+                title: plan.title.clone(),
+                body: plan.body,
+            });
+            plans::saved(plan.title)
+        };
+        self.complete_call(call, done);
         self.flush(Durability::Full).await
     }
 

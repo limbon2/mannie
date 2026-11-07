@@ -9,6 +9,7 @@
 //! Only the `testing` feature compiles this module. The desktop app and the
 //! worker never enable it.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -65,7 +66,7 @@ use tokio::sync::watch;
 
 use crate::{
     AgentDefinition, AgentRegistry, CredentialVault, FileMentions, GENERAL, InstructionRegistry,
-    InstructionSection, MachineSettings, MentionRegistry, Requester, RetryPolicy, Runtime,
+    InstructionSection, MachineSettings, MentionRegistry, PlanMentions, RetryPolicy, Runtime,
     RuntimeConfig, RuntimeDeps, ToolsDeps, VaultError, checkpoint_section, texts,
 };
 
@@ -522,6 +523,9 @@ pub struct HarnessOptions {
     /// and registers as the composition root's (ADR-0030, decision 5;
     /// ADR-0034, decision 7).
     pub store_modules: Vec<PluginModule>,
+    /// What the "@" list offers: [`core_mentions`] by default, so the tests of
+    /// mentions see one kind, or [`mentions_with_plans`].
+    pub mentions: fn(&Store) -> MentionRegistry,
 }
 
 impl Default for HarnessOptions {
@@ -537,6 +541,7 @@ impl Default for HarnessOptions {
             agents: AgentRegistry::with_builtin(),
             config: fast_config(),
             store_modules: Vec::new(),
+            mentions: |_store| core_mentions(),
         }
     }
 }
@@ -709,6 +714,32 @@ pub async fn start_master(
     tools: ToolsDeps,
     agents: AgentRegistry,
 ) -> Runtime {
+    start_master_with_mentions(
+        store,
+        provider,
+        vault,
+        config,
+        tools,
+        agents,
+        core_mentions(),
+    )
+    .await
+}
+
+/// Starts the runtime as [`start_master`] does, with these mention providers.
+///
+/// # Panics
+///
+/// When the runtime cannot start, which fails the test.
+pub async fn start_master_with_mentions(
+    store: Store,
+    provider: Arc<dyn Provider>,
+    vault: Arc<MemoryVault>,
+    config: RuntimeConfig,
+    tools: ToolsDeps,
+    agents: AgentRegistry,
+    mentions: MentionRegistry,
+) -> Runtime {
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let client = HttpClient::new(Arc::clone(&clock)).expect("the HTTP client builds");
     let mut registry = ProviderRegistry::new();
@@ -725,11 +756,26 @@ pub async fn start_master(
         instructions: InstructionRegistry::with_builtin(),
         tools,
         machine: MachineSettings::default(),
-        mentions: core_mentions(),
+        mentions,
     };
     Runtime::start(deps, config)
         .await
         .expect("the runtime starts")
+}
+
+/// The mention providers of the core and the owner's plans, as the desktop app
+/// registers them.
+///
+/// # Panics
+///
+/// When two providers have one ID, which fails the test.
+#[must_use]
+pub fn mentions_with_plans(store: &Store) -> MentionRegistry {
+    let mut mentions = core_mentions();
+    mentions
+        .register(Arc::new(PlanMentions::new(store.clone())))
+        .expect("the IDs of the core's providers differ");
+    mentions
 }
 
 impl Harness {
@@ -758,13 +804,14 @@ impl Harness {
             model.write_full_summaries();
         }
         let vault = Arc::new(MemoryVault::new());
-        let runtime = start_master(
+        let runtime = start_master_with_mentions(
             store.clone(),
             Arc::new(model.clone()),
             Arc::clone(&vault),
             options.config.clone(),
             test_tools(directory.path()),
             options.agents.clone(),
+            (options.mentions)(&store),
         )
         .await;
         let profile = runtime
@@ -803,13 +850,14 @@ impl Harness {
     /// restart of Mannie does.
     pub async fn restart(mut self) -> Self {
         self.runtime.shutdown().await;
-        self.runtime = start_master(
+        self.runtime = start_master_with_mentions(
             self.store.clone(),
             Arc::new(self.model.clone()),
             Arc::clone(&self.vault),
             self.options.config.clone(),
             test_tools(self.directory.path()),
             self.options.agents.clone(),
+            (self.options.mentions)(&self.store),
         )
         .await;
         self
@@ -1194,14 +1242,11 @@ pub const HARNESS_WORKER_AGENT: &str = "worker";
 /// The harness's worker agent: every system tool but the move into a
 /// project, with the budgets of the worker service's agent.
 pub const HARNESS_WORKER: AgentDefinition = AgentDefinition {
-    name: HARNESS_WORKER_AGENT,
-    requester: Requester::Agent,
-    instructions: "",
-    tools: GENERAL.tools,
-    max_continuation_notes: 2,
-    max_tool_rounds: 100,
-    max_tool_calls: 250,
-    max_tasks: 0,
+    name: Cow::Borrowed(HARNESS_WORKER_AGENT),
+    base: HARNESS_WORKER_AGENT,
+    description: Cow::Borrowed(""),
+    instructions: Cow::Borrowed(""),
+    ..GENERAL
 };
 
 /// The first line of the harness worker's prompt.

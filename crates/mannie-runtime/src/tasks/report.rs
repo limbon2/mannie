@@ -123,6 +123,8 @@ fn refusal_text(refusal: &TaskRefusal) -> String {
         TaskRefusal::StillRunning { number } => texts::task_still_running(*number),
         TaskRefusal::BudgetUsed => texts::TASK_BUDGET_USED.to_owned(),
         TaskRefusal::NotStarted => texts::TASK_NOT_STARTED.to_owned(),
+        TaskRefusal::AgentGone => texts::TASK_AGENT_GONE.to_owned(),
+        TaskRefusal::NotOffered => texts::TASK_NOT_OFFERED.to_owned(),
         TaskRefusal::WorkerOffline { worker }
         | TaskRefusal::WorkerUnknown { worker }
         | TaskRefusal::WorkerIncompatible { worker }

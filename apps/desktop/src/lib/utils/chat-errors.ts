@@ -80,6 +80,9 @@ export function runFailureMessage(failure: RunFailure): string {
     case 'permission_denied': {
       return m.chat_failure_permission_denied();
     }
+    case 'agent_missing': {
+      return m.chat_failure_agent_missing();
+    }
     case 'profile_missing': {
       return m.chat_failure_profile_missing();
     }
@@ -129,6 +132,9 @@ export function chatFailureMessage(
   }
   const { error } = failure;
   switch (error.code) {
+    case 'agent_not_found': {
+      return m.chat_error_agent_not_found();
+    }
     case 'checkpoint_not_found': {
       return m.chat_error_checkpoint_not_found();
     }

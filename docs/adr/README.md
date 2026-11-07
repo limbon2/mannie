@@ -76,3 +76,5 @@ Each ADR has exactly one of these statuses:
 | [0056](0056-let-plugins-work-with-the-owners-sqlite-files-through-the-core.md)         | Let plugins work with the owner's SQLite files through the core                               | Accepted (D47)         | M15        |
 | [0057](0057-let-the-master-work-with-the-databases-on-a-workers-host.md)               | Let the master work with the databases on a worker's host, under the host's ceiling           | Accepted (D47)         | M15        |
 | [0058](0058-let-agents-ask-the-owner-questions.md)                                     | Let agents ask the owner questions with options                                               | Accepted (D48)         | M16        |
+| [0059](0059-let-the-owner-define-agents.md)                                            | Let the owner define agents and choose one for each conversation                              | Accepted (D49)         | M17        |
+| [0060](0060-let-agents-save-plans-that-the-owner-runs.md)                              | Let agents save plans that the owner runs later                                               | Accepted (D49)         | M17        |

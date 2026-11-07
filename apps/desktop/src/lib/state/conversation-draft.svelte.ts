@@ -28,6 +28,9 @@ export class ConversationDraftState {
   /** The attachment that the conversation belongs to, which stays attached, or `null`. */
   home: AttachmentRef | null = $state(null);
 
+  /** The agent of the conversation's replies, or `null` for the built-in one (ADR-0059). */
+  agentKey: string | null = $state(null);
+
   /** Adds an attachment after the others, or gives one that the draft holds this label. */
   attach(attachment: Attachment): void {
     const index = this.attachments.findIndex((held) => sameKey(held, attachment));
@@ -68,6 +71,7 @@ export class ConversationDraftState {
     const others = attachments.filter((attachment) => !isHome(home, attachment));
     this.attachments = home === null ? others : [home, ...others];
     this.home = home === null ? null : { key: home.key, provider: home.provider };
+    this.agentKey = null;
   }
 }
 

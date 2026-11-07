@@ -18,7 +18,7 @@ pub(crate) use report::{doer_of, render_report, reported_numbers, returned_repor
 pub(crate) use slots::{ChildSlot, ChildSlots};
 pub(crate) use tools::{
     FOLLOW_UP_TASK, START_TASK, TaskCall, WAIT_FOR_TASKS, check_instruction, definitions,
-    parse_call,
+    is_default_roster, parse_call,
 };
 
 /// The task tools, as agent definitions name them. The tools of plugins'

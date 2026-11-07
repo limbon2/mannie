@@ -34,6 +34,7 @@ describe('the shell', () => {
     );
     expect(bar).toEqual([
       { current: 'page', text: 'Chat' },
+      { current: null, text: 'Agents' },
       { current: null, text: 'Find a command' },
       { current: null, text: 'Settings' },
     ]);

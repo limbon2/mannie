@@ -34,6 +34,9 @@ pub(crate) struct Task {
     pub(crate) general: bool,
     /// A change that another program makes to a file once the model read it.
     pub(crate) change: Option<FileChange>,
+    /// The starter agent that answers in the conversation, or `None` for the
+    /// built-in one (ADR-0059).
+    pub(crate) agent: Option<&'static str>,
     /// Whether the task succeeded, and why not.
     pub(crate) check: fn(&Outcome) -> Result<(), String>,
     /// How the oracle answers a request of the task.
@@ -58,9 +61,15 @@ impl Task {
             allow_changes: true,
             general: false,
             change: None,
+            agent: None,
             check,
             oracle,
         }
+    }
+
+    fn agent(mut self, agent: &'static str) -> Self {
+        self.agent = Some(agent);
+        self
     }
 
     fn file(mut self, path: &'static str, content: impl Into<String>) -> Self {
@@ -109,6 +118,8 @@ pub(crate) fn all() -> Vec<Task> {
         children_read_in_parallel(),
         fix_through_a_general_child(),
         research_through_an_explore_child(),
+        orchestrator_hands_the_fix_to_a_child(),
+        plan_agent_saves_and_changes_nothing(),
         background_counts_then_wait(),
         server_in_the_background(),
         tests_in_the_background_while_reading(),
@@ -795,6 +806,90 @@ fn fix_through_a_general_child() -> Task {
         "calc.py",
         "def add(a, b):\n    return a - b\n\n\ndef multiply(a, b):\n    return a * b\n",
     )
+}
+
+const SUBTRACTING_CALC: &str =
+    "def add(a, b):\n    return a - b\n\n\ndef multiply(a, b):\n    return a * b\n";
+
+/// The Orchestrator does the work through a child, unasked: its own tools only
+/// read (docs/features/custom-agents.md, the Orchestrator).
+fn orchestrator_hands_the_fix_to_a_child() -> Task {
+    Task::new(
+        "orchestrator_hands_the_fix_to_a_child",
+        "The add function in calc.py subtracts instead of adding. Fix the bug.",
+        |outcome| {
+            outcome.reported_tasks("general", 1)?;
+            let text = outcome.file("calc.py").ok_or("calc.py is gone")?;
+            let fixed = text.contains("return a + b") && !text.contains("return a - b");
+            if fixed {
+                Ok(())
+            } else {
+                Err(format!("calc.py is now {text:?}"))
+            }
+        },
+        |view| {
+            if view.is_child() {
+                if view.confirming() {
+                    return answer("I changed return a - b to return a + b in add, in calc.py.");
+                }
+                return match read_revision(view.last_result()) {
+                    None if view.steps() == 0 => call("read_file", &json!({ "path": "calc.py" })),
+                    Some(revision) => call(
+                        "edit_file",
+                        &json!({
+                            "path": "calc.py",
+                            "expected_revision": revision,
+                            "edits": [{ "old_text": "return a - b", "new_text": "return a + b" }],
+                        }),
+                    ),
+                    None => answer("add now returns a + b."),
+                };
+            }
+            match view.steps() {
+                0 => call(
+                    "start_task",
+                    &start_task(
+                        "Fix add in calc.py",
+                        "general",
+                        "The add function in calc.py subtracts instead of adding. Read calc.py, fix add, and change nothing else. Report the change.",
+                        false,
+                    ),
+                ),
+                _ => answer("A child changed return a - b to return a + b in calc.py."),
+            }
+        },
+    )
+    .agent("custom.orchestrator")
+    .file("calc.py", SUBTRACTING_CALC)
+}
+
+/// The Plan agent changes nothing and saves a plan, even when the owner's words
+/// ask for the fix (docs/features/plans.md, the Plan agent).
+fn plan_agent_saves_and_changes_nothing() -> Task {
+    Task::new(
+        "plan_agent_saves_and_changes_nothing",
+        "The add function in calc.py subtracts instead of adding. Make a plan for fixing it.",
+        |outcome| {
+            outcome.used("save_plan")?;
+            outcome.file_is("calc.py", SUBTRACTING_CALC)?;
+            outcome.never_asked("change a file", |call| {
+                ["write_file", "edit_file", "run_command"].contains(&call.tool.as_str())
+            })
+        },
+        |view| match view.steps() {
+            0 => call("read_file", &json!({ "path": "calc.py" })),
+            1 => call(
+                "save_plan",
+                &json!({
+                    "title": "Fix add in calc.py",
+                    "body": "# Fix add\n\ncalc.py line 2 subtracts. Change it to return a + b, then run the tests.\n",
+                }),
+            ),
+            _ => answer("I saved a plan that changes line 2 of calc.py."),
+        },
+    )
+    .agent("custom.plan")
+    .file("calc.py", SUBTRACTING_CALC)
 }
 
 /// The tool calls that the guidance on tasks allows for checking one report

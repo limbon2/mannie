@@ -1,0 +1,24 @@
+{
+  "description": "Saves this conversation's plan in Mannie, where the owner can read, edit and run it. A conversation holds one plan, so saving again replaces it. Nothing runs until the owner starts it. Write it for someone who has not read this conversation.",
+  "name": "save_plan",
+  "parameters": {
+    "additionalProperties": false,
+    "properties": {
+      "activity": {
+        "description": "A few words for the owner that say what this call does, as an ongoing action, such as \"Reading package.json\" or \"Counting the failed tests\".",
+        "type": "string"
+      },
+      "body": {
+        "description": "The whole plan in Markdown, at most 32 KiB.",
+        "type": "string"
+      },
+      "title": {
+        "description": "A few words that name the plan, at most 80 characters.",
+        "type": "string"
+      }
+    },
+    "required": ["activity", "body", "title"],
+    "type": "object"
+  },
+  "strict": true
+}
