@@ -33,8 +33,8 @@ use mannie_runtime::texts;
 use mannie_types::chat::{SendMessage, SetConversationProfile, StartConversation};
 use mannie_types::ids::{ConversationId, ProfileId, RunId, TaskId};
 use mannie_types::provider::{
-    ApiInterface, CreateProviderProfile, CredentialChange, CredentialStoreProblem, ProfileDraft,
-    ProviderProfile, ReasoningEffort,
+    ApiInterface, CreateProviderProfile, CredentialChange, CredentialStoreProblem, ProfileAccess,
+    ProfileDraft, ProviderProfile, ReasoningEffort,
 };
 use mannie_types::secret::Secret;
 use mannie_types::tasks::{AssignedTaskState, TaskState};
@@ -138,6 +138,7 @@ impl Setup {
             .runtime
             .create_profile(CreateProviderProfile {
                 draft: ProfileDraft {
+                    access: ProfileAccess::Endpoint,
                     name: "Second".to_owned(),
                     interface: ApiInterface::ChatCompletions,
                     base_url: "http://127.0.0.1:9/v1".to_owned(),
@@ -560,6 +561,7 @@ async fn a_permitted_lend_of_a_profile_without_a_credential_or_a_deleted_one_len
         .update_profile(
             &profile.id,
             ProfileDraft {
+                access: ProfileAccess::Endpoint,
                 name: profile.name.clone(),
                 interface: profile.interface,
                 base_url: profile.base_url.clone(),

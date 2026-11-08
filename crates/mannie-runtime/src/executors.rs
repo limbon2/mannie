@@ -483,6 +483,13 @@ impl Runtime {
                 return Err(credentials::LendError::StorageFailed);
             }
         };
+        // The ChatGPT plan's tokens stay on this machine. A refusal, never
+        // "no credential", which a plugin reads as a task that needs no lease
+        // (ADR-0062, decision 13).
+        if !profile.access.is_lendable() {
+            tracing::warn!(profile = %profile_id, reason = "chatgpt_plan", "refused to lend the credential of a profile on the ChatGPT plan");
+            return Err(credentials::LendError::NotPermitted);
+        }
         let Some(reference) = profile.credential_ref.clone() else {
             return Ok(None);
         };

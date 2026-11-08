@@ -131,6 +131,22 @@ impl HttpClient {
     }
 }
 
+impl HttpClient {
+    /// A POST of a form to `url` that expects JSON back, for the token
+    /// endpoint of the ChatGPT sign-in (ADR-0062). The form can hold tokens,
+    /// so the caller keeps its copy in memory that is cleared on drop.
+    pub(crate) fn post_form(&self, url: Url, form: &str) -> RequestBuilder {
+        self.client
+            .post(url)
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                "application/x-www-form-urlencoded",
+            )
+            .header(reqwest::header::ACCEPT, "application/json")
+            .body(form.to_owned())
+    }
+}
+
 /// Adds the credential as a bearer token, marked as sensitive so that the
 /// HTTP stack never shows it in debug output.
 fn authorize(request: RequestBuilder, credential: Option<&Secret>) -> RequestBuilder {

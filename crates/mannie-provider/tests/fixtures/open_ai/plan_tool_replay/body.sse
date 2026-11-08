@@ -1,0 +1,15 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_p1","object":"response","status":"in_progress"},"sequence_number":0}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_p2","type":"message","status":"in_progress","role":"assistant","content":[],"phase":"final_answer"},"sequence_number":1}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_p2","output_index":0,"content_index":0,"delta":"It says hello.","sequence_number":2}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"id":"msg_p2","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"It says hello.","annotations":[]}],"phase":"final_answer"},"sequence_number":3}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_p1","object":"response","status":"completed","usage":{"input_tokens":40,"input_tokens_details":{"cached_tokens":0},"output_tokens":4,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":44}},"sequence_number":4}
+

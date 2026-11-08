@@ -12,9 +12,9 @@ use mannie_provider::{TestInput, Url, check_base_url, credential_transport_allow
 use mannie_store::{ProfileFields, ProfileStoreError, StoredProfile};
 use mannie_types::ids::ProfileId;
 use mannie_types::provider::{
-    CheckOutcome, CreateProviderProfile, CredentialChange, CredentialStoreProblem, ProfileDraft,
-    ProviderProfile, ProviderProfileError, ProviderTestReport, ServerKind, SkipReason,
-    check_credential,
+    ApiInterface, CheckOutcome, CreateProviderProfile, CredentialChange, CredentialStoreProblem,
+    ProfileAccess, ProfileDraft, ProviderProfile, ProviderProfileError, ProviderTestReport,
+    ServerKind, SkipReason, check_credential,
 };
 use mannie_types::run::RunFailure;
 use mannie_types::secret::Secret;
@@ -37,7 +37,29 @@ pub trait CredentialVault: Send + Sync + fmt::Debug + 'static {
     fn arrival(&self, _reference: &str) -> Option<BoxFuture<'static, ()>> {
         None
     }
+    /// Stores a part of a secret that the caller keeps out of the logs as a
+    /// whole through [`CredentialVault::protect`], such as a part of the
+    /// ChatGPT account's tokens, which change every hour (ADR-0062,
+    /// decision 6). A vault that registers what it saves with the log
+    /// redactor for the life of the process does not register a part.
+    fn save_part(&self, reference: &str, part: &Secret) -> Result<(), VaultError> {
+        self.save(reference, part)
+    }
+    /// Reads a part that [`CredentialVault::save_part`] stored.
+    fn read_part(&self, reference: &str) -> Result<Secret, VaultError> {
+        self.read(reference)
+    }
+    /// Keeps `secret` out of the logs until the returned protection drops,
+    /// for a secret that is replaced while the process runs. `None`, the
+    /// default, for a vault without a log redactor.
+    fn protect(&self, _secret: &Secret) -> Option<Protection> {
+        None
+    }
 }
+
+/// What keeps a secret out of the logs while it is in use. Dropping it lets
+/// the log redactor forget the secret.
+pub type Protection = Box<dyn std::any::Any + Send + Sync>;
 
 /// Why the vault could not do what was asked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -97,9 +119,15 @@ struct Checked {
     base_url: Url,
 }
 
-fn check_draft(draft: &ProfileDraft) -> Result<Checked, ProviderProfileError> {
+/// Checks a draft. A profile on the ChatGPT plan calls OpenAI's API at
+/// `plan_base`, whatever base URL the draft names: the webview is untrusted
+/// and never decides where the account's tokens go (ADR-0004; ADR-0062).
+fn check_draft(draft: &ProfileDraft, plan_base: &Url) -> Result<Checked, ProviderProfileError> {
     let (name, model) = draft.check_fields()?;
-    let base_url = check_base_url(&draft.base_url)?;
+    let base_url = match draft.access {
+        ProfileAccess::ChatGptPlan => plan_base.clone(),
+        ProfileAccess::Endpoint => check_base_url(&draft.base_url)?,
+    };
     Ok(Checked {
         name,
         model: model.as_str().to_owned(),
@@ -107,10 +135,19 @@ fn check_draft(draft: &ProfileDraft) -> Result<Checked, ProviderProfileError> {
     })
 }
 
+/// The interface of a draft: always the Responses API on the ChatGPT plan.
+fn interface_of(draft: &ProfileDraft) -> ApiInterface {
+    match draft.access {
+        ProfileAccess::ChatGptPlan => ApiInterface::Responses,
+        ProfileAccess::Endpoint => draft.interface,
+    }
+}
+
 fn fields(draft: &ProfileDraft, checked: Checked, credential_ref: Option<String>) -> ProfileFields {
     ProfileFields {
         name: checked.name,
-        interface: draft.interface,
+        access: draft.access,
+        interface: interface_of(draft),
         base_url: checked.base_url.to_string(),
         model: checked.model,
         credential_ref,
@@ -139,7 +176,12 @@ impl Runtime {
         &self,
         input: CreateProviderProfile,
     ) -> Result<ProviderProfile, ProviderProfileError> {
-        let checked = check_draft(&input.draft)?;
+        let checked = check_draft(&input.draft, &self.chatgpt_endpoints().api_base)?;
+        // A profile on the ChatGPT plan uses the account's tokens, never a
+        // credential of its own.
+        if input.draft.access == ProfileAccess::ChatGptPlan && input.credential.is_some() {
+            return Err(ProviderProfileError::InvalidCredential);
+        }
         let credential = input
             .credential
             .as_ref()
@@ -193,8 +235,18 @@ impl Runtime {
             .await
             .map_err(|error| store_failure(&error))?
             .ok_or(ProviderProfileError::NotFound)?;
-        let checked = check_draft(&draft)?;
+        let checked = check_draft(&draft, &self.chatgpt_endpoints().api_base)?;
         let (reference, new_credential) = match change {
+            // A profile on the ChatGPT plan keeps no credential of its own, so
+            // one that switches to the plan forgets its credential below.
+            CredentialChange::Keep | CredentialChange::Remove
+                if draft.access == ProfileAccess::ChatGptPlan =>
+            {
+                (None, None)
+            }
+            CredentialChange::Replace { .. } if draft.access == ProfileAccess::ChatGptPlan => {
+                return Err(ProviderProfileError::InvalidCredential);
+            }
             CredentialChange::Keep => (current.credential_ref.clone(), None),
             CredentialChange::Remove => (None, None),
             CredentialChange::Replace { credential } => {
@@ -278,6 +330,11 @@ impl Runtime {
             .await
             .map_err(|error| store_failure(&error))?
             .ok_or(ProviderProfileError::NotFound)?;
+        if profile.access == ProfileAccess::ChatGptPlan {
+            let report = self.test_plan_profile(&profile).await;
+            tracing::info!(profile = %id, "tested a provider profile on the ChatGPT plan");
+            return Ok(report);
+        }
         let base_url = check_base_url(&profile.base_url)?;
         let (credential, credential_check) = match profile.credential_ref.clone() {
             None => (
@@ -313,6 +370,7 @@ impl Runtime {
             output_limit: profile.output_limit,
             credential_check,
             use_tools: profile.use_tools,
+            plan: false,
         };
         let report = test_profile(&self.inner.client, &self.inner.registry, input).await;
         if let Some(server) = report.server
@@ -322,6 +380,36 @@ impl Runtime {
         }
         tracing::info!(profile = %id, server = report.server.map(ServerKind::as_str), "tested a provider profile");
         Ok(report)
+    }
+
+    /// The provider test of a profile on the ChatGPT plan: its credential
+    /// check gets a token of the signed-in account, its server check reads
+    /// the plan's catalog, and no server is recorded (ADR-0062).
+    async fn test_plan_profile(&self, profile: &StoredProfile) -> ProviderTestReport {
+        let (credential, credential_check) = match self.chatgpt_key().await {
+            Err(failure) => (None, CheckOutcome::Failed { failure }),
+            Ok(key) => match self.chatgpt_token(&key).await {
+                Ok(issued) => (Some(issued.token), CheckOutcome::Passed),
+                Err(error) => (
+                    None,
+                    CheckOutcome::Failed {
+                        failure: error.failure(),
+                    },
+                ),
+            },
+        };
+        let input = TestInput {
+            interface: ApiInterface::Responses,
+            base_url: self.chatgpt_endpoints().api_base,
+            model: profile.model.clone(),
+            credential,
+            reasoning_effort: profile.reasoning_effort,
+            output_limit: profile.output_limit,
+            credential_check,
+            use_tools: profile.use_tools,
+            plan: true,
+        };
+        test_profile(&self.inner.client, &self.inner.registry, input).await
     }
 
     /// Deletes a credential that no profile uses any more. A failure is

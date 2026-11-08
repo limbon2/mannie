@@ -14,9 +14,13 @@ use reqwest::header::CONTENT_TYPE;
 
 use crate::errors::{self, Context, ErrorDetails};
 use crate::provider::{EventStream, ProviderError, ProviderEvent};
-use crate::quirks::Quirks;
+use crate::quirks::{Quirks, ResponsesShape};
 use crate::sse::{SseEvent, SseParser};
 use crate::transport::{HttpClient, MAX_ERROR_BODY_BYTES, MAX_RESPONSE_BYTES};
+
+/// How long Mannie waits for the body of an answer that is not an event
+/// stream, which it reads only to log what the answer was.
+const ANSWER_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Whether a stream goes on after an event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,12 +156,20 @@ impl<T: Translator> Driver<T> {
         };
         self.received = self.received.saturating_add(chunk.len());
         if self.received > MAX_RESPONSE_BYTES {
+            tracing::warn!(
+                bytes = self.received,
+                "the provider's answer is longer than Mannie reads"
+            );
             return self.fail(ProviderError::Permanent(RunFailure::InvalidResponse));
         }
         let events = match self.parser.push(&chunk) {
             Ok(events) => events,
             Err(error) => {
-                tracing::debug!(%error, "the provider's stream is not valid");
+                tracing::warn!(
+                    %error,
+                    bytes = self.received,
+                    "the provider's stream is not valid"
+                );
                 return self.fail(ProviderError::Permanent(RunFailure::InvalidResponse));
             }
         };
@@ -222,26 +234,55 @@ async fn open(
         tracing::debug!(
             status = status.as_u16(),
             code = details.code.as_deref(),
+            param = details.param.as_deref(),
             message = loggable(details.message.as_deref(), credential).as_deref(),
             "the provider refused the call"
         );
         return Err(error);
     }
-    let is_event_stream = response
+    let content_type = response
         .headers()
         .get(CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| {
-            value
-                .trim()
-                .to_ascii_lowercase()
-                .starts_with("text/event-stream")
-        });
-    if !is_event_stream {
-        tracing::debug!("the provider answered without an event stream");
+        .map(|value| value.trim().to_ascii_lowercase());
+    let is_event_stream = content_type
+        .as_deref()
+        .is_some_and(|value| value.starts_with("text/event-stream"));
+    // The ChatGPT plan's route sends its event streams without a content type
+    // (ADR-0062, decision 10), so there an answer without one is read as the
+    // stream that the request asked for. An answer that names another type is
+    // still refused, and the stream's other checks still apply.
+    let is_unlabeled_plan_stream =
+        content_type.is_none() && quirks.responses == ResponsesShape::ChatGptPlan;
+    if !is_event_stream && !is_unlabeled_plan_stream {
+        // The answer may be an error sent with a success status. Its code and
+        // type name it; its message may repeat the owner's content, so only
+        // the debug log shows that.
+        let body = read_error_body(response, ANSWER_WAIT).await;
+        let details = ErrorDetails::from_body(&body);
+        let shown_type = content_type.as_deref().map(log_label);
+        tracing::warn!(
+            status = status.as_u16(),
+            content_type = shown_type.as_deref(),
+            bytes = body.len(),
+            code = details.code.as_deref(),
+            kind = details.kind.as_deref(),
+            param = details.param.as_deref(),
+            "the provider answered without an event stream"
+        );
+        tracing::debug!(
+            message = loggable(details.message.as_deref(), credential).as_deref(),
+            "the provider's answer without an event stream"
+        );
         return Err(ProviderError::Permanent(RunFailure::InvalidResponse));
     }
     Ok(Box::pin(response.bytes_stream()))
+}
+
+/// A name that the server chose, such as a content type or an event's type,
+/// cut to a length that a log line can hold.
+pub(crate) fn log_label(name: &str) -> String {
+    name.chars().take(64).collect()
 }
 
 /// A provider's message as the log may show it: without the credential, in

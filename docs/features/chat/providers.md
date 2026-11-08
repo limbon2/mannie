@@ -1,12 +1,12 @@
 # Providers
 
-|              |                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status       | Building                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| Milestone    | M1                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| Last updated | 2026-10-24                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| Part of      | [Chat](README.md)                                                                                                                                                                                                                                                                                                                                                                                                           |
-| Related      | [ADR-0011](../../adr/0011-own-the-provider-adapters.md), [ADR-0010](../../adr/0010-keep-provider-credentials-on-the-master.md), [ADR-0047](../../adr/0047-serve-embeddings-and-reranking-through-provider-profiles.md), [Agent runtime](../../architecture/agent-runtime.md#4-model-calls), [Security](../../architecture/security.md#7-rules-for-handling-secrets), [Notebooks](../../../plugins/notebooks/docs/README.md) |
+|              |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status       | Building                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Milestone    | M1                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Last updated | 2026-11-09                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Part of      | [Chat](README.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Related      | [ADR-0011](../../adr/0011-own-the-provider-adapters.md), [ADR-0010](../../adr/0010-keep-provider-credentials-on-the-master.md), [ADR-0047](../../adr/0047-serve-embeddings-and-reranking-through-provider-profiles.md), [ADR-0062](../../adr/0062-let-the-owner-pay-for-model-calls-with-a-chatgpt-plan.md), [ChatGPT plan](../chatgpt-plan.md), [Agent runtime](../../architecture/agent-runtime.md#4-model-calls), [Security](../../architecture/security.md#7-rules-for-handling-secrets), [Notebooks](../../../plugins/notebooks/docs/README.md) |
 
 ## Design
 
@@ -17,6 +17,7 @@ A profile names one model on one server. The core validates every field; the web
 | Field            | Rule                                                                                                                                                                             |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Name             | 1 to 100 characters after trimming, unique among profiles regardless of case                                                                                                     |
+| Access           | An API endpoint, the default, with the fields below, or the ChatGPT plan, whose interface and base URL the core sets, without a credential ([plan profiles](#plan-profiles))     |
 | API interface    | Responses or Chat Completions                                                                                                                                                    |
 | Base URL         | An absolute `http` or `https` URL of at most 2,048 characters, without user information, query or fragment. Mannie appends `/responses`, `/chat/completions` or `/models`.       |
 | Model            | 1 to 200 characters without control characters                                                                                                                                   |
@@ -28,7 +29,17 @@ A profile names one model on one server. The core validates every field; the web
 
 - Known models have defaults for the context window and the output limit, kept with their verification dates in `crates/mannie-provider/src/models.rs`. When the server reports a model's limits, the provider test shows them, and the owner can apply them.
 - One profile is the default. A conversation uses the default unless the owner chose another profile for it. Deleting the default profile makes the oldest remaining profile the default. A profile that a running reply uses cannot be deleted until the reply ends; conversations that used a deleted profile fall back to the default.
-- Each profile has a configuration revision that increases when the API interface, the base URL, the model or the credential changes. Provider-private data, such as encrypted reasoning, is bound to the profile and its revision and replayed only to that binding ([ADR-0011](../../adr/0011-own-the-provider-adapters.md), decision 6).
+- Each profile has a configuration revision that increases when the access, the API interface, the base URL, the model or the credential changes. Provider-private data, such as encrypted reasoning, is bound to the profile and its revision and replayed only to that binding ([ADR-0011](../../adr/0011-own-the-provider-adapters.md), decision 6). A plan profile's binding also holds the key of its ChatGPT account ([plan profiles](#plan-profiles)).
+
+### Plan profiles
+
+A plan profile calls OpenAI's models on the owner's ChatGPT plan, through the ChatGPT account that the owner signed in with ([ChatGPT plan](../chatgpt-plan.md), [ADR-0062](../../adr/0062-let-the-owner-pay-for-model-calls-with-a-chatgpt-plan.md)).
+
+- Its API interface is Responses and its base URL is `https://api.openai.com/v1`. The core sets both from its own configuration and never takes them from the webview.
+- It has no credential of its own, and refuses one. Each of its model calls uses the account's access token of the moment, which the core resolves right before the call. A profile that switches to the plan forgets its old credential.
+- Its model comes from the account's catalog, which lists the models by their display names in the server's order. The context window and the output limit come from the defaults of known models, or the owner enters them.
+- Its binding is `{profile}:{revision}:{account key}`, where the account key is the first 16 hex characters of SHA-256 over the account's client ID and subject. A refresh of the tokens changes nothing, the same account keeps its encrypted reasoning when it signs in again, and another account never receives it. When the account changes during a reply, the reply ends with `chatgpt_account_changed`.
+- The master never lends the account's tokens, so runs on a plan profile are offered no executors, such as workers ([credential leases](../../../plugins/workers/docs/credential-leases.md)).
 
 ### Credentials
 
@@ -52,11 +63,13 @@ The test runs these checks in order and reports each one as passed, failed with 
 | Reasoning  | When the profile sets a reasoning effort, checks that the server accepted it and reports whether reasoning arrived                                                                                                        |
 | Tools      | When the profile uses tools, offers one tool and checks that a well-formed call arrives and that the model answers after its result. A server that refuses tools fails the check with the advice to turn "Use tools" off. |
 
+On a plan profile, the Server and Model checks read the ChatGPT account's catalog in place of `/models` and the identification of the server, the other checks send the plan's requests, and the test records no server.
+
 ### Adapters
 
 - `mannie-provider` defines the `Provider` trait: one streamed model call that yields normalized events (text and reasoning deltas, provider-private reasoning items, usage, and the end of the step with its reason). There is one adapter per API interface, registered in the provider registry.
 - Transport: reqwest with rustls and ring, and the operating system's trust store through `rustls-platform-verifier`. Redirects are refused, so a credential never follows one. Timeouts: 15 s to connect, 120 s for the response headers, 600 s for the first event (local servers can take minutes to read a long prompt), and 300 s between events. One event may be at most 1 MiB, and one response at most 32 MiB.
-- Responses API: `stream: true`, `store: false`, the owner's instructions as `instructions`, `max_output_tokens`, and, with a reasoning effort, `reasoning: {effort, summary: "auto"}` and `include: ["reasoning.encrypted_content"]`.
+- Responses API: `stream: true`, `store: false`, the owner's instructions as `instructions`, `max_output_tokens`, and, with a reasoning effort, `reasoning: {effort, summary: "auto"}` and `include: ["reasoning.encrypted_content"]`. A plan profile's requests leave out `max_output_tokens`, hold the tools in the namespace `mannie` and give replayed assistant messages a `phase` ([ChatGPT plan](../chatgpt-plan.md#the-text-the-model-sees)).
 - Chat Completions: `stream: true`, `stream_options: {include_usage: true}`, the instructions as the first `system` message, and `max_completion_tokens`, or whatever the quirk profile says instead. Reasoning arrives as `reasoning` or `reasoning_content` in the deltas, or, for some models, between `<think>` tags at the start of the content.
 - Errors fall into three classes ([ADR-0011](../../adr/0011-own-the-provider-adapters.md), decision 3):
 
@@ -66,7 +79,8 @@ The test runs these checks in order and reports each one as passed, failed with 
   | Context overflow | The error codes and messages that each server uses when the request is longer than the model's context                                                                   |
   | Permanent        | HTTP 401 (invalid credential), 402 and 429 with `insufficient_quota` (quota), 403 (permission), 404 (model or endpoint), other 4xx, refused redirects, malformed streams |
 
-- Each stream's integrity is checked: the content type is `text/event-stream`, a finish reason or completion event arrives, and events stay within their size limits. A stream that ends without one is a broken stream.
+- On a plan profile's calls, OpenAI's codes of plan usage come before these classes, and a usage limit is permanent ([ADR-0062](../../adr/0062-let-the-owner-pay-for-model-calls-with-a-chatgpt-plan.md), decision 12).
+- Each stream's integrity is checked: the content type is `text/event-stream`, a finish reason or completion event arrives, and events stay within their size limits. A stream that ends without one is a broken stream. The ChatGPT plan's route sends its streams without a content type, which Mannie accepts from that route alone ([ADR-0062](../../adr/0062-let-the-owner-pay-for-model-calls-with-a-chatgpt-plan.md), decision 10).
 
 ### Quirk profiles
 
@@ -80,6 +94,7 @@ Quirk profiles are data in `crates/mannie-provider/src/quirks.rs`. Each one matc
 | Reasoning effort shape      | `reasoning_effort`, `reasoning: {effort}`, or no effort at all                                                                                                                                                                                                                             |
 | Context overflow messages   | The server's wording of a context overflow, for servers without an error code                                                                                                                                                                                                              |
 | Silent truncation           | The server shortens prompts beyond its context instead of failing. Between two calls of a conversation the request only grows, so when the reported size grows by less than half of what was added, the reply's status says that the model may not have read the start of the conversation |
+| Responses shape             | The ChatGPT plan's shape of a Responses request. Only plan profiles get it, and no server or model selects it ([ChatGPT plan](../chatgpt-plan.md#the-text-the-model-sees))                                                                                                                 |
 
 The server is identified by the base URL's host for OpenAI and OpenRouter, and by probing endpoints that only one server has for Ollama, LM Studio, vLLM and SGLang. An unidentified server gets the generic Chat Completions behavior.
 
@@ -109,11 +124,14 @@ A search profile names one embedding or rerank model on one server, for the feat
 
 - Commands (`apps/desktop/core/src/commands/providers.rs`): `list_provider_profiles`, `create_provider_profile`, `update_provider_profile` (the credential is kept, replaced or removed), `delete_provider_profile`, `set_default_provider_profile`, `test_provider_profile`, and `get_model_defaults` for the known limits of a model name.
 - Commands of search profiles: `list_search_profiles`, `create_search_profile`, `update_search_profile`, `delete_search_profile` and `test_search_profile`.
+- `ProviderProfile` and `ProfileDraft` carry `access`, `endpoint` or `chatgpt_plan`, which a draft without the field reads as `endpoint`. The commands of the ChatGPT account are in [ChatGPT plan](../chatgpt-plan.md#contracts).
 - Errors use the `ProviderProfileError` codes, such as `name_taken`, `invalid_base_url`, `insecure_credential_transport`, `invalid_limits`, `invalid_prefix` (with its limit), `credential_store_unavailable` (with its reason), `profile_in_use` and `not_found`. Failures of a reply use the run failure codes in [conversations](conversations.md#errors).
 
 ### Data
 
-`provider_profiles` (migration `0006`): the profile's fields, the credential entry's name, whether it is the default (at most one row), the configuration revision, and a versioned JSON document with the limits, the reasoning effort and what the provider test found out about the server.
+`provider_profiles` (migration `0006`): the profile's fields, the credential entry's name, whether it is the default (at most one row), the configuration revision, and a versioned JSON document with the limits, the reasoning effort, the access, which an endpoint profile leaves out, and what the provider test found out about the server.
+
+`provider_chatgpt_account` (migration `0043`): the ChatGPT account of plan profiles ([ChatGPT plan](../chatgpt-plan.md#data)).
 
 `provider_search_profiles` (migration `0035`): a search profile's fields, the credential entry's name, the configuration revision, and a versioned JSON document with the texts before queries and documents and what the test found out about the server.
 
@@ -123,6 +141,7 @@ A search profile names one embedding or rerank model on one server, for the feat
 - Recorded scenarios on every server: a short reply, a reply cut at the output limit, the model list, an unknown model, an invalid credential where the server checks credentials, a context overflow, and reasoning where the model supports it. The Responses API adds a two-turn exchange that replays encrypted reasoning.
 - Constructed scenarios: rate limits with `Retry-After`, server errors, an exhausted quota, broken streams, CRLF line endings, keepalive comments, an error in the middle of a stream, an oversized event and malformed chunks.
 - A fixture server in the tests replays each stream with random chunk boundaries and delays. `task provider:record` records fixtures from the owner's servers and refuses to write a file that contains the credential. `task provider:live` runs the same scenarios against live servers, and a nightly workflow runs it with the repository's provider secrets.
+- The ChatGPT plan's fixtures, `open_ai/plan_*`, come from the live route through `task provider:record:chatgpt`, after the owner signs in, and `task provider:live:chatgpt` runs their scenarios against it ([M19 validation results](../../roadmap/m19-validation.md)).
 
 ### Message keys
 
@@ -131,6 +150,7 @@ Settings and errors of providers use keys under `chat_providers_` and `chat_erro
 ### Threat notes
 
 - Credentials (T-6): only in the credential store; registered with the redactor; never in the database, logs, URLs, the webview's responses or fixtures; never sent over plain HTTP to a remote host; never forwarded by a redirect. A planted credential is searched for in every log, database and crash file of the end-to-end tests.
+- The ChatGPT account's tokens live only in the credential store, never reach the webview, a worker or a plugin, and refresh one at a time ([ChatGPT plan](../chatgpt-plan.md#threat-notes), T-94 to T-99).
 - Provider output is untrusted. Size limits bound memory, the parser rejects malformed input without panicking, and the text reaches the webview only through the Markdown renderer of [conversation view](conversation-view.md#markdown-rendering).
 - A compromised webview can create a profile that points anywhere and send a conversation there. This is part of the residual risk of [security](../../architecture/security.md#8-if-the-webview-is-compromised): the webview can call every command the main window is granted.
 
@@ -150,3 +170,4 @@ Settings and errors of providers use keys under `chat_providers_` and `chat_erro
 - The search adapters send and read the shapes above, classify refusals as the chat adapters do and turn logits into probabilities (`crates/mannie-provider/tests/search.rs`); search profiles keep the rules of fields, credentials and transport, and their test reports dimensions and scores (`crates/mannie-runtime/tests/search_profiles.rs`); and search profiles are added from the provider settings page (the plugin Notebooks' end-to-end test against the mock provider's `/embeddings` and `/rerank`).
 - A planted credential appears in no log, database or crash file after the end-to-end scenario, and never in a recorded fixture.
 - The dependency graph contains ring as the only crypto provider and no OpenSSL or aws-lc (`task lint:deps`).
+- Plan profiles, their sign-in, their requests and their errors pass the checks of [ChatGPT plan](../chatgpt-plan.md#acceptance).

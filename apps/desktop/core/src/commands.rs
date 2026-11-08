@@ -6,6 +6,7 @@
 
 pub(crate) mod agents;
 pub(crate) mod chat;
+pub(crate) mod chatgpt;
 pub(crate) mod child_agents;
 pub(crate) mod export;
 pub(crate) mod interface;

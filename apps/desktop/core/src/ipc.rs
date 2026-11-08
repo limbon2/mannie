@@ -22,8 +22,8 @@ use tauri::Wry;
 use tauri_specta::{Builder, ErrorHandlingMode, collect_commands};
 
 use crate::commands::{
-    agents, chat, child_agents, export, interface, links, plans, plugins, projects, providers,
-    skills, startup, tools, window,
+    agents, chat, chatgpt, child_agents, export, interface, links, plans, plugins, projects,
+    providers, skills, startup, tools, window,
 };
 
 /// The first line of every generated file.
@@ -108,6 +108,13 @@ macro_rules! app_commands {
             providers::update_search_profile,
             providers::delete_search_profile,
             providers::test_search_profile,
+            chatgpt::subscribe_chatgpt_account,
+            chatgpt::start_chatgpt_sign_in,
+            chatgpt::reopen_chatgpt_sign_in_page,
+            chatgpt::cancel_chatgpt_sign_in,
+            chatgpt::sign_out_chatgpt,
+            chatgpt::list_chatgpt_models,
+            chatgpt::acknowledge_chatgpt_notice,
             links::check_link,
             links::open_link,
             window::subscribe_window_requests,
@@ -193,6 +200,8 @@ fn validation_builder() -> Builder<Wry> {
             crate::commands::validation::validation_set_folder_choice,
             crate::commands::validation::validation_set_file_choice,
             crate::commands::validation::validation_set_skills_folder,
+            crate::commands::validation::validation_set_chatgpt_mock,
+            crate::commands::validation::validation_expire_chatgpt_token,
         ])
 }
 
@@ -226,6 +235,8 @@ pub(crate) fn runtime_builder() -> Builder<Wry> {
                 crate::commands::validation::validation_set_folder_choice,
                 crate::commands::validation::validation_set_file_choice,
                 crate::commands::validation::validation_set_skills_folder,
+                crate::commands::validation::validation_set_chatgpt_mock,
+                crate::commands::validation::validation_expire_chatgpt_token,
             ])
     }
 }

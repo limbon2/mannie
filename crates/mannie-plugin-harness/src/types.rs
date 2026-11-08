@@ -19,7 +19,8 @@ pub use mannie_types::images::{ImageRef, ImageSize, ReadImage};
 pub use mannie_types::mentions::{MentionPlace, MentionRef, MentionSuggestions, SuggestMentions};
 pub use mannie_types::plugins::{FeatureView, PluginState, PluginView};
 pub use mannie_types::provider::{
-    ApiInterface, CreateProviderProfile, ProfileDraft, ProviderProfile, ReasoningEffort,
+    ApiInterface, CreateProviderProfile, ProfileAccess, ProfileDraft, ProviderProfile,
+    ReasoningEffort,
 };
 pub use mannie_types::run::{FinishReason, RunState};
 pub use mannie_types::tasks::{TaskDocument, TaskPartDocument, TaskRefusal, TaskView};

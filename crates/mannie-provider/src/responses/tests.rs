@@ -11,7 +11,7 @@ use crate::provider::{
     Content, ImageInput, Message, ModelRequest, ProviderError, ProviderEvent, Role, ToolChoice,
     ToolDefinition,
 };
-use crate::quirks::quirks_for;
+use crate::quirks::{chatgpt_plan_quirks, quirks_for};
 use crate::sse::SseEvent;
 use crate::stream::{Flow, Translator};
 use crate::transport::HttpClient;
@@ -406,4 +406,178 @@ fn a_loose_tool_goes_without_strict_mode_beside_strict_ones() {
     assert_eq!(openai["tools"][0]["strict"], json!(true));
     assert_eq!(openai["tools"][1]["strict"], json!(false));
     assert_eq!(openai["tools"][1]["name"], json!("mcp_github_list_issues"));
+}
+
+fn read_file_tool() -> ToolDefinition {
+    ToolDefinition {
+        name: "read_file".to_owned(),
+        description: "Reads a file.".to_owned(),
+        parameters: json!({ "type": "object", "properties": { "path": { "type": "string" } } }),
+        strict: true,
+    }
+}
+
+/// A conversation in which the model wrote a preamble, called a tool, read
+/// its result and answered.
+fn conversation_with_a_call() -> ModelRequest {
+    let reasoning = r#"{"type":"reasoning","id":"rs_1","encrypted_content":"opaque","summary":[]}"#;
+    ModelRequest {
+        model: "gpt-6.1-sol".to_owned(),
+        instructions: "Be brief.".to_owned(),
+        messages: vec![
+            Message::text(Role::User, "What is in notes.txt?"),
+            Message {
+                role: Role::Assistant,
+                content: vec![
+                    Content::ProviderItem(reasoning.to_owned()),
+                    Content::Text("Let me read it.".to_owned()),
+                    Content::ToolCall {
+                        call_id: "call_1".to_owned(),
+                        name: "read_file".to_owned(),
+                        arguments: r#"{"path":"notes.txt"}"#.to_owned(),
+                    },
+                ],
+            },
+            Message {
+                role: Role::Tool,
+                content: vec![Content::ToolResult {
+                    call_id: "call_1".to_owned(),
+                    output: "Buy milk.".to_owned(),
+                    images: Vec::new(),
+                }],
+            },
+            Message::text(Role::Assistant, "It says: buy milk."),
+            Message::text(Role::User, "Thanks."),
+        ],
+        max_output_tokens: 8_192,
+        reasoning_effort: ReasoningEffort::Medium,
+        tools: vec![read_file_tool()],
+        tool_choice: ToolChoice::Auto,
+    }
+}
+
+#[test]
+fn a_plan_request_sends_no_output_limit_and_offers_its_tools_in_one_namespace() {
+    let body = request_body(&conversation_with_a_call(), &chatgpt_plan_quirks());
+
+    let mut keys: Vec<&str> = body
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        [
+            "include",
+            "input",
+            "instructions",
+            "model",
+            "reasoning",
+            "store",
+            "stream",
+            "tool_choice",
+            "tools"
+        ]
+    );
+    assert_eq!(
+        body["tools"],
+        json!([{
+            "type": "namespace",
+            "name": "mannie",
+            "description": "Tools that Mannie runs for this conversation.",
+            "tools": [{
+                "type": "function",
+                "name": "read_file",
+                "description": "Reads a file.",
+                "parameters": { "type": "object", "properties": { "path": { "type": "string" } } },
+                "strict": true
+            }]
+        }])
+    );
+    assert_eq!(body["store"], json!(false));
+    assert_eq!(body["stream"], json!(true));
+}
+
+#[test]
+fn replayed_calls_of_a_plan_request_name_the_namespace_and_assistant_text_has_its_phase() {
+    let body = request_body(&conversation_with_a_call(), &chatgpt_plan_quirks());
+
+    assert_eq!(
+        body["input"],
+        json!([
+            { "role": "user", "content": [{ "type": "input_text", "text": "What is in notes.txt?" }] },
+            { "type": "reasoning", "id": "rs_1", "encrypted_content": "opaque", "summary": [] },
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{ "type": "output_text", "text": "Let me read it." }],
+                "phase": "commentary"
+            },
+            {
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "read_file",
+                "arguments": "{\"path\":\"notes.txt\"}",
+                "namespace": "mannie"
+            },
+            { "type": "function_call_output", "call_id": "call_1", "output": "Buy milk." },
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{ "type": "output_text", "text": "It says: buy milk." }],
+                "phase": "final_answer"
+            },
+            { "role": "user", "content": [{ "type": "input_text", "text": "Thanks." }] }
+        ])
+    );
+}
+
+#[test]
+fn an_endpoint_request_has_no_namespace_and_no_phase() {
+    let body = request_body(
+        &conversation_with_a_call(),
+        &quirks_for(ApiInterface::Responses, Some(ServerKind::OpenAi)),
+    );
+
+    assert_eq!(body["max_output_tokens"], json!(8_192));
+    assert_eq!(body["tools"][0]["type"], json!("function"));
+    let input = body["input"].as_array().unwrap();
+    assert!(input.iter().all(|item| item.get("namespace").is_none()));
+    assert!(input.iter().all(|item| item.get("phase").is_none()));
+    assert_eq!(
+        input[2],
+        json!({ "role": "assistant", "content": [{ "type": "output_text", "text": "Let me read it." }] })
+    );
+}
+
+#[test]
+fn a_namespaced_call_in_the_stream_keeps_its_plain_name() {
+    let clock = Arc::new(ManualClock::new(UtcMillis::from_millis(0)));
+    let client = HttpClient::new(clock).unwrap();
+    let mut translator = ResponsesTranslator::new(&client, "gpt-6.1-sol", chatgpt_plan_quirks());
+    let item = json!({
+        "type": "function_call",
+        "id": "fc_1",
+        "call_id": "call_1",
+        "name": "read_file",
+        "namespace": "mannie",
+        "arguments": "{\"path\":\"notes.txt\"}"
+    });
+
+    let (events, flow) = feed(
+        &mut translator,
+        &[
+            json!({ "type": "response.output_item.added", "item": item }),
+            json!({ "type": "response.output_item.done", "item": item }),
+            json!({ "type": "response.completed", "response": {} }),
+        ],
+    );
+
+    assert!(matches!(flow, Ok(Flow::Finished)));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        ProviderEvent::ToolCall { name, call_id, .. } if name == "read_file" && call_id == "call_1"
+    )));
 }

@@ -267,6 +267,18 @@ tasks:
     cmds:
       - task: provider:live
 
+  provider:live:chatgpt:
+    desc: Sign in with ChatGPT in the browser and run the live checks of the ChatGPT plan (ADR-0062); port 1455 must be free
+    cmds:
+      - cargo test --locked -p mannie-provider --features testing --test live_chatgpt -- --ignored --nocapture
+
+  provider:record:chatgpt:
+    desc: Record the ChatGPT plan's fixtures as its live checks run
+    env:
+      MANNIE_RECORD_FIXTURES: "1"
+    cmds:
+      - task: provider:live:chatgpt
+
   test:scripts:
     desc: Run the tests of the repository scripts, such as the local ESLint rules
     cmds:

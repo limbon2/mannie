@@ -37,6 +37,19 @@ required-features = ["testing"]
 name = "live"
 required-features = ["testing"]
 
+# The ChatGPT sign-in over real HTTP: the token endpoint, refreshes,
+# revocation, the ID token's keys and the plan's catalog (ADR-0062).
+[[test]]
+name = "chatgpt"
+required-features = ["testing"]
+
+# The live checks of the ChatGPT plan: the owner signs in in the browser, and
+# the checks call OpenAI. Ignored unless run on purpose
+# (`task provider:live:chatgpt`, `task provider:record:chatgpt`).
+[[test]]
+name = "live_chatgpt"
+required-features = ["testing"]
+
 [dependencies]
 # The `data:` URLs of the images in a request (ADR-0033).
 base64 = { workspace = true }
@@ -47,15 +60,24 @@ mannie-types = { workspace = true }
 # HTTP/1.1 and HTTP/2 over rustls, the operating system's trust store through
 # rustls-platform-verifier, streamed bodies, and the system's proxy settings.
 reqwest = { workspace = true, features = ["http2", "rustls-no-provider", "stream", "system-proxy"] }
+# The ChatGPT sign-in's RS256 check of ID tokens, its PKCE challenge and its
+# random values (ADR-0062). ring is already the TLS provider (ADR-0008).
+ring = { workspace = true }
 rustls = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
-tokio = { workspace = true, features = ["macros", "sync", "time"] }
+# The loopback listener of the ChatGPT sign-in's return reads and answers one
+# request (ADR-0062, decision 4).
+tokio = { workspace = true, features = ["io-util", "macros", "net", "sync", "time"] }
 tracing = { workspace = true }
-# The host of a base URL, to tell local addresses from remote ones.
+# The host of a base URL, to tell local addresses from remote ones, and the
+# forms of the ChatGPT sign-in's token requests.
 url = { workspace = true }
+# The host ID that the ChatGPT sign-in sends, a UUID of version 4 that OpenAI
+# asks for (ADR-0062, decision 3).
+uuid = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]

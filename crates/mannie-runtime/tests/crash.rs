@@ -25,7 +25,9 @@ use mannie_runtime::testing::{
     FakeModel, MemoryVault, fast_config, open_store, reply, server_error, start_runtime,
 };
 use mannie_types::chat::{StartConversation, SubscribeConversation};
-use mannie_types::provider::{ApiInterface, CreateProviderProfile, ProfileDraft, ReasoningEffort};
+use mannie_types::provider::{
+    ApiInterface, CreateProviderProfile, ProfileAccess, ProfileDraft, ReasoningEffort,
+};
 use mannie_types::run::RunState;
 use mannie_types::secret::Secret;
 use mannie_types::transcript::{ConversationEvent, ConversationUpdate, PartContent, PartState};
@@ -39,6 +41,7 @@ const KILL_AFTER: [usize; 8] = [1, 3, 6, 8, 11, 13, 16, 20];
 
 fn draft() -> ProfileDraft {
     ProfileDraft {
+        access: ProfileAccess::Endpoint,
         name: "Test".to_owned(),
         interface: ApiInterface::ChatCompletions,
         base_url: "http://127.0.0.1:9/v1".to_owned(),

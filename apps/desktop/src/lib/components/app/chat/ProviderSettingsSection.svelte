@@ -18,16 +18,19 @@
   import { ProviderTestRun } from '#lib/state/provider-test-run.svelte.js';
   import type { ProfileFailure } from '#lib/types/chat.js';
   import { profileFailureMessage } from '#lib/utils/chat-errors.js';
-  import { interfaceLabel, serverLabel } from '#lib/utils/provider-labels.js';
+  import { accessLabel, interfaceLabel, serverLabel } from '#lib/utils/provider-labels.js';
 
+  import ChatGptAccountItem from './ChatGptAccountItem.svelte';
   import ProviderProfileDialog from './ProviderProfileDialog.svelte';
   import ProviderTestDialog from './ProviderTestDialog.svelte';
   import SearchProfilesList from './SearchProfilesList.svelte';
 
   // The provider profiles (docs/features/chat/conversation-view.md, settings
-  // sections): each with its model and interface, which one is the default,
-  // and Edit, Test, Make default and Delete; below them, the search profiles
-  // of embedding and rerank models (ADR-0047).
+  // sections): above them, the ChatGPT account (docs/features/
+  // chatgpt-plan.md); each profile with its model and interface, or the mark
+  // of the ChatGPT plan, which one is the default, and Edit, Test, Make
+  // default and Delete; below them, the search profiles of embedding and
+  // rerank models (ADR-0047).
   let editorOpen = $state(false);
   let editor = $state<ProviderProfileForm | null>(null);
   let testOpen = $state(false);
@@ -71,6 +74,7 @@
   });
 </script>
 
+<ChatGptAccountItem />
 {#if providerProfiles.status === 'loading'}
   <div class="flex flex-col gap-2" aria-busy="true">
     <Skeleton class="h-14 w-full" />
@@ -108,12 +112,17 @@
           <span class="truncate font-medium" data-content>{profile.name}</span>
           <span class="truncate text-xs text-muted-foreground">
             <span data-content>{profile.model}</span>
-            ·
-            <span>{interfaceLabel(profile.interface)}</span>
+            {#if profile.access === 'endpoint'}
+              ·
+              <span>{interfaceLabel(profile.interface)}</span>
+            {/if}
           </span>
         </div>
         {#if profile.isDefault}
           <Badge variant="secondary">{m.chat_providers_default()}</Badge>
+        {/if}
+        {#if profile.access === 'chatgpt_plan'}
+          <Badge data-chatgpt-plan="" variant="outline">{accessLabel(profile.access)}</Badge>
         {/if}
         {#if profile.server !== null}
           <Badge variant="outline">{serverLabel(profile.server)}</Badge>

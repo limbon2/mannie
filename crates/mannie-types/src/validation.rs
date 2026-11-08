@@ -107,6 +107,18 @@ impl SeedConversation {
     }
 }
 
+/// Where a validation build's ChatGPT sign-in and calls on the ChatGPT plan
+/// go: the end-to-end tests' mock of OpenAI (ADR-0062).
+#[derive(Debug, Clone, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatGptMock {
+    /// The issuer, whose paths are OpenAI's, such as
+    /// `http://127.0.0.1:4000`.
+    pub issuer: String,
+    /// The base URL of the Responses API and the catalog of models.
+    pub api_base: String,
+}
+
 /// The state of the main window and the tray, as the validations see it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]

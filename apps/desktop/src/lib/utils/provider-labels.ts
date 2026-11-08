@@ -1,8 +1,24 @@
-// Labels of the provider settings (docs/features/chat/providers.md): the API
-// interfaces, the servers, the reasoning efforts and the kinds of search
-// profiles (ADR-0047), from the catalog.
-import type { ApiInterface, ReasoningEffort, SearchKind, ServerKind } from '#lib/generated/bindings.js';
+// Labels of the provider settings (docs/features/chat/providers.md): the ways
+// a profile reaches its model (ADR-0062), the API interfaces, the servers,
+// the reasoning efforts and the kinds of search profiles (ADR-0047), from the
+// catalog.
+import type { ApiInterface, ProfileAccess, ReasoningEffort, SearchKind, ServerKind } from '#lib/generated/bindings.js';
 import { m } from '#lib/paraglide/messages.js';
+
+/** The ways a profile reaches its model, in the order the profile dialog offers them. */
+export const PROFILE_ACCESSES: readonly ProfileAccess[] = ['endpoint', 'chatgpt_plan'];
+
+/** The label of a way a profile reaches its model: an API endpoint or the ChatGPT plan. */
+export function accessLabel(access: ProfileAccess): string {
+  switch (access) {
+    case 'chatgpt_plan': {
+      return m.chat_chatgpt_plan();
+    }
+    case 'endpoint': {
+      return m.chat_chatgpt_access_endpoint();
+    }
+  }
+}
 
 /** The kinds of search profiles, in the order the settings offer them. */
 export const SEARCH_KINDS: readonly SearchKind[] = ['embeddings', 'rerank'];

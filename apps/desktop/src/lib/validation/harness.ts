@@ -74,6 +74,8 @@ export interface ValidationHarness {
   cspViolations(): readonly CspViolation[];
   /** Deletes every provider profile, and with them the credentials they stored. */
   deleteProviderProfiles(): Promise<number>;
+  /** Makes the ChatGPT account's access token expire, so the next call refreshes it. */
+  expireChatGptToken(): Promise<void>;
   insertHostileHtml(payloads: readonly string[]): Promise<boolean>;
   /** The links that the app would have opened in the browser. */
   openedLinks(): Promise<string[]>;
@@ -83,6 +85,11 @@ export interface ValidationHarness {
   runChannelLoad(load: ChannelLoad): Promise<ChannelLoadReport>;
   /** Adds a conversation with this many turns, and returns its ID. */
   seedConversation(turns: number): Promise<string>;
+  /**
+   * Points the ChatGPT sign-in and the calls on the ChatGPT plan at the
+   * tests' mock of OpenAI: its issuer and its API's base URL (ADR-0062).
+   */
+  setChatGptMock(issuer: string, apiBase: string): Promise<void>;
   /**
    * Sets the files that the next file dialog answers instead of opening, or
    * none for a dialog that the owner closed.
@@ -326,6 +333,12 @@ window.mannieValidation = {
   },
   setFolderChoice: async (folder) => {
     await commands.validationSetFolderChoice(folder);
+  },
+  setChatGptMock: async (issuer, apiBase) => {
+    unwrap(await commands.validationSetChatgptMock({ apiBase, issuer }));
+  },
+  expireChatGptToken: async () => {
+    await commands.validationExpireChatgptToken();
   },
   setSkillsFolder: async (folder) => {
     await commands.validationSetSkillsFolder(folder);

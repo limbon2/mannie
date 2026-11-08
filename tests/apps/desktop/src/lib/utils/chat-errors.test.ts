@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import type {
   ChatError,
+  ChatGptError,
   CheckKind,
   CheckNote,
   CredentialStoreProblem,
@@ -15,6 +16,8 @@ import type {
 import type { ImageSourceKind } from '../../../../../../apps/desktop/src/lib/types/shell-slots.js';
 import {
   chatFailureMessage,
+  chatgptErrorMessage,
+  chatgptFailureMessage,
   checkLabel,
   checkNoteMessage,
   credentialStoreMessage,
@@ -50,6 +53,34 @@ const RUN_FAILURES: RunFailure[] = [
   { code: 'no_profile' },
   { code: 'tools_unsupported' },
   { code: 'internal' },
+  { code: 'chatgpt_sign_in_needed' },
+  { code: 'chatgpt_account_changed' },
+  { code: 'chatgpt_usage_limit_reached' },
+  { code: 'chatgpt_unavailable' },
+  { code: 'chatgpt_not_eligible' },
+  { code: 'chatgpt_unsupported', param: null },
+  { code: 'chatgpt_unsupported', param: 'reasoning.effort' },
+];
+
+const CHATGPT_ERRORS: ChatGptError[] = [
+  { code: 'port_in_use', port: 1455 },
+  { code: 'timed_out' },
+  { code: 'access_denied' },
+  { code: 'registration_incomplete' },
+  { code: 'sign_in_refused' },
+  { code: 'id_token_invalid' },
+  { code: 'plan_usage_not_granted' },
+  { code: 'network' },
+  { code: 'canceled' },
+  { code: 'already_signing_in' },
+  { code: 'not_signing_in' },
+  { code: 'invalid_page' },
+  { code: 'signed_out' },
+  { code: 'browser_unavailable' },
+  { code: 'provider', failure: { code: 'chatgpt_unavailable' } },
+  { code: 'credential_store_unavailable', reason: 'no_secret_service' },
+  { code: 'storage_failed' },
+  { code: 'store_unavailable' },
 ];
 
 const CHAT_ERRORS: ChatError[] = [
@@ -120,6 +151,24 @@ describe('chat messages', () => {
     expectDistinct(messages);
     expect(runFailureMessage({ code: 'model_not_found', model: 'gpt-x' })).toContain('gpt-x');
     expect(runFailureMessage({ code: 'server_error', status: 503 })).toContain('503');
+    expect(runFailureMessage({ code: 'chatgpt_unsupported', param: 'reasoning.effort' })).toContain('reasoning.effort');
+  });
+
+  it('say what each error of the ChatGPT account means and what the owner can do', () => {
+    const messages = CHATGPT_ERRORS.map((error) => chatgptErrorMessage(error));
+
+    expectDistinct(messages);
+    expect(chatgptErrorMessage({ code: 'port_in_use', port: 1455 })).toContain('port 1455');
+    expect(chatgptErrorMessage({ code: 'provider', failure: { code: 'chatgpt_unavailable' } })).toBe(
+      runFailureMessage({ code: 'chatgpt_unavailable' }),
+    );
+    expect(chatgptErrorMessage({ code: 'credential_store_unavailable', reason: 'no_secret_service' })).toBe(
+      credentialStoreMessage('no_secret_service'),
+    );
+    expect(chatgptFailureMessage({ error: { code: 'network' }, kind: 'core' })).toBe(
+      chatgptErrorMessage({ code: 'network' }),
+    );
+    expect(chatgptFailureMessage({ kind: 'ipc' })).toBe(chatFailureMessage({ kind: 'ipc' }));
   });
 
   it('say what each chat command error means', () => {

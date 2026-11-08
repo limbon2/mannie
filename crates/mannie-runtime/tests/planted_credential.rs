@@ -23,7 +23,9 @@ use mannie_runtime::{AgentRegistry, InstructionRegistry, Runtime, RuntimeDeps};
 use mannie_types::chat::StartConversation;
 use mannie_types::clock::{Clock, SystemClock};
 use mannie_types::ids::{ConversationId, RunId};
-use mannie_types::provider::{ApiInterface, CreateProviderProfile, ProfileDraft, ReasoningEffort};
+use mannie_types::provider::{
+    ApiInterface, CreateProviderProfile, ProfileAccess, ProfileDraft, ReasoningEffort,
+};
 use mannie_types::run::{RunFailure, RunState};
 use mannie_types::secret::Secret;
 use mannie_types::transcript::PartContent;
@@ -142,6 +144,7 @@ async fn start_with_adapters(store: mannie_store::Store, base_url: &str) -> Runt
     runtime
         .create_profile(CreateProviderProfile {
             draft: ProfileDraft {
+                access: ProfileAccess::Endpoint,
                 name: "Local".to_owned(),
                 interface: ApiInterface::ChatCompletions,
                 base_url: base_url.to_owned(),

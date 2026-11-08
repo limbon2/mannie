@@ -7,7 +7,7 @@
 | Deciders | Owner                                                                                                                                                        |
 | Related  | [ADR-0012](0012-run-agents-as-durable-actors.md), [Agent runtime](../architecture/agent-runtime.md), [Technology stack](../architecture/technology-stack.md) |
 
-Later changes: [ADR-0044](0044-let-tool-results-carry-images-to-the-model.md) refines decision 1: the adapters send the images of tool results, in the placement that each interface takes. [ADR-0047](0047-serve-embeddings-and-reranking-through-provider-profiles.md) refines decisions 1, 2, 3, 5 and 7: two adapters call embedding and rerank models with one request and one response, share the transport, the error classes and the quirk profiles, and are tested with recorded fixtures.
+Later changes: [ADR-0044](0044-let-tool-results-carry-images-to-the-model.md) refines decision 1: the adapters send the images of tool results, in the placement that each interface takes. [ADR-0047](0047-serve-embeddings-and-reranking-through-provider-profiles.md) refines decisions 1, 2, 3, 5 and 7: two adapters call embedding and rerank models with one request and one response, share the transport, the error classes and the quirk profiles, and are tested with recorded fixtures. [ADR-0062](0062-let-the-owner-pay-for-model-calls-with-a-chatgpt-plan.md) refines decisions 3, 4 and 6: on the calls of a profile that uses the ChatGPT plan, OpenAI's codes of plan usage come before the classes of the HTTP status, and the 429 of a usage limit is permanent; an answer of the plan's route without a content type is read as its event stream; such a profile's binding adds the key of the ChatGPT account.
 
 ## Context
 

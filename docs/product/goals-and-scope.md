@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                           |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                                          |
-| Last updated | 2026-10-30                                                                                                                                                                                |
+| Last updated | 2026-11-08                                                                                                                                                                                |
 | Related      | [Vision](vision.md), [Feature protocol](../features/README.md), [Milestones](../roadmap/milestones.md), [Releasing](../engineering/releasing.md), [Security](../architecture/security.md) |
 
 ## 1. What Mannie is for
@@ -86,12 +86,12 @@ The [M14 validation results](../roadmap/m14-validation.md) record the figures, a
 
 ### 4.4 Operability
 
-| ID         | Requirement                                                                                                                                                                                           |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| NFR-OPS-01 | Logs are structured, stay on the machine, rotate, and contain no secrets.                                                                                                                             |
-| NFR-OPS-02 | Following the documentation, the owner installs a worker as a service in under 10 minutes on each supported system.                                                                                   |
-| NFR-OPS-03 | The master works with workers that are one minor version behind.                                                                                                                                      |
-| NFR-OPS-04 | Mannie needs no network access other than to the providers, workers, remote hosts and tool servers that the owner configured, and to the authorization servers that the tool servers' metadata names. |
+| ID         | Requirement                                                                                                                                                                                                                                                                                                                                                                             |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| NFR-OPS-01 | Logs are structured, stay on the machine, rotate, and contain no secrets.                                                                                                                                                                                                                                                                                                               |
+| NFR-OPS-02 | Following the documentation, the owner installs a worker as a service in under 10 minutes on each supported system.                                                                                                                                                                                                                                                                     |
+| NFR-OPS-03 | The master works with workers that are one minor version behind.                                                                                                                                                                                                                                                                                                                        |
+| NFR-OPS-04 | Mannie needs no network access other than to the providers, workers, remote hosts and tool servers that the owner configured, to the authorization servers that the tool servers' metadata names, and to `auth.openai.com` for the sign-ins, refreshes, revocations and keys of the ChatGPT account ([ADR-0062](../adr/0062-let-the-owner-pay-for-model-calls-with-a-chatgpt-plan.md)). |
 
 ### 4.5 Usability
 
@@ -108,7 +108,7 @@ The [M14 validation results](../roadmap/m14-validation.md) record the figures, a
 | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Desktop       | Windows 11 x86_64 with the WebView2 Evergreen runtime. Linux x86_64 with WebKitGTK 4.1: Ubuntu 22.04 LTS and newer, Debian 12 and newer, current Fedora releases. |
 | Worker        | Windows 11, Windows Server 2022 and Windows Server 2025 on x86_64. Linux x86_64 on any distribution, as a static binary. FreeBSD 14 and 15 on amd64.              |
-| Providers     | The OpenAI Responses API. OpenAI-compatible Chat Completions on vLLM, SGLang, LM Studio, Ollama and OpenRouter.                                                   |
+| Providers     | The OpenAI Responses API, also on the owner's ChatGPT plan. OpenAI-compatible Chat Completions on vLLM, SGLang, LM Studio, Ollama and OpenRouter.                 |
 | Architectures | x86_64 only. Other architectures can be added as features.                                                                                                        |
 
 Windows 10 reached its end of support on 2025-10-14 and is not supported. [ADR-0008](../adr/0008-one-workspace-two-binaries.md) records the baselines, and M0 validates them.

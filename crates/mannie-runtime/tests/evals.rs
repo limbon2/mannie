@@ -63,7 +63,9 @@ use mannie_tools::{ACTIVITY_ARGUMENT, split_activity};
 use mannie_types::chat::{StartConversation, SubscribeConversation};
 use mannie_types::clock::{Clock, SystemClock};
 use mannie_types::ids::{ConversationId, PartId, ProjectId, RunId};
-use mannie_types::provider::{ApiInterface, CreateProviderProfile, ProfileDraft, ReasoningEffort};
+use mannie_types::provider::{
+    ApiInterface, CreateProviderProfile, ProfileAccess, ProfileDraft, ReasoningEffort,
+};
 use mannie_types::run::{FinishReason, RunState};
 use mannie_types::secret::Secret;
 use mannie_types::tasks::{TaskState, TaskView};
@@ -767,6 +769,7 @@ async fn start(
         .expect("the runtime starts");
     let draft = match subject {
         Subject::Live(model) => ProfileDraft {
+            access: ProfileAccess::Endpoint,
             name: "Evaluation".to_owned(),
             interface: model.interface,
             base_url: model.base_url.clone(),
@@ -777,6 +780,7 @@ async fn start(
             use_tools: true,
         },
         Subject::Oracle => ProfileDraft {
+            access: ProfileAccess::Endpoint,
             name: "Oracle".to_owned(),
             interface: subject.interface(),
             base_url: ORACLE_BASE_URL.to_owned(),

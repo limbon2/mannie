@@ -148,6 +148,58 @@ impl ServerKind {
     }
 }
 
+/// How a profile reaches its model (ADR-0062): through an API endpoint that
+/// the owner names, with an optional credential of the profile's own, or
+/// through the owner's ChatGPT plan, with the tokens of the signed-in ChatGPT
+/// account.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileAccess {
+    /// The profile's API interface and base URL, with its own credential if
+    /// it has one.
+    #[default]
+    Endpoint,
+    /// OpenAI's Responses API, billed to the plan of the signed-in ChatGPT
+    /// account. The profile has no credential, interface or base URL of its
+    /// own.
+    #[serde(rename = "chatgpt_plan")]
+    ChatGptPlan,
+}
+
+impl ProfileAccess {
+    /// The access's name as the store keeps it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Endpoint => "endpoint",
+            Self::ChatGptPlan => "chatgpt_plan",
+        }
+    }
+
+    /// The access with this name.
+    pub fn parse(name: &str) -> Option<Self> {
+        [Self::Endpoint, Self::ChatGptPlan]
+            .into_iter()
+            .find(|access| access.as_str() == name)
+    }
+
+    /// Whether the access is the endpoint's, which a stored document leaves
+    /// out.
+    #[expect(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "serde's skip_serializing_if passes the field by reference"
+    )]
+    pub fn is_endpoint(&self) -> bool {
+        *self == Self::Endpoint
+    }
+
+    /// Whether the core may lend the profile's credential to a task that an
+    /// executor runs elsewhere. A ChatGPT plan's tokens stay on the master
+    /// (ADR-0062, decision 13).
+    pub fn is_lendable(self) -> bool {
+        self == Self::Endpoint
+    }
+}
+
 /// A model's context window and output limit, in tokens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -186,6 +238,8 @@ pub struct ProviderProfile {
     pub id: ProfileId,
     /// Its name.
     pub name: String,
+    /// How it reaches its model.
+    pub access: ProfileAccess,
     /// The API it speaks.
     pub interface: ApiInterface,
     /// The server's base URL.
@@ -219,6 +273,11 @@ pub struct ProviderProfile {
 pub struct ProfileDraft {
     /// The name.
     pub name: String,
+    /// How the profile reaches its model. A draft of a ChatGPT plan's profile
+    /// names no interface or base URL that the core uses: the core sets them
+    /// (ADR-0062). Drafts from before the field read as an endpoint.
+    #[serde(default)]
+    pub access: ProfileAccess,
     /// The API interface.
     pub interface: ApiInterface,
     /// The base URL.
@@ -472,14 +531,15 @@ impl ProviderProfileError {
 #[cfg(test)]
 mod tests {
     use super::{
-        ApiInterface, ProfileDraft, ProviderProfileError, ReasoningEffort, ServerKind,
-        check_credential, check_limits, context_budget,
+        ApiInterface, ProfileAccess, ProfileDraft, ProviderProfileError, ReasoningEffort,
+        ServerKind, check_credential, check_limits, context_budget,
     };
     use crate::secret::Secret;
 
     fn draft() -> ProfileDraft {
         ProfileDraft {
             name: "  Local vLLM ".to_owned(),
+            access: ProfileAccess::Endpoint,
             interface: ApiInterface::ChatCompletions,
             base_url: "http://127.0.0.1:8000/v1".to_owned(),
             model: " qwen3 ".to_owned(),
@@ -498,6 +558,15 @@ mod tests {
         for kind in ServerKind::ALL {
             assert_eq!(ServerKind::parse(kind.as_str()), Some(kind));
         }
+        for access in [ProfileAccess::Endpoint, ProfileAccess::ChatGptPlan] {
+            assert_eq!(ProfileAccess::parse(access.as_str()), Some(access));
+            assert_eq!(
+                serde_json::to_value(access).unwrap(),
+                serde_json::json!(access.as_str())
+            );
+        }
+        assert!(ProfileAccess::Endpoint.is_lendable());
+        assert!(!ProfileAccess::ChatGptPlan.is_lendable());
         assert_eq!(ReasoningEffort::ServerDefault.api_name(), None);
         assert_eq!(ReasoningEffort::Low.api_name(), Some("low"));
     }

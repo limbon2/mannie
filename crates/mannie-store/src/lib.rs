@@ -34,6 +34,7 @@ mod writer;
 
 pub use error::{DatabaseError, ModuleProblem, StoreError};
 pub use plugin_store::{PluginModule, service_providers};
+pub use provider::chatgpt::{ChatGptSignInRecord, StoredChatGptAccount};
 pub use provider::search::{SearchProfileFields, StoredSearchProfile};
 pub use provider::{ProfileFields, ProfileStoreError, StoredProfile};
 pub use runtime::{
@@ -70,6 +71,7 @@ pub(crate) fn all_statements() -> impl Iterator<Item = &'static str> {
         .iter()
         .chain(exports::STATEMENTS)
         .chain(provider::STATEMENTS)
+        .chain(provider::chatgpt::STATEMENTS)
         .chain(provider::search::STATEMENTS)
         .chain(tools::STATEMENTS)
         .copied()

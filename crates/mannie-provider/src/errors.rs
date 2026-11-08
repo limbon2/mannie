@@ -10,7 +10,7 @@ use serde_json::Value;
 use time::{Date, Month, PrimitiveDateTime, Time};
 
 use crate::provider::ProviderError;
-use crate::quirks::Quirks;
+use crate::quirks::{Quirks, ResponsesShape};
 
 /// Phrases that servers use when a request is longer than the model's
 /// context, in lower case. A server's quirk profile adds its own.
@@ -41,8 +41,11 @@ const TOOLS_UNSUPPORTED_PHRASES: &[&str] = &[
     "tools are not supported",
 ];
 
+/// The most characters of a request parameter that a failure names.
+const MAX_PARAM_CHARACTERS: usize = 64;
+
 /// What a server's error document says: OpenAI's `{"error": {...}}`, a flat
-/// object with `message` and `code`, or a plain string.
+/// object with `message` and `code`, `{"detail": "..."}`, or a plain string.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ErrorDetails {
     /// The error code, when it is a string.
@@ -51,6 +54,8 @@ pub(crate) struct ErrorDetails {
     pub(crate) kind: Option<String>,
     /// The message, for the log and for recognizing a context overflow.
     pub(crate) message: Option<String>,
+    /// The request parameter that the error names, as OpenAI's `param`.
+    pub(crate) param: Option<String>,
 }
 
 impl ErrorDetails {
@@ -82,7 +87,10 @@ impl ErrorDetails {
         Self {
             code: text("code"),
             kind: text("type"),
-            message: text("message"),
+            // OpenAI answers some refusals before the stream opens with
+            // `{"detail": "..."}`, which is only diagnostic text.
+            message: text("message").or_else(|| text("detail")),
+            param: text("param"),
         }
     }
 
@@ -129,6 +137,64 @@ impl Context<'_> {
     }
 }
 
+/// The ChatGPT plan's error codes and what they mean for a run (ADR-0062,
+/// decision 12; verified 2026-11-08,
+/// <https://developers.openai.com/siwc/token-sharing-open-source/errors-and-recovery>).
+/// `None` for any other code, which the generic rules classify.
+fn plan_error(details: &ErrorDetails, retry_after: Option<Duration>) -> Option<ProviderError> {
+    let code = details.code.as_deref()?;
+    let error = match code {
+        // OpenAI asks apps not to retry, and to send the owner to their
+        // usage settings.
+        "subscription_sharing_usage_limit_exceeded" => {
+            ProviderError::Permanent(RunFailure::ChatGptUsageLimitReached)
+        }
+        "subscription_sharing_usage_unavailable" | "subscription_sharing_user_unavailable" => {
+            ProviderError::Transient {
+                cause: RunFailure::ChatGptUnavailable,
+                retry_after,
+            }
+        }
+        "subscription_sharing_unsupported_capability" => {
+            ProviderError::Permanent(RunFailure::ChatGptUnsupported {
+                param: details.param.as_deref().and_then(clean_param),
+            })
+        }
+        "subscription_sharing_route_not_supported" => {
+            ProviderError::Permanent(RunFailure::ChatGptUnsupported { param: None })
+        }
+        "subscription_sharing_user_not_eligible" => {
+            ProviderError::Permanent(RunFailure::ChatGptNotEligible)
+        }
+        // The runtime refreshes the token once and calls again; only a
+        // refresh that fails for good asks the owner to sign in.
+        "subscription_sharing_invalid_user" => {
+            ProviderError::Permanent(RunFailure::InvalidCredential)
+        }
+        // The grant lacks the plan's permission: signing in again asks for
+        // it. The tokens stay until then.
+        "chatpass_v2_scope_not_authorized" | "chatpass_v2_invalid_authorization_context" => {
+            ProviderError::Permanent(RunFailure::ChatGptSignInNeeded)
+        }
+        _other => return None,
+    };
+    Some(error)
+}
+
+/// A request parameter that OpenAI named, cut to letters, digits and the
+/// characters of a path such as `tools[0].type`, so that a server cannot put
+/// text of its choice into the UI.
+fn clean_param(param: &str) -> Option<String> {
+    let cleaned: String = param
+        .chars()
+        .filter(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '_' | '.' | '[' | ']' | '-')
+        })
+        .take(MAX_PARAM_CHARACTERS)
+        .collect();
+    (!cleaned.is_empty()).then_some(cleaned)
+}
+
 /// Classifies an HTTP response that did not succeed.
 pub(crate) fn classify_status(
     status: u16,
@@ -137,6 +203,14 @@ pub(crate) fn classify_status(
     context: Context<'_>,
 ) -> ProviderError {
     let retry_after = retry_after(headers, context.now);
+    // The plan's codes come before the rules of their statuses: a usage limit
+    // is a 429 that must not be retried, and an unsupported capability can
+    // name tools (ADR-0062, decision 12).
+    if context.quirks.responses == ResponsesShape::ChatGptPlan
+        && let Some(error) = plan_error(details, retry_after)
+    {
+        return error;
+    }
     let transient = |cause| ProviderError::Transient { cause, retry_after };
     match status {
         300..=399 => ProviderError::Permanent(RunFailure::RedirectRefused),
@@ -174,6 +248,12 @@ pub(crate) fn classify_status(
 /// Classifies an error that arrives inside a stream, where no HTTP status
 /// tells its class.
 pub(crate) fn classify_stream_error(details: &ErrorDetails, context: Context<'_>) -> ProviderError {
+    // A usage limit can also end a stream that already opened.
+    if context.quirks.responses == ResponsesShape::ChatGptPlan
+        && let Some(error) = plan_error(details, None)
+    {
+        return error;
+    }
     if context.is_context_overflow(details) {
         return ProviderError::ContextOverflow;
     }

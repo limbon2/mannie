@@ -30,6 +30,7 @@ disallowed-methods = [
 # Names that doc comments may use without backticks, in addition to Clippy's list.
 doc-valid-idents = [
   "..",
+  "ChatGPT",
   "gRPC",
   "KWallet",
   "OpenAI",

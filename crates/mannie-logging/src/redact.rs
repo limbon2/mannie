@@ -35,12 +35,12 @@ static CREDENTIAL_PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new
         (r"\bsk-[A-Za-z0-9_-]{16,}", "[REDACTED]"),
         // JSON fields named like credentials: "api_key":"...".
         (
-            r#"(?i)("(?:api[_-]?key|authorization|password|passwd|secret|client[_-]?secret|access[_-]?token|refresh[_-]?token|credential)"\s*:\s*)"(?:[^"\\]|\\.)*""#,
+            r#"(?i)("(?:api[_-]?key|authorization|password|passwd|secret|client[_-]?secret|access[_-]?token|refresh[_-]?token|id[_-]?token|credential)"\s*:\s*)"(?:[^"\\]|\\.)*""#,
             "${1}\"[REDACTED]\"",
         ),
         // key=value pairs named like credentials, as the console format writes them.
         (
-            r"(?i)\b((?:api[_-]?key|authorization|password|passwd|secret|client[_-]?secret|access[_-]?token|refresh[_-]?token|credential)\s*=\s*)[^\s,;]+",
+            r"(?i)\b((?:api[_-]?key|authorization|password|passwd|secret|client[_-]?secret|access[_-]?token|refresh[_-]?token|id[_-]?token|credential)\s*=\s*)[^\s,;]+",
             "${1}[REDACTED]",
         ),
     ]
@@ -405,6 +405,14 @@ mod tests {
             (
                 "password = hunter2hunter2, user=owner",
                 "password = [REDACTED], user=owner",
+            ),
+            (
+                r#"{"id_token":"eyJhbGciOiJSUzI1NiJ9.e30.c2ln","expires_in":3600}"#,
+                r#"{"id_token":"[REDACTED]","expires_in":3600}"#,
+            ),
+            (
+                "answer idToken=eyJhbGciOiJSUzI1NiJ9.e30.c2ln scope=openid",
+                "answer idToken=[REDACTED] scope=openid",
             ),
         ];
         for (input, expected) in cases {

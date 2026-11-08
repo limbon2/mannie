@@ -1,0 +1,10 @@
+{
+  "error": {
+    "class": "transient",
+    "failure": {
+      "code": "chatgpt_unavailable"
+    },
+    "retryAfterMs": 30000
+  },
+  "events": []
+}

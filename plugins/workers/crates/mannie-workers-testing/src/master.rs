@@ -29,7 +29,8 @@ use mannie_plugin_harness::types::PartContent;
 use mannie_plugin_harness::types::SystemClock;
 use mannie_plugin_harness::types::TaskView;
 use mannie_plugin_harness::types::{
-    ApiInterface, CreateProviderProfile, ProfileDraft, ProviderProfile, ReasoningEffort,
+    ApiInterface, CreateProviderProfile, ProfileAccess, ProfileDraft, ProviderProfile,
+    ReasoningEffort,
 };
 use mannie_plugin_harness::types::{StartConversation, SubscribeConversation};
 use mannie_plugin_sdk::contracts::Secret;
@@ -805,6 +806,7 @@ impl LinkedMaster {
         let profile = runtime
             .create_profile(CreateProviderProfile {
                 draft: ProfileDraft {
+                    access: ProfileAccess::Endpoint,
                     name: "Test".to_owned(),
                     interface: ApiInterface::ChatCompletions,
                     base_url: profile_url,

@@ -25,6 +25,7 @@
   import { hasActiveRun } from '#lib/utils/conversation-reducer.js';
 
   import AttachmentChips from './AttachmentChips.svelte';
+  import ChatGptPlanIndicator from './ChatGptPlanIndicator.svelte';
   import Composer from './Composer.svelte';
   import ContextMeter from './ContextMeter.svelte';
   import NoProfileNotice from './NoProfileNotice.svelte';
@@ -34,7 +35,8 @@
 
   // One conversation: its toolbar, its transcript and the message box
   // (docs/features/chat/conversation-view.md). The toolbar holds the profile
-  // menu, the controls of the toolbar and the conversation's menu; the
+  // menu with the ChatGPT plan's indicator beside it while the profile uses
+  // the plan, the controls of the toolbar and the conversation's menu; the
   // message box holds the controls of its place and the context meter
   // (ADR-0042). The view creates a new pane for each conversation, so the ID
   // never changes during a pane's life. A child agent's conversation shows
@@ -146,6 +148,7 @@
       <div class="flex items-center gap-2 border-b px-3 py-1.5">
         {#if !isChild}
           <ProfileMenu conversation={summary} />
+          <ChatGptPlanIndicator profileId={summary.profileId} />
         {/if}
         <div class="ms-auto flex items-center gap-1">
           <ConversationControlOutlet

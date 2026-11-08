@@ -6,9 +6,11 @@
   "permissions": [
     "allow-stream-validation-events",
     "allow-validation-close-main-window",
+    "allow-validation-expire-chatgpt-token",
     "allow-validation-opened-links",
     "allow-validation-process-id",
     "allow-validation-seed-conversation",
+    "allow-validation-set-chatgpt-mock",
     "allow-validation-set-file-choice",
     "allow-validation-set-folder-choice",
     "allow-validation-set-skills-folder",

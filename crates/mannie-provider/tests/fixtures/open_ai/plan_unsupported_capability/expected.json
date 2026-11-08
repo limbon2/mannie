@@ -1,0 +1,10 @@
+{
+  "error": {
+    "class": "permanent",
+    "failure": {
+      "code": "chatgpt_unsupported",
+      "param": "max_output_tokens"
+    }
+  },
+  "events": []
+}

@@ -1,0 +1,71 @@
+{
+  "server": "open_ai",
+  "interface": "responses",
+  "access": "chatgpt_plan",
+  "provenance": "constructed",
+  "sources": [
+    "https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference",
+    "https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations",
+    "https://developers.openai.com/siwc/token-sharing-open-source/errors-and-recovery",
+    "https://developers.openai.com/api/docs/guides/function-calling"
+  ],
+  "verifiedOn": "2026-11-08",
+  "request": {
+    "model": "gpt-6.1-sol",
+    "instructions": "",
+    "messages": [
+      {
+        "role": "user",
+        "text": "What does notes.txt say?"
+      },
+      {
+        "role": "assistant",
+        "item": {
+          "type": "reasoning",
+          "id": "rs_p1",
+          "encrypted_content": "gAAAAABconstructedOpaquePlanReasoning==",
+          "summary": []
+        },
+        "text": "I will read the file.",
+        "toolCalls": [
+          {
+            "callId": "call_p1",
+            "name": "read_file",
+            "arguments": "{\"path\":\"notes.txt\"}"
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "toolResults": [
+          {
+            "callId": "call_p1",
+            "output": "File: notes.txt\n     1\thello"
+          }
+        ]
+      }
+    ],
+    "maxOutputTokens": 1024,
+    "reasoningEffort": "server_default",
+    "tools": [
+      {
+        "name": "read_file",
+        "description": "Reads lines of a text file.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "The file."
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ],
+    "toolChoice": "auto"
+  }
+}

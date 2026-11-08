@@ -28,6 +28,19 @@ pub enum EffortShape {
     Omitted,
 }
 
+/// The shape of a Responses API request and its answer (ADR-0062, decision
+/// 10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResponsesShape {
+    /// The Responses API as OpenAI's API and compatible servers take it.
+    Standard,
+    /// OpenAI's Responses API on the owner's ChatGPT plan, which refuses an
+    /// output limit and wants function tools in a namespace. Replayed
+    /// assistant messages carry their phase, and the answer's event stream
+    /// comes without a content type.
+    ChatGptPlan,
+}
+
 /// The normalizations that one server needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Quirks {
@@ -49,6 +62,8 @@ pub struct Quirks {
     pub silent_truncation: bool,
     /// How the server handles tools.
     pub tools: ToolQuirks,
+    /// The shape of Responses API requests.
+    pub responses: ResponsesShape,
 }
 
 /// How a server handles tools (docs/features/system-tools/tool-calls.md,
@@ -88,9 +103,23 @@ const GENERIC: Quirks = Quirks {
     overflow_phrases: &["context length", "context window", "context size"],
     silent_truncation: false,
     tools: GENERIC_TOOLS,
+    responses: ResponsesShape::Standard,
 };
 
+/// The quirks of OpenAI's Responses API on the owner's ChatGPT plan. A
+/// profile's access selects them, never the server that a test recognized
+/// (ADR-0062, decision 10).
+pub fn chatgpt_plan_quirks() -> Quirks {
+    Quirks {
+        think_tags: false,
+        tools: OPENAI_TOOLS,
+        responses: ResponsesShape::ChatGptPlan,
+        ..GENERIC
+    }
+}
+
 /// The quirks of a server, or the generic behavior when it is not known.
+/// Servers never get the ChatGPT plan's request shape.
 pub fn quirks_for(interface: ApiInterface, server: Option<ServerKind>) -> Quirks {
     if interface == ApiInterface::Responses {
         // The Responses API has structured tool calls on every server that
@@ -151,7 +180,7 @@ pub fn quirks_for(interface: ApiInterface, server: Option<ServerKind>) -> Quirks
 mod tests {
     use mannie_types::provider::{ApiInterface, ServerKind};
 
-    use super::{EffortShape, OutputLimitField, quirks_for};
+    use super::{EffortShape, OutputLimitField, ResponsesShape, chatgpt_plan_quirks, quirks_for};
 
     #[test]
     fn openai_uses_its_own_fields_and_no_think_tags() {
@@ -187,6 +216,21 @@ mod tests {
         assert!(
             quirks_for(ApiInterface::ChatCompletions, Some(ServerKind::Ollama)).silent_truncation
         );
+    }
+
+    #[test]
+    fn servers_never_get_the_plan_shape() {
+        for interface in [ApiInterface::Responses, ApiInterface::ChatCompletions] {
+            for server in ServerKind::ALL.map(Some).into_iter().chain([None]) {
+                assert_eq!(
+                    quirks_for(interface, server).responses,
+                    ResponsesShape::Standard
+                );
+            }
+        }
+        let plan = chatgpt_plan_quirks();
+        assert_eq!(plan.responses, ResponsesShape::ChatGptPlan);
+        assert!(plan.tools.strict && !plan.tools.calls_in_text && !plan.think_tags);
     }
 
     #[test]
