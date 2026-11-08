@@ -1,0 +1,74 @@
+{
+  "model": "gpt-6.1-sol",
+  "input": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "What does notes.txt say?"
+        }
+      ]
+    },
+    {
+      "type": "reasoning",
+      "id": "rs_p1",
+      "encrypted_content": "gAAAAABconstructedOpaquePlanReasoning==",
+      "summary": []
+    },
+    {
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "I will read the file."
+        }
+      ],
+      "phase": "commentary"
+    },
+    {
+      "type": "function_call",
+      "call_id": "call_p1",
+      "name": "read_file",
+      "arguments": "{\"path\":\"notes.txt\"}",
+      "namespace": "mannie"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_p1",
+      "output": "File: notes.txt\n     1\thello"
+    }
+  ],
+  "stream": true,
+  "store": false,
+  "tools": [
+    {
+      "type": "namespace",
+      "name": "mannie",
+      "description": "Tools that Mannie runs for this conversation.",
+      "tools": [
+        {
+          "name": "read_file",
+          "description": "Reads lines of a text file.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "The file."
+              }
+            },
+            "required": [
+              "path"
+            ],
+            "additionalProperties": false
+          },
+          "type": "function",
+          "strict": true
+        }
+      ]
+    }
+  ],
+  "tool_choice": "auto"
+}

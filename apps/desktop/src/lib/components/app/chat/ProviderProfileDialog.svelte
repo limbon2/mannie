@@ -15,12 +15,23 @@
   import { m } from '#lib/paraglide/messages.js';
   import type { ProviderProfileForm } from '#lib/state/provider-profile-form.svelte.js';
   import { formatCount, profileFailureMessage } from '#lib/utils/chat-errors.js';
-  import { effortLabel, interfaceLabel, REASONING_EFFORTS } from '#lib/utils/provider-labels.js';
+  import {
+    accessLabel,
+    effortLabel,
+    interfaceLabel,
+    PROFILE_ACCESSES,
+    REASONING_EFFORTS,
+  } from '#lib/utils/provider-labels.js';
+
+  import ChatGptModelField from './ChatGptModelField.svelte';
 
   // Adds or edits a provider profile (docs/features/chat/conversation-view.md,
   // settings sections). Each opening gets a new form. The credential field
   // never shows a stored credential: its placeholder says that one is saved,
-  // and the dialog warns before saving replaces or removes it.
+  // and the dialog warns before saving replaces or removes it. The first
+  // choice is how the profile reaches its model: a profile on the ChatGPT
+  // plan has no interface, base URL or API key, and picks its model from the
+  // plan's catalog (docs/features/chatgpt-plan.md, plan profiles).
   interface Props {
     /** The form of the latest opening, which stays while the dialog closes. */
     form: ProviderProfileForm | null;
@@ -85,6 +96,10 @@
       form.limitsTouched = true;
     }
   }
+
+  function chooseAccess(value: string): void {
+    form?.setAccess(value === 'chatgpt_plan' ? 'chatgpt_plan' : 'endpoint');
+  }
 </script>
 
 <Dialog.Root bind:open>
@@ -100,105 +115,140 @@
         <!-- The end padding holds the click area of a control at the end, which reaches 12 pixels past the switch; with less, the fields scroll sideways. -->
         <div class="flex max-h-[60vh] flex-col gap-4 overflow-y-auto pe-3" data-profile-fields="">
           <Field.Group>
-            <Field.Field data-invalid={failedWith(form, 'invalid_name', 'name_taken')}>
-              <Field.Label for="profile-name">{m.chat_providers_field_name()}</Field.Label>
-              <Input id="profile-name" placeholder={m.chat_providers_field_name_placeholder()} bind:value={form.name} />
-            </Field.Field>
             <!-- The legend also holds the help button, so the group takes its name from the label alone. -->
-            <Field.Set aria-describedby="profile-interface-help" aria-labelledby="profile-interface-legend">
+            <Field.Set aria-describedby="profile-access-help" aria-labelledby="profile-access-legend">
               <Field.Legend variant="label">
                 <span class="flex items-center gap-1">
-                  <span id="profile-interface-legend">{m.chat_providers_field_interface()}</span>
+                  <span id="profile-access-legend">{m.chat_chatgpt_access()}</span>
                   <FieldHelp
-                    id="profile-interface-help"
-                    field={m.chat_providers_field_interface()}
-                    text={m.chat_providers_field_interface_description()}
+                    id="profile-access-help"
+                    field={m.chat_chatgpt_access()}
+                    text={m.chat_chatgpt_access_description()}
                   />
                 </span>
               </Field.Legend>
-              <RadioGroup.Root class="flex flex-wrap gap-x-6" orientation="horizontal" bind:value={form.api}>
-                {#each INTERFACES as option (option)}
+              <RadioGroup.Root
+                class="flex flex-wrap gap-x-6"
+                orientation="horizontal"
+                bind:value={() => form.access, chooseAccess}
+              >
+                {#each PROFILE_ACCESSES as option (option)}
                   <Field.Field class="w-auto" orientation="horizontal">
-                    <RadioGroup.Item id="profile-interface-{option}" value={option} />
-                    <Field.Label class="font-normal" for="profile-interface-{option}"
-                      >{interfaceLabel(option)}</Field.Label
-                    >
+                    <RadioGroup.Item id="profile-access-{option}" value={option} />
+                    <Field.Label class="font-normal" for="profile-access-{option}">{accessLabel(option)}</Field.Label>
                   </Field.Field>
                 {/each}
               </RadioGroup.Root>
             </Field.Set>
-            <Field.Field data-invalid={failedWith(form, 'invalid_base_url', 'insecure_credential_transport')}>
-              <div class="flex items-center gap-1">
-                <Field.Label for="profile-base-url">{m.chat_providers_field_base_url()}</Field.Label>
-                <FieldHelp
-                  id="profile-base-url-help"
-                  field={m.chat_providers_field_base_url()}
-                  text={m.chat_providers_field_base_url_description()}
-                />
-              </div>
-              <Input
-                id="profile-base-url"
-                aria-describedby="profile-base-url-help"
-                inputmode="url"
-                placeholder={m.chat_providers_field_base_url_placeholder()}
-                bind:value={form.baseUrl}
-              />
+            <Field.Field data-invalid={failedWith(form, 'invalid_name', 'name_taken')}>
+              <Field.Label for="profile-name">{m.chat_providers_field_name()}</Field.Label>
+              <Input id="profile-name" placeholder={m.chat_providers_field_name_placeholder()} bind:value={form.name} />
             </Field.Field>
-            <Field.Field data-invalid={failedWith(form, 'invalid_model')}>
-              <Field.Label for="profile-model">{m.chat_providers_field_model()}</Field.Label>
-              <Input
-                id="profile-model"
-                placeholder={m.chat_providers_field_model_placeholder()}
-                bind:value={form.model}
-                onblur={() => void form.applyModelDefaults()}
-              />
-              {#if form.defaultsApplied}
-                <Field.Description>{m.chat_providers_defaults_applied()}</Field.Description>
+            {#if form.usesPlan}
+              <ChatGptModelField {form} invalid={failedWith(form, 'invalid_model')} />
+              {#if form.forgetsStoredCredential}
+                <Alert.Root>
+                  <TriangleAlertIcon />
+                  <Alert.Description>{m.chat_chatgpt_credential_forgotten_warning()}</Alert.Description>
+                </Alert.Root>
               {/if}
-            </Field.Field>
-            <Field.Field data-invalid={failedWith(form, 'invalid_credential')}>
-              <div class="flex items-center gap-1">
-                <Field.Label for="profile-credential">{m.chat_providers_field_credential_value()}</Field.Label>
-                <FieldHelp
-                  id="profile-credential-help"
-                  field={m.chat_providers_field_credential_value()}
-                  text={form.hasStoredCredential
-                    ? m.chat_providers_field_credential_saved_description()
-                    : m.chat_providers_field_credential_description()}
-                />
-              </div>
-              <div class="flex gap-2">
+            {:else}
+              <!-- The legend also holds the help button, so the group takes its name from the label alone. -->
+              <Field.Set aria-describedby="profile-interface-help" aria-labelledby="profile-interface-legend">
+                <Field.Legend variant="label">
+                  <span class="flex items-center gap-1">
+                    <span id="profile-interface-legend">{m.chat_providers_field_interface()}</span>
+                    <FieldHelp
+                      id="profile-interface-help"
+                      field={m.chat_providers_field_interface()}
+                      text={m.chat_providers_field_interface_description()}
+                    />
+                  </span>
+                </Field.Legend>
+                <RadioGroup.Root class="flex flex-wrap gap-x-6" orientation="horizontal" bind:value={form.api}>
+                  {#each INTERFACES as option (option)}
+                    <Field.Field class="w-auto" orientation="horizontal">
+                      <RadioGroup.Item id="profile-interface-{option}" value={option} />
+                      <Field.Label class="font-normal" for="profile-interface-{option}"
+                        >{interfaceLabel(option)}</Field.Label
+                      >
+                    </Field.Field>
+                  {/each}
+                </RadioGroup.Root>
+              </Field.Set>
+              <Field.Field data-invalid={failedWith(form, 'invalid_base_url', 'insecure_credential_transport')}>
+                <div class="flex items-center gap-1">
+                  <Field.Label for="profile-base-url">{m.chat_providers_field_base_url()}</Field.Label>
+                  <FieldHelp
+                    id="profile-base-url-help"
+                    field={m.chat_providers_field_base_url()}
+                    text={m.chat_providers_field_base_url_description()}
+                  />
+                </div>
                 <Input
-                  id="profile-credential"
-                  aria-describedby="profile-credential-help"
-                  autocomplete="off"
-                  disabled={form.removesCredential}
-                  placeholder={credentialPlaceholder(form)}
-                  type="password"
-                  bind:value={form.credential}
+                  id="profile-base-url"
+                  aria-describedby="profile-base-url-help"
+                  inputmode="url"
+                  placeholder={m.chat_providers_field_base_url_placeholder()}
+                  bind:value={form.baseUrl}
                 />
-                {#if form.hasStoredCredential && !form.removesCredential}
-                  <Button type="button" variant="outline" onclick={() => form.removeStoredCredential()}>
-                    {m.chat_providers_credential_remove()}
-                  </Button>
+              </Field.Field>
+              <Field.Field data-invalid={failedWith(form, 'invalid_model')}>
+                <Field.Label for="profile-model">{m.chat_providers_field_model()}</Field.Label>
+                <Input
+                  id="profile-model"
+                  placeholder={m.chat_providers_field_model_placeholder()}
+                  bind:value={form.model}
+                  onblur={() => void form.applyModelDefaults()}
+                />
+                {#if form.defaultsApplied}
+                  <Field.Description>{m.chat_providers_defaults_applied()}</Field.Description>
                 {/if}
-              </div>
-            </Field.Field>
-            {#if form.removesCredential}
-              <Alert.Root>
-                <TriangleAlertIcon />
-                <Alert.Description>{m.chat_providers_credential_remove_warning()}</Alert.Description>
-                <Alert.Action>
-                  <Button size="sm" type="button" variant="outline" onclick={() => form.keepStoredCredential()}>
-                    {m.chat_providers_credential_keep()}
-                  </Button>
-                </Alert.Action>
-              </Alert.Root>
-            {:else if replacesStoredCredential(form)}
-              <Alert.Root>
-                <TriangleAlertIcon />
-                <Alert.Description>{m.chat_providers_credential_replace_warning()}</Alert.Description>
-              </Alert.Root>
+              </Field.Field>
+              <Field.Field data-invalid={failedWith(form, 'invalid_credential')}>
+                <div class="flex items-center gap-1">
+                  <Field.Label for="profile-credential">{m.chat_providers_field_credential_value()}</Field.Label>
+                  <FieldHelp
+                    id="profile-credential-help"
+                    field={m.chat_providers_field_credential_value()}
+                    text={form.hasStoredCredential
+                      ? m.chat_providers_field_credential_saved_description()
+                      : m.chat_providers_field_credential_description()}
+                  />
+                </div>
+                <div class="flex gap-2">
+                  <Input
+                    id="profile-credential"
+                    aria-describedby="profile-credential-help"
+                    autocomplete="off"
+                    disabled={form.removesCredential}
+                    placeholder={credentialPlaceholder(form)}
+                    type="password"
+                    bind:value={form.credential}
+                  />
+                  {#if form.hasStoredCredential && !form.removesCredential}
+                    <Button type="button" variant="outline" onclick={() => form.removeStoredCredential()}>
+                      {m.chat_providers_credential_remove()}
+                    </Button>
+                  {/if}
+                </div>
+              </Field.Field>
+              {#if form.removesCredential}
+                <Alert.Root>
+                  <TriangleAlertIcon />
+                  <Alert.Description>{m.chat_providers_credential_remove_warning()}</Alert.Description>
+                  <Alert.Action>
+                    <Button size="sm" type="button" variant="outline" onclick={() => form.keepStoredCredential()}>
+                      {m.chat_providers_credential_keep()}
+                    </Button>
+                  </Alert.Action>
+                </Alert.Root>
+              {:else if replacesStoredCredential(form)}
+                <Alert.Root>
+                  <TriangleAlertIcon />
+                  <Alert.Description>{m.chat_providers_credential_replace_warning()}</Alert.Description>
+                </Alert.Root>
+              {/if}
             {/if}
             <div class="grid gap-4 sm:grid-cols-2">
               <Field.Field data-invalid={limitsInvalid(form)}>

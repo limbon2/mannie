@@ -810,8 +810,9 @@ impl RunActor {
             // A conversation that switched agents still holds the tasks of its
             // earlier replies, and an executor's task runs elsewhere with tools
             // of its own, so an agent that only reads does not continue one
-            // (T-86).
-            if setup.agent.read_only {
+            // (T-86). A run on the ChatGPT plan lends no credential, so it
+            // gives executors no tasks (ADR-0062, decision 13).
+            if setup.agent.read_only || !setup.lends_credential() {
                 self.refuse_task(call, TaskRefusal::NotOffered);
                 return Ok(());
             }

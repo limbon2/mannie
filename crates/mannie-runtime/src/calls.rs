@@ -11,8 +11,8 @@ use futures_util::StreamExt;
 use mannie_plugin_sdk::points::executors::{Executors, TaskExecutor};
 use mannie_plugin_sdk::points::tools::ToolSpec;
 use mannie_provider::{
-    ImageInput, ModelRequest, Provider, ProviderError, ProviderEvent, Target, ToolChoice,
-    ToolDefinition, check_base_url, quirks_for,
+    ImageInput, ModelRequest, Provider, ProviderError, ProviderEvent, ResponsesShape, Target,
+    ToolChoice, ToolDefinition, Url, chatgpt_plan_quirks, check_base_url, quirks_for,
 };
 use mannie_store::{
     Change, Durability, ModelTurn, NewCheckpoint, RuntimeStoreError, StoredCheckpoint,
@@ -25,7 +25,7 @@ use mannie_types::clock::UtcMillis;
 use mannie_types::context::{Attachment, AttachmentRef};
 use mannie_types::ids::{ConversationId, PartId, ProfileId, ProjectId};
 use mannie_types::projects::ProjectView;
-use mannie_types::provider::{ApiInterface, ReasoningEffort, context_budget};
+use mannie_types::provider::{ApiInterface, ProfileAccess, ReasoningEffort, context_budget};
 use mannie_types::run::{FinishReason, RunFailure};
 use mannie_types::secret::Secret;
 use mannie_types::tools::ToolCallStatus;
@@ -33,7 +33,8 @@ use mannie_types::transcript::PartKind;
 
 use crate::agents::{AgentDefinition, Requester};
 use crate::assigned::{AssignedRun, lease_reference};
-use crate::budget::{Ledger, estimate_request, usage};
+use crate::budget::{Ledger, estimate_request, estimate_text, usage};
+use crate::chatgpt::AccountKey;
 use crate::compaction::{self, ContextSize, Trigger};
 use crate::context::{RequestShape, SentImages, build_request, chosen_context};
 use crate::instructions::{
@@ -104,6 +105,43 @@ impl From<RuntimeStoreError> for CallError {
     }
 }
 
+/// Where the credential of a run's calls comes from.
+#[derive(Debug, Clone)]
+pub(crate) enum CallCredential {
+    /// The profile's own credential, read once when the run starts, which
+    /// the target holds.
+    Profile,
+    /// A token of the ChatGPT account that the run started with, got right
+    /// before each call, since tokens expire within the hour (ADR-0062,
+    /// decision 8).
+    ChatGptAccount {
+        /// The account.
+        key: AccountKey,
+    },
+}
+
+/// Where a run's calls go, and how they are bound.
+struct Route {
+    /// The API interface.
+    interface: ApiInterface,
+    /// The server's base URL.
+    base_url: Url,
+    /// Where the calls' credential comes from.
+    credential: CallCredential,
+    /// The binding of the run's provider-private data.
+    binding: String,
+}
+
+/// The target of one call, with the serial of the ChatGPT token it carries.
+#[derive(Debug, Clone)]
+pub(crate) struct CallTarget {
+    /// The server, the credential and the server's quirks.
+    pub(crate) target: Target,
+    /// The serial of the session whose token the call carries, for a call
+    /// on the ChatGPT plan.
+    pub(crate) issued: Option<u64>,
+}
+
 /// What the calls of a run use, read once when the run starts.
 #[derive(Debug, Clone)]
 pub(crate) struct Setup {
@@ -111,8 +149,11 @@ pub(crate) struct Setup {
     pub(crate) agent: AgentDefinition,
     /// The adapter of the profile's interface.
     pub(crate) adapter: Arc<dyn Provider>,
-    /// The server, the credential and the server's quirks.
+    /// The server, the credential and the server's quirks. On the ChatGPT
+    /// plan it has no credential; each call gets a token.
     pub(crate) target: Target,
+    /// Where the calls' credential comes from.
+    pub(crate) credential: CallCredential,
     /// The interface.
     pub(crate) interface: ApiInterface,
     /// The model.
@@ -245,6 +286,13 @@ impl Setup {
             || self.offers_tasks()
             || self.offers_questions()
             || self.offers_plans()
+    }
+
+    /// Whether the run's credential may be lent to an executor's task. A
+    /// run on the ChatGPT plan keeps its tokens on this machine (ADR-0062,
+    /// decision 13).
+    pub(crate) fn lends_credential(&self) -> bool {
+        matches!(self.credential, CallCredential::Profile)
     }
 
     /// Whether the run is offered the task tools.
@@ -414,17 +462,14 @@ impl Runtime {
             tracing::warn!(agent, "a run names an agent that is not registered");
             return Err(RunFailure::AgentMissing);
         };
-        let Some(adapter) = self.inner.registry.adapter(profile.interface) else {
+        let route = self.route_of(profile).await?;
+        let Some(adapter) = self.inner.registry.adapter(route.interface) else {
             tracing::error!(
-                interface = profile.interface.as_str(),
+                interface = route.interface.as_str(),
                 "no adapter is registered for the profile's interface"
             );
             return Err(RunFailure::Internal);
         };
-        let base_url = check_base_url(&profile.base_url).map_err(|error| {
-            tracing::error!(error.code = error.code(), "a stored base URL is not valid");
-            RunFailure::Internal
-        })?;
         let (plugin_tools, adapters) = if profile.use_tools {
             self.plugin_tools_for(&snapshot, &agent)
         } else {
@@ -472,8 +517,10 @@ impl Runtime {
         let mut executors = Vec::new();
         let mut plugin_sections = plugin_sections(&snapshot, &agent);
         // An executor's task runs elsewhere with tools of its own, so an agent
-        // that only reads gives it none.
-        if offers_tasks && !agent.read_only {
+        // that only reads gives it none. The ChatGPT plan's tokens stay on this
+        // machine, so a run on the plan gives executors no tasks (ADR-0062,
+        // decision 13).
+        if offers_tasks && !agent.read_only && profile.access.is_lendable() {
             let offered_names: Vec<String> = definitions
                 .iter()
                 .chain(&task_definitions)
@@ -486,19 +533,16 @@ impl Runtime {
             task_definitions.extend(offer.definitions);
             plugin_sections.extend(offer.sections);
         }
-        let credential = self.read_credential(profile).await?;
+        let target = self.target_of(profile, &route).await?;
         let agent = self.with_roster_named(&snapshot, agent, &child_agents, offers_tasks);
         Ok(Setup {
             agent,
             adapter,
-            target: Target {
-                base_url,
-                credential,
-                quirks: quirks_for(profile.interface, profile.server),
-            },
-            interface: profile.interface,
+            target,
+            credential: route.credential,
+            interface: route.interface,
             model: profile.model.clone(),
-            binding: profile.binding(),
+            binding: route.binding,
             output_limit: profile.output_limit,
             budget: context_budget(profile.context_window, profile.output_limit),
             reasoning_effort: profile.reasoning_effort,
@@ -647,6 +691,76 @@ impl Runtime {
         offer
     }
 
+    /// Where a run's calls go (ADR-0062, decisions 8 and 9): on the ChatGPT
+    /// plan, OpenAI's Responses API with the tokens of the account that is
+    /// signed in now, its provider-private data bound to that account too;
+    /// otherwise the profile's interface, server and credential.
+    async fn route_of(&self, profile: &StoredProfile) -> Result<Route, RunFailure> {
+        if profile.access == ProfileAccess::ChatGptPlan {
+            let key = self.chatgpt_key().await?;
+            return Ok(Route {
+                interface: ApiInterface::Responses,
+                base_url: self.chatgpt_endpoints().api_base,
+                binding: format!("{}:{}", profile.binding(), key.as_str()),
+                credential: CallCredential::ChatGptAccount { key },
+            });
+        }
+        let base_url = check_base_url(&profile.base_url).map_err(|error| {
+            tracing::error!(error.code = error.code(), "a stored base URL is not valid");
+            RunFailure::Internal
+        })?;
+        Ok(Route {
+            interface: profile.interface,
+            base_url,
+            credential: CallCredential::Profile,
+            binding: profile.binding(),
+        })
+    }
+
+    /// The target of a run's calls. A profile's own credential is read here,
+    /// which may wait for the owner to unlock the credential store; on the
+    /// ChatGPT plan each call gets its token instead.
+    async fn target_of(
+        &self,
+        profile: &StoredProfile,
+        route: &Route,
+    ) -> Result<Target, RunFailure> {
+        let target = match route.credential {
+            CallCredential::ChatGptAccount { .. } => Target {
+                base_url: route.base_url.clone(),
+                credential: None,
+                quirks: chatgpt_plan_quirks(),
+            },
+            CallCredential::Profile => Target {
+                base_url: route.base_url.clone(),
+                credential: self.read_credential(profile).await?,
+                quirks: quirks_for(profile.interface, profile.server),
+            },
+        };
+        Ok(target)
+    }
+
+    /// The target of one call: the setup's, or on the ChatGPT plan, the
+    /// setup's with a token that is valid now.
+    pub(crate) async fn call_target(&self, setup: &Setup) -> Result<CallTarget, ProviderError> {
+        match &setup.credential {
+            CallCredential::Profile => Ok(CallTarget {
+                target: setup.target.clone(),
+                issued: None,
+            }),
+            CallCredential::ChatGptAccount { key } => {
+                let issued = self.chatgpt_token(key).await?;
+                Ok(CallTarget {
+                    target: Target {
+                        credential: Some(issued.token),
+                        ..setup.target.clone()
+                    },
+                    issued: Some(issued.serial),
+                })
+            }
+        }
+    }
+
     /// The credential of a profile, which may wait for the owner to unlock
     /// the credential store, or none for a profile without one.
     async fn read_credential(&self, profile: &StoredProfile) -> Result<Option<Secret>, RunFailure> {
@@ -677,6 +791,9 @@ impl Runtime {
         let profile = StoredProfile {
             id: snapshot.id.clone(),
             name: String::new(),
+            // A task's profile is never on the ChatGPT plan, whose tokens are
+            // never lent (ADR-0062, decision 13).
+            access: ProfileAccess::Endpoint,
             interface: snapshot.interface,
             base_url: snapshot.base_url.clone(),
             model: snapshot.model.clone(),
@@ -1114,7 +1231,9 @@ impl Runtime {
             .ok_or(CallError::Failed(RunFailure::InvalidResponse))
     }
 
-    /// One summary call, retried like the calls of a run.
+    /// One summary call, retried like the calls of a run. On the ChatGPT
+    /// plan each try gets a token that is valid at its moment, and a refused
+    /// token is refreshed once (ADR-0062, decision 8).
     async fn summary_call(
         &self,
         setup: &Setup,
@@ -1122,22 +1241,29 @@ impl Runtime {
     ) -> Result<String, CallError> {
         let policy = self.inner.config.retry;
         let mut tries = 0;
+        let mut refused_once = false;
         loop {
             tries += 1;
-            let mut stream = setup.adapter.stream(&setup.target, request.clone());
             let mut text = String::new();
-            let ended = loop {
-                match stream.next().await {
-                    Some(Ok(ProviderEvent::TextDelta(delta))) => text.push_str(&delta),
-                    Some(Ok(ProviderEvent::Finished(finish))) => break Ok(finish),
-                    Some(Ok(_)) => {}
-                    Some(Err(error)) => break Err(error),
-                    None => {
-                        break Err(ProviderError::Transient {
-                            cause: RunFailure::BrokenStream,
-                            retry_after: None,
-                        });
-                    }
+            let (ended, issued) = match self.call_target(setup).await {
+                Err(error) => (Err(error), None),
+                Ok(call) => {
+                    let mut stream = setup.adapter.stream(&call.target, request.clone());
+                    let ended = loop {
+                        match stream.next().await {
+                            Some(Ok(ProviderEvent::TextDelta(delta))) => text.push_str(&delta),
+                            Some(Ok(ProviderEvent::Finished(finish))) => break Ok(finish),
+                            Some(Ok(_)) => {}
+                            Some(Err(error)) => break Err(error),
+                            None => {
+                                break Err(ProviderError::Transient {
+                                    cause: RunFailure::BrokenStream,
+                                    retry_after: None,
+                                });
+                            }
+                        }
+                    };
+                    (ended, call.issued)
                 }
             };
             match ended {
@@ -1149,7 +1275,13 @@ impl Runtime {
                     tracing::warn!("a summary reached the output limit; no checkpoint is written");
                     return Err(CallError::Failed(RunFailure::SummaryCut));
                 }
-                Ok(_finish) => return Ok(text.trim().to_owned()),
+                Ok(_finish) => return Ok(fitted_summary(setup, &request, text.trim())),
+                Err(ProviderError::Permanent(RunFailure::InvalidCredential))
+                    if issued.is_some() && !refused_once =>
+                {
+                    refused_once = true;
+                    self.reject_chatgpt_token(issued);
+                }
                 Err(ProviderError::Transient { cause, retry_after }) => {
                     match policy.decide(tries, retry_after, self.random()) {
                         RetryDecision::After(delay) => tokio::time::sleep(delay).await,
@@ -1164,6 +1296,18 @@ impl Runtime {
 
 /// The smallest transcript chunk of a summary call.
 const MIN_CHUNK_TOKENS: u32 = 256;
+
+/// A summary that fits its allowance. The ChatGPT plan takes no output limit,
+/// so a summary there can run longer than its request allows; it is cut to
+/// its head and tail, as a long chunk is (ADR-0062, decision 10).
+fn fitted_summary(setup: &Setup, request: &ModelRequest, summary: &str) -> String {
+    let unbounded = setup.target.quirks.responses == ResponsesShape::ChatGptPlan;
+    if unbounded && estimate_text(summary) > request.max_output_tokens {
+        tracing::warn!("a summary on the ChatGPT plan was longer than its allowance and was cut");
+        return compaction::fit(summary, request.max_output_tokens);
+    }
+    summary.to_owned()
+}
 
 /// The machine's instructions, read for every assigned task so a change
 /// applies from the next task. A missing file means that there are none; a

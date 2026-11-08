@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use mannie_types::clock::{Clock, ManualClock, UtcMillis};
 use mannie_types::ids::ProfileId;
-use mannie_types::provider::{ApiInterface, ReasoningEffort, ServerKind};
+use mannie_types::provider::{ApiInterface, ProfileAccess, ReasoningEffort, ServerKind};
 
 use super::{ProfileFields, ProfileStoreError};
 use crate::{Store, StoreOptions};
@@ -35,6 +35,7 @@ fn id(number: u32) -> ProfileId {
 fn fields(name: &str) -> ProfileFields {
     ProfileFields {
         name: name.to_owned(),
+        access: ProfileAccess::Endpoint,
         interface: ApiInterface::ChatCompletions,
         base_url: "http://127.0.0.1:8000/v1".to_owned(),
         model: "qwen3".to_owned(),
@@ -234,4 +235,70 @@ async fn deleting_the_last_profile_leaves_no_default() {
 
     assert_eq!(fixture.store.default_profile().await.unwrap(), None);
     assert!(fixture.store.profile(&id(1)).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn a_profile_keeps_its_access_through_updates_and_the_recorded_server() {
+    let fixture = Fixture::new();
+    let plan = ProfileFields {
+        access: ProfileAccess::ChatGptPlan,
+        interface: ApiInterface::Responses,
+        base_url: "https://api.openai.com/v1".to_owned(),
+        model: "gpt-6.1-sol".to_owned(),
+        ..fields("Plan")
+    };
+
+    let inserted = fixture
+        .store
+        .insert_profile(&id(1), plan.clone())
+        .await
+        .unwrap();
+    let (_before, renamed) = fixture
+        .store
+        .update_profile(
+            &id(1),
+            ProfileFields {
+                name: "Plan, renamed".to_owned(),
+                ..plan.clone()
+            },
+        )
+        .await
+        .unwrap();
+    fixture
+        .store
+        .record_profile_server(&id(1), ServerKind::OpenAi)
+        .await
+        .unwrap();
+    let after_test = fixture.store.profile(&id(1)).await.unwrap().unwrap();
+
+    assert_eq!(inserted.access, ProfileAccess::ChatGptPlan);
+    assert_eq!(inserted.view().access, ProfileAccess::ChatGptPlan);
+    assert_eq!(renamed.access, ProfileAccess::ChatGptPlan);
+    assert_eq!(renamed.config_revision, inserted.config_revision);
+    assert_eq!(after_test.access, ProfileAccess::ChatGptPlan);
+}
+
+#[tokio::test]
+async fn changing_the_access_changes_the_configuration_revision() {
+    let fixture = Fixture::new();
+    let inserted = fixture
+        .store
+        .insert_profile(&id(1), fields("Local"))
+        .await
+        .unwrap();
+
+    let (_before, after) = fixture
+        .store
+        .update_profile(
+            &id(1),
+            ProfileFields {
+                access: ProfileAccess::ChatGptPlan,
+                ..fields("Local")
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(after.config_revision, inserted.config_revision + 1);
+    assert_eq!(after.access, ProfileAccess::ChatGptPlan);
 }

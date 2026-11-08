@@ -23,6 +23,7 @@ mod attachments;
 mod background;
 mod budget;
 mod calls;
+mod chatgpt;
 mod compaction;
 mod context;
 mod conversations;
@@ -66,6 +67,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use mannie_plugin_sdk::host::ServiceProvider;
+use mannie_provider::chatgpt::ChatGptEndpoints;
 use mannie_provider::{HttpClient, ProviderRegistry};
 use mannie_store::{RuntimeStoreError, Store};
 use mannie_tools::{Ceiling, MutationLock, SystemFacts, ToolRegistry};
@@ -91,7 +93,7 @@ pub use mentions::{
     DuplicateMentionProvider, FILES, FileMentions, MentionContext, MentionProvider, MentionRegistry,
 };
 pub use plans::PlanMentions;
-pub use profiles::{CredentialVault, VaultError};
+pub use profiles::{CredentialVault, Protection, VaultError};
 pub use retry::RetryPolicy;
 pub use skills::{READ_SKILL, SKILLS, SkillCatalog, SkillMentions, skill_token};
 pub use sqlite_files::{
@@ -105,6 +107,7 @@ use crate::agents::AgentPlugins;
 use crate::approvals::Pending;
 use crate::assigned::AssignedTasks;
 use crate::background::{BackgroundCommandsProvider, CommandRegistry};
+use crate::chatgpt::ChatGptState;
 use crate::executors::{CredentialsProvider, ExecutorFollows, ExecutorHostProvider};
 use crate::hub::Hubs;
 use crate::ids::IdGenerator;
@@ -220,6 +223,9 @@ pub struct RuntimeConfig {
     /// the failure `timed_out` (ADR-0046, decision 3): the SDK's
     /// `GATHER_TIMEOUT`, which tests shorten.
     pub gather_timeout: Duration,
+    /// Where the ChatGPT sign-in and the calls on the owner's ChatGPT plan
+    /// go (ADR-0062): OpenAI's servers, or a test's.
+    pub chatgpt: ChatGptEndpoints,
 }
 
 impl Default for RuntimeConfig {
@@ -235,6 +241,7 @@ impl Default for RuntimeConfig {
             random_seed: None,
             wake_up_delay: Duration::from_secs(2),
             gather_timeout: mannie_plugin_sdk::points::context::GATHER_TIMEOUT,
+            chatgpt: ChatGptEndpoints::openai(),
         }
     }
 }
@@ -303,6 +310,9 @@ struct Inner {
     /// The IDs of search profiles that changed or were deleted, for the
     /// plugins that follow them through the service `models` (ADR-0047).
     search_changes: tokio::sync::broadcast::Sender<String>,
+    /// The ChatGPT account through which profiles use the owner's ChatGPT
+    /// plan (ADR-0062).
+    chatgpt: ChatGptState,
     /// What wake-ups know of the conversations (ADR-0041).
     wake_ups: WakeUps,
     hubs: Hubs,
@@ -458,6 +468,7 @@ impl Runtime {
             terminals: Terminals::default(),
             database_tickets: DatabaseTickets::default(),
             search_changes: tokio::sync::broadcast::channel(SEARCH_CHANGES_CAPACITY).0,
+            chatgpt: ChatGptState::new(config.chatgpt.clone()),
             wake_ups: WakeUps::default(),
             hubs: Hubs::default(),
             busy: Mutex::default(),
@@ -474,6 +485,7 @@ impl Runtime {
             inner: Arc::new(inner),
         };
         runtime.load_custom_agents().await?;
+        runtime.load_chatgpt_view().await;
         Ok(runtime)
     }
 
@@ -543,6 +555,9 @@ impl Runtime {
         self.end_background_commands().await;
         self.end_local_servers().await;
         self.end_terminals().await;
+        // A refresh that OpenAI already answered stores its rotated tokens
+        // before the store closes (ADR-0062, decision 7).
+        self.quit_chatgpt().await;
         self.inner.hubs.shut_down().await;
         self.inner.assigned.shut_down();
         if let Err(error) = self.inner.store.flush().await {

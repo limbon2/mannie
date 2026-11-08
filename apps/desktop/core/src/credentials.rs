@@ -15,7 +15,7 @@ use mannie_plugin_sdk::host::{BindRefusal, PluginBinding, ServiceProvider};
 use mannie_plugin_sdk::manifest::{MAX_SECRET_KEY_CHARS, SecretsSection};
 use mannie_plugin_sdk::service::{BoundService, Service};
 use mannie_plugin_sdk::services::secrets::{Secrets, SecretsApi, SecretsError};
-use mannie_runtime::{CredentialVault, VaultError};
+use mannie_runtime::{CredentialVault, Protection, VaultError};
 use mannie_secrets::{CredentialError, CredentialRef, CredentialStore, UnavailableReason};
 use mannie_types::provider::CredentialStoreProblem;
 use mannie_types::secret::Secret;
@@ -118,6 +118,27 @@ impl CredentialVault for KeyringVault {
         self.store()?
             .delete(&reference)
             .map_err(|error| logged(&error, "delete"))
+    }
+
+    // The parts of the ChatGPT account's tokens change every hour, so they
+    // are not registered for the life of the process; the runtime keeps each
+    // whole token out of the logs while it holds it (ADR-0062, decision 6).
+    fn save_part(&self, reference: &str, part: &Secret) -> Result<(), VaultError> {
+        let reference = parse(reference)?;
+        self.store()?
+            .save(&reference, part)
+            .map_err(|error| logged(&error, "save"))
+    }
+
+    fn read_part(&self, reference: &str) -> Result<Secret, VaultError> {
+        let reference = parse(reference)?;
+        self.store()?
+            .read(&reference)
+            .map_err(|error| logged(&error, "read"))
+    }
+
+    fn protect(&self, secret: &Secret) -> Option<Protection> {
+        Some(Box::new(self.redactor.register_scoped(secret)))
     }
 }
 

@@ -1,6 +1,8 @@
 //! Mannie's provider adapters (ADR-0011): one streamed model call each,
 //! through the OpenAI Responses API or Chat Completions, and the calls of
-//! embedding and rerank models of search profiles (ADR-0047).
+//! embedding and rerank models of search profiles (ADR-0047). The sign-in
+//! with ChatGPT, through which profiles use the owner's ChatGPT plan, is in
+//! [`chatgpt`] (ADR-0062).
 //!
 //! An adapter turns a [`ModelRequest`] into an HTTP request, streams the
 //! answer, and normalizes it into [`ProviderEvent`]s, classifying failures
@@ -14,6 +16,7 @@
 //! involved.
 
 mod chat_completions;
+pub mod chatgpt;
 mod detect;
 mod errors;
 mod models;
@@ -32,7 +35,9 @@ mod tool_calls;
 mod transport;
 
 pub use chat_completions::ChatCompletionsAdapter;
-pub use detect::{ListedModel, ModelList, detect_server, list_models, server_from_host};
+pub use detect::{
+    ListedModel, ModelList, detect_server, list_models, list_plan_models, server_from_host,
+};
 pub use models::{KnownModel, known_model, known_models};
 pub use probe::{TEST_PROMPT, TOOL_PROMPT, TestInput, test_profile};
 pub use profile::{MAX_BASE_URL_BYTES, check_base_url, credential_transport_allowed};
@@ -40,7 +45,10 @@ pub use provider::{
     Content, EventStream, ImageInput, Message, ModelRequest, Provider, ProviderError,
     ProviderEvent, Role, Target, ToolChoice, ToolDefinition,
 };
-pub use quirks::{EffortShape, OutputLimitField, Quirks, ToolQuirks, quirks_for};
+pub use quirks::{
+    EffortShape, OutputLimitField, Quirks, ResponsesShape, ToolQuirks, chatgpt_plan_quirks,
+    quirks_for,
+};
 pub use registry::{DuplicateAdapter, ProviderRegistry};
 pub use reqwest::Url;
 pub use responses::ResponsesAdapter;

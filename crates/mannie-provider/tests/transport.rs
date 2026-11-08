@@ -1,6 +1,7 @@
 //! The transport of provider calls over real HTTP: no redirect is followed,
 //! the credential travels only as a bearer header, a response must be an event
-//! stream, and a silent server times out. `tests/log.rs` checks the log.
+//! stream, which only the ChatGPT plan may send without its content type, and
+//! a silent server times out. `tests/log.rs` checks the log.
 
 #![cfg(test)]
 
@@ -10,8 +11,8 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use mannie_provider::testing::{FixtureResponse, FixtureServer};
 use mannie_provider::{
-    HttpClient, Message, ModelRequest, ProviderError, ProviderEvent, ProviderRegistry, Role,
-    Target, Timeouts, quirks_for,
+    HttpClient, Message, ModelRequest, ProviderError, ProviderEvent, ProviderRegistry, Quirks,
+    Role, Target, Timeouts, chatgpt_plan_quirks, quirks_for,
 };
 use mannie_types::clock::{ManualClock, UtcMillis};
 use mannie_types::provider::{ApiInterface, ReasoningEffort};
@@ -45,12 +46,27 @@ async fn call(
     server: &FixtureServer,
     credential: Option<Secret>,
 ) -> (Vec<ProviderEvent>, Option<ProviderError>) {
+    call_with(
+        client,
+        server,
+        credential,
+        quirks_for(ApiInterface::Responses, None),
+    )
+    .await
+}
+
+async fn call_with(
+    client: &HttpClient,
+    server: &FixtureServer,
+    credential: Option<Secret>,
+    quirks: Quirks,
+) -> (Vec<ProviderEvent>, Option<ProviderError>) {
     let registry = ProviderRegistry::with_builtin(client);
     let adapter = registry.adapter(ApiInterface::Responses).unwrap();
     let target = Target {
         base_url: server.base_url(),
         credential,
-        quirks: quirks_for(ApiInterface::Responses, None),
+        quirks,
     };
     let mut stream = adapter.stream(&target, request());
     let mut events = Vec::new();
@@ -131,6 +147,41 @@ async fn a_response_that_is_not_an_event_stream_is_invalid() {
 
     assert_eq!(
         error,
+        Some(ProviderError::Permanent(RunFailure::InvalidResponse))
+    );
+}
+
+#[tokio::test]
+async fn only_the_chatgpt_plan_streams_without_a_content_type() {
+    let unlabeled = || {
+        let mut answer = FixtureResponse::event_stream(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello\"}\n\n\
+             data: {\"type\":\"response.completed\",\"response\":{}}\n\n",
+        );
+        answer.headers.clear();
+        answer
+    };
+    let server = FixtureServer::start().await.unwrap();
+    server.respond(unlabeled());
+    server.respond(unlabeled());
+    server.respond(FixtureResponse::json(200, "{\"output\":[]}"));
+    let client = client(Timeouts::default());
+
+    let (plan_events, plan_error) = call_with(&client, &server, None, chatgpt_plan_quirks()).await;
+    let (_, endpoint_error) = call(&client, &server, None).await;
+    let (_, json_on_plan) = call_with(&client, &server, None, chatgpt_plan_quirks()).await;
+
+    assert_eq!(plan_error, None);
+    assert_eq!(
+        plan_events.first(),
+        Some(&ProviderEvent::TextDelta("Hello".to_owned()))
+    );
+    assert_eq!(
+        endpoint_error,
+        Some(ProviderError::Permanent(RunFailure::InvalidResponse))
+    );
+    assert_eq!(
+        json_on_plan,
         Some(ProviderError::Permanent(RunFailure::InvalidResponse))
     );
 }

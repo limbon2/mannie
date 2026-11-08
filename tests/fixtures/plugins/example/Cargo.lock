@@ -824,6 +824,7 @@ dependencies = [
  "futures-util",
  "mannie-types",
  "reqwest",
+ "ring",
  "rustls",
  "serde",
  "serde_json",
@@ -832,6 +833,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "uuid",
  "zeroize",
 ]
 
@@ -857,6 +859,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

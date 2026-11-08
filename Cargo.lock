@@ -2527,6 +2527,7 @@ dependencies = [
  "mannie-types",
  "proptest",
  "reqwest",
+ "ring",
  "rustls",
  "serde",
  "serde_json",
@@ -2536,6 +2537,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "uuid",
  "zeroize",
 ]
 
@@ -2563,6 +2565,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

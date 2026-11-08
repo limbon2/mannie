@@ -27,7 +27,9 @@ use mannie_runtime::testing::{
 };
 use mannie_runtime::{AgentRegistry, texts};
 use mannie_types::chat::{StartConversation, SubscribeConversation};
-use mannie_types::provider::{ApiInterface, CreateProviderProfile, ProfileDraft, ReasoningEffort};
+use mannie_types::provider::{
+    ApiInterface, CreateProviderProfile, ProfileAccess, ProfileDraft, ReasoningEffort,
+};
 use mannie_types::run::{FinishReason, RunState};
 use mannie_types::secret::Secret;
 use mannie_types::tools::{ApprovalChoice, DecideApproval, ToolCallStatus};
@@ -64,6 +66,7 @@ impl KillPoint {
 
 fn draft() -> ProfileDraft {
     ProfileDraft {
+        access: ProfileAccess::Endpoint,
         name: "Test".to_owned(),
         interface: ApiInterface::ChatCompletions,
         base_url: "http://127.0.0.1:9/v1".to_owned(),

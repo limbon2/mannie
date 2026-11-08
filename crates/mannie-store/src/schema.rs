@@ -280,6 +280,12 @@ const PROVIDER: StoreModule = StoreModule {
             description: "create the search profiles table",
             sql: include_str!("provider/migrations/0035_create_search_profiles.sql"),
         },
+        Migration {
+            version: 3,
+            legacy_version: None,
+            description: "create the table of the ChatGPT account",
+            sql: include_str!("provider/migrations/0043_create_chatgpt_account.sql"),
+        },
     ]),
     confined: false,
 };

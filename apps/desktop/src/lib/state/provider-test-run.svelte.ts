@@ -31,6 +31,9 @@ export class ProviderTestRun {
     const outcome = await providerProfiles.update({
       credential: { action: 'keep' },
       draft: {
+        // A draft without its access reads as an endpoint, which would move a
+        // profile off the ChatGPT plan (ADR-0062).
+        access: profile.access,
         baseUrl: profile.baseUrl,
         contextWindow: limits.contextWindow,
         interface: profile.interface,

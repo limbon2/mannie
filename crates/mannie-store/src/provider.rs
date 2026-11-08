@@ -4,7 +4,9 @@
 
 use mannie_types::clock::UtcMillis;
 use mannie_types::ids::ProfileId;
-use mannie_types::provider::{ApiInterface, ProviderProfile, ReasoningEffort, ServerKind};
+use mannie_types::provider::{
+    ApiInterface, ProfileAccess, ProviderProfile, ReasoningEffort, ServerKind,
+};
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 use serde::{Deserialize, Serialize};
 
@@ -12,6 +14,7 @@ use crate::error::StoreError;
 use crate::writer::TransactError;
 use crate::{Durability, Store};
 
+pub(crate) mod chatgpt;
 pub(crate) mod search;
 
 /// The version of the profile document this module writes.
@@ -67,6 +70,11 @@ struct ProfileDocument {
     /// read it as on, the default.
     #[serde(default = "uses_tools_by_default")]
     use_tools: bool,
+    /// How the profile reaches its model. Profiles stored before the ChatGPT
+    /// plan read it as an endpoint, which the document leaves out
+    /// (ADR-0062).
+    #[serde(default, skip_serializing_if = "ProfileAccess::is_endpoint")]
+    access: ProfileAccess,
 }
 
 fn uses_tools_by_default() -> bool {
@@ -80,6 +88,8 @@ pub struct StoredProfile {
     pub id: ProfileId,
     /// Its name.
     pub name: String,
+    /// How it reaches its model.
+    pub access: ProfileAccess,
     /// The API it speaks.
     pub interface: ApiInterface,
     /// The server's base URL.
@@ -115,6 +125,7 @@ impl StoredProfile {
         ProviderProfile {
             id: self.id.clone(),
             name: self.name.clone(),
+            access: self.access,
             interface: self.interface,
             base_url: self.base_url.clone(),
             model: self.model.clone(),
@@ -131,7 +142,9 @@ impl StoredProfile {
     }
 
     /// The binding that provider-private data of this profile carries: the
-    /// profile and its configuration revision (ADR-0011, decision 6).
+    /// profile and its configuration revision (ADR-0011, decision 6). A
+    /// profile on the ChatGPT plan adds the account to it (ADR-0062,
+    /// decision 9), which the runtime does.
     pub fn binding(&self) -> String {
         format!("{}:{}", self.id, self.config_revision)
     }
@@ -142,6 +155,8 @@ impl StoredProfile {
 pub struct ProfileFields {
     /// The name.
     pub name: String,
+    /// How the profile reaches its model.
+    pub access: ProfileAccess,
     /// The API interface.
     pub interface: ApiInterface,
     /// The base URL.
@@ -255,6 +270,7 @@ impl RawProfile {
         Ok(StoredProfile {
             id: ProfileId::parse(&self.id).map_err(|error| invalid(error.to_string()))?,
             name: self.name,
+            access: document.access,
             interface,
             base_url: self.base_url,
             model: self.model,
@@ -314,6 +330,7 @@ fn document_json(
         reasoning_effort: fields.reasoning_effort,
         server,
         use_tools: fields.use_tools,
+        access: fields.access,
     };
     serde_json::to_string(&document).map_err(|error| ProfileStoreError::InvalidData {
         what: error.to_string(),
@@ -400,8 +417,8 @@ impl Store {
     }
 
     /// Replaces a profile's fields. The configuration revision increases when
-    /// the interface, the base URL, the model or the credential changes.
-    /// Returns the profile before and after the change.
+    /// the access, the interface, the base URL, the model or the credential
+    /// changes. Returns the profile before and after the change.
     pub async fn update_profile(
         &self,
         id: &ProfileId,
@@ -414,7 +431,8 @@ impl Store {
                 .map_err(TransactError::Rejected)?
                 .ok_or(TransactError::Rejected(ProfileStoreError::NotFound))?;
             refuse_taken_name(transaction, &fields.name, Some(&id))?;
-            let connection_changed = before.interface != fields.interface
+            let connection_changed = before.access != fields.access
+                || before.interface != fields.interface
                 || before.base_url != fields.base_url
                 || before.model != fields.model
                 || before.credential_ref != fields.credential_ref;
@@ -508,6 +526,7 @@ impl Store {
                 .ok_or(TransactError::Rejected(ProfileStoreError::NotFound))?;
             let fields = ProfileFields {
                 name: profile.name,
+                access: profile.access,
                 interface: profile.interface,
                 base_url: profile.base_url,
                 model: profile.model,

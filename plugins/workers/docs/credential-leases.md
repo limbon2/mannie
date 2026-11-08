@@ -1,12 +1,12 @@
 # Credential leases
 
-|              |                                                                                                                                                                                                                                                                                                                  |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status       | Building                                                                                                                                                                                                                                                                                                         |
-| Milestone    | M4                                                                                                                                                                                                                                                                                                               |
-| Last updated | 2026-10-16                                                                                                                                                                                                                                                                                                       |
-| Part of      | [Workers](README.md)                                                                                                                                                                                                                                                                                             |
-| Related      | [ADR-0010](../../../docs/adr/0010-keep-provider-credentials-on-the-master.md), [ADR-0028](../../../docs/adr/0028-run-assigned-tasks-under-the-host-ceiling.md), [Workers architecture](architecture.md#model-access-on-workers), [Security](../../../docs/architecture/security.md#7-rules-for-handling-secrets) |
+|              |                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status       | Building                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Milestone    | M4                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Last updated | 2026-11-08                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Part of      | [Workers](README.md)                                                                                                                                                                                                                                                                                                                                                                                          |
+| Related      | [ADR-0010](../../../docs/adr/0010-keep-provider-credentials-on-the-master.md), [ADR-0028](../../../docs/adr/0028-run-assigned-tasks-under-the-host-ceiling.md), [ADR-0062](../../../docs/adr/0062-let-the-owner-pay-for-model-calls-with-a-chatgpt-plan.md), [Workers architecture](architecture.md#model-access-on-workers), [Security](../../../docs/architecture/security.md#7-rules-for-handling-secrets) |
 
 ## Design
 
@@ -26,6 +26,14 @@ A base URL with a loopback address names the master's own computer, which a work
 A run that starts before its lease arrived waits with the activity `waiting_for_lease`, and continues once the vault holds it. While it waits, the run holds its slot and no model slot.
 
 The run that submitted the task and the master's follower of the worker both offer the lease, and the master delivers it once. After a failed delivery, the next state of the task that waits for the lease delivers it again.
+
+### Profiles that use the ChatGPT plan
+
+A profile that uses the owner's ChatGPT plan is never leased ([ADR-0062](../../../docs/adr/0062-let-the-owner-pay-for-model-calls-with-a-chatgpt-plan.md), decision 13; [ChatGPT plan](../../../docs/features/chatgpt-plan.md)):
+
+- The master's lender refuses such a profile with `NotPermitted`, and never answers as for a profile that needs no lease.
+- A run on such a profile is offered no executors, so it never gives a task to a worker, and its follow-ups on the tasks of executors are refused. Its child agents on the master work as before.
+- The tokens of the ChatGPT account stay in the master's credential store and never cross the link.
 
 ### When the worker drops a lease
 
@@ -61,3 +69,4 @@ A lease never reaches the worker's database, its logs, its crash files, a comman
 - A run that starts before its lease waits, and continues when it arrives (runtime tests).
 - The master delivers a task's lease once, also when the worker reports that the task waits for it before the submission's answer arrives, and revokes the lease when the task ends (runtime tests).
 - A delegation whose profile points at the master's loopback is refused for a worker on another machine (runtime tests).
+- A profile that uses the ChatGPT plan is never leased, a run on it is offered no worker, and its follow-ups on the tasks of executors are refused (the runtime tests of the ChatGPT account).

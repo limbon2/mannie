@@ -1,0 +1,9 @@
+{
+  "error": {
+    "class": "permanent",
+    "failure": {
+      "code": "chatgpt_usage_limit_reached"
+    }
+  },
+  "events": []
+}

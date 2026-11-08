@@ -147,6 +147,13 @@ required-features = ["testing"]
 name = "planted_credential"
 required-features = ["testing"]
 
+# The tokens of the ChatGPT account reach only the Authorization header and
+# the token endpoint's form; its own binary because it installs a global log
+# subscriber (ADR-0062).
+[[test]]
+name = "planted_chatgpt_token"
+required-features = ["testing"]
+
 # Plugins' tools on the owner's paths: the workspace, offering, path accesses
 # and the data of tool cards (ADR-0038, ADR-0039).
 [[test]]
@@ -200,6 +207,12 @@ required-features = ["testing"]
 name = "local_servers"
 required-features = ["testing"]
 
+# The ChatGPT account: its sign-in, its tokens in the vault, one refresh at a
+# time, and a token for every call of a profile on the plan (ADR-0062).
+[[test]]
+name = "chatgpt"
+required-features = ["testing"]
+
 [dependencies]
 # The bytes of a stored image as `read_image` returns them (ADR-0033).
 base64 = { workspace = true }
@@ -233,6 +246,9 @@ tracing = { workspace = true }
 # spells it (ADR-0043, decision 6).
 url = { workspace = true }
 uuid = { workspace = true }
+# The ChatGPT account's bundle of tokens, cleared from memory when it drops
+# (ADR-0062).
+zeroize = { workspace = true }
 
 [dev-dependencies]
 mannie-provider = { workspace = true, features = ["testing"] }
@@ -248,7 +264,7 @@ tracing-subscriber = { workspace = true }
 [features]
 # The test runtime, the in-memory vault and the fake model, for the tests of
 # this crate. Never enabled in the desktop app or the worker.
-testing = ["dep:tempfile", "mannie-provider/testing"]
+testing = ["dep:tempfile", "mannie-provider/testing", "tokio/io-util", "tokio/net"]
 # The seeder of long conversations for the desktop app's performance checks.
 # Never enabled in a release.
 validation = ["mannie-store/validation"]

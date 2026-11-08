@@ -15,7 +15,10 @@ use mannie_types::secret::Secret;
 use reqwest::Url;
 use serde_json::Value;
 
-use crate::stream::transport_failure;
+use crate::errors::{self, Context, ErrorDetails};
+use crate::provider::ProviderError;
+use crate::quirks::chatgpt_plan_quirks;
+use crate::stream::{broken_stream, read_error_body, timed_out, transport_failure};
 use crate::transport::{HttpClient, MAX_ERROR_BODY_BYTES, endpoint};
 
 /// How long one request of the test may take.
@@ -30,6 +33,9 @@ const MAX_LIST_BYTES: usize = 16 * 1024 * 1024;
 pub struct ListedModel {
     /// The model's name.
     pub id: String,
+    /// The name that the owner reads, when the list has one, as the ChatGPT
+    /// plan's catalog does.
+    pub display_name: Option<String>,
     /// Its limits, when the list says.
     pub limits: Option<ReportedLimits>,
 }
@@ -132,6 +138,88 @@ pub async fn list_models(
     }
 }
 
+/// Asks for the catalog of models that the ChatGPT plan offers the signed-in
+/// account (ADR-0062, decision 11): `{"models": [...]}`, of which the entries
+/// with `visibility` `list` are offered, in the catalog's order. A refusal is
+/// classified as a model call's would be, so that a refused token is
+/// refreshed and a usage limit is shown.
+pub async fn list_plan_models(
+    client: &HttpClient,
+    api_base: &Url,
+    token: &Secret,
+) -> Result<Vec<ListedModel>, ProviderError> {
+    let url = endpoint(api_base, &["models"]);
+    let response = tokio::time::timeout(PROBE_TIMEOUT, client.get(url, Some(token)).send())
+        .await
+        .map_err(|_elapsed| timed_out())?
+        .map_err(|error| transport_failure(&error))?;
+    let status = response.status().as_u16();
+    if !(200..300).contains(&status) {
+        let headers = response.headers().clone();
+        let body = read_error_body(response, PROBE_TIMEOUT).await;
+        let quirks = chatgpt_plan_quirks();
+        let context = Context {
+            model: "",
+            quirks: &quirks,
+            now: client.clock().now(),
+        };
+        return Err(errors::classify_status(
+            status,
+            &headers,
+            &ErrorDetails::from_body(&body),
+            context,
+        ));
+    }
+    // The catalog is read whole, under the limit of model lists: cut to the
+    // size of an error body, a long catalog would not parse.
+    let body = read_body(response, MAX_LIST_BYTES)
+        .await
+        .inspect_err(|error| {
+            tracing::warn!(
+                failure = ?error.failure(),
+                "the ChatGPT plan's catalog could not be read"
+            );
+        })?;
+    let catalog: Value = serde_json::from_slice(&body).map_err(|error| {
+        // Where and how the catalog breaks, never its content, which
+        // describes the owner's account.
+        tracing::warn!(
+            bytes = body.len(),
+            line = error.line(),
+            column = error.column(),
+            kind = ?error.classify(),
+            "the ChatGPT plan's catalog is not JSON"
+        );
+        ProviderError::Permanent(RunFailure::InvalidResponse)
+    })?;
+    Ok(plan_models(&catalog))
+}
+
+/// The models of the ChatGPT plan's catalog that it offers for a list.
+fn plan_models(catalog: &Value) -> Vec<ListedModel> {
+    let text = |item: &Value, key: &str| {
+        item.get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_owned)
+    };
+    catalog
+        .get("models")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|item| item.get("visibility").and_then(Value::as_str) == Some("list"))
+        .filter_map(|item| {
+            Some(ListedModel {
+                id: text(item, "slug")?,
+                display_name: text(item, "display_name"),
+                limits: None,
+            })
+        })
+        .collect()
+}
+
 /// The models in a list, in the shapes that the servers use: `{"data": [...]}`
 /// or a bare array.
 fn listed_models(body: &Value) -> Vec<ListedModel> {
@@ -146,6 +234,7 @@ fn listed_models(body: &Value) -> Vec<ListedModel> {
             let id = item.get("id").and_then(Value::as_str)?.to_owned();
             Some(ListedModel {
                 id,
+                display_name: None,
                 limits: reported_limits(item),
             })
         })
@@ -218,13 +307,25 @@ async fn get_json(
         500..=599 => return Err(RunFailure::ServerError { status }),
         _ => return Ok(None),
     }
+    let body = read_body(response, max_bytes)
+        .await
+        .map_err(|error| error.failure())?;
+    Ok(serde_json::from_slice(&body).ok())
+}
+
+/// Reads a whole body of at most `max_bytes`, within the time of one request
+/// of the test. A larger body is refused, never cut.
+async fn read_body(
+    response: reqwest::Response,
+    max_bytes: usize,
+) -> Result<Vec<u8>, ProviderError> {
     let mut body = Vec::new();
     let mut chunks = response.bytes_stream();
     let reading = async {
         while let Some(chunk) = chunks.next().await {
-            let chunk = chunk.map_err(|_broken| RunFailure::BrokenStream)?;
+            let chunk = chunk.map_err(|_broken| broken_stream())?;
             if body.len() + chunk.len() > max_bytes {
-                return Err(RunFailure::InvalidResponse);
+                return Err(ProviderError::Permanent(RunFailure::InvalidResponse));
             }
             body.extend_from_slice(&chunk);
         }
@@ -232,8 +333,8 @@ async fn get_json(
     };
     tokio::time::timeout(PROBE_TIMEOUT, reading)
         .await
-        .map_err(|_elapsed| RunFailure::TimedOut)??;
-    Ok(serde_json::from_slice(&body).ok())
+        .map_err(|_elapsed| timed_out())??;
+    Ok(body)
 }
 
 #[cfg(test)]
@@ -294,5 +395,37 @@ mod tests {
         );
         assert_eq!(listed_models(&bare)[0].id, "plain");
         assert_eq!(listed_models(&bare)[0].limits, None);
+    }
+
+    #[test]
+    fn plan_catalogs_keep_listed_models_in_server_order() {
+        let catalog = serde_json::json!({
+            "models": [
+                { "slug": "gpt-6.1-sol", "display_name": "GPT-6.1 Sol", "visibility": "list" },
+                { "slug": "internal-eval", "display_name": "Eval", "visibility": "hide" },
+                { "slug": "gpt-6-mini", "visibility": "list" },
+                { "display_name": "No slug", "visibility": "list" },
+                { "slug": "codex-6", "display_name": " ", "visibility": "list" }
+            ]
+        });
+
+        let models = super::plan_models(&catalog);
+
+        let names: Vec<(&str, Option<&str>)> = models
+            .iter()
+            .map(|model| (model.id.as_str(), model.display_name.as_deref()))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("gpt-6.1-sol", Some("GPT-6.1 Sol")),
+                ("gpt-6-mini", None),
+                ("codex-6", None)
+            ]
+        );
+        assert_eq!(
+            super::plan_models(&serde_json::json!({ "data": [] })),
+            Vec::<super::ListedModel>::new()
+        );
     }
 }

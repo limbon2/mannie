@@ -1,0 +1,25 @@
+{
+  "server": "open_ai",
+  "interface": "responses",
+  "access": "chatgpt_plan",
+  "provenance": "constructed",
+  "sources": [
+    "https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference",
+    "https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations",
+    "https://developers.openai.com/siwc/token-sharing-open-source/errors-and-recovery",
+    "https://developers.openai.com/api/docs/guides/function-calling"
+  ],
+  "verifiedOn": "2026-11-08",
+  "request": {
+    "model": "gpt-6.1-sol",
+    "instructions": "",
+    "messages": [
+      {
+        "role": "user",
+        "text": "Reply with the single word: ready"
+      }
+    ],
+    "maxOutputTokens": 1024,
+    "reasoningEffort": "server_default"
+  }
+}

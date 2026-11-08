@@ -31,7 +31,7 @@ use mannie_runtime::{ORCHESTRATOR_KEY, PLAN_KEY, RuntimeConfig, texts};
 use mannie_types::agents::{AgentDraft, AgentError, AgentField, AgentKind, AgentStep, AgentView};
 use mannie_types::chat::{ChatError, SendMessage, SetConversationAgent, StartConversation};
 use mannie_types::ids::{ConversationId, ProfileId, RunId};
-use mannie_types::provider::{CreateProviderProfile, ProfileDraft, ReasoningEffort};
+use mannie_types::provider::{CreateProviderProfile, ProfileAccess, ProfileDraft, ReasoningEffort};
 use mannie_types::run::{RunFailure, RunState};
 use mannie_types::tasks::{TaskState, UpdateChildAgentsSettings};
 use mannie_types::tools::{SetFullAccess, UpdateToolsSettings};
@@ -991,6 +991,7 @@ async fn second_profile(setup: &Setup, model: &str, use_tools: bool) -> ProfileI
         .runtime
         .create_profile(CreateProviderProfile {
             draft: ProfileDraft {
+                access: ProfileAccess::Endpoint,
                 name: model.to_owned(),
                 interface: setup.harness.profile.interface,
                 base_url: "https://api.example.com/v1".to_owned(),

@@ -18,7 +18,8 @@ use mannie_plugin_harness::store::{
 };
 use mannie_plugin_harness::types::PartKind;
 use mannie_plugin_harness::types::{
-    ApiInterface, CreateProviderProfile, ProfileDraft, ProviderProfile, ReasoningEffort,
+    ApiInterface, CreateProviderProfile, ProfileAccess, ProfileDraft, ProviderProfile,
+    ReasoningEffort,
 };
 use mannie_plugin_harness::types::{PartId, RunId, TurnId};
 use mannie_plugin_harness::types::{TaskDocument, TaskPartDocument, TaskRefusal, TaskView};
@@ -391,6 +392,7 @@ async fn a_lease_for_a_profile_that_the_task_does_not_use_is_refused_and_never_r
         .runtime
         .create_profile(CreateProviderProfile {
             draft: ProfileDraft {
+                access: ProfileAccess::Endpoint,
                 name: "Second".to_owned(),
                 interface: ApiInterface::ChatCompletions,
                 base_url: "http://127.0.0.1:9/v1".to_owned(),

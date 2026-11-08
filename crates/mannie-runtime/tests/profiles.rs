@@ -18,8 +18,8 @@ use mannie_store::Store;
 use mannie_types::chat::StartConversation;
 use mannie_types::provider::{
     ApiInterface, CheckKind, CheckOutcome, CreateProviderProfile, CredentialChange,
-    CredentialStoreProblem, ProfileDraft, ProviderProfile, ProviderProfileError, ReasoningEffort,
-    ServerKind,
+    CredentialStoreProblem, ProfileAccess, ProfileDraft, ProviderProfile, ProviderProfileError,
+    ReasoningEffort, ServerKind,
 };
 use mannie_types::secret::Secret;
 
@@ -54,6 +54,7 @@ async fn setup() -> Setup {
 
 fn draft(name: &str, base_url: &str) -> ProfileDraft {
     ProfileDraft {
+        access: ProfileAccess::Endpoint,
         name: name.to_owned(),
         interface: ApiInterface::ChatCompletions,
         base_url: base_url.to_owned(),

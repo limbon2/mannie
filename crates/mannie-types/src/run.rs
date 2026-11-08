@@ -296,6 +296,40 @@ pub enum RunFailure {
     /// credential-leases.md).
     #[error("the master revoked the task's credential lease")]
     LeaseRevoked,
+    /// The ChatGPT account is signed out, its session ended, or it no longer
+    /// allows Mannie to use its plan, so a profile that uses the ChatGPT plan
+    /// cannot call its model until the owner signs in again (ADR-0062).
+    #[serde(rename = "chatgpt_sign_in_needed")]
+    #[error("the ChatGPT account must sign in again")]
+    ChatGptSignInNeeded,
+    /// Another ChatGPT account signed in while the reply was written, so the
+    /// reply stopped before it used the other account (ADR-0062, decision 9).
+    #[serde(rename = "chatgpt_account_changed")]
+    #[error("another ChatGPT account signed in during the reply")]
+    ChatGptAccountChanged,
+    /// The usage limit of the ChatGPT plan, or a limit that OpenAI sets for
+    /// Mannie, is reached. Mannie does not retry: the owner manages their
+    /// usage in ChatGPT's settings.
+    #[serde(rename = "chatgpt_usage_limit_reached")]
+    #[error("the ChatGPT plan's usage limit is reached")]
+    ChatGptUsageLimitReached,
+    /// OpenAI cannot serve the ChatGPT plan's usage for now.
+    #[serde(rename = "chatgpt_unavailable")]
+    #[error("the ChatGPT plan's usage is unavailable for now")]
+    ChatGptUnavailable,
+    /// The ChatGPT account may not use its plan in other apps, for example
+    /// because of its plan or its workspace's policy.
+    #[serde(rename = "chatgpt_not_eligible")]
+    #[error("the ChatGPT account may not use its plan in other apps")]
+    ChatGptNotEligible,
+    /// The ChatGPT plan does not support part of the request.
+    #[serde(rename = "chatgpt_unsupported")]
+    #[error("the ChatGPT plan does not support part of the request")]
+    ChatGptUnsupported {
+        /// The part of the request that OpenAI named, cleaned to a short
+        /// parameter name, if it named one.
+        param: Option<String>,
+    },
     /// Mannie failed. The log has the cause.
     #[error("Mannie failed")]
     Internal,
@@ -329,6 +363,12 @@ impl RunFailure {
             Self::NoProfile => "run.no_profile",
             Self::ToolsUnsupported => "run.tools_unsupported",
             Self::LeaseRevoked => "run.lease_revoked",
+            Self::ChatGptSignInNeeded => "run.chatgpt_sign_in_needed",
+            Self::ChatGptAccountChanged => "run.chatgpt_account_changed",
+            Self::ChatGptUsageLimitReached => "run.chatgpt_usage_limit_reached",
+            Self::ChatGptUnavailable => "run.chatgpt_unavailable",
+            Self::ChatGptNotEligible => "run.chatgpt_not_eligible",
+            Self::ChatGptUnsupported { .. } => "run.chatgpt_unsupported",
             Self::Internal => "run.internal",
         }
     }
@@ -401,6 +441,48 @@ mod tests {
         let back: RunFailure =
             serde_json::from_value(serde_json::to_value(&failure).unwrap()).unwrap();
         assert_eq!(back, failure);
+    }
+
+    #[test]
+    fn chatgpt_failures_serialize_with_their_codes() {
+        let cases = [
+            (
+                RunFailure::ChatGptSignInNeeded,
+                serde_json::json!({ "code": "chatgpt_sign_in_needed" }),
+            ),
+            (
+                RunFailure::ChatGptAccountChanged,
+                serde_json::json!({ "code": "chatgpt_account_changed" }),
+            ),
+            (
+                RunFailure::ChatGptUsageLimitReached,
+                serde_json::json!({ "code": "chatgpt_usage_limit_reached" }),
+            ),
+            (
+                RunFailure::ChatGptUnavailable,
+                serde_json::json!({ "code": "chatgpt_unavailable" }),
+            ),
+            (
+                RunFailure::ChatGptNotEligible,
+                serde_json::json!({ "code": "chatgpt_not_eligible" }),
+            ),
+            (
+                RunFailure::ChatGptUnsupported {
+                    param: Some("tools[0].type".to_owned()),
+                },
+                serde_json::json!({ "code": "chatgpt_unsupported", "param": "tools[0].type" }),
+            ),
+        ];
+
+        for (failure, json) in cases {
+            assert_eq!(serde_json::to_value(&failure).unwrap(), json);
+            assert_eq!(
+                failure.code(),
+                format!("run.{}", json["code"].as_str().unwrap())
+            );
+            let back: RunFailure = serde_json::from_value(json).unwrap();
+            assert_eq!(back, failure);
+        }
     }
 
     #[test]

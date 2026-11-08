@@ -9,12 +9,12 @@ use super::{
     Context, ErrorDetails, classify_status, classify_stream_error, parse_http_date, retry_after,
 };
 use crate::provider::ProviderError;
-use crate::quirks::quirks_for;
+use crate::quirks::{Quirks, chatgpt_plan_quirks, quirks_for};
 
 /// 2026-10-13T12:00:00Z
 const NOON: i64 = 1_791_892_800_000;
 
-fn context_for(server: ServerKind) -> (crate::quirks::Quirks, UtcMillis) {
+fn context_for(server: ServerKind) -> (Quirks, UtcMillis) {
     (
         quirks_for(ApiInterface::ChatCompletions, Some(server)),
         UtcMillis::from_millis(NOON),
@@ -306,5 +306,181 @@ fn servers_that_refuse_tools_say_so_with_their_own_words() {
     assert_eq!(
         classify(400, r#"{"error":{"message":"bad tool name"}}"#, &[]),
         ProviderError::Permanent(RunFailure::BadRequest { status: 400 })
+    );
+}
+
+fn classify_with(
+    quirks: &Quirks,
+    status: u16,
+    body: &str,
+    headers: &[(&'static str, &str)],
+) -> ProviderError {
+    let mut map = HeaderMap::new();
+    for (name, value) in headers {
+        map.insert(*name, HeaderValue::from_str(value).unwrap());
+    }
+    let context = Context {
+        model: "gpt-6.1-sol",
+        quirks,
+        now: UtcMillis::from_millis(NOON),
+    };
+    classify_status(
+        status,
+        &map,
+        &ErrorDetails::from_body(body.as_bytes()),
+        context,
+    )
+}
+
+fn plan_body(code: &str) -> String {
+    format!(r#"{{"error":{{"code":"{code}","message":"x","param":null}}}}"#)
+}
+
+#[test]
+fn plan_codes_win_over_the_classes_of_their_statuses() {
+    let plan = chatgpt_plan_quirks();
+    let cases = [
+        (
+            429,
+            plan_body("subscription_sharing_usage_limit_exceeded"),
+            ProviderError::Permanent(RunFailure::ChatGptUsageLimitReached),
+        ),
+        (
+            403,
+            plan_body("subscription_sharing_user_not_eligible"),
+            ProviderError::Permanent(RunFailure::ChatGptNotEligible),
+        ),
+        (
+            403,
+            plan_body("subscription_sharing_route_not_supported"),
+            ProviderError::Permanent(RunFailure::ChatGptUnsupported { param: None }),
+        ),
+        (
+            401,
+            plan_body("subscription_sharing_invalid_user"),
+            ProviderError::Permanent(RunFailure::InvalidCredential),
+        ),
+        (
+            403,
+            plan_body("chatpass_v2_scope_not_authorized"),
+            ProviderError::Permanent(RunFailure::ChatGptSignInNeeded),
+        ),
+        (
+            403,
+            plan_body("chatpass_v2_invalid_authorization_context"),
+            ProviderError::Permanent(RunFailure::ChatGptSignInNeeded),
+        ),
+        (
+            400,
+            r#"{"error":{"code":"subscription_sharing_unsupported_capability","message":"tools are not supported","param":"tools[0].type"}}"#.to_owned(),
+            ProviderError::Permanent(RunFailure::ChatGptUnsupported {
+                param: Some("tools[0].type".to_owned()),
+            }),
+        ),
+    ];
+
+    for (status, body, expected) in cases {
+        assert_eq!(classify_with(&plan, status, &body, &[]), expected, "{body}");
+    }
+}
+
+#[test]
+fn plan_unavailability_is_transient_and_honors_retry_after() {
+    let plan = chatgpt_plan_quirks();
+
+    for code in [
+        "subscription_sharing_usage_unavailable",
+        "subscription_sharing_user_unavailable",
+    ] {
+        assert_eq!(
+            classify_with(&plan, 503, &plan_body(code), &[("retry-after", "30")]),
+            transient(
+                RunFailure::ChatGptUnavailable,
+                Some(Duration::from_secs(30))
+            ),
+            "{code}"
+        );
+    }
+}
+
+#[test]
+fn a_usage_limit_inside_a_stream_is_permanent() {
+    let plan = chatgpt_plan_quirks();
+    let details = ErrorDetails::from_value(&serde_json::json!({
+        "code": "subscription_sharing_usage_limit_exceeded",
+        "message": "You have reached your usage limit."
+    }));
+    let context = Context {
+        model: "gpt-6.1-sol",
+        quirks: &plan,
+        now: UtcMillis::from_millis(NOON),
+    };
+
+    assert_eq!(
+        classify_stream_error(&details, context),
+        ProviderError::Permanent(RunFailure::ChatGptUsageLimitReached)
+    );
+}
+
+#[test]
+fn an_unsupported_capability_keeps_a_clean_parameter_name() {
+    let plan = chatgpt_plan_quirks();
+    let long = "p".repeat(100);
+    let body = |param: &str| {
+        serde_json::json!({
+            "error": { "code": "subscription_sharing_unsupported_capability", "param": param }
+        })
+        .to_string()
+    };
+
+    assert_eq!(
+        classify_with(&plan, 400, &body("max_output_tokens\n<b>"), &[]),
+        ProviderError::Permanent(RunFailure::ChatGptUnsupported {
+            param: Some("max_output_tokensb".to_owned()),
+        })
+    );
+    assert_eq!(
+        classify_with(&plan, 400, &body(&long), &[]),
+        ProviderError::Permanent(RunFailure::ChatGptUnsupported {
+            param: Some("p".repeat(64)),
+        })
+    );
+    assert_eq!(
+        classify_with(&plan, 400, &body("<>"), &[]),
+        ProviderError::Permanent(RunFailure::ChatGptUnsupported { param: None })
+    );
+}
+
+#[test]
+fn detail_bodies_become_messages_and_keep_their_status_class() {
+    let plan = chatgpt_plan_quirks();
+    let details = ErrorDetails::from_body(br#"{"detail":"Direct routing is not enabled."}"#);
+
+    assert_eq!(
+        details.message.as_deref(),
+        Some("Direct routing is not enabled.")
+    );
+    assert_eq!(
+        classify_with(&plan, 401, r#"{"detail":"no"}"#, &[]),
+        ProviderError::Permanent(RunFailure::InvalidCredential)
+    );
+    assert_eq!(
+        classify_with(&plan, 503, r#"{"detail":"no"}"#, &[]),
+        transient(RunFailure::ServerError { status: 503 }, None)
+    );
+}
+
+#[test]
+fn plan_codes_mean_nothing_to_other_servers() {
+    let openai = quirks_for(ApiInterface::Responses, Some(ServerKind::OpenAi));
+
+    assert_eq!(
+        classify_with(
+            &openai,
+            429,
+            &plan_body("subscription_sharing_usage_limit_exceeded"),
+            &[]
+        ),
+        transient(RunFailure::RateLimited { retry_at: None }, None)
     );
 }

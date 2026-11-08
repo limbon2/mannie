@@ -16,6 +16,7 @@
   import { controlsIn } from '#lib/utils/conversation-controls.js';
 
   import AttachmentChips from './AttachmentChips.svelte';
+  import ChatGptPlanIndicator from './ChatGptPlanIndicator.svelte';
   import Composer from './Composer.svelte';
   import NoProfileNotice from './NoProfileNotice.svelte';
 
@@ -115,6 +116,7 @@
           <Empty.Description>{m.chat_new_description()}</Empty.Description>
         </Empty.Header>
       </Empty.Root>
+      <ChatGptPlanIndicator profileId={null} />
     {/if}
   </div>
   <Composer disabled={noProfile} mentionPlace={{ kind: 'new_conversation', projectId }} onSend={start}>

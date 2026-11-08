@@ -32,10 +32,13 @@ use mannie_plugin_sdk::services::background_commands::BackgroundCommandsApi;
 use mannie_plugin_sdk::services::credentials::CredentialsApi;
 use mannie_plugin_sdk::services::executor_host::ExecutorHostApi;
 use mannie_plugin_sdk::services::models::ModelsApi;
-use mannie_provider::testing::Step;
+use mannie_provider::chatgpt::ChatGptEndpoints;
+use mannie_provider::testing::{
+    FixtureResponse, FixtureServer, Step, example_key_set, signed_id_token,
+};
 use mannie_provider::{
     Content, EventStream, HttpClient, ModelRequest, Provider, ProviderError, ProviderEvent,
-    ProviderRegistry, Target,
+    ProviderRegistry, Target, Url,
 };
 use mannie_store::{PluginModule, Store, StoreOptions};
 use mannie_tools::{Ceiling, MutationLock, SystemFacts, ToolRegistry};
@@ -46,8 +49,9 @@ use mannie_types::chat::{
 use mannie_types::clock::{Clock, SystemClock};
 use mannie_types::ids::{ConversationId, PartId, ProfileId, RunId, TaskId, TurnId};
 use mannie_types::provider::{
-    ApiInterface, CreateProviderProfile, CredentialStoreProblem, ProfileDraft, ProviderProfile,
-    ReasoningEffort,
+    ApiInterface, ChatGptAccountState, ChatGptCallbackPage, CreateProviderProfile,
+    CredentialStoreProblem, ProfileAccess, ProfileDraft, ProviderProfile, ReasoningEffort,
+    StartChatGptSignIn,
 };
 use mannie_types::run::{FinishReason, RunFailure, RunState, RunView, Usage};
 use mannie_types::secret::Secret;
@@ -87,6 +91,7 @@ struct VaultState {
     failing_saves: Option<CredentialStoreProblem>,
     failing_reads: Option<CredentialStoreProblem>,
     failing_deletes: Option<CredentialStoreProblem>,
+    protected: Vec<String>,
 }
 
 /// A credential vault in memory, whose calls can be made to fail. One made
@@ -164,6 +169,11 @@ impl MemoryVault {
     pub fn fail_deletes(&self, problem: Option<CredentialStoreProblem>) {
         lock(&self.state).failing_deletes = problem;
     }
+
+    /// Every secret that the runtime asked to keep out of the logs, in order.
+    pub fn protected(&self) -> Vec<String> {
+        lock(&self.state).protected.clone()
+    }
 }
 
 impl CredentialVault for MemoryVault {
@@ -202,6 +212,11 @@ impl CredentialVault for MemoryVault {
             .remove(reference)
             .map(|_removed| ())
             .ok_or(VaultError::Missing)
+    }
+
+    fn protect(&self, secret: &Secret) -> Option<crate::Protection> {
+        lock(&self.state).protected.push(secret.expose().to_owned());
+        None
     }
 
     fn arrival(&self, _reference: &str) -> Option<BoxFuture<'static, ()>> {
@@ -891,6 +906,7 @@ impl Harness {
         let profile = runtime
             .create_profile(CreateProviderProfile {
                 draft: ProfileDraft {
+                    access: ProfileAccess::Endpoint,
                     name: "Test".to_owned(),
                     interface: options.interface,
                     base_url: "http://127.0.0.1:9/v1".to_owned(),
@@ -2191,4 +2207,163 @@ impl Transcript {
     pub fn content(&self) -> BTreeMap<u32, SeenTurn> {
         self.turns.clone()
     }
+}
+
+/// The client that a test's sign-in with ChatGPT registers.
+pub const TEST_CHATGPT_CLIENT: &str = "oaiapp_test";
+
+/// The ChatGPT endpoints of a fixture server, which plays OpenAI's sign-in
+/// and API, with the first sign-in on any free port so that tests run beside
+/// each other (ADR-0062).
+pub fn chatgpt_endpoints_at(server: &FixtureServer) -> ChatGptEndpoints {
+    let mut issuer = server.base_url();
+    issuer.set_path("/");
+    ChatGptEndpoints {
+        registration_port: 0,
+        ..ChatGptEndpoints::at(&issuer, &server.base_url())
+    }
+}
+
+/// The token endpoint's answer with `access` and `refresh`, and an ID token of
+/// `subject` for `nonce` when `nonce` is given.
+///
+/// # Panics
+///
+/// Never: the answer is valid JSON.
+pub fn chatgpt_tokens(
+    endpoints: &ChatGptEndpoints,
+    access: &str,
+    refresh: &str,
+    id_token: Option<(&str, &str)>,
+) -> FixtureResponse {
+    let mut answer = serde_json::json!({
+        "access_token": access,
+        "refresh_token": refresh,
+        "expires_in": 3600,
+        "scope": "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct",
+        "token_type": "Bearer",
+    });
+    if let Some((subject, nonce)) = id_token {
+        let now = SystemClock.now().as_millis() / 1_000;
+        let claims = serde_json::json!({
+            "iss": endpoints.issuer,
+            "aud": TEST_CHATGPT_CLIENT,
+            "sub": subject,
+            "email": format!("{subject}@example.com"),
+            "nonce": nonce,
+            "iat": now - 10,
+            "exp": now + 3_600,
+        });
+        answer["id_token"] = serde_json::json!(signed_id_token("test-key", &claims));
+    }
+    FixtureResponse::json(200, answer.to_string())
+}
+
+/// Signs `runtime` in to the ChatGPT account of `subject`, with `server`
+/// playing OpenAI and this function the browser: queues the token endpoint's
+/// answer with `access` and `refresh` and the issuer's keys, calls the
+/// sign-in's return, and waits until the account is signed in.
+/// `another_account` registers anew, as "Use another account" does.
+///
+/// # Panics
+///
+/// When the sign-in does not end signed in, which fails the test.
+pub async fn sign_in_chatgpt(
+    runtime: &Runtime,
+    server: &FixtureServer,
+    subject: &str,
+    access: &str,
+    refresh: &str,
+    another_account: bool,
+) {
+    let endpoints = chatgpt_endpoints_at(server);
+    runtime.set_chatgpt_endpoints(endpoints.clone());
+    let page = ChatGptCallbackPage {
+        title: "Mannie".to_owned(),
+        signed_in: "Signed in.".to_owned(),
+        failed: "The sign-in failed.".to_owned(),
+    };
+    let url = runtime
+        .begin_chatgpt_sign_in(StartChatGptSignIn {
+            another_account,
+            page,
+        })
+        .await
+        .expect("the sign-in starts");
+    let query = |name: &str| {
+        url.query_pairs()
+            .find(|(key, _value)| key == name)
+            .map(|(_key, value)| value.into_owned())
+            .expect("the sign-in's URL names its parameters")
+    };
+    let state = query("state");
+    let nonce = query("nonce");
+    let redirect = Url::parse(&query("redirect_uri")).expect("the redirect is a URL");
+    server.respond(chatgpt_tokens(
+        &endpoints,
+        access,
+        refresh,
+        Some((subject, &nonce)),
+    ));
+    server.respond(FixtureResponse::json(
+        200,
+        example_key_set("test-key").to_string(),
+    ));
+    let mut receiver = runtime.subscribe_chatgpt_account();
+    let target = format!(
+        "{}?state={state}&code=test-code&client_id={TEST_CHATGPT_CLIENT}",
+        redirect.path()
+    );
+    let port = redirect.port().expect("the redirect names its port");
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("the sign-in listens");
+    tokio::io::AsyncWriteExt::write_all(
+        &mut stream,
+        format!("GET {target} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n").as_bytes(),
+    )
+    .await
+    .expect("the browser's request is sent");
+    let mut answer = String::new();
+    tokio::io::AsyncReadExt::read_to_string(&mut stream, &mut answer)
+        .await
+        .expect("the sign-in answers the browser");
+    let signed_in = receiver.wait_for(|view| {
+        view.state == ChatGptAccountState::SignedIn
+            && view.sign_in == mannie_types::provider::ChatGptSignIn::Idle
+    });
+    tokio::time::timeout(Duration::from_secs(10), signed_in)
+        .await
+        .expect("the sign-in ends in time")
+        .expect("the account's view stays");
+}
+
+/// A profile on the ChatGPT plan with `model`, made the default.
+///
+/// # Panics
+///
+/// When the profile cannot be created, which fails the test.
+pub async fn plan_profile(runtime: &Runtime, model: &str, use_tools: bool) -> ProviderProfile {
+    let profile = runtime
+        .create_profile(CreateProviderProfile {
+            draft: ProfileDraft {
+                name: "Plan".to_owned(),
+                access: ProfileAccess::ChatGptPlan,
+                interface: ApiInterface::ChatCompletions,
+                base_url: "http://127.0.0.1:9/ignored".to_owned(),
+                model: model.to_owned(),
+                context_window: 128_000,
+                output_limit: 16_384,
+                reasoning_effort: ReasoningEffort::Medium,
+                use_tools,
+            },
+            credential: None,
+        })
+        .await
+        .expect("the plan profile is valid");
+    runtime
+        .set_default_profile(&profile.id)
+        .await
+        .expect("the plan profile becomes the default");
+    profile
 }

@@ -29,11 +29,11 @@ use futures_util::StreamExt;
 use mannie_provider::testing::{Chunking, FixtureResponse, FixtureServer};
 use mannie_provider::{
     Content, HttpClient, ImageInput, Message, ModelRequest, ProviderError, ProviderEvent,
-    ProviderRegistry, Role, Target, ToolChoice, ToolDefinition, quirks_for,
+    ProviderRegistry, Role, Target, ToolChoice, ToolDefinition, chatgpt_plan_quirks, quirks_for,
 };
 use mannie_types::clock::{ManualClock, UtcMillis};
 use mannie_types::images::{ImageBytes, ImageFormat};
-use mannie_types::provider::{ApiInterface, ReasoningEffort, ServerKind};
+use mannie_types::provider::{ApiInterface, ProfileAccess, ReasoningEffort, ServerKind};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -53,6 +53,10 @@ const CHUNKINGS: [Chunking; 4] = [
 struct Manifest {
     server: ServerKind,
     interface: ApiInterface,
+    /// `chatgpt_plan` for a call on the owner's ChatGPT plan, whose quirks
+    /// the profile's access selects (ADR-0062).
+    #[serde(default)]
+    access: ProfileAccess,
     provenance: String,
     request: RequestManifest,
 }
@@ -284,10 +288,14 @@ async fn run_fixture(folder: &Path, chunking: Chunking) -> (Value, Option<Value>
     let client = HttpClient::new(clock).unwrap();
     let registry = ProviderRegistry::with_builtin(&client);
     let adapter = registry.adapter(manifest.interface).unwrap();
+    let quirks = match manifest.access {
+        ProfileAccess::ChatGptPlan => chatgpt_plan_quirks(),
+        ProfileAccess::Endpoint => quirks_for(manifest.interface, Some(manifest.server)),
+    };
     let target = Target {
         base_url: server.base_url(),
         credential: None,
-        quirks: quirks_for(manifest.interface, Some(manifest.server)),
+        quirks,
     };
     let mut stream = adapter.stream(&target, model_request(&manifest.request));
     let mut events = Vec::new();

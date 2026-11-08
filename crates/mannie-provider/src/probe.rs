@@ -16,7 +16,7 @@ use crate::detect::{self, ModelList};
 use crate::provider::{
     Content, Message, ModelRequest, ProviderEvent, Role, Target, ToolChoice, ToolDefinition,
 };
-use crate::quirks::quirks_for;
+use crate::quirks::{Quirks, chatgpt_plan_quirks, quirks_for};
 use crate::registry::ProviderRegistry;
 use crate::transport::HttpClient;
 
@@ -75,6 +75,21 @@ pub struct TestInput {
     pub use_tools: bool,
     /// The outcome of reading the credential, which the caller checked.
     pub credential_check: CheckOutcome,
+    /// Whether the profile uses the owner's ChatGPT plan: the server check
+    /// reads the plan's catalog, no server is recognized, and the calls have
+    /// the plan's shape (ADR-0062).
+    pub plan: bool,
+}
+
+impl TestInput {
+    /// The quirks of the test's calls.
+    fn quirks(&self, server: Option<ServerKind>) -> Quirks {
+        if self.plan {
+            chatgpt_plan_quirks()
+        } else {
+            quirks_for(self.interface, server)
+        }
+    }
 }
 
 /// Runs the test.
@@ -106,13 +121,7 @@ pub async fn test_profile(
         };
     }
 
-    let list = detect::list_models(client, &input.base_url, input.credential.as_ref()).await;
-    let server = match &list {
-        ModelList::Failed(_) => detect::server_from_host(&input.base_url),
-        ModelList::Listed(_) | ModelList::Unavailable => {
-            Some(detect::detect_server(client, &input.base_url).await)
-        }
-    };
+    let (list, server) = model_list(client, &input).await;
     let mut reported_limits = None;
     let (server_outcome, model_outcome) = match &list {
         ModelList::Listed(models) => {
@@ -180,6 +189,34 @@ pub async fn test_profile(
         checks,
         server,
         reported_limits,
+    }
+}
+
+/// The list of models and the server that the test recognized. On the
+/// ChatGPT plan, the plan's catalog and no server.
+async fn model_list(client: &HttpClient, input: &TestInput) -> (ModelList, Option<ServerKind>) {
+    if input.plan {
+        return (plan_list(client, input).await, None);
+    }
+    let list = detect::list_models(client, &input.base_url, input.credential.as_ref()).await;
+    let server = match &list {
+        ModelList::Failed(_) => detect::server_from_host(&input.base_url),
+        ModelList::Listed(_) | ModelList::Unavailable => {
+            Some(detect::detect_server(client, &input.base_url).await)
+        }
+    };
+    (list, server)
+}
+
+/// The ChatGPT plan's catalog as a list of models. The plan has no other list,
+/// and its server is OpenAI's, which needs no probe.
+async fn plan_list(client: &HttpClient, input: &TestInput) -> ModelList {
+    let Some(token) = input.credential.as_ref() else {
+        return ModelList::Failed(RunFailure::ChatGptSignInNeeded);
+    };
+    match detect::list_plan_models(client, &input.base_url, token).await {
+        Ok(models) => ModelList::Listed(models),
+        Err(error) => ModelList::Failed(error.failure()),
     }
 }
 
@@ -280,7 +317,7 @@ async fn reply_check(
     let target = Target {
         base_url: input.base_url.clone(),
         credential: input.credential.clone(),
-        quirks: quirks_for(input.interface, server),
+        quirks: input.quirks(server),
     };
     let request = ModelRequest {
         model: input.model.clone(),
@@ -378,7 +415,7 @@ async fn tools_check(
     let target = Target {
         base_url: input.base_url.clone(),
         credential: input.credential.clone(),
-        quirks: quirks_for(input.interface, server),
+        quirks: input.quirks(server),
     };
     let request = |messages| ModelRequest {
         model: input.model.clone(),

@@ -40,7 +40,7 @@ use self::child::ChildRun;
 use self::tasks::TaskLane;
 use crate::assigned::AssignedRun;
 use crate::budget::{Ledger, budget_bytes, estimate_text, usage};
-use crate::calls::{CallError, CallOptions, Prepared, Setup};
+use crate::calls::{CallCredential, CallError, CallOptions, Prepared, Setup};
 use crate::compaction::{self, ContextSize, Trigger};
 use crate::retry::RetryDecision;
 use crate::{Busy, RunHandle, Runtime, lock, texts};
@@ -518,6 +518,9 @@ impl RunActor {
             self.gather_context(&setup, due).await?;
         }
         let mut tries = 0;
+        // Whether the ChatGPT plan refused the token of the last call, which
+        // gets one refresh before the run ends (ADR-0062, decision 8).
+        let mut refused_once = false;
         loop {
             if permit.is_none() {
                 permit = Some(self.acquire_slot().await?);
@@ -526,15 +529,31 @@ impl RunActor {
             self.attempt += 1;
             self.attempt_stored = false;
             tries += 1;
-            let writing = self.activity(RunActivity::Writing);
-            self.apply(vec![writing], Durability::Normal).await?;
-            tracing::debug!(run = %self.run, attempt = self.attempt, tokens = prepared.size.projected, "calling the model");
-            let stream = setup
-                .adapter
-                .stream(&setup.target, prepared.request.clone());
-            match self.stream_step(stream).await? {
+            // On the ChatGPT plan each call gets a token that is valid at its
+            // moment; a refresh that fails for now is retried like the call.
+            // A refresh can take a while, so a Stop ends the wait for it. The
+            // profile's own credential is at hand, and its call starts as it
+            // always did.
+            let runtime = self.runtime.clone();
+            let target = if matches!(setup.credential, CallCredential::ChatGptAccount { .. }) {
+                self.wait(runtime.call_target(&setup)).await?
+            } else {
+                runtime.call_target(&setup).await
+            };
+            let (step, issued) = match target {
+                Err(error) => (StepEnd::Failed(error), None),
+                Ok(call) => {
+                    let writing = self.activity(RunActivity::Writing);
+                    self.apply(vec![writing], Durability::Normal).await?;
+                    tracing::debug!(run = %self.run, attempt = self.attempt, tokens = prepared.size.projected, "calling the model");
+                    let stream = setup.adapter.stream(&call.target, prepared.request.clone());
+                    (self.stream_step(stream).await?, call.issued)
+                }
+            };
+            match step {
                 StepEnd::Finished(finish) => {
                     tries = 0;
+                    refused_once = false;
                     self.record_step(&setup, &prepared);
                     match self.after_step(&setup, finish).await? {
                         AfterStep::End => return Ok(finish),
@@ -580,6 +599,19 @@ impl RunActor {
                     {
                         return Err(Ending::Failed(RunFailure::RequestTooLarge));
                     }
+                }
+                StepEnd::Failed(ProviderError::Permanent(RunFailure::InvalidCredential))
+                    if issued.is_some() =>
+                {
+                    if refused_once {
+                        return Err(Ending::Failed(RunFailure::ChatGptSignInNeeded));
+                    }
+                    // The refused call's parts go and its calls never ran, so
+                    // calling again repeats no tool operation.
+                    refused_once = true;
+                    self.discard_attempt().await?;
+                    self.runtime.reject_chatgpt_token(issued);
+                    tracing::info!(run = %self.run, "the ChatGPT plan refused a token; refreshing it once");
                 }
                 StepEnd::Failed(ProviderError::Permanent(failure)) => {
                     return Err(Ending::Failed(failure));

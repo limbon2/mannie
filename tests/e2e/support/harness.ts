@@ -67,12 +67,14 @@ interface Harness {
   createProviderProfile(input: ProfileInput): Promise<string>;
   cspViolations(): readonly CspViolation[];
   deleteProviderProfiles(): Promise<number>;
+  expireChatGptToken(): Promise<void>;
   insertHostileHtml(payloads: readonly string[]): Promise<boolean>;
   openedLinks(): Promise<string[]>;
   probeScripts(): Promise<ScriptProbe>;
   processId(): Promise<number>;
   runChannelLoad(load: ChannelLoad): Promise<ChannelLoadReport>;
   seedConversation(turns: number): Promise<string>;
+  setChatGptMock(issuer: string, apiBase: string): Promise<void>;
   setFileChoice(files: string[]): Promise<void>;
   setFolderChoice(folder: string | null): Promise<void>;
   setSkillsFolder(folder: string | null): Promise<void>;
@@ -263,6 +265,35 @@ export async function setFolderChoice(folder: string | null): Promise<void> {
  * Names the folder of this computer's skills, or `null` for none, since a
  * validation build never reads the owner's `~/.agents/skills`.
  */
+/**
+ * Points the app's ChatGPT sign-in and its calls on the ChatGPT plan at the
+ * mock of OpenAI in the provider server (ADR-0062).
+ */
+export async function setChatGptMock(issuer: string, apiBase: string): Promise<void> {
+  await browser.execute(
+    async (mockIssuer, mockApi) => {
+      const harness = window.mannieValidation;
+      if (harness === undefined) {
+        throw new Error('the validation harness is missing: run the validation build');
+      }
+      await harness.setChatGptMock(mockIssuer, mockApi);
+    },
+    issuer,
+    apiBase,
+  );
+}
+
+/** Makes the ChatGPT account's access token expire, as an hour of use would. */
+export async function expireChatGptToken(): Promise<void> {
+  await browser.execute(async () => {
+    const harness = window.mannieValidation;
+    if (harness === undefined) {
+      throw new Error('the validation harness is missing: run the validation build');
+    }
+    await harness.expireChatGptToken();
+  });
+}
+
 export async function setSkillsFolder(folder: string | null): Promise<void> {
   await browser.execute(async (chosen) => {
     const harness = window.mannieValidation;

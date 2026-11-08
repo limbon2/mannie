@@ -24,7 +24,8 @@ use mannie_runtime::testing::{
 };
 use mannie_types::chat::{StartConversation, StartedConversation};
 use mannie_types::provider::{
-    ApiInterface, CreateProviderProfile, ProfileDraft, ProviderProfile, ReasoningEffort,
+    ApiInterface, CreateProviderProfile, ProfileAccess, ProfileDraft, ProviderProfile,
+    ReasoningEffort,
 };
 use mannie_types::secret::Secret;
 use serde_json::json;
@@ -79,6 +80,7 @@ async fn start() -> (Harness, Arc<FakeExecutor>, ProviderProfile) {
         .runtime
         .create_profile(CreateProviderProfile {
             draft: ProfileDraft {
+                access: ProfileAccess::Endpoint,
                 name: "Second".to_owned(),
                 interface: ApiInterface::ChatCompletions,
                 base_url: "http://127.0.0.1:9/v1".to_owned(),

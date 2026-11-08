@@ -8,7 +8,9 @@
 // the tools scenario calls the tools that the owner's message lists
 // (docs/features/system-tools/tool-activity.md, tests). It also serves
 // embeddings and reranking in the shapes that search profiles use (ADR-0047),
-// from the words of the texts, so that searches need no real model.
+// from the words of the texts, so that searches need no real model. It also
+// plays OpenAI's sign-in with ChatGPT and the ChatGPT plan (ADR-0062).
+import { generateKeyPairSync, sign } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 
 /** The scenarios, by model name. */
@@ -62,6 +64,27 @@ export const MODELS = {
    */
   withoutImages: 'e2e-without-images',
 } as const;
+
+/** The model that the ChatGPT plan's catalog offers (ADR-0062). */
+export const PLAN_MODEL = 'e2e-plan';
+
+/** The name of the plan's model in its catalog. */
+export const PLAN_MODEL_NAME = 'E2E Plan';
+
+/** The client that the mock's sign-in issues. */
+export const PLAN_CLIENT = 'oaiapp_e2e';
+
+/** The email address of the mock's ChatGPT account. */
+export const PLAN_EMAIL = 'owner@example.com';
+
+/** An owner's message that holds this gets the plan's usage limit. */
+export const USAGE_LIMIT_MARKER = 'USAGE LIMIT';
+
+/** What the mock's access tokens start with, which tells calls on the plan from the others. */
+const PLAN_TOKEN = 'plan-access-';
+
+/** The scopes that the mock's sign-in grants, with the plan's. */
+const PLAN_SCOPE = 'openid profile email offline_access resource.invoke chatgpt.tokens.use.direct';
 
 /** How many words the paced scenario sends. */
 export const PACED_WORDS = 200;
@@ -237,6 +260,8 @@ export interface ProviderServer {
   readonly baseUrl: string;
   /** Ends every open reply and stops the server. */
   close(): Promise<void>;
+  /** The server's origin, which the mock of OpenAI's sign-in names as its issuer. */
+  readonly origin: string;
   /** The requests so far, oldest first. */
   requests(): readonly RecordedRequest[];
   /** The text that the hostile scenario answers with. */
@@ -544,6 +569,108 @@ async function pause(millis: number): Promise<void> {
   });
 }
 
+/**
+ * OpenAI's sign-in with ChatGPT, as the tests need it (ADR-0062): the
+ * authorize endpoint sends the browser back to the app with a code and the
+ * client that it issues, the token endpoint answers with tokens and an ID
+ * token signed with a key of its own, and the key set publishes that key.
+ */
+class ChatGptMock {
+  readonly #keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  readonly #nonces = new Map<string, string>();
+  #issued = 0;
+
+  /** Answers a request to the sign-in's endpoints. */
+  answer(request: IncomingMessage, url: URL, text: string, response: ServerResponse): void {
+    const issuer = `http://${request.headers.host ?? '127.0.0.1'}`;
+    switch (url.pathname) {
+      case '/.well-known/jwks.json': {
+        const key = this.#keys.publicKey.export({ format: 'jwk' });
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ keys: [{ ...key, alg: 'RS256', kid: 'e2e-key', use: 'sig' }] }));
+        return;
+      }
+      case '/api/accounts/authorize': {
+        this.#authorize(url, response);
+        return;
+      }
+      case '/api/accounts/oauth/revoke': {
+        response.writeHead(200);
+        response.end();
+        return;
+      }
+      case '/api/accounts/oauth/token': {
+        this.#token(new URLSearchParams(text), issuer, response);
+        return;
+      }
+      default: {
+        response.writeHead(404, { 'content-type': 'application/json' });
+        response.end('{"error":"not found"}');
+      }
+    }
+  }
+
+  /** Sends the browser back to the app's sign-in with a code and the issued client. */
+  #authorize(url: URL, response: ServerResponse): void {
+    this.#issued += 1;
+    const code = `plan-code-${String(this.#issued)}`;
+    this.#nonces.set(code, url.searchParams.get('nonce') ?? '');
+    const back = new URL(url.searchParams.get('redirect_uri') ?? '');
+    back.searchParams.set('code', code);
+    back.searchParams.set('state', url.searchParams.get('state') ?? '');
+    back.searchParams.set('client_id', PLAN_CLIENT);
+    back.searchParams.set('scope', PLAN_SCOPE);
+    response.writeHead(302, { location: back.toString() });
+    response.end();
+  }
+
+  /** Answers a code or a refresh token with fresh tokens. */
+  #token(form: URLSearchParams, issuer: string, response: ServerResponse): void {
+    this.#issued += 1;
+    const serial = String(this.#issued);
+    const answer: Record<string, unknown> = {
+      access_token: `${PLAN_TOKEN}${serial}`,
+      expires_in: 3600,
+      refresh_token: `plan-refresh-${serial}`,
+      scope: PLAN_SCOPE,
+      token_type: 'Bearer',
+    };
+    if (form.get('grant_type') === 'authorization_code') {
+      answer.id_token = this.#idToken(issuer, this.#nonces.get(form.get('code') ?? '') ?? '');
+    }
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(answer));
+  }
+
+  /** An ID token of the mock's account, signed with RS256. */
+  #idToken(issuer: string, nonce: string): string {
+    const now = Math.floor(Date.now() / 1000);
+    const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+    const header = encode({ alg: 'RS256', kid: 'e2e-key', typ: 'JWT' });
+    const payload = encode({
+      aud: PLAN_CLIENT,
+      email: PLAN_EMAIL,
+      exp: now + 3600,
+      iat: now,
+      iss: issuer,
+      nonce,
+      sub: 'e2e-user',
+    });
+    const signature = sign('RSA-SHA256', Buffer.from(`${header}.${payload}`), this.#keys.privateKey);
+    return `${header}.${payload}.${signature.toString('base64url')}`;
+  }
+}
+
+/** The catalog of the ChatGPT plan's models, in the plan's shape. */
+function planCatalog(): string {
+  return JSON.stringify({
+    models: [
+      { display_name: PLAN_MODEL_NAME, slug: PLAN_MODEL, visibility: 'list' },
+      { display_name: 'Hidden', slug: 'e2e-hidden', visibility: 'hide' },
+    ],
+  });
+}
+
 function refuse(response: ServerResponse, status: number, error: Record<string, unknown>, headers = {}): void {
   response.writeHead(status, { 'content-type': 'application/json', ...headers });
   response.end(JSON.stringify({ error }));
@@ -552,6 +679,7 @@ function refuse(response: ServerResponse, status: number, error: Record<string, 
 /** Starts the server on a free port of the loopback interface. */
 export async function startProviderServer(): Promise<ProviderServer> {
   const recorded: RecordedRequest[] = [];
+  const chatgpt = new ChatGptMock();
   const attemptsByModel = new Map<string, number>();
   const longReplies = { count: 0 };
   let hostileText = '';
@@ -713,8 +841,22 @@ export async function startProviderServer(): Promise<ProviderServer> {
   }
 
   async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const path = new URL(request.url ?? '/', 'http://localhost').pathname;
+    const url = new URL(request.url ?? '/', 'http://localhost');
+    const path = url.pathname;
     const text = await readBody(request);
+    const isSignIn = path.startsWith('/api/accounts/') || path === '/.well-known/jwks.json';
+    if (isSignIn) {
+      // The token endpoints take forms, not JSON.
+      recorded.push({
+        authorization: request.headers.authorization ?? null,
+        body: text === '' ? null : Object.fromEntries(new URLSearchParams(text)),
+        method: request.method ?? '',
+        path,
+        receivedAt: Date.now(),
+      });
+      chatgpt.answer(request, url, text, response);
+      return;
+    }
     const body = text === '' ? null : (JSON.parse(text) as Record<string, unknown>);
     recorded.push({
       authorization: request.headers.authorization ?? null,
@@ -724,6 +866,12 @@ export async function startProviderServer(): Promise<ProviderServer> {
       receivedAt: Date.now(),
     });
     const isModelList = request.method === 'GET' && path === '/v1/models';
+    const isPlan = request.headers.authorization?.startsWith(`Bearer ${PLAN_TOKEN}`) ?? false;
+    if (isModelList && isPlan) {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(planCatalog());
+      return;
+    }
     if (isModelList) {
       const data = Object.values(MODELS).map((id) => ({
         context_length: LISTED_CONTEXT_WINDOW,
@@ -752,6 +900,27 @@ export async function startProviderServer(): Promise<ProviderServer> {
       // Includes the probes for Ollama, LM Studio, SGLang and vLLM.
       response.writeHead(404, { 'content-type': 'application/json' });
       response.end('{"error":"not found"}');
+      return;
+    }
+    // The ChatGPT plan refuses an output limit, as OpenAI's route does, and
+    // answers a marked message with its usage limit.
+    const limitsOutput = 'max_output_tokens' in body;
+    const refusesOutputLimit = isPlan && limitsOutput;
+    if (refusesOutputLimit) {
+      refuse(response, 400, {
+        code: 'subscription_sharing_unsupported_capability',
+        message: 'max_output_tokens is not supported with ChatGPT plan usage.',
+        param: 'max_output_tokens',
+      });
+      return;
+    }
+    const marksUsageLimit = latestOwnerText(body).includes(USAGE_LIMIT_MARKER);
+    const reachesUsageLimit = isPlan && marksUsageLimit;
+    if (reachesUsageLimit) {
+      refuse(response, 429, {
+        code: 'subscription_sharing_usage_limit_exceeded',
+        message: 'You have reached your ChatGPT plan usage limit.',
+      });
       return;
     }
     const model = String(body.model);
@@ -806,6 +975,7 @@ export async function startProviderServer(): Promise<ProviderServer> {
   }
   return {
     baseUrl: `http://127.0.0.1:${String(address.port)}/v1`,
+    origin: `http://127.0.0.1:${String(address.port)}`,
     close: async () => {
       server.closeAllConnections();
       await new Promise<void>((resolve) => {

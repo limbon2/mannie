@@ -22,8 +22,8 @@ use mannie_types::chat::{
 };
 use mannie_types::clock::UtcMillis;
 use mannie_types::provider::{
-    ApiInterface, CreateProviderProfile, CredentialChange, CredentialStoreProblem, ProfileDraft,
-    ReasoningEffort, ServerKind,
+    ApiInterface, CreateProviderProfile, CredentialChange, CredentialStoreProblem, ProfileAccess,
+    ProfileDraft, ReasoningEffort, ServerKind,
 };
 use mannie_types::run::{FinishReason, RunActivity, RunFailure, RunState};
 use mannie_types::secret::Secret;
@@ -206,6 +206,7 @@ async fn reasoning_items_go_back_only_to_the_binding_that_wrote_them() {
 
 fn draft(interface: ApiInterface) -> ProfileDraft {
     ProfileDraft {
+        access: ProfileAccess::Endpoint,
         name: "Test".to_owned(),
         interface,
         base_url: "http://127.0.0.1:9/v1".to_owned(),

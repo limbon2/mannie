@@ -1,0 +1,19 @@
+{
+  "error": null,
+  "events": [
+    {
+      "text": "Ready."
+    },
+    {
+      "usage": {
+        "cachedInput": 0,
+        "input": 40,
+        "output": 4,
+        "reasoning": 0
+      }
+    },
+    {
+      "finished": "stop"
+    }
+  ]
+}

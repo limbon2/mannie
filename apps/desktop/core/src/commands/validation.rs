@@ -9,12 +9,14 @@
 use std::time::Duration;
 
 use mannie_logging::ErrorChain;
+use mannie_provider::Url;
+use mannie_provider::chatgpt::ChatGptEndpoints;
 use mannie_types::clock::{Clock, SystemClock};
 use mannie_types::ids::ConversationId;
 use mannie_types::ipc::{ChannelBatch, CommandError};
 use mannie_types::validation::{
-    ChannelLoad, ChannelLoadSummary, SeedConversation, ValidationDelta, ValidationError,
-    ValidationTrayItem, ValidationWindowState,
+    ChannelLoad, ChannelLoadSummary, ChatGptMock, SeedConversation, ValidationDelta,
+    ValidationError, ValidationTrayItem, ValidationWindowState,
 };
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
@@ -65,6 +67,48 @@ pub(crate) fn validation_set_file_choice(core: State<'_, Core>, files: Vec<Strin
 pub(crate) fn validation_set_skills_folder(core: State<'_, Core>, folder: Option<String>) {
     if let Some(runtime) = core.runtime() {
         runtime.set_skills_folder(folder.map(std::path::PathBuf::from));
+    }
+}
+
+/// Points the ChatGPT sign-in and the calls on the ChatGPT plan at the
+/// end-to-end tests' mock of OpenAI, with the first sign-in on any free port
+/// (ADR-0062). A release never calls OpenAI anywhere else.
+#[tauri::command]
+#[specta::specta]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri hands command arguments over by value"
+)]
+pub(crate) fn validation_set_chatgpt_mock(
+    core: State<'_, Core>,
+    mock: ChatGptMock,
+) -> Result<(), CommandError<ValidationError>> {
+    let runtime = core.runtime().ok_or(ValidationError::CoreUnavailable)?;
+    let parse = |text: &str| {
+        Url::parse(text).map_err(|error| {
+            tracing::warn!(%error, "the ChatGPT mock's URL is not valid");
+            ValidationError::Failed
+        })
+    };
+    let endpoints = ChatGptEndpoints {
+        registration_port: 0,
+        ..ChatGptEndpoints::at(&parse(&mock.issuer)?, &parse(&mock.api_base)?)
+    };
+    runtime.set_chatgpt_endpoints(endpoints);
+    Ok(())
+}
+
+/// Makes the ChatGPT account's access token expire, so that the next call
+/// refreshes it, as an hour of use would.
+#[tauri::command]
+#[specta::specta]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri hands command arguments over by value"
+)]
+pub(crate) fn validation_expire_chatgpt_token(core: State<'_, Core>) {
+    if let Some(runtime) = core.runtime() {
+        runtime.expire_chatgpt_token();
     }
 }
 

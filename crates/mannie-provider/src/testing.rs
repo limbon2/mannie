@@ -544,3 +544,15 @@ async fn forward(
         // The adapter went away.
     }
 }
+
+/// An ID token with `claims`, signed under `kid` with the example RSA key of
+/// RFC 7515, appendix A.2, for the tests of the ChatGPT sign-in (ADR-0062).
+pub fn signed_id_token(kid: &str, claims: &serde_json::Value) -> String {
+    crate::chatgpt::example_key::signed_token(kid, claims)
+}
+
+/// The key set, as an issuer publishes it, that holds the example key of
+/// [`signed_id_token`] under `kid`.
+pub fn example_key_set(kid: &str) -> serde_json::Value {
+    crate::chatgpt::example_key::key_set(kid)
+}

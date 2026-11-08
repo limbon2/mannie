@@ -4,6 +4,10 @@
 //! `input` each time. With a reasoning effort, the request asks for reasoning
 //! summaries, which the owner reads, and for encrypted reasoning, which goes
 //! back to the model on the next call of the same binding.
+//!
+//! On the owner's ChatGPT plan (ADR-0062, decision 10), the request has no
+//! output limit, its function tools sit in one namespace that replayed calls
+//! name, and replayed assistant messages carry their phase.
 
 use mannie_types::provider::ApiInterface;
 use mannie_types::run::{FinishReason, Usage};
@@ -14,7 +18,7 @@ use crate::provider::{
     Content, EventStream, ImageInput, ModelRequest, Provider, ProviderError, ProviderEvent, Role,
     Target, ToolChoice,
 };
-use crate::quirks::Quirks;
+use crate::quirks::{Quirks, ResponsesShape};
 use crate::sse::SseEvent;
 use crate::stream::{self, Call, Flow, Translator};
 use crate::tool_calls::ToolCalls;
@@ -79,8 +83,35 @@ fn tool_output(output: &str, images: &[ImageInput]) -> Value {
     Value::Array(items)
 }
 
+/// The namespace of the function tools of a request on the ChatGPT plan.
+/// Replayed calls name it, so it never changes.
+pub(crate) const PLAN_NAMESPACE: &str = "mannie";
+
+/// What the namespace of a request on the ChatGPT plan tells the model.
+const PLAN_NAMESPACE_DESCRIPTION: &str = "Tools that Mannie runs for this conversation.";
+
+/// The phase of a replayed assistant message on the ChatGPT plan: text before
+/// tool calls in the same model call, or the answer that ended it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    /// Text that the model wrote before its tool calls.
+    Commentary,
+    /// The text that ended the model's call.
+    FinalAnswer,
+}
+
+impl Phase {
+    fn api_name(self) -> &'static str {
+        match self {
+            Self::Commentary => "commentary",
+            Self::FinalAnswer => "final_answer",
+        }
+    }
+}
+
 /// The request body of a call.
 pub(crate) fn request_body(request: &ModelRequest, quirks: &Quirks) -> Value {
+    let plan = quirks.responses == ResponsesShape::ChatGptPlan;
     let mut input = Vec::new();
     for message in &request.messages {
         let (role, text_type) = match message.role {
@@ -111,20 +142,29 @@ pub(crate) fn request_body(request: &ModelRequest, quirks: &Quirks) -> Value {
                     // The text written before a call comes before it. The
                     // item ID is left out, because it would tie the call to a
                     // reasoning item that may not be sent.
-                    flush_message(&mut input, role, &mut parts);
-                    input.push(json!({
+                    flush_message(
+                        &mut input,
+                        role,
+                        &mut parts,
+                        plan.then_some(Phase::Commentary),
+                    );
+                    let mut call = json!({
                         "type": "function_call",
                         "call_id": call_id,
                         "name": name,
                         "arguments": arguments,
-                    }));
+                    });
+                    if plan {
+                        call["namespace"] = json!(PLAN_NAMESPACE);
+                    }
+                    input.push(call);
                 }
                 Content::ToolResult {
                     call_id,
                     output,
                     images,
                 } => {
-                    flush_message(&mut input, role, &mut parts);
+                    flush_message(&mut input, role, &mut parts, None);
                     input.push(json!({
                         "type": "function_call_output",
                         "call_id": call_id,
@@ -133,7 +173,12 @@ pub(crate) fn request_body(request: &ModelRequest, quirks: &Quirks) -> Value {
                 }
             }
         }
-        flush_message(&mut input, role, &mut parts);
+        flush_message(
+            &mut input,
+            role,
+            &mut parts,
+            plan.then_some(Phase::FinalAnswer),
+        );
     }
     let mut body = Map::new();
     body.insert("model".to_owned(), json!(request.model));
@@ -143,10 +188,14 @@ pub(crate) fn request_body(request: &ModelRequest, quirks: &Quirks) -> Value {
     body.insert("input".to_owned(), Value::Array(input));
     body.insert("stream".to_owned(), json!(true));
     body.insert("store".to_owned(), json!(false));
-    body.insert(
-        "max_output_tokens".to_owned(),
-        json!(request.max_output_tokens),
-    );
+    // The ChatGPT plan refuses an output limit; the profile's limit stays a
+    // budget of the context (ADR-0062, decision 10).
+    if !plan {
+        body.insert(
+            "max_output_tokens".to_owned(),
+            json!(request.max_output_tokens),
+        );
+    }
     if let Some(effort) = request.reasoning_effort.api_name() {
         body.insert(
             "reasoning".to_owned(),
@@ -155,20 +204,10 @@ pub(crate) fn request_body(request: &ModelRequest, quirks: &Quirks) -> Value {
         body.insert("include".to_owned(), json!(["reasoning.encrypted_content"]));
     }
     if !request.tools.is_empty() {
-        let tools: Vec<Value> = request
-            .tools
-            .iter()
-            .map(|tool| {
-                json!({
-                    "type": "function",
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.parameters,
-                    "strict": quirks.tools.strict && tool.strict,
-                })
-            })
-            .collect();
-        body.insert("tools".to_owned(), Value::Array(tools));
+        body.insert(
+            "tools".to_owned(),
+            Value::Array(tool_definitions(request, quirks, plan)),
+        );
         let choice = match request.tool_choice {
             ToolChoice::Auto => "auto",
             ToolChoice::None => "none",
@@ -178,10 +217,49 @@ pub(crate) fn request_body(request: &ModelRequest, quirks: &Quirks) -> Value {
     Value::Object(body)
 }
 
-/// Adds the text and image parts collected so far as one message.
-fn flush_message(input: &mut Vec<Value>, role: &str, parts: &mut Vec<Value>) {
-    if !parts.is_empty() {
-        input.push(json!({ "role": role, "content": std::mem::take(parts) }));
+/// The function tools of a request: flat, or on the ChatGPT plan inside one
+/// namespace (ADR-0062, decision 10).
+fn tool_definitions(request: &ModelRequest, quirks: &Quirks, plan: bool) -> Vec<Value> {
+    let functions: Vec<Value> = request
+        .tools
+        .iter()
+        .map(|tool| {
+            json!({
+                "type": "function",
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
+                "strict": quirks.tools.strict && tool.strict,
+            })
+        })
+        .collect();
+    if !plan {
+        return functions;
+    }
+    vec![json!({
+        "type": "namespace",
+        "name": PLAN_NAMESPACE,
+        "description": PLAN_NAMESPACE_DESCRIPTION,
+        "tools": functions,
+    })]
+}
+
+/// Adds the text and image parts collected so far as one message. An
+/// assistant message gets `phase` when the request is on the ChatGPT plan,
+/// whose newer models read it on follow-up calls.
+fn flush_message(input: &mut Vec<Value>, role: &str, parts: &mut Vec<Value>, phase: Option<Phase>) {
+    if parts.is_empty() {
+        return;
+    }
+    let content = std::mem::take(parts);
+    match phase.filter(|_phase| role == "assistant") {
+        Some(phase) => input.push(json!({
+            "type": "message",
+            "role": role,
+            "content": content,
+            "phase": phase.api_name(),
+        })),
+        None => input.push(json!({ "role": role, "content": content })),
     }
 }
 
@@ -275,7 +353,17 @@ impl Translator for ResponsesTranslator {
         event: SseEvent,
         out: &mut Vec<ProviderEvent>,
     ) -> Result<Flow, ProviderError> {
-        let data: Value = serde_json::from_str(&event.data).map_err(|_not_json| {
+        let data: Value = serde_json::from_str(&event.data).map_err(|error| {
+            // The event's name, size and fault, never its data, which may
+            // hold the model's text.
+            tracing::warn!(
+                event = %stream::log_label(&event.event),
+                bytes = event.data.len(),
+                line = error.line(),
+                column = error.column(),
+                kind = ?error.classify(),
+                "an event of the provider's stream is not JSON"
+            );
             ProviderError::Permanent(mannie_types::run::RunFailure::InvalidResponse)
         })?;
         // The `type` in the data names the event; proxies sometimes drop the

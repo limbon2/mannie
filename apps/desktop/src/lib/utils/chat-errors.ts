@@ -1,7 +1,9 @@
 // Messages for the codes of the chat feature (ADR-0019): run failures, the
-// chat commands' errors, provider profile errors and the provider test. The UI
-// shows the catalog's message for a code and never the core's description.
+// chat commands' errors, provider profile errors, the provider test and the
+// ChatGPT account (ADR-0062). The UI shows the catalog's message for a code
+// and never the core's description.
 import type {
+  ChatGptError,
   CheckKind,
   CheckNote,
   CredentialStoreProblem,
@@ -12,7 +14,7 @@ import type {
 } from '#lib/generated/bindings.js';
 import { m } from '#lib/paraglide/messages.js';
 import { pluginName } from '#lib/state/plugin-catalog.js';
-import type { ChatFailure, ProfileFailure } from '#lib/types/chat.js';
+import type { ChatFailure, ChatGptFailure, ProfileFailure } from '#lib/types/chat.js';
 import type { ImageSourceKind } from '#lib/types/shell-slots.js';
 import { contextRefusal, type FindContextKind } from '#lib/utils/context-kinds.js';
 import { type FindMentionKind, mentionRefusal } from '#lib/utils/mention-kinds.js';
@@ -40,6 +42,26 @@ export function runFailureMessage(failure: RunFailure): string {
     }
     case 'broken_stream': {
       return m.chat_failure_broken_stream();
+    }
+    case 'chatgpt_account_changed': {
+      return m.chat_failure_chatgpt_account_changed();
+    }
+    case 'chatgpt_not_eligible': {
+      return m.chat_failure_chatgpt_not_eligible();
+    }
+    case 'chatgpt_sign_in_needed': {
+      return m.chat_failure_chatgpt_sign_in_needed();
+    }
+    case 'chatgpt_unavailable': {
+      return m.chat_failure_chatgpt_unavailable();
+    }
+    case 'chatgpt_unsupported': {
+      return failure.param === null
+        ? m.chat_failure_chatgpt_unsupported()
+        : m.chat_failure_chatgpt_unsupported_param({ param: failure.param });
+    }
+    case 'chatgpt_usage_limit_reached': {
+      return m.chat_failure_chatgpt_usage_limit_reached();
     }
     case 'connection_failed': {
       return m.chat_failure_connection_failed();
@@ -331,6 +353,78 @@ export function credentialStoreMessage(problem: CredentialStoreProblem): string 
       return m.chat_providers_store_unsupported_platform();
     }
   }
+}
+
+/**
+ * What to tell the owner about a command of the ChatGPT account, or a sign-in,
+ * that failed (ADR-0062): what failed and what they can do.
+ */
+export function chatgptErrorMessage(error: ChatGptError): string {
+  switch (error.code) {
+    case 'access_denied': {
+      return m.chat_chatgpt_error_access_denied();
+    }
+    case 'already_signing_in': {
+      return m.chat_chatgpt_error_already_signing_in();
+    }
+    case 'browser_unavailable': {
+      return m.chat_chatgpt_error_browser_unavailable();
+    }
+    case 'canceled': {
+      return m.chat_chatgpt_error_canceled();
+    }
+    case 'credential_store_unavailable': {
+      return credentialStoreMessage(error.reason);
+    }
+    case 'id_token_invalid': {
+      return m.chat_chatgpt_error_id_token_invalid();
+    }
+    case 'invalid_page': {
+      return m.chat_chatgpt_error_invalid_page();
+    }
+    case 'network': {
+      return m.chat_chatgpt_error_network();
+    }
+    case 'not_signing_in': {
+      return m.chat_chatgpt_error_not_signing_in();
+    }
+    case 'plan_usage_not_granted': {
+      return m.chat_chatgpt_error_plan_usage_not_granted();
+    }
+    case 'port_in_use': {
+      // A port is a number without separators.
+      return m.chat_chatgpt_error_port_in_use({ port: String(error.port) });
+    }
+    case 'provider': {
+      return runFailureMessage(error.failure);
+    }
+    case 'registration_incomplete': {
+      return m.chat_chatgpt_error_registration_incomplete();
+    }
+    case 'sign_in_refused': {
+      return m.chat_chatgpt_error_sign_in_refused();
+    }
+    case 'signed_out': {
+      return m.chat_chatgpt_error_signed_out();
+    }
+    case 'storage_failed': {
+      return m.chat_chatgpt_error_storage_failed();
+    }
+    case 'store_unavailable': {
+      return m.shell_error_store_unavailable();
+    }
+    case 'timed_out': {
+      return m.chat_chatgpt_error_timed_out();
+    }
+  }
+}
+
+/** What to tell the owner about a command of the ChatGPT account that failed, or that the core did not answer. */
+export function chatgptFailureMessage(failure: ChatGptFailure): string {
+  if (failure.kind === 'ipc') {
+    return m.shell_error_ipc_failed();
+  }
+  return chatgptErrorMessage(failure.error);
 }
 
 /** What to tell the owner about a provider profile command that failed. */
