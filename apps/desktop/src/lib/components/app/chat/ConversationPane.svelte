@@ -147,7 +147,10 @@
     {#if summary !== null}
       <div class="flex items-center gap-2 border-b px-3 py-1.5">
         {#if !isChild}
-          <ProfileMenu conversation={summary} />
+          <ProfileMenu
+            profileId={summary.profileId}
+            onChoose={(profileId: string | null) => chatActions.setProfile(id, profileId)}
+          />
           <ChatGptPlanIndicator profileId={summary.profileId} />
         {/if}
         <div class="ms-auto flex items-center gap-1">

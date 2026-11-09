@@ -4,6 +4,7 @@
   import { notebookActions } from '../state/notebook-actions.svelte.js';
   import { sourceViewer } from '../state/source-viewer.svelte.js';
 
+  import DeleteChatDialog from './DeleteChatDialog.svelte';
   import DeleteNotebookDialog from './DeleteNotebookDialog.svelte';
   import NotebookNameDialog from './NotebookNameDialog.svelte';
   import PasteTextDialog from './PasteTextDialog.svelte';
@@ -23,6 +24,7 @@
 
 <NotebookNameDialog />
 <DeleteNotebookDialog />
+<DeleteChatDialog />
 <PasteTextDialog />
 <RemoveSourceDialog />
 <SourceDialog />

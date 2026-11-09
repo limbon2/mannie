@@ -4,33 +4,39 @@
 
   import { Button } from '#lib/components/ui/button/index.js';
   import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
-  import type { ConversationSummary } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
-  import { chatActions } from '#lib/state/chat-actions.svelte.js';
   import { providerProfiles } from '#lib/state/provider-profiles.svelte.js';
   import type { ChatFailure } from '#lib/types/chat.js';
   import { chatFailureMessage } from '#lib/utils/chat-errors.js';
   import { PROVIDER_SETTINGS_SECTION } from '#lib/utils/chat-urls.js';
   import { openSettings } from '#lib/utils/settings-sections.js';
 
-  // The provider profile of a conversation's next replies: one of the
-  // profiles, or the default (docs/features/chat/conversation-view.md). The
+  // The provider profile of a conversation's next replies, or of a new
+  // conversation's first: one of the profiles, or the default
+  // (docs/features/chat/conversation-view.md). `profileId` is the chosen
+  // profile, or `null` for the default, and `onChoose` applies a choice. The
   // registry's radio items keep their menu open by default; choosing a
   // profile is a single choice, so the menu closes with it.
-  let { conversation }: { conversation: ConversationSummary } = $props();
+  let {
+    onChoose,
+    profileId,
+  }: {
+    onChoose: (profileId: string | null) => Promise<ChatFailure | null>;
+    profileId: string | null;
+  } = $props();
 
   /** The menu's value for "the default profile". No profile ID can be `*`. */
   const DEFAULT_PROFILE = '*';
 
   let failure = $state<ChatFailure | null>(null);
 
-  const chosen = $derived(providerProfiles.find(conversation.profileId));
+  const chosen = $derived(providerProfiles.find(profileId));
   const effective = $derived(chosen ?? providerProfiles.defaultProfile);
   const effectiveName = $derived(effective?.name ?? m.chat_profile_none());
   const defaultName = $derived(providerProfiles.defaultProfile?.name ?? m.chat_profile_none());
 
   async function choose(value: string): Promise<void> {
-    failure = await chatActions.setProfile(conversation.id, value === DEFAULT_PROFILE ? null : value);
+    failure = await onChoose(value === DEFAULT_PROFILE ? null : value);
   }
 </script>
 
@@ -48,7 +54,7 @@
     <DropdownMenu.Content class="w-72" align="start">
       <DropdownMenu.Group>
         <DropdownMenu.Label>{m.chat_profile_menu_label()}</DropdownMenu.Label>
-        <DropdownMenu.RadioGroup value={conversation.profileId ?? DEFAULT_PROFILE} onValueChange={choose}>
+        <DropdownMenu.RadioGroup value={profileId ?? DEFAULT_PROFILE} onValueChange={choose}>
           <DropdownMenu.RadioItem closeOnSelect value={DEFAULT_PROFILE}>
             {m.chat_profile_default({ name: defaultName })}
           </DropdownMenu.RadioItem>

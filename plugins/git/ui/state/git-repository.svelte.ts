@@ -123,6 +123,12 @@ export class RepositoryPanel {
     this.readCommit();
   }
 
+  /** Closes the commit that shows, as choosing it again does. */
+  closeCommit(): void {
+    this.chosenCommit = null;
+    this.commit.clear();
+  }
+
   /** Reads the change of the file at `path`, staged or not. */
   chooseFile(path: string, staged: boolean): void {
     this.file = { path, staged };

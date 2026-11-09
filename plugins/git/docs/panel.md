@@ -19,7 +19,7 @@ Show the owner the repository that the agents work in, beside the conversation, 
 - The panel's header shows the branch or the detached HEAD, the upstream with how far ahead and behind it is, the operation in progress with its step, and the number of stash entries.
 - Its tabs:
   - Changes: the conflicted, staged, unstaged and untracked files; choosing a file shows its diff, and "Back" returns to the files.
-  - History: the newest commits of the current branch, 50 at a time, more on "Show more"; choosing a commit shows its message, files and diff.
+  - History: the newest commits of the current branch, 50 at a time, more on "Show more"; choosing a commit shows its message, files and diff, and choosing it again closes them. A file's counts of added and removed lines take the colors of those lines.
   - Branches: the local branches with their upstreams, the remote branches and the tags, each with its last commit.
   - Conflicts, while an operation is in progress or a file is conflicted: each conflicted file with its hunks and their sides. The tab goes away with the conflicts, and the panel then shows Changes.
 - The panel reads the repository again after each of the plugin's own changes in a repository, on "Refresh", and every 15 seconds while it shows, so changes made in a terminal show at the next read. After a read fails, it waits twice as long before the next one, up to 2 minutes. Each read also reads the tabs that were opened again, and the history from its first page when HEAD moved.

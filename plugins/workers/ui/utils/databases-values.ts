@@ -100,6 +100,52 @@ export interface ValueField {
   text: string;
 }
 
+/** The kinds of value that a field's typed text writes. */
+export type TypedKind = 'integer' | 'real' | 'text';
+
+/**
+ * The kind of value that a column's declared type gives its fields, by
+ * SQLite's rules of type affinity, or `null` for a column whose type gives
+ * none: one without a type or with BLOB affinity, which stores any value as
+ * it comes. A column of NUMERIC affinity, such as DATE or DECIMAL, takes
+ * text, which SQLite converts to a number where it can.
+ */
+export function columnKind(declaredType: string | null): TypedKind | null {
+  const type = (declaredType ?? '').toUpperCase();
+  if (type.includes('INT')) {
+    return 'integer';
+  }
+  const isText = ['CHAR', 'CLOB', 'TEXT'].some((part) => type.includes(part));
+  if (isText) {
+    return 'text';
+  }
+  const isBlob = type === '' || type.includes('BLOB');
+  if (isBlob) {
+    return null;
+  }
+  const isReal = ['REAL', 'FLOA', 'DOUB'].some((part) => type.includes(part));
+  return isReal ? 'real' : 'text';
+}
+
+/** The kind of value that a field of a column without a type writes at first: the kind of the row's value. */
+export function kindOfValue(value: SqlValue | undefined): TypedKind {
+  switch (value?.type) {
+    case 'integer': {
+      return 'integer';
+    }
+    case 'infinity':
+    case 'real': {
+      return 'real';
+    }
+    case 'blob':
+    case 'null':
+    case 'text':
+    case undefined: {
+      return 'text';
+    }
+  }
+}
+
 /** The field of a value that a row has, which starts unchanged with the value's text. */
 export function fieldOf(value: SqlValue): ValueField {
   switch (value.type) {

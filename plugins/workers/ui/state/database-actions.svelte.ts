@@ -13,6 +13,8 @@ import { m } from '../generated/messages.js';
 import type { DatabasesFailure } from '../types/databases.js';
 import { openDatabase, openDatabases, shownDatabaseKey } from '../utils/databases-places.js';
 
+import { databaseStructures } from './database-structures.svelte.js';
+
 /** One opening of the dialog that adds a database, whose fields start empty. */
 export class AddDatabaseRequest {
   /** Whether the system's file dialog is open or the core or the worker is registering the file. */
@@ -128,6 +130,7 @@ export class DatabaseActions {
     if (this.removing === request) {
       this.removeOpen = false;
     }
+    databaseStructures.forget(key);
     if (shownDatabaseKey() === key) {
       await openDatabases();
     }

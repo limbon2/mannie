@@ -8,6 +8,10 @@ Each change to the plugin adds one line under Unreleased, below its kind of chan
 
 - The plugin Notebooks, off by default: notebooks of PDF, Markdown and text files of any size and pasted texts, indexed and searched through the owner's search profiles of an embedding model and, if the owner chooses one, a reranker. The Notebooks entry of the activity bar opens the latest notebook, whose page shows each source's state and progress, with "Use in answers", "Try again" and its text in a viewer that fills the window. The sidebar lists the notebooks, each with "New chat" and its own chats, which search the notebook with every message and stay out of the Chat list; "@" attaches a notebook to any other chat. Replies get the best passages, searched with the message and the owner's earlier messages, and the model lists, searches and reads the attached notebooks with three tools, and cites passages by links that open them in the viewer. A PDF is read page by page, so a page that fails costs only that page.
 
+### Changed
+
+- A notebook's chat can be deleted from the sidebar: a button on its row asks first, and the notebook's page shows in place of a chat that showed.
+
 ### Security
 
 - Accept the maintenance advisory RUSTSEC-2026-0192 for `ttf-parser`, which the pinned PDF library requires for font embedding that Notebooks never uses, with the owner's approval. Recheck when `pdf-extract` supports `lopdf` 0.44 or newer.

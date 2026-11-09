@@ -1,5 +1,6 @@
 // Which parts of the sidebar are collapsed (docs/features/chat/projects.md,
-// the sidebar): the "Projects" group and each project. It is a convenience of
+// the sidebar): the "Projects" group, each project and the other groups of
+// Chat's sidebar, such as "Plans" and "Conversations". It is a convenience of
 // one window, kept in the webview's storage as the theme is. When the storage
 // is empty, unreadable or blocked, everything starts expanded, and the
 // sidebar works the same without it.
@@ -9,6 +10,8 @@ export const SIDEBAR_STORAGE_KEY = 'mannie.chat.sidebar';
 
 /** What the storage holds. */
 interface Stored {
+  /** The IDs of the collapsed groups other than "Projects", absent in what older versions stored. */
+  readonly collapsedGroups?: readonly string[];
   /** The IDs of the collapsed projects. */
   readonly collapsedProjects: readonly string[];
   /** Whether the "Projects" group is collapsed. */
@@ -20,10 +23,15 @@ function isStored(value: unknown): value is Stored {
   if (!isObject) {
     return false;
   }
-  const { collapsedProjects, projectsCollapsed } = value as Record<string, unknown>;
-  const hasProjects = Array.isArray(collapsedProjects) && collapsedProjects.every((id) => typeof id === 'string');
+  const { collapsedGroups, collapsedProjects, projectsCollapsed } = value as Record<string, unknown>;
+  const hasProjects = isIdList(collapsedProjects);
   const hasGroup = typeof projectsCollapsed === 'boolean';
-  return hasProjects && hasGroup;
+  const hasGroups = collapsedGroups === undefined || isIdList(collapsedGroups);
+  return hasProjects && hasGroup && hasGroups;
+}
+
+function isIdList(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.every((id) => typeof id === 'string');
 }
 
 /** The webview's storage, or `null` where reading it throws, as in a blocked context. */
@@ -37,6 +45,8 @@ export function browserStorage(): Storage | null {
 
 /** The sidebar's collapsed parts. */
 export class SidebarCollapse {
+  /** The IDs of the collapsed groups other than "Projects". */
+  collapsedGroups: string[] = $state([]);
   /** The IDs of the collapsed projects. */
   collapsedProjects: string[] = $state([]);
   /** The projects whose list shows every conversation, for this window's life. */
@@ -51,6 +61,7 @@ export class SidebarCollapse {
     if (stored !== null) {
       this.collapsedProjects = [...stored.collapsedProjects];
       this.projectsCollapsed = stored.projectsCollapsed;
+      this.collapsedGroups = [...(stored.collapsedGroups ?? [])];
     }
   }
 
@@ -62,6 +73,11 @@ export class SidebarCollapse {
       this.#save();
     }
     this.expandedLists = this.expandedLists.filter((expanded) => expanded !== id);
+  }
+
+  /** Whether a group other than "Projects" shows its rows. */
+  isGroupOpen(id: string): boolean {
+    return !this.collapsedGroups.includes(id);
   }
 
   /** Whether a project shows its conversations. */
@@ -82,6 +98,13 @@ export class SidebarCollapse {
     if (changes) {
       this.#save();
     }
+  }
+
+  /** Expands or collapses a group other than "Projects". */
+  setGroupOpen(id: string, open: boolean): void {
+    const others = this.collapsedGroups.filter((collapsed) => collapsed !== id);
+    this.collapsedGroups = open ? others : [...others, id];
+    this.#save();
   }
 
   /** Shows every conversation of a project, or the first few again. */
@@ -119,7 +142,11 @@ export class SidebarCollapse {
   }
 
   #save(): void {
-    const stored: Stored = { collapsedProjects: this.collapsedProjects, projectsCollapsed: this.projectsCollapsed };
+    const stored: Stored = {
+      collapsedGroups: this.collapsedGroups,
+      collapsedProjects: this.collapsedProjects,
+      projectsCollapsed: this.projectsCollapsed,
+    };
     try {
       this.#storage?.setItem(SIDEBAR_STORAGE_KEY, JSON.stringify(stored));
     } catch {

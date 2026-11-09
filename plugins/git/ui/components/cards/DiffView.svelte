@@ -10,7 +10,8 @@
 
   // A diff (ADR-0039; plugins/git/docs/panel.md): each changed file with its
   // line counts, which opens to its patch. A file whose patch the data does
-  // not hold, because the result was cut, shows its counts only.
+  // not hold, because the result was cut, shows its counts only. The counts
+  // take the colors of the added and removed lines.
   interface Props {
     readonly files: readonly FileStat[];
     /** Whether every file starts open, as for a single file. */
@@ -24,23 +25,24 @@
     patches.length === 0 ? 0 : files.filter((file) => patchOf(file.path) === undefined).length,
   );
 
-  function patchOf(path: string): FilePatch | undefined {
-    return patches.find((patch) => patch.path === path);
+  /** A file's counts of added and removed lines, or `null` for a binary file, which has none. */
+  function lineCounts(file: FileStat): { added: number; removed: number } | null {
+    const { added, removed } = file;
+    if (added === null) {
+      return null;
+    }
+    return removed === null ? null : { added, removed };
   }
 
-  function stat(file: FileStat): string {
-    const { added, removed } = file;
-    const isBinary = added === null || removed === null;
-    if (isBinary) {
-      return m.git_diff_binary();
-    }
-    return m.git_diff_stat({ added: formatCount(added), removed: formatCount(removed) });
+  function patchOf(path: string): FilePatch | undefined {
+    return patches.find((patch) => patch.path === path);
   }
 </script>
 
 <div class="flex flex-col gap-1" data-git-diff="">
   {#each files as file (file.path)}
     {const patch = $derived(patchOf(file.path))}
+    {const counts = $derived(lineCounts(file))}
     <Collapsible.Root class="group/file rounded-md border" {open}>
       <Collapsible.Trigger
         class="flex w-full items-center gap-2 px-2 py-1 text-start text-sm hover:bg-muted"
@@ -54,7 +56,16 @@
         {#if file.original !== null}
           <span class="truncate text-muted-foreground">{m.git_renamed_from({ path: file.original })}</span>
         {/if}
-        <span class="ms-auto shrink-0 text-muted-foreground tabular-nums">{stat(file)}</span>
+        {#if counts === null}
+          <span class="ms-auto shrink-0 text-muted-foreground">{m.git_diff_binary()}</span>
+        {:else}
+          <span class="ms-auto flex shrink-0 gap-1 tabular-nums" data-git-diff-stat="">
+            <span class="text-diff-added-foreground">{m.git_diff_added({ count: formatCount(counts.added) })}</span>
+            <span class="text-diff-removed-foreground">
+              {m.git_diff_removed({ count: formatCount(counts.removed) })}
+            </span>
+          </span>
+        {/if}
       </Collapsible.Trigger>
       {#if patch !== undefined}
         <Collapsible.Content class="border-t">

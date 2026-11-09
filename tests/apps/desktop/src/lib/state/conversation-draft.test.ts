@@ -56,4 +56,16 @@ describe('ConversationDraftState', () => {
     expect(draft.home).toBeNull();
     expect(draft.attachments).toEqual([notebook('n2', 'Optics')]);
   });
+
+  it('starts with the default profile and forgets the chosen one when it starts over', () => {
+    const draft = new ConversationDraftState();
+    expect(draft.profileId).toBeNull();
+
+    draft.profileId = 'work';
+    draft.agentKey = 'plan';
+    draft.reset();
+
+    expect(draft.profileId).toBeNull();
+    expect(draft.agentKey).toBeNull();
+  });
 });

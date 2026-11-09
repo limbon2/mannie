@@ -194,6 +194,11 @@
     }
   ],
   "notebooks_delete_confirm": "Delete",
+  "notebooks_chat_delete": "Delete {title}…",
+  "notebooks_chat_delete_title": "Delete {title}?",
+  "notebooks_chat_delete_description": "The chat and its replies are deleted. The notebook and its sources stay.",
+  "notebooks_chat_deleting": "Deleting the chat…",
+  "notebooks_chat_delete_failed_title": "The chat was not deleted",
   "notebooks_deleting": "Deleting the notebook…",
   "notebooks_delete_failed_title": "The notebook was not deleted",
   "notebooks_delete_chat_failed": "A chat of the notebook was not deleted, so the notebook stays. {reason}",

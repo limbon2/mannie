@@ -41,9 +41,12 @@
   // conditions on columns that the core turns into a parameterized
   // statement. A table with a key edits, inserts and deletes rows; each
   // change names its rows by their keys and the values that the page showed.
-  // "Copy page as CSV" copies the page. The tab mounts it again for another
-  // table, which starts from its first page without conditions. Names and
-  // values are content.
+  // "Copy page as CSV" copies the page. The order, the conditions, the pages
+  // and the actions on rows share one compact row above the rows, the
+  // actions as icons whose names show on hover, and conditions show below it
+  // once the owner adds one. The tab mounts it again for another table,
+  // which starts from its first page without conditions. Names and values
+  // are content.
   /** A condition as the owner writes it. */
   interface Condition {
     column: string;
@@ -258,152 +261,169 @@
   });
 </script>
 
-<div class="flex flex-col gap-4" data-database-data="">
-  <div class="flex flex-wrap items-end gap-4">
-    <Field.Field class="w-56">
-      <Field.Label for="database-data-order">{m.workers_databases_data_sort()}</Field.Label>
-      <Select.Root type="single" value={orderColumn} onValueChange={chooseOrder}>
-        <Select.Trigger id="database-data-order" class="w-full">
-          {#if orderColumn === KEY_ORDER}
-            {m.workers_databases_data_sort_key()}
-          {:else}
-            <span class="truncate font-mono" data-content dir="auto">{orderColumn}</span>
-          {/if}
-        </Select.Trigger>
-        <Select.Content>
-          <Select.Item label={m.workers_databases_data_sort_key()} value={KEY_ORDER}>
-            {m.workers_databases_data_sort_key()}
-          </Select.Item>
-          {#each columnNames as column (column)}
-            <Select.Item label={column} value={column}>
-              <span class="truncate font-mono" data-content dir="auto">{column}</span>
-            </Select.Item>
-          {/each}
-        </Select.Content>
-      </Select.Root>
-    </Field.Field>
-    <Field.Field class="w-auto" orientation="horizontal">
-      <Checkbox
-        id="database-data-descending"
-        disabled={orderColumn === KEY_ORDER}
-        bind:checked={descending}
-        onCheckedChange={() => showFirst()}
-      />
-      <Field.Label for="database-data-descending">{m.workers_databases_data_descending()}</Field.Label>
-    </Field.Field>
-  </div>
-
+<div class="flex flex-col gap-3" data-database-data="">
   <form class="flex flex-col gap-2" onsubmit={apply}>
-    <Field.Set>
-      <Field.Legend variant="label">{m.workers_databases_data_conditions()}</Field.Legend>
-      {#each conditions as condition, index (condition.id)}
-        <div class="flex flex-wrap items-center gap-2" data-database-condition="">
-          <Select.Root type="single" bind:value={condition.column}>
-            <Select.Trigger class="w-48" aria-label={m.workers_databases_data_condition_column()}>
-              <span class="truncate font-mono" data-content dir="auto">{condition.column}</span>
-            </Select.Trigger>
-            <Select.Content>
-              {#each columnNames as column (column)}
-                <Select.Item label={column} value={column}>
-                  <span class="truncate font-mono" data-content dir="auto">{column}</span>
-                </Select.Item>
-              {/each}
-            </Select.Content>
-          </Select.Root>
-          <Select.Root
-            type="single"
-            value={condition.operator}
-            onValueChange={(value: string) => {
-              const operator = OPERATORS.find((known) => known === value);
-              if (operator !== undefined) {
-                condition.operator = operator;
-              }
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+      <Field.Field class="w-auto" orientation="horizontal">
+        <Field.Label class="whitespace-nowrap" for="database-data-order">{m.workers_databases_data_sort()}</Field.Label>
+        <Select.Root type="single" value={orderColumn} onValueChange={chooseOrder}>
+          <Select.Trigger id="database-data-order" class="w-44" size="sm">
+            {#if orderColumn === KEY_ORDER}
+              {m.workers_databases_data_sort_key()}
+            {:else}
+              <span class="truncate font-mono" data-content dir="auto">{orderColumn}</span>
+            {/if}
+          </Select.Trigger>
+          <Select.Content>
+            <Select.Item label={m.workers_databases_data_sort_key()} value={KEY_ORDER}>
+              {m.workers_databases_data_sort_key()}
+            </Select.Item>
+            {#each columnNames as column (column)}
+              <Select.Item label={column} value={column}>
+                <span class="truncate font-mono" data-content dir="auto">{column}</span>
+              </Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
+      </Field.Field>
+      <Field.Field class="w-auto" orientation="horizontal">
+        <Checkbox
+          id="database-data-descending"
+          disabled={orderColumn === KEY_ORDER}
+          bind:checked={descending}
+          onCheckedChange={() => showFirst()}
+        />
+        <Field.Label class="whitespace-nowrap" for="database-data-descending">
+          {m.workers_databases_data_descending()}
+        </Field.Label>
+      </Field.Field>
+      <div class="flex items-center gap-2">
+        <Button size="sm" type="button" variant="outline" onclick={addCondition}>
+          <PlusIcon data-icon="inline-start" />
+          {m.workers_databases_data_condition_add()}
+        </Button>
+        <Button data-database-apply="" size="sm" type="submit">{m.workers_databases_data_apply()}</Button>
+      </div>
+      <div class="ms-auto flex flex-wrap items-center gap-1" role="toolbar">
+        {#if loading}
+          <Spinner />
+          <span class="sr-only">{m.workers_databases_data_loading()}</span>
+        {/if}
+        <Button disabled={starts.length <= 1 || loading} size="sm" variant="outline" onclick={showPrevious}>
+          <ChevronLeftIcon data-icon="inline-start" />
+          {m.workers_databases_data_previous()}
+        </Button>
+        <Button
+          data-database-next=""
+          disabled={(page?.next ?? null) === null || loading}
+          size="sm"
+          variant="outline"
+          onclick={showNext}
+        >
+          {m.workers_databases_data_next()}
+          <ChevronRightIcon data-icon="inline-end" />
+        </Button>
+        {#if insertable}
+          <Button
+            aria-label={m.workers_databases_data_insert()}
+            data-database-insert=""
+            disabled={page === null}
+            size="icon-sm"
+            title={m.workers_databases_data_insert()}
+            variant="outline"
+            onclick={startInsert}
+          >
+            <PlusIcon />
+          </Button>
+        {/if}
+        {#if editable}
+          <Button
+            aria-label={m.workers_databases_data_delete()}
+            data-database-delete=""
+            disabled={selected.size === 0}
+            size="icon-sm"
+            title={m.workers_databases_data_delete()}
+            variant="outline"
+            onclick={() => {
+              deleteFailure = null;
+              deleteOpen = true;
             }}
           >
-            <Select.Trigger class="w-44" aria-label={m.workers_databases_data_condition_operator()}>
-              {operatorLabel(condition.operator)}
-            </Select.Trigger>
-            <Select.Content>
-              {#each OPERATORS as operator (operator)}
-                <Select.Item label={operatorLabel(operator)} value={operator}>{operatorLabel(operator)}</Select.Item>
-              {/each}
-            </Select.Content>
-          </Select.Root>
-          {#if !WITHOUT_VALUE.has(condition.operator)}
-            <Input
-              class="w-56 font-mono"
-              aria-label={m.workers_databases_data_condition_value()}
-              dir="auto"
-              spellcheck="false"
-              bind:value={condition.value}
-            />
-          {/if}
-          <Button
-            size="icon-sm"
-            type="button"
-            variant="ghost"
-            onclick={() => (conditions = conditions.filter((_kept, kept) => kept !== index))}
-          >
-            <XIcon />
-            <span class="sr-only">{m.workers_databases_data_condition_remove()}</span>
+            <TrashIcon />
           </Button>
-        </div>
-      {/each}
-    </Field.Set>
-    <div class="flex flex-wrap gap-2">
-      <Button size="sm" type="button" variant="outline" onclick={addCondition}>
-        <PlusIcon data-icon="inline-start" />
-        {m.workers_databases_data_condition_add()}
-      </Button>
-      <Button data-database-apply="" size="sm" type="submit">{m.workers_databases_data_apply()}</Button>
+        {/if}
+        <Button
+          aria-label={m.workers_databases_data_copy()}
+          disabled={page === null}
+          size="icon-sm"
+          title={m.workers_databases_data_copy()}
+          variant="outline"
+          onclick={() => void copyPage()}
+        >
+          <CopyIcon />
+        </Button>
+      </div>
     </div>
+    {#if conditions.length > 0}
+      <Field.Set class="gap-2">
+        <Field.Legend class="sr-only">{m.workers_databases_data_conditions()}</Field.Legend>
+        {#each conditions as condition, index (condition.id)}
+          <div class="flex flex-wrap items-center gap-2" data-database-condition="">
+            <Select.Root type="single" bind:value={condition.column}>
+              <Select.Trigger class="w-48" aria-label={m.workers_databases_data_condition_column()} size="sm">
+                <span class="truncate font-mono" data-content dir="auto">{condition.column}</span>
+              </Select.Trigger>
+              <Select.Content>
+                {#each columnNames as column (column)}
+                  <Select.Item label={column} value={column}>
+                    <span class="truncate font-mono" data-content dir="auto">{column}</span>
+                  </Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
+            <Select.Root
+              type="single"
+              value={condition.operator}
+              onValueChange={(value: string) => {
+                const operator = OPERATORS.find((known) => known === value);
+                if (operator !== undefined) {
+                  condition.operator = operator;
+                }
+              }}
+            >
+              <Select.Trigger class="w-44" aria-label={m.workers_databases_data_condition_operator()} size="sm">
+                {operatorLabel(condition.operator)}
+              </Select.Trigger>
+              <Select.Content>
+                {#each OPERATORS as operator (operator)}
+                  <Select.Item label={operatorLabel(operator)} value={operator}>{operatorLabel(operator)}</Select.Item>
+                {/each}
+              </Select.Content>
+            </Select.Root>
+            {#if !WITHOUT_VALUE.has(condition.operator)}
+              <Input
+                class="h-7 w-56 font-mono"
+                aria-label={m.workers_databases_data_condition_value()}
+                dir="auto"
+                spellcheck="false"
+                bind:value={condition.value}
+              />
+            {/if}
+            <Button
+              aria-label={m.workers_databases_data_condition_remove()}
+              size="icon-sm"
+              title={m.workers_databases_data_condition_remove()}
+              type="button"
+              variant="ghost"
+              onclick={() => (conditions = conditions.filter((_kept, kept) => kept !== index))}
+            >
+              <XIcon />
+            </Button>
+          </div>
+        {/each}
+      </Field.Set>
+    {/if}
   </form>
-
-  <div class="flex flex-wrap items-center gap-2" role="toolbar">
-    <Button disabled={starts.length <= 1 || loading} size="sm" variant="outline" onclick={showPrevious}>
-      <ChevronLeftIcon data-icon="inline-start" />
-      {m.workers_databases_data_previous()}
-    </Button>
-    <Button
-      data-database-next=""
-      disabled={(page?.next ?? null) === null || loading}
-      size="sm"
-      variant="outline"
-      onclick={showNext}
-    >
-      {m.workers_databases_data_next()}
-      <ChevronRightIcon data-icon="inline-end" />
-    </Button>
-    {#if insertable}
-      <Button data-database-insert="" disabled={page === null} size="sm" variant="outline" onclick={startInsert}>
-        <PlusIcon data-icon="inline-start" />
-        {m.workers_databases_data_insert()}
-      </Button>
-    {/if}
-    {#if editable}
-      <Button
-        data-database-delete=""
-        disabled={selected.size === 0}
-        size="sm"
-        variant="outline"
-        onclick={() => {
-          deleteFailure = null;
-          deleteOpen = true;
-        }}
-      >
-        <TrashIcon data-icon="inline-start" />
-        {m.workers_databases_data_delete()}
-      </Button>
-    {/if}
-    <Button disabled={page === null} size="sm" variant="outline" onclick={() => void copyPage()}>
-      <CopyIcon data-icon="inline-start" />
-      {m.workers_databases_data_copy()}
-    </Button>
-    {#if loading}
-      <Spinner />
-      <span class="sr-only">{m.workers_databases_data_loading()}</span>
-    {/if}
-  </div>
 
   {#if notice !== null}
     <p class="text-sm text-muted-foreground" aria-live="polite" data-database-notice="">{notice}</p>

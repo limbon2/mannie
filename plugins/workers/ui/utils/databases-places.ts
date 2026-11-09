@@ -1,7 +1,8 @@
 // Where Databases shows things (plugins/workers/docs/databases.md, the
 // view): its view, with the database, the tab and the table that it shows,
 // which it opens through the SDK's navigation, so the addresses stay the
-// shell's.
+// shell's. The sidebar lists each database's tables, and a table opens on
+// the tab that shows it.
 import { type NavigateOptions, openView, viewParameters } from '@mannie/plugin-sdk/navigation';
 
 import type { DatabaseTab } from '../types/databases.js';
@@ -22,17 +23,22 @@ export const TABLE_PARAMETER = 'table';
 export const DATABASES_FEATURE = 'databases';
 
 /** The tabs of a database's page, in their order. */
-export const DATABASE_TABS: readonly DatabaseTab[] = ['tables', 'structure', 'data', 'sql'];
+export const DATABASE_TABS: readonly DatabaseTab[] = ['data', 'structure', 'sql'];
 
 /** The database whose page the view shows, or `null`; read in a component, it follows the address. */
 export function shownDatabaseKey(): string | null {
   return viewParameters().get(DATABASE_PARAMETER);
 }
 
-/** The tab that the view shows, the Tables tab when the address names none it knows. */
+/** The tab that the view shows, the Data tab when the address names none it knows. */
 export function shownTab(): DatabaseTab {
   const tab = viewParameters().get(TAB_PARAMETER);
-  return DATABASE_TABS.find((known) => known === tab) ?? 'tables';
+  return DATABASE_TABS.find((known) => known === tab) ?? 'data';
+}
+
+/** The tab on which a table from the sidebar opens: the Structure tab while it shows, else the Data tab. */
+export function tableTab(): DatabaseTab {
+  return shownTab() === 'structure' ? 'structure' : 'data';
 }
 
 /** The table of the Structure and Data tabs, or `null` for the first one. */
@@ -48,7 +54,7 @@ export function openDatabases(): Promise<void> {
 /** Shows a database's page on a tab, with a table for the Structure and Data tabs. */
 export function openDatabase(
   key: string,
-  tab: DatabaseTab = 'tables',
+  tab: DatabaseTab = 'data',
   table: string | null = null,
   options?: NavigateOptions,
 ): Promise<void> {

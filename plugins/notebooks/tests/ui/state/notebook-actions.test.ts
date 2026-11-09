@@ -4,7 +4,8 @@
 // that the plugin reads, in parts, and gathers the refusals, a switch shows
 // its new value while its call runs, deleting a notebook deletes its own
 // chats first, takes it from the other chats that use it and says when one
-// stayed, and "New chat" starts a chat that belongs to the notebook.
+// stayed, "New chat" starts a chat that belongs to the notebook, and
+// deleting one of its chats asks first and leaves the chat if it shows.
 import type { ConversationSummary } from '@mannie/plugin-sdk/conversations';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -36,6 +37,7 @@ const conversations = vi.hoisted(() => ({
 }));
 
 const navigation = vi.hoisted(() => ({
+  openConversationId: vi.fn((): string | null => null),
   openView: vi.fn(),
   startConversation: vi.fn(),
   viewParameters: vi.fn(() => new URLSearchParams()),
@@ -100,7 +102,54 @@ beforeEach(() => {
   conversations.conversationFailureMessage.mockReturnValue('The window could not reach the core.');
   conversations.listConversations.mockReturnValue([]);
   navigation.viewParameters.mockReturnValue(new URLSearchParams());
+  navigation.openConversationId.mockReturnValue(null);
   notebookLibrary.notebooks = [];
+});
+
+describe('deleting a chat of a notebook', () => {
+  it('deletes the chat and shows the notebook in its place when the chat shows', async () => {
+    conversations.deleteConversation.mockResolvedValue({ data: null, ok: true });
+    navigation.openConversationId.mockReturnValue('own-1');
+    const actions = new NotebookActions();
+    actions.startDeleteChat(ownChat('own-1', 'notebook-1'), 'notebook-1');
+    const request = present(actions.chatDeleting);
+    expect(actions.chatDeleteOpen).toBe(true);
+
+    await actions.confirmDeleteChat(request);
+
+    expect(conversations.deleteConversation).toHaveBeenCalledWith('own-1');
+    expect(actions.chatDeleteOpen).toBe(false);
+    expect(navigation.openView).toHaveBeenCalledWith('notebooks', { notebook: 'notebook-1' }, undefined);
+  });
+
+  it('keeps the confirmation open with the reason when the chat was not deleted', async () => {
+    conversations.deleteConversation.mockResolvedValue({ failure: { kind: 'ipc' }, ok: false });
+    const actions = new NotebookActions();
+    actions.startDeleteChat(ownChat('own-1', 'notebook-1'), 'notebook-1');
+    const request = present(actions.chatDeleting);
+
+    await actions.confirmDeleteChat(request);
+
+    expect(request.failure).toBe('The window could not reach the core.');
+    expect(request.deleting).toBe(false);
+    expect(actions.chatDeleteOpen).toBe(true);
+    expect(navigation.openView).not.toHaveBeenCalled();
+  });
+
+  it('closes for a chat that is gone already, and stays on another conversation', async () => {
+    conversations.deleteConversation.mockResolvedValue({
+      failure: { error: { code: 'conversation_not_found' }, kind: 'core' },
+      ok: false,
+    });
+    navigation.openConversationId.mockReturnValue('other');
+    const actions = new NotebookActions();
+    actions.startDeleteChat(ownChat('own-1', 'notebook-1'), 'notebook-1');
+
+    await actions.confirmDeleteChat(present(actions.chatDeleting));
+
+    expect(actions.chatDeleteOpen).toBe(false);
+    expect(navigation.openView).not.toHaveBeenCalled();
+  });
 });
 
 describe('the actions on notebooks', () => {

@@ -125,8 +125,13 @@
     panel.chooseFile(entry.path, staged);
   }
 
+  /** Shows a commit's changes, or closes them when the commit shows already. */
   function chooseCommit(oid: string): void {
-    panel.chooseCommit(oid);
+    if (panel.chosenCommit === oid) {
+      panel.closeCommit();
+    } else {
+      panel.chooseCommit(oid);
+    }
   }
 
   function chooseTab(name: string): void {

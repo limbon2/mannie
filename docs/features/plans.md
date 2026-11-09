@@ -22,7 +22,7 @@ The owner asked for "a plan agent that will focus on creating readonly plans tha
 
 - The row of a `save_plan` call names the plan, and a card below it shows the plan's title with "Open", "Run in a new conversation" and "Run in the plan's conversation".
 - "Open" shows the plan in a side panel, rendered as Markdown, with the same two buttons, "Edit" and "Delete". "Edit" lets the owner change its title and text.
-- A panel "Plans" in Chat's sidebar lists the plans, newest first, and hides while there are none.
+- A panel "Plans" in Chat's sidebar lists the plans, newest first, and hides while there are none. Its heading collapses and expands it, as the "Projects" group's does.
 - In any conversation, "@" lists the plans under "Plans".
 - A conversation holds one plan, and saving again replaces it. The model's earlier version stays in the stored call.
 - When the owner edited a plan, the model's next save is refused once and the model reads the plan as it stands, so it cannot overwrite the edit by accident.

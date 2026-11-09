@@ -28,7 +28,9 @@ describe('DiffView', () => {
     const body = shown([PARSER], [{ hunks: [HUNK], path: 'src/parser.rs' }]);
 
     expect(body).toContain('src/parser.rs');
-    expect(body).toContain('+1 −1');
+    // The counts take the colors of the added and removed lines.
+    expect(body).toMatch(/text-diff-added-foreground[^>]*>\+1</u);
+    expect(body).toMatch(/text-diff-removed-foreground[^>]*>\s*−1\s*</u);
     expect(body).toContain('@@ -1,2 +1,2 @@ fn main()');
     expect(body).toMatch(/data-git-line="removed"[^]*?-<\/span>[^]*?removed<\/span>[^]*?old_call\(\);/u);
     expect(body).toMatch(/data-git-line="added"[^]*?\+<\/span>[^]*?added<\/span>[^]*?new_call\(\);/u);

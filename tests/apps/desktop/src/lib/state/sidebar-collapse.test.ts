@@ -61,6 +61,31 @@ describe('SidebarCollapse', () => {
     expect(later.projectsCollapsed).toBe(true);
   });
 
+  it('remembers the other groups that the owner collapsed', () => {
+    const storage = new MemoryStorage();
+    const first = new SidebarCollapse(storage);
+
+    expect(first.isGroupOpen('plans')).toBe(true);
+    first.setGroupOpen('plans', false);
+    first.setGroupOpen('conversations', false);
+    first.setGroupOpen('conversations', true);
+
+    const later = new SidebarCollapse(storage);
+    expect(later.isGroupOpen('plans')).toBe(false);
+    expect(later.isGroupOpen('conversations')).toBe(true);
+  });
+
+  it('reads what an older version stored, without the other groups', () => {
+    const storage = new MemoryStorage();
+    storage.items.set(SIDEBAR_STORAGE_KEY, JSON.stringify({ collapsedProjects: ['app'], projectsCollapsed: true }));
+
+    const collapse = new SidebarCollapse(storage);
+
+    expect(collapse.isProjectOpen('app')).toBe(false);
+    expect(collapse.projectsCollapsed).toBe(true);
+    expect(collapse.isGroupOpen('plans')).toBe(true);
+  });
+
   it('expands a project and the group to show where a conversation works', () => {
     const collapse = new SidebarCollapse(new MemoryStorage());
     collapse.setProjectOpen('app', false);

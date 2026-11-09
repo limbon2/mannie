@@ -41,6 +41,8 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ### Changed
 
+- The "Plans" and "Conversations" groups of Chat's sidebar collapse from their headings, as "Projects" does, and the webview's storage remembers them.
+- A new conversation shows the profile menu before its first message, with the ChatGPT plan's indicator beside it, and the first message starts the conversation with the chosen profile.
 - `task dev` runs the app as `io.github.limbon2.mannie.dev`, with a data folder, credentials and logs of its own, so a development build never migrates the owner's database and runs beside a release build.
 - The "@" list shows each kind of mention as soon as it answers, and while more than one kind shows entries, each shows its first 5 with "Show N more", so Git's and SSH's entries no longer sit below 50 files. A space no longer ends the query while an entry that the list shows holds it, so a name with spaces, such as a commit's subject or a path with a space, can be typed out.
 - Child agents write their reports in sections: status, answer, established findings with their evidence, what they did not verify, changes, what is left open and their assumptions. A report's result says that its evidence comes from the child's own tool calls, and the guidance on tasks treats what a report backs with evidence as established, with at most two tool calls to check one report, on the files that a task changed and the claims that it did not verify.

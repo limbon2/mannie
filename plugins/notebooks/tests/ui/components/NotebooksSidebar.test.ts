@@ -77,9 +77,11 @@ describe("a notebook's row in the sidebar", () => {
     expect(body).toContain('data-notebooks-panel-chat="own-1"');
     expect(body).not.toContain('data-notebooks-panel-chat="mentioned"');
     expect(body).not.toContain('data-notebooks-panel-chat="other"');
+    expect(body).toContain('data-notebooks-panel-chat-delete="own-1"');
+    expect(body).not.toContain('data-notebooks-panel-chat-delete="mentioned"');
     expect(body).not.toContain('data-notebooks-panel-source');
     // The class of each button of the list, which takes the sidebar's width.
-    const classes = [...body.matchAll(/class="([^"]*)"[^<]*?data-notebooks-panel-(?:chat|new-chat)/gu)].map(
+    const classes = [...body.matchAll(/class="([^"]*)"[^<]*?data-notebooks-panel-(?:chat|new-chat)=/gu)].map(
       (match) => match[1],
     );
     expect(classes).toHaveLength(2);

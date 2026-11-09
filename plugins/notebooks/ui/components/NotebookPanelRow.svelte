@@ -1,10 +1,12 @@
 <script lang="ts">
+  import { Button } from '@mannie/plugin-sdk/components/button';
   import * as Collapsible from '@mannie/plugin-sdk/components/collapsible';
   import * as Sidebar from '@mannie/plugin-sdk/components/sidebar';
   import BookOpenIcon from '@mannie/plugin-sdk/icons/book-open';
   import ChevronDownIcon from '@mannie/plugin-sdk/icons/chevron-down';
   import MessageSquarePlusIcon from '@mannie/plugin-sdk/icons/message-square-plus';
   import MessagesSquareIcon from '@mannie/plugin-sdk/icons/messages-square';
+  import TrashIcon from '@mannie/plugin-sdk/icons/trash';
   import { openConversation } from '@mannie/plugin-sdk/navigation';
 
   import type { NotebookView } from '../generated/bindings.js';
@@ -17,7 +19,10 @@
   // One notebook in the sidebar (plugins/notebooks/docs/README.md, chats):
   // its row opens its page, and its toggle shows "New chat" and the
   // notebook's own chats, the most recently changed first, each of which
-  // opens in the chat view. The row opens as its notebook's page does, and
+  // opens in the chat view, with a button that deletes it after asking. The
+  // button lies over room that the chat's row keeps free, and shows on hover
+  // and focus, so nothing moves when it shows. The row opens as its
+  // notebook's page does, and
   // keeps its state while a chat shows. The buttons take the sidebar's
   // width, so a long title ends in "…" instead of running past it.
   let { notebook }: { notebook: NotebookView } = $props();
@@ -65,8 +70,8 @@
             </Sidebar.MenuSubButton>
           </Sidebar.MenuSubItem>
           {#each chats as chat (chat.id)}
-            <Sidebar.MenuSubItem>
-              <Sidebar.MenuSubButton class="w-full">
+            <Sidebar.MenuSubItem class="group/chat">
+              <Sidebar.MenuSubButton class="w-full pe-8">
                 {#snippet child({ props: button })}
                   <button
                     {...button}
@@ -79,6 +84,20 @@
                   </button>
                 {/snippet}
               </Sidebar.MenuSubButton>
+              <div
+                class="absolute inset-y-0 inset-e-1 flex items-center group-focus-within/chat:opacity-100 group-hover/chat:opacity-100 md:opacity-0"
+              >
+                <Button
+                  aria-label={m.notebooks_chat_delete({ title: chat.title })}
+                  data-notebooks-panel-chat-delete={chat.id}
+                  size="icon-xs"
+                  title={m.notebooks_chat_delete({ title: chat.title })}
+                  variant="ghost"
+                  onclick={() => notebookActions.startDeleteChat(chat, notebook.id)}
+                >
+                  <TrashIcon class="size-3.5" />
+                </Button>
+              </div>
             </Sidebar.MenuSubItem>
           {/each}
         </Sidebar.MenuSub>

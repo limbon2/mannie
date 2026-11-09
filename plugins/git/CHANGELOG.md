@@ -4,8 +4,13 @@ Each change to the plugin adds one line under Unreleased, below its kind of chan
 
 ## Unreleased
 
+### Changed
+
+- The counts of added and removed lines of a diff's files take the colors of those lines.
+
 ### Fixed
 
+- Choosing the open commit in the panel's History again closes it, where before it stayed open until another commit was chosen.
 - The "@" list reads the repository once for a conversation and matches what the owner types against that reading for 10 seconds, instead of running git, `git status` included, for every key.
 
 ### Security
