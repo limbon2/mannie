@@ -2,10 +2,12 @@
 
 |          |                                                                                                                                                                                                                                                                                                                                                                     |
 | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status   | Proposed                                                                                                                                                                                                                                                                                                                                                            |
+| Status   | Accepted (D52)                                                                                                                                                                                                                                                                                                                                                      |
 | Date     | 2026-10-24                                                                                                                                                                                                                                                                                                                                                          |
 | Deciders | Owner                                                                                                                                                                                                                                                                                                                                                               |
 | Related  | [ADR-0009](0009-persist-state-in-sqlite.md), [ADR-0034](0034-build-plugins-on-a-plugin-sdk.md), [ADR-0046](0046-let-plugins-attach-context-to-conversations.md), [Security](../architecture/security.md#11-local-data), [Extension points](../architecture/extension-points.md#39-store-tables-and-migrations), [Notebooks](../../plugins/notebooks/docs/README.md) |
+
+The owner accepted this decision on 2026-11-09 ([D52](../roadmap/milestones.md#5-decisions)).
 
 ## Context
 

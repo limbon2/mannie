@@ -22,7 +22,7 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - A plugin's tool can be offered only where the conversation, or the one that gave a child its task, holds attachments of the plugin's own context provider, and its calls carry their keys (ADR-0052).
 - A new embedding profile starts with the query text that instruction-aware models such as Qwen3-Embedding want, which the owner can change or clear, and a plugin's `openView` can replace the address in the history.
 - Search profiles in the Providers settings, "Embedding and rerank models": an embedding or rerank model on a server that the owner names, with an optional key and the texts that go before queries and documents, and a test that reports the vectors' dimensions or the scores of two passages. Plugins embed and rerank through them with the service `models`, and never see a key (ADR-0047).
-- A plugin's write to the store can erase what it deleted from every file of the store, as deleting a conversation does (ADR-0048, proposed).
+- A plugin's write to the store can erase what it deleted from every file of the store, as deleting a conversation does (ADR-0048).
 
 #### MCP
 
