@@ -1024,7 +1024,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-host-kit"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "mannie-logging",
  "mannie-provider",
@@ -1036,7 +1036,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-link"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "futures-util",
  "mannie-plugin-harness",
@@ -1060,7 +1060,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-link-worker"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "futures-util",
  "mannie-host-kit",
@@ -1078,7 +1078,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-logging"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "mannie-types",
  "regex",
@@ -1092,7 +1092,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-plugin-harness"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "futures-util",
  "mannie-plugin-sdk",
@@ -1107,7 +1107,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-plugin-sdk"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "base64 0.22.1",
  "futures-util",
@@ -1126,7 +1126,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-plugins"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "futures-util",
  "mannie-plugin-sdk",
@@ -1140,7 +1140,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-provider"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -1160,7 +1160,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-runtime"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "base64 0.22.1",
  "fastrand",
@@ -1184,7 +1184,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-store"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "mannie-plugin-sdk",
  "mannie-types",
@@ -1200,7 +1200,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-tools"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "fastrand",
  "futures-util",
@@ -1227,7 +1227,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-types"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "serde",
  "specta",
@@ -1238,7 +1238,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-worker"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1264,7 +1264,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-workers"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "base64 0.22.1",
  "fastrand",
@@ -1292,7 +1292,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-workers-testing"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "futures-util",
  "hyper-util",

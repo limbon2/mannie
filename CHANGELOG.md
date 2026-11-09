@@ -4,6 +4,8 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+## 0.6.0 - 2026-11-09
+
 ### Added
 
 - Plugins publish tools while they run, through the point `tool-sources`: each set replaces the source's tools, a run keeps the set that it started with, and a published tool gives way to any tool of the same name (ADR-0043).
@@ -22,6 +24,20 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - Search profiles in the Providers settings, "Embedding and rerank models": an embedding or rerank model on a server that the owner names, with an optional key and the texts that go before queries and documents, and a test that reports the vectors' dimensions or the scores of two passages. Plugins embed and rerank through them with the service `models`, and never see a key (ADR-0047).
 - A plugin's write to the store can erase what it deleted from every file of the store, as deleting a conversation does (ADR-0048, proposed).
 
+#### MCP
+
+- The plugin MCP (ADR-0043): agents use the tools of MCP servers that the owner registers in the settings section MCP servers, programs that Mannie starts on this computer and remote servers over Streamable HTTP, in the protocol era of 2026-07-28 and in the earlier one of `initialize`, through rmcp 3.7.0. Each call asks the owner unless a grant for the tool or full access covers it, and the servers' hints decide nothing.
+- Secret variables of a local server reach only that server's environment, and secret headers of a remote server only its URL; both stay in the credential store, and results, errors, the log, the server's instructions and its listings of tools and resources replace them.
+- Signing in to a remote server with OAuth: discovery, registration of Mannie as a native client or a client that the owner registered, the code flow with PKCE S256, `state` and the `iss` check, a browser that comes back to a loopback port, and tokens that Mannie refreshes itself.
+- Show tools switches each tool of a server, at most 64 of all servers; a tool that a server adds later starts off and is marked new. Show log shows a server's error output and what happened to its connections.
+- Paste JSON adds the servers of another client's configuration, under `mcpServers` or `servers`, after a preview that names their secrets without their values.
+- The images that a server's tools return reach the model (ADR-0044), with a switch for each server, and so do the server's instructions, marked as its words.
+- "@" attaches a connected server's resource to a message, and agents read resources with `mcp_read_resource`.
+
+#### Notebooks
+
+- The plugin Notebooks, off by default: notebooks of PDF, Markdown and text files of any size and pasted texts, indexed and searched through the owner's search profiles of an embedding model and, if the owner chooses one, a reranker. The Notebooks entry of the activity bar opens the latest notebook, whose page shows each source's state and progress, with "Use in answers", "Try again" and its text in a viewer that fills the window. The sidebar lists the notebooks, each with "New chat" and its own chats, which search the notebook with every message and stay out of the Chat list; "@" attaches a notebook to any other chat. Replies get the best passages, searched with the message and the owner's earlier messages, and the model lists, searches and reads the attached notebooks with three tools, and cites passages by links that open them in the viewer. A PDF is read page by page, so a page that fails costs only that page.
+
 ### Changed
 
 - `task dev` runs the app as `io.github.limbon2.mannie.dev`, with a data folder, credentials and logs of its own, so a development build never migrates the owner's database and runs beside a release build.
@@ -37,10 +53,53 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - The styles that only a plugin's interface uses reach the app, such as the row of a host's name and port in SSH's host dialog: Tailwind read no file of the plugins' folders, because their source pattern named the folders instead of their files.
 - The end-to-end test of child agents expects a task report's result as the runtime now writes it, with the sentence that its evidence comes from the child's own tool calls.
 
+#### Workers
+
+- The end-to-end test of workers expects a task report's result as the runtime now writes it, with the sentence that its evidence comes from the worker's own tool calls.
+
+#### SSH
+
+- CI uses crypto-bigint 0.7.10 after the upstream project yanked 0.7.6, with its required ctutils 0.4.6 dependency.
+
+#### Git
+
+- The "@" list reads the repository once for a conversation and matches what the owner types against that reading for 10 seconds, instead of running git, `git status` included, for every key.
+
+#### MCP
+
+- The JSON import test uses an absolute working folder for the platform that runs it, so it passes on Linux as well as Windows.
+
 ### Security
 
 - ctutils 0.4.6, which fixes the advisory RUSTSEC-2026-0385 in the constant-time masks and `u128` comparisons that the Secret Service credential store reaches through its hashes.
 - tokio 1.53.3, which fixes the advisory RUSTSEC-2026-0386 in the constructors of `AsyncFd` on Unix, which neither Mannie's crates nor their dependencies call.
+
+#### Workers
+
+- tokio 1.53.3, which fixes the advisory RUSTSEC-2026-0386 in the constructors of `AsyncFd` on Unix, which neither the plugin's crates nor their dependencies call.
+
+#### Images
+
+- tokio 1.53.3, which fixes the advisory RUSTSEC-2026-0386 in the constructors of `AsyncFd` on Unix, which neither the plugin's crates nor their dependencies call.
+
+#### SSH
+
+- ctutils 0.4.6, which fixes the advisory RUSTSEC-2026-0385 in the constant-time masks and `u128` comparisons that russh's ciphers and elliptic curves use.
+- crypto-bigint 0.7.10, which fixes the advisory RUSTSEC-2026-0387 in the constant-time subtraction, division and Montgomery multiplication that russh's P-256, P-384 and P-521 curves use.
+- tokio 1.53.3, which fixes the advisory RUSTSEC-2026-0386 in the constructors of `AsyncFd` on Unix, which neither the plugin's crates nor their dependencies call.
+
+#### Git
+
+- tokio 1.53.3, which fixes the advisory RUSTSEC-2026-0386 in the constructors of `AsyncFd` on Unix, which neither the plugin's crates nor their dependencies call.
+
+#### MCP
+
+- tokio 1.53.3, which fixes the advisory RUSTSEC-2026-0386 in the constructors of `AsyncFd` on Unix, which neither the plugin's crates nor their dependencies call.
+
+#### Notebooks
+
+- Accept the maintenance advisory RUSTSEC-2026-0192 for `ttf-parser`, which the pinned PDF library requires for font embedding that Notebooks never uses, with the owner's approval. Recheck when `pdf-extract` supports `lopdf` 0.44 or newer.
+- tokio 1.53.3, which fixes the advisory RUSTSEC-2026-0386 in the constructors of `AsyncFd` on Unix, which neither the plugin's crates nor their dependencies call.
 
 ## 0.5.0 - 2026-10-22
 
