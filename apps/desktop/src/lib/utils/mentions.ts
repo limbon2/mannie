@@ -160,31 +160,49 @@ function standsAt(text: string, token: string, index: number): boolean {
   return ends && startsToken(text, index);
 }
 
-/** Where `token` first stands in the text as a whole token, or -1. */
-function firstStanding(text: string, token: string): number {
+/** A place where a token stands in the text as a whole token. */
+interface Standing {
+  readonly index: number;
+  readonly token: string;
+}
+
+/** Every place where `token` stands in the text as a whole token. */
+function standings(text: string, token: string): Standing[] {
+  const found: Standing[] = [];
   let index = text.indexOf(token);
   while (index !== -1) {
     if (standsAt(text, token, index)) {
-      return index;
+      found.push({ index, token });
     }
     index = text.indexOf(token, index + 1);
   }
-  return -1;
+  return found;
+}
+
+/** Orders standings by where they start, the longer token first where two start together. */
+function byPlaceThenLength(left: Standing, right: Standing): number {
+  const byIndex = left.index - right.index;
+  return byIndex === 0 ? right.token.length - left.token.length : byIndex;
 }
 
 /**
  * The tokens among `tokens` that the text holds as whole tokens, in the order
  * in which they first appear. A token that the owner changed, such as a
- * folder's token followed by more of a path, no longer counts.
+ * folder's token followed by more of a path, no longer counts. Where tokens
+ * overlap, the longer one wins, so that "@test db" holds the mention of
+ * "test db" and not also that of "test".
  */
 export function tokensInText(text: string, tokens: Iterable<string>): string[] {
-  const found: { index: number; token: string }[] = [];
-  for (const token of tokens) {
-    const index = firstStanding(text, token);
-    if (index !== -1) {
-      found.push({ index, token });
+  const all = [...new Set(tokens)].flatMap((token) => standings(text, token));
+  all.sort(byPlaceThenLength);
+  const kept = new Set<string>();
+  let claimedUntil = 0;
+  for (const standing of all) {
+    if (standing.index < claimedUntil) {
+      continue;
     }
+    kept.add(standing.token);
+    claimedUntil = standing.index + standing.token.length;
   }
-  found.sort((left, right) => left.index - right.index);
-  return found.map((entry) => entry.token);
+  return [...kept];
 }
