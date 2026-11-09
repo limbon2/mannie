@@ -136,7 +136,7 @@ describe('databases', () => {
     await $(PAGE).waitForExist({ timeout: 30_000, timeoutMsg: 'the database did not open' });
     await waitForShownText(PAGE, /inventory\.db on this computer/u);
     await $(`${THIS_COMPUTER} [data-database-table="parts"]`).waitForDisplayed();
-    await expect($(`${THIS_COMPUTER} [data-database-row]`)).toHaveText(expect.stringContaining('Inventory'));
+    await waitForShownText(`${THIS_COMPUTER} [data-database-row]`, /Inventory/u);
     // The page opens on the Data tab with the first table's rows.
     await expect($('[data-database-tab="data"]')).toHaveAttribute('aria-selected', 'true');
     await waitForShownText(GRID, /bolt/u);
@@ -169,7 +169,7 @@ describe('databases', () => {
     await $(PAGE).waitForExist({ timeout: 30_000, timeoutMsg: 'the worker’s database did not open' });
     await waitForShownText(PAGE, new RegExp(`parts\\.db on ${WORKER_NAME}`, 'u'));
     await $(`${ON_WORKER} [data-database-table="parts"]`).waitForDisplayed();
-    await expect($(`${ON_WORKER} [data-database-row]`)).toHaveText(expect.stringContaining('Parts'));
+    await waitForShownText(`${ON_WORKER} [data-database-row]`, /Parts/u);
     await $(`${ON_WORKER} [data-database-table="parts"] button`).click();
     await expect($('[data-database-tab="data"]')).toHaveAttribute('aria-selected', 'true');
     await waitForShownText(GRID, /nut/u);
@@ -185,7 +185,7 @@ describe('databases', () => {
       timeout: 60_000,
       timeoutMsg: 'the worker’s database did not show as offline',
     });
-    await expect($(`${ON_WORKER} [data-database-row]`)).toHaveText(expect.stringContaining('Parts'));
+    await waitForShownText(`${ON_WORKER} [data-database-row]`, /Parts/u);
     await axeInBothThemes();
   });
 });

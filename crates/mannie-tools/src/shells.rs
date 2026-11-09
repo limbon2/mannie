@@ -395,12 +395,12 @@ mod tests {
     fn a_shell_s_kind_comes_from_its_program_name() {
         assert_eq!(ShellKind::of(Path::new("/bin/bash")), ShellKind::Bash);
         assert_eq!(
-            ShellKind::of(Path::new(r"C:\Program Files\Git\bin\bash.exe")),
+            ShellKind::of(Path::new("C:/Program Files/Git/bin/bash.exe")),
             ShellKind::Bash
         );
         assert_eq!(ShellKind::of(Path::new("/usr/bin/dash")), ShellKind::Sh);
         assert_eq!(
-            ShellKind::of(Path::new(r"C:\Windows\System32\cmd.exe")),
+            ShellKind::of(Path::new("C:/Windows/System32/cmd.exe")),
             ShellKind::Cmd
         );
         assert_eq!(ShellKind::of(Path::new("pwsh.exe")), ShellKind::PowerShell);
@@ -455,7 +455,7 @@ mod tests {
 
     #[test]
     fn powershell_takes_its_setup_as_a_command_on_one_line_without_double_quotes() {
-        let powershell = shell(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe");
+        let powershell = shell("C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe");
 
         let start =
             shell_start(&powershell, Some("$a = 'b'"), Path::new("C:/t"), &no_owner).unwrap();

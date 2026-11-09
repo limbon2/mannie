@@ -34,7 +34,6 @@ pub(super) struct Pty {
     shell: Pid,
     child: Child,
     controller: OwnedFd,
-    code: Option<Option<i32>>,
     record: ProcessRecord,
 }
 
@@ -89,7 +88,6 @@ impl Pty {
             shell,
             child,
             controller,
-            code: None,
             record,
         };
         Ok((pty, reader, writer))
@@ -109,25 +107,26 @@ impl Pty {
 
     /// Waits until the shell exits, and returns its exit code.
     pub(super) async fn finished(&mut self) -> Option<i32> {
-        if let Some(code) = self.code {
-            return code;
-        }
-        let code = self
-            .child
+        self.child
             .wait()
             .await
             .ok()
-            .and_then(|status| status.code());
-        self.code = Some(code);
-        code
+            .and_then(|status| status.code())
     }
 
     /// Hangs up the shell's process group, waits at most `grace` for the
     /// shell to exit, then ends what is left of its tree and the shell.
     pub(super) async fn end(mut self, grace: Duration) -> Option<i32> {
-        // The shell leads its own session and process group, so the group's
-        // ID is the shell's.
-        if let Err(error) = rustix::process::kill_process_group(self.shell, Signal::HUP)
+        let processes = self
+            .record
+            .start_time
+            .parse()
+            .ok()
+            .map(|start| tree::ProcessTree::capture(self.shell, start));
+        // The shell leads its own process group. The child holds the PID
+        // until it is reaped, so hang up the group only before that happens.
+        if self.child.id().is_some()
+            && let Err(error) = rustix::process::kill_process_group(self.shell, Signal::HUP)
             && error != rustix::io::Errno::SRCH
         {
             tracing::debug!(%error, "the shell of a terminal was not hung up");
@@ -136,7 +135,9 @@ impl Pty {
             .await
             .ok()
             .flatten();
-        tree::end_tree(self.shell).await;
+        if let Some(processes) = processes {
+            processes.end().await;
+        }
         if exited.is_none() {
             if let Err(error) = self.child.start_kill() {
                 tracing::debug!(%error, "the shell of a terminal was not killed");

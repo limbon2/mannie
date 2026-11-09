@@ -109,6 +109,7 @@ describe('the shell', () => {
       'Interface',
       'Providers',
       'Instructions',
+      'Skills',
       'Tools',
       'Child agents',
       'Window',

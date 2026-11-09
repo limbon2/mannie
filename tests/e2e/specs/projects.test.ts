@@ -213,7 +213,7 @@ describe('projects', () => {
     await projectToggle(project).click();
     await expect(projectToggle(project)).toHaveAttribute('aria-expanded', 'true');
 
-    const group = $('[data-slot="sidebar-group-label"][aria-expanded]');
+    const group = $('[data-slot="sidebar-group-label"][aria-expanded]:has(+ [data-add-project])');
     await group.click();
     await expect(group).toHaveAttribute('aria-expanded', 'false');
     await expect(projectRow(project)).not.toBeDisplayed();

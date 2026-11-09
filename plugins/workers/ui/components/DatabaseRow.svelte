@@ -66,9 +66,10 @@
     <Sidebar.MenuItem {...props} data-database={database.key}>
       <div class="group/database relative">
         <Collapsible.Trigger>
-          {#snippet child({ props: trigger })}
+          {#snippet child({ props: trigger }: { props: Record<string, unknown> })}
+            {const buttonProps = $derived(usable ? trigger : { onclick: () => void openDatabase(database.key) })}
             <Sidebar.MenuButton
-              {...trigger}
+              {...buttonProps}
               class="pe-8 group-hover/database:bg-sidebar-accent group-hover/database:text-sidebar-accent-foreground"
               data-database-row=""
               isActive={isShown && !usable}

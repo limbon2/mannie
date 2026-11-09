@@ -55,8 +55,7 @@ async function openToolbarMenu(index: number): Promise<void> {
   await waitForAnimations();
 }
 
-async function closeOverlays(): Promise<void> {
-  await browser.keys(Key.Escape);
+async function waitForOverlaysToClose(): Promise<void> {
   await browser.waitUntil(
     async () =>
       browser.execute(
@@ -66,6 +65,11 @@ async function closeOverlays(): Promise<void> {
     { timeoutMsg: 'a menu or dialog stayed open' },
   );
   await waitForAnimations();
+}
+
+async function closeOverlays(): Promise<void> {
+  await browser.keys(Key.Escape);
+  await waitForOverlaysToClose();
 }
 
 async function openInterfaceSettings(): Promise<void> {
@@ -221,7 +225,9 @@ describe('the chat and window views in the pseudo-locale', () => {
     expect(await overflowsHorizontally()).toBe(false);
     expect(await axeViolations()).toEqual([]);
 
-    await $(`${card} [data-task-open]`).click();
+    const openTask = $(`${card} [data-task-open]`);
+    await openTask.scrollIntoView({ block: 'center' });
+    await openTask.click();
     await $('[data-side-panels] article').waitForDisplayed({ timeout: 10_000 });
     await waitForAnimations();
     expect(await uncataloguedText()).toEqual([]);
@@ -367,7 +373,10 @@ describe('the chat and window views in the pseudo-locale', () => {
     await $('#profile-name').waitForDisplayed();
     await waitForAnimations();
     expect(await uncataloguedText()).toEqual([]);
-    await closeOverlays();
+    const cancel = $('[role="dialog"] [data-slot="dialog-footer"] button[type="button"]');
+    await cancel.scrollIntoView({ block: 'center' });
+    await cancel.click();
+    await waitForOverlaysToClose();
   });
 
   it('shows only catalog text in the question about closing the window', async () => {

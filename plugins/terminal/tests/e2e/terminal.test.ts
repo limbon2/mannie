@@ -29,6 +29,7 @@ import {
   openPluginUses,
   openSettings,
   setPluginEnabled,
+  shownText,
   waitForApp,
   waitForShownText,
 } from '#e2e/page.ts';
@@ -81,8 +82,8 @@ async function endedBlock(command: string): Promise<WebdriverIO.Element> {
     await browser.waitUntil(
       async () => {
         listed = [];
-        for (const row of await $$('[data-block]')) {
-          const text = await row.getText();
+        for (const row of await $$('[data-side-panels] [role="tabpanel"]:not([hidden]) [data-block]')) {
+          const text = await shownText(row);
           listed.push(text.replaceAll('\n', ' '));
           if (text.includes(command) && !text.includes(RUNNING)) {
             found = row;
@@ -93,8 +94,8 @@ async function endedBlock(command: string): Promise<WebdriverIO.Element> {
       },
       { timeout: 30_000 },
     );
-  } catch {
-    // The list's rows say what the terminal made of the command instead.
+  } catch (cause) {
+    throw new Error(`no ended block of "${command}"; the list shows: ${JSON.stringify(listed)}`, { cause });
   }
   if (found === undefined) {
     throw new Error(`no ended block of "${command}"; the list shows: ${JSON.stringify(listed)}`);
@@ -103,9 +104,7 @@ async function endedBlock(command: string): Promise<WebdriverIO.Element> {
 }
 
 /**
- * Waits until the terminal that shows reached a prompt that marks commands:
- * its status in the toolbar no longer says that the shell starts, as a person
- * waits for the prompt before typing.
+ * Waits for the shown terminal to reach a prompt before typing into it.
  */
 async function waitForPrompt(): Promise<void> {
   await browser.waitUntil(
@@ -115,9 +114,7 @@ async function waitForPrompt(): Promise<void> {
         const shown = toolbars.find((toolbar) => toolbar.offsetParent !== null);
         return shown?.querySelector('[data-content]')?.textContent.trim() ?? '';
       });
-      const hasStatus = status !== '';
-      const isStarting = status === 'Starting';
-      return hasStatus && !isStarting;
+      return status === 'Ready';
     },
     { timeout: 30_000, timeoutMsg: 'the terminal reached no prompt that marks commands' },
   );
@@ -143,7 +140,7 @@ async function showCommandList(): Promise<void> {
 async function showTab(terminal: string): Promise<void> {
   const label = `${terminal} ·`;
   for (const tab of await $$('[data-side-panel-tab] [role="tab"]')) {
-    if ((await tab.getText()).includes(label)) {
+    if ((await shownText(tab)).includes(label)) {
       await tab.click();
       break;
     }

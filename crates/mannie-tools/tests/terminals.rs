@@ -259,12 +259,13 @@ async fn a_resize_reaches_the_shell() {
 async fn ending_the_terminal_ends_a_process_in_a_console_of_its_own() {
     let folder = tempfile::tempdir().unwrap();
     let pid_file = folder.path().join("grandchild.pid");
-    let mut session = Session::start(powershell(), vec!["-NoLogo".into(), "-NoProfile".into()]);
+    let session = Session::start(powershell(), vec!["-NoLogo".into(), "-NoProfile".into()]);
     // Start-Process gives the sleeper a hidden console of its own, outside
-    // the pseudo console, so only the job reaches it.
+    // the pseudo console, so only the job reaches it. The parent writes the
+    // child's process ID from Start-Process's result.
     session
         .type_line(&format!(
-            "Start-Process -WindowStyle Hidden -FilePath '{}' -ArgumentList '-NoProfile -NonInteractive -Command \"$PID | Out-File -Encoding ascii ''{}''; Start-Sleep -Seconds 60\"'",
+            "(Start-Process -WindowStyle Hidden -FilePath '{}' -ArgumentList '-NoProfile -NonInteractive -Command \"Start-Sleep -Seconds 60\"' -PassThru).Id | Out-File -Encoding ascii -LiteralPath '{}'",
             powershell().display(),
             pid_file.display()
         ))
@@ -275,7 +276,6 @@ async fn ending_the_terminal_ends_a_process_in_a_console_of_its_own() {
     session.terminal.end(Duration::from_secs(1)).await;
 
     assert_ended(pid).await;
-    let _ = &mut session.output;
 }
 
 #[cfg(target_os = "linux")]
