@@ -40,9 +40,23 @@ tasks:
   gen:
     desc: Generate the launcher and its lock, the IPC bindings of the core and of each plugin, the message catalogs and SvelteKit's types
     cmds:
+      - task: gen:launcher
+      - task: gen:bindings
+
+  # `task ci` runs the two halves of `task gen` as steps of their own
+  # (scripts/ci.mjs), so the checks that read only the launcher start before
+  # the bindings' programs have built.
+
+  gen:launcher:
+    desc: Write the launcher and its lock, the plugin list and the inlang project, the first half of `task gen`, which builds nothing
+    cmds:
       # The plugins' manifests, the launcher in .generated/desktop/ with its
       # lock, and the editor workspace (ADR-0035, decisions 3 to 5 and 12).
       - node scripts/plugins/generate.mjs
+
+  gen:bindings:
+    desc: Generate the IPC bindings of the core and of each plugin, the message catalogs, SvelteKit's types and the launcher's fingerprint, the second half of `task gen`, after `task gen:launcher`
+    cmds:
       # The core's bindings. The program also writes the bindings of the
       # validation commands, so it needs the validation feature
       # (apps/desktop/core/Cargo.toml).
@@ -220,16 +234,35 @@ tasks:
       - task: test:scripts
 
   test:rust:
-    desc: Run the Rust tests of every Cargo workspace and of the desktop binary with cargo-nextest, then the doctests
+    desc: Run the Rust tests and the doctests of every Cargo workspace and the tests of the desktop binary with cargo-nextest
     cmds:
-      # cargo-nextest runs the tests of every binary side by side, and every
-      # test runs even after one fails (.config/nextest.toml), so a single run
-      # reports every failure (ADR-0037, decision 4).
-      - node scripts/plugins/each.mjs -- cargo nextest run --config-file .config/nextest.toml --manifest-path {manifest} --workspace --all-features --locked
+      - task: test:rust:core
+      - task: test:rust:plugins
+      - task: test:rust:desktop
+
+  # The three parts of `task test:rust`, which `task ci` runs as steps of
+  # their own and CI as jobs of their own (scripts/ci.mjs). cargo-nextest runs
+  # the tests of every binary side by side, and every test runs even after one
+  # fails (.config/nextest.toml), so a single run reports every failure
+  # (ADR-0037, decision 4). It leaves the doctests to cargo test.
+
+  test:rust:core:
+    desc: Run the Rust tests of the root workspace, which holds the core's crates, with cargo-nextest, then its doctests
+    cmds:
+      - cargo nextest run --config-file .config/nextest.toml --manifest-path Cargo.toml --workspace --all-features --locked
+      - cargo test --doc --manifest-path Cargo.toml --workspace --all-features --locked --no-fail-fast
+
+  test:rust:plugins:
+    desc: Run the Rust tests of each plugin's workspace and of each fixture plugin's with cargo-nextest, then their doctests
+    cmds:
+      - node scripts/plugins/each.mjs --plugins -- cargo nextest run --config-file .config/nextest.toml --manifest-path {manifest} --workspace --all-features --locked
+      - node scripts/plugins/each.mjs --plugins -- cargo test --doc --manifest-path {manifest} --workspace --all-features --locked --no-fail-fast
+
+  test:rust:desktop:
+    desc: Run the Rust tests of the desktop binary with cargo-nextest (after `task gen`)
+    cmds:
       # The desktop binary belongs to the launcher, which `task gen` writes.
       - cargo nextest run --config-file .config/nextest.toml --manifest-path apps/desktop/src-tauri/Cargo.toml -p mannie-desktop --all-features --locked
-      # nextest leaves the doctests to cargo test.
-      - node scripts/plugins/each.mjs -- cargo test --doc --manifest-path {manifest} --workspace --all-features --locked --no-fail-fast
 
   test:rust:build:
     desc: Build the Rust tests of every Cargo workspace and of the desktop binary without running them
@@ -308,7 +341,7 @@ tasks:
       - task: e2e:run
 
   e2e:run:
-    desc: Run the built validation app through tauri-driver; MANNIE_E2E_SPEC selects one spec
+    desc: Run the built validation app through tauri-driver; MANNIE_E2E_SPEC selects one spec, and MANNIE_E2E_SHARD=1/2 the first of two parts of the specs
     cmds:
       - pnpm exec wdio run tests/e2e/wdio.startup.conf.ts
       - pnpm exec wdio run tests/e2e/wdio.conf.ts
@@ -405,7 +438,8 @@ tasks:
       - node scripts/check-docs.mjs
 
   ci:
-    desc: Run every check a change must pass, side by side within limits that keep the machine usable, and list each step's result and time (after `task setup`)
+    desc: Run every check a change must pass, side by side within limits that keep the machine usable, and list each step's result and time (after `task setup`); `task ci -- static` runs one group of the checks, as a job of CI does
     cmds:
-      # The steps, their order and the limits are in the script (ADR-0037).
-      - node scripts/ci.mjs
+      # The steps, their order, their groups and the limits are in the script
+      # (ADR-0037).
+      - node scripts/ci.mjs {{.CLI_ARGS}}

@@ -53,9 +53,10 @@ jobs:
             set -eu
             . "$HOME/.cargo/env"
             # The workflow's environment does not reach the virtual machine,
-            # whose disk lives on the runner's, so the build settings of
-            # ci.yml that keep the build small are set here.
-            export CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=line-tables-only
+            # whose disk lives on the runner's, so the setting of ci.yml that
+            # keeps the build folder small is set here. The debug information
+            # of dev builds comes from .cargo/config.toml, as in every build.
+            export CARGO_INCREMENTAL=0
             rustup toolchain install
             # The core's crates that run inside a worker: the system tools
             # that its agents use, the provider adapters and the runtime

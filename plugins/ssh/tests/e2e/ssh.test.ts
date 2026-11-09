@@ -25,6 +25,7 @@ import {
   openSettings,
   setPluginEnabled,
   waitForApp,
+  waitForGone,
   waitForShownText,
 } from '#e2e/page.ts';
 import { MODELS, type ProviderServer, startProviderServer } from '#e2e/provider-server.ts';
@@ -150,7 +151,7 @@ describe('SSH hosts', () => {
     await axeInBothThemes();
     await $('[data-ssh-remove-confirm]').click();
 
-    await expect($(ROW)).not.toBeExisting();
+    await waitForGone(ROW);
     await leaveSettings();
   });
 });

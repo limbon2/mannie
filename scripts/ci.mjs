@@ -23,7 +23,13 @@
 // above the summary, which ends the run with every step's status and
 // duration.
 //
-// Usage: node scripts/ci.mjs (through `task ci`)
+// The steps belong to groups, and a run that names groups runs only their
+// steps and the steps that those need. CI runs each group as a job of its
+// own, side by side on a runner each (.github/workflows/ci.yml), so the
+// slowest group sets the time of the checks, and a group that fails names
+// the command that repeats it.
+//
+// Usage: node scripts/ci.mjs [group...] (through `task ci` and `task ci -- <group>...`)
 
 import { spawn } from 'node:child_process';
 import { availableParallelism, constants, freemem, setPriority, totalmem } from 'node:os';
@@ -71,33 +77,103 @@ import { fileURLToPath } from 'node:url';
  */
 
 /**
- * The steps of `task ci`. `gen` comes first, because most checks read what it
- * writes; the steps without a lane are listed with the longest first, so the
- * short ones fill in at the end.
+ * The steps of `task ci`. The two halves of `task gen` come first, because
+ * most checks read what they write: the launcher, which takes seconds, and
+ * the bindings, whose programs build first. The steps without a lane are
+ * listed with the longest first, so the short ones fill in at the end.
  * @type {Step[]}
  */
 export const STEPS = [
-  { lanes: ['build'], task: 'gen' },
-  { lanes: ['build'], needs: ['gen'], task: 'test:rust:build' },
-  { lanes: ['clippy'], needs: ['gen'], task: 'lint:rust' },
-  { needs: ['gen'], task: 'lint:ts' },
-  { needs: ['gen'], task: 'lint:types' },
+  { task: 'gen:launcher' },
+  { lanes: ['build'], needs: ['gen:launcher'], task: 'gen:bindings' },
+  { lanes: ['build'], needs: ['gen:bindings'], task: 'test:rust:build' },
+  { lanes: ['clippy'], needs: ['gen:bindings'], task: 'lint:rust' },
+  { needs: ['gen:bindings'], task: 'lint:ts' },
+  { needs: ['gen:bindings'], task: 'lint:types' },
+  { needs: ['gen:bindings'], task: 'lint:messages' },
   // Vitest's Paraglide plugin compiles the messages again and rewrites their
-  // files, which ESLint and svelte-check read, so it runs after them.
-  // Cold message evaluation timed out on Windows while Cargo compiled. Keep
-  // both test suites out of the compiler lanes without changing timeouts.
-  { after: ['lint:ts', 'lint:types'], lanes: ['build', 'clippy'], needs: ['gen'], task: 'test:desktop' },
+  // files, which ESLint, svelte-check and the message check read, so it runs
+  // after them. Cold message evaluation timed out on Windows while Cargo
+  // compiled. Keep both test suites out of the compiler lanes without
+  // changing timeouts.
+  {
+    after: ['lint:ts', 'lint:types', 'lint:messages'],
+    lanes: ['build', 'clippy'],
+    needs: ['gen:bindings'],
+    task: 'test:desktop',
+  },
   // Wait for desktop transforms and tests to finish before timing Rust
-  // behavior. These steps still run after a failed build or desktop suite.
-  { after: ['test:rust:build', 'test:desktop'], lanes: ['build', 'clippy'], needs: ['gen'], task: 'test:rust' },
-  { needs: ['gen'], task: 'lint:deps' },
-  { needs: ['gen'], task: 'fmt:check' },
-  { needs: ['gen'], task: 'lint:messages' },
+  // behavior. These steps still run after a failed build or desktop suite,
+  // and a step builds its own tests where `test:rust:build` has not. Only
+  // the desktop binary needs what `task gen` writes.
+  { after: ['test:rust:build', 'test:desktop'], lanes: ['build', 'clippy'], task: 'test:rust:core' },
+  { after: ['test:rust:build', 'test:desktop'], lanes: ['build', 'clippy'], task: 'test:rust:plugins' },
+  {
+    after: ['test:rust:build', 'test:desktop'],
+    lanes: ['build', 'clippy'],
+    needs: ['gen:bindings'],
+    task: 'test:rust:desktop',
+  },
+  // cargo-deny and rustfmt read the launcher and its lock, not the bindings.
+  { needs: ['gen:launcher'], task: 'lint:deps' },
+  { needs: ['gen:launcher'], task: 'fmt:check' },
   { task: 'docs:lint' },
   { task: 'test:scripts' },
   { task: 'lint:proto' },
   { task: 'lint:toml' },
 ];
+
+/**
+ * The groups of steps, by name. Every check belongs to exactly one group, and
+ * a group also runs the steps that its own need, such as the halves of `task
+ * gen`. `test:rust:build` belongs to none: it builds every Rust test ahead of
+ * the three test steps for a run of all groups, and a group's test step
+ * builds its own.
+ *
+ * - `static` needs no build, so it reports formatting, dependency and
+ *   documentation problems within minutes.
+ * - `desktop` checks the desktop app's UI and runs the desktop binary's tests.
+ * - `clippy` lints the Rust code of every workspace.
+ * - `core` and `plugins` run the Rust tests of the root workspace and of the
+ *   plugins' workspaces.
+ * @type {Record<string, string[]>}
+ */
+export const GROUPS = {
+  clippy: ['lint:rust'],
+  core: ['test:rust:core'],
+  desktop: ['lint:ts', 'lint:types', 'lint:messages', 'test:desktop', 'test:rust:desktop'],
+  plugins: ['test:rust:plugins'],
+  static: ['docs:lint', 'test:scripts', 'lint:proto', 'lint:toml', 'fmt:check', 'lint:deps'],
+};
+
+/**
+ * The steps of the named groups with the steps that they need, in the order
+ * of `steps`. A step that waits for a step outside the selection no longer
+ * waits for it.
+ * @param {Step[]} steps
+ * @param {Record<string, string[]>} groups
+ * @param {string[]} names the groups to run
+ * @returns {Step[]}
+ */
+export function stepsOfGroups(steps, groups, names) {
+  const byTask = new Map(steps.map((step) => [step.task, step]));
+  /** @type {Set<string>} */
+  const selected = new Set();
+  const pending = names.flatMap((name) => groups[name] ?? []);
+  while (pending.length > 0) {
+    const task = /** @type {string} */ (pending.pop());
+    if (!selected.has(task)) {
+      selected.add(task);
+      pending.push(...(byTask.get(task)?.needs ?? []));
+    }
+  }
+  return steps
+    .filter((step) => selected.has(step.task))
+    .map((step) => {
+      const after = (step.after ?? []).filter((task) => selected.has(task));
+      return step.after === undefined ? step : { ...step, after };
+    });
+}
 
 const GIBIBYTE = 1024 ** 3;
 
@@ -377,6 +453,15 @@ export function taskRunner(root, baseEnvironment) {
 const isMain = process.argv[1] === fileURLToPath(import.meta.url);
 if (isMain) {
   const root = resolve(import.meta.dirname, '..');
+  const requested = process.argv.slice(2);
+  const unknown = requested.filter((name) => !Object.hasOwn(GROUPS, name));
+  if (unknown.length > 0) {
+    console.error(`ci: no group is named ${unknown.join(' or ')}; the groups are ${Object.keys(GROUPS).join(', ')}`);
+    process.exit(2);
+  }
+  const runsEveryStep = requested.length === 0;
+  const steps = runsEveryStep ? STEPS : stepsOfGroups(STEPS, GROUPS, requested);
+  const selection = runsEveryStep ? '' : ` of ${requested.join(' and ')}`;
   const limits = limitsFor({ freeMemory: freemem(), processors: availableParallelism(), totalMemory: totalmem() });
   try {
     setPriority(constants.priority.PRIORITY_BELOW_NORMAL);
@@ -395,10 +480,10 @@ if (isMain) {
   });
   const lanes = limits.sharedLanes ? 'one cargo step' : 'two cargo steps';
   console.log(
-    `ci: ${String(STEPS.length)} steps; ${lanes} and ${String(limits.otherSteps)} other steps at a time, below normal priority`,
+    `ci: ${String(steps.length)} steps${selection}; ${lanes} and ${String(limits.otherSteps)} other steps at a time, below normal priority`,
   );
   const started = performance.now();
-  const outcomes = await runSteps(STEPS, {
+  const outcomes = await runSteps(steps, {
     isInterrupted: () => isInterrupted,
     limits,
     now: () => performance.now(),
