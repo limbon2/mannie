@@ -67,8 +67,9 @@ runs:
         cache-all-crates: true
         # The Rust tools are installed below, in their pinned versions.
         cache-bin: false
-        # Compiler results use sccache. Keep Clippy's metadata, which sccache
-        # cannot cache, without storing another copy of every debug build.
+        # Compiler results use sccache. Keep Clippy's build folder, with the
+        # build scripts and procedural macros that sccache cannot cache,
+        # without storing another copy of every debug build.
         cache-targets: false
         cache-directories: ${{ inputs.rust-cache == 'clippy' && 'target/clippy' || '' }}
         cache-on-failure: true
