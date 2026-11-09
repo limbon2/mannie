@@ -194,13 +194,13 @@ fn decide_replay(context: &AuthContext<'_>) -> Authorization {
 
 /// Installs the authorizer of a schema copy, which the engine removes once
 /// the copy is built.
-pub(super) fn install_replay(connection: &Connection) -> rusqlite::Result<()> {
+pub(super) fn install_replay(connection: &mut Connection) -> rusqlite::Result<()> {
     connection.authorizer(Some(|context: AuthContext<'_>| decide_replay(&context)))
 }
 
 /// Installs the authorizer on a connection for its whole life, and returns
 /// what its actions show.
-pub(super) fn install(connection: &Connection) -> rusqlite::Result<Actions> {
+pub(super) fn install(connection: &mut Connection) -> rusqlite::Result<Actions> {
     let actions = Actions::default();
     let seen = Arc::clone(&actions.0);
     connection.authorizer(Some(move |context: AuthContext<'_>| {
@@ -220,7 +220,7 @@ mod tests {
     /// A database with a table, a child table, an index, a trigger, a view
     /// and a virtual table, under the authorizer.
     fn database() -> (Connection, super::Actions) {
-        let connection = Connection::open_in_memory().unwrap();
+        let mut connection = Connection::open_in_memory().unwrap();
         connection
             .execute_batch(
                 "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
@@ -234,7 +234,7 @@ mod tests {
                  INSERT INTO items (name) VALUES ('one');",
             )
             .unwrap();
-        let actions = install(&connection).unwrap();
+        let actions = install(&mut connection).unwrap();
         (connection, actions)
     }
 

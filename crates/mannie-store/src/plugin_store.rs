@@ -36,8 +36,8 @@ use mannie_plugin_sdk::services::store as sdk;
 use rusqlite::types::Value;
 use rusqlite::{Connection, params_from_iter};
 
-pub(crate) use self::authorizer::run_plugin_migration;
 use self::authorizer::{Policy, confined};
+pub(crate) use self::authorizer::{install as install_authorizer, run_plugin_migration};
 use crate::error::{ModuleProblem, StoreError};
 use crate::legacy::LEGACY_VERSIONS;
 use crate::schema::{Migration, StoreModule};

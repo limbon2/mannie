@@ -14,18 +14,22 @@
 //! the schema before the migration, and refuses any change there and any
 //! foreign key to a table outside the prefix.
 //!
-//! The store installs the authorizer before it prepares a plugin's statement
-//! and removes it once the statement has finished stepping, because SQLite
-//! prepares a statement again, under whatever authorizer is installed then,
-//! when another connection changed the schema. Installing or removing it
-//! makes SQLite prepare every cached statement of the connection again
-//! before it next runs, so a core statement cached under no authorizer never
-//! runs under a plugin's rules, nor a plugin's under none.
+//! rusqlite changes a connection's authorizer only through `&mut Connection`,
+//! which neither the store's readers nor its writer's transactions hand out,
+//! so the store installs the authorizer once on each of its connections when
+//! it opens them ([`install`]). It allows everything until [`confined`] sets
+//! a plugin's rules for the work that it runs on the calling thread. SQLite
+//! consults the authorizer when it prepares a statement, and again when it
+//! prepares one anew because another connection changed the schema. A
+//! plugin's statement is prepared, stepped and finalized inside [`confined`]
+//! and the core's statements run outside it, so each is authorized under its
+//! own rules.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
-use rusqlite::{Connection, ffi};
+use rusqlite::{Connection, ErrorCode, ffi};
 use sha2::{Digest, Sha256};
 
 use crate::legacy::{EXEMPT_MIGRATIONS, ExemptMigration};
@@ -203,20 +207,66 @@ impl Policy {
     }
 }
 
-/// Runs `work` on `connection` with the authorizer of `policy` installed,
-/// and removes the authorizer afterwards, also when `work` failed.
+thread_local! {
+    /// The rules of the plugin whose SQL this thread runs inside [`confined`].
+    static CONFINEMENT: RefCell<Option<Policy>> = const { RefCell::new(None) };
+}
+
+/// Installs the authorizer on a connection of the store when the store opens
+/// it. It allows everything except while [`confined`] runs a plugin's SQL on
+/// the same thread, which SQLite's calls of the authorizer are on.
+pub(crate) fn install(connection: &mut Connection) -> rusqlite::Result<()> {
+    connection.authorizer(Some(|context: AuthContext<'_>| {
+        CONFINEMENT.with_borrow(|confinement| {
+            confinement
+                .as_ref()
+                .map_or(Authorization::Allow, |policy| policy.decide(&context))
+        })
+    }))
+}
+
+/// Holds a plugin's rules in [`CONFINEMENT`] while it lives, and puts the
+/// rules before back when it drops, also when the work failed or panicked.
+struct Confinement {
+    before: Option<Policy>,
+}
+
+impl Confinement {
+    fn enter(policy: &Policy) -> Self {
+        Self {
+            before: CONFINEMENT.replace(Some(policy.clone())),
+        }
+    }
+}
+
+impl Drop for Confinement {
+    fn drop(&mut self) {
+        CONFINEMENT.set(self.before.take());
+    }
+}
+
+/// Runs `work` on `connection` under the rules of `policy`, which apply to
+/// every statement that this thread prepares until `work` returns, so `work`
+/// runs the plugin's SQL and nothing else. On a connection without the
+/// store's authorizer the plugin's SQL would run unconfined, so `BEGIN`,
+/// which every plugin's rules refuse, must be refused first.
 pub(crate) fn confined<T>(
     connection: &Connection,
     policy: &Policy,
     work: impl FnOnce(&Connection) -> rusqlite::Result<T>,
 ) -> rusqlite::Result<T> {
-    let rules = policy.clone();
-    connection.authorizer(Some(move |context: AuthContext<'_>| rules.decide(&context)))?;
-    let done = work(connection);
-    let removed = connection.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
-    let value = done?;
-    removed?;
-    Ok(value)
+    let _confinement = Confinement::enter(policy);
+    match connection.prepare("BEGIN") {
+        Err(error)
+            if error.sqlite_error_code() == Some(ErrorCode::AuthorizationForStatementDenied) => {}
+        Err(error) => return Err(error),
+        Ok(_unconfined) => {
+            return Err(refused(
+                "the connection has no authorizer to confine a plugin's SQL".to_owned(),
+            ));
+        }
+    }
+    work(connection)
 }
 
 /// Runs the migration `version` of the plugin's module `module`, whose text
@@ -303,11 +353,12 @@ fn refused(what: String) -> rusqlite::Error {
 mod tests {
     use rusqlite::{Connection, ErrorCode};
 
-    use super::{Policy, confined, exemption, run_plugin_migration};
+    use super::{Policy, confined, exemption, install, run_plugin_migration};
     use crate::legacy::ExemptMigration;
 
-    /// A database with a core table and the plugin `notes`'s table.
-    fn database() -> Connection {
+    /// A database with a core table and the plugin `notes`'s table, without
+    /// the store's authorizer.
+    fn unconfined_database() -> Connection {
         let connection = Connection::open_in_memory().unwrap();
         connection
             .execute_batch(
@@ -317,6 +368,13 @@ mod tests {
                  INSERT INTO notes_items (id, body) VALUES ('n1', 'One');",
             )
             .unwrap();
+        connection
+    }
+
+    /// The database of [`unconfined_database`] with the store's authorizer.
+    fn database() -> Connection {
+        let mut connection = unconfined_database();
+        install(&mut connection).unwrap();
         connection
     }
 
@@ -456,7 +514,7 @@ mod tests {
     }
 
     #[test]
-    fn the_authorizer_is_removed_after_a_plugin_statement_also_when_it_failed() {
+    fn the_rules_end_with_a_plugin_statement_also_when_it_failed() {
         let connection = database();
 
         let failed = statement_runs(&connection, "SELECT title FROM runtime_conversations");
@@ -468,6 +526,24 @@ mod tests {
 
         assert!(!failed);
         assert_eq!(core, "Secret plans");
+    }
+
+    #[test]
+    fn a_connection_without_the_authorizer_runs_no_plugin_sql() {
+        let connection = unconfined_database();
+
+        let refused = confined(&connection, &Policy::statement("notes"), |connection| {
+            connection.execute("DELETE FROM runtime_conversations", [])
+        })
+        .unwrap_err();
+        let kept: i64 = connection
+            .query_row("SELECT count(*) FROM runtime_conversations", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+
+        assert!(is_unauthorized(&refused), "{refused}");
+        assert_eq!(kept, 1);
     }
 
     #[test]

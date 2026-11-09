@@ -84,7 +84,7 @@ rfd = { version = "0.17.2", default-features = false, features = ["wayland", "xd
 # values with ring, which is already the only crypto provider (ADR-0008,
 # ADR-0062).
 ring = "0.17.14"
-rusqlite = { version = "0.40.2", features = ["bundled"] }
+rusqlite = { version = "0.41.1", features = ["bundled"] }
 # Safe calls of Unix file and process functions: `openat` without following
 # links, child subreapers and process file descriptors (ADR-0014).
 rustix = "1.1.5"

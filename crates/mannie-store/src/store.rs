@@ -148,7 +148,7 @@ impl Store {
             | OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let mut connection = Connection::open_with_flags(path, flags).map_err(open_failed)?;
         restrict_permissions(path)?;
-        configure_connection(&connection).map_err(open_failed)?;
+        configure_connection(&mut connection).map_err(open_failed)?;
         let journal_mode = enable_wal(&connection).map_err(open_failed)?;
         if !journal_mode.eq_ignore_ascii_case("wal") {
             return Err(StoreError::WalUnavailable {
@@ -218,7 +218,7 @@ impl Store {
             modules.push(plugin_store::schema_module(plugin)?);
         }
         let mut connection = Connection::open(path).map_err(open_failed)?;
-        configure_connection(&connection).map_err(open_failed)?;
+        configure_connection(&mut connection).map_err(open_failed)?;
         enable_wal(&connection).map_err(open_failed)?;
         schema::migrate_as_before_m5(&mut connection, &modules, version).map_err(open_failed)?;
         let readers = Arc::new(Readers::open(path, options.readers.max(1))?);
@@ -337,11 +337,12 @@ fn refuse_newer_schema(path: &Path, modules: &[StoreModule]) -> Result<(), Store
     schema.refuse_newer(path, modules)
 }
 
-/// Settings that every connection needs.
-pub(crate) fn configure_connection(connection: &Connection) -> rusqlite::Result<()> {
+/// Settings that every connection needs, and the authorizer that confines
+/// plugins' SQL on it.
+pub(crate) fn configure_connection(connection: &mut Connection) -> rusqlite::Result<()> {
     connection.busy_timeout(BUSY_TIMEOUT)?;
     connection.pragma_update(None, "foreign_keys", "ON")?;
-    Ok(())
+    plugin_store::install_authorizer(connection)
 }
 
 /// Switches the database to write-ahead logging and returns the journal mode

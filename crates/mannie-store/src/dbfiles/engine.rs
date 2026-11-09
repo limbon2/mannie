@@ -382,7 +382,7 @@ impl Opened {
         // Without SQLITE_OPEN_CREATE and SQLITE_OPEN_URI: the engine never
         // creates a database, and the path is no URI.
         let flags = access | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_NOFOLLOW;
-        let connection = Connection::open_with_flags(path, flags)
+        let mut connection = Connection::open_with_flags(path, flags)
             .map_err(|error| engine_error(error, cancel))?;
         harden(&connection, mode).map_err(|error| engine_error(error, cancel))?;
         // The file is checked again, so that a file replaced while it opened
@@ -406,7 +406,8 @@ impl Opened {
 
     /// Installs the authorizer for the statements that follow.
     pub(super) fn confine(&mut self) -> Result<(), EngineError> {
-        let actions = authorizer::install(&self.connection).map_err(|error| self.error(error))?;
+        let actions =
+            authorizer::install(&mut self.connection).map_err(|error| self.error(error))?;
         self.actions = Some(actions);
         Ok(())
     }
@@ -476,7 +477,6 @@ pub(super) fn bind(statement: &mut Statement<'_>, parameters: &[Value]) -> Resul
 pub(super) fn columns_of(statement: &Statement<'_>) -> Vec<Column> {
     statement
         .columns()
-        .iter()
         .map(|column| Column {
             name: column.name().to_owned(),
             declared_type: column.decl_type().map(str::to_owned),
@@ -564,10 +564,10 @@ fn schema_copy(schema: &[String]) -> Result<Opened, EngineError> {
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
         | OpenFlags::SQLITE_OPEN_CREATE
         | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    let connection = Connection::open_in_memory_with_flags(flags)
+    let mut connection = Connection::open_in_memory_with_flags(flags)
         .map_err(|error| engine_error(error, &cancel))?;
     harden(&connection, Mode::Write).map_err(|error| engine_error(error, &cancel))?;
-    authorizer::install_replay(&connection).map_err(|error| engine_error(error, &cancel))?;
+    authorizer::install_replay(&mut connection).map_err(|error| engine_error(error, &cancel))?;
     for create in schema {
         replay(&connection, create);
     }

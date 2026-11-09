@@ -22,8 +22,8 @@ impl Readers {
         let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let mut connections = Vec::with_capacity(count);
         for _ in 0..count {
-            let opened = Connection::open_with_flags(path, flags).and_then(|connection| {
-                crate::store::configure_connection(&connection)?;
+            let opened = Connection::open_with_flags(path, flags).and_then(|mut connection| {
+                crate::store::configure_connection(&mut connection)?;
                 Ok(connection)
             });
             let connection = opened.map_err(|source| StoreError::Open {
