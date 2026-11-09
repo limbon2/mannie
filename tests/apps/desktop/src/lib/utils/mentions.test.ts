@@ -91,4 +91,15 @@ describe('tokensInText', () => {
   it('finds quoted tokens', () => {
     expect(tokensInText('See @"my notes/" now', ['@"my notes/"'])).toEqual(['@"my notes/"']);
   });
+
+  it('keeps the longer token where a shorter one starts it', () => {
+    expect(tokensInText('@test db', ['@test', '@test db'])).toEqual(['@test db']);
+    expect(tokensInText('@test db', ['@test db', '@test'])).toEqual(['@test db']);
+    expect(tokensInText('Look at @test db.', ['@test', '@test db'])).toEqual(['@test db']);
+  });
+
+  it('keeps the shorter token where it stands on its own', () => {
+    expect(tokensInText('@test db and @test', ['@test', '@test db'])).toEqual(['@test db', '@test']);
+    expect(tokensInText('@test then @test db', ['@test db', '@test'])).toEqual(['@test', '@test db']);
+  });
 });
