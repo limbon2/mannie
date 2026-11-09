@@ -146,6 +146,20 @@ export async function waitForShownText(
 }
 
 /**
+ * Waits until no element of the page matches the selector. It asks the page
+ * and takes no element from the driver: WebKitWebDriver ends a search with a
+ * stale element reference when a match leaves the page between the search and
+ * the handle that the driver makes for it, which a row that is being removed
+ * does.
+ */
+export async function waitForGone(selector: string): Promise<void> {
+  await browser.waitUntil(
+    async () => browser.execute((query: string) => document.querySelector(query) === null, selector),
+    { timeout: 10_000, timeoutMsg: `${selector} stayed on the page` },
+  );
+}
+
+/**
  * Opens the settings with Ctrl+, and then the page of the section `id`, such
  * as `chat.providers`, from the settings sidebar. The sidebar's links are
  * found by their address, never their text, so this works in the pseudo-locale.
