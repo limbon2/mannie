@@ -131,8 +131,8 @@ fn pid_written(path: &Path) -> Option<u32> {
     fs::read_to_string(path).ok()?.trim().parse().ok()
 }
 
-async fn wait_for_pid(session: &mut Session, path: &Path) -> u32 {
-    let deadline = Instant::now() + Duration::from_secs(20);
+async fn wait_for_pid(session: &mut Session, path: &Path, timeout: Duration) -> u32 {
+    let deadline = Instant::now() + timeout;
     let mut poll = tokio::time::interval(Duration::from_millis(50));
     loop {
         if let Some(pid) = pid_written(path) {
@@ -285,7 +285,8 @@ async fn ending_the_terminal_ends_a_process_in_a_console_of_its_own() {
             command.into(),
         ],
     );
-    let pid = wait_for_pid(&mut session, &pid_file).await;
+    // Starting a detached PowerShell can take over 20 seconds on CI.
+    let pid = wait_for_pid(&mut session, &pid_file, Duration::from_secs(60)).await;
     assert!(is_alive(pid));
 
     session.terminal.end(Duration::from_secs(1)).await;
@@ -307,7 +308,7 @@ async fn ending_the_terminal_ends_a_process_in_a_session_of_its_own() {
             pid_file.display()
         ))
         .await;
-    let pid = wait_for_pid(&mut session, &pid_file).await;
+    let pid = wait_for_pid(&mut session, &pid_file, Duration::from_secs(20)).await;
     assert!(is_alive(pid));
 
     session.terminal.end(Duration::from_secs(1)).await;

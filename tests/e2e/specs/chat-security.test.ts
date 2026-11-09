@@ -176,11 +176,22 @@ describe('chat security', () => {
     // Quitting closes the database and flushes the logs, so every byte that
     // Mannie wrote is on disk when the folder is searched.
     const pid = await processId();
-    await chooseTrayItem('quit');
+    let lostReply: Error | undefined;
+    try {
+      await chooseTrayItem('quit');
+    } catch (error) {
+      // WebKit can end the session before the Quit response arrives.
+      const sessionEnded =
+        error instanceof Error && /unknown error when running "execute\/sync"|invalid session id/u.test(error.message);
+      if (!sessionEnded) {
+        throw error;
+      }
+      lostReply = error;
+    }
     await poll(
       () => !isRunning(pid),
       15_000,
-      () => 'Mannie did not quit',
+      () => (lostReply === undefined ? 'Mannie did not quit' : `Mannie did not quit after ${lostReply.message}`),
     );
     let scan: Scan = { found: [], searched: [], unreadable: [] };
     // The webview's processes can hold their files for a moment after Mannie ends.
