@@ -402,7 +402,7 @@ describe('performance of terminals (NFR-PERF-06 to 09)', () => {
       }
     });
     const tabSelector = '[data-side-panel-tab] [role="tab"]';
-    const tabs = await $$(tabSelector);
+    const tabs = [...(await $$(tabSelector))];
     expect(tabs).toHaveLength(IDLE_TERMINALS);
     await browser.execute(
       (selector: string) => document.querySelector<HTMLElement>(selector)?.focus(),
