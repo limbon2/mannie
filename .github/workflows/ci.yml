@@ -86,13 +86,11 @@ jobs:
           fetch-depth: 0
       # The static group builds nothing. It saves the registry's cache for
       # the other jobs, and the job with Clippy saves Clippy's build folder.
-      # Clippy alone builds only what `task gen` builds, which the desktop
-      # group stores in the compiler cache.
       - uses: ./.github/actions/setup
         with:
           rust-cache: ${{ contains(matrix.groups, 'clippy') && 'clippy' || 'registry' }}
           save-rust-cache: ${{ matrix.groups == 'static' || contains(matrix.groups, 'clippy') }}
-          compiler-cache: ${{ matrix.groups == 'static' && 'none' || matrix.groups == 'clippy' && 'read' || 'write' }}
+          compiler-cache: ${{ matrix.groups == 'static' && 'none' || 'write' }}
           system-libraries: ${{ matrix.groups != 'static' }}
       - name: Run the checks of the groups
         run: task ci -- ${{ matrix.groups }}
@@ -101,10 +99,11 @@ jobs:
         run: sccache --show-stats
 
   # A repair's selected Rust test (docs/engineering/ci-runners.md, running
-  # the pipeline).
+  # the pipeline). GitHub adds the platform to the name of a job that runs,
+  # and a full run lists this job as skipped under the name alone.
   rust-test:
     if: inputs.scope == 'rust'
-    name: Selected Rust test (${{ matrix.os }})
+    name: Selected Rust test
     strategy:
       fail-fast: false
       matrix:
@@ -122,24 +121,32 @@ jobs:
         if: always() && env.SCCACHE_PATH != ''
         run: sccache --show-stats
 
+  # The end-to-end specs in two parts, each in a job that builds the
+  # validation app, so the suite takes as long as its longer half
+  # (tests/e2e/support/shard.ts). A repair's one spec runs in one job.
   e2e:
     if: inputs.scope != 'rust'
-    name: End-to-end tests (${{ matrix.os }})
+    name: End-to-end tests ${{ matrix.shard }} (${{ matrix.os }})
     # These are disposable desktops. Let the webview paint normally rather
     # than using the off-screen mode that keeps local tests out of the way.
     env:
       MANNIE_E2E_SHOW_WINDOW: "1"
       MANNIE_E2E_SPEC: ${{ inputs.scope == 'e2e' && inputs.e2e-spec || '' }}
+      MANNIE_E2E_SHARD: ${{ matrix.shard }}
     strategy:
       fail-fast: false
       matrix:
         # V1 names the WebKitGTK 4.1 of Ubuntu 22.04, the oldest supported LTS.
         os: ${{ fromJSON(inputs.scope == 'e2e' && inputs.platform == 'windows' && '["windows-2025"]' || inputs.scope == 'e2e' && inputs.platform == 'linux' && '["ubuntu-22.04"]' || '["windows-2025","ubuntu-22.04"]') }}
+        shard: ${{ fromJSON(inputs.scope == 'e2e' && inputs.e2e-spec != '' && '["1/1"]' || '["1/2","2/2"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Both parts build the same app, so the first stores the results.
       - uses: ./.github/actions/setup
+        with:
+          compiler-cache: ${{ startsWith(matrix.shard, '1/') && 'write' || 'read' }}
       - name: Build the validation app
         run: task e2e:build
       - name: Run the end-to-end tests on WebView2
@@ -160,7 +167,7 @@ jobs:
   # The performance figures, in a job of their own beside the end-to-end
   # tests, so their five minutes do not add to the suite's time. Shared
   # runners measure their neighbours as much as Mannie, so CI records the
-  # figures without enforcing the targets. The job builds what the
+  # figures without enforcing the targets. The job builds what the first
   # end-to-end job builds and stores, so it only reads the compiler cache.
   performance:
     if: inputs.scope != 'rust' && (inputs.scope != 'e2e' || inputs.e2e-spec == '')

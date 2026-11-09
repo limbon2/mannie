@@ -12,6 +12,7 @@ import { createConnection } from 'node:net';
 import { basename, isAbsolute, join, resolve, sep } from 'node:path';
 
 import { applicationPath, plantDatabaseFromTheFuture, repository, resetDataDirectory } from './support/app.ts';
+import { shardOf } from './support/shard.ts';
 
 const DRIVER_PORT = 4444;
 
@@ -81,6 +82,9 @@ export const config: WebdriverIO.Config = {
   port: DRIVER_PORT,
   reporters: ['spec'],
   runner: 'local',
+  // The part of the specs that `MANNIE_E2E_SHARD` names, as a job of CI runs
+  // it. One focused spec is the whole run.
+  shard: hasFocusedSpec ? undefined : shardOf(process.env.MANNIE_E2E_SHARD),
   // The core's specs, and each plugin's in its folder's tests/e2e (ADR-0035,
   // decision 9), which import this folder's support as `#e2e/<module>.ts`.
   specs: focusedSpec

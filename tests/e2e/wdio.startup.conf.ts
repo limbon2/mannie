@@ -4,5 +4,7 @@ import { config as endToEnd } from './wdio.conf.ts';
 
 export const config: WebdriverIO.Config = {
   ...endToEnd,
+  // The check runs before every part of the suite and is no part of it.
+  shard: undefined,
   specs: ['./startup.test.ts'],
 };

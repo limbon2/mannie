@@ -6,5 +6,7 @@ import { config as endToEnd } from './wdio.conf.ts';
 
 export const config: WebdriverIO.Config = {
   ...endToEnd,
+  // The measurements run whole, whatever part of the suite a run takes.
+  shard: undefined,
   specs: ['./perf/**/*.test.ts'],
 };

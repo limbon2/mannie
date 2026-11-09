@@ -341,7 +341,7 @@ tasks:
       - task: e2e:run
 
   e2e:run:
-    desc: Run the built validation app through tauri-driver; MANNIE_E2E_SPEC selects one spec
+    desc: Run the built validation app through tauri-driver; MANNIE_E2E_SPEC selects one spec, and MANNIE_E2E_SHARD=1/2 the first of two parts of the specs
     cmds:
       - pnpm exec wdio run tests/e2e/wdio.startup.conf.ts
       - pnpm exec wdio run tests/e2e/wdio.conf.ts

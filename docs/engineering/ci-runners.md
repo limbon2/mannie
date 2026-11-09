@@ -24,7 +24,7 @@ Windows browser automation runs with restricted privileges at medium integrity. 
 
 ## 2. Running the pipeline
 
-- Pull requests and pushes to `main` run `CI`: the checks of `task ci` on Windows and Linux, both webviews, the performance measurements, the credential stores, the plugin programs' service tests and cross-builds, and the core's FreeBSD checks. A failed job stops no other, so one run reports every failure. A new push cancels the obsolete run for that branch.
+- Pull requests and pushes to `main` run `CI`: the checks of `task ci` on Windows and Linux, the end-to-end specs on both webviews, the performance measurements, the credential stores, the plugin programs' service tests and cross-builds, and the core's FreeBSD checks. A failed job stops no other, so one run reports every failure. A new push cancels the obsolete run for that branch.
 - The checks of `task ci` run as the groups of `scripts/ci.mjs`, each in a job of its own, and a job's name is the command that repeats it on a workstation, such as `task ci -- core`:
 
   | Group     | Checks                                                                                                          | Builds                                        |
@@ -37,6 +37,7 @@ Windows browser automation runs with restricted privileges at medium integrity. 
 
   Windows runs one job for each group. Linux builds about twice as fast, so `desktop` and `clippy` share one job and `core` and `plugins` another. A test of the script fails when a step of `task ci` belongs to no group, or when a platform's jobs miss a group.
 
+- The end-to-end specs run in two parts on each webview, each in a job that builds the validation app, so the suite takes as long as its longer part. `MANNIE_E2E_SHARD=1/2` names a part (`tests/e2e/support/shard.ts`); WebdriverIO sorts the spec files and gives each part the next share of them. The performance measurements, which CI only records, run in a job of their own.
 - The `FreeBSD` workflow runs native FreeBSD tests for pull requests that change worker code, and `Nightly` runs them every night.
 - The `Release` workflow can be run manually from the Actions page. It builds the Windows installer, Linux packages and worker archives for all three platforms, runs the checks and installs the artifacts on fresh machines. The unsigned artifacts are downloads on that run, retained for one day. A manual branch build creates no release and receives no signing key.
 - Pushing a prepared `vX.Y.Z` tag runs the same release pipeline, then signs the worker archives and creates a draft release after all checks and install tests pass. The draft holds the durable downloads. The owner publishes it after the [release checks](releasing.md#3-steps).
@@ -49,7 +50,7 @@ Builds and tests run side by side across jobs. Each job has a timeout. A failed 
 
 The groups exist because a runner has four processors, so the steps of `task ci` that build run one after another on it. Measured on 2026-11-09, after a dependency update that left the compiler cache without most of the workspace's crates, the one Windows job that ran every step took 46 min: `task gen` built for 6 min, the Rust tests for 16 min and Clippy for 8 min, and the tests then ran for 11 min. The same job took 18 min on Linux, and each end-to-end job 25 min, 5 min of them for the performance measurements. A dependency problem that cargo-deny found in the first minute showed when the job ended. A release ran all of this twice, once for the push to `main` and once for the tag.
 
-Verified on 2026-11-10 against [GitHub's limits for Actions](https://docs.github.com/en/actions/reference/limits): GitHub Free runs 20 jobs of an account at a time. Further jobs wait: on 2026-11-09, when a release ran every check beside the `CI` run of the same push, some of its jobs started 100 s late. A full `CI` run has 21 jobs, 17 of which start at once and 4 after the plan of the programs' jobs, and Linux shares jobs between groups to stay near that limit. A release adds its build jobs beside them, and the jobs over the limit start as the first short ones end.
+Verified on 2026-11-10 against [GitHub's limits for Actions](https://docs.github.com/en/actions/reference/limits): GitHub Free runs 20 jobs of an account at a time. Further jobs wait: on 2026-11-09, when a release ran every check beside the `CI` run of the same push, some of its jobs started 100 s late. A full `CI` run has 23 jobs, 19 of which start at once and 4 after the plan of the programs' jobs, and Linux shares jobs between groups to stay near that limit. A release adds its build jobs beside them, and the jobs over the limit start as the first short ones end.
 
 ## 3. Cost and storage
 
@@ -70,7 +71,7 @@ The caches stay useful only while they fit the limit and the runs that need them
 - Every job of a platform restores one cache of Cargo's registry, which the `static` job saves, and the job with Clippy restores the registry with Clippy's build folder and saves that. A cache of the registry for each job would hold the same crates many times.
 - A release does not repeat the checks of its commit's push, so a tag's run stores only the results of its release builds, which a retry of the same tag reads.
 - `ci.yml` and `release.yml` set the same variables whose names start with `CARGO_`, and the debug information of dev builds is set in `.cargo/config.toml`. sccache's key of a compilation holds every such variable (`src/compiler/rust.rs` of v0.18.0, verified on 2026-11-10), so a variable that one workflow sets alone keeps it from reading what the other stored.
-- A job that builds what another job stores only reads the compiler cache (`SCCACHE_GHA_RW_MODE=READ_ONLY`, verified on 2026-11-10 in [sccache's notes on GitHub Actions](https://github.com/mozilla/sccache/blob/v0.18.0/docs/GHA.md)): Clippy's job on Windows, the performance measurements and two of the three credential jobs. Jobs that start together with an empty cache build the same crates at once, and sccache drops what GitHub's limit of 200 new entries a minute refuses.
+- A job that builds what another job stores only reads the compiler cache (`SCCACHE_GHA_RW_MODE=READ_ONLY`, verified on 2026-11-10 in [sccache's notes on GitHub Actions](https://github.com/mozilla/sccache/blob/v0.18.0/docs/GHA.md)): the second end-to-end job of a platform, the performance measurements and two of the three credential jobs. Jobs that start together with an empty cache build the same crates at once, and sccache drops what GitHub's limit of 200 new entries a minute refuses.
 
 ## 4. Security and maintenance
 
