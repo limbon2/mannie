@@ -100,14 +100,9 @@ function check(name: string, value: number, limit: number, unit: string, samples
 }
 
 /** How much the page's heap grew, when the webview reports its size. */
-function heapGrowth(before: number | undefined, after: number | undefined): number | undefined {
-  if (before === undefined) {
-    return undefined;
-  }
-  if (after === undefined) {
-    return undefined;
-  }
-  return after - before;
+function heapGrowth(before: number | null, after: number | null): number | null {
+  const hasMeasurements = before !== null && after !== null;
+  return hasMeasurements ? after - before : null;
 }
 
 /** Opens a terminal of this computer with Ctrl+`, and waits until its rows show. */
@@ -147,19 +142,10 @@ async function openShell(shell?: string): Promise<void> {
 
 /** Waits until the terminal that shows reached its prompt, and a moment more for the shell to settle. */
 async function waitForPrompt(): Promise<void> {
-  await browser.waitUntil(
-    async () => {
-      const status = await browser.execute(() => {
-        const toolbars = [...document.querySelectorAll<HTMLElement>('[data-side-panels] [role="toolbar"]')];
-        const shown = toolbars.find((toolbar) => toolbar.offsetParent !== null);
-        return shown?.querySelector('[data-content]')?.textContent.trim() ?? '';
-      });
-      const hasStatus = status !== '';
-      const isStarting = status === 'Starting';
-      return hasStatus && !isStarting;
-    },
-    { timeout: 30_000, timeoutMsg: 'the terminal reached no prompt' },
-  );
+  await $('[data-side-panels] [role="tabpanel"]:not([hidden]) [data-terminal-phase="prompt"]').waitForDisplayed({
+    timeout: 30_000,
+    timeoutMsg: 'the terminal reached no prompt',
+  });
   await browser.pause(1_000);
 }
 
@@ -181,7 +167,10 @@ async function measureEcho(): Promise<number[]> {
       throw new Error('the terminal has no field for keys');
     }
     const samples: number[] = [];
-    for (let sample = 0; sample < 40; sample += 1) {
+    // Alternating keys makes a sample less likely to match a shell prediction
+    // and leave the rendered text unchanged.
+    for (const character of 'xq'.repeat(20)) {
+      const key = { bubbles: true, code: `Key${character.toUpperCase()}`, key: character };
       const before = rows.textContent;
       const shown = new Promise<number>((resolve) => {
         const observer = new MutationObserver(() => {
@@ -193,8 +182,9 @@ async function measureEcho(): Promise<number[]> {
         observer.observe(rows, { characterData: true, childList: true, subtree: true });
       });
       const start = performance.now();
-      field.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, code: 'KeyX', key: 'x' }));
-      field.dispatchEvent(new KeyboardEvent('keypress', { bubbles: true, charCode: 120, code: 'KeyX', key: 'x' }));
+      field.dispatchEvent(new KeyboardEvent('keydown', key));
+      field.dispatchEvent(new KeyboardEvent('keypress', { ...key, charCode: character.charCodeAt(0) }));
+      field.dispatchEvent(new KeyboardEvent('keyup', key));
       samples.push((await shown) - start);
       await new Promise((resolve) => {
         setTimeout(resolve, 100);
@@ -311,7 +301,7 @@ describe('performance of terminals (NFR-PERF-06 to 09)', () => {
       return {
         lastRowChange: window.lastRowChange ?? 0,
         latencies: window.floodLatencies ?? [],
-        longestTask: window.longestTask,
+        longestTask: window.longestTask ?? null,
       };
     });
 
@@ -324,7 +314,7 @@ describe('performance of terminals (NFR-PERF-06 to 09)', () => {
       measured.latencies.length,
     );
     check('NFR-PERF-07 view settled after the flood', Math.max(0, measured.lastRowChange - stopped), 300, 'ms');
-    if (measured.longestTask === undefined) {
+    if (measured.longestTask === null) {
       console.log('NFR-PERF-07 longest task: this webview reports no long tasks');
     } else {
       check('NFR-PERF-07 longest task during a flood', measured.longestTask, 50, 'ms');
@@ -334,11 +324,11 @@ describe('performance of terminals (NFR-PERF-06 to 09)', () => {
   // The idle measurement takes two minutes and the terminals to open, longer
   // than one test may run, so its steps are tests in order.
   let quietCpu = 0;
-  let heapBefore: number | undefined;
+  let heapBefore: number | null = null;
 
   it('measures a quiet minute with one terminal', async () => {
     heapBefore = await browser.execute(
-      () => (performance as Performance & { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize,
+      () => (performance as Performance & { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? null,
     );
     const quietBefore = cpuMilliseconds(pid);
     await browser.pause(IDLE_MILLIS);
@@ -358,13 +348,13 @@ describe('performance of terminals (NFR-PERF-06 to 09)', () => {
     await browser.pause(IDLE_MILLIS);
     const idleCpu = cpuMilliseconds(pid) - idleBefore;
     const heapAfter = await browser.execute(
-      () => (performance as Performance & { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize,
+      () => (performance as Performance & { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? null,
     );
 
     const addedShare = ((idleCpu - quietCpu) / IDLE_MILLIS) * 100;
     check('NFR-PERF-08 CPU that 8 idle terminals add', Math.max(0, addedShare), 0.5, '% of one core');
     const growth = heapGrowth(heapBefore, heapAfter);
-    if (growth === undefined) {
+    if (growth === null) {
       console.log('NFR-PERF-09 memory per tab: this webview reports no heap size');
     } else {
       const perTab = growth / (IDLE_TERMINALS - 1) / 1_000_000;
@@ -406,22 +396,30 @@ describe('performance of terminals (NFR-PERF-06 to 09)', () => {
         }).observe({ type: 'longtask' });
       }
     });
+    const tabSelector = '[data-side-panel-tab] [role="tab"]';
+    const tabs = [...(await $$(tabSelector))];
+    expect(tabs).toHaveLength(IDLE_TERMINALS);
+    await browser.execute(
+      (selector: string) => document.querySelector<HTMLElement>(selector)?.focus(),
+      `${tabSelector}[aria-selected="true"]`,
+    );
     let switches = 0;
     for (let round = 0; round < SWITCH_ROUNDS; round += 1) {
-      for (const tab of await $$('[data-side-panel-tab] [role="tab"]')) {
-        await tab.click();
+      for (const [index, tab] of tabs.entries()) {
+        await browser.keys(index === 0 ? Key.Home : Key.ArrowRight);
+        await expect(tab).toHaveAttribute('aria-selected', 'true');
         switches += 1;
         await browser.pause(500);
       }
     }
     const measured = await browser.execute(() => ({
       hidden: window.hiddenMeasurements ?? 0,
-      longestTask: window.longestSwitchTask,
+      longestTask: window.longestSwitchTask ?? null,
     }));
 
     expect(switches).toBe(SWITCH_ROUNDS * IDLE_TERMINALS);
     check('Glyphs that hidden terminals measured in tab switches', measured.hidden, 0, 'measurements', switches);
-    if (measured.longestTask === undefined) {
+    if (measured.longestTask === null) {
       console.log('Tab switches: this webview reports no long tasks');
     } else {
       report('The longest task of the page in tab switches', measured.longestTask, 'ms', switches);

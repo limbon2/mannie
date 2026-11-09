@@ -327,17 +327,21 @@ describe('child agents', () => {
     const mainCursor = async (): Promise<string> =>
       browser.execute(() => getComputedStyle(document.querySelector('main') ?? document.body).cursor);
 
+    const pointer = { id: 'resize-handle-pointer' };
     await browser
-      .action('pointer')
+      .action('pointer', pointer)
       .move({ origin: await $(RESIZE_HANDLE) })
       .down()
       .move({ origin: 'pointer', x: -40, y: 0 })
       .perform(true);
-    const whileDragged = { cursor: await mainCursor(), marked: await isMarked() };
-    await browser.releaseActions();
+    try {
+      expect({ cursor: await mainCursor(), marked: await isMarked() }).toEqual({ cursor: 'ew-resize', marked: true });
+    } finally {
+      // WebKitWebDriver does not dispatch pointerup when releasing all actions.
+      await browser.action('pointer', pointer).up().perform();
+    }
 
-    expect(whileDragged).toEqual({ cursor: 'ew-resize', marked: true });
-    expect(await isMarked()).toBe(false);
+    await browser.waitUntil(async () => !(await isMarked()), { timeoutMsg: 'the handle stayed in the dragging state' });
     expect(await mainCursor()).not.toBe('ew-resize');
     await $('[data-side-panel-close]').click();
     await $(PANELS).waitForExist({ reverse: true });

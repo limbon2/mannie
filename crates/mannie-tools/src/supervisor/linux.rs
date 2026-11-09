@@ -23,32 +23,56 @@ pub(super) fn hold_descendants() -> io::Result<()> {
     Ok(())
 }
 
-/// Ends every descendant of the shell: `SIGTERM`, up to 500 ms to end, then
-/// `SIGSTOP` and `SIGKILL` until none is left. Stopping first keeps a process
-/// from forking while its siblings die.
-pub(super) async fn end_tree(shell: Pid) {
-    let tree = descendants(shell);
-    if tree.is_empty() {
-        return;
-    }
-    signal_all(&tree, Signal::TERM);
-    let deadline = tokio::time::Instant::now() + TERM_GRACE;
-    while tokio::time::Instant::now() < deadline {
-        tokio::time::sleep(POLL).await;
-        if descendants(shell).is_empty() {
-            return;
+/// A shell's descendants, including processes that outlive the shell.
+pub(super) struct ProcessTree {
+    shell: Member,
+    members: Vec<Member>,
+}
+
+impl ProcessTree {
+    /// Captures the descendants of the shell with the recorded start time,
+    /// before an interactive shell can lose its tree when the terminal hangs up.
+    pub(super) fn capture(shell: Pid, start_time: u64) -> Self {
+        let shell = Member {
+            pid: shell,
+            start_time,
+        };
+        Self {
+            shell,
+            members: descendants(shell, &[]),
         }
     }
-    for _ in 0..MAX_KILL_ROUNDS {
-        let tree = descendants(shell);
-        if tree.is_empty() {
+
+    /// Gives members time to exit after `SIGTERM`, then stops and kills
+    /// survivors. Stopping first keeps them from forking during cleanup.
+    pub(super) async fn end(mut self) {
+        if self.members.is_empty() {
             return;
         }
-        signal_all(&tree, Signal::STOP);
-        signal_all(&tree, Signal::KILL);
-        tokio::time::sleep(POLL).await;
+        signal_all(&self.members, Signal::TERM);
+        let deadline = tokio::time::Instant::now() + TERM_GRACE;
+        while tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(POLL).await;
+            self.refresh();
+            if self.members.is_empty() {
+                return;
+            }
+        }
+        for _ in 0..MAX_KILL_ROUNDS {
+            self.refresh();
+            if self.members.is_empty() {
+                return;
+            }
+            signal_all(&self.members, Signal::STOP);
+            signal_all(&self.members, Signal::KILL);
+            tokio::time::sleep(POLL).await;
+        }
+        tracing::warn!("processes of a command did not end");
     }
-    tracing::warn!("processes of a command did not end");
+
+    fn refresh(&mut self) {
+        self.members = descendants(self.shell, &self.members);
+    }
 }
 
 /// Kills the shell of a command that ended with Mannie, when it is still the
@@ -66,11 +90,15 @@ struct Member {
 
 /// The living descendants of a process, from `/proc`. Zombies are skipped:
 /// they have ended, and signals cannot reach them.
-fn descendants(root: Pid) -> Vec<Member> {
+fn descendants(root: Member, remembered: &[Member]) -> Vec<Member> {
     let Ok(entries) = fs::read_dir("/proc") else {
         return Vec::new();
     };
     let mut children: HashMap<i32, Vec<Member>> = HashMap::new();
+    let remembered: HashSet<Member> = remembered.iter().copied().collect();
+    let mut tree = Vec::new();
+    let mut seen = HashSet::new();
+    let mut pending = Vec::new();
     for entry in entries.flatten() {
         let Some(pid) = entry
             .file_name()
@@ -86,14 +114,20 @@ fn descendants(root: Pid) -> Vec<Member> {
         if stat.state == 'Z' {
             continue;
         }
-        children.entry(stat.parent).or_default().push(Member {
+        let member = Member {
             pid,
             start_time: stat.start_time,
-        });
+        };
+        if member == root {
+            pending.push(pid.as_raw_pid());
+        } else if remembered.contains(&member) {
+            seen.insert(pid);
+            tree.push(member);
+            pending.push(pid.as_raw_pid());
+        } else {
+            children.entry(stat.parent).or_default().push(member);
+        }
     }
-    let mut tree = Vec::new();
-    let mut seen = HashSet::new();
-    let mut pending = vec![root.as_raw_pid()];
     while let Some(parent) = pending.pop() {
         for member in children.get(&parent).into_iter().flatten() {
             if seen.insert(member.pid) {

@@ -25,12 +25,15 @@ use super::windows_terminal as platform;
 
 /// How many chunks of output wait for their reader before the reading thread
 /// waits too. A chunk holds at most [`READ_CHUNK_BYTES`].
+#[cfg(any(windows, target_os = "linux"))]
 const OUTPUT_QUEUE: usize = 64;
 
 /// The most bytes of one read from the pseudo console.
+#[cfg(any(windows, target_os = "linux"))]
 pub(super) const READ_CHUNK_BYTES: usize = 64 * 1024;
 
 /// How many writes wait for the writing thread.
+#[cfg(any(windows, target_os = "linux"))]
 const INPUT_QUEUE: usize = 256;
 
 /// A shell to start in a pseudo console.
@@ -136,6 +139,13 @@ impl TerminalProcess {
 
     /// Changes the pseudo console's size, which the shell and its programs
     /// learn of as a resized terminal.
+    #[cfg_attr(
+        not(any(windows, target_os = "linux")),
+        expect(
+            clippy::unused_self,
+            reason = "callers use the same terminal interface on every target"
+        )
+    )]
     pub fn resize(&self, columns: u16, rows: u16) -> io::Result<()> {
         #[cfg(any(windows, target_os = "linux"))]
         if let Some(pty) = &self.pty {
@@ -157,17 +167,17 @@ impl TerminalProcess {
     /// Ends the terminal: closes the pseudo console, which hangs up the
     /// shell, waits at most `grace` for it to exit, then ends what is left of
     /// its tree. Returns the shell's exit code when it exited in time.
+    #[cfg(any(windows, target_os = "linux"))]
     pub async fn end(mut self, grace: Duration) -> Option<i32> {
-        #[cfg(any(windows, target_os = "linux"))]
-        {
-            let pty = self.pty.take()?;
-            pty.end(grace).await
-        }
-        #[cfg(not(any(windows, target_os = "linux")))]
-        {
-            let _ = grace;
-            None
-        }
+        let pty = self.pty.take()?;
+        pty.end(grace).await
+    }
+
+    /// Returns no exit code on systems without pseudo consoles.
+    #[cfg(not(any(windows, target_os = "linux")))]
+    pub fn end(self, _grace: Duration) -> std::future::Ready<Option<i32>> {
+        drop(self);
+        std::future::ready(None)
     }
 }
 

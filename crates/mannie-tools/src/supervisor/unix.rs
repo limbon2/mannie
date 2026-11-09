@@ -266,7 +266,9 @@ impl Contained {
     pub(super) async fn end(&mut self, child: &mut Child, graceful_shell: bool) {
         // Input that was never sent closes with the run.
         self.input = None;
-        tree::end_tree(self.shell).await;
+        if let Ok(start) = self.record.start_time.parse() {
+            end_tree(self.shell, start).await;
+        }
         if graceful_shell {
             self.stdin = None;
         } else if let Err(error) = child.start_kill() {
@@ -346,6 +348,16 @@ fn read_status(pipe: OwnedFd) -> Option<i32> {
     text.trim().parse().ok()
 }
 
+/// Ends the descendants of the shell identified by its recorded start time.
+async fn end_tree(shell: Pid, start: u64) {
+    #[cfg(target_os = "linux")]
+    tree::ProcessTree::capture(shell, start).end().await;
+    #[cfg(target_os = "freebsd")]
+    if tree::start_time(shell) == Some(start) {
+        tree::end_tree(shell).await;
+    }
+}
+
 /// Ends what is left of a command whose run ended with Mannie: the shell, when
 /// it still runs with the start time the journal recorded, and its tree.
 pub(super) async fn end_leftovers(record: &ProcessRecord) {
@@ -355,9 +367,6 @@ pub(super) async fn end_leftovers(record: &ProcessRecord) {
     let Ok(recorded) = record.start_time.parse::<u64>() else {
         return;
     };
-    if tree::start_time(shell) != Some(recorded) {
-        return;
-    }
-    tree::end_tree(shell).await;
+    end_tree(shell, recorded).await;
     tree::kill_if_same(shell, recorded);
 }

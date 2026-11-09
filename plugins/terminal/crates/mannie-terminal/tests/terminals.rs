@@ -23,10 +23,16 @@ use mannie_plugin_harness::types::{
     PartContent, PartId, RunId, SendMessage, StartConversation, TerminalHost, ToolCallStatus,
     ToolCallView,
 };
+use mannie_plugin_sdk::context::HostProfile;
 use mannie_plugin_sdk::contracts::ConversationId;
 use mannie_plugin_sdk::contributions::Contributions;
+use mannie_plugin_sdk::host::PluginBinding;
+use mannie_plugin_sdk::ids::PluginId;
 use mannie_plugin_sdk::ipc::{ChannelMessage, PluginStream};
+use mannie_plugin_sdk::manifest::Manifest;
 use mannie_plugin_sdk::points::terminal_hosts::{PluginTerminalHostSource, TerminalHosts};
+use mannie_plugin_sdk::service::Service;
+use mannie_plugin_sdk::services::terminals::{ShellKind, Terminals};
 use mannie_plugin_sdk::testing::{FakeTerminals, ScriptedHosts};
 use mannie_terminal::{RUN_IN_TERMINAL, mannie_plugin};
 use serde_json::{Value, json};
@@ -489,7 +495,7 @@ async fn a_mention_of_a_command_gives_the_model_its_output() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn every_shell_of_this_computer_marks_its_commands() {
+async fn every_supported_shell_of_this_computer_marks_its_commands() {
     let core = HarnessOptions {
         use_tools: true,
         ..HarnessOptions::default()
@@ -498,27 +504,45 @@ async fn every_shell_of_this_computer_marks_its_commands() {
     hosted.turn_on().await;
     let (conversation, _run) = start(&hosted.core, "OWNER: hello").await;
     let id = conversation.to_string();
-    let mut hosts = hosted
-        .open_channel("follow_hosts", json!(null))
+    let provider = hosted
+        .core
+        .runtime
+        .service_providers()
+        .into_iter()
+        .find(|provider| provider.name() == Terminals::NAME)
+        .expect("the core provides terminals");
+    let plugin = PluginId::parse(hosted.id()).unwrap();
+    let manifest = Manifest::parse(mannie_plugin().manifest).unwrap();
+    let terminals = provider
+        .bind(&PluginBinding::new(
+            &plugin,
+            &manifest,
+            HostProfile::Development,
+        ))
+        .expect("the core binds terminals to the plugin")
+        .get::<Terminals>()
+        .expect("the binding is the service terminals");
+    let list = terminals
+        .hosts()
+        .next()
         .await
-        .expect("the hosts are followed");
-    let Some(ChannelMessage::Item { item: list }) = hosts.next().await else {
-        panic!("the list of hosts comes");
-    };
-    let shells: Vec<(String, String)> = list["shells"]
-        .as_array()
-        .expect("a list of shells")
-        .iter()
-        .map(|shell| {
-            (
-                shell["program"].as_str().unwrap().to_owned(),
-                shell["name"].as_str().unwrap().to_owned(),
-            )
-        })
-        .collect();
-    assert!(!shells.is_empty(), "this computer lists a shell");
+        .expect("the list of hosts comes");
+    // /etc/shells can list programs outside the shell integration matrix
+    // documented in the terminal plugin's ADR-0001.
+    let shells = list.shells.iter().filter(|shell| match shell.kind {
+        ShellKind::Bash => true,
+        ShellKind::Zsh | ShellKind::Fish | ShellKind::Sh => cfg!(target_os = "linux"),
+        ShellKind::PowerShell | ShellKind::Cmd => cfg!(windows),
+        _ => false,
+    });
+    assert!(
+        shells.clone().next().is_some(),
+        "this computer lists a supported shell"
+    );
 
-    for (number, (program, name)) in (1_u64..).zip(&shells) {
+    for (number, shell) in (1_u64..).zip(shells) {
+        let program = shell.program.to_string_lossy();
+        let name = &shell.name;
         open_where(
             &hosted,
             &id,

@@ -655,7 +655,7 @@ async fn open_local(
         })?;
     let input = process.input();
     Ok(Backend::Local {
-        process: Some(process),
+        process: Some(Box::new(process)),
         output,
         input,
         _setup: setup_folder,
@@ -786,7 +786,7 @@ impl Drop for SetupFolder {
 enum Backend {
     /// A shell of this machine.
     Local {
-        process: Option<TerminalProcess>,
+        process: Option<Box<TerminalProcess>>,
         output: mpsc::Receiver<Vec<u8>>,
         input: TerminalInput,
         _setup: SetupFolder,

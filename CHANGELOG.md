@@ -4,38 +4,9 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
-### Added
-
-- ChatGPT plan: "Continue with ChatGPT" in Settings > Providers signs in to one ChatGPT account through OpenAI's Sign in with ChatGPT, and a provider profile can use the ChatGPT plan in place of an API endpoint, with a model from the account's catalog, so that its replies bill the owner's ChatGPT subscription. The tokens stay in the credential store and refresh by themselves, "Using ChatGPT plan" shows beside the profile menu, a usage limit offers "Manage usage" and is never retried, and runs on the plan are not offered workers (ADR-0062).
-- Skills: agents see the skills that the `skills` CLI installs with `--agent universal` in `~/.agents/skills` and in a project's `.agents/skills`, and read them with `read_skill` without asking. Settings > Skills lists them with a switch each: a skill of this computer is on until the owner turns it off, and a project's skill is off until the owner turns it on, and off again when its name or description changes. "@" mentions a skill for one message, and nothing in a skill grants a permission (ADR-0061).
-- Custom agents: an Agents page creates and edits agents without code, with a name, a kind, instructions, steps, a model, groups of tools, plugins, the child agents it may use and limits, and a picker in the message box chooses each conversation's agent. A custom agent can only have less than the built-in agent that it is shaped like, and an agent that only reads gets no tool with side effects, no executor and no child that can act. The starters are an Orchestrator, which hands the work to child agents, and a Plan agent (ADR-0059).
-- Plans: the tool `save_plan` saves a conversation's plan in Mannie's database, where the owner reads, edits and deletes it, and "@" mentions it in any conversation. Running a plan fills the message box of a new conversation or of its own, and nothing runs before Send. A plan is model output and allows nothing (ADR-0060).
-- A side panel lists a conversation's child agents under Working and Ended, and opens by itself without taking the focus on the first task of a conversation whose agent is custom.
-- Agents can ask the owner questions with options during a reply: the tool `ask_owner` pauses the run, a card in the transcript shows up to 4 questions of 2 to 6 options with a choice of the owner's own words, and the reply goes on with the answer. Only the conversation agent asks, an answer allows nothing, and Stop, a quit or a crash cancels the question (ADR-0058).
-- Plugins open terminals through the service `terminals`: this machine's shells, which the supervisor starts on a pseudo console with a setup that the plugin passes and contains as a command, and the hosts that plugins offer through the point `terminal-hosts`. Each terminal belongs to a conversation, at most 8 to one and 32 on the machine, and ends with its conversation, its plugin and Mannie (ADR-0053).
-- A plugin's tool may type a command into a terminal as a terminal-command access, which the owner allows once, for the conversation, for the project or for every conversation, covering the same command on the same host and, on this machine, in the same shell; rules of its leading words apply on their host only and show in the Tools settings, full access runs it, and a worker's ceiling refuses it (ADR-0053).
-- A tool's result may keep up to 8 items that it cites, which the call's part stores, so a citation's popover shows their text after their source is gone; a cite key may end with `#L<first>-L<last>`, whose lines the popover marks, and a context kind without a provider serves citations only (ADR-0054).
-- A plugin's view puts a mention into the open conversation's message box through `@mannie/plugin-sdk/message-box`, as if the owner had chosen it from the "@" list (ADR-0054).
-- A command of the palette may have a key, which the shell binds while the command is available and the palette shows (ADR-0053).
-- The warning before closing or quitting counts the terminals that run a command (ADR-0053).
-- Plugins may have optional features, each a table `[features.<id>]` of the manifest with the services that only it uses, which start off and start on the running plugin when the owner turns them on. A feature's contributions, commands and channels have a generation of their own, and turning it off removes them, ends its calls and channels with `feature_off`, waits for its work and releases its services; turning the plugin off stops its features first (ADR-0055).
-- Plugins work with the owner's SQLite files through the service `sqlite-files`: the owner chooses a file in the system's file dialog, the core registers it for the plugin, refuses links, network paths, Mannie's own folders and files without SQLite's header, opens it with hardened connections of its own, and journals each change that the owner makes from the plugin's view before it runs, never running one twice (ADR-0056).
-- A plugin's tool may run a statement on a registered database as a database access: a read runs in every conversation without asking, a write asks and its grant covers the same statement on the same database with any values, a change of the schema always asks and gets no grant, and the approval shows the statement with its values; full access runs every statement, and a worker's ceiling refuses them (ADR-0056).
-- A plugin's tool may name a database on a worker's host with what the worker reported of it: the core classifies its statements against the copy of the schema, narrows the master's policy to the host, gives the tool the evidence of exactly the write that was allowed, with what allowed it, for the worker to check, and journals the owner's change there before the plugin sends it. A plugin's result may say that it lost its answer, which makes a call with side effects uncertain (ADR-0057).
-- The Plugins page lists each plugin's optional features under it, with what each adds and may use and a switch that works while the plugin is on, asks first when the feature has work in progress and offers "Try again" after a failed start. A plugin's UI registers a feature's entries through `context.feature(id)`, which show only while the plugin and the feature are on, and the address of a view, settings page or side panel of a feature that is off says so and leads to the Plugins page (ADR-0055).
-
-### Changed
-
-- The "Plans" and "Conversations" groups of Chat's sidebar collapse from their headings, as "Projects" does, and the webview's storage remembers them.
-- A new conversation shows the profile menu before its first message, with the ChatGPT plan's indicator beside it, and the first message starts the conversation with the chosen profile.
-
 ### Fixed
 
-- On Windows, a channel to the webview held its first message after a pause until the system's next timer tick, up to 15.6 ms, and stretched the 16 ms between its batches to as much as 31 ms. A channel now sends up to 4 batches at once after a pause, without a timer, and then one every 16 ms at most on average, so a terminal's echo of a key reaches the page as soon as the shell sends it.
-- Every change of the page made the webview restyle the whole page, 5 to 6 ms on the reference machine and four times that on the low-end laptop profile, because Tailwind's `group-has-*` utilities in the shadcn-svelte components and the cursor rule of the side panel's handle put `*` after a `:has()`. These utilities stay out of the build, rules that cost nothing between changes do what Mannie needs of them, and `task build` refuses a stylesheet with such a selector.
-- A plugin that turned on or off could keep showing the state that the command returned, when the list with its newer state arrived before the command's answer. The command's plugin now goes in only while no list arrived during the command.
 - A mention whose name starts with another mention's name and a space, such as a database "test db" and a notebook "test", no longer carries both: where tokens in the message overlap, the longer one counts.
-- Showing another side panel tab, or opening or closing one, no longer makes the Git panel start over and read its repository again: the side panel area hands a panel the same argument for as long as it stays open.
 
 ## 0.6.0 - 2026-11-09
 
@@ -56,6 +27,23 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - A new embedding profile starts with the query text that instruction-aware models such as Qwen3-Embedding want, which the owner can change or clear, and a plugin's `openView` can replace the address in the history.
 - Search profiles in the Providers settings, "Embedding and rerank models": an embedding or rerank model on a server that the owner names, with an optional key and the texts that go before queries and documents, and a test that reports the vectors' dimensions or the scores of two passages. Plugins embed and rerank through them with the service `models`, and never see a key (ADR-0047).
 - A plugin's write to the store can erase what it deleted from every file of the store, as deleting a conversation does (ADR-0048).
+- ChatGPT plan: "Continue with ChatGPT" in Settings > Providers signs in to one ChatGPT account through OpenAI's Sign in with ChatGPT, and a provider profile can use the ChatGPT plan in place of an API endpoint, with a model from the account's catalog, so that its replies bill the owner's ChatGPT subscription. The tokens stay in the credential store and refresh by themselves, "Using ChatGPT plan" shows beside the profile menu, a usage limit offers "Manage usage" and is never retried, and runs on the plan are not offered workers (ADR-0062).
+- Skills: agents see the skills that the `skills` CLI installs with `--agent universal` in `~/.agents/skills` and in a project's `.agents/skills`, and read them with `read_skill` without asking. Settings > Skills lists them with a switch each: a skill of this computer is on until the owner turns it off, and a project's skill is off until the owner turns it on, and off again when its name or description changes. "@" mentions a skill for one message, and nothing in a skill grants a permission (ADR-0061).
+- Custom agents: an Agents page creates and edits agents without code, with a name, a kind, instructions, steps, a model, groups of tools, plugins, the child agents it may use and limits, and a picker in the message box chooses each conversation's agent. A custom agent can only have less than the built-in agent that it is shaped like, and an agent that only reads gets no tool with side effects, no executor and no child that can act. The starters are an Orchestrator, which hands the work to child agents, and a Plan agent (ADR-0059).
+- Plans: the tool `save_plan` saves a conversation's plan in Mannie's database, where the owner reads, edits and deletes it, and "@" mentions it in any conversation. Running a plan fills the message box of a new conversation or of its own, and nothing runs before Send. A plan is model output and allows nothing (ADR-0060).
+- A side panel lists a conversation's child agents under Working and Ended, and opens by itself without taking the focus on the first task of a conversation whose agent is custom.
+- Agents can ask the owner questions with options during a reply: the tool `ask_owner` pauses the run, a card in the transcript shows up to 4 questions of 2 to 6 options with a choice of the owner's own words, and the reply goes on with the answer. Only the conversation agent asks, an answer allows nothing, and Stop, a quit or a crash cancels the question (ADR-0058).
+- Plugins open terminals through the service `terminals`: this machine's shells, which the supervisor starts on a pseudo console with a setup that the plugin passes and contains as a command, and the hosts that plugins offer through the point `terminal-hosts`. Each terminal belongs to a conversation, at most 8 to one and 32 on the machine, and ends with its conversation, its plugin and Mannie (ADR-0053).
+- A plugin's tool may type a command into a terminal as a terminal-command access, which the owner allows once, for the conversation, for the project or for every conversation, covering the same command on the same host and, on this machine, in the same shell; rules of its leading words apply on their host only and show in the Tools settings, full access runs it, and a worker's ceiling refuses it (ADR-0053).
+- A tool's result may keep up to 8 items that it cites, which the call's part stores, so a citation's popover shows their text after their source is gone; a cite key may end with `#L<first>-L<last>`, whose lines the popover marks, and a context kind without a provider serves citations only (ADR-0054).
+- A plugin's view puts a mention into the open conversation's message box through `@mannie/plugin-sdk/message-box`, as if the owner had chosen it from the "@" list (ADR-0054).
+- A command of the palette may have a key, which the shell binds while the command is available and the palette shows (ADR-0053).
+- The warning before closing or quitting counts the terminals that run a command (ADR-0053).
+- Plugins may have optional features, each a table `[features.<id>]` of the manifest with the services that only it uses, which start off and start on the running plugin when the owner turns them on. A feature's contributions, commands and channels have a generation of their own, and turning it off removes them, ends its calls and channels with `feature_off`, waits for its work and releases its services; turning the plugin off stops its features first (ADR-0055).
+- Plugins work with the owner's SQLite files through the service `sqlite-files`: the owner chooses a file in the system's file dialog, the core registers it for the plugin, refuses links, network paths, Mannie's own folders and files without SQLite's header, opens it with hardened connections of its own, and journals each change that the owner makes from the plugin's view before it runs, never running one twice (ADR-0056).
+- A plugin's tool may run a statement on a registered database as a database access: a read runs in every conversation without asking, a write asks and its grant covers the same statement on the same database with any values, a change of the schema always asks and gets no grant, and the approval shows the statement with its values; full access runs every statement, and a worker's ceiling refuses them (ADR-0056).
+- A plugin's tool may name a database on a worker's host with what the worker reported of it: the core classifies its statements against the copy of the schema, narrows the master's policy to the host, gives the tool the evidence of exactly the write that was allowed, with what allowed it, for the worker to check, and journals the owner's change there before the plugin sends it. A plugin's result may say that it lost its answer, which makes a call with side effects uncertain (ADR-0057).
+- The Plugins page lists each plugin's optional features under it, with what each adds and may use and a switch that works while the plugin is on, asks first when the feature has work in progress and offers "Try again" after a failed start. A plugin's UI registers a feature's entries through `context.feature(id)`, which show only while the plugin and the feature are on, and the address of a view, settings page or side panel of a feature that is off says so and leads to the Plugins page (ADR-0055).
 
 #### MCP
 
@@ -71,12 +59,50 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 - The plugin Notebooks, off by default: notebooks of PDF, Markdown and text files of any size and pasted texts, indexed and searched through the owner's search profiles of an embedding model and, if the owner chooses one, a reranker. The Notebooks entry of the activity bar opens the latest notebook, whose page shows each source's state and progress, with "Use in answers", "Try again" and its text in a viewer that fills the window. The sidebar lists the notebooks, each with "New chat" and its own chats, which search the notebook with every message and stay out of the Chat list; "@" attaches a notebook to any other chat. Replies get the best passages, searched with the message and the owner's earlier messages, and the model lists, searches and reads the attached notebooks with three tools, and cites passages by links that open them in the viewer. A PDF is read page by page, so a page that fails costs only that page.
 
+#### Workers
+
+- Databases, an optional feature that the owner turns on under Workers on the Plugins page, registers SQLite files on this computer through the system's file dialog, with a name that no other database has, and gives the view commands to list, rename, mark, accept and remove them, read their structures, counts, pages and statements, stop a read and run the owner's changes, which the core journals (ADR-0055, ADR-0056).
+- With Databases on, conversations and the general child agent read registered databases with `describe_database` and `query_database` without asking and change them with `change_database` after the owner's approval; the explore agent gets the reading tools, a section lists the databases with their states, and "@" names a database and gives the model its structure.
+- The Databases view, in the activity bar while the feature is on: the databases of this computer in the sidebar with their states and menus, "Add database…" with a name and a read-only mark, and a page for each database with the tabs Tables, with row counts on request, Structure, Data, which pages, sorts, filters, edits, inserts, deletes and copies rows as CSV, and SQL, which runs a statement with Stop for reads and asks before a change of the schema. The cards of the database tools say what each call read or changed.
+- Databases reach the paired workers' hosts (ADR-0057): the owner registers a SQLite file on a worker by its path, which the worker checks under its ceiling once its `worker.toml` sets `enabled = true` under `[databases]`. The view groups the databases by machine and says when a worker is offline, needs an update or does not allow databases, and the master keeps each worker's list to show it while the worker is offline. Agents read a worker's databases without asking and change them under the master's policy and the worker's ceiling; both machines journal each write, and one whose answer the link lost ends uncertain.
+- The worker serves the link's optional package `databases`, runs each request under its ceiling, journals each write under its operation ID before it runs, and forgets the host's registrations when it is unpaired. A worker without the package stays connected, and its databases say that it needs an update.
+
+#### SSH
+
+- Terminals on the registered hosts: the plugin offers its hosts to the terminal plugin, whose terminals run the account's login shell on a pseudo terminal over the host's session, with the password replaced in their output ([ADR-0053](docs/adr/0053-let-plugins-offer-terminals.md)).
+
+#### Terminal
+
+- Terminals beside a conversation, as tabs of the side panel area, on this computer in its shells and on the hosts that plugins offer, such as SSH hosts, opened from the toolbar's Terminal menu, the command palette or Ctrl+`, with Find, a list of commands, End and Start again (ADR-0053).
+- Agents run one command at a time in the conversation's terminals with `run_in_terminal`, under the master's policy, at an idle prompt and never while the owner types, and list them with `list_terminals`; the result cites the command's output by a link, which a reply's citation shows and marks in the terminal (ADR-0053, ADR-0054).
+- Shells that mark their prompts and commands with a setup that the plugin injects on this computer and types on a remote host: bash, zsh, fish, sh, PowerShell and Command Prompt ([mark commands with shell integration](plugins/terminal/docs/adr/0001-mark-commands-with-shell-integration.md)).
+- The owner points an agent at a command or a selection with "Mention in message", "Mention selection" and the "@" group Terminal.
+- A headless emulator of each terminal in Rust, the only source of the text that a model reads, with a text log of 2 MiB for each terminal and 32 MiB in all, and views that get snapshots instead of a flood and nothing while hidden ([keep a headless emulator of each terminal in Rust](plugins/terminal/docs/adr/0002-keep-a-headless-emulator-of-each-terminal-in-rust.md)).
+- Settings for the default shell of this computer, the scrollback, the font size, a blinking cursor, the renderer and screen reader mode.
+
 ### Changed
 
 - `task dev` runs the app as `io.github.limbon2.mannie.dev`, with a data folder, credentials and logs of its own, so a development build never migrates the owner's database and runs beside a release build.
 - The "@" list shows each kind of mention as soon as it answers, and while more than one kind shows entries, each shows its first 5 with "Show N more", so Git's and SSH's entries no longer sit below 50 files. A space no longer ends the query while an entry that the list shows holds it, so a name with spaces, such as a commit's subject or a path with a space, can be typed out.
 - Child agents write their reports in sections: status, answer, established findings with their evidence, what they did not verify, changes, what is left open and their assumptions. A report's result says that its evidence comes from the child's own tool calls, and the guidance on tasks treats what a report backs with evidence as established, with at most two tool calls to check one report, on the files that a task changed and the claims that it did not verify.
 - Checkpoints are written under fixed headings: the goal, what is done with what shows it, established facts with their sources, decisions, what nobody verified, open questions and the next steps.
+- The "Plans" and "Conversations" groups of Chat's sidebar collapse from their headings, as "Projects" does, and the webview's storage remembers them.
+- A new conversation shows the profile menu before its first message, with the ChatGPT plan's indicator beside it, and the first message starts the conversation with the chosen profile.
+
+#### Workers
+
+- The "Workers" group of the sidebar collapses from its heading, as "Projects" does.
+- The Databases view lists each database's tables under it in the sidebar, which choose the table of the Data and Structure tabs in place of the Tables tab and the tabs' table pickers. "Count rows" moves to the Structure tab.
+- The Data tab puts the order, the conditions' buttons, the pages and the actions on rows in one row, with Insert, Delete and Copy as icons whose names show on hover.
+- The row dialog writes the kind of value that a column's declared type gives and offers the kind only for a column without one. Each field starts with the row's value, or with the column's default for a new row, can be set to NULL and can be undone, in place of the choices "Unchanged" and "The column's default".
+
+#### Git
+
+- The counts of added and removed lines of a diff's files take the colors of those lines.
+
+#### Notebooks
+
+- A notebook's chat can be deleted from the sidebar: a button on its row asks first, and the notebook's page shows in place of a chat that showed.
 
 ### Fixed
 
@@ -85,22 +111,33 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - A summary that reaches the output limit no longer becomes a checkpoint: the compaction fails with `summary_cut`, which asks the owner to raise the profile's output limit.
 - The styles that only a plugin's interface uses reach the app, such as the row of a host's name and port in SSH's host dialog: Tailwind read no file of the plugins' folders, because their source pattern named the folders instead of their files.
 - The end-to-end test of child agents expects a task report's result as the runtime now writes it, with the sentence that its evidence comes from the child's own tool calls.
+- On Windows, a channel to the webview held its first message after a pause until the system's next timer tick, up to 15.6 ms, and stretched the 16 ms between its batches to as much as 31 ms. A channel now sends up to 4 batches at once after a pause, without a timer, and then one every 16 ms at most on average, so a terminal's echo of a key reaches the page as soon as the shell sends it.
+- Every change of the page made the webview restyle the whole page, 5 to 6 ms on the reference machine and four times that on the low-end laptop profile, because Tailwind's `group-has-*` utilities in the shadcn-svelte components and the cursor rule of the side panel's handle put `*` after a `:has()`. These utilities stay out of the build, rules that cost nothing between changes do what Mannie needs of them, and `task build` refuses a stylesheet with such a selector.
+- A plugin that turned on or off could keep showing the state that the command returned, when the list with its newer state arrived before the command's answer. The command's plugin now goes in only while no list arrived during the command.
+- Showing another side panel tab, or opening or closing one, no longer makes the Git panel start over and read its repository again: the side panel area hands a panel the same argument for as long as it stays open.
+- On Linux, ending a terminal also ends the processes that it started in their own sessions, even after the terminal shell exits during shutdown.
+- The Linux credential store uses async-executor 1.14.1 after the upstream project yanked 1.14.0.
 
 #### Workers
 
 - The end-to-end test of workers expects a task report's result as the runtime now writes it, with the sentence that its evidence comes from the worker's own tool calls.
+- A worker that connected while it was being paired, or while it was renamed, could keep showing the status that the command returned, when the list with its newer status arrived before the command's answer. The command's worker now goes in only while no list arrived during the command.
+- When a worker goes offline, its database row opens the database's status page without announcing a table list that is no longer available.
 
 #### SSH
 
 - CI uses crypto-bigint 0.7.10 after the upstream project yanked 0.7.6, with its required ctutils 0.4.6 dependency.
+- A host that a command saved or trusted could keep showing the state that the command returned, when the list with its newer state arrived before the command's answer. The command's host now goes in only while no list arrived during the command.
 
 #### Git
 
 - The "@" list reads the repository once for a conversation and matches what the owner types against that reading for 10 seconds, instead of running git, `git status` included, for every key.
+- Choosing the open commit in the panel's History again closes it, where before it stayed open until another commit was chosen.
 
 #### MCP
 
 - The JSON import test uses an absolute working folder for the platform that runs it, so it passes on Linux as well as Windows.
+- A server that started while it was being added, turned on or signed out could keep showing the status that the command returned, when the list with its newer status arrived before the command's answer. The command's server now goes in only while no list arrived during the command.
 
 ### Security
 

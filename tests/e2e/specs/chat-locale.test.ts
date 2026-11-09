@@ -55,8 +55,7 @@ async function openToolbarMenu(index: number): Promise<void> {
   await waitForAnimations();
 }
 
-async function closeOverlays(): Promise<void> {
-  await browser.keys(Key.Escape);
+async function waitForOverlaysToClose(): Promise<void> {
   await browser.waitUntil(
     async () =>
       browser.execute(
@@ -66,6 +65,18 @@ async function closeOverlays(): Promise<void> {
     { timeoutMsg: 'a menu or dialog stayed open' },
   );
   await waitForAnimations();
+}
+
+async function closeOverlays(): Promise<void> {
+  await browser.keys(Key.Escape);
+  await waitForOverlaysToClose();
+}
+
+/** Activates a task card's control from the keyboard. */
+async function activateTaskControl(selector: string): Promise<void> {
+  await $(selector).waitForDisplayed();
+  await browser.execute((target: string) => document.querySelector<HTMLElement>(target)?.focus(), selector);
+  await browser.keys(Key.Enter);
 }
 
 async function openInterfaceSettings(): Promise<void> {
@@ -214,14 +225,14 @@ describe('the chat and window views in the pseudo-locale', () => {
     );
     const card = `${LATEST_MAIN_TURN} [data-task-number="1"]`;
     await $(`${card} [data-tool-status="awaiting_approval"]`).waitForDisplayed({ timeout: 30_000 });
-    await $(`${card} [data-task-details]`).click();
+    await activateTaskControl(`${card} [data-task-details]`);
     await waitForAnimations();
 
     expect(await uncataloguedText()).toEqual([]);
     expect(await overflowsHorizontally()).toBe(false);
     expect(await axeViolations()).toEqual([]);
 
-    await $(`${card} [data-task-open]`).click();
+    await activateTaskControl(`${card} [data-task-open]`);
     await $('[data-side-panels] article').waitForDisplayed({ timeout: 10_000 });
     await waitForAnimations();
     expect(await uncataloguedText()).toEqual([]);
@@ -367,7 +378,10 @@ describe('the chat and window views in the pseudo-locale', () => {
     await $('#profile-name').waitForDisplayed();
     await waitForAnimations();
     expect(await uncataloguedText()).toEqual([]);
-    await closeOverlays();
+    const cancel = $('[role="dialog"] [data-slot="dialog-footer"] button[type="button"]');
+    await cancel.scrollIntoView({ block: 'center' });
+    await cancel.click();
+    await waitForOverlaysToClose();
   });
 
   it('shows only catalog text in the question about closing the window', async () => {

@@ -22,7 +22,7 @@ use mannie_plugin_sdk::points::tools::{
     ToolSpec, Tools,
 };
 use mannie_provider::testing::Step;
-use mannie_provider::{Content, ModelRequest, ProviderEvent, Role};
+use mannie_provider::{Content, ModelRequest, Role};
 use mannie_runtime::testing::{
     FAKE_EXECUTOR_KIND, FAKE_EXECUTOR_TOOL, FakeExecutor, Harness, HarnessOptions, add_plugin,
     executor_host, fast_config, reply, tool_calls,
@@ -356,24 +356,24 @@ async fn a_conversation_uses_its_agent_for_each_reply_and_retry() {
         .await;
     let model = &setup.harness.model;
     model.push_reply(reply("One."));
-    model.push_reply(vec![
-        Step::Event(ProviderEvent::TextDelta("Two".to_owned())),
-        Step::Hang,
-    ]);
+    model.push_reply(vec![Step::Hang]);
     model.push_reply(reply("Three."));
     model.push_reply(reply("Four."));
 
     let (conversation, run) = setup.start("Start", None).await;
     setup.harness.wait_for_run(&conversation, &run).await;
     setup.switch(&conversation, Some(&agent.key)).await;
+    let queued = model.remaining_replies();
     let second = setup.send(&conversation, "Next").await;
-    // The model took this reply, so a stop does not leave it for the retry.
-    setup
-        .harness
-        .wait_until(&conversation, |transcript| {
-            transcript.reply_text(1) == "Two"
-        })
-        .await;
+    // The model must take the hanging reply before Stop, so the retry gets
+    // the next script.
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while model.remaining_replies() == queued {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the model takes the second reply");
     setup.harness.runtime.stop_reply(&conversation).await;
     setup.harness.wait_for_run(&conversation, &second).await;
     let retried = setup

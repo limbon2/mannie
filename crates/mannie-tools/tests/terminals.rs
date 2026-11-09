@@ -131,18 +131,26 @@ fn pid_written(path: &Path) -> Option<u32> {
     fs::read_to_string(path).ok()?.trim().parse().ok()
 }
 
-async fn wait_for_pid(path: &Path) -> u32 {
-    let deadline = Instant::now() + Duration::from_secs(20);
+async fn wait_for_pid(session: &mut Session, path: &Path, timeout: Duration) -> u32 {
+    let deadline = Instant::now() + timeout;
+    let mut poll = tokio::time::interval(Duration::from_millis(50));
     loop {
         if let Some(pid) = pid_written(path) {
             return pid;
         }
         assert!(
             Instant::now() < deadline,
-            "{} was not written",
-            path.display()
+            "{} was not written; the terminal showed {:?}",
+            path.display(),
+            session.seen
         );
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // The terminal can block while its output queue is full.
+        tokio::select! {
+            Some(chunk) = session.output.recv() => {
+                session.seen.push_str(&String::from_utf8_lossy(&chunk));
+            }
+            _ = poll.tick() => {}
+        }
     }
 }
 
@@ -259,23 +267,31 @@ async fn a_resize_reaches_the_shell() {
 async fn ending_the_terminal_ends_a_process_in_a_console_of_its_own() {
     let folder = tempfile::tempdir().unwrap();
     let pid_file = folder.path().join("grandchild.pid");
-    let mut session = Session::start(powershell(), vec!["-NoLogo".into(), "-NoProfile".into()]);
     // Start-Process gives the sleeper a hidden console of its own, outside
-    // the pseudo console, so only the job reaches it.
-    session
-        .type_line(&format!(
-            "Start-Process -WindowStyle Hidden -FilePath '{}' -ArgumentList '-NoProfile -NonInteractive -Command \"$PID | Out-File -Encoding ascii ''{}''; Start-Sleep -Seconds 60\"'",
-            powershell().display(),
-            pid_file.display()
-        ))
-        .await;
-    let pid = wait_for_pid(&pid_file).await;
+    // the pseudo console, so only the job reaches it. Run this before the
+    // first prompt so the fixture does not depend on the interactive editor.
+    let command = format!(
+        "(Start-Process -WindowStyle Hidden -FilePath '{}' -ArgumentList '-NoProfile -NonInteractive -Command Start-Sleep -Seconds 60' -PassThru).Id | Out-File -Encoding ascii -LiteralPath '{}'",
+        powershell().to_string_lossy().replace('\'', "''"),
+        pid_file.to_string_lossy().replace('\'', "''")
+    );
+    let mut session = Session::start(
+        powershell(),
+        vec![
+            "-NoLogo".into(),
+            "-NoProfile".into(),
+            "-NoExit".into(),
+            "-Command".into(),
+            command.into(),
+        ],
+    );
+    // Starting a detached PowerShell can take over 20 seconds on CI.
+    let pid = wait_for_pid(&mut session, &pid_file, Duration::from_secs(60)).await;
     assert!(is_alive(pid));
 
     session.terminal.end(Duration::from_secs(1)).await;
 
     assert_ended(pid).await;
-    let _ = &mut session.output;
 }
 
 #[cfg(target_os = "linux")]
@@ -283,7 +299,7 @@ async fn ending_the_terminal_ends_a_process_in_a_console_of_its_own() {
 async fn ending_the_terminal_ends_a_process_in_a_session_of_its_own() {
     let folder = tempfile::tempdir().unwrap();
     let pid_file = folder.path().join("grandchild.pid");
-    let session = plain_shell();
+    let mut session = plain_shell();
     // A new session leaves the terminal's process group, so only the
     // subreaper keeps it in the shell's tree.
     session
@@ -292,7 +308,7 @@ async fn ending_the_terminal_ends_a_process_in_a_session_of_its_own() {
             pid_file.display()
         ))
         .await;
-    let pid = wait_for_pid(&pid_file).await;
+    let pid = wait_for_pid(&mut session, &pid_file, Duration::from_secs(20)).await;
     assert!(is_alive(pid));
 
     session.terminal.end(Duration::from_secs(1)).await;
