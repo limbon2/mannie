@@ -1,15 +1,20 @@
 // What the owner does with notebooks and their sources (plugins/notebooks/
 // docs/README.md, notebooks and sources): creating, renaming and deleting a
 // notebook, adding files through the system's dialog or a drop and pasted
-// texts, switching, trying again and removing sources, and starting one of a
-// notebook's own chats. The dialogs are mounted once, as the plugin's
+// texts, switching, trying again and removing sources, and starting and
+// deleting one of a notebook's own chats. The dialogs are mounted once, as the plugin's
 // overlay, so that the sidebar, the view and the command palette open them
 // alike. The plugin's commands go through its generated bindings (ADR-0034,
 // decision 9), and the conversations and their attachments through the
 // core's commands (ADR-0046, decision 6; ADR-0051).
-import { conversationFailureMessage, deleteConversation, detach } from '@mannie/plugin-sdk/conversations';
+import {
+  conversationFailureMessage,
+  type ConversationSummary,
+  deleteConversation,
+  detach,
+} from '@mannie/plugin-sdk/conversations';
 import { call } from '@mannie/plugin-sdk/ipc';
-import { startConversation } from '@mannie/plugin-sdk/navigation';
+import { openConversationId, startConversation } from '@mannie/plugin-sdk/navigation';
 
 import { commands, type NotebookView, type SourceRefusal, type SourceView } from '../generated/bindings.js';
 import { m } from '../generated/messages.js';
@@ -60,6 +65,21 @@ export class DeleteRequest {
   }
 }
 
+/** One opening of the deletion confirmation of one of a notebook's chats. */
+export class DeleteChatRequest {
+  readonly chat: ConversationSummary;
+  deleting = $state(false);
+  /** Why the latest attempt failed, worded. */
+  failure: string | null = $state(null);
+  /** The notebook that the chat belongs to. */
+  readonly notebookId: string;
+
+  constructor(chat: ConversationSummary, notebookId: string) {
+    this.chat = chat;
+    this.notebookId = notebookId;
+  }
+}
+
 /** One opening of "Paste text". */
 export class PasteRequest {
   failure: NotebooksFailure | null = $state(null);
@@ -101,6 +121,9 @@ export class NotebookActions {
   addFailures: Partial<Record<string, NotebooksFailure>> = $state({});
   /** How many dropped files each notebook still takes, by its ID. */
   adding: Partial<Record<string, number>> = $state({});
+  /** The latest deletion confirmation of a chat, which stays while it closes. */
+  chatDeleting: DeleteChatRequest | null = $state(null);
+  chatDeleteOpen = $state(false);
   deleteOpen = $state(false);
   /** The latest deletion confirmation, which stays while it closes. */
   deleting: DeleteRequest | null = $state(null);
@@ -124,6 +147,7 @@ export class NotebookActions {
   closeAll(): void {
     this.nameOpen = false;
     this.deleteOpen = false;
+    this.chatDeleteOpen = false;
     this.pasteOpen = false;
     this.removeOpen = false;
     this.addFailures = {};
@@ -207,6 +231,30 @@ export class NotebookActions {
     }
     if (this.paste === request) {
       this.pasteOpen = false;
+    }
+  }
+
+  /**
+   * Deletes the chat of a confirmation, which closes once the core deleted
+   * it. While the chat shows, its notebook's page shows instead.
+   */
+  async confirmDeleteChat(request: DeleteChatRequest): Promise<void> {
+    request.deleting = true;
+    request.failure = null;
+    const outcome = await deleteConversation(request.chat.id);
+    request.deleting = false;
+    // A chat that is gone already needs nothing more.
+    const isGone =
+      !outcome.ok && outcome.failure.kind === 'core' && outcome.failure.error.code === 'conversation_not_found';
+    if (!outcome.ok && !isGone) {
+      request.failure = conversationFailureMessage(outcome.failure, NOTEBOOKS_CONTEXT);
+      return;
+    }
+    if (this.chatDeleting === request) {
+      this.chatDeleteOpen = false;
+    }
+    if (openConversationId() === request.chat.id) {
+      await openNotebook(request.notebookId);
     }
   }
 
@@ -311,6 +359,12 @@ export class NotebookActions {
   startDelete(notebook: NotebookView): void {
     this.deleting = new DeleteRequest(notebook, chatsOf(notebook.id).length, chatsUsing(notebook.id).length);
     this.deleteOpen = true;
+  }
+
+  /** Opens the deletion confirmation of one of a notebook's chats. */
+  startDeleteChat(chat: ConversationSummary, notebookId: string): void {
+    this.chatDeleting = new DeleteChatRequest(chat, notebookId);
+    this.chatDeleteOpen = true;
   }
 
   /** Opens "Paste text" for a notebook. */

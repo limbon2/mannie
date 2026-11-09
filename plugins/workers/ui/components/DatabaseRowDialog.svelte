@@ -5,20 +5,27 @@
   import { Input } from '@mannie/plugin-sdk/components/input';
   import * as Select from '@mannie/plugin-sdk/components/select';
   import { Textarea } from '@mannie/plugin-sdk/components/textarea';
+  import { formatBytes } from '@mannie/plugin-sdk/format';
+  import BanIcon from '@mannie/plugin-sdk/icons/ban';
+  import Undo2Icon from '@mannie/plugin-sdk/icons/undo-2';
 
   import type { TableInfo } from '../generated/bindings.js';
   import { m } from '../generated/messages.js';
   import type { RowEditRequest } from '../state/database-rows.svelte.js';
   import { databasesFailureMessage } from '../utils/databases-messages.js';
-  import { fieldProblem, type ValueKind } from '../utils/databases-values.js';
+  import { blobBytes, fieldProblem, type TypedKind } from '../utils/databases-values.js';
 
   // The Data tab's row dialog (plugins/workers/docs/databases.md, the view):
-  // a field for each column, with the kind of value it writes. An edit
-  // writes only the columns that the owner changed, and the core checks that
-  // the row still has the values that the page showed; an insertion leaves
-  // the columns that keep their default out. Generated columns show without
-  // a field, and binary data can only become NULL. Names and values are
-  // content.
+  // a field for each column, which starts with the row's value, or empty
+  // with the column's default for a new row. A column's declared type gives
+  // the kind of value it writes; only a column without one, or with BLOB
+  // affinity, offers the kind. Each field can be set to NULL where the
+  // column allows it, and a changed field can be undone to its start. An
+  // edit writes only the columns that the owner changed, and the core checks
+  // that the row still has the values that the page showed; an insertion
+  // leaves the columns that keep their default out. Generated columns show
+  // without a field, and binary data can only become NULL. Names and values
+  // are content.
   let {
     open = $bindable(false),
     request,
@@ -31,32 +38,17 @@
     table: TableInfo;
   } = $props();
 
-  /** The kinds of value that are numbers. */
-  const NUMBERS: ReadonlySet<ValueKind> = new Set(['integer', 'real']);
+  /** The kinds that a column without a type offers. */
+  const KINDS: readonly TypedKind[] = ['text', 'integer', 'real'];
 
   const generated = $derived(new Set(table.columns.filter((column) => column.hidden).map((column) => column.name)));
   const problems = $derived(request.fields.map((field) => fieldProblem(field)));
   const hasProblem = $derived(problems.some((problem) => problem !== null));
 
-  /** The kinds that a column's field offers: an edit keeps a value unchanged, an insertion takes the default. */
-  function kindsOf(index: number): readonly ValueKind[] {
-    const isBlob = request.row?.values[index]?.type === 'blob';
-    if (request.row === null) {
-      return ['default', 'text', 'integer', 'real', 'null'];
-    }
-    return isBlob ? ['unchanged', 'null'] : ['unchanged', 'text', 'integer', 'real', 'null'];
-  }
-
-  function kindLabel(kind: ValueKind): string {
+  function kindLabel(kind: TypedKind): string {
     switch (kind) {
-      case 'default': {
-        return m.workers_databases_row_kind_default();
-      }
       case 'integer': {
         return m.workers_databases_row_kind_integer();
-      }
-      case 'null': {
-        return m.workers_databases_row_kind_null();
       }
       case 'real': {
         return m.workers_databases_row_kind_real();
@@ -64,22 +56,47 @@
       case 'text': {
         return m.workers_databases_row_kind_text();
       }
-      case 'unchanged': {
-        return m.workers_databases_row_kind_unchanged();
-      }
     }
   }
 
   function setKind(index: number, value: string): void {
-    const kind = kindsOf(index).find((known) => known === value);
+    const kind = KINDS.find((known) => known === value);
     if (kind !== undefined) {
-      request.fields[index].kind = kind;
+      request.setKind(index, kind);
     }
   }
 
-  /** Whether a kind of value is written as a number. */
-  function isNumber(kind: ValueKind): boolean {
-    return NUMBERS.has(kind);
+  /** Whether a column takes NULL; a column that the table does not describe is taken to. */
+  function allowsNull(name: string): boolean {
+    return table.columns.find((column) => column.name === name)?.notNull !== true;
+  }
+
+  /** What an empty field shows: NULL, or for a new row the column's default. */
+  function placeholderOf(index: number, name: string): string {
+    if (request.isNull(index)) {
+      return m.workers_databases_row_kind_null();
+    }
+    if (request.fields[index].kind !== 'default') {
+      return '';
+    }
+    const defaultSql = table.columns.find((column) => column.name === name)?.default ?? null;
+    return defaultSql === null
+      ? m.workers_databases_row_kind_default()
+      : m.workers_databases_row_default_value({ value: defaultSql });
+  }
+
+  /** Whether a field offers the kind of value: its column has no type, and the row has no binary data in it. */
+  function offersKind(index: number): boolean {
+    if (request.typed[index]) {
+      return false;
+    }
+    return blobSize(index) === null;
+  }
+
+  /** The size of the binary data that the row has in a column, or `null` when it has none. */
+  function blobSize(index: number): string | null {
+    const value = request.row?.values[index];
+    return value?.type === 'blob' ? formatBytes(blobBytes(value.base64)) : null;
   }
 
   function save(event: SubmitEvent): void {
@@ -103,6 +120,8 @@
       <Field.Group>
         {#each request.fields as field, index (index)}
           {const column = $derived(request.columns[index])}
+          {const kind = $derived(request.kinds[index])}
+          {const blob = $derived(field.kind === 'unchanged' ? blobSize(index) : null)}
           <Field.Field data-invalid={problems[index] !== null ? true : undefined}>
             <Field.Label class="font-mono" for="database-row-{index}">
               <span class="wrap-anywhere" data-content dir="auto">{column.name}</span>
@@ -111,40 +130,76 @@
               {/if}
             </Field.Label>
             {#if generated.has(column.name)}
-              <p class="text-sm text-muted-foreground">{m.workers_databases_row_kind_unchanged()}</p>
+              <p class="text-sm text-muted-foreground">{m.workers_databases_row_generated()}</p>
             {:else}
-              <div class="flex flex-col gap-2 sm:flex-row">
-                <Select.Root type="single" value={field.kind} onValueChange={(value: string) => setKind(index, value)}>
-                  <Select.Trigger
-                    class="w-full sm:w-48"
-                    aria-label={m.workers_databases_row_kind({ column: column.name })}
+              <div class="flex items-start gap-2">
+                {#if offersKind(index)}
+                  <Select.Root type="single" value={kind} onValueChange={(value: string) => setKind(index, value)}>
+                    <Select.Trigger
+                      class="w-36 shrink-0"
+                      aria-label={m.workers_databases_row_kind({ column: column.name })}
+                    >
+                      {kindLabel(kind)}
+                    </Select.Trigger>
+                    <Select.Content>
+                      {#each KINDS as known (known)}
+                        <Select.Item label={kindLabel(known)} value={known}>{kindLabel(known)}</Select.Item>
+                      {/each}
+                    </Select.Content>
+                  </Select.Root>
+                {/if}
+                {#if blob !== null}
+                  <p
+                    id="database-row-{index}"
+                    class="flex h-8 min-w-0 flex-1 items-center text-sm text-muted-foreground"
                   >
-                    {kindLabel(field.kind)}
-                  </Select.Trigger>
-                  <Select.Content>
-                    {#each kindsOf(index) as kind (kind)}
-                      <Select.Item label={kindLabel(kind)} value={kind}>{kindLabel(kind)}</Select.Item>
-                    {/each}
-                  </Select.Content>
-                </Select.Root>
-                {#if field.kind === 'text'}
+                    {m.workers_databases_row_blob({ size: blob })}
+                  </p>
+                {:else if kind === 'text'}
                   <Textarea
                     id="database-row-{index}"
-                    class="min-h-9 font-mono"
+                    class="min-h-8 flex-1 font-mono"
                     dir="auto"
+                    placeholder={placeholderOf(index, column.name)}
                     rows={1}
                     spellcheck="false"
-                    bind:value={field.text}
+                    value={field.text}
+                    oninput={(event: Event) => request.edit(index, (event.currentTarget as HTMLTextAreaElement).value)}
                   />
-                {:else if isNumber(field.kind)}
+                {:else}
                   <Input
                     id="database-row-{index}"
-                    class="font-mono"
+                    class="flex-1 font-mono"
                     aria-invalid={problems[index] !== null}
                     inputmode="decimal"
+                    placeholder={placeholderOf(index, column.name)}
                     spellcheck="false"
-                    bind:value={field.text}
+                    value={field.text}
+                    oninput={(event: Event) => request.edit(index, (event.currentTarget as HTMLInputElement).value)}
                   />
+                {/if}
+                {#if allowsNull(column.name) && !request.isNull(index)}
+                  <Button
+                    aria-label={m.workers_databases_row_set_null({ column: column.name })}
+                    size="icon"
+                    title={m.workers_databases_row_set_null({ column: column.name })}
+                    variant="ghost"
+                    onclick={() => request.setNull(index)}
+                  >
+                    <BanIcon />
+                  </Button>
+                {/if}
+                {#if request.changed(index)}
+                  <Button
+                    aria-label={m.workers_databases_row_undo({ column: column.name })}
+                    data-database-row-undo=""
+                    size="icon"
+                    title={m.workers_databases_row_undo({ column: column.name })}
+                    variant="ghost"
+                    onclick={() => request.undo(index)}
+                  >
+                    <Undo2Icon />
+                  </Button>
                 {/if}
               </div>
               {#if problems[index] !== null}

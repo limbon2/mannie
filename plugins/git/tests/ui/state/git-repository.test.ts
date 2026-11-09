@@ -312,6 +312,25 @@ describe('the repository of an open panel', () => {
     expect(core.repositoryCommit).toHaveBeenLastCalledWith({ commit: 'c2', projectId: 'project-1' });
   });
 
+  it('closes the chosen commit, and a read that was on its way changes nothing', async () => {
+    const panel = new RepositoryPanel('project-1');
+    let answer: (value: unknown) => void = () => undefined;
+    core.repositoryCommit.mockReturnValueOnce(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    panel.chooseCommit('c1');
+
+    panel.closeCommit();
+    answer(ok(view('c1')));
+    await settle();
+
+    expect(panel.chosenCommit).toBeNull();
+    expect(panel.commit.status).toBe('idle');
+    expect(panel.commit.value).toBeNull();
+  });
+
   it('reads a view again with the overview after its read failed', async () => {
     const panel = new RepositoryPanel('project-1');
     core.repositoryBranches.mockResolvedValueOnce(failed('timed_out'));

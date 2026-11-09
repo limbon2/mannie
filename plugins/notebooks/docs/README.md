@@ -48,6 +48,7 @@ After trying the first version on administration guides, the owner asked for doc
 ### Chats
 
 - "New chat", on a notebook's page or under it in the sidebar, starts one of the notebook's chats ([ADR-0051](../../../docs/adr/0051-let-a-plugin-keep-conversations-of-its-own.md)). The chat belongs to the notebook: the notebook stays attached, and its chip has no button that detaches it. It never shows in the Chat list or in a project, and it opens in the main area while the sidebar keeps the notebooks. It has the usual tools.
+- On hover or focus, a chat under its notebook in the sidebar offers a button that deletes it. Deleting asks first, deletes the chat with its replies and keeps the notebook and its sources. While the chat shows, the notebook's page shows in its place.
 - In a regular chat, "@" lists the notebooks whose names hold what the owner typed. A notebook chosen there is attached to the chat when the message is sent ([ADR-0050](../../../docs/adr/0050-let-a-mention-attach-what-it-names.md)). The chip of an attached notebook detaches it, and a conversation holds at most 8 attachments.
 
 ### Answers

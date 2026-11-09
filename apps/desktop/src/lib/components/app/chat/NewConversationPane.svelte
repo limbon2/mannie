@@ -19,6 +19,7 @@
   import ChatGptPlanIndicator from './ChatGptPlanIndicator.svelte';
   import Composer from './Composer.svelte';
   import NoProfileNotice from './NoProfileNotice.svelte';
+  import ProfileMenu from './ProfileMenu.svelte';
 
   // A new conversation: the message box, with a hint about what the owner can
   // do. The first message creates the conversation, which then opens. A new
@@ -29,7 +30,10 @@
   // show here too, with the attachments that the conversation starts with
   // (ADR-0046, decision 6). A conversation that a plugin starts for one of
   // its items, such as a notebook's chat, belongs to it: the heading names
-  // it, and its chip stays (ADR-0051).
+  // it, and its chip stays (ADR-0051). The toolbar holds the profile menu,
+  // as an open conversation's does, with the ChatGPT plan's indicator beside
+  // it, and the first message starts the conversation with the profile that
+  // the owner chose.
   const slots = getShellSlots();
 
   const noProfile = $derived(providerProfiles.status === 'ready' && providerProfiles.profiles.length === 0);
@@ -72,6 +76,12 @@
     },
   };
 
+  /** Chooses the draft's profile, which cannot fail before the conversation exists. */
+  function chooseProfile(profileId: string | null): Promise<ChatFailure | null> {
+    conversationDraft.profileId = profileId;
+    return Promise.resolve(null);
+  }
+
   async function start(text: string, mentions: MentionRef[], images: ImageRef[]): Promise<ChatFailure | null> {
     const attachments = conversationDraft.refs();
     const home = conversationDraft.home;
@@ -82,7 +92,7 @@
         home,
         images,
         mentions,
-        profileId: null,
+        profileId: conversationDraft.profileId,
         projectId,
         text,
       }),
@@ -101,6 +111,12 @@
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col">
+  {#if !noProfile}
+    <div class="flex items-center gap-2 border-b px-3 py-1.5" data-new-conversation-toolbar="">
+      <ProfileMenu profileId={conversationDraft.profileId} onChoose={chooseProfile} />
+      <ChatGptPlanIndicator profileId={conversationDraft.profileId} />
+    </div>
+  {/if}
   <div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 overflow-y-auto p-6">
     {#if noProfile}
       <div class="w-full max-w-xl">
@@ -116,7 +132,6 @@
           <Empty.Description>{m.chat_new_description()}</Empty.Description>
         </Empty.Header>
       </Empty.Root>
-      <ChatGptPlanIndicator profileId={null} />
     {/if}
   </div>
   <Composer disabled={noProfile} mentionPlace={{ kind: 'new_conversation', projectId }} onSend={start}>

@@ -8,4 +8,4 @@ import type { DatabasesError } from '../generated/bindings.js';
 export type DatabasesFailure = PluginCallFailure<DatabasesError>;
 
 /** A tab of a database's page. */
-export type DatabaseTab = 'data' | 'sql' | 'structure' | 'tables';
+export type DatabaseTab = 'data' | 'sql' | 'structure';

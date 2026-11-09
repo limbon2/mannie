@@ -12,7 +12,7 @@
 
 ### Workers in the sidebar
 
-Once a worker is paired, the sidebar shows a "Workers" group between the projects and the conversations, with one row for each worker: its name, as content, and its status as an icon with a text for screen readers: "Connected", "Connecting", "Offline", "Needs an update", "Key changed" or "No longer paired". A row's menu offers "Details", which opens the worker in the Workers settings, "Rename…" and "Remove…". The group's "+" opens "Pair a worker". Without paired workers the group is not shown, so the sidebar of an owner without workers stays as it was.
+Once a worker is paired, the sidebar shows a "Workers" group between the projects and the conversations, with one row for each worker: its name, as content, and its status as an icon with a text for screen readers: "Connected", "Connecting", "Offline", "Needs an update", "Key changed" or "No longer paired". A row's menu offers "Details", which opens the worker in the Workers settings, "Rename…" and "Remove…". The group's "+" opens "Pair a worker". Without paired workers the group is not shown, so the sidebar of an owner without workers stays as it was. The group's heading collapses and expands it, as the "Projects" group's does, and the webview's storage remembers it.
 
 ### Pairing a worker
 

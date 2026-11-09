@@ -226,7 +226,8 @@
   "git_diff_added_line": "added",
   "git_diff_removed_line": "removed",
   "git_diff_no_newline": "no line break at the end",
-  "git_diff_stat": "+{added} −{removed}",
+  "git_diff_added": "+{count}",
+  "git_diff_removed": "−{count}",
   "git_diff_patches_left": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],

@@ -2,7 +2,8 @@
 // a real worker on this computer: the feature turns on under Workers on the
 // Plugins page and adds its view to the activity bar; the owner registers a
 // SQLite file on this computer through the system's file dialog under a
-// name, and its page lists its tables and pages its rows; a worker whose
+// name, the sidebar lists its tables under it, and its page pages its rows
+// and shows a table's structure; a worker whose
 // configuration allows databases shows as a group of its own, the owner
 // registers a file on it by its path, and its page reads the worker's file
 // through the link; a worker that stops leaves its databases listed as
@@ -42,9 +43,6 @@ const ON_WORKER = '[data-databases-panel][data-databases-machine]:not([data-data
 
 /** The page of the database that the view shows. */
 const PAGE = '[data-database-page]';
-
-/** The row of the table `parts` on the page's Tables tab. */
-const PARTS_TABLE = `${PAGE} [data-database-table="parts"]`;
 
 /** The grid of rows on the page's Data tab. */
 const GRID = `${PAGE} [data-database-grid]`;
@@ -137,13 +135,16 @@ describe('databases', () => {
 
     await $(PAGE).waitForExist({ timeout: 30_000, timeoutMsg: 'the database did not open' });
     await waitForShownText(PAGE, /inventory\.db on this computer/u);
-    await $(PARTS_TABLE).waitForDisplayed();
+    await $(`${THIS_COMPUTER} [data-database-table="parts"]`).waitForDisplayed();
     await expect($(`${THIS_COMPUTER} [data-database-row]`)).toHaveText(expect.stringContaining('Inventory'));
-    // The tabs follow the arrow keys: Tables, Structure, then Data.
-    await focus('[data-database-tab="tables"]');
-    await browser.keys([Key.ArrowRight, Key.ArrowRight]);
+    // The page opens on the Data tab with the first table's rows.
     await expect($('[data-database-tab="data"]')).toHaveAttribute('aria-selected', 'true');
     await waitForShownText(GRID, /bolt/u);
+    // The tabs follow the arrow keys: Data, then Structure.
+    await focus('[data-database-tab="data"]');
+    await browser.keys([Key.ArrowRight]);
+    await expect($('[data-database-tab="structure"]')).toHaveAttribute('aria-selected', 'true');
+    await waitForShownText(`${PAGE} [data-database-structure]`, /stock/u);
     await axeInBothThemes();
   });
 
@@ -167,9 +168,10 @@ describe('databases', () => {
 
     await $(PAGE).waitForExist({ timeout: 30_000, timeoutMsg: 'the worker’s database did not open' });
     await waitForShownText(PAGE, new RegExp(`parts\\.db on ${WORKER_NAME}`, 'u'));
-    await $(PARTS_TABLE).waitForDisplayed();
+    await $(`${ON_WORKER} [data-database-table="parts"]`).waitForDisplayed();
     await expect($(`${ON_WORKER} [data-database-row]`)).toHaveText(expect.stringContaining('Parts'));
-    await $('[data-database-tab="data"]').click();
+    await $(`${ON_WORKER} [data-database-table="parts"] button`).click();
+    await expect($('[data-database-tab="data"]')).toHaveAttribute('aria-selected', 'true');
     await waitForShownText(GRID, /nut/u);
     await axeInBothThemes();
   });

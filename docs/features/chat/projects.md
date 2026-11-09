@@ -23,8 +23,8 @@ The conversation list ([conversation view](conversation-view.md#layout)) has two
 - "Projects", above. Its heading collapses and expands the group, and "+" ("Add a project") opens the system's folder dialog from the core. The chosen folder becomes a project, which opens with a new conversation in it.
 - Each project is a row with a folder icon, open while the project is expanded, and its name, most recently active first: by its newest conversation, or by the time it was added while it has none. Activating the row collapses or expands the project. On hover or focus, the row offers "New conversation in" the project and a menu with the folder's full path, "Rename…" and "Remove…". A collapsed project shows when one of its conversations waits for approval or writes a reply.
 - Below an expanded project, its conversations, most recent first: five at first, then "Show more" and "Show less". A conversation row is the same as in the general list, with its menu to rename or delete it.
-- "Conversations", below: the general conversations, with "+" for a new one, as before.
-- Whether the "Projects" group and each project are collapsed is remembered in the webview's storage, as the theme is. It is a convenience of one window: when the storage is empty or unreadable, everything starts expanded. "Show more" lasts while the window runs. A project's list always shows the open conversation, also beyond its first five.
+- "Conversations", below: the general conversations, with "+" for a new one. Its heading collapses and expands it, as do the headings of "Plans" and of the plugins' groups, such as "Workers".
+- Whether the "Projects", "Plans" and "Conversations" groups and each project are collapsed is remembered in the webview's storage, as the theme is. It is a convenience of one window: when the storage is empty or unreadable, everything starts expanded. "Show more" lasts while the window runs. A project's list always shows the open conversation, also beyond its first five.
 
 ### Starting a conversation in a project
 

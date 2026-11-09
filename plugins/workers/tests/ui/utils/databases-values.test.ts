@@ -10,10 +10,12 @@ import {
   blobBytes,
   CELL_CHARS,
   cellText,
+  columnKind,
   fieldOf,
   fieldProblem,
   fullText,
   isWorded,
+  kindOfValue,
   pageCsv,
   valueOf,
 } from '../../../ui/utils/databases-values.js';
@@ -74,6 +76,32 @@ describe('the fields of the row dialog', () => {
     expect(valueOf({ kind: 'null', text: 'ignored' })).toEqual({ type: 'null' });
     expect(valueOf({ kind: 'unchanged', text: '12' })).toBeNull();
     expect(valueOf({ kind: 'default', text: '' })).toBeNull();
+  });
+});
+
+describe('the kind of value of a column', () => {
+  it("follows the declared type by SQLite's rules of affinity", () => {
+    expect(columnKind('INTEGER')).toBe('integer');
+    expect(columnKind('bigint')).toBe('integer');
+    expect(columnKind('VARCHAR(40)')).toBe('text');
+    expect(columnKind('TEXT')).toBe('text');
+    expect(columnKind('DOUBLE PRECISION')).toBe('real');
+    expect(columnKind('REAL')).toBe('real');
+    expect(columnKind('DATETIME')).toBe('text');
+    expect(columnKind('DECIMAL(10,2)')).toBe('text');
+  });
+
+  it('gives none for a column without a type or with BLOB affinity', () => {
+    expect(columnKind(null)).toBeNull();
+    expect(columnKind('')).toBeNull();
+    expect(columnKind('BLOB')).toBeNull();
+  });
+
+  it('starts a column without a type with the kind of its value', () => {
+    expect(kindOfValue({ type: 'integer', value: '1' })).toBe('integer');
+    expect(kindOfValue({ type: 'real', value: 1.5 })).toBe('real');
+    expect(kindOfValue({ type: 'null' })).toBe('text');
+    expect(kindOfValue(undefined)).toBe('text');
   });
 });
 
