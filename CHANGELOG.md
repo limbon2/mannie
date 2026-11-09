@@ -12,21 +12,6 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - Plans: the tool `save_plan` saves a conversation's plan in Mannie's database, where the owner reads, edits and deletes it, and "@" mentions it in any conversation. Running a plan fills the message box of a new conversation or of its own, and nothing runs before Send. A plan is model output and allows nothing (ADR-0060).
 - A side panel lists a conversation's child agents under Working and Ended, and opens by itself without taking the focus on the first task of a conversation whose agent is custom.
 - Agents can ask the owner questions with options during a reply: the tool `ask_owner` pauses the run, a card in the transcript shows up to 4 questions of 2 to 6 options with a choice of the owner's own words, and the reply goes on with the answer. Only the conversation agent asks, an answer allows nothing, and Stop, a quit or a crash cancels the question (ADR-0058).
-- Plugins publish tools while they run, through the point `tool-sources`: each set replaces the source's tools, a run keeps the set that it started with, and a published tool gives way to any tool of the same name (ADR-0043).
-- A plugin's tool may call a tool server's tool as an external-tool access, which the owner allows once, for the conversation, for the project or for every conversation, covering the same tool of the same server at the same endpoint with any arguments; full access runs every call, a worker's ceiling refuses them, and the approval shows the server's hints as its claims (ADR-0043).
-- Plugins start the programs of local tool servers through the service `local-servers`, which finds the program on Mannie's `PATH`, runs it in the supervisor with the environment of commands and the server's own variables and secrets, and ends it when the plugin stops or Mannie quits (ADR-0043).
-- The images of tool results reach the model, PNG and JPEG without their metadata, at most 4 of a result, through the Responses API's tool outputs and a message after the tool results on Chat Completions; the call's details show them and the export keeps them (ADR-0044).
-- A plugin's tool may have a schema that is not strict, which the providers' strict mode leaves as it is, and a plugin's UI opens a link through the core's checks with `openLink` and describes every tool that it publishes with one tool kind (ADR-0043).
-- The evaluations count, for each report of a child agent, the parent's reads and searches that repeat what a child read or searched, apart from its checks of files that a child changed. A new task fails when the parent repeats more than two of them for its report, and `MANNIE_EVAL_RUNS` runs each task several times.
-- An activity bar at the far left of the window switches the sidebar between Chat and the views of plugins, such as Notebooks, with "Find a command" and "Settings" at its foot; each entry shows its own sidebar panels and returns to where the main area last was under it, and Ctrl+B collapses the sidebar to the bar (ADR-0045).
-- Conversations hold attachments, at most 8: a plugin's context, such as a notebook. A reply searches the conversation's home and the attachments that the message names, with the owner's two earlier messages, before the model answers, under "Searching the attached sources…". The owner's message shows what was found as a row that opens to the excerpts, and the model reads them after the message's mentions with their cite links, and the instructions with an outline of what the attachments hold and how to search, read and cite them. The message box shows the attachments as chips that detach them, and the new conversation pane offers the controls of the message box that work on a draft (ADR-0046, ADR-0049).
-- Replies cite by links such as `[guide.pdf p. 12](cite:notebooks/<key>)`, which the transcript shows as buttons with their labels that open the excerpt, also while its plugin is off, or open where a passage that a tool returned comes from; compaction keeps the cite links that the replies relied on (ADR-0049).
-- A mention whose provider is also a context provider, such as a notebook after "@", attaches what it names when the message is sent, and that message gets what the attachment holds for it (ADR-0050).
-- A conversation can belong to one of its attachments, such as a notebook's chat: the attachment stays attached, every message gathers from it, the conversation never joins a project, and the Chat list leaves it to the plugin, which starts it with `startConversation({ home })` and deletes it with `deleteConversation` (ADR-0051).
-- A plugin's tool can be offered only where the conversation, or the one that gave a child its task, holds attachments of the plugin's own context provider, and its calls carry their keys (ADR-0052).
-- A new embedding profile starts with the query text that instruction-aware models such as Qwen3-Embedding want, which the owner can change or clear, and a plugin's `openView` can replace the address in the history.
-- Search profiles in the Providers settings, "Embedding and rerank models": an embedding or rerank model on a server that the owner names, with an optional key and the texts that go before queries and documents, and a test that reports the vectors' dimensions or the scores of two passages. Plugins embed and rerank through them with the service `models`, and never see a key (ADR-0047).
-- A plugin's write to the store can erase what it deleted from every file of the store, as deleting a conversation does (ADR-0048, proposed).
 - Plugins open terminals through the service `terminals`: this machine's shells, which the supervisor starts on a pseudo console with a setup that the plugin passes and contains as a command, and the hosts that plugins offer through the point `terminal-hosts`. Each terminal belongs to a conversation, at most 8 to one and 32 on the machine, and ends with its conversation, its plugin and Mannie (ADR-0053).
 - A plugin's tool may type a command into a terminal as a terminal-command access, which the owner allows once, for the conversation, for the project or for every conversation, covering the same command on the same host and, on this machine, in the same shell; rules of its leading words apply on their host only and show in the Tools settings, full access runs it, and a worker's ceiling refuses it (ADR-0053).
 - A tool's result may keep up to 8 items that it cites, which the call's part stores, so a citation's popover shows their text after their source is gone; a cite key may end with `#L<first>-L<last>`, whose lines the popover marks, and a context kind without a provider serves citations only (ADR-0054).
@@ -43,6 +28,50 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 - The "Plans" and "Conversations" groups of Chat's sidebar collapse from their headings, as "Projects" does, and the webview's storage remembers them.
 - A new conversation shows the profile menu before its first message, with the ChatGPT plan's indicator beside it, and the first message starts the conversation with the chosen profile.
+
+### Fixed
+
+- On Windows, a channel to the webview held its first message after a pause until the system's next timer tick, up to 15.6 ms, and stretched the 16 ms between its batches to as much as 31 ms. A channel now sends up to 4 batches at once after a pause, without a timer, and then one every 16 ms at most on average, so a terminal's echo of a key reaches the page as soon as the shell sends it.
+- Every change of the page made the webview restyle the whole page, 5 to 6 ms on the reference machine and four times that on the low-end laptop profile, because Tailwind's `group-has-*` utilities in the shadcn-svelte components and the cursor rule of the side panel's handle put `*` after a `:has()`. These utilities stay out of the build, rules that cost nothing between changes do what Mannie needs of them, and `task build` refuses a stylesheet with such a selector.
+- A plugin that turned on or off could keep showing the state that the command returned, when the list with its newer state arrived before the command's answer. The command's plugin now goes in only while no list arrived during the command.
+- Showing another side panel tab, or opening or closing one, no longer makes the Git panel start over and read its repository again: the side panel area hands a panel the same argument for as long as it stays open.
+
+## 0.6.0 - 2026-11-09
+
+### Added
+
+- Plugins publish tools while they run, through the point `tool-sources`: each set replaces the source's tools, a run keeps the set that it started with, and a published tool gives way to any tool of the same name (ADR-0043).
+- A plugin's tool may call a tool server's tool as an external-tool access, which the owner allows once, for the conversation, for the project or for every conversation, covering the same tool of the same server at the same endpoint with any arguments; full access runs every call, a worker's ceiling refuses them, and the approval shows the server's hints as its claims (ADR-0043).
+- Plugins start the programs of local tool servers through the service `local-servers`, which finds the program on Mannie's `PATH`, runs it in the supervisor with the environment of commands and the server's own variables and secrets, and ends it when the plugin stops or Mannie quits (ADR-0043).
+- The images of tool results reach the model, PNG and JPEG without their metadata, at most 4 of a result, through the Responses API's tool outputs and a message after the tool results on Chat Completions; the call's details show them and the export keeps them (ADR-0044).
+- A plugin's tool may have a schema that is not strict, which the providers' strict mode leaves as it is, and a plugin's UI opens a link through the core's checks with `openLink` and describes every tool that it publishes with one tool kind (ADR-0043).
+- The evaluations count, for each report of a child agent, the parent's reads and searches that repeat what a child read or searched, apart from its checks of files that a child changed. A new task fails when the parent repeats more than two of them for its report, and `MANNIE_EVAL_RUNS` runs each task several times.
+- An activity bar at the far left of the window switches the sidebar between Chat and the views of plugins, such as Notebooks, with "Find a command" and "Settings" at its foot; each entry shows its own sidebar panels and returns to where the main area last was under it, and Ctrl+B collapses the sidebar to the bar (ADR-0045).
+- Conversations hold attachments, at most 8: a plugin's context, such as a notebook. A reply searches the conversation's home and the attachments that the message names, with the owner's two earlier messages, before the model answers, under "Searching the attached sources…". The owner's message shows what was found as a row that opens to the excerpts, and the model reads them after the message's mentions with their cite links, and the instructions with an outline of what the attachments hold and how to search, read and cite them. The message box shows the attachments as chips that detach them, and the new conversation pane offers the controls of the message box that work on a draft (ADR-0046, ADR-0049).
+- Replies cite by links such as `[guide.pdf p. 12](cite:notebooks/<key>)`, which the transcript shows as buttons with their labels that open the excerpt, also while its plugin is off, or open where a passage that a tool returned comes from; compaction keeps the cite links that the replies relied on (ADR-0049).
+- A mention whose provider is also a context provider, such as a notebook after "@", attaches what it names when the message is sent, and that message gets what the attachment holds for it (ADR-0050).
+- A conversation can belong to one of its attachments, such as a notebook's chat: the attachment stays attached, every message gathers from it, the conversation never joins a project, and the Chat list leaves it to the plugin, which starts it with `startConversation({ home })` and deletes it with `deleteConversation` (ADR-0051).
+- A plugin's tool can be offered only where the conversation, or the one that gave a child its task, holds attachments of the plugin's own context provider, and its calls carry their keys (ADR-0052).
+- A new embedding profile starts with the query text that instruction-aware models such as Qwen3-Embedding want, which the owner can change or clear, and a plugin's `openView` can replace the address in the history.
+- Search profiles in the Providers settings, "Embedding and rerank models": an embedding or rerank model on a server that the owner names, with an optional key and the texts that go before queries and documents, and a test that reports the vectors' dimensions or the scores of two passages. Plugins embed and rerank through them with the service `models`, and never see a key (ADR-0047).
+- A plugin's write to the store can erase what it deleted from every file of the store, as deleting a conversation does (ADR-0048).
+
+#### MCP
+
+- The plugin MCP (ADR-0043): agents use the tools of MCP servers that the owner registers in the settings section MCP servers, programs that Mannie starts on this computer and remote servers over Streamable HTTP, in the protocol era of 2026-07-28 and in the earlier one of `initialize`, through rmcp 3.7.0. Each call asks the owner unless a grant for the tool or full access covers it, and the servers' hints decide nothing.
+- Secret variables of a local server reach only that server's environment, and secret headers of a remote server only its URL; both stay in the credential store, and results, errors, the log, the server's instructions and its listings of tools and resources replace them.
+- Signing in to a remote server with OAuth: discovery, registration of Mannie as a native client or a client that the owner registered, the code flow with PKCE S256, `state` and the `iss` check, a browser that comes back to a loopback port, and tokens that Mannie refreshes itself.
+- Show tools switches each tool of a server, at most 64 of all servers; a tool that a server adds later starts off and is marked new. Show log shows a server's error output and what happened to its connections.
+- Paste JSON adds the servers of another client's configuration, under `mcpServers` or `servers`, after a preview that names their secrets without their values.
+- The images that a server's tools return reach the model (ADR-0044), with a switch for each server, and so do the server's instructions, marked as its words.
+- "@" attaches a connected server's resource to a message, and agents read resources with `mcp_read_resource`.
+
+#### Notebooks
+
+- The plugin Notebooks, off by default: notebooks of PDF, Markdown and text files of any size and pasted texts, indexed and searched through the owner's search profiles of an embedding model and, if the owner chooses one, a reranker. The Notebooks entry of the activity bar opens the latest notebook, whose page shows each source's state and progress, with "Use in answers", "Try again" and its text in a viewer that fills the window. The sidebar lists the notebooks, each with "New chat" and its own chats, which search the notebook with every message and stay out of the Chat list; "@" attaches a notebook to any other chat. Replies get the best passages, searched with the message and the owner's earlier messages, and the model lists, searches and reads the attached notebooks with three tools, and cites passages by links that open them in the viewer. A PDF is read page by page, so a page that fails costs only that page.
+
+### Changed
+
 - `task dev` runs the app as `io.github.limbon2.mannie.dev`, with a data folder, credentials and logs of its own, so a development build never migrates the owner's database and runs beside a release build.
 - The "@" list shows each kind of mention as soon as it answers, and while more than one kind shows entries, each shows its first 5 with "Show N more", so Git's and SSH's entries no longer sit below 50 files. A space no longer ends the query while an entry that the list shows holds it, so a name with spaces, such as a commit's subject or a path with a space, can be typed out.
 - Child agents write their reports in sections: status, answer, established findings with their evidence, what they did not verify, changes, what is left open and their assumptions. A report's result says that its evidence comes from the child's own tool calls, and the guidance on tasks treats what a report backs with evidence as established, with at most two tool calls to check one report, on the files that a task changed and the claims that it did not verify.
@@ -51,19 +80,58 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 ### Fixed
 
 - CI checks of local servers compile without an unused Windows import on Linux and FreeBSD.
-- On Windows, a channel to the webview held its first message after a pause until the system's next timer tick, up to 15.6 ms, and stretched the 16 ms between its batches to as much as 31 ms. A channel now sends up to 4 batches at once after a pause, without a timer, and then one every 16 ms at most on average, so a terminal's echo of a key reaches the page as soon as the shell sends it.
-- Every change of the page made the webview restyle the whole page, 5 to 6 ms on the reference machine and four times that on the low-end laptop profile, because Tailwind's `group-has-*` utilities in the shadcn-svelte components and the cursor rule of the side panel's handle put `*` after a `:has()`. These utilities stay out of the build, rules that cost nothing between changes do what Mannie needs of them, and `task build` refuses a stylesheet with such a selector.
-- A plugin that turned on or off could keep showing the state that the command returned, when the list with its newer state arrived before the command's answer. The command's plugin now goes in only while no list arrived during the command.
-- Showing another side panel tab, or opening or closing one, no longer makes the Git panel start over and read its repository again: the side panel area hands a panel the same argument for as long as it stays open.
 - The "@" list keeps up in large projects: queries that arrive while the project's folder is read share that one reading instead of each reading the folder again, an index older than 15 seconds answers at once while the folder is read again in the background, and a query no longer sorts every match.
 - A summary that reaches the output limit no longer becomes a checkpoint: the compaction fails with `summary_cut`, which asks the owner to raise the profile's output limit.
 - The styles that only a plugin's interface uses reach the app, such as the row of a host's name and port in SSH's host dialog: Tailwind read no file of the plugins' folders, because their source pattern named the folders instead of their files.
 - The end-to-end test of child agents expects a task report's result as the runtime now writes it, with the sentence that its evidence comes from the child's own tool calls.
 
+#### Workers
+
+- The end-to-end test of workers expects a task report's result as the runtime now writes it, with the sentence that its evidence comes from the worker's own tool calls.
+
+#### SSH
+
+- CI uses crypto-bigint 0.7.10 after the upstream project yanked 0.7.6, with its required ctutils 0.4.6 dependency.
+
+#### Git
+
+- The "@" list reads the repository once for a conversation and matches what the owner types against that reading for 10 seconds, instead of running git, `git status` included, for every key.
+
+#### MCP
+
+- The JSON import test uses an absolute working folder for the platform that runs it, so it passes on Linux as well as Windows.
+
 ### Security
 
 - ctutils 0.4.6, which fixes the advisory RUSTSEC-2026-0385 in the constant-time masks and `u128` comparisons that the Secret Service credential store reaches through its hashes.
 - tokio 1.53.3, which fixes the advisory RUSTSEC-2026-0386 in the constructors of `AsyncFd` on Unix, which neither Mannie's crates nor their dependencies call.
+
+#### Workers
+
+- tokio 1.53.3, which fixes the advisory RUSTSEC-2026-0386 in the constructors of `AsyncFd` on Unix, which neither the plugin's crates nor their dependencies call.
+
+#### Images
+
+- tokio 1.53.3, which fixes the advisory RUSTSEC-2026-0386 in the constructors of `AsyncFd` on Unix, which neither the plugin's crates nor their dependencies call.
+
+#### SSH
+
+- ctutils 0.4.6, which fixes the advisory RUSTSEC-2026-0385 in the constant-time masks and `u128` comparisons that russh's ciphers and elliptic curves use.
+- crypto-bigint 0.7.10, which fixes the advisory RUSTSEC-2026-0387 in the constant-time subtraction, division and Montgomery multiplication that russh's P-256, P-384 and P-521 curves use.
+- tokio 1.53.3, which fixes the advisory RUSTSEC-2026-0386 in the constructors of `AsyncFd` on Unix, which neither the plugin's crates nor their dependencies call.
+
+#### Git
+
+- tokio 1.53.3, which fixes the advisory RUSTSEC-2026-0386 in the constructors of `AsyncFd` on Unix, which neither the plugin's crates nor their dependencies call.
+
+#### MCP
+
+- tokio 1.53.3, which fixes the advisory RUSTSEC-2026-0386 in the constructors of `AsyncFd` on Unix, which neither the plugin's crates nor their dependencies call.
+
+#### Notebooks
+
+- Accept the maintenance advisory RUSTSEC-2026-0192 for `ttf-parser`, which the pinned PDF library requires for font embedding that Notebooks never uses, with the owner's approval. Recheck when `pdf-extract` supports `lopdf` 0.44 or newer.
+- tokio 1.53.3, which fixes the advisory RUSTSEC-2026-0386 in the constructors of `AsyncFd` on Unix, which neither the plugin's crates nor their dependencies call.
 
 ## 0.5.0 - 2026-10-22
 

@@ -10,11 +10,4 @@ Each change to the plugin adds one line under Unreleased, below its kind of chan
 
 ### Fixed
 
-- CI uses crypto-bigint 0.7.10 after the upstream project yanked 0.7.6, with its required ctutils 0.4.6 dependency.
 - A host that a command saved or trusted could keep showing the state that the command returned, when the list with its newer state arrived before the command's answer. The command's host now goes in only while no list arrived during the command.
-
-### Security
-
-- ctutils 0.4.6, which fixes the advisory RUSTSEC-2026-0385 in the constant-time masks and `u128` comparisons that russh's ciphers and elliptic curves use.
-- crypto-bigint 0.7.10, which fixes the advisory RUSTSEC-2026-0387 in the constant-time subtraction, division and Montgomery multiplication that russh's P-256, P-384 and P-521 curves use.
-- tokio 1.53.3, which fixes the advisory RUSTSEC-2026-0386 in the constructors of `AsyncFd` on Unix, which neither the plugin's crates nor their dependencies call.
