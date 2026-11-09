@@ -273,6 +273,7 @@
       bind:this={toolbar}
       class="flex shrink-0 items-center gap-1 border-b px-2 py-1"
       aria-label={m.terminal_toolbar_label()}
+      data-terminal-phase={view.phase}
       role="toolbar"
     >
       <Button aria-pressed={finding} size="sm" variant="ghost" onclick={() => (finding = !finding)}>

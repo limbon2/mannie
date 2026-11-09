@@ -112,6 +112,7 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - A plugin that turned on or off could keep showing the state that the command returned, when the list with its newer state arrived before the command's answer. The command's plugin now goes in only while no list arrived during the command.
 - Showing another side panel tab, or opening or closing one, no longer makes the Git panel start over and read its repository again: the side panel area hands a panel the same argument for as long as it stays open.
 - On Linux, ending a terminal also ends the processes that it started in their own sessions, even after the terminal shell exits during shutdown.
+- The Linux credential store uses async-executor 1.14.1 after the upstream project yanked 1.14.0.
 
 #### Workers
 

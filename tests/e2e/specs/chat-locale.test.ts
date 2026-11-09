@@ -72,6 +72,13 @@ async function closeOverlays(): Promise<void> {
   await waitForOverlaysToClose();
 }
 
+/** Activates a task card's control from the keyboard. */
+async function activateTaskControl(selector: string): Promise<void> {
+  await $(selector).waitForDisplayed();
+  await browser.execute((target: string) => document.querySelector<HTMLElement>(target)?.focus(), selector);
+  await browser.keys(Key.Enter);
+}
+
 async function openInterfaceSettings(): Promise<void> {
   await openSettings('shell.interface');
   await $('#interface-language').waitForDisplayed();
@@ -218,16 +225,14 @@ describe('the chat and window views in the pseudo-locale', () => {
     );
     const card = `${LATEST_MAIN_TURN} [data-task-number="1"]`;
     await $(`${card} [data-tool-status="awaiting_approval"]`).waitForDisplayed({ timeout: 30_000 });
-    await $(`${card} [data-task-details]`).click();
+    await activateTaskControl(`${card} [data-task-details]`);
     await waitForAnimations();
 
     expect(await uncataloguedText()).toEqual([]);
     expect(await overflowsHorizontally()).toBe(false);
     expect(await axeViolations()).toEqual([]);
 
-    const openTask = $(`${card} [data-task-open]`);
-    await openTask.scrollIntoView({ block: 'center' });
-    await openTask.click();
+    await activateTaskControl(`${card} [data-task-open]`);
     await $('[data-side-panels] article').waitForDisplayed({ timeout: 10_000 });
     await waitForAnimations();
     expect(await uncataloguedText()).toEqual([]);

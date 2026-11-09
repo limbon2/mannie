@@ -107,17 +107,10 @@ async function endedBlock(command: string): Promise<WebdriverIO.Element> {
  * Waits for the shown terminal to reach a prompt before typing into it.
  */
 async function waitForPrompt(): Promise<void> {
-  await browser.waitUntil(
-    async () => {
-      const status = await browser.execute(() => {
-        const toolbars = [...document.querySelectorAll<HTMLElement>('[data-side-panels] [role="toolbar"]')];
-        const shown = toolbars.find((toolbar) => toolbar.offsetParent !== null);
-        return shown?.querySelector('[data-content]')?.textContent.trim() ?? '';
-      });
-      return status === 'Ready';
-    },
-    { timeout: 30_000, timeoutMsg: 'the terminal reached no prompt that marks commands' },
-  );
+  await $('[data-side-panels] [role="tabpanel"]:not([hidden]) [data-terminal-phase="prompt"]').waitForDisplayed({
+    timeout: 30_000,
+    timeoutMsg: 'the terminal reached no prompt',
+  });
 }
 
 /** Shows the command list of the panel that shows, unless it shows already. */
@@ -136,23 +129,13 @@ async function showCommandList(): Promise<void> {
   }
 }
 
-/** Shows the side panel tab whose label names `terminal`, such as "Terminal 1", with a click on it. */
-async function showTab(terminal: string): Promise<void> {
-  const label = `${terminal} ·`;
-  for (const tab of await $$('[data-side-panel-tab] [role="tab"]')) {
-    if ((await shownText(tab)).includes(label)) {
-      await tab.click();
-      break;
-    }
-  }
-  await browser.waitUntil(
-    async () =>
-      browser.execute((wanted: string) => {
-        const selected = document.querySelector('[data-side-panel-tab] [role="tab"][aria-selected="true"]');
-        return selected?.textContent.includes(wanted) ?? false;
-      }, label),
-    { timeout: 10_000, timeoutMsg: `the tab of ${terminal} did not show` },
-  );
+/** Moves to a neighboring terminal tab from the keyboard and waits for it to show. */
+async function showTab(terminal: string, direction: typeof Key.ArrowLeft | typeof Key.ArrowRight): Promise<void> {
+  const selected = '[data-side-panel-tab] [role="tab"][aria-selected="true"]';
+  await $(selected).waitForDisplayed();
+  await browser.execute((selector: string) => document.querySelector<HTMLElement>(selector)?.focus(), selected);
+  await browser.keys(direction);
+  await waitForShownText(selected, expect.stringContaining(`${terminal} ·`));
 }
 
 /** Whether the terminals' xterm.js elements are the ones that the test noted, in the same order. */
@@ -278,9 +261,9 @@ describe('Terminal', () => {
       window.keptTerminals = [...document.querySelectorAll('[data-side-panels] [data-terminal-view] .xterm')];
     });
 
-    await showTab('Terminal 1');
+    await showTab('Terminal 1', Key.ArrowLeft);
     const keptWhileTerminalOneShows = await keepsTerminals();
-    await showTab('Terminal 2');
+    await showTab('Terminal 2', Key.ArrowRight);
     await waitForPrompt();
     const [shownView] = await $$(VIEW).filter((view) => view.isDisplayed());
     await shownView?.click();

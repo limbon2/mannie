@@ -527,11 +527,14 @@ async fn every_supported_shell_of_this_computer_marks_its_commands() {
         .next()
         .await
         .expect("the list of hosts comes");
-    // /etc/shells can include programs such as screen, which open without markers.
-    let shells = list
-        .shells
-        .iter()
-        .filter(|shell| shell.kind != ShellKind::Other);
+    // /etc/shells can list programs outside the shell integration matrix
+    // documented in the terminal plugin's ADR-0001.
+    let shells = list.shells.iter().filter(|shell| match shell.kind {
+        ShellKind::Bash => true,
+        ShellKind::Zsh | ShellKind::Fish | ShellKind::Sh => cfg!(target_os = "linux"),
+        ShellKind::PowerShell | ShellKind::Cmd => cfg!(windows),
+        _ => false,
+    });
     assert!(
         shells.clone().next().is_some(),
         "this computer lists a supported shell"
