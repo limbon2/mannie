@@ -28,11 +28,12 @@ mannie-ssh-testing = { path = "crates/mannie-ssh-testing" }
 # The keys that the tests' SSH server generates. russh depends on the same
 # rand, so the graph gains no crate.
 rand = { version = "0.10.3", default-features = false, features = ["thread_rng"] }
-# The SSH client, on ring only, without RSA, aws-lc-rs or compression
+# The SSH client, on ring, without aws-lc-rs or compression
 # (plugins/ssh/docs/adr/0001-speak-ssh-with-russh-and-pinned-host-keys.md):
-# deny.toml bans aws-lc, and the rsa crate has an advisory without a fixed
-# release (RUSTSEC-2023-0071).
-russh = { version = "=0.64.1", default-features = false, features = ["ring"] }
+# deny.toml bans aws-lc. The rsa feature verifies RSA host keys with their
+# public keys only, which RUSTSEC-2023-0071 does not affect
+# (plugins/ssh/docs/adr/0002-accept-rsa-host-keys.md).
+russh = { version = "=0.64.1", default-features = false, features = ["ring", "rsa"] }
 # The JSON Schema of run_ssh_command's arguments, from the type that reads
 # them.
 schemars = "1.2.3"

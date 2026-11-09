@@ -134,8 +134,7 @@ pub(crate) const TIMED_OUT: &str = "the SSH host did not answer in time.";
 pub(crate) const HANDSHAKE_FAILED: &str = "the SSH handshake with the host failed.";
 
 /// The host offers only keys that the plugin does not accept.
-pub(crate) const KEY_UNSUPPORTED: &str =
-    "the SSH host offers only host keys that Mannie does not accept, such as RSA keys.";
+pub(crate) const KEY_UNSUPPORTED: &str = "the SSH host offers no host key that Mannie accepts:      Ed25519, ECDSA, or RSA of at least 2048 bits signed with SHA-2.";
 
 /// The host has no trusted key.
 pub(crate) const KEY_NOT_TRUSTED: &str = "the SSH host has no trusted host key, so nothing was sent to it. Ask the owner to check its key in the SSH settings.";

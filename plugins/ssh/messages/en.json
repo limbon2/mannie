@@ -78,7 +78,7 @@
   "ssh_error_unreachable": "The host could not be reached. Check its address and port, and that it is on.",
   "ssh_error_timed_out": "The host did not answer in time. Check that it is on and reachable, then try again.",
   "ssh_error_handshake_failed": "The SSH connection could not be set up. Check that the port belongs to an SSH server.",
-  "ssh_error_host_key_unsupported": "The host offers only keys that Mannie does not accept, such as RSA keys. Add an Ed25519 or ECDSA host key on the host.",
+  "ssh_error_host_key_unsupported": "The host offers no host key that Mannie accepts. Mannie accepts Ed25519 and ECDSA keys, and RSA keys of at least 2048 bits signed with SHA-2. Add an Ed25519 host key on the host, or update its SSH server.",
   "ssh_error_host_key_changed": "The host showed another key than the trusted one, so the password was not sent. Check the key.",
   "ssh_error_host_key_not_trusted": "Check and trust the host's key first.",
   "ssh_error_scan_outdated": "The host's key changed after it was read. Read the key again.",

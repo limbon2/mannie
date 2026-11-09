@@ -5,8 +5,9 @@
 //! The client compares the key that a host shows with the pinned one right
 //! after the key exchange and before any authentication, so a host that
 //! shows another key never receives the password. A scan reads the key and
-//! stops there. The client accepts Ed25519 and ECDSA host keys only: russh
-//! is built without RSA (ADR-0036; D35).
+//! stops there. The client accepts Ed25519 and ECDSA host keys, and RSA
+//! host keys of at least 2048 bits signed with SHA-2, never SHA-1
+//! (plugins/ssh/docs/adr/0002-accept-rsa-host-keys.md; D53).
 //!
 //! Login tries the password, then keyboard-interactive login that asks for
 //! exactly one hidden answer, which is how a server such as FreeBSD's, with
@@ -37,7 +38,10 @@ const KEEPALIVE_MAX: usize = 3;
 /// empty round before the one that asks for the password.
 const MAX_KEYBOARD_INTERACTIVE_ROUNDS: usize = 4;
 
-/// The host keys that the client accepts, the strongest first.
+/// The host keys that the client accepts, the strongest first, so a host
+/// that also has an RSA key keeps using its Ed25519 or ECDSA key. RSA is
+/// offered only with SHA-2 signatures: `ssh-rsa`, which signs with SHA-1,
+/// stays out.
 const HOST_KEY_ALGORITHMS: &[Algorithm] = &[
     Algorithm::Ed25519,
     Algorithm::Ecdsa {
@@ -49,7 +53,26 @@ const HOST_KEY_ALGORITHMS: &[Algorithm] = &[
     Algorithm::Ecdsa {
         curve: EcdsaCurve::NistP521,
     },
+    Algorithm::Rsa {
+        hash: Some(HashAlg::Sha512),
+    },
+    Algorithm::Rsa {
+        hash: Some(HashAlg::Sha256),
+    },
 ];
+
+/// The smallest RSA host key that the client accepts, in bits. russh and
+/// ssh-key accept any size, so the client checks it itself.
+const MIN_RSA_BITS: u32 = 2048;
+
+/// Whether the client accepts `key` as a host key at all: RSA keys need at
+/// least [`MIN_RSA_BITS`]. The algorithms are already limited by
+/// [`HOST_KEY_ALGORITHMS`] during the key exchange.
+fn is_strong_enough(key: &PublicKey) -> bool {
+    key.key_data()
+        .rsa()
+        .is_none_or(|rsa| rsa.key_size() >= MIN_RSA_BITS)
+}
 
 /// A session with a host after login, on which commands open channels.
 pub(crate) type Session = Handle<Client>;
@@ -130,15 +153,18 @@ impl client::Handler for Client {
 
 impl Client {
     /// Records the key that the host showed, and says whether it is the
-    /// pinned one.
+    /// pinned one. A key that is too weak is never accepted, even when
+    /// pinned.
     fn is_pinned(&self, key: &PublicKeyOrCertificate) -> bool {
         let PublicKeyOrCertificate::PublicKey { key, .. } = key else {
             return false;
         };
         *self.seen.lock().unwrap_or_else(PoisonError::into_inner) = Some(key.clone());
-        self.pin
-            .as_ref()
-            .is_some_and(|pin| pin.key_data() == key.key_data())
+        is_strong_enough(key)
+            && self
+                .pin
+                .as_ref()
+                .is_some_and(|pin| pin.key_data() == key.key_data())
     }
 }
 
@@ -194,7 +220,10 @@ pub(crate) async fn scan(address: &str, port: u16) -> Result<SeenKey, ConnectErr
         Err(error) => error,
     };
     match recorded(&seen) {
-        Some(key) => SeenKey::of(&key).ok_or(ConnectError::KeyUnsupported),
+        Some(key) if is_strong_enough(&key) => {
+            SeenKey::of(&key).ok_or(ConnectError::KeyUnsupported)
+        }
+        Some(_weak) => Err(ConnectError::KeyUnsupported),
         None => Err(failure),
     }
 }
@@ -215,6 +244,7 @@ pub(crate) async fn connect(
         Ok(session) => Ok(session),
         Err(error) => {
             match recorded(&seen) {
+                Some(key) if !is_strong_enough(&key) => Err(ConnectError::KeyUnsupported),
                 Some(key) if key.key_data() != pin.key_data() => Err(SeenKey::of(&key)
                     .map_or(ConnectError::KeyUnsupported, ConnectError::KeyChanged)),
                 _other => Err(error),

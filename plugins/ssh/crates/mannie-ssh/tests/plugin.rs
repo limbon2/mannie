@@ -12,7 +12,7 @@ use mannie_plugin_sdk::manifest::Manifest;
 use mannie_plugin_sdk::testing::FakeSecrets;
 use mannie_ssh::commands::interface;
 use mannie_ssh::{MODULE, PLUGIN_MANIFEST, SSH, mannie_plugin};
-use mannie_ssh_testing::{Login, Options, PASSWORD, TestServer, USERNAME};
+use mannie_ssh_testing::{HostKeys, Login, Options, PASSWORD, TestServer, USERNAME};
 use serde_json::{Value, json};
 
 fn options(secrets: &FakeSecrets) -> HostOptions {
@@ -317,20 +317,90 @@ async fn a_changed_key_stops_the_login_before_the_password_is_sent() {
 }
 
 #[tokio::test]
-async fn a_host_that_offers_only_rsa_keys_is_refused() {
+async fn a_host_whose_only_key_is_rsa_is_scanned_trusted_and_logged_in_to() {
     let secrets = FakeSecrets::new();
     let hosted = hosted(&secrets).await;
     let server = server(Options {
-        rsa_only: true,
+        host_keys: HostKeys::Rsa,
         ..Options::default()
     })
     .await;
     let added = add(&hosted, "old-box", &server).await;
+    let id = &added["id"];
+
+    let scan = hosted
+        .invoke("scan_host_key", json!({ "hostId": id }))
+        .await
+        .unwrap();
+    let attempts_after_scan = server.auth_attempts();
+    let trusted = hosted
+        .invoke(
+            "trust_host_key",
+            json!({ "hostId": id, "fingerprint": scan["key"]["fingerprint"] }),
+        )
+        .await
+        .unwrap();
+    let tested = hosted.invoke("test_host", json!({ "hostId": id })).await;
+
+    assert_eq!(scan["key"]["algorithm"], "ssh-rsa");
+    assert_eq!(scan["key"]["fingerprint"], server.fingerprint());
+    assert_eq!(attempts_after_scan, 0);
+    assert_eq!(trusted["status"], "ready");
+    assert_eq!(tested.unwrap(), Value::Null);
+}
+
+#[tokio::test]
+async fn a_host_that_signs_its_rsa_key_only_with_sha1_is_refused() {
+    let secrets = FakeSecrets::new();
+    let hosted = hosted(&secrets).await;
+    let server = server(Options {
+        host_keys: HostKeys::RsaSha1Only,
+        ..Options::default()
+    })
+    .await;
+    let added = add(&hosted, "older-box", &server).await;
 
     let refused = failure(&hosted, "scan_host_key", json!({ "hostId": added["id"] })).await;
 
     assert_eq!(refused, "ssh.host_key_unsupported");
     assert_eq!(server.auth_attempts(), 0);
+}
+
+#[tokio::test]
+async fn a_host_whose_rsa_key_is_under_2048_bits_is_refused() {
+    let secrets = FakeSecrets::new();
+    let hosted = hosted(&secrets).await;
+    let server = server(Options {
+        host_keys: HostKeys::WeakRsa,
+        ..Options::default()
+    })
+    .await;
+    let added = add(&hosted, "weak-box", &server).await;
+
+    let refused = failure(&hosted, "scan_host_key", json!({ "hostId": added["id"] })).await;
+
+    assert_eq!(refused, "ssh.host_key_unsupported");
+    assert_eq!(server.auth_attempts(), 0);
+}
+
+#[tokio::test]
+async fn a_host_with_ed25519_and_rsa_keys_shows_its_ed25519_key() {
+    let secrets = FakeSecrets::new();
+    let hosted = hosted(&secrets).await;
+    let server = server(Options {
+        host_keys: HostKeys::Ed25519AndRsa,
+        ..Options::default()
+    })
+    .await;
+    let added = add(&hosted, "both-box", &server).await;
+
+    let scan = hosted
+        .invoke("scan_host_key", json!({ "hostId": added["id"] }))
+        .await
+        .unwrap();
+
+    assert_eq!(scan["key"]["algorithm"], "ssh-ed25519");
+    assert_eq!(scan["key"]["fingerprint"], server.fingerprint());
 }
 
 #[tokio::test]

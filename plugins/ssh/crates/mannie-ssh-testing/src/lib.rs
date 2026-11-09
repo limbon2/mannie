@@ -1,5 +1,6 @@
 //! An SSH server for the SSH plugin's tests, on `127.0.0.1` and a port that
-//! the system chooses, with an Ed25519 host key that it generates. It is
+//! the system chooses, with an Ed25519 host key that it generates, or RSA
+//! host keys from `keys/`, which only these tests use. It is
 //! never shipped: the plugin's Rust tests start it in their process, and the
 //! end-to-end tests start its example program.
 //!
@@ -61,15 +62,41 @@ pub enum Login {
     KeyboardInteractive,
 }
 
+/// The host keys that the server has, and the signatures it offers.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum HostKeys {
+    /// An Ed25519 key that the server generates, and a new one on
+    /// [`TestServer::replace_key`].
+    #[default]
+    Ed25519,
+    /// A 2048-bit RSA key, signed with `rsa-sha2-512` only.
+    Rsa,
+    /// The same RSA key, signed with SHA-1 `ssh-rsa` only, as a server
+    /// older than OpenSSH 7.2 does.
+    RsaSha1Only,
+    /// A 1024-bit RSA key, signed with `rsa-sha2-512`.
+    WeakRsa,
+    /// A generated Ed25519 key and the 2048-bit RSA key, with russh's
+    /// default order of signatures.
+    Ed25519AndRsa,
+}
+
 /// How a test server behaves.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Options {
     /// How the server takes the password.
     pub login: Login,
-    /// Whether the server offers only RSA host keys, which the plugin
-    /// refuses.
-    pub rsa_only: bool,
+    /// The server's host keys.
+    pub host_keys: HostKeys,
 }
+
+/// A 2048-bit RSA host key, made with `ssh-keygen -t rsa -b 2048` for these
+/// tests only. Generating one in a debug build takes too long.
+const RSA_2048: &str = include_str!("../keys/rsa-2048");
+
+/// A 1024-bit RSA host key, made with `ssh-keygen -t rsa -b 1024` for these
+/// tests only.
+const RSA_1024: &str = include_str!("../keys/rsa-1024");
 
 /// What the server saw, which tests read.
 #[derive(Debug, Default)]
@@ -107,7 +134,7 @@ impl TestServer {
     pub async fn start(options: Options) -> std::io::Result<Self> {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
         let address = listener.local_addr()?;
-        let config = Arc::new(Mutex::new(Arc::new(config(options, new_key()?))));
+        let config = Arc::new(Mutex::new(Arc::new(config(options, host_keys(options)?))));
         let seen = Arc::new(Seen::default());
         let accept = tokio::spawn(accept(
             listener,
@@ -129,11 +156,12 @@ impl TestServer {
         self.address.port()
     }
 
-    /// The host key that the server shows now.
+    /// The host key that the server shows now: its first one, which is
+    /// the Ed25519 key when it has both.
     ///
     /// # Panics
     ///
-    /// Never: the server always has one key.
+    /// Never: the server always has a key.
     pub fn key(&self) -> PublicKey {
         let config = Arc::clone(&lock(&self.config));
         config
@@ -155,7 +183,7 @@ impl TestServer {
     ///
     /// When the key cannot be made.
     pub fn replace_key(&self) -> std::io::Result<()> {
-        *lock(&self.config) = Arc::new(config(self.options, new_key()?));
+        *lock(&self.config) = Arc::new(config(self.options, host_keys(self.options)?));
         Ok(())
     }
 
@@ -195,9 +223,36 @@ fn new_key() -> std::io::Result<PrivateKey> {
     PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).map_err(std::io::Error::other)
 }
 
-fn config(options: Options, key: PrivateKey) -> server::Config {
+fn fixed_key(openssh: &str) -> std::io::Result<PrivateKey> {
+    PrivateKey::from_openssh(openssh).map_err(std::io::Error::other)
+}
+
+/// The host keys of `options`, the one that [`TestServer::key`] shows
+/// first.
+fn host_keys(options: Options) -> std::io::Result<Vec<PrivateKey>> {
+    Ok(match options.host_keys {
+        HostKeys::Ed25519 => vec![new_key()?],
+        HostKeys::Rsa | HostKeys::RsaSha1Only => vec![fixed_key(RSA_2048)?],
+        HostKeys::WeakRsa => vec![fixed_key(RSA_1024)?],
+        HostKeys::Ed25519AndRsa => vec![new_key()?, fixed_key(RSA_2048)?],
+    })
+}
+
+/// The host key signatures that the server offers, or `None` for russh's
+/// default order.
+fn host_key_algorithms(host_keys: HostKeys) -> Option<&'static [Algorithm]> {
+    match host_keys {
+        HostKeys::Ed25519 | HostKeys::Ed25519AndRsa => None,
+        HostKeys::Rsa | HostKeys::WeakRsa => Some(&[Algorithm::Rsa {
+            hash: Some(HashAlg::Sha512),
+        }]),
+        HostKeys::RsaSha1Only => Some(&[Algorithm::Rsa { hash: None }]),
+    }
+}
+
+fn config(options: Options, keys: Vec<PrivateKey>) -> server::Config {
     let mut config = server::Config {
-        keys: vec![key],
+        keys,
         auth_rejection_time: Duration::from_millis(10),
         auth_rejection_time_initial: Some(Duration::ZERO),
         ..server::Config::default()
@@ -205,11 +260,9 @@ fn config(options: Options, key: PrivateKey) -> server::Config {
     if options.login == Login::KeyboardInteractive {
         config.methods = MethodSet::from(&[MethodKind::KeyboardInteractive][..]);
     }
-    if options.rsa_only {
+    if let Some(algorithms) = host_key_algorithms(options.host_keys) {
         config.preferred = Preferred {
-            key: Cow::Borrowed(&[Algorithm::Rsa {
-                hash: Some(HashAlg::Sha512),
-            }]),
+            key: Cow::Borrowed(algorithms),
             ..Preferred::DEFAULT
         };
     }
