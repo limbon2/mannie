@@ -4,6 +4,14 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+## 0.6.1 - 2026-11-09
+
+### Changed
+
+#### SSH
+
+- Hosts whose only host key is RSA can be scanned, trusted and used, with `rsa-sha2-512` or `rsa-sha2-256` signatures and keys of at least 2048 bits; SHA-1 `ssh-rsa` and shorter keys are still refused ([SSH ADR-0002](plugins/ssh/docs/adr/0002-accept-rsa-host-keys.md)).
+
 ### Fixed
 
 - A mention whose name starts with another mention's name and a space, such as a database "test db" and a notebook "test", no longer carries both: where tokens in the message overlap, the longer one counts.
