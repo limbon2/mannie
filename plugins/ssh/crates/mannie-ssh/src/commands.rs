@@ -291,7 +291,7 @@ pub enum SshError {
     #[error("the SSH handshake with the host failed")]
     HandshakeFailed,
     /// The host offers only keys that the plugin does not accept, such as
-    /// RSA keys.
+    /// RSA keys under 2048 bits or RSA signed with SHA-1 only.
     #[error("the host offers only keys that the plugin does not accept")]
     HostKeyUnsupported,
     /// The host showed another key than the pinned one, so the password was

@@ -22,6 +22,9 @@ targets = [
 unmaintained = "all"
 yanked = "deny"
 ignore = [
+  # Approved by the owner on 2026-11-09 (D53). The plugin SSH only verifies RSA
+  # host keys' signatures with their public keys, through russh and ssh-key.
+  { id = "RUSTSEC-2023-0071", reason = "The Marvin attack leaks timing in RSA private-key operations; the plugin SSH only verifies host signatures with public keys and holds no RSA private key outside its tests. Recheck when an rsa release fixes it, or before anything uses RSA private keys" },
   # Approved by the owner on 2026-10-25. Only lopdf::FontData::new calls
   # this parser; neither pdf-extract nor Notebooks calls that API.
   { id = "RUSTSEC-2026-0192", reason = "ttf-parser 0.25.1 is unmaintained, with no known vulnerability; lopdf 0.42 uses it only to embed fonts, which Notebooks never calls. Recheck when pdf-extract supports lopdf 0.44 or newer" },
