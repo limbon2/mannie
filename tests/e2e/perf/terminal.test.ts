@@ -25,6 +25,12 @@ const REPORT_ONLY = process.env.MANNIE_PERF_REPORT_ONLY === '1';
 /** The rows of the terminal that the compatible renderer draws in the page. */
 const ROWS = '[data-terminal-view] .xterm-rows';
 
+/** The Terminal button in the conversation's toolbar. */
+const CONTROL = '[data-terminal-control]';
+
+/** The conversation's terminals in the button's menu: its items without the submenu New terminal. */
+const LISTED_TERMINALS = '[data-slot="dropdown-menu-content"] [role="menuitem"]:not([aria-haspopup])';
+
 /** Terminals that stay open and idle for NFR-PERF-08. */
 const IDLE_TERMINALS = 8;
 
@@ -114,7 +120,15 @@ async function openTerminal(): Promise<void> {
 /** Opens a terminal of this computer in the shell that the menu names `shell`, or in its first shell. */
 async function openShell(shell?: string): Promise<void> {
   const open = await $$('[data-side-panel-tab]').length;
-  await $('[data-terminal-control]').click();
+  // The button stays disabled until the terminal that it opened last shows.
+  await $(CONTROL).waitForEnabled();
+  await $(CONTROL).click();
+  // The menu lists a terminal once the plugin reports it, which can be after
+  // its tab shows. The row that it adds then moves New terminal down, and the
+  // click lands on that terminal instead, which closes the menu.
+  await browser.waitUntil(async () => (await $$(LISTED_TERMINALS).length) === open, {
+    timeoutMsg: `the menu does not list the ${String(open)} open terminals`,
+  });
   await $('[role="menuitem"]=New terminal').click();
   const shown = async (): Promise<WebdriverIO.Element[]> =>
     $$('[data-slot="dropdown-menu-sub-content"] [role="menuitem"]').filter((item) => item.isDisplayed());
