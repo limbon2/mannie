@@ -67,8 +67,14 @@ async function axeInBothThemes(): Promise<void> {
 
 /** Types a line into the terminal that has the focus, and Enter. */
 async function typeLine(text: string): Promise<void> {
-  await browser.keys(text.split(''));
-  await browser.keys(Key.Enter);
+  // browser.keys presses the whole sequence before releasing any key.
+  // Release each key so WebKitWebDriver receives repeated spaces and letters.
+  const typing = browser.action('key');
+  for (const character of text) {
+    const key = character === ' ' ? Key.Space : character;
+    typing.down(key).up(key);
+  }
+  await typing.down(Key.Enter).up(Key.Enter).perform();
 }
 
 /** What the badge of a block that runs says. */
