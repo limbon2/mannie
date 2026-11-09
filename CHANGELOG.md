@@ -4,6 +4,10 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+### Changed
+
+- CI runs the checks of `task ci` as groups in jobs of their own, five on Windows and three on Linux, with the performance measurements beside the end-to-end tests, so a run takes as long as its longest job and a formatting or dependency problem shows within minutes. A release takes its checks from the CI run that the push of its commit started instead of running every check a second time beside it, and builds the Windows programs beside the installer. Only runs on `main` save the Rust caches, which a tag's run filled with copies that no other run could read. `task ci -- <group>` runs one group on a workstation.
+
 ## 0.6.1 - 2026-11-09
 
 ### Changed

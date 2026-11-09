@@ -1,10 +1,20 @@
 // @ts-check
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { describe, it } from 'node:test';
 
-import { failures, formatDuration, limitsFor, runSteps, STEPS, summary } from '../../scripts/ci.mjs';
+import {
+  failures,
+  formatDuration,
+  GROUPS,
+  limitsFor,
+  runSteps,
+  STEPS,
+  stepsOfGroups,
+  summary,
+} from '../../scripts/ci.mjs';
 
 /** @typedef {import('../../scripts/ci.mjs').Step} Step */
 
@@ -68,6 +78,41 @@ function start(steps, limits = LARGE) {
   const written = [];
   const outcomes = runSteps(steps, { limits, now: () => 0, run: runner.run, write: (text) => written.push(text) });
   return { ...runner, outcomes, written };
+}
+
+/**
+ * Runs the steps to the end, with every step passing as soon as it starts.
+ * @param {Step[]} steps
+ * @param {import('../../scripts/ci.mjs').Limits} limits
+ */
+async function runToTheEnd(steps, limits) {
+  const run = start(steps, limits);
+  /** @type {Set<string>} */
+  const finished = new Set();
+  for (;;) {
+    await settle();
+    const pending = run.started.filter((entry) => !finished.has(entry.task));
+    if (pending.length === 0) {
+      break;
+    }
+    for (const entry of pending) {
+      run.finish(entry.task);
+      finished.add(entry.task);
+    }
+  }
+  return { outcomes: await run.outcomes, overlaps: run.overlaps, started: run.started };
+}
+
+/**
+ * The tasks that `task <name>` would run, from its dry run.
+ * @param {string} name
+ */
+function tasksOf(name) {
+  const dryRun = spawnSync('task', ['--dry', name], { cwd: root, encoding: 'utf8' });
+  assert.equal(dryRun.status, 0, dryRun.stderr);
+  const lines = `${dryRun.stdout}\n${dryRun.stderr}`.split('\n');
+  const tasks = lines.flatMap((line) => /^task: \[(?<task>[^\]]+)\]/u.exec(line)?.groups?.task ?? []);
+  return [...new Set(tasks)];
 }
 
 describe('limitsFor', () => {
@@ -306,18 +351,36 @@ describe('summary', () => {
 
 describe('STEPS', () => {
   it('keeps desktop tests out of both compiler lanes on small and large machines', async () => {
-    const selected = new Set(['gen', 'test:rust:build', 'lint:rust', 'lint:ts', 'lint:types', 'test:desktop']);
+    const selected = new Set([
+      'gen:launcher',
+      'gen:bindings',
+      'test:rust:build',
+      'lint:rust',
+      'lint:ts',
+      'lint:types',
+      'lint:messages',
+      'test:desktop',
+    ]);
     for (const limits of [SMALL, LARGE]) {
       const run = start(
         STEPS.filter((step) => selected.has(step.task)),
         limits,
       );
       await settle();
-      run.finish('gen');
+      run.finish('gen:launcher');
+      await settle();
+      run.finish('gen:bindings');
       await settle();
       run.finish('lint:ts');
       await settle();
       run.finish('lint:types');
+      await settle();
+      // The message check reads the files that the desktop tests rewrite.
+      assert.equal(
+        run.started.some((entry) => entry.task === 'test:desktop'),
+        false,
+      );
+      run.finish('lint:messages');
       await settle();
       assert.equal(
         run.started.some((entry) => entry.task === 'test:desktop'),
@@ -346,6 +409,8 @@ describe('STEPS', () => {
   });
 
   it('finishes desktop tests before Rust tests in the actual graph, including a desktop failure', async () => {
+    const rustTests = ['test:rust:core', 'test:rust:plugins', 'test:rust:desktop'];
+    const testSuites = new Set(['test:desktop', ...rustTests]);
     for (const desktopCode of [0, 1]) {
       const run = start(STEPS);
       const finished = new Set();
@@ -353,7 +418,7 @@ describe('STEPS', () => {
       // Finish every prerequisite while holding the desktop suite open.
       while (true) {
         const pending = run.started.filter((entry) => {
-          const held = entry.task === 'test:desktop' || entry.task === 'test:rust';
+          const held = entry.task === 'test:desktop' || rustTests.includes(entry.task);
           return !held && !finished.has(entry.task);
         });
         if (pending.length === 0) {
@@ -367,7 +432,7 @@ describe('STEPS', () => {
       }
       assert.ok(run.started.some((entry) => entry.task === 'test:desktop'));
       assert.equal(
-        run.started.some((entry) => entry.task === 'test:rust'),
+        run.started.some((entry) => rustTests.includes(entry.task)),
         false,
       );
       run.finish('test:desktop', desktopCode);
@@ -385,9 +450,34 @@ describe('STEPS', () => {
         await settle();
       }
       const outcomes = await run.outcomes;
-      assert.equal(outcomes.find((outcome) => outcome.task === 'test:rust')?.status, 'passed');
-      const overlap = run.overlaps.some((tasks) => tasks.includes('test:desktop') && tasks.includes('test:rust'));
+      for (const task of rustTests) {
+        assert.equal(outcomes.find((outcome) => outcome.task === task)?.status, 'passed', task);
+      }
+      // No two test suites run at the same time.
+      const overlap = run.overlaps.some((tasks) => tasks.filter((task) => testSuites.has(task)).length > 1);
       assert.equal(overlap, false);
+    }
+  });
+
+  it('starts the checks of the launcher before the bindings have built', async () => {
+    const run = start(STEPS);
+    await settle();
+    run.finish('gen:launcher');
+    await settle();
+    const started = run.started.map((entry) => entry.task);
+    assert.ok(started.includes('gen:bindings'));
+    assert.ok(started.includes('lint:deps'), started.join(', '));
+    assert.equal(started.includes('lint:ts'), false);
+    assert.equal(started.includes('test:rust:build'), false);
+  });
+
+  it('runs all of `task gen` and of `task test:rust`', () => {
+    const steps = new Set(STEPS.map((step) => step.task));
+    for (const task of ['gen', 'test:rust']) {
+      const parts = tasksOf(task);
+      assert.ok(parts.length > 1, `${task} has no parts`);
+      const missing = parts.filter((part) => !steps.has(part));
+      assert.deepEqual(missing, [], `a part of ${task} is not a step`);
     }
   });
 
@@ -418,5 +508,113 @@ describe('STEPS', () => {
     const defined = new Set(parsed.tasks.map((task) => task.name));
     const missing = STEPS.map((step) => step.task).filter((task) => !defined.has(task));
     assert.deepEqual(missing, []);
+  });
+});
+
+describe('stepsOfGroups', () => {
+  /** @type {Step[]} */
+  const steps = [
+    { task: 'gen' },
+    { needs: ['gen'], task: 'build' },
+    { needs: ['gen'], task: 'lint' },
+    { after: ['build', 'lint'], needs: ['gen'], task: 'tests' },
+    { task: 'docs' },
+  ];
+  const groups = { documents: ['docs'], linting: ['lint'], testing: ['tests'] };
+
+  it('brings the steps that a group needs, in the order of the steps', () => {
+    assert.deepEqual(
+      stepsOfGroups(steps, groups, ['linting', 'documents']).map((step) => step.task),
+      ['gen', 'lint', 'docs'],
+    );
+  });
+
+  it('waits only for the steps of the selection', () => {
+    assert.deepEqual(stepsOfGroups(steps, groups, ['testing']), [
+      { task: 'gen' },
+      { after: [], needs: ['gen'], task: 'tests' },
+    ]);
+    assert.deepEqual(stepsOfGroups(steps, groups, ['testing', 'linting'])[2], {
+      after: ['lint'],
+      needs: ['gen'],
+      task: 'tests',
+    });
+  });
+});
+
+describe('GROUPS', () => {
+  const names = Object.keys(GROUPS);
+
+  it('puts every check in exactly one group', () => {
+    const grouped = names.flatMap((name) => GROUPS[name]);
+    assert.deepEqual(
+      grouped.filter((task, index) => grouped.indexOf(task) !== index),
+      [],
+      'a step is in two groups',
+    );
+    const known = new Set(STEPS.map((step) => step.task));
+    assert.deepEqual(
+      grouped.filter((task) => !known.has(task)),
+      [],
+      'a group names a step that is not in the list',
+    );
+    // `test:rust:build` only builds ahead of the test steps, which build
+    // their own tests in a group's run.
+    const covered = new Set([...stepsOfGroups(STEPS, GROUPS, names).map((step) => step.task), 'test:rust:build']);
+    assert.deepEqual(
+      STEPS.map((step) => step.task).filter((task) => !covered.has(task)),
+      [],
+      'a step is in no group',
+    );
+  });
+
+  it('ends every group and every pair of groups with all of its steps passed', async () => {
+    const selections = [...names.map((name) => [name]), ['desktop', 'clippy'], ['core', 'plugins'], names];
+    for (const selection of selections) {
+      for (const limits of [SMALL, LARGE]) {
+        const steps = stepsOfGroups(STEPS, GROUPS, selection);
+        const { outcomes } = await runToTheEnd(steps, limits);
+        assert.deepEqual(
+          outcomes.filter((outcome) => outcome.status !== 'passed'),
+          [],
+          selection.join(' '),
+        );
+        assert.equal(outcomes.length, steps.length);
+      }
+    }
+  });
+
+  it('builds nothing for the static group', () => {
+    const steps = stepsOfGroups(STEPS, GROUPS, ['static']);
+    assert.deepEqual(
+      steps.filter((step) => step.lanes !== undefined).map((step) => step.task),
+      [],
+    );
+    assert.ok(steps.some((step) => step.task === 'gen:launcher'));
+  });
+
+  it('runs the desktop tests before the desktop binary tests, and Clippy beside ESLint', async () => {
+    const { overlaps, started } = await runToTheEnd(stepsOfGroups(STEPS, GROUPS, ['desktop', 'clippy']), SMALL);
+    const order = started.map((entry) => entry.task);
+    assert.ok(order.indexOf('test:desktop') < order.indexOf('test:rust:desktop'));
+    assert.ok(order.indexOf('lint:rust') < order.indexOf('test:desktop'));
+    assert.ok(overlaps.some((tasks) => tasks.includes('lint:rust') && tasks.includes('lint:ts')));
+    const cargoSteps = new Set(['gen:bindings', 'lint:rust', 'test:desktop', 'test:rust:desktop']);
+    const mostCargoSteps = Math.max(...overlaps.map((tasks) => tasks.filter((task) => cargoSteps.has(task)).length));
+    assert.equal(mostCargoSteps, 1);
+  });
+
+  it('is what the jobs of the CI workflow run, each group once on each platform', () => {
+    const workflow = readFileSync(join(root, '.github', 'workflows', 'ci.yml'), 'utf8');
+    /** @type {Map<string, string[]>} */
+    const byPlatform = new Map();
+    for (const match of workflow.matchAll(/\{ os: (?<os>[\w.-]+), groups: (?<groups>[a-z ]+?) \}/gu)) {
+      const { groups = '', os = '' } = match.groups ?? {};
+      byPlatform.set(os, [...(byPlatform.get(os) ?? []), ...groups.split(' ')]);
+    }
+    assert.deepEqual([...byPlatform.keys()].sort(), ['ubuntu-24.04', 'windows-2025']);
+    for (const [os, groups] of byPlatform) {
+      assert.deepEqual([...groups].sort(), [...names].sort(), os);
+    }
   });
 });

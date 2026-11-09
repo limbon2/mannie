@@ -4,7 +4,9 @@
 # decision 10), an install check of each artifact on a clean runner, SHA-256
 # checksums, Ed25519 signatures of the signed programs' archives, CycloneDX
 # SBOMs and third-party notices, and a draft GitHub release whose notes are
-# the version's changelog section.
+# the version's changelog section. The checks are those of the CI run that
+# the push of the tagged commit to main started; a commit without such a run
+# gets them here, and the dependencies are always checked again.
 # Nothing is published: the owner checks the draft on clean machines and
 # publishes it (V10). Every job uses a standard GitHub-hosted runner.
 # A manual run builds and install-checks the artifacts without signing them
@@ -30,6 +32,8 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+# The same CARGO_ variables as ci.yml, so that `task gen` here finds what the
+# jobs of CI stored in the compiler cache, whose keys hold these variables.
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
@@ -66,10 +70,56 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+  # The push of a commit to main starts the CI workflow for it, so a tag that
+  # is pushed with its commit or after it would run every check a second
+  # time, beside the first. This job waits for the push's run and takes its
+  # result. Its output is `none` when the commit has no such run or the run
+  # was cancelled, and the checks then run here (scripts/ci/commit-checks.mjs).
+  commit-checks:
+    name: Checks of the commit's push to main
+    needs: version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      result: ${{ steps.checks.outputs.result }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - id: checks
+        name: Wait for the CI run of this commit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/commit-checks.mjs "$(git rev-parse HEAD)"
+
   checks:
     name: Checks
-    needs: version
+    needs: [version, commit-checks]
+    if: needs.commit-checks.outputs.result == 'none'
     uses: ./.github/workflows/ci.yml
+
+  # The advisories that cargo-deny reads change from day to day, and a tag
+  # can follow the push of its commit by days. The release therefore checks
+  # the dependencies at its own time, whichever run its other checks come
+  # from.
+  dependencies:
+    name: Dependencies at the time of the release
+    needs: version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The check builds nothing: it reads the locks and the launcher.
+      - uses: ./.github/actions/setup
+        with:
+          compiler-cache: none
+          system-libraries: false
+      - run: task gen:launcher
+      - run: task lint:deps
 
   freebsd-tests:
     name: FreeBSD tests
@@ -98,8 +148,8 @@ jobs:
         run: node scripts/plugins/programs.mjs matrix >> "$GITHUB_OUTPUT"
 
   windows:
-    name: Windows installer and programs
-    needs: [version, plan]
+    name: Windows installer
+    needs: version
     runs-on: windows-2025
     timeout-minutes: 60
     env:
@@ -107,8 +157,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
-        with:
-          cache-key: release
       - run: task gen
       - run: pnpm --dir apps/desktop exec tauri build --bundles nsis -- --locked
       - name: Collect the installer
@@ -117,23 +165,42 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           $installer = Get-ChildItem -Path target/release/bundle/nsis -Filter '*-setup.exe' | Select-Object -First 1
           Copy-Item -Path $installer.FullName -Destination "dist/mannie-$env:VERSION-windows-x86_64-setup.exe"
-      # Each program with a Windows target, as `<package>-<version>-windows-x86_64.zip`.
-      - name: Build and pack the programs
-        shell: pwsh
-        env:
-          PROGRAMS: ${{ needs.plan.outputs.windows }}
-        run: |
-          foreach ($program in ($env:PROGRAMS | ConvertFrom-Json)) {
-            cargo build --locked --release --manifest-path "$($program.folder)/Cargo.toml" -p $program.package
-            if ($LASTEXITCODE -ne 0) { throw "cargo build failed for $($program.package)" }
-            $staging = "staging/$($program.package)"
-            New-Item -ItemType Directory -Force -Path $staging | Out-Null
-            Copy-Item -Path "target/release/$($program.package).exe", LICENSE -Destination $staging
-            Compress-Archive -Path "$staging/*" -DestinationPath "dist/$($program.package)-$env:VERSION-windows-x86_64.zip"
-          }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  # Each program with a Windows target, as `<package>-<version>-windows-x86_64.zip`.
+  # A job of its own keeps this build out of the installer's job, the longest
+  # of the release.
+  windows-programs:
+    name: Windows build of ${{ matrix.package }}
+    needs: [version, plan]
+    if: needs.plan.outputs.windows != '[]'
+    strategy:
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.windows) }}
+    runs-on: windows-2025
+    timeout-minutes: 45
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install the Rust toolchain from rust-toolchain.toml
+        shell: bash
+        run: rustup toolchain install
+      - run: cargo build --locked --release --manifest-path ${{ matrix.folder }}/Cargo.toml -p ${{ matrix.package }}
+      - name: Collect the archive
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist, staging | Out-Null
+          Copy-Item -Path "target/release/${{ matrix.package }}.exe", LICENSE -Destination staging
+          Compress-Archive -Path "staging/*" -DestinationPath "dist/${{ matrix.package }}-$env:VERSION-windows-x86_64.zip"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-${{ matrix.package }}
           path: dist/
           if-no-files-found: error
           retention-days: 1
@@ -150,8 +217,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
-        with:
-          cache-key: release
       - run: task gen
       - run: pnpm --dir apps/desktop exec tauri build --bundles deb,rpm -- --locked
       - name: Collect the artifacts
@@ -245,7 +310,9 @@ jobs:
 
   install-windows:
     name: Install check on Windows
-    needs: [version, windows]
+    needs: [version, windows, windows-programs]
+    # The programs' builds are skipped when no program has a Windows target.
+    if: ${{ !failure() && !cancelled() && needs.windows.result == 'success' }}
     runs-on: windows-2025
     timeout-minutes: 15
     env:
@@ -253,8 +320,9 @@ jobs:
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: windows
+          pattern: windows*
           path: dist
+          merge-multiple: true
       - name: Install the desktop app, start it, and remove it
         shell: pwsh
         run: |
@@ -352,7 +420,15 @@ jobs:
     name: Draft the release
     # A limited draft skips Linux installation; every job that runs must pass.
     if: ${{ !failure() && !cancelled() && github.ref_type == 'tag' }}
-    needs: [version, checks, freebsd-tests, install-windows, install-linux, install-freebsd]
+    needs:
+      - version
+      - commit-checks
+      - checks
+      - dependencies
+      - freebsd-tests
+      - install-windows
+      - install-linux
+      - install-freebsd
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -361,9 +437,10 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The job reads the crates' graphs and license texts and builds nothing.
       - uses: ./.github/actions/setup
         with:
-          cache-key: release
+          compiler-cache: none
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
         with:
           tool: cargo-about@0.9.2,cargo-cyclonedx@0.5.9

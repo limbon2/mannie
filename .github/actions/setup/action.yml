@@ -3,6 +3,12 @@
 # packageManager, Task, cargo-deny, cargo-nextest and tauri-driver, the pnpm
 # packages, the crates that every Cargo workspace's lock pins and, on Linux,
 # the system libraries of the desktop app. Actions are pinned by commit SHA.
+#
+# The caches (docs/engineering/ci-runners.md, cost and storage): every job of
+# a platform restores one cache of Cargo's registry, the job that lints with
+# Clippy restores Clippy's build folder with it, and only a run on main saves
+# either, in the one job that asks for it. Compiler results come from
+# sccache, which a job reads and writes, only reads, or does without.
 name: Set up the toolchains
 description: Installs the pinned toolchains, the Rust tools and the pnpm packages.
 
@@ -11,16 +17,33 @@ inputs:
     description: Extra Rust targets to install, separated by spaces.
     required: false
     default: ""
-  cache-key:
-    description: Separates this job's Rust build cache from the other jobs'.
+  rust-cache:
+    description: >-
+      The Rust cache to restore: `registry`, the crates of Cargo's registry,
+      or `clippy`, the registry with Clippy's build folder.
     required: false
-    default: ""
+    default: registry
+  save-rust-cache:
+    description: Whether a run on main saves the Rust cache when the root's locked crates changed. One job of a platform saves each cache.
+    required: false
+    default: "false"
+  compiler-cache:
+    description: >-
+      How the job uses the shared compiler cache: `write` reads and stores
+      results, `read` only reads them, for a job that builds what another job
+      stores, and `none` builds without it.
+    required: false
+    default: write
+  system-libraries:
+    description: Whether to install the desktop app's system libraries on Linux, which every build of the desktop app's crates needs.
+    required: false
+    default: "true"
 
 runs:
   using: composite
   steps:
     - name: Install the desktop app's system libraries
-      if: runner.os == 'Linux'
+      if: runner.os == 'Linux' && inputs.system-libraries == 'true'
       shell: bash
       run: |
         sudo sh scripts/ci/install-ubuntu-packages.sh \
@@ -38,20 +61,29 @@ runs:
 
     - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       with:
-        cache-on-failure: true
+        # One key for every job of a platform, so the jobs share one copy of
+        # the registry instead of storing one each.
+        shared-key: ${{ inputs.rust-cache }}
         cache-all-crates: true
+        # The Rust tools are installed below, in their pinned versions.
+        cache-bin: false
         # Compiler results use sccache. Keep Clippy's metadata, which sccache
         # cannot cache, without storing another copy of every debug build.
         cache-targets: false
-        cache-directories: ${{ inputs.cache-key == 'check' && 'target/clippy' || '' }}
-        key: ${{ inputs.cache-key }}
+        cache-directories: ${{ inputs.rust-cache == 'clippy' && 'target/clippy' || '' }}
+        cache-on-failure: true
+        # A cache that a tag or a pull request saves can only be read by that
+        # tag or pull request, and counts against the repository's limit.
+        save-if: ${{ inputs.save-rust-cache == 'true' && github.ref == 'refs/heads/main' }}
 
     - uses: Mozilla-Actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      if: inputs.compiler-cache != 'none'
       with:
         version: v0.18.0
         disable_annotations: true
 
     - name: Enable the shared compiler cache
+      if: inputs.compiler-cache != 'none'
       env:
         SCCACHE_GHA_ENABLED: "true"
         SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
@@ -60,6 +92,13 @@ runs:
         echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
         echo "SCCACHE_IGNORE_SERVER_IO_ERROR=1" >> "$GITHUB_ENV"
         echo "RUSTC_WRAPPER=$SCCACHE_PATH" >> "$GITHUB_ENV"
+        # The server reads its settings when it starts. GitHub accepts 200
+        # new cache entries a minute for the repository, so a job that builds
+        # what another job stores leaves the storing to that job.
+        if [ "${{ inputs.compiler-cache }}" = read ]; then
+          export SCCACHE_GHA_RW_MODE=READ_ONLY
+          echo "SCCACHE_GHA_RW_MODE=READ_ONLY" >> "$GITHUB_ENV"
+        fi
         # A cache outage still leaves Cargo able to compile normally.
         if ! sccache --start-server; then
           echo "Compiler cache unavailable; Cargo will compile normally."

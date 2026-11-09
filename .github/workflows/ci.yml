@@ -1,13 +1,15 @@
 # The checks of every pull request and every push to main (engineering
-# standards, Definition of Done): `task ci` and the end-to-end tests on Windows
-# and Linux, with the performance figures they measure (NFR-PERF-01 to 04,
-# enforced only on the reference machine), the credential store with GNOME
-# Keyring, KWallet and no Secret Service (V7), and the programs of the
-# plugins' manifests, such as the worker: their smoke tests on Windows and
-# Linux and their builds for FreeBSD and static Linux (ADR-0035, decision
-# 10). The release workflow runs it too. Every job uses a standard GitHub-hosted
-# runner, which is free in this public repository (docs/engineering/ci-runners.md).
-# Actions are pinned by commit SHA.
+# standards, Definition of Done): the groups of `task ci` and the end-to-end
+# tests on Windows and Linux, each in a job of its own, the performance
+# figures (NFR-PERF-01 to 04, enforced only on the reference machine), the
+# credential store with GNOME Keyring, KWallet and no Secret Service (V7), and
+# the programs of the plugins' manifests, such as the worker: their smoke
+# tests on Windows and Linux and their builds for FreeBSD and static Linux
+# (ADR-0035, decision 10). The release workflow takes the result of the run
+# that the push of its commit started, and runs these jobs itself when the
+# commit has none. Every job uses a standard GitHub-hosted runner, which is
+# free in this public repository (docs/engineering/ci-runners.md). Actions are
+# pinned by commit SHA.
 name: CI
 
 on:
@@ -43,38 +45,76 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}-${{ inputs.scope || 'full' }}-${{ inputs.platform || 'both' }}
   cancel-in-progress: ${{ github.event_name != 'push' || github.ref_type != 'tag' }}
 
+# The compiler cache's keys hold every variable whose name starts with CARGO_,
+# so the workflows that share the cache set the same ones (release.yml). The
+# debug information of dev builds, which once filled the disk of the Linux
+# runners, is set in .cargo/config.toml for every build.
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
-  # With full debug information the workspace's test build outgrew the disk
-  # of the Linux runners, and the linker crashed. Line tables keep the file
-  # and line of a panic.
-  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
-  check:
-    if: inputs.scope != 'e2e'
-    name: ${{ inputs.scope == 'rust' && 'Selected Rust test' || 'task ci' }} (${{ matrix.os }})
+  # The checks of `task ci`, one job for each group of its steps
+  # (scripts/ci.mjs), so the slowest group sets the time of the checks, a
+  # problem that needs no build shows within minutes, and a failed job names
+  # the command that repeats it. Linux builds about twice as fast as Windows,
+  # so its groups share jobs. A test of the script compares this list with
+  # the script's groups.
+  checks:
+    if: inputs.scope != 'rust' && inputs.scope != 'e2e'
+    name: task ci -- ${{ matrix.groups }} (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(inputs.scope == 'rust' && inputs.platform == 'windows' && '["windows-2025"]' || inputs.scope == 'rust' && inputs.platform == 'linux' && '["ubuntu-24.04"]' || '["windows-2025","ubuntu-24.04"]') }}
+        include:
+          - { os: windows-2025, groups: static }
+          - { os: windows-2025, groups: desktop }
+          - { os: windows-2025, groups: clippy }
+          - { os: windows-2025, groups: core }
+          - { os: windows-2025, groups: plugins }
+          - { os: ubuntu-24.04, groups: static }
+          - { os: ubuntu-24.04, groups: desktop clippy }
+          - { os: ubuntu-24.04, groups: core plugins }
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 45
     steps:
-      # The whole history and the tags: `task lint:proto` compares the link's
-      # contracts with the merge base and the newest release that has them.
+      # The whole history and the tags: `task lint:proto`, in the static
+      # group, compares the link's contracts with the merge base and the
+      # newest release that has them.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      # The static group builds nothing. It saves the registry's cache for
+      # the other jobs, and the job with Clippy saves Clippy's build folder.
+      # Clippy alone builds only what `task gen` builds, which the desktop
+      # group stores in the compiler cache.
       - uses: ./.github/actions/setup
         with:
-          cache-key: check
-      - name: Run the full checks
-        if: inputs.scope != 'rust'
-        run: task ci
+          rust-cache: ${{ contains(matrix.groups, 'clippy') && 'clippy' || 'registry' }}
+          save-rust-cache: ${{ matrix.groups == 'static' || contains(matrix.groups, 'clippy') }}
+          compiler-cache: ${{ matrix.groups == 'static' && 'none' || matrix.groups == 'clippy' && 'read' || 'write' }}
+          system-libraries: ${{ matrix.groups != 'static' }}
+      - name: Run the checks of the groups
+        run: task ci -- ${{ matrix.groups }}
+      - name: Report compiler cache use
+        if: always() && env.SCCACHE_PATH != ''
+        run: sccache --show-stats
+
+  # A repair's selected Rust test (docs/engineering/ci-runners.md, running
+  # the pipeline).
+  rust-test:
+    if: inputs.scope == 'rust'
+    name: Selected Rust test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.platform == 'windows' && '["windows-2025"]' || inputs.platform == 'linux' && '["ubuntu-24.04"]' || '["windows-2025","ubuntu-24.04"]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
       - name: Run the selected Rust test
-        if: inputs.scope == 'rust'
         env:
           MANNIE_CARGO_ARGUMENTS: ${{ inputs.cargo-arguments }}
         run: node scripts/ci/run-cargo-test.mjs
@@ -100,8 +140,6 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
-        with:
-          cache-key: e2e
       - name: Build the validation app
         run: task e2e:build
       - name: Run the end-to-end tests on WebView2
@@ -115,20 +153,48 @@ jobs:
       - name: Run the end-to-end tests on WebKitGTK
         if: runner.os == 'Linux'
         run: dbus-run-session -- sh scripts/ci/with-secret-service.sh gnome-keyring xvfb-run --auto-servernum task e2e:run
-      # Shared runners measure their neighbours as much as Mannie, so CI
-      # records the figures without enforcing the targets.
+      - name: Report compiler cache use
+        if: always() && env.SCCACHE_PATH != ''
+        run: sccache --show-stats
+
+  # The performance figures, in a job of their own beside the end-to-end
+  # tests, so their five minutes do not add to the suite's time. Shared
+  # runners measure their neighbours as much as Mannie, so CI records the
+  # figures without enforcing the targets. The job builds what the
+  # end-to-end job builds and stores, so it only reads the compiler cache.
+  performance:
+    if: inputs.scope != 'rust' && (inputs.scope != 'e2e' || inputs.e2e-spec == '')
+    name: Performance measurements (${{ matrix.os }})
+    env:
+      MANNIE_E2E_SHOW_WINDOW: "1"
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.scope == 'e2e' && inputs.platform == 'windows' && '["windows-2025"]' || inputs.scope == 'e2e' && inputs.platform == 'linux' && '["ubuntu-22.04"]' || '["windows-2025","ubuntu-22.04"]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+        with:
+          compiler-cache: read
+      - name: Build the validation app
+        run: task e2e:build
       - name: Measure the performance targets on WebView2
-        if: runner.os == 'Windows' && env.MANNIE_E2E_SPEC == ''
+        if: runner.os == 'Windows'
         env:
           MANNIE_PERF_REPORT_ONLY: "1"
         run: pwsh -File scripts/ci/run-windows-e2e.ps1 -Mode performance
+      - name: Install GNOME Keyring
+        if: runner.os == 'Linux'
+        run: sudo sh scripts/ci/install-ubuntu-packages.sh gnome-keyring
       - name: Measure the performance targets on WebKitGTK
-        if: runner.os == 'Linux' && env.MANNIE_E2E_SPEC == ''
+        if: runner.os == 'Linux'
         env:
           MANNIE_PERF_REPORT_ONLY: "1"
         run: dbus-run-session -- sh scripts/ci/with-secret-service.sh gnome-keyring xvfb-run --auto-servernum pnpm exec wdio run tests/e2e/wdio.perf.conf.ts
       - name: Record the performance measurements
-        if: always() && env.MANNIE_E2E_SPEC == ''
+        if: always()
         run: node scripts/ci/summarize-performance.mjs
       - name: Report compiler cache use
         if: always() && env.SCCACHE_PATH != ''
@@ -145,9 +211,10 @@ jobs:
         secret-service: [gnome-keyring, kwallet, none]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The three jobs build the same tests, so one stores the results.
       - uses: ./.github/actions/setup
         with:
-          cache-key: credentials
+          compiler-cache: ${{ matrix.secret-service == 'gnome-keyring' && 'write' || 'read' }}
       - name: Install the Secret Service
         if: matrix.secret-service != 'none'
         run: |
@@ -204,9 +271,12 @@ jobs:
       - name: Install the Rust toolchain from rust-toolchain.toml
         shell: bash
         run: rustup toolchain install
+      # Only a run on main saves the build cache: one that a tag or a pull
+      # request saves serves that tag or pull request alone.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: smoke
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # The program as it ships, then what the smoke test needs beside it,
       # such as Workers' test master, in builds of their own, so that the
       # helpers' features never reach the program.
@@ -242,6 +312,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: program-builds-${{ matrix.target }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install musl-tools for a static Linux build
         if: endsWith(matrix.target, '-musl')
         run: |
@@ -281,5 +352,6 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: core-freebsd
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Lint the core's crates for FreeBSD
         run: cargo clippy --locked -p mannie-tools -p mannie-runtime --all-targets --all-features --target x86_64-unknown-freebsd -- -D warnings
