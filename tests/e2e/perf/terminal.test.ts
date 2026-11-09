@@ -142,19 +142,10 @@ async function openShell(shell?: string): Promise<void> {
 
 /** Waits until the terminal that shows reached its prompt, and a moment more for the shell to settle. */
 async function waitForPrompt(): Promise<void> {
-  await browser.waitUntil(
-    async () => {
-      const status = await browser.execute(() => {
-        const toolbars = [...document.querySelectorAll<HTMLElement>('[data-side-panels] [role="toolbar"]')];
-        const shown = toolbars.find((toolbar) => toolbar.offsetParent !== null);
-        return shown?.querySelector('[data-content]')?.textContent.trim() ?? '';
-      });
-      const hasStatus = status !== '';
-      const isStarting = status === 'Starting';
-      return hasStatus && !isStarting;
-    },
-    { timeout: 30_000, timeoutMsg: 'the terminal reached no prompt' },
-  );
+  await $('[data-side-panels] [role="tabpanel"]:not([hidden]) [data-terminal-phase="prompt"]').waitForDisplayed({
+    timeout: 30_000,
+    timeoutMsg: 'the terminal reached no prompt',
+  });
   await browser.pause(1_000);
 }
 
@@ -176,7 +167,10 @@ async function measureEcho(): Promise<number[]> {
       throw new Error('the terminal has no field for keys');
     }
     const samples: number[] = [];
-    for (let sample = 0; sample < 40; sample += 1) {
+    // Alternating keys makes a sample less likely to match a shell prediction
+    // and leave the rendered text unchanged.
+    for (const character of 'xq'.repeat(20)) {
+      const key = { bubbles: true, code: `Key${character.toUpperCase()}`, key: character };
       const before = rows.textContent;
       const shown = new Promise<number>((resolve) => {
         const observer = new MutationObserver(() => {
@@ -188,8 +182,9 @@ async function measureEcho(): Promise<number[]> {
         observer.observe(rows, { characterData: true, childList: true, subtree: true });
       });
       const start = performance.now();
-      field.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, code: 'KeyX', key: 'x' }));
-      field.dispatchEvent(new KeyboardEvent('keypress', { bubbles: true, charCode: 120, code: 'KeyX', key: 'x' }));
+      field.dispatchEvent(new KeyboardEvent('keydown', key));
+      field.dispatchEvent(new KeyboardEvent('keypress', { ...key, charCode: character.charCodeAt(0) }));
+      field.dispatchEvent(new KeyboardEvent('keyup', key));
       samples.push((await shown) - start);
       await new Promise((resolve) => {
         setTimeout(resolve, 100);
