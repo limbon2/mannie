@@ -20,6 +20,10 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 - rusqlite 0.41.1, whose SQLite 3.54.1 fixes the advisory RUSTSEC-2026-0459: an earlier SQLite can return uninitialized memory of the process when it opens a database beside a `-wal` file of another page size, such as a file that Databases registers.
 
+#### MCP
+
+- rmcp 3.9.0, which fixes the advisory RUSTSEC-2026-0462: rmcp 3.7.0 read a remote server's JSON response or error without a limit, so a server could make Mannie run out of memory. A JSON response may now take 16 MiB and an error 64 KiB.
+
 #### Workers
 
 - The worker's rusqlite 0.41.1, whose SQLite 3.54.1 fixes the advisory RUSTSEC-2026-0459: an earlier SQLite can return uninitialized memory of the process when it opens a database beside a `-wal` file of another page size, such as a database registered on the worker's host.
