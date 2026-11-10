@@ -60,6 +60,28 @@ export interface WindowState {
   readonly visible: boolean;
 }
 
+/** Why a check for updates or a download failed, as the core reports it. */
+type UpdateFailureCode =
+  | 'download_failed'
+  | 'no_package_for_this_installation'
+  | 'no_update_information'
+  | 'signature_invalid'
+  | 'unreachable';
+
+/** What the fake source of a validation build's updates answers a check with. */
+export type UpdateOffer =
+  | { readonly code: UpdateFailureCode; readonly kind: 'check_fails' }
+  | { readonly code: UpdateFailureCode; readonly kind: 'download_fails'; readonly version: string }
+  | { readonly kind: 'nothing' }
+  | { readonly kind: 'version'; readonly version: string };
+
+/** How the last install ended, as a start after it finds it. */
+export interface UpdateOutcome {
+  readonly fromVersion: string;
+  readonly result: 'completed' | 'failed';
+  readonly toVersion: string;
+}
+
 interface Harness {
   callUndeclaredPluginCommand(): Promise<string>;
   callUngrantedCommand(): Promise<string>;
@@ -78,7 +100,10 @@ interface Harness {
   setFileChoice(files: string[]): Promise<void>;
   setFolderChoice(folder: string | null): Promise<void>;
   setSkillsFolder(folder: string | null): Promise<void>;
+  setUpdateOffer(offer: UpdateOffer): Promise<void>;
+  setUpdateOutcome(outcome: UpdateOutcome | null): Promise<void>;
   trayMenu(item: 'open' | 'quit'): Promise<void>;
+  updateInstalls(): Promise<string[]>;
   windowState(): Promise<WindowState>;
 }
 
@@ -341,5 +366,47 @@ export async function windowState(): Promise<WindowState> {
       throw new Error('the validation harness is missing: run the validation build');
     }
     return harness.windowState();
+  });
+}
+
+/**
+ * Sets what the next checks for updates find. A validation build reads a fake
+ * source and never the releases (ADR-0063, decision 5).
+ */
+export async function setUpdateOffer(offer: UpdateOffer): Promise<void> {
+  await browser.execute(async (chosen) => {
+    const harness = window.mannieValidation;
+    if (harness === undefined) {
+      throw new Error('the validation harness is missing: run the validation build');
+    }
+    await harness.setUpdateOffer(chosen);
+  }, offer);
+}
+
+/**
+ * Sets how the last install ended, as a start after it finds it, or drops
+ * that with `null`. The tests cannot install a version.
+ */
+export async function setUpdateOutcome(outcome: UpdateOutcome | null): Promise<void> {
+  await browser.execute(async (chosen) => {
+    const harness = window.mannieValidation;
+    if (harness === undefined) {
+      throw new Error('the validation harness is missing: run the validation build');
+    }
+    await harness.setUpdateOutcome(chosen);
+  }, outcome);
+}
+
+/**
+ * The versions that "Restart and update" would have installed, in order. A
+ * validation build records the request and keeps running.
+ */
+export async function updateInstalls(): Promise<string[]> {
+  return browser.execute(async () => {
+    const harness = window.mannieValidation;
+    if (harness === undefined) {
+      throw new Error('the validation harness is missing: run the validation build');
+    }
+    return harness.updateInstalls();
   });
 }

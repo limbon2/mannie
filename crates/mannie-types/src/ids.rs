@@ -158,6 +158,12 @@ uuid_id!(
     ExportId
 );
 
+uuid_id!(
+    /// Identifies an install of an update, which the journal records before
+    /// Mannie quits to install it (ADR-0063, decision 9).
+    UpdateId
+);
+
 #[cfg(test)]
 mod tests {
     use super::{ConversationId, RunId};

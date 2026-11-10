@@ -80,3 +80,4 @@ Each ADR has exactly one of these statuses:
 | [0060](0060-let-agents-save-plans-that-the-owner-runs.md)                              | Let agents save plans that the owner runs later                                               | Accepted (D49)         | M17        |
 | [0061](0061-let-agents-use-the-skills-that-the-owner-installs.md)                      | Let agents use the skills that the owner installs                                             | Accepted (D50)         | M18        |
 | [0062](0062-let-the-owner-pay-for-model-calls-with-a-chatgpt-plan.md)                  | Let the owner pay for model calls with a ChatGPT plan                                         | Accepted (D51)         | M19        |
+| [0063](0063-update-the-desktop-app-from-signed-releases.md)                            | Update the desktop app from signed releases                                                   | Accepted (D55)         | M20        |

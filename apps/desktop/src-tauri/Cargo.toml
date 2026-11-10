@@ -22,6 +22,10 @@ mannie-desktop-core = { workspace = true }
 # The plugins in plugins/*/plugin.toml when `task gen` ran, in the manifests'
 # order (ADR-0035, decisions 3 and 4).
 mannie-plugin-list = { workspace = true }
+# `tauri::generate_context!` writes the configuration of Tauri's plugins in
+# `tauri.conf.json`, which is the updater's (ADR-0063), as `serde_json` values
+# into this crate, so the crate names `serde_json` itself.
+serde_json = { workspace = true }
 # Without `dynamic-acl`: capabilities are fixed at build time and nothing adds
 # one at runtime (ADR-0004). `tray-icon` adds the tray (window and tray
 # feature); the other features are Tauri's defaults. `common-controls-v6`

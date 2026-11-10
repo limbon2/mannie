@@ -1,10 +1,10 @@
 # Mannie product vision
 
-|              |                                                                                                                                                                                         |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Status       | Draft for review                                                                                                                                                                        |
-| Last updated | 2026-10-20                                                                                                                                                                              |
-| Related      | [Goals and scope](goals-and-scope.md), [Feature protocol](../features/README.md), [Milestones](../roadmap/milestones.md), [Glossary](../glossary.md), [Plugins](../features/plugins.md) |
+|              |                                                                                                                                                                                                                                                                 |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status       | Draft for review                                                                                                                                                                                                                                                |
+| Last updated | 2026-11-10                                                                                                                                                                                                                                                      |
+| Related      | [Goals and scope](goals-and-scope.md), [Feature protocol](../features/README.md), [Milestones](../roadmap/milestones.md), [Glossary](../glossary.md), [Plugins](../features/plugins.md), [ADR-0063](../adr/0063-update-the-desktop-app-from-signed-releases.md) |
 
 ## 1. Summary
 
@@ -36,7 +36,7 @@ Mannie has one user, who also directs its development.
 | Never lose work                               | Durable runs, crash-safe storage, and operations that are never repeated after a crash         |
 | Add features when needs appear                | The feature protocol and an architecture that grows by addition                                |
 
-There are no accounts, teams or tenants, and Mannie never phones home.
+There are no accounts, teams or tenants, and Mannie sends no telemetry and no reports of its use. The check for updates is the one request that the owner did not configure, and a switch turns it off ([ADR-0063](../adr/0063-update-the-desktop-app-from-signed-releases.md)).
 
 ## 4. Product principles
 

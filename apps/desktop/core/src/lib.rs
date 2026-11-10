@@ -22,6 +22,7 @@ mod ipc;
 mod links;
 mod plugin_ipc;
 mod state;
+mod updates;
 mod window;
 
 use std::sync::{Arc, OnceLock};
@@ -35,7 +36,9 @@ use crate::state::Core;
 
 /// Runs the app with Tauri's `context` and the bundled `plugins` until the
 /// owner quits it, then shuts the core down: active replies become
-/// interrupted, and the store and the logs close.
+/// interrupted, and the store closes. An update that the owner chose
+/// installs afterwards, and the log closes last (ADR-0063, decisions 10 and
+/// 11).
 pub fn run(context: Context<Wry>, plugins: Vec<PluginEntry>) -> anyhow::Result<()> {
     // CI and native tests can rebuild the same executable. Refuse a validation
     // build with the normal bundle ID before startup opens any owner data.
@@ -59,7 +62,11 @@ pub fn run(context: Context<Wry>, plugins: Vec<PluginEntry>) -> anyhow::Result<(
             |app, _arguments, _working_directory| {
                 window::show_main(app);
             },
-        ));
+        ))
+        // Registered for its configuration and its state only. No capability
+        // grants its commands, so the webview reaches updates through the
+        // core's own commands (ADR-0063, decision 2).
+        .plugin(tauri_plugin_updater::Builder::new().build());
     for plugin in plugin_ipc::tauri_plugins(&plugins) {
         builder = builder.plugin(plugin);
     }
@@ -75,6 +82,9 @@ pub fn run(context: Context<Wry>, plugins: Vec<PluginEntry>) -> anyhow::Result<(
             Ok(())
         })
         .build(context)?;
+    // Taken before the event loop takes the app: Mannie starts again after an
+    // install with the arguments that it was started with.
+    let env = app.env();
     let exit_code = app.run_return(|_app, event| {
         if let tauri::RunEvent::ExitRequested { code, .. } = event {
             tracing::info!(?code, "the event loop ends");
@@ -82,6 +92,8 @@ pub fn run(context: Context<Wry>, plugins: Vec<PluginEntry>) -> anyhow::Result<(
     });
     if let Some(core) = started.get() {
         tauri::async_runtime::block_on(core.shutdown());
+        updates::install_chosen(core, &env);
+        core.close_log();
     }
     if exit_code != 0 {
         anyhow::bail!("the event loop ended with code {exit_code}");

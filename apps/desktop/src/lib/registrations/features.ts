@@ -13,6 +13,7 @@ import { registerPlans } from './plans.js';
 import { registerPlugins } from './plugins.js';
 import { registerSkills } from './skills.js';
 import { registerTools } from './tools.js';
+import { registerUpdates } from './updates.js';
 import { registerWindowAndTray } from './window-and-tray.js';
 
 /** A feature's registration: it adds the feature's entries to the shell's slots. */
@@ -28,5 +29,6 @@ export const features: readonly FeatureRegistration[] = [
   registerPlans,
   registerSkills,
   registerExport,
+  registerUpdates,
   registerPlugins,
 ];

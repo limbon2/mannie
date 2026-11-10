@@ -71,6 +71,10 @@ mannie-secrets = { path = "crates/mannie-secrets" }
 mannie-store = { path = "crates/mannie-store" }
 mannie-tools = { path = "crates/mannie-tools" }
 mannie-types = { path = "crates/mannie-types" }
+# The crate that Tauri's updater verifies signatures with. A test of the desktop
+# core verifies with it a desktop installer's signature as
+# `scripts/release.mjs` writes it (ADR-0063).
+minisign-verify = "0.3.0"
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 regex = "1.13.1"
 # Without the default TLS feature, which brings the aws-lc crypto provider that
@@ -105,6 +109,11 @@ tauri = "2.12.3"
 tauri-build = "2.7.2"
 tauri-plugin-opener = "2.7.1"
 tauri-plugin-single-instance = "2.5.3"
+# Reads the newest release's manifest from GitHub's release files, verifies the
+# installer's signature and starts the installer (ADR-0063). Without the default
+# features: `zip` only unpacks the archives of Tauri 1's updater, and the two
+# that stay are HTTPS through rustls with ring and the system's proxy.
+tauri-plugin-updater = { version = "2.14.1", default-features = false, features = ["rustls-tls", "system-proxy"] }
 tauri-specta = { version = "=2.0.0-rc.25", features = ["derive", "typescript"] }
 tempfile = "3.27.0"
 thiserror = "2.0.21"

@@ -8,7 +8,8 @@
     "store",
     "validation",
     "sqlite",
-    "dbfiles"
+    "dbfiles",
+    "updates"
   ],
   "loaderNamePrefixes": ["LD_", "DYLD_"],
   "pluginOnlyServices": ["store", "secrets", "processes", "executor-host", "credentials"],
@@ -24,6 +25,7 @@
     "single-instance",
     "tauri",
     "tray",
+    "updater",
     "webview",
     "window",
     "link",
@@ -36,6 +38,7 @@
     "tools",
     "validation",
     "dbfiles",
+    "updates",
     "interface",
     "sqlite",
     "aux",
