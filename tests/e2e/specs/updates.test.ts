@@ -180,6 +180,7 @@ describe('desktop updates', () => {
     // The reply of the last test ends with the app.
     await startAfterInstall('completed');
     await waitForShownText(OUTCOME_NOTICE, expect.stringContaining(`Mannie was updated to ${NEWER}`));
+    await runCommand('Use the dark theme');
     expect(await isDark()).toBe(true);
     expect(await axeViolations()).toEqual([]);
     await runCommand('Use the light theme');
