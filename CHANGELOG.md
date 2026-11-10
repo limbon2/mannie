@@ -4,6 +4,8 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+## 0.7.0 - 2026-11-11
+
 ### Added
 
 - The desktop app updates itself from Mannie's releases on GitHub. An app that the Windows installer, the deb or the rpm package installed looks for a newer release a minute after it starts and once a day, downloads the installer in the background, keeps it only with a valid signature of the release key, and installs it when the owner chooses "Restart and update", after a question while replies, background commands or terminals run. Settings has a section "Updates" with the state, "Check for updates" and a switch that turns the automatic checks off, a notice says when a version is ready and whether the last install worked, and a check sends nothing about the owner. A release gains the update manifest `latest.json`, which the release key signs (ADR-0063).
