@@ -56,6 +56,7 @@ pub mod testing;
 pub mod texts;
 mod tool_images;
 mod tools;
+mod updates;
 #[cfg(feature = "validation")]
 mod validation;
 mod wake_ups;

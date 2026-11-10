@@ -4,6 +4,10 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+### Added
+
+- The desktop app updates itself from Mannie's releases on GitHub. An app that the Windows installer, the deb or the rpm package installed looks for a newer release a minute after it starts and once a day, downloads the installer in the background, keeps it only with a valid signature of the release key, and installs it when the owner chooses "Restart and update", after a question while replies, background commands or terminals run. Settings has a section "Updates" with the state, "Check for updates" and a switch that turns the automatic checks off, a notice says when a version is ready and whether the last install worked, and a check sends nothing about the owner. A release gains the update manifest `latest.json`, which the release key signs (ADR-0063).
+
 ### Changed
 
 - CI runs the checks of `task ci` as groups in jobs of their own, five on Windows and three on Linux, the end-to-end specs in two jobs for each webview and the performance measurements in a job beside them, so a run takes as long as its longest job and a formatting or dependency problem shows within minutes. A release takes its checks from the CI run that the push of its commit started instead of running every check a second time beside it, and builds the Windows programs beside the installer. Only runs on `main` save the Rust caches, which a tag's run filled with copies that no other run could read. `task ci -- <group>` runs one group on a workstation.

@@ -10,8 +10,10 @@ import type {
   ChannelBatch,
   ChannelLoad,
   ChannelLoadSummary,
+  UpdateOutcome,
   ValidationDelta,
   ValidationTrayItem,
+  ValidationUpdateOffer,
   ValidationWindowState,
 } from '#lib/generated/validation.js';
 import { commands } from '#lib/generated/validation.js';
@@ -105,8 +107,23 @@ export interface ValidationHarness {
    * owner's `~/.agents/skills`, which a validation build never reads.
    */
   setSkillsFolder(folder: string | null): Promise<void>;
+  /**
+   * Sets what the next checks for updates find. A validation build reads a
+   * fake source and never the releases (ADR-0063, decision 5).
+   */
+  setUpdateOffer(offer: ValidationUpdateOffer): Promise<void>;
+  /**
+   * Sets the result of a last install, as a start after an install would, or
+   * drops it with `null`. The end-to-end tests cannot install a version.
+   */
+  setUpdateOutcome(outcome: UpdateOutcome | null): Promise<void>;
   /** Chooses an item of the tray's menu. */
   trayMenu(item: ValidationTrayItem): Promise<void>;
+  /**
+   * The versions that "Restart and update" would have installed, in order. A
+   * validation build records the request and keeps running.
+   */
+  updateInstalls(): Promise<string[]>;
   /** Whether the main window is visible and the tray exists. */
   windowState(): Promise<ValidationWindowState>;
 }
@@ -343,8 +360,15 @@ window.mannieValidation = {
   setSkillsFolder: async (folder) => {
     await commands.validationSetSkillsFolder(folder);
   },
+  setUpdateOffer: async (offer) => {
+    await commands.validationSetUpdateOffer(offer);
+  },
+  setUpdateOutcome: async (outcome) => {
+    await commands.validationSetUpdateOutcome(outcome);
+  },
   trayMenu: async (item) => {
     await commands.validationTrayMenu(item);
   },
+  updateInstalls: async () => commands.validationUpdateInstalls(),
   windowState: async () => unwrap(await commands.validationWindowState()),
 };

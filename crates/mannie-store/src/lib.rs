@@ -28,6 +28,7 @@ mod schema;
 mod settings;
 mod store;
 mod tools;
+mod updates;
 #[cfg(feature = "validation")]
 pub mod validation;
 mod writer;
@@ -49,6 +50,7 @@ pub use runtime::{
 pub use settings::SettingsStoreError;
 pub use store::{Store, StoreOptions};
 pub use tools::ToolsStoreError;
+pub use updates::SettledUpdate;
 
 /// How durable a write is once its future resolves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +76,7 @@ pub(crate) fn all_statements() -> impl Iterator<Item = &'static str> {
         .chain(provider::chatgpt::STATEMENTS)
         .chain(provider::search::STATEMENTS)
         .chain(tools::STATEMENTS)
+        .chain(updates::STATEMENTS)
         .copied()
         .chain(runtime::statements())
         .chain(dbfiles::statements())

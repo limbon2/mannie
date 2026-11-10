@@ -168,6 +168,7 @@ describe('composeShell', () => {
       'window.requests',
       'tools.dialogs',
       'export.result',
+      'updates.overlay',
     ]);
     expect(slots.partRenderers.entries.map((renderer) => renderer.id)).toEqual([
       'user_text',
@@ -193,6 +194,7 @@ describe('composeShell', () => {
       'tools.settings',
       'child-agents.settings',
       'skills.settings',
+      'updates.settings',
       'plugins.settings',
     ]);
     expect(slots.taskKinds.entries).toEqual([]);

@@ -14,9 +14,10 @@ use mannie_provider::chatgpt::ChatGptEndpoints;
 use mannie_types::clock::{Clock, SystemClock};
 use mannie_types::ids::ConversationId;
 use mannie_types::ipc::{ChannelBatch, CommandError};
+use mannie_types::updates::UpdateOutcome;
 use mannie_types::validation::{
     ChannelLoad, ChannelLoadSummary, ChatGptMock, SeedConversation, ValidationDelta,
-    ValidationError, ValidationTrayItem, ValidationWindowState,
+    ValidationError, ValidationTrayItem, ValidationUpdateOffer, ValidationWindowState,
 };
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
@@ -291,4 +292,40 @@ pub(crate) async fn validation_seed_conversation(
 )]
 pub(crate) fn validation_opened_links(core: State<'_, Core>) -> Vec<String> {
     core.opened_links()
+}
+
+/// Sets what the next checks for updates find. A validation build reads a
+/// fake source and never the releases (ADR-0063, decision 5).
+#[tauri::command]
+#[specta::specta]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri hands command arguments over by value"
+)]
+pub(crate) fn validation_set_update_offer(core: State<'_, Core>, offer: ValidationUpdateOffer) {
+    core.updates().set_validation_offer(offer);
+}
+
+/// Sets the result of a last install, as a start after an install would, or
+/// drops it. The end-to-end tests cannot install a version.
+#[tauri::command]
+#[specta::specta]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri hands command arguments over by value"
+)]
+pub(crate) fn validation_set_update_outcome(core: State<'_, Core>, outcome: Option<UpdateOutcome>) {
+    core.updates().set_validation_outcome(outcome);
+}
+
+/// The versions that "Restart and update" would have installed, in order. A
+/// validation build records the request and keeps running.
+#[tauri::command]
+#[specta::specta]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri hands command arguments over by value"
+)]
+pub(crate) fn validation_update_installs(core: State<'_, Core>) -> Vec<String> {
+    core.updates().validation_installs()
 }

@@ -1774,5 +1774,89 @@
   "plans_error_store_unavailable": "Mannie could not open its database, so plans are not available. Restart Mannie.",
   "tools_tool_save_plan": "Saving a plan",
   "tools_done_plan_saved": "Saved the plan \"{title}\"",
-  "tools_done_plan_kept": "Did not save: you edited the plan, and the agent read your version"
+  "tools_done_plan_kept": "Did not save: you edited the plan, and the agent read your version",
+  "updates_settings_title": "Updates",
+  "updates_settings_description": "The version of Mannie that runs, and how newer versions arrive.",
+  "updates_command_group": "Updates",
+  "updates_running_version": "Mannie {version} is running.",
+  "updates_loading": "Reading the state of updates",
+  "updates_load_failed_title": "The state of updates could not be read",
+  "updates_try_again": "Try again",
+  "updates_off_development_build": "Updates are off in a development build.",
+  "updates_off_not_installed": "Updates are off, because no installer or package put this copy of Mannie in place. Install a release from the releases page to get updates.",
+  "updates_open_releases_page": "Open the releases page",
+  "updates_not_checked": "Mannie has not checked for updates since it started.",
+  "updates_up_to_date": "Mannie is up to date.",
+  "updates_last_check": "Last check: {time}",
+  "updates_checking": "Checking for updates",
+  "updates_downloading": "Downloading Mannie {version}",
+  "updates_downloaded": "{amount} downloaded",
+  "updates_ready": "Mannie {version} is ready to install.",
+  "updates_needs_system_password": "During the install, the system asks for an administrator's password.",
+  "updates_restarting": "Mannie restarts to install the update.",
+  "updates_check_now": "Check for updates",
+  "updates_restart_and_update": "Restart and update",
+  "updates_whats_new": "What's new",
+  "updates_failed_unreachable_title": "Mannie could not reach GitHub",
+  "updates_failed_unreachable": "Check the network connection, then check for updates again.",
+  "updates_failed_no_release_title": "Mannie cannot install the latest release from here",
+  "updates_failed_no_update_information": "The latest release has no update information that this version can read. Open the releases page to install it yourself.",
+  "updates_failed_no_package_for_this_installation": "The latest release has no installer for the way this copy of Mannie was installed. Open the releases page to install it yourself.",
+  "updates_failed_download_title": "The download failed",
+  "updates_failed_download": "Check the network connection, then check for updates again.",
+  "updates_failed_signature_title": "Mannie discarded the download",
+  "updates_failed_signature": "Its signature is wrong, so Mannie installs nothing from it. Check for updates again.",
+  "updates_automatic_label": "Check for updates automatically",
+  "updates_automatic_description": "Mannie checks one minute after it starts and then once a day, and downloads a newer version when it finds one. A check tells GitHub nothing about you or this installation. GitHub sees your IP address and the time. With this off, Mannie contacts GitHub only when you check.",
+  "updates_settings_load_failed_title": "The setting could not be read",
+  "updates_settings_save_failed_title": "The setting was not changed",
+  "updates_settings_saving": "Saving the setting",
+  "updates_check_failed_title": "The check did not start",
+  "updates_restart_failed_title": "Mannie did not restart",
+  "updates_page_failed_title": "The page did not open",
+  "updates_error_not_available_in_this_build": "This build of Mannie does not update itself.",
+  "updates_error_version_not_ready": "That version is no longer ready to install. Check for updates again.",
+  "updates_error_storage_failed": "Mannie's database could not be read or written, so nothing changed. The log in Mannie's data folder has the cause. Try again, and restart Mannie if it keeps failing.",
+  "updates_error_store_unavailable": "The database is not open, so Mannie cannot check for updates, install one or change this setting.",
+  "updates_error_browser_unavailable": "The system browser could not be opened. Check that a default browser is set, then try again.",
+  "updates_notice_label": "Notices about updates",
+  "updates_notice_ready_title": "Mannie {version} is ready to install",
+  "updates_notice_close": "Close this notice",
+  "updates_outcome_completed_title": "Mannie was updated to {version}",
+  "updates_outcome_failed_title": "Mannie {version} was not installed",
+  "updates_outcome_failed_description": "Mannie {version} is running. Check for updates to try again.",
+  "updates_restart_question_title": "Restart while replies are being written?",
+  "updates_restart_question_title_commands": "Restart while background commands run?",
+  "updates_restart_question_title_terminals": "Restart while terminals run commands?",
+  "updates_restart_active_runs": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count: number} reply is being written. The restart interrupts it, and you can retry it after Mannie starts again.",
+        "countPlural=other": "{count: number} replies are being written. The restart interrupts them, and you can retry them after Mannie starts again."
+      }
+    }
+  ],
+  "updates_restart_background_commands": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count: number} background command runs. The restart ends it and everything it started.",
+        "countPlural=other": "{count: number} background commands run. The restart ends them and everything they started."
+      }
+    }
+  ],
+  "updates_restart_terminals": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count: number} terminal runs a command. The restart ends the terminal and everything it started.",
+        "countPlural=other": "{count: number} terminals run commands. The restart ends the terminals and everything they started."
+      }
+    }
+  ],
+  "updates_cancel": "Cancel"
 }

@@ -33,6 +33,7 @@ pub mod tasks;
 pub mod tools;
 pub mod transcript;
 pub mod transport;
+pub mod updates;
 #[cfg(feature = "validation")]
 pub mod validation;
 pub mod window;

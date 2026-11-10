@@ -85,6 +85,7 @@ deny = [
     "mannie-desktop-core",
     "tauri-plugin-opener",
     "tauri-plugin-single-instance",
+    "tauri-plugin-updater",
     "tauri-specta",
   ], reason = "only the desktop app's binary and library depend on Tauri (ADR-0008, ADR-0035)" },
   { crate = "rusqlite", wrappers = ["mannie-store"], reason = "only the store uses SQLite (ADR-0008, ADR-0009)" },

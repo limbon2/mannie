@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use mannie_types::clock::Clock;
 use mannie_types::ids::{
     ArchiveId, CheckpointId, ConversationId, DatabaseKey, DatabaseOperationId, ExportId, GrantId,
-    InvalidId, PartId, ProfileId, ProjectId, RuleId, RunId, TaskId, TurnId,
+    InvalidId, PartId, ProfileId, ProjectId, RuleId, RunId, TaskId, TurnId, UpdateId,
 };
 use uuid::timestamp::context::ContextV7;
 use uuid::{Timestamp, Uuid};
@@ -60,6 +60,11 @@ impl IdGenerator {
     /// A new owner-initiated export operation ID.
     pub(crate) fn export(&self) -> ExportId {
         self.make(ExportId::parse)
+    }
+
+    /// A new ID of an install of an update (ADR-0063, decision 9).
+    pub(crate) fn update(&self) -> UpdateId {
+        self.make(UpdateId::parse)
     }
 
     /// A new key of a SQLite file that the owner registered (ADR-0056).
