@@ -1,4 +1,4 @@
-// Floating layers of the TypeScript plugin SDK (ADR-0063, decision 5): a
+// Floating layers of the TypeScript plugin SDK (ADR-0064, decision 5): a
 // plugin learns which of the shell's dialogs, menus, selects, popovers and
 // tooltips are open and where, from the bits-ui markers.
 import { describe, expect, it } from 'vitest';

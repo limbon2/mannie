@@ -44,7 +44,7 @@ pub struct EntryCount {
     pub folders: u32,
 }
 
-/// What a browser tool does to the session (ADR-0063).
+/// What a browser tool does to the session (ADR-0064).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum BrowserAction {
@@ -297,7 +297,7 @@ pub enum Access {
         /// The command's text, as the plugin types it.
         command: String,
     },
-    /// A prepared action on an isolated browser session (ADR-0063).
+    /// A prepared action on an isolated browser session (ADR-0064).
     BrowserAction {
         /// The plugin whose tool prepared the action.
         plugin: String,

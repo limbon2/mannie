@@ -1,4 +1,4 @@
-// Floating layers of the shell, `@mannie/plugin-sdk/surface` (ADR-0063,
+// Floating layers of the shell, `@mannie/plugin-sdk/surface` (ADR-0064,
 // decision 5): the open dialogs, menus, selects, popovers and tooltips that
 // the shell's components draw over the page. A plugin that places a native
 // view over its pane reads them, because the view would cover them: the

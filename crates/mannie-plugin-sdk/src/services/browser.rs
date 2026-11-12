@@ -1,4 +1,4 @@
-//! Conversation-owned browser sessions on the desktop (ADR-0063).
+//! Conversation-owned browser sessions on the desktop (ADR-0064).
 
 use std::fmt;
 
@@ -25,7 +25,7 @@ impl Service for Browser {
 /// The service bound to a plugin by the desktop.
 pub trait BrowserApi: Send + Sync + fmt::Debug {
     /// Whether this system can host browser sessions. On other systems the
-    /// plugin does not start (ADR-0063, decision 1).
+    /// plugin does not start (ADR-0064, decision 1).
     fn supported(&self) -> bool;
     /// Current session metadata for the owner.
     fn status(
@@ -35,7 +35,7 @@ pub trait BrowserApi: Send + Sync + fmt::Debug {
     /// The conversation's status, first as it is and then after each
     /// change, each item complete. The stream is the lease of the session's
     /// native page views: when every stream of a conversation ends, or the
-    /// app page loads again, its pages hide (ADR-0063, decision 5).
+    /// app page loads again, its pages hide (ADR-0064, decision 5).
     fn watch(&self, conversation: ConversationId) -> BoxStream<'static, BrowserStatus>;
     /// Places a tab's native page view over the pane's placeholder.
     fn place(
@@ -245,7 +245,7 @@ pub struct BrowserTab {
 }
 
 /// Where the pane wants a tab's page, in the app webview's CSS pixels. The
-/// core clamps it to the window's client area (ADR-0063, decision 5).
+/// core clamps it to the window's client area (ADR-0064, decision 5).
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BrowserPlacement {

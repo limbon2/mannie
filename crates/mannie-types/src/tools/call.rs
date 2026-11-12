@@ -161,9 +161,9 @@ pub enum Refusal {
     /// A worker runs no plugin's statements on databases, for the same
     /// reason (ADR-0056).
     NoDatabases,
-    /// Browser sessions belong to the desktop (ADR-0063).
+    /// Browser sessions belong to the desktop (ADR-0064).
     NoBrowser,
-    /// The owner denied this browser site for the current run (ADR-0063).
+    /// The owner denied this browser site for the current run (ADR-0064).
     BrowserSiteDenied,
 }
 

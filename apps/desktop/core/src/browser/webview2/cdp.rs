@@ -1,5 +1,5 @@
 //! Each tab's own `DevTools` endpoint: commands and the events the driver
-//! needs (ADR-0063, decision 3).
+//! needs (ADR-0064, decision 3).
 
 use std::sync::Arc;
 

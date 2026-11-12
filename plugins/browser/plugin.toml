@@ -1,5 +1,5 @@
 #:schema ../../crates/mannie-plugin-sdk/plugin.schema.json
-# Browser sessions beside a conversation (ADR-0063).
+# Browser sessions beside a conversation (ADR-0064).
 
 id = "browser"
 sdk = 1

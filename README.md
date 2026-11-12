@@ -20,12 +20,13 @@ Everything else is a plugin that the owner turns on and off in the settings:
 | [MCP](plugins/mcp/docs/README.md)             | The tools, resources and images of MCP servers, local and remote                                                        |
 | [Notebooks](plugins/notebooks/docs/README.md) | Notebooks of PDF, Markdown and text sources that conversations search and cite                                          |
 | [Terminal](plugins/terminal/docs/README.md)   | Terminals of this machine and of SSH hosts beside a conversation, where the owner types and agents run commands         |
+| [Browser](plugins/browser/docs/README.md)     | An isolated WebView2 browser beside a conversation on Windows, under site approvals and owner control                   |
 
 New features and plugins go in one at a time through the [feature protocol](docs/features/README.md).
 
 ## Status
 
-v0.6.0 was released on 2026-11-09 with the MCP and Notebooks plugins. The next release is being built from [M14 to M19](docs/roadmap/milestones.md#m14-terminals): terminals, databases, questions to the owner, custom agents and plans, skills, and the ChatGPT plan. [CHANGELOG.md](CHANGELOG.md) lists what each release added, and the [milestones](docs/roadmap/milestones.md) list what comes next.
+v0.7.0 was released on 2026-11-11 with signed desktop updates. The Browser plugin is in development for a later release. [CHANGELOG.md](CHANGELOG.md) lists what each release added, and the [milestones](docs/roadmap/milestones.md) list what comes next.
 
 ## Principles
 

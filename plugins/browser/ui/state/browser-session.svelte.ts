@@ -1,7 +1,7 @@
 // A conversation's browser session as the pane sees it: the status that the
 // core sends through `browser_follow`, and the owner's controls. The
 // subscription is the lease of the session's native pages: while no pane
-// follows the conversation, its pages hide (ADR-0063, decision 5).
+// follows the conversation, its pages hide (ADR-0064, decision 5).
 import {
   batchChannel,
   call,

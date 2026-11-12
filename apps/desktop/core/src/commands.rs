@@ -18,6 +18,7 @@ pub(crate) mod providers;
 pub(crate) mod skills;
 pub(crate) mod startup;
 pub(crate) mod tools;
+pub(crate) mod updates;
 #[cfg(feature = "validation")]
 pub(crate) mod validation;
 pub(crate) mod window;

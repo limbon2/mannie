@@ -1,4 +1,4 @@
-// Where a tab's native page may show (ADR-0063, decision 5). The page is a
+// Where a tab's native page may show (ADR-0064, decision 5). The page is a
 // native window above the app's HTML, so it hides under an open dialog, menu,
 // select or popover, where the pane shows a still of it, and leaves out the
 // parts that a tooltip covers.

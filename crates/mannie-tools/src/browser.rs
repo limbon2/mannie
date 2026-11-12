@@ -1,4 +1,4 @@
-//! A guarded browser session over a host that holds its tabs (ADR-0063).
+//! A guarded browser session over a host that holds its tabs (ADR-0064).
 //!
 //! The driver is portable: [`ChromeHost`] is the engine, which the desktop
 //! core implements with WebView2 and the tests script.

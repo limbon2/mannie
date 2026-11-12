@@ -1,4 +1,4 @@
-//! The browser driver on the real WebView2 engine (V12). They need the
+//! The browser driver on the real WebView2 engine (V13). They need the
 //! WebView2 runtime and run one at a time:
 //! `cargo test --locked -p mannie-desktop-core --lib real_webview2 -- --ignored --test-threads=1`.
 
@@ -279,7 +279,7 @@ async fn observe(chrome: &Chrome, tab: &str) -> ChromeObservation {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "V12 needs the WebView2 runtime"]
+#[ignore = "V13 needs the WebView2 runtime"]
 async fn real_webview2_site_approval_click_and_replayed_form() {
     let (other, mut other_requests) =
         site(|_| "<!doctype html><title>Done</title><p>Received</p>".to_owned()).await;
@@ -354,7 +354,7 @@ async fn real_webview2_site_approval_click_and_replayed_form() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "V12 needs the WebView2 runtime"]
+#[ignore = "V13 needs the WebView2 runtime"]
 async fn real_webview2_popups_with_and_without_an_opener() {
     let (target, mut target_requests) =
         site(|_| "<!doctype html><title>Popup</title>".to_owned()).await;
@@ -403,7 +403,7 @@ async fn real_webview2_popups_with_and_without_an_opener() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "V12 needs the WebView2 runtime"]
+#[ignore = "V13 needs the WebView2 runtime"]
 async fn real_webview2_history_needs_approval() {
     let (first, _first_requests) = site(|_| "<!doctype html><title>First</title>".to_owned()).await;
     let (second, _second_requests) =
@@ -444,7 +444,7 @@ async fn real_webview2_history_needs_approval() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "V12 needs the WebView2 runtime"]
+#[ignore = "V13 needs the WebView2 runtime"]
 async fn real_webview2_ending_a_session_ends_its_processes_and_folder() {
     let (origin, _requests) = site(|_| "<!doctype html><title>Page</title>".to_owned()).await;
     let session = session().await;
@@ -507,7 +507,7 @@ async fn real_webview2_victim() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "V12 needs the WebView2 runtime"]
+#[ignore = "V13 needs the WebView2 runtime"]
 async fn real_webview2_a_killed_host_leaves_no_process() {
     let (origin, _requests) = site(|_| "<!doctype html><title>Page</title>".to_owned()).await;
     let mut child = std::process::Command::new(std::env::current_exe().unwrap())
@@ -563,7 +563,7 @@ async fn real_webview2_a_killed_host_leaves_no_process() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "V12 needs the WebView2 runtime"]
+#[ignore = "V13 needs the WebView2 runtime"]
 async fn real_webview2_keys_reach_a_page_without_the_system_focus() {
     let (origin, _requests) = site(|_| {
         "<!doctype html><title>Keys</title>
@@ -669,7 +669,7 @@ const SORTABLE_LISTS: &str = r#"<!doctype html><title>Sorting</title>
 </script>"#;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "V12 needs the WebView2 runtime"]
+#[ignore = "V13 needs the WebView2 runtime"]
 async fn real_webview2_an_agent_drags_to_sort_lists() {
     let (origin, _requests) = site(|_| SORTABLE_LISTS.to_owned()).await;
     let session = session().await;
@@ -765,7 +765,7 @@ async fn wait_for_canvas_repaint(host: &WebView2Session, tab: &str) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "V12 needs the WebView2 runtime"]
+#[ignore = "V13 needs the WebView2 runtime"]
 async fn real_webview2_accepts_points_on_a_repainting_canvas() {
     let (origin, _requests) = site(|_| REPAINTING_CANVAS.to_owned()).await;
     let session = session().await;
@@ -855,7 +855,7 @@ const POINTER_CAPTURE: &str = r#"<!doctype html><title>Canvas pointer capture</t
 </script>"#;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "V12 needs the WebView2 runtime"]
+#[ignore = "V13 needs the WebView2 runtime"]
 async fn real_webview2_drag_honors_canvas_pointer_capture() {
     let (origin, _requests) = site(|_| POINTER_CAPTURE.to_owned()).await;
     let session = session().await;
@@ -898,7 +898,7 @@ const SCROLLABLE_PAGE: &str = "<!doctype html><title>Scrollable page</title>
 <main>Scrollable content</main>";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "V12 needs the WebView2 runtime"]
+#[ignore = "V13 needs the WebView2 runtime"]
 async fn real_webview2_reports_the_jpeg_dimensions_with_scrollbars() {
     let (origin, _requests) = site(|_| SCROLLABLE_PAGE.to_owned()).await;
     let session = session().await;

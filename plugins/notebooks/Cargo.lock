@@ -937,7 +937,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-notebooks"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "base64 0.22.1",
  "futures-util",
@@ -956,7 +956,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-notebooks-documents"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "pdf-extract",
  "thiserror",
@@ -964,7 +964,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-plugin-harness"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "futures-util",
  "mannie-plugin-sdk",
@@ -979,7 +979,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-plugin-sdk"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "base64 0.22.1",
  "futures-util",
@@ -998,7 +998,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-plugins"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "futures-util",
  "mannie-plugin-sdk",
@@ -1012,7 +1012,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-provider"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -1034,7 +1034,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-runtime"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "base64 0.22.1",
  "fastrand",
@@ -1059,7 +1059,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-store"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "mannie-plugin-sdk",
  "mannie-types",
@@ -1077,7 +1077,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-tools"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "base64 0.22.1",
  "fastrand",
@@ -1108,7 +1108,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-types"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "serde",
  "specta",

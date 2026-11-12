@@ -1,5 +1,5 @@
 //! The seam between the portable driver and the engine that hosts its tabs
-//! (ADR-0063, decision 2).
+//! (ADR-0064, decision 2).
 //!
 //! The desktop core implements [`ChromeHost`] with WebView2, where each tab
 //! has a `DevTools` endpoint of its own. The driver's tests use a scripted

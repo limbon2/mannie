@@ -338,7 +338,7 @@ pub enum Decision {
     /// conversation's places, which runs without asking (ADR-0061,
     /// decision 8).
     Skill,
-    /// The owner allowed this browser origin for the current run (ADR-0063).
+    /// The owner allowed this browser origin for the current run (ADR-0064).
     BrowserSite,
 }
 

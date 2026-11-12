@@ -4,6 +4,8 @@
 //! replies of a previous process as interrupted before any command runs,
 //! then the plugin host, which starts the plugins that the owner turned on
 //! with the services that their manifests declare (ADR-0030, ADR-0034).
+//! Updates of the app are built beside them, and check and install only once
+//! the store opened (ADR-0063).
 //!
 //! A store that does not open does not stop the app. The window opens, the
 //! shell asks for the startup status, and it shows what failed and what the
@@ -27,6 +29,7 @@ use mannie_store::{Store, StoreError, StoreOptions};
 use mannie_tools::{MutationLock, SystemFacts, ToolRegistry};
 use mannie_types::clock::{Clock, SystemClock};
 use mannie_types::startup::StartupProblem;
+use mannie_types::updates::UpdatesSettings;
 use mannie_types::window::WindowSettings;
 use tauri::{App, Manager};
 
@@ -34,10 +37,16 @@ use crate::browser::BrowserProvider;
 use crate::credentials::{KeyringVault, SecretsProvider};
 use crate::file_dialog::FileDialogProvider;
 use crate::ipc::subscriptions::Subscriptions;
+use crate::updates::{Automatic, Updates};
 use crate::window::requests::WindowRequests;
 
 /// The file name of the master's database in its data folder.
 const DATABASE_FILE: &str = "mannie.sqlite";
+
+/// The guard that keeps the log files written. The core closes the log
+/// through it, and so does an install of an update that ends the process
+/// (ADR-0063, decision 11).
+type LogHandle = Arc<Mutex<Option<LoggingGuard>>>;
 
 /// What runs once the store opened.
 #[derive(Debug)]
@@ -56,8 +65,12 @@ struct Inner {
     window_settings: RwLock<WindowSettings>,
     window_requests: WindowRequests,
     subscriptions: Subscriptions,
-    /// Keeps the log files written until the core shuts down.
-    logging: Mutex<Option<LoggingGuard>>,
+    /// Updates of the app. They exist without the store, and check and
+    /// install only with it.
+    updates: Updates,
+    /// Keeps the log files written until Mannie closes the log as its last
+    /// step.
+    logging: LogHandle,
     /// The system's file dialog, whose next answer a validation build sets.
     /// It exists before the store opens, so a test can set the answer even
     /// when the store did not open.
@@ -121,7 +134,7 @@ impl Core {
             .map(|services| &services.plugins)
     }
 
-    /// The Browser provider, for the validation commands (V12).
+    /// The Browser provider, for the validation commands (V13).
     #[cfg(feature = "validation")]
     pub(crate) fn browser(&self) -> Option<&BrowserProvider> {
         self.inner
@@ -195,13 +208,18 @@ impl Core {
         &self.inner.subscriptions
     }
 
+    /// Updates of the app.
+    pub(crate) fn updates(&self) -> &Updates {
+        &self.inner.updates
+    }
+
     /// The window's page loads, for the first time or again: the old page's
     /// subscriptions end, and the new page subscribes again.
     pub(crate) fn page_loaded(&self) {
         self.inner.subscriptions.cancel_all();
         self.inner.window_requests.unsubscribe();
         // The Browser pane's pages float over the app; the old page's panes
-        // are gone, so no page may stay (ADR-0063, decision 5).
+        // are gone, so no page may stay (ADR-0064, decision 5).
         if let Ok(services) = &self.inner.services {
             services.browser.page_loaded();
         }
@@ -237,15 +255,17 @@ impl Core {
         self.inner.file_dialog.set_choice(files);
     }
 
-    /// Stops the core: the runtime marks active replies as interrupted and
-    /// waits for them, and lets the tasks of plugins' executors run on; the
-    /// plugins that are on stop and keep the owner's choices; the store makes
-    /// everything durable, and the logs are written out. Mannie quits
-    /// afterwards.
+    /// Stops the core: update checks and Browser sessions end. The runtime
+    /// marks active replies as interrupted and waits for them, and lets the
+    /// tasks of plugins' executors run on. The plugins that are on stop and
+    /// keep the owner's choices, and the store makes everything durable. The
+    /// log stays open for the install of an update. [`Core::close_log`] closes
+    /// it afterwards.
     pub(crate) async fn shutdown(&self) {
         self.inner.subscriptions.cancel_all();
+        self.inner.updates.stop();
         // Browser sessions end first, their processes before their folders,
-        // so that no request of theirs outlives Mannie (ADR-0063, decision 4).
+        // so that no request of theirs outlives Mannie (ADR-0064, decision 4).
         if let Ok(services) = &self.inner.services {
             services.browser.shutdown().await;
         }
@@ -256,6 +276,11 @@ impl Core {
             plugins.shutdown().await;
         }
         tracing::info!("Mannie stopped");
+    }
+
+    /// Writes the log out and closes it, as the last step before Mannie
+    /// quits (ADR-0063, decision 11). Nothing is logged afterwards.
+    pub(crate) fn close_log(&self) {
         drop(lock(&self.inner.logging).take());
     }
 }
@@ -266,15 +291,23 @@ impl Core {
 pub(crate) fn start(app: &App, plugins: Vec<PluginEntry>) -> Core {
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let redactor = Redactor::new();
-    let logging = start_logging(app, &redactor, &clock);
-    tracing::info!(version = env!("CARGO_PKG_VERSION"), "Mannie is starting");
+    let logging: LogHandle = Arc::new(Mutex::new(start_logging(app, &redactor, &clock)));
+    // The install checks of the release workflow read the kind of the
+    // installation in this line (ADR-0063, decision 5).
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        installation = %crate::updates::bundle_mark(),
+        "Mannie is starting"
+    );
+    let updates = build_updates(app, &clock, &logging);
     let file_dialog = Arc::new(FileDialogProvider::new(app.handle().clone()));
     let services = open_store(app, Arc::clone(&clock), plugins).and_then(|(store, plugins)| {
         let dialog = Arc::clone(&file_dialog);
         start_runtime(app, store, plugins, &redactor, dialog, clock)
     });
-    if let Err(problem) = &services {
-        tracing::error!(?problem, "Mannie started without its database");
+    match &services {
+        Ok(services) => start_updates(&updates, &services.store),
+        Err(problem) => tracing::error!(?problem, "Mannie started without its database"),
     }
     let window_settings = services
         .as_ref()
@@ -286,7 +319,8 @@ pub(crate) fn start(app: &App, plugins: Vec<PluginEntry>) -> Core {
             window_settings: RwLock::new(window_settings),
             window_requests: WindowRequests::default(),
             subscriptions: Subscriptions::default(),
-            logging: Mutex::new(logging),
+            updates,
+            logging,
             #[cfg(feature = "validation")]
             file_dialog,
             #[cfg(feature = "validation")]
@@ -323,6 +357,40 @@ fn start_logging(app: &App, redactor: &Redactor, clock: &Arc<dyn Clock>) -> Opti
             drop(error);
             None
         }
+    }
+}
+
+/// The updates of this build (ADR-0063, decision 5). An install that ends
+/// the process closes the log through the handle that the core closes it
+/// through.
+fn build_updates(app: &App, clock: &Arc<dyn Clock>, logging: &LogHandle) -> Updates {
+    let log = Arc::clone(logging);
+    let close_log: Arc<dyn Fn() + Send + Sync> = Arc::new(move || drop(lock(&log).take()));
+    Updates::for_app(app.handle(), host_profile(), Arc::clone(clock), close_log)
+}
+
+/// What updates do once the store opened: the installs that the journal
+/// still shows as running are settled, the setting says whether Mannie
+/// checks on its own, and the schedule starts. A validation build keeps no
+/// schedule, so only its tests start a check.
+fn start_updates(updates: &Updates, store: &Store) {
+    tauri::async_runtime::block_on(updates.settle(store));
+    let settings = tauri::async_runtime::block_on(store.load_settings::<UpdatesSettings>());
+    let automatic = match settings {
+        Ok(settings) if settings.check_automatically => Automatic::On,
+        Ok(_) => Automatic::Off,
+        Err(error) => {
+            tracing::warn!(
+                error = %ErrorChain(&error),
+                error.code = error.code(),
+                "could not read the updates settings; Mannie makes no automatic check"
+            );
+            Automatic::Unread
+        }
+    };
+    updates.follow_setting(automatic);
+    if host_profile() != HostProfile::Validation {
+        updates.start_schedule();
     }
 }
 

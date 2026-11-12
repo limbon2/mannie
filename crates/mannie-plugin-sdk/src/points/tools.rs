@@ -195,7 +195,7 @@ pub enum ToolAccess {
     /// A statement on a database that the owner registered for the plugin
     /// (ADR-0056, decision 5).
     Database(DatabaseAccess),
-    /// An action on an isolated browser session (ADR-0063).
+    /// An action on an isolated browser session (ADR-0064).
     BrowserAction(BrowserAccess),
     /// A request to return control of the browser to the agent.
     BrowserControl(BrowserControlAccess),
@@ -588,10 +588,10 @@ pub enum ToolEffect {
     /// agent may be offered it (ADR-0056, decision 6).
     ReadsDatabases,
     /// It observes a loaded browser page under site policy. When the owner
-    /// has control it may request a separately journaled handoff (ADR-0063).
+    /// has control it may request a separately journaled handoff (ADR-0064).
     ReadsBrowser,
     /// It controls an isolated browser under site policy. Browser changes
-    /// and handoffs are operations (ADR-0063).
+    /// and handoffs are operations (ADR-0064).
     BrowserActions,
 }
 
@@ -691,7 +691,7 @@ impl PluginTool {
         self
     }
 
-    /// The same tool, controlling the browser under site policy (ADR-0063).
+    /// The same tool, controlling the browser under site policy (ADR-0064).
     #[must_use]
     pub fn with_browser_actions(mut self) -> Self {
         self.effect = ToolEffect::BrowserActions;
@@ -699,7 +699,7 @@ impl PluginTool {
     }
 
     /// The same tool, observing the browser's loaded page under site policy
-    /// or asking the owner to return control (ADR-0063).
+    /// or asking the owner to return control (ADR-0064).
     #[must_use]
     pub fn with_browser_reads(mut self) -> Self {
         self.effect = ToolEffect::ReadsBrowser;

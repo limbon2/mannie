@@ -2,7 +2,7 @@
 //!
 //! Points that the agent gives are pixels of the screenshot it observed. The
 //! driver divides them by the page's device pixel ratio to get the CSS
-//! pixels that `DevTools` input uses (ADR-0064, decision 6).
+//! pixels that `DevTools` input uses (ADR-0065, decision 6).
 
 use serde_json::{Value, json};
 use zeroize::Zeroizing;

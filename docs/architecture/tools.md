@@ -78,7 +78,7 @@ Policy decides first, and the owner decides what policy leaves open.
 - A command rule never matches a command that contains shell metacharacters (`;`, `&`, `|`, `$`, backticks, parentheses, braces or redirections). Such commands always ask. On a remote host, whose shell Mannie does not know, a backslash counts as one too.
 - Text that the model read can never create a grant or a rule, and neither can a report from another agent.
 
-A browser site grant covers an exact HTTP or HTTPS origin for the conversation ([ADR-0064](../adr/0064-let-browser-access-follow-the-conversation.md), decision 2). Browser operations can ask even when the conversation has full access. A top-level request to an unapproved origin, a redirect or popup included, fails in the engine at once; after the owner approves it, the browser sends it again with its original method, body and headers ([ADR-0063](../adr/0063-give-agents-an-isolated-browser-beside-the-conversation.md), decision 8).
+A browser site grant covers an exact HTTP or HTTPS origin for the conversation ([ADR-0065](../adr/0065-let-browser-access-follow-the-conversation.md), decision 2). Browser operations can ask even when the conversation has full access. A top-level request to an unapproved origin, a redirect or popup included, fails in the engine at once; after the owner approves it, the browser sends it again with its original method, body and headers ([ADR-0064](../adr/0064-give-agents-an-isolated-browser-beside-the-conversation.md), decision 8).
 
 ## 5. File safety
 

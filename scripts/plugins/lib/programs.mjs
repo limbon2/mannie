@@ -24,7 +24,7 @@ import { findPlugins, readRules } from './manifests.mjs';
  * @typedef {import('./cargo.mjs').Metadata} Metadata
  */
 
-/** Crates of the desktop stack, WebView2 included (ADR-0063), that must never reach a headless program. */
+/** Crates of the desktop stack, WebView2 included (ADR-0064), that must never reach a headless program. */
 export const FORBIDDEN_CRATE =
   /^(?:tauri|wry|tao|muda|gtk|gdk|gio|glib|webkit2gtk|webview2|javascriptcore-rs|soup3)(?:[-_]|$)/u;
 

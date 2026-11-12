@@ -9,7 +9,7 @@ publish.workspace = true
 
 [dependencies]
 # Boxed futures, so that the registry holds tools as trait objects.
-# A browser replay sends the request's body to DevTools as base64 (ADR-0063).
+# A browser replay sends the request's body to DevTools as base64 (ADR-0064).
 base64 = { workspace = true }
 # The names of temporary files of atomic writes.
 fastrand = { workspace = true }

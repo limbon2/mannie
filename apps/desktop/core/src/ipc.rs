@@ -23,7 +23,7 @@ use tauri_specta::{Builder, ErrorHandlingMode, collect_commands};
 
 use crate::commands::{
     agents, chat, chatgpt, child_agents, export, interface, links, plans, plugins, projects,
-    providers, skills, startup, tools, window,
+    providers, skills, startup, tools, updates, window,
 };
 
 /// The first line of every generated file.
@@ -163,6 +163,13 @@ macro_rules! app_commands {
             plugins::plugin_work,
             plugins::set_plugin_feature_enabled,
             plugins::plugin_feature_work,
+            updates::get_updates_settings,
+            updates::update_updates_settings,
+            updates::subscribe_updates,
+            updates::check_for_updates,
+            updates::restart_to_update,
+            updates::dismiss_update_outcome,
+            updates::open_release_page,
             $($extra)*
         ]
     };
@@ -204,6 +211,9 @@ fn validation_builder() -> Builder<Wry> {
             crate::commands::validation::validation_expire_chatgpt_token,
             crate::commands::validation::validation_browser_surface,
             crate::commands::validation::validation_browser_evaluate,
+            crate::commands::validation::validation_set_update_offer,
+            crate::commands::validation::validation_set_update_outcome,
+            crate::commands::validation::validation_update_installs,
         ])
 }
 
@@ -241,6 +251,9 @@ pub(crate) fn runtime_builder() -> Builder<Wry> {
                 crate::commands::validation::validation_expire_chatgpt_token,
                 crate::commands::validation::validation_browser_surface,
                 crate::commands::validation::validation_browser_evaluate,
+                crate::commands::validation::validation_set_update_offer,
+                crate::commands::validation::validation_set_update_outcome,
+                crate::commands::validation::validation_update_installs,
             ])
     }
 }

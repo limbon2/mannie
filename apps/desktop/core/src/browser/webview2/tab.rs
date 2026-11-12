@@ -1,6 +1,6 @@
 //! A tab: one WebView2 controller in a child window of the main window, with
 //! the settings and native handlers that keep a page inside the session's
-//! rules (ADR-0063, decisions 2 and 8, and ADR-0064, decision 4).
+//! rules (ADR-0064, decisions 2 and 8, and ADR-0065, decision 4).
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -138,7 +138,7 @@ fn adopt(
 /// objects, the `DevTools` window, autofill, saved passwords and the status
 /// bar. Drops stay on: `WebView2` has one drop target for a page, so turning
 /// off drops from other programs also breaks the page's own drag and drop
-/// (ADR-0063, decision 6).
+/// (ADR-0064, decision 6).
 fn configure(
     controller: &ICoreWebView2Controller,
     webview: &ICoreWebView2,
@@ -405,7 +405,7 @@ fn filter_menu(items: &ICoreWebView2ContextMenuItemCollection) -> windows::core:
 
 /// Keys: F6 and Tab past either end of the page return focus to the app,
 /// and the browser keys for saving, printing, downloads, the page source and
-/// `DevTools` do nothing (ADR-0063, decision 6, and ADR-0064, decision 4).
+/// `DevTools` do nothing (ADR-0064, decision 6, and ADR-0065, decision 4).
 fn keyboard(
     shared: &Arc<Shared>,
     id: &str,

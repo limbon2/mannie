@@ -1,12 +1,14 @@
 # Builds a release from a version tag (docs/engineering/releasing.md,
 # ADR-0018): every check, the desktop installers and the archives of the
 # programs that the plugins' manifests declare, such as the worker (ADR-0035,
-# decision 10), an install check of each artifact on a clean runner, SHA-256
-# checksums, Ed25519 signatures of the signed programs' archives, CycloneDX
-# SBOMs and third-party notices, and a draft GitHub release whose notes are
-# the version's changelog section. The checks are those of the CI run that
-# the push of the tagged commit to main started; a commit without such a run
-# gets them here, and the dependencies are always checked again.
+# decision 10), an install check of each artifact on a clean runner, Ed25519
+# signatures of the signed programs' archives, the update manifest
+# latest.json with signatures of the desktop installers (ADR-0063), SHA-256
+# checksums, CycloneDX SBOMs and third-party notices, and a draft GitHub
+# release whose notes are the version's changelog section. The checks are
+# those of the CI run that the push of the tagged commit to main started; a
+# commit without such a run gets them here, and the dependencies are always
+# checked again.
 # Nothing is published: the owner checks the draft on clean machines and
 # publishes it (V10). Every job uses a standard GitHub-hosted runner.
 # A manual run builds and install-checks the artifacts without signing them
@@ -323,6 +325,10 @@ jobs:
           pattern: windows*
           path: dist
           merge-multiple: true
+      # The bundler marks the app's binary with the kind of its installer, and
+      # an installed app chooses its package of a later release by that mark,
+      # so a build without the mark would never update itself (ADR-0063,
+      # decision 5). The app writes the mark into the start line of its log.
       - name: Install the desktop app, start it, and remove it
         shell: pwsh
         run: |
@@ -334,6 +340,11 @@ jobs:
           Start-Sleep -Seconds 15
           if ($process.HasExited) { throw "the desktop app exited with code $($process.ExitCode)" }
           Stop-Process -Id $process.Id
+          $logs = Join-Path $env:LOCALAPPDATA 'io.github.limbon2.mannie/logs'
+          $start = Get-ChildItem -Path $logs -Filter 'mannie.*.log' | Get-Content | Where-Object { $_.Contains('"Mannie is starting"') } | Select-Object -Last 1
+          if ($null -eq $start) { throw "the log in $logs has no start line of the desktop app" }
+          $installation = ($start | ConvertFrom-Json).fields.installation
+          if ($installation -ne 'nsis') { throw "the desktop app reports the installation '$installation', and an NSIS installer installed it" }
           $uninstaller = Join-Path $app.DirectoryName 'uninstall.exe'
           Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait
       # Every program answers `--version` with its package's name and the
@@ -375,15 +386,17 @@ jobs:
         run: |
           if [ "${{ matrix.distribution }}" = ubuntu ]; then
             image=ubuntu:24.04
+            package=deb
             install="apt-get update && apt-get install -y ./dist/mannie-$VERSION-linux-amd64.deb xvfb xauth dbus-x11"
           else
             image=fedora:latest
+            package=rpm
             install="dnf install -y ./dist/mannie-$VERSION-linux-x86_64.rpm xorg-x11-server-Xvfb xauth dbus-x11"
           fi
           docker run --rm -v "$PWD:/check" -w /check -e VERSION "$image" sh -c "
             set -eu
             $install
-            sh scripts/ci/check-linux-install.sh
+            sh scripts/ci/check-linux-install.sh $package
           "
 
   install-freebsd:
@@ -489,6 +502,17 @@ jobs:
       - name: Keep the selected platforms
         if: inputs.artifacts == 'windows-freebsd'
         run: rm dist/*-"$VERSION"-linux-*
+      # An installed desktop app reads latest.json of the latest published
+      # release, downloads the installer that it names for the app's kind of
+      # installation, and installs it only with a valid signature by the
+      # release key (ADR-0063). The manifest names the installers that this
+      # draft keeps, so the step runs after the selection.
+      - name: Sign the desktop installers and write the update manifest
+        env:
+          MANNIE_RELEASE_SIGNING_KEY: ${{ secrets.MANNIE_RELEASE_SIGNING_KEY }}
+        run: |
+          node scripts/release.mjs manifest dist "$VERSION" "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
+          node scripts/release.mjs verify-manifest release/mannie-release.pub dist
       - name: Write the checksums
         run: node scripts/release.mjs checksums dist
       - name: Create or refresh the draft release

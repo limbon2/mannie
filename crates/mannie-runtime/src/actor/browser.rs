@@ -1,5 +1,5 @@
 //! Site consent scoped to a run, including continuation operations for
-//! browser requests paused before reaching an unapproved origin (ADR-0063).
+//! browser requests paused before reaching an unapproved origin (ADR-0064).
 
 use futures_util::future::BoxFuture;
 use mannie_store::{Change, Durability, NewPart};

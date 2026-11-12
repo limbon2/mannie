@@ -1,10 +1,10 @@
 //! The page's native window over the pane: its place, its clip, its
-//! visibility, and whether owner input reaches it (ADR-0063, decisions 5
+//! visibility, and whether owner input reaches it (ADR-0064, decisions 5
 //! and 6).
 //!
 //! The controller stays visible and only its container hides: WebView2
 //! stops rendering, and capturing, a controller that is set invisible
-//! (ADR-0063, validation, check 1). A tab that no pane has placed keeps a
+//! (ADR-0064, validation, check 1). A tab that no pane has placed keeps a
 //! default size, so an agent can work with it while the pane is closed.
 
 use std::sync::Arc;
@@ -223,7 +223,7 @@ pub(super) fn place(session: u64, placement: &BrowserPlacement) {
 }
 
 /// Leaves the parts of the page that an overlay covers out of its window's
-/// region (ADR-0063, validation, check 6).
+/// region (ADR-0064, validation, check 6).
 fn clip(container: HWND, area: RECT, clips: &[RECT]) -> Result<()> {
     if clips.is_empty() {
         // SAFETY: the container is a live window; a null region removes it.
@@ -282,7 +282,7 @@ pub(super) fn hide_all(session: u64) {
 
 /// Gives the pages to the owner, or takes them back for the agent. Focus
 /// returns to the app before a page is disabled, because a page that keeps
-/// focus still receives keys (ADR-0063, validation, check 2).
+/// focus still receives keys (ADR-0064, validation, check 2).
 pub(super) fn set_owner(shared: &Arc<Shared>, owner: bool) {
     let tabs = session_tabs(shared.id);
     if !owner {

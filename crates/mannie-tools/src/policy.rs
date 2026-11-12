@@ -34,7 +34,7 @@ pub struct Grants<'a> {
     pub always: &'a [GrantScope],
 }
 
-/// A site decision kept only by the run whose owner made it (ADR-0063).
+/// A site decision kept only by the run whose owner made it (ADR-0064).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BrowserSiteConsent {
     plugin: String,
@@ -114,11 +114,11 @@ pub struct PolicyInputs<'a> {
     /// On a worker, its name, which an approval request shows.
     pub host: Option<&'a str>,
     /// On the master, whether the conversation is in full access, which the
-    /// owner switched on (ADR-0029). Browser sites still ask (ADR-0063).
+    /// owner switched on (ADR-0029). Browser sites still ask (ADR-0064).
     /// On a worker, its ceiling's mode decides instead.
     pub full_access: bool,
     /// The browser site decisions of the current run. The runtime never
-    /// saves them (ADR-0063).
+    /// saves them (ADR-0064).
     pub browser_sites: &'a [BrowserSiteConsent],
 }
 
@@ -141,7 +141,7 @@ pub enum Verdict {
 /// operation, Mannie's own folders included (ADR-0029, decision 3), except a
 /// write on a worker's database whose host does not take the master's full
 /// access (ADR-0057, decision 6), unapproved browser sites and requests for
-/// browser control (ADR-0063).
+/// browser control (ADR-0064).
 /// Otherwise it is allowed only when every
 /// access is:
 ///
@@ -236,7 +236,7 @@ pub fn decide(accesses: &[Access], inputs: &PolicyInputs<'_>) -> Verdict {
 
 /// Whether the master's full access allows an access: every access but a
 /// write or a change of a schema on a worker's database whose host does not
-/// take it (ADR-0057, decision 6) and browser actions (ADR-0063).
+/// take it (ADR-0057, decision 6) and browser actions (ADR-0064).
 fn takes_full_access(access: &Access) -> bool {
     match access {
         Access::BrowserAction { .. } | Access::BrowserControl { .. } => false,

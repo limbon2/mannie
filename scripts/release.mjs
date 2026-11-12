@@ -11,12 +11,24 @@
 //   node scripts/release.mjs sign <file>...            sign files with MANNIE_RELEASE_SIGNING_KEY
 //   node scripts/release.mjs verify <public key> <file>...  check the signatures of files
 //   node scripts/release.mjs fingerprint <public key>  print the SHA-256 of a public key
+//   node scripts/release.mjs updater-key <public key>  print a public key as the desktop app's updater reads it
+//   node scripts/release.mjs manifest <folder> <version> <download URL>
+//                                                      sign the desktop installers in a folder with
+//                                                      MANNIE_RELEASE_SIGNING_KEY and write latest.json
+//   node scripts/release.mjs verify-manifest <public key> <folder>
+//                                                      check latest.json against the installers in a folder
 //
 // Signatures are Ed25519 over the whole file, stored base64-encoded beside it
 // as <file>.sig. The private key is a PKCS #8 PEM that lives only in the CI
 // secret MANNIE_RELEASE_SIGNING_KEY; the public key is an SPKI PEM. The
 // fingerprint is the SHA-256 of the key's SubjectPublicKeyInfo, which the
 // worker's `self-check --json` reports for the key built into it.
+//
+// The desktop app's updater reads minisign signatures instead (ADR-0063). The
+// same key signs the BLAKE2b-512 hash of an installer, and a second signature
+// covers the first one and a trusted comment, which names the file and its
+// version. latest.json, the update manifest, holds the URL and the signature
+// of each installer of a release, and the app reads the newest release's.
 
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -283,6 +295,315 @@ export function keyFingerprint(publicKeyPem) {
   return createHash('sha256').update(spki).digest('hex');
 }
 
+/** The file of a release that the desktop app's updater reads (ADR-0063). */
+export const UPDATE_MANIFEST = 'latest.json';
+
+/**
+ * The desktop installers of a release: how each one's file name ends after
+ * `mannie-<version>`, and its key in the update manifest, which is the
+ * updater's `<system>-<architecture>-<installer>`.
+ */
+const INSTALLERS = [
+  { ending: '-windows-x86_64-setup.exe', platform: 'windows-x86_64-nsis' },
+  { ending: '-linux-amd64.deb', platform: 'linux-x86_64-deb' },
+  { ending: '-linux-x86_64.rpm', platform: 'linux-x86_64-rpm' },
+];
+
+const MEBIBYTE = 1024 * 1024;
+
+/**
+ * The largest installer that a desktop app downloads as an update, which is
+ * `MAX_PACKAGE_BYTES` of apps/desktop/core/src/updates.rs. A larger one
+ * would update no installed app, so a release with one stops before it is
+ * published.
+ */
+export const MAX_INSTALLER_BYTES = 256 * MEBIBYTE;
+
+/**
+ * @param {string} name an installer's file name
+ * @returns {string} what is wrong with an installer above the limit
+ */
+function tooLarge(name) {
+  const limit = String(MAX_INSTALLER_BYTES / MEBIBYTE);
+  return `${name} is larger than the ${limit} MiB that the desktop app downloads as an update`;
+}
+
+/** What a minisign signature's trusted comment line starts with. */
+const TRUSTED_COMMENT_PREFIX = 'trusted comment: ';
+
+/**
+ * The ID that minisign keys and signatures carry so that a verifier can tell
+ * keys apart: the first eight bytes of the key's fingerprint.
+ * @param {string} publicKeyPem
+ * @returns {Buffer}
+ */
+function minisignKeyId(publicKeyPem) {
+  return Buffer.from(keyFingerprint(publicKeyPem), 'hex').subarray(0, 8);
+}
+
+/**
+ * A public key in minisign's text form: a comment line, then the base64 of
+ * "Ed", the key ID and the 32 bytes of the key.
+ * @param {string} publicKeyPem
+ * @returns {string}
+ */
+export function minisignPublicKey(publicKeyPem) {
+  const jwk = createPublicKey(publicKeyPem).export({ format: 'jwk' });
+  const rawKey = jwk.crv === 'Ed25519' ? jwk.x : undefined;
+  if (rawKey === undefined) {
+    throw new Error('the public key is not an Ed25519 key');
+  }
+  const key = Buffer.concat([Buffer.from('Ed'), minisignKeyId(publicKeyPem), Buffer.from(rawKey, 'base64url')]);
+  return `untrusted comment: Mannie's release key\n${key.toString('base64')}\n`;
+}
+
+/**
+ * A public key as `plugins.updater.pubkey` of tauri.conf.json holds it: the
+ * base64 of its minisign text.
+ * @param {string} publicKeyPem
+ * @returns {string}
+ */
+export function updaterKey(publicKeyPem) {
+  return Buffer.from(minisignPublicKey(publicKeyPem)).toString('base64');
+}
+
+/**
+ * What a signature says about its file, which its second signature covers.
+ * The updater refuses an installer whose signed version is not the version
+ * that the manifest announces, so an older signed installer cannot pass as a
+ * newer release.
+ * @typedef {object} SignedFile
+ * @property {string} file the file's name
+ * @property {number} timestamp when it was signed, in seconds since the Unix epoch
+ * @property {string} version the release's version
+ */
+
+/**
+ * The minisign signature of `content` in its text form: a comment line, the
+ * base64 of "ED", the key ID and the signature of the content's BLAKE2b-512
+ * hash, the trusted comment, and the base64 of the signature of the first
+ * signature followed by the trusted comment.
+ * @param {Buffer} content
+ * @param {string} privateKeyPem
+ * @param {SignedFile} signed
+ * @returns {string}
+ */
+export function minisignSignature(content, privateKeyPem, signed) {
+  const privateKey = createPrivateKey(privateKeyPem);
+  const publicKeyPem = createPublicKey(privateKey).export({ format: 'pem', type: 'spki' }).toString();
+  const trustedComment = `timestamp:${String(signed.timestamp)}\tfile:${signed.file}\tversion:${signed.version}`;
+  // A line break would end the comment early, and a tab would start a field.
+  const isOneLineOfThreeFields = !/[\n\r]/u.test(trustedComment) && trustedComment.split('\t').length === 3;
+  if (!isOneLineOfThreeFields) {
+    throw new Error(`${JSON.stringify(signed.file)} or ${JSON.stringify(signed.version)} has a tab or a line break`);
+  }
+  const hash = createHash('blake2b512').update(content).digest();
+  const fileSignature = sign(null, hash, privateKey);
+  const commentSignature = sign(null, Buffer.concat([fileSignature, Buffer.from(trustedComment)]), privateKey);
+  return [
+    "untrusted comment: signature from Mannie's release key",
+    Buffer.concat([Buffer.from('ED'), minisignKeyId(publicKeyPem), fileSignature]).toString('base64'),
+    `${TRUSTED_COMMENT_PREFIX}${trustedComment}`,
+    commentSignature.toString('base64'),
+    '',
+  ].join('\n');
+}
+
+/**
+ * The fields of a minisign signature's trusted comment, when the signature
+ * is a valid one of `content` by the key, and null otherwise. It checks what
+ * the updater checks: the key ID, the signature of the content's hash and
+ * the signature of the trusted comment.
+ * @param {Buffer} content
+ * @param {string} signatureText
+ * @param {string} publicKeyPem
+ * @returns {Map<string, string> | null}
+ */
+export function verifiedTrustedComment(content, signatureText, publicKeyPem) {
+  const [, signatureLine = '', commentLine = '', commentSignatureLine = ''] = signatureText.split(/\r?\n/u);
+  const signed = Buffer.from(signatureLine, 'base64');
+  const isOfThisKey =
+    signed.length === 74 &&
+    signed.subarray(0, 2).toString('latin1') === 'ED' &&
+    signed.subarray(2, 10).equals(minisignKeyId(publicKeyPem));
+  if (!isOfThisKey || !commentLine.startsWith(TRUSTED_COMMENT_PREFIX)) {
+    return null;
+  }
+  const publicKey = createPublicKey(publicKeyPem);
+  const fileSignature = signed.subarray(10);
+  const trustedComment = commentLine.slice(TRUSTED_COMMENT_PREFIX.length);
+  const hash = createHash('blake2b512').update(content).digest();
+  const signedComment = Buffer.concat([fileSignature, Buffer.from(trustedComment)]);
+  const isValid =
+    verify(null, hash, publicKey, fileSignature) &&
+    verify(null, signedComment, publicKey, Buffer.from(commentSignatureLine, 'base64'));
+  if (!isValid) {
+    return null;
+  }
+  /** @type {Map<string, string>} */
+  const fields = new Map();
+  for (const field of trustedComment.split('\t')) {
+    const separator = field.indexOf(':');
+    if (separator !== -1) {
+      fields.set(field.slice(0, separator), field.slice(separator + 1));
+    }
+  }
+  return fields;
+}
+
+/**
+ * A release as its update manifest describes it.
+ * @typedef {object} ManifestRelease
+ * @property {string} downloadUrl the address that the release's files download from, without a file's name
+ * @property {string} notes the release's changelog section
+ * @property {string} privateKeyPem the release key
+ * @property {Date} publishedAt when the manifest is written
+ * @property {string} version
+ */
+
+/**
+ * The update manifest of a release: its version, notes and date, and for
+ * each desktop installer among `files` the address it downloads from and its
+ * minisign signature, as the updater reads them. A release may leave a
+ * platform out, and the desktop apps of that platform then find no package
+ * in it. An installer above the size that the app downloads is refused.
+ * @param {{ name: string, content: Buffer }[]} files
+ * @param {ManifestRelease} release
+ * @returns {string}
+ */
+export function updateManifest(files, release) {
+  const version = checkedVersion(release.version);
+  const downloadUrl = release.downloadUrl.replace(/\/+$/u, '');
+  if (!downloadUrl.startsWith('https://')) {
+    throw new Error(`${JSON.stringify(release.downloadUrl)} is not an HTTPS address`);
+  }
+  const timestamp = Math.floor(release.publishedAt.getTime() / 1000);
+  /** @type {Record<string, { signature: string, url: string }>} */
+  const platforms = {};
+  for (const installer of INSTALLERS) {
+    const name = `mannie-${version}${installer.ending}`;
+    const file = files.find((candidate) => candidate.name === name);
+    if (file !== undefined) {
+      if (file.content.length > MAX_INSTALLER_BYTES) {
+        throw new Error(tooLarge(name));
+      }
+      const signed = minisignSignature(file.content, release.privateKeyPem, { file: name, timestamp, version });
+      platforms[installer.platform] = {
+        signature: Buffer.from(signed).toString('base64'),
+        url: `${downloadUrl}/${name}`,
+      };
+    }
+  }
+  if (Object.keys(platforms).length === 0) {
+    throw new Error(`the release files have no desktop installer of ${version}`);
+  }
+  // The date has whole seconds, as the signatures' timestamps have.
+  const publishedAt = new Date(timestamp * 1000).toISOString().replace('.000Z', 'Z');
+  return `${JSON.stringify({ notes: release.notes, platforms, pub_date: publishedAt, version }, null, 2)}\n`;
+}
+
+/**
+ * @param {unknown} value
+ * @returns {string} the value when it is text, and no text otherwise
+ */
+function textOf(value) {
+  return typeof value === 'string' ? value : '';
+}
+
+/**
+ * @param {unknown} value
+ * @returns {Record<string, unknown>} the value when it is an object with keys, and an empty one otherwise
+ */
+function recordOf(value) {
+  const isObject = typeof value === 'object' && value !== null;
+  return isObject && !Array.isArray(value) ? /** @type {Record<string, unknown>} */ (value) : {};
+}
+
+/**
+ * What is wrong with an update manifest, for the release files it belongs
+ * to: every installer it names must be among `files` under the manifest's
+ * version, no larger than the app downloads, at an HTTPS address that ends
+ * with the file's name, with a valid signature whose trusted comment names
+ * that file and that version.
+ * @param {string} manifestText
+ * @param {string} publicKeyPem
+ * @param {{ name: string, content: Buffer }[]} files
+ * @returns {string[]}
+ */
+export function manifestProblems(manifestText, publicKeyPem, files) {
+  /** @type {Record<string, unknown>} */
+  let manifest;
+  try {
+    manifest = recordOf(JSON.parse(manifestText));
+  } catch {
+    return [`${UPDATE_MANIFEST} is not JSON`];
+  }
+  const version = textOf(manifest.version);
+  const platforms = Object.entries(recordOf(manifest.platforms));
+  if (!VERSION.test(version)) {
+    return [`${UPDATE_MANIFEST} names no version such as 0.1.0`];
+  }
+  if (platforms.length === 0) {
+    return [`${UPDATE_MANIFEST} names no installer`];
+  }
+  /** @type {string[]} */
+  const problems = [];
+  for (const [platform, value] of platforms) {
+    const installer = INSTALLERS.find((candidate) => candidate.platform === platform);
+    if (installer === undefined) {
+      problems.push(`${platform} is not a platform of the desktop app`);
+      continue;
+    }
+    const entry = recordOf(value);
+    const name = `mannie-${version}${installer.ending}`;
+    const url = textOf(entry.url);
+    const isDownloadOfFile = url.startsWith('https://') && url.endsWith(`/${name}`);
+    if (!isDownloadOfFile) {
+      problems.push(`${platform}: the address is not an HTTPS address of ${name}`);
+    }
+    const file = files.find((candidate) => candidate.name === name);
+    if (file === undefined) {
+      problems.push(`${platform}: the release files have no ${name}`);
+      continue;
+    }
+    if (file.content.length > MAX_INSTALLER_BYTES) {
+      problems.push(`${platform}: ${tooLarge(name)}`);
+    }
+    const signatureText = Buffer.from(textOf(entry.signature), 'base64').toString();
+    const comment = verifiedTrustedComment(file.content, signatureText, publicKeyPem);
+    const isOfThisRelease = comment?.get('file') === name && comment.get('version') === version;
+    if (comment === null) {
+      problems.push(`${platform}: the signature of ${name} is not valid`);
+    } else if (!isOfThisRelease) {
+      problems.push(`${platform}: the signature is not one of ${name} in version ${version}`);
+    }
+  }
+  return problems;
+}
+
+/**
+ * The files of a folder with their content.
+ * @param {string} folder
+ * @returns {{ name: string, content: Buffer }[]}
+ */
+function filesIn(folder) {
+  return readdirSync(folder)
+    .filter((name) => statSync(join(folder, name)).isFile())
+    .map((name) => ({ content: readFileSync(join(folder, name)), name }));
+}
+
+/**
+ * The release key from the environment.
+ * @returns {string}
+ */
+function signingKey() {
+  const privateKey = process.env.MANNIE_RELEASE_SIGNING_KEY ?? '';
+  if (privateKey === '') {
+    throw new Error('MANNIE_RELEASE_SIGNING_KEY holds no signing key');
+  }
+  return privateKey;
+}
+
 /** @param {string} path */
 function readText(path) {
   return readFileSync(path, 'utf8');
@@ -366,12 +687,10 @@ function run(argumentList, repository) {
       if (folder === undefined) {
         throw new Error('name the folder of the release files');
       }
-      const names = readdirSync(folder).filter((name) => {
-        const isOwnOutput = name === 'SHA256SUMS' || name.endsWith('.sig');
-        const isFile = statSync(join(folder, name)).isFile();
-        return isFile && !isOwnOutput;
+      const files = filesIn(folder).filter((file) => {
+        const isOwnOutput = file.name === 'SHA256SUMS' || file.name.endsWith('.sig');
+        return !isOwnOutput;
       });
-      const files = names.map((name) => ({ content: readFileSync(join(folder, name)), name }));
       writeFileSync(join(folder, 'SHA256SUMS'), checksums(files));
       console.log(`release: wrote the checksums of ${String(files.length)} files to ${join(folder, 'SHA256SUMS')}`);
       return;
@@ -390,10 +709,7 @@ function run(argumentList, repository) {
       return;
     }
     case 'sign': {
-      const privateKey = process.env.MANNIE_RELEASE_SIGNING_KEY ?? '';
-      if (privateKey === '') {
-        throw new Error('MANNIE_RELEASE_SIGNING_KEY holds no signing key');
-      }
+      const privateKey = signingKey();
       for (const file of rest) {
         writeFileSync(`${file}.sig`, `${signature(readFileSync(file), privateKey)}\n`);
         console.log(`release: signed ${basename(file)}`);
@@ -425,9 +741,55 @@ function run(argumentList, repository) {
       console.log(keyFingerprint(readText(publicKeyFile)));
       return;
     }
+    case 'updater-key': {
+      const publicKeyFile = rest[0];
+      if (publicKeyFile === undefined) {
+        throw new Error('name the public key file');
+      }
+      console.log(updaterKey(readText(publicKeyFile)));
+      return;
+    }
+    case 'manifest': {
+      const [folder, versionArgument, downloadUrl] = rest;
+      const lacksArgument = folder === undefined || downloadUrl === undefined;
+      if (lacksArgument) {
+        throw new Error(
+          'name the folder of the release files, the version and the address that the files download from',
+        );
+      }
+      const version = checkedVersion(versionArgument);
+      const manifest = updateManifest(filesIn(folder), {
+        downloadUrl,
+        notes: releaseNotes(readText(join(repository, 'CHANGELOG.md')), version),
+        privateKeyPem: signingKey(),
+        publishedAt: new Date(),
+        version,
+      });
+      writeFileSync(join(folder, UPDATE_MANIFEST), manifest);
+      console.log(`release: signed the desktop installers of ${version} and wrote ${join(folder, UPDATE_MANIFEST)}`);
+      return;
+    }
+    case 'verify-manifest': {
+      const [publicKeyFile, folder] = rest;
+      const lacksArgument = publicKeyFile === undefined || folder === undefined;
+      if (lacksArgument) {
+        throw new Error('name the public key file and the folder of the release files');
+      }
+      const manifest = readText(join(folder, UPDATE_MANIFEST));
+      const problems = manifestProblems(manifest, readText(publicKeyFile), filesIn(folder));
+      for (const problem of problems) {
+        console.error(`error: ${problem}`);
+      }
+      if (problems.length > 0) {
+        process.exitCode = 1;
+      } else {
+        console.log(`release: ${UPDATE_MANIFEST} names installers of the folder with valid signatures`);
+      }
+      return;
+    }
     default: {
       throw new Error(
-        `unknown command ${JSON.stringify(command)}: use version, prepare, notes, checksums, keygen, sign, verify or fingerprint`,
+        `unknown command ${JSON.stringify(command)}: use version, prepare, notes, checksums, keygen, sign, verify, fingerprint, updater-key, manifest or verify-manifest`,
       );
     }
   }

@@ -1,5 +1,5 @@
 //! The engine that hosts browser sessions: WebView2 on Windows, and none on
-//! other systems, where the Browser plugin does not start (ADR-0063,
+//! other systems, where the Browser plugin does not start (ADR-0064,
 //! decision 1).
 
 use std::path::PathBuf;
@@ -17,18 +17,18 @@ pub(crate) trait PageViews: Send + Sync {
     /// Hides every view of the session, when its last lease ends.
     fn hide_all(&self);
     /// Gives the pages to the owner, or disables them for the agent after
-    /// focus returned to the app (ADR-0063, decision 6).
+    /// focus returned to the app (ADR-0064, decision 6).
     fn set_owner(&self, owner: bool) -> Result<(), ChromeError>;
     /// Moves keyboard focus into a tab's page, in takeover.
     fn focus(&self, tab: &str) -> Result<(), ChromeError>;
     /// The latest time keyboard focus left a page for the app.
     fn focus_return(&self) -> Option<BrowserFocusReturn>;
-    /// Where each tab's window is, for the end-to-end tests (V12).
+    /// Where each tab's window is, for the end-to-end tests (V13).
     #[cfg(feature = "validation")]
     fn surfaces(&self) -> mannie_plugin_sdk::BoxFuture<'static, Vec<SurfaceReport>>;
 }
 
-/// A tab's window as the end-to-end tests see it (V12).
+/// A tab's window as the end-to-end tests see it (V13).
 #[cfg(feature = "validation")]
 #[derive(Debug, Clone, serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -127,7 +127,7 @@ impl Engine {
 }
 
 /// Removes the engine's variables from the process environment once the
-/// main window exists (ADR-0063, decision 3).
+/// main window exists (ADR-0064, decision 3).
 pub(crate) fn clear_engine_variables() {
     #[cfg(windows)]
     super::webview2::clear_engine_variables();

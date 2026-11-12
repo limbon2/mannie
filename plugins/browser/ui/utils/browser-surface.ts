@@ -1,4 +1,4 @@
-// The pane's placeholder for a tab's native page (ADR-0063, decision 5). It
+// The pane's placeholder for a tab's native page (ADR-0064, decision 5). It
 // measures the placeholder and the shell's floating layers and reports the
 // page's place to the core, which clamps it to the window, because the app
 // webview is untrusted (ADR-0004).

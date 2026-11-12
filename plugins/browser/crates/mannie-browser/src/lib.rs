@@ -1,4 +1,4 @@
-//! Browser tools and the Browser pane (ADR-0063, ADR-0064).
+//! Browser tools and the Browser pane (ADR-0064, ADR-0065).
 
 mod commands;
 mod tools;
@@ -40,7 +40,7 @@ impl Plugin for BrowserPlugin {
         Box::pin(async move {
             let browser = context.service::<Browser>()?;
             // Browser needs a Chromium webview with a DevTools endpoint, which
-            // only WebView2 on Windows offers (ADR-0063, decision 1).
+            // only WebView2 on Windows offers (ADR-0064, decision 1).
             if !browser.supported() {
                 return Err(StartFailure::new(UNSUPPORTED_PLATFORM));
             }

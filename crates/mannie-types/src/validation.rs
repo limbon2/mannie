@@ -4,6 +4,8 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+use crate::updates::UpdateFailureCode;
+
 /// The most simulated runs a channel load may have.
 pub const MAX_RUNS: u8 = 16;
 /// The most deltas per second one simulated run may stream.
@@ -137,6 +139,37 @@ pub enum ValidationTrayItem {
     Open,
     /// "Quit".
     Quit,
+}
+
+/// What the fake source of a validation build's updates answers when Mannie
+/// checks for updates (ADR-0063, decision 5). The end-to-end tests set it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Type)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum ValidationUpdateOffer {
+    /// No release is newer than the running version.
+    #[default]
+    Nothing,
+    /// A newer version, whose installer downloads and verifies.
+    Version {
+        /// The version that the release announces.
+        version: String,
+    },
+    /// A check that fails.
+    CheckFails {
+        /// The code that the check fails with.
+        code: UpdateFailureCode,
+    },
+    /// A newer version, whose download fails.
+    DownloadFails {
+        /// The version that the release announces.
+        version: String,
+        /// The code that the download fails with.
+        code: UpdateFailureCode,
+    },
 }
 
 #[cfg(test)]

@@ -114,6 +114,7 @@ describe('the shell', () => {
       'Child agents',
       'Window',
       'Plugins',
+      'Updates',
     ]);
     await waitForShownText('[id="settings-section-window.behavior"]', 'Window');
     await expect($('#interface-theme-system')).not.toBeExisting();

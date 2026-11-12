@@ -141,7 +141,7 @@
   }
 
   // The status subscription lives as long as the pane: it is the lease of
-  // the conversation's pages (ADR-0063, decision 5).
+  // the conversation's pages (ADR-0064, decision 5).
   $effect(() => {
     const current = session;
     current.follow();
@@ -158,7 +158,7 @@
   });
 
   // Focus that leaves the page for the app lands on the pane's controls:
-  // forward on "Focus page", back on the address (ADR-0063, decision 6).
+  // forward on "Focus page", back on the address (ADR-0064, decision 6).
   $effect(() => {
     const returned = status?.focusReturn ?? null;
     const handled = returned === null || returned.sequence === focusSequence;

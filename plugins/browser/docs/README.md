@@ -5,7 +5,7 @@
 | Status       | Building                                                                                                                                                                             |
 | Plugin       | `browser`                                                                                                                                                                            |
 | Last updated | 2026-11-13                                                                                                                                                                           |
-| Related      | [ADR-0063](../../../docs/adr/0063-give-agents-an-isolated-browser-beside-the-conversation.md), [ADR-0064](../../../docs/adr/0064-let-browser-access-follow-the-conversation.md), D57 |
+| Related      | [ADR-0064](../../../docs/adr/0064-give-agents-an-isolated-browser-beside-the-conversation.md), [ADR-0065](../../../docs/adr/0065-let-browser-access-follow-the-conversation.md), D58 |
 
 ## Intent
 
@@ -26,7 +26,7 @@ The owner wants agents to navigate live pages, press buttons and complete forms 
 
 ## Fit
 
-The plugin registers browser tools and a conversation side panel. The desktop's browser service hosts each session in a WebView2 environment of its own, checks site approvals, and places the native pages over the pane. The plugin uses generated IPC, the SDK's floating-layer tracker and existing tool image results. [ADR-0063](../../../docs/adr/0063-give-agents-an-isolated-browser-beside-the-conversation.md) and [ADR-0064](../../../docs/adr/0064-let-browser-access-follow-the-conversation.md) define the policy and trust boundary.
+The plugin registers browser tools and a conversation side panel. The desktop's browser service hosts each session in a WebView2 environment of its own, checks site approvals, and places the native pages over the pane. The plugin uses generated IPC, the SDK's floating-layer tracker and existing tool image results. [ADR-0064](../../../docs/adr/0064-give-agents-an-isolated-browser-beside-the-conversation.md) and [ADR-0065](../../../docs/adr/0065-let-browser-access-follow-the-conversation.md) define the policy and trust boundary.
 
 ## Design
 
@@ -38,11 +38,11 @@ Agent tools use the same session through the host's browser service. The service
 
 ## Acceptance
 
-[V12](../../../docs/roadmap/milestones.md#4-validations) checks the browser and its approval boundary on Windows: live form and sign-in flows, navigation redirects, popups, stale targets, owner takeover, teardown and credential redaction.
+[V13](../../../docs/roadmap/milestones.md#4-validations) checks the browser and its approval boundary on Windows: live form and sign-in flows, navigation redirects, popups, stale targets, owner takeover, teardown and credential redaction.
 
 - The driver's tests use a scripted host on every system: `cargo test --locked -p mannie-tools --lib browser`.
 - The real-engine tests use WebView2 and loopback sites: `cargo test --locked -p mannie-desktop-core --lib real_webview2 -- --ignored --test-threads=1`.
 - The desktop test `plugins/browser/tests/e2e/browser.test.ts` checks that the page follows its placeholder, hides under dialogs, takes the keyboard with "Focus page" and returns it with F6, refuses owner input under agent control, comes back after the app reloads, shows the agent cursor at two click targets, clears it on takeover, and runs the agent flows.
 - By hand: browse, type, scroll, select and play a video; drag the splitter; use the context menu and browser keys; take over and resume; let an agent work with the pane closed, the window minimized and in the tray; try a download, a drop from Explorer and a print; quit while an approval is pending, then confirm that no WebView2 process of the session and no `session-*` folder remain.
 
-A page's own `window.print()` still opens the print dialog in takeover and under agent control: WebView2 has no setting that refuses it, and refusing it from the page would need a script that Mannie injects, which ADR-0063 rules out. The print key and the context menu's Print item are off.
+A page's own `window.print()` still opens the print dialog in takeover and under agent control: WebView2 has no setting that refuses it, and refusing it from the page would need a script that Mannie injects, which ADR-0064 rules out. The print key and the context menu's Print item are off.

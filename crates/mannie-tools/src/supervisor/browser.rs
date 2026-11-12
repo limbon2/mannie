@@ -1,4 +1,4 @@
-//! The private folders of browser sessions (ADR-0063, decision 2).
+//! The private folders of browser sessions (ADR-0064, decision 2).
 //!
 //! Each session of the Browser plugin keeps its engine's data in a folder of
 //! its own under one root. The process that hosts the session holds the
@@ -92,7 +92,7 @@ impl BrowserFolder {
     }
 
     /// Whether the engine opened a debugging port in this folder, which a
-    /// session must never have (ADR-0063, decision 3).
+    /// session must never have (ADR-0064, decision 3).
     #[must_use]
     pub fn has_debugging_port(&self) -> bool {
         self.data

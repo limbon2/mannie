@@ -3,7 +3,7 @@ name = "mannie-browser"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "Browser tools and the conversation browser pane (ADR-0063)."
+description = "Browser tools and the conversation browser pane (ADR-0064)."
 license.workspace = true
 publish.workspace = true
 

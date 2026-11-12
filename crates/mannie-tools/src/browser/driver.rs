@@ -1,11 +1,11 @@
 //! Browser tabs, committed documents and checked top-level requests over a
-//! [`ChromeHost`] (ADR-0063, decisions 2 and 8).
+//! [`ChromeHost`] (ADR-0064, decisions 2 and 8).
 //!
 //! A paused top-level request to an approved origin continues at once. Any
 //! other request fails at once, the host asks the owner, and an approved
 //! request is replayed with its original method, body and headers. No request
 //! waits inside the engine for the owner, so no order of process deaths can
-//! release one (ADR-0063, validation, check 4).
+//! release one (ADR-0064, validation, check 4).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
@@ -342,7 +342,7 @@ impl Chrome {
 
     /// Records who controls the session. When the owner returns control,
     /// the current document of every tab that the owner used is withheld
-    /// from model screenshots until the tab navigates (ADR-0064, decision 4).
+    /// from model screenshots until the tab navigates (ADR-0065, decision 4).
     pub fn set_owner_control(&self, owner: bool) {
         let mut state = lock(&self.inner.state);
         state.owner = owner;
@@ -721,7 +721,7 @@ impl Driver {
                 Ok(())
             }
             "Page.javascriptDialogOpening" => {
-                // The owner answers dialogs in takeover (ADR-0064, decision 4).
+                // The owner answers dialogs in takeover (ADR-0065, decision 4).
                 if lock(&self.state).owner {
                     return Ok(());
                 }
@@ -794,7 +794,7 @@ impl Driver {
             return self.resolve_request(tab, id, Resolution::Fail).await;
         };
         if !is_top {
-            // Frames load under the engine's rules (ADR-0063, decision 8).
+            // Frames load under the engine's rules (ADR-0064, decision 8).
             return self.resolve_request(tab, id, Resolution::Continue).await;
         }
         let continuation = {

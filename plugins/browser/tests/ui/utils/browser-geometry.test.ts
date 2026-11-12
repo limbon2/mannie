@@ -1,4 +1,4 @@
-// Where a tab's native page may show (ADR-0063, decision 5): an open dialog,
+// Where a tab's native page may show (ADR-0064, decision 5): an open dialog,
 // menu, select or popover hides it, and a tooltip cuts out its rectangle.
 import { describe, expect, it } from 'vitest';
 

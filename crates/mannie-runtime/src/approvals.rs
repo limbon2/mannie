@@ -19,7 +19,7 @@ use crate::{Runtime, lock};
 /// what an approval allows. A worker's request offers only Allow once and
 /// Deny, whatever the master sends, so its ceiling stays what its
 /// configuration says (ADR-0028, decision 5). Browser site consent can last
-/// for the run or conversation. Browser control is a one-time choice (ADR-0063).
+/// for the run or conversation. Browser control is a one-time choice (ADR-0064).
 fn check_choice(request: &ApprovalRequest, choice: &ApprovalChoice) -> Result<(), ToolsError> {
     let once = matches!(choice, ApprovalChoice::AllowOnce | ApprovalChoice::Deny);
     if !once {

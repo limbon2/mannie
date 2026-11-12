@@ -1,4 +1,4 @@
-//! The WebView2 host of browser sessions (ADR-0063, decisions 2 to 6).
+//! The WebView2 host of browser sessions (ADR-0064, decisions 2 to 6).
 //!
 //! The core creates these webviews itself with `webview2-com`, outside
 //! Tauri's webview manager, so a page gets no IPC bridge, no host objects and
@@ -14,7 +14,7 @@
 //! WebView2, whose handlers may run inside such a call.
 #![expect(
     unsafe_code,
-    reason = "WebView2's COM API is unsafe throughout; this module is the exception that the engineering standards and ADR-0063, decision 11, allow"
+    reason = "WebView2's COM API is unsafe throughout; this module is the exception that the engineering standards and ADR-0064, decision 11, allow"
 )]
 
 mod cdp;
@@ -60,7 +60,7 @@ const EVENTS: usize = 256;
 const EXIT_GRACE: Duration = Duration::from_secs(3);
 
 /// Removes the variables through which WebView2 would give a session another
-/// folder, browser or debugging port (ADR-0063, decision 3). The app
+/// folder, browser or debugging port (ADR-0064, decision 3). The app
 /// webview read them when the main window was created, so tauri-driver still
 /// reaches it.
 pub(crate) fn clear_engine_variables() {
@@ -398,7 +398,7 @@ impl ChromeHost for WebView2Session {
 
 /// Ends a session's processes first, then its views, then its folder. A
 /// graceful close could let a request go, and at quit the event loop is
-/// already gone, so the job ends before anything else (ADR-0063, decision 4).
+/// already gone, so the job ends before anything else (ADR-0064, decision 4).
 async fn end_session(shared: &Arc<Shared>) {
     if shared.ended.swap(true, Ordering::AcqRel) {
         return;

@@ -381,7 +381,7 @@ pub(super) fn creation_time(process: RawHandle) -> Option<String> {
 }
 
 /// A kill-on-close job for a process tree that Mannie did not start itself,
-/// such as the browser process of a WebView2 environment (ADR-0063,
+/// such as the browser process of a WebView2 environment (ADR-0064,
 /// decision 4). The tree's processes join it after they started, so a
 /// process that their root started earlier, or that left the job, is outside
 /// it; the caller ends those through their root.

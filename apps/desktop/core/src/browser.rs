@@ -1,4 +1,4 @@
-//! Desktop binding of the Browser service (ADR-0063, ADR-0064).
+//! Desktop binding of the Browser service (ADR-0064, ADR-0065).
 //!
 //! A session's tabs are WebView2 webviews that the core hosts beside the
 //! pane ([`engine`]). The driver in `mannie-tools` checks every top-level
@@ -69,7 +69,7 @@ struct Registry {
     bindings: Mutex<Bindings>,
     startup: AsyncMutex<()>,
     /// Changes each time the app page loads, which ends every lease of a
-    /// native view (ADR-0063, decision 5).
+    /// native view (ADR-0064, decision 5).
     page: watch::Sender<u64>,
 }
 
@@ -126,7 +126,7 @@ impl BrowserProvider {
     }
 
     /// Ends every session before Mannie quits: their processes first, then
-    /// their folders (ADR-0063, decision 4).
+    /// their folders (ADR-0064, decision 4).
     pub(crate) async fn shutdown(&self) {
         let sessions: Vec<_> = lock(&self.registry.bindings)
             .sessions
@@ -150,7 +150,7 @@ impl BrowserProvider {
             .and_then(|(_, slot)| slot.views())
     }
 
-    /// Where each tab's window of a conversation's session is (V12).
+    /// Where each tab's window of a conversation's session is (V13).
     pub(crate) async fn validation_surfaces(
         &self,
         conversation: &ConversationId,
@@ -162,7 +162,7 @@ impl BrowserProvider {
     }
 
     /// Evaluates an expression in a tab's page and returns its value as JSON
-    /// (V12). It runs in the page, so only validation builds have it.
+    /// (V13). It runs in the page, so only validation builds have it.
     pub(crate) async fn validation_evaluate(
         &self,
         conversation: &ConversationId,
@@ -445,7 +445,7 @@ impl ChromeNavigation for NavigationGate {
     fn approved(&self, request: &ChromeRequest) -> Option<bool> {
         let current = self.0.borrow();
         // The owner's own navigation in takeover grants the agent nothing
-        // and needs no approval (ADR-0064, decision 3).
+        // and needs no approval (ADR-0065, decision 3).
         if current.mode == BrowserControlMode::Owner {
             return Some(true);
         }
@@ -482,7 +482,7 @@ impl ChromeNavigation for NavigationGate {
 }
 
 /// A status stream's hold on its conversation's native views. When the last
-/// one ends, the pages hide (ADR-0063, decision 5).
+/// one ends, the pages hide (ADR-0064, decision 5).
 struct Lease {
     slot: Arc<Slot>,
 }
@@ -799,7 +799,7 @@ impl BoundBrowser {
         }
         let chrome = slot.chrome()?;
         // Focus leaves the pages and they stop taking input before the
-        // agent gets them (ADR-0063, decision 6).
+        // agent gets them (ADR-0064, decision 6).
         if let Some(views) = slot.views() {
             views.set_owner(false).map_err(error)?;
         }
@@ -965,7 +965,7 @@ impl BoundBrowser {
                     }
                     tokio::select! {
                         // The app page loaded again: this stream's pane is
-                        // gone (ADR-0063, decision 5).
+                        // gone (ADR-0064, decision 5).
                         _ = page.changed() => return None,
                         () = tokio::time::sleep(STATUS_INTERVAL) => {}
                     }

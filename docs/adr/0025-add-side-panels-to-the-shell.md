@@ -7,7 +7,7 @@
 | Deciders | Owner                                                                                                                                                                                                                                                                                                                                                        |
 | Related  | [ADR-0020](0020-complete-the-ui-shell-slots.md), [ADR-0006](0006-use-shadcn-svelte-through-its-cli.md), [ADR-0002](0002-grow-through-extension-points.md), [Extension points](../architecture/extension-points.md#37-ui-shell-slots), [Desktop app](../architecture/desktop-app.md#6-frontend-structure), [Child agents](../features/child-agents/README.md) |
 
-[ADR-0064](0064-let-browser-access-follow-the-conversation.md) adds SDK options to open a background panel, replace a launcher panel in place and update an open panel's label.
+[ADR-0065](0065-let-browser-access-follow-the-conversation.md) adds SDK options to open a background panel, replace a launcher panel in place and update an open panel's label.
 
 ## Context
 

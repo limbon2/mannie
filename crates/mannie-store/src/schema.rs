@@ -368,8 +368,21 @@ const DBFILES: StoreModule = StoreModule {
     confined: false,
 };
 
-pub(crate) const CORE_MODULES: [StoreModule; 6] =
-    [SETTINGS, RUNTIME, PROVIDER, TOOLS, EXPORTS, DBFILES];
+/// The journal of installs of updates of the desktop app (ADR-0063).
+const UPDATES: StoreModule = StoreModule {
+    name: "updates",
+    migrations: Cow::Borrowed(&[Migration {
+        version: 1,
+        legacy_version: None,
+        description: "create the journal of installs of updates",
+        sql: include_str!("updates/0001_create_operations.sql"),
+    }]),
+    confined: false,
+};
+
+pub(crate) const CORE_MODULES: [StoreModule; 7] = [
+    SETTINGS, RUNTIME, PROVIDER, TOOLS, EXPORTS, DBFILES, UPDATES,
+];
 
 /// The records of a database: each module's name and how many of its
 /// migrations the database has. Modules that this binary does not know keep

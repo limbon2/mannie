@@ -24,7 +24,7 @@ const MINIMUM_MAJOR_VERSION: u32 = 120;
 
 /// The switches of every session. The back-forward cache, prerendering and
 /// speculative prefetch would load documents that request interception does
-/// not see (ADR-0063, decision 8). Occlusion tracking would stop rendering
+/// not see (ADR-0064, decision 8). Occlusion tracking would stop rendering
 /// while the app is minimized or in the tray.
 const ARGUMENTS: &str = "--disable-features=BackForwardCache,Prerender2,SpeculationRulesPrefetch,CalculateNativeWinOcclusion";
 
@@ -93,7 +93,7 @@ fn adopt(
     parent: windows::Win32::Foundation::HWND,
 ) -> Result<(), ChromeError> {
     // An environment variable or a policy can replace the folder that the
-    // host asked for (ADR-0063, validation, check 5).
+    // host asked for (ADR-0064, validation, check 5).
     let environment7: ICoreWebView2Environment7 = environment
         .cast()
         .map_err(|_old| ChromeError::Incompatible)?;
@@ -155,7 +155,7 @@ fn adopt(
 
 /// Records the session's processes, and puts its browser process into the
 /// job. The engine's sandboxed processes leave the job; teardown ends them
-/// through the browser process (ADR-0063, decision 4).
+/// through the browser process (ADR-0064, decision 4).
 fn record_processes(
     shared: &Shared,
     environment: &ICoreWebView2Environment8,

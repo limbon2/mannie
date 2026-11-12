@@ -73,7 +73,7 @@ pub(crate) fn create_main(app: &App) -> Result<(), WindowError> {
     #[cfg(feature = "validation")]
     validation::place_window(&window);
     // The app webview has read WebView2's variables; browser sessions must
-    // not (ADR-0063, decision 3).
+    // not (ADR-0064, decision 3).
     crate::browser::clear_engine_variables();
     let app = app.handle().clone();
     window.on_window_event(move |event| {

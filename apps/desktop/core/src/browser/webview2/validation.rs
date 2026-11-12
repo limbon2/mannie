@@ -1,4 +1,4 @@
-//! What the end-to-end tests read outside the app webview (V12): the pages'
+//! What the end-to-end tests read outside the app webview (V13): the pages'
 //! windows. Only validation builds compile this.
 
 use std::sync::Arc;

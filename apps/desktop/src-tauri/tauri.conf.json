@@ -66,5 +66,14 @@
         "depends": ["libappindicator-gtk3"]
       }
     }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IE1hbm5pZSdzIHJlbGVhc2Uga2V5ClJXUzBmL1dsYURMY0llR0hQUEJ4dzlXRktUaVFXd2ROTENZa1JhU0s5UmxvMnFjL0szTUd3dXpiCg==",
+      "requireSignedVersion": true,
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }
