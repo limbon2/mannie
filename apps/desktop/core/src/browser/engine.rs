@@ -90,7 +90,7 @@ impl std::fmt::Debug for Engine {
 impl Engine {
     pub(crate) fn new(app: AppHandle, root: PathBuf) -> Self {
         #[cfg(not(windows))]
-        let _ = app;
+        drop(app);
         Self {
             root,
             #[cfg(windows)]
@@ -111,18 +111,18 @@ impl Engine {
     }
 
     /// Starts a session with its own folder, processes and job.
+    #[cfg(windows)]
     pub(crate) async fn start(&self) -> Result<StartedSession, ChromeError> {
-        #[cfg(windows)]
-        {
-            if !Self::supported() {
-                return Err(ChromeError::NotInstalled);
-            }
-            super::webview2::start(self.ui.clone(), &self.root).await
+        if !Self::supported() {
+            return Err(ChromeError::NotInstalled);
         }
-        #[cfg(not(windows))]
-        {
-            Err(ChromeError::Incompatible)
-        }
+        super::webview2::start(self.ui.clone(), &self.root).await
+    }
+
+    /// Reports that this platform has no browser engine.
+    #[cfg(not(windows))]
+    pub(crate) fn start(&self) -> std::future::Ready<Result<StartedSession, ChromeError>> {
+        std::future::ready(Err(ChromeError::Incompatible))
     }
 }
 
