@@ -17,10 +17,10 @@
 //! quits, because Tauri never answers a call whose answer was dropped
 //! (spike S3).
 //!
-//! Each call leaves one log line with the plugin, the command, the outcome's
-//! code and the duration, never the input or the output, and a decoding
-//! error only with its category, because the decoder's message can quote
-//! the input (T-6).
+//! Each call records the plugin, command, outcome code and duration at trace
+//! on success and warn on failure. The log omits the input and output. A
+//! decoding error records only its category because the decoder's message
+//! can quote the input (T-6).
 
 use std::collections::HashMap;
 use std::io;
@@ -349,7 +349,7 @@ fn refused_input(plugin: &str, name: &str, failure: InputFailure) -> CallFailure
 fn record(plugin: &str, name: &str, failure: Option<&CallFailure>, started: Instant) {
     let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     match failure {
-        None => tracing::info!(
+        None => tracing::trace!(
             plugin,
             command = name,
             outcome = "ok",

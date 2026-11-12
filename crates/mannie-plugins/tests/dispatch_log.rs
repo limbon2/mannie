@@ -163,11 +163,18 @@ async fn a_call_logs_its_plugin_command_outcome_and_duration_and_never_its_input
     );
     assert_eq!(failed.unwrap_err().code(), "echo.failed");
     assert!(
-        log.contains("plugin=\"echo\" command=\"echo\" outcome=\"ok\" duration_ms="),
+        log.lines().any(|line| {
+            line.contains(" TRACE ")
+                && line.contains("plugin=\"echo\" command=\"echo\" outcome=\"ok\" duration_ms=")
+        }),
         "{log}"
     );
     assert!(log.contains("outcome=\"invalid_input\""), "{log}");
-    assert!(log.contains("outcome=\"echo.failed\""), "{log}");
+    assert!(
+        log.lines()
+            .any(|line| { line.contains(" WARN ") && line.contains("outcome=\"echo.failed\"") }),
+        "{log}"
+    );
     assert!(log.contains("category=\"data\""), "{log}");
     assert!(!log.contains(PLANTED_INPUT), "{log}");
     assert!(!log.contains(PLANTED_OUTPUT), "{log}");
