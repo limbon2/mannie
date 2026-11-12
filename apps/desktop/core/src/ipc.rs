@@ -202,6 +202,8 @@ fn validation_builder() -> Builder<Wry> {
             crate::commands::validation::validation_set_skills_folder,
             crate::commands::validation::validation_set_chatgpt_mock,
             crate::commands::validation::validation_expire_chatgpt_token,
+            crate::commands::validation::validation_browser_surface,
+            crate::commands::validation::validation_browser_evaluate,
         ])
 }
 
@@ -237,6 +239,8 @@ pub(crate) fn runtime_builder() -> Builder<Wry> {
                 crate::commands::validation::validation_set_skills_folder,
                 crate::commands::validation::validation_set_chatgpt_mock,
                 crate::commands::validation::validation_expire_chatgpt_token,
+                crate::commands::validation::validation_browser_surface,
+                crate::commands::validation::validation_browser_evaluate,
             ])
     }
 }

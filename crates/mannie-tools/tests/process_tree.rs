@@ -73,6 +73,7 @@ impl Harness {
         let store = Store::open(&folder.path().join("mannie.sqlite"), &options).unwrap();
         let context = ToolContext {
             conversation_id: ConversationId::parse("0199e0f2-0000-7000-8000-000000000001").unwrap(),
+            run_id: None,
             workspace: Some(root.clone()),
             store,
             result_limit: mannie_tools::RESULT_LIMIT_BYTES,
@@ -126,6 +127,7 @@ impl Harness {
             part_id: None,
             activity: None,
             decision: None,
+            browser: None,
         });
         let stopper = async {
             if end == End::Stop {

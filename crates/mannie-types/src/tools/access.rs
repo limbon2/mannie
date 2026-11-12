@@ -44,6 +44,90 @@ pub struct EntryCount {
     pub folders: u32,
 }
 
+/// What a browser tool does to the session (ADR-0063).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserAction {
+    /// Reads a loaded page.
+    Observe,
+    /// Manages tabs.
+    Tabs,
+    /// Starts navigation or changes the current history entry.
+    Navigate,
+    /// Resumes an intercepted navigation to another origin.
+    ContinueNavigation,
+    /// Sends input to a page.
+    Interact,
+}
+
+/// An origin and session revision that the browser prepared for an action.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserAccess {
+    /// The canonical HTTP or HTTPS origin, without a path or credentials.
+    pub origin: String,
+    /// The browser service's session generation.
+    pub session: String,
+    /// The service's identity for the prepared action and its live target.
+    pub revision: String,
+    /// The kind of action the tool prepared.
+    pub action: BrowserAction,
+}
+
+impl BrowserAccess {
+    /// Builds a prepared browser access. The core checks its shape and the
+    /// browser service checks that the revision still holds before dispatch.
+    pub fn new(origin: String, session: String, revision: String, action: BrowserAction) -> Self {
+        Self {
+            origin,
+            session,
+            revision,
+            action,
+        }
+    }
+
+    /// An access names an exact canonical origin and opaque, bounded IDs.
+    pub fn is_canonical(&self) -> bool {
+        self.origin.len() <= 512
+            && url::Url::parse(&self.origin).is_ok_and(|url| {
+                matches!(url.scheme(), "http" | "https")
+                    && url.origin().ascii_serialization() == self.origin
+            })
+            && is_browser_id(&self.session)
+            && is_browser_id(&self.revision)
+    }
+}
+
+/// An owner-to-agent handoff prepared for a particular live browser state.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserControlAccess {
+    /// The browser service's session generation.
+    pub session: String,
+    /// The browser service's control generation.
+    pub revision: String,
+}
+
+impl BrowserControlAccess {
+    /// Records the session and control generation that the owner is using.
+    pub fn new(session: String, revision: String) -> Self {
+        Self { session, revision }
+    }
+
+    /// Whether the handoff identifies a bounded session and control revision.
+    pub fn is_canonical(&self) -> bool {
+        is_browser_id(&self.session) && is_browser_id(&self.revision)
+    }
+}
+
+fn is_browser_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 256
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
+}
+
 /// One access of an operation. Authorization decides on accesses, never on
 /// the arguments the model wrote (docs/architecture/tools.md, operations).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
@@ -213,6 +297,28 @@ pub enum Access {
         /// The command's text, as the plugin types it.
         command: String,
     },
+    /// A prepared action on an isolated browser session (ADR-0063).
+    BrowserAction {
+        /// The plugin whose tool prepared the action.
+        plugin: String,
+        /// The canonical HTTP or HTTPS origin, without a path or credentials.
+        origin: String,
+        /// The browser service's session generation.
+        session: String,
+        /// The service's identity for the prepared action and its live target.
+        revision: String,
+        /// The kind of action the tool prepared.
+        action: BrowserAction,
+    },
+    /// A request to return an isolated browser session to the agent.
+    BrowserControl {
+        /// The plugin that owns the browser session.
+        plugin: String,
+        /// The session generation the owner is using.
+        session: String,
+        /// The control generation the owner is using.
+        revision: String,
+    },
     /// A statement on a SQLite file that the owner registered for a plugin
     /// (ADR-0056, decision 5). The plugin names the database by its key and
     /// the statement with its parameters; the core adds the plugin, the
@@ -252,6 +358,26 @@ pub enum Access {
 }
 
 impl Access {
+    /// Adds the plugin that prepared a browser access.
+    pub fn from_browser(plugin: String, access: BrowserAccess) -> Self {
+        Self::BrowserAction {
+            plugin,
+            origin: access.origin,
+            session: access.session,
+            revision: access.revision,
+            action: access.action,
+        }
+    }
+
+    /// Adds the plugin that prepared a browser handoff.
+    pub fn from_browser_control(plugin: String, access: BrowserControlAccess) -> Self {
+        Self::BrowserControl {
+            plugin,
+            session: access.session,
+            revision: access.revision,
+        }
+    }
+
     /// Whether the access changes something: a change of the file system, a
     /// command on this machine, on a remote host or in a terminal, a run of
     /// an installed program, a write or a schema change of a database, or a
@@ -260,19 +386,45 @@ impl Access {
         match self {
             Self::Path { mode, .. } => mode.changes(),
             Self::Database { class, .. } => *class != StatementClass::Read,
+            Self::BrowserAction { action, .. } => *action != BrowserAction::Observe,
             Self::Command { .. }
             | Self::Project { .. }
             | Self::RemoteCommand { .. }
             | Self::Program { .. }
             | Self::ExternalTool { .. }
-            | Self::TerminalCommand { .. } => true,
+            | Self::TerminalCommand { .. }
+            | Self::BrowserControl { .. } => true,
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Access, AccessMode, EntryCount, ProgramEffect};
+    use super::{Access, AccessMode, BrowserAccess, BrowserAction, EntryCount, ProgramEffect};
+
+    #[test]
+    fn browser_access_names_an_origin_and_opaque_revisions() {
+        let mut access = BrowserAccess::new(
+            "http://[::1]:8080".to_owned(),
+            "session-1".to_owned(),
+            "document-3".to_owned(),
+            BrowserAction::Observe,
+        );
+        assert!(access.is_canonical());
+        assert!(!Access::from_browser("browser".to_owned(), access.clone()).changes());
+        for invalid in [
+            "https://site.example/form",
+            "https://user:password@site.example",
+            "https://site.example?code=auth",
+            "file:///local.txt",
+        ] {
+            access.origin = invalid.to_owned();
+            assert!(!access.is_canonical(), "{invalid}");
+        }
+        access.origin = "https://site.example".to_owned();
+        access.revision = "input value".to_owned();
+        assert!(!access.is_canonical());
+    }
 
     #[test]
     fn only_reads_change_nothing() {

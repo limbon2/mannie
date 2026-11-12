@@ -45,18 +45,19 @@ use mannie_plugin_sdk::ids::{FeatureId, PluginId, owned_by};
 use mannie_plugin_sdk::points::executors::Executors;
 use mannie_plugin_sdk::points::tool_sources::{MAX_SOURCE_TOOLS, check_published};
 use mannie_plugin_sdk::points::tools::{
-    AgentSelector, DatabaseAccess, ExternalToolAccess, MAX_FAILURE_CODE_CHARS,
-    MAX_TOOL_ARCHIVE_BYTES, MAX_TOOL_ARCHIVES, MAX_TOOL_DATA_BYTES, PathAccess, PluginTool,
-    ProgramAccess, RemoteCommandAccess, TerminalCommandAccess, Tool as SdkTool, ToolAccess,
-    ToolArchive, ToolCall, ToolEffect, ToolExecution, ToolOffering, ToolSpec, Tools, is_tool_name,
+    AgentSelector, BrowserAccess, BrowserAction, BrowserAuthorization, BrowserControlAccess,
+    DatabaseAccess, ExternalToolAccess, MAX_FAILURE_CODE_CHARS, MAX_TOOL_ARCHIVE_BYTES,
+    MAX_TOOL_ARCHIVES, MAX_TOOL_DATA_BYTES, PathAccess, PluginTool, ProgramAccess,
+    RemoteCommandAccess, TerminalCommandAccess, Tool as SdkTool, ToolAccess, ToolArchive, ToolCall,
+    ToolEffect, ToolExecution, ToolOffering, ToolSpec, Tools, is_tool_name,
 };
 use mannie_plugin_sdk::services::sqlite_files::{SqliteFilesError, Statement, WorkerDatabase};
 use mannie_plugin_sdk::services::terminals::{ExpectedHost, TerminalHostRef};
 use mannie_store::dbfiles::{self, EngineError, RegistryError};
 use mannie_tools::{
-    ArchivedOutput, Availability, Done, Execution, FolderError, PermissionClass, PrepareError,
-    Prepared, Tool, ToolContext, ToolRegistry, plugin_path_access, stopped, takes_activity,
-    workspace_folder,
+    ArchivedOutput, Availability, BrowserContinuation, Done, Execution, FolderError,
+    PermissionClass, PrepareError, Prepared, Tool, ToolContext, ToolRegistry, plugin_path_access,
+    stopped, takes_activity, workspace_folder,
 };
 use mannie_types::ceiling::CeilingMode;
 use mannie_types::context::Attachment;
@@ -66,6 +67,7 @@ use mannie_types::tools::{
     MAX_VIEW_PARAMETER_CHARS, MAX_VIEW_PARAMETERS, ProgramEffect, StatementClass, TerminalHost,
     ToolFailure, ToolHint, ToolOutcome, ToolServerEndpoint, looks_like_secret,
 };
+use tokio::sync::mpsc;
 use url::Url;
 
 use crate::Runtime;
@@ -172,8 +174,11 @@ pub(crate) fn offered_tools(
     runtime: &Runtime,
 ) -> Vec<(OfferedPluginTool, Arc<dyn Tool>)> {
     let mut offered = Vec::new();
+    let desktop = runtime.machine().assigned_agent.is_none();
+    let can_offer =
+        |entry: &PluginTool| (desktop || !browser_effect(entry.effect)) && offers(entry, agent);
     for registered in snapshot.items::<Tools>() {
-        if agent.gets_plugin(registered.plugin.as_str()) && offers(&registered.entry, agent) {
+        if agent.gets_plugin(registered.plugin.as_str()) && can_offer(&registered.entry) {
             offered.push(adapted(
                 registered.plugin.as_str(),
                 registered.feature.as_ref().map(FeatureId::as_str),
@@ -192,7 +197,7 @@ pub(crate) fn offered_tools(
             if fixed.contains(name) || !seen.insert(name) {
                 continue;
             }
-            if agent.gets_plugin(set.plugin.as_str()) && offers(tool, agent) {
+            if agent.gets_plugin(set.plugin.as_str()) && can_offer(tool) {
                 offered.push(adapted(
                     set.plugin.as_str(),
                     set.feature.as_ref().map(FeatureId::as_str),
@@ -317,8 +322,18 @@ pub(crate) fn kept_published(
 /// names the agent, and a tool with side effects never reaches an agent that
 /// only reads, whatever the selector says.
 fn offers(entry: &PluginTool, agent: &AgentDefinition) -> bool {
-    let acts = entry.effect == ToolEffect::SideEffects;
-    offered_to(&entry.offered_to, agent) && !(agent.read_only && acts)
+    let browser = browser_effect(entry.effect);
+    let acts = entry.effect == ToolEffect::SideEffects || browser;
+    offered_to(&entry.offered_to, agent)
+        && !(agent.read_only && acts)
+        && (!browser || agent.requester == Requester::Owner)
+}
+
+fn browser_effect(effect: ToolEffect) -> bool {
+    matches!(
+        effect,
+        ToolEffect::ReadsBrowser | ToolEffect::BrowserActions
+    )
 }
 
 /// Whether a tool's selector offers it to the runs of `agent`.
@@ -599,10 +614,20 @@ impl Tool for PluginToolAdapter {
     /// records (ADR-0036).
     fn class(&self) -> PermissionClass {
         match self.effect {
-            ToolEffect::ReadsOwnData | ToolEffect::ReadsFiles | ToolEffect::ReadsDatabases => {
-                PermissionClass::ReadOnly
-            }
-            ToolEffect::SideEffects => PermissionClass::SideEffects,
+            ToolEffect::ReadsOwnData
+            | ToolEffect::ReadsFiles
+            | ToolEffect::ReadsDatabases
+            | ToolEffect::ReadsBrowser => PermissionClass::ReadOnly,
+            ToolEffect::SideEffects | ToolEffect::BrowserActions => PermissionClass::SideEffects,
+        }
+    }
+
+    fn has_side_effects(&self, accesses: &[Access]) -> bool {
+        match self.effect {
+            ToolEffect::BrowserActions => !accesses.is_empty(),
+            ToolEffect::ReadsBrowser => accesses.iter().any(Access::changes),
+            ToolEffect::SideEffects => true,
+            _ => false,
         }
     }
 
@@ -617,6 +642,7 @@ impl Tool for PluginToolAdapter {
     ) -> BoxFuture<'static, Result<Prepared, PrepareError>> {
         let preparing = self.tool.prepare(
             ToolCall::new(arguments, context.conversation_id)
+                .with_run(context.run_id.filter(|_| browser_effect(self.effect)))
                 .with_workspace(context.workspace)
                 .with_attachments(reached_keys(&self.offering, &context.attachments)),
         );
@@ -656,6 +682,7 @@ impl Tool for PluginToolAdapter {
             part_id,
             activity,
             decision,
+            browser,
             ..
         } = execution;
         let limit = context.result_limit;
@@ -682,8 +709,12 @@ impl Tool for PluginToolAdapter {
             decision,
             origin,
         );
+        let authorized = sdk_accesses(&accesses);
+        let browser = browser.and_then(|continuations| {
+            issue_browser_ticket(&self.plugin, &context, &authorized, continuations)
+        });
         let mut tool_execution = ToolExecution::new(arguments, context.conversation_id)
-            .with_authorized(sdk_accesses(&accesses))
+            .with_authorized(authorized)
             .with_result_limit(u32::try_from(limit).unwrap_or(u32::MAX))
             .with_archive_ids(reserved.clone())
             .with_workspace(context.workspace)
@@ -694,9 +725,12 @@ impl Tool for PluginToolAdapter {
         if let Some(guard) = &database_ticket {
             tool_execution = tool_execution.with_database(guard.ticket());
         }
+        if let Some(browser) = browser {
+            tool_execution = tool_execution.with_browser(browser);
+        }
         let running = self.tool.execute(tool_execution);
         let plugin = self.plugin.clone();
-        let side_effects = self.effect == ToolEffect::SideEffects;
+        let side_effects = self.has_side_effects(&accesses);
         async move {
             // The tickets are good while the call executes.
             let _ticket = ticket;
@@ -738,6 +772,35 @@ impl Tool for PluginToolAdapter {
         }
         .boxed()
     }
+}
+
+/// Issues a browser ticket limited to the policy-approved accesses of the live run.
+fn issue_browser_ticket(
+    plugin: &str,
+    context: &ToolContext,
+    authorized: &[ToolAccess],
+    continuations: mpsc::Sender<BrowserContinuation>,
+) -> Option<BrowserAuthorization> {
+    let run = context.run_id.clone()?;
+    let browser_accesses = authorized
+        .iter()
+        .filter_map(|access| match access {
+            ToolAccess::BrowserAction(access) => Some(access.clone()),
+            _ => None,
+        })
+        .collect();
+    let control = authorized.iter().find_map(|access| match access {
+        ToolAccess::BrowserControl(access) => Some(access.clone()),
+        _ => None,
+    });
+    Some(BrowserAuthorization::issue(
+        plugin.to_owned(),
+        context.conversation_id.clone(),
+        run,
+        browser_accesses,
+        control,
+        continuations,
+    ))
 }
 
 /// What the core adds to a run of an installed program: the program's
@@ -818,7 +881,24 @@ fn core_accesses(
                     .iter()
                     .all(|access| matches!(access, ToolAccess::Database(_)))
         }
-        ToolEffect::SideEffects => !accesses.is_empty() && accesses.len() <= MAX_ACCESSES,
+        ToolEffect::ReadsBrowser | ToolEffect::BrowserActions => {
+            let site_actions = accesses.len() <= MAX_ACCESSES && accesses.iter().all(|access| {
+                matches!(access, ToolAccess::BrowserAction(access)
+                    if access.action != BrowserAction::ContinueNavigation
+                        && (access.action == BrowserAction::Observe) == (effect == ToolEffect::ReadsBrowser))
+            });
+            site_actions || matches!(accesses.as_slice(), [ToolAccess::BrowserControl(_)])
+        }
+        ToolEffect::SideEffects => {
+            !accesses.is_empty()
+                && accesses.len() <= MAX_ACCESSES
+                && accesses.iter().all(|access| {
+                    !matches!(
+                        access,
+                        ToolAccess::BrowserAction(_) | ToolAccess::BrowserControl(_)
+                    )
+                })
+        }
     };
     // A call hands the core at most one command in the background, the one
     // that its ticket names.
@@ -845,6 +925,18 @@ fn core_accesses(
             }
             ToolAccess::Database(database) => {
                 database_access(plugin, database, databases).ok_or_else(|| broken(plugin))
+            }
+            ToolAccess::BrowserAction(access) => {
+                if !access.is_canonical() {
+                    return Err(broken(plugin));
+                }
+                Ok(Access::from_browser(plugin.to_owned(), access))
+            }
+            ToolAccess::BrowserControl(access) => {
+                if !access.is_canonical() {
+                    return Err(broken(plugin));
+                }
+                Ok(Access::from_browser_control(plugin.to_owned(), access))
             }
         })
         .collect()
@@ -1628,6 +1720,24 @@ fn sdk_accesses(accesses: &[Access]) -> Vec<ToolAccess> {
             Access::TerminalCommand { .. } => {
                 sdk_terminal_command(access).map(ToolAccess::TerminalCommand)
             }
+            Access::BrowserAction {
+                origin,
+                session,
+                revision,
+                action,
+                ..
+            } => Some(ToolAccess::BrowserAction(BrowserAccess::new(
+                origin.clone(),
+                session.clone(),
+                revision.clone(),
+                *action,
+            ))),
+            Access::BrowserControl {
+                session, revision, ..
+            } => Some(ToolAccess::BrowserControl(BrowserControlAccess::new(
+                session.clone(),
+                revision.clone(),
+            ))),
             Access::Command { .. } | Access::Project { .. } | Access::Database { .. } => None,
         })
         .collect()

@@ -4,6 +4,8 @@
 // the state that it made of its argument, such as a terminal's view.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { goto } from '$app/navigation';
+
 import { SidePanels } from '../../../../../../apps/desktop/src/lib/state/side-panels.svelte.js';
 import {
   openPanel,
@@ -26,6 +28,7 @@ function address(state: SidePanelState): void {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks();
   page.route.id = '/';
   page.url = new URL('http://localhost/');
 });
@@ -60,6 +63,17 @@ describe('SidePanels', () => {
     expect(afterOpening.panels[0]).toBe(second);
     expect(afterOpening.panels[1]).toEqual(three);
     expect(afterOpening.panels).not.toContain(first);
+  });
+
+  it('replaces a same-kind panel in one navigation', async () => {
+    const panels = new SidePanels();
+    address({ panels: [ONE], shown: ONE.key });
+
+    await panels.open(TWO.kind, TWO.argument, { replaceArgument: ONE.argument });
+
+    const search = withSidePanels('view=chat', { panels: [TWO], shown: TWO.key });
+    expect(goto).toHaveBeenCalledExactlyOnceWith(`/?${search.toString()}`, { replace: true, reset: false });
+    expect(panels.focusRequest).toBe(TWO.key);
   });
 
   it('holds no panels outside the main view', () => {

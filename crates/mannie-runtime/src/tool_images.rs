@@ -4,7 +4,10 @@
 //! photo that a tool returns would otherwise send where it was taken to the
 //! provider (T-33).
 
-use mannie_types::images::{ImageBytes, ImageFormat};
+use mannie_types::images::{
+    ImageBytes, ImageFormat,
+    jpeg::{EOI, SOI, SOS, next_segment},
+};
 use mannie_types::tools::{MAX_TOOL_IMAGE_BYTES, MAX_TOOL_IMAGE_SIDE, MAX_TOOL_IMAGES};
 
 use crate::texts;
@@ -105,12 +108,6 @@ struct Cleaned {
     bytes: Vec<u8>,
 }
 
-/// The big-endian `u16` at `at`, if the bytes hold one there.
-fn be_u16(bytes: &[u8], at: usize) -> Option<u16> {
-    let field = bytes.get(at..at.checked_add(2)?)?;
-    Some(u16::from_be_bytes(field.try_into().ok()?))
-}
-
 /// The big-endian `u32` at `at`, if the bytes hold one there.
 fn be_u32(bytes: &[u8], at: usize) -> Option<u32> {
     let field = bytes.get(at..at.checked_add(4)?)?;
@@ -178,10 +175,6 @@ fn clean_png(data: &[u8]) -> Result<Cleaned, LeftOut> {
 }
 
 /// The JPEG markers that the cleaner tells apart.
-const SOI: u8 = 0xD8;
-const EOI: u8 = 0xD9;
-const SOS: u8 = 0xDA;
-const TEM: u8 = 0x01;
 const APP0: u8 = 0xE0;
 const APP1: u8 = 0xE1;
 const APP2: u8 = 0xE2;
@@ -198,11 +191,6 @@ const ADOBE: &[u8] = b"Adobe";
 /// holds only the orientation.
 const EXIF: &[u8] = b"Exif\0\0";
 
-/// Whether a marker starts a frame, whose header gives the image's size.
-fn is_frame(marker: u8) -> bool {
-    matches!(marker, 0xC0..=0xC3 | 0xC5..=0xC7 | 0xC9..=0xCB | 0xCD..=0xCF)
-}
-
 /// A JPEG file without its metadata: without its application segments other
 /// than the color profile and Adobe's, without comments, and with an EXIF
 /// segment only for an orientation other than upright. A segment is a marker,
@@ -211,50 +199,16 @@ fn is_frame(marker: u8) -> bool {
 fn clean_jpeg(data: &[u8]) -> Result<Cleaned, LeftOut> {
     let mut bytes = Vec::with_capacity(data.len());
     bytes.extend_from_slice(&[0xFF, SOI]);
-    let mut at = 2;
+    let mut remaining = &data[2..];
     let mut size = None;
     let mut oriented = false;
     loop {
-        if data.get(at) != Some(&0xFF) {
-            return Err(LeftOut::Damaged);
+        let (segment, rest) = next_segment(remaining).ok_or(LeftOut::Damaged)?;
+        if segment.is_frame() && size.is_none() {
+            size = Some(segment.frame_dimensions().ok_or(LeftOut::Damaged)?);
         }
-        // Any number of fill bytes may come before a marker's code.
-        while data.get(at + 1) == Some(&0xFF) {
-            at += 1;
-        }
-        let marker = *data.get(at + 1).ok_or(LeftOut::Damaged)?;
-        match marker {
-            EOI => {
-                bytes.extend_from_slice(&[0xFF, EOI]);
-                break;
-            }
-            0xD0..=0xD7 | TEM => {
-                bytes.extend_from_slice(&[0xFF, marker]);
-                at += 2;
-                continue;
-            }
-            0x00 | SOI => return Err(LeftOut::Damaged),
-            _ => {}
-        }
-        let length = usize::from(be_u16(data, at + 2).ok_or(LeftOut::Damaged)?);
-        if length < 2 {
-            return Err(LeftOut::Damaged);
-        }
-        let end = at + 2 + length;
-        let segment = data.get(at..end).ok_or(LeftOut::Damaged)?;
-        let content = &segment[4..];
-        if is_frame(marker) && size.is_none() {
-            // A frame's header: the precision, then the height and the width.
-            let height = be_u16(content, 1).ok_or(LeftOut::Damaged)?;
-            let width = be_u16(content, 3).ok_or(LeftOut::Damaged)?;
-            // A height of 0 comes later in a segment that this reader does
-            // not follow, so the file counts as damaged.
-            if width == 0 || height == 0 {
-                return Err(LeftOut::Damaged);
-            }
-            size = Some((u32::from(width), u32::from(height)));
-        }
-        match marker {
+        let content = segment.content();
+        match segment.marker {
             APP1 if content.starts_with(EXIF) => {
                 let orientation = exif_orientation(&content[EXIF.len()..]);
                 if let Some(orientation) = orientation.filter(|_| !oriented) {
@@ -262,17 +216,20 @@ fn clean_jpeg(data: &[u8]) -> Result<Cleaned, LeftOut> {
                     oriented = true;
                 }
             }
-            APP2 if content.starts_with(ICC_PROFILE) => bytes.extend_from_slice(segment),
-            APP14 if content.starts_with(ADOBE) => bytes.extend_from_slice(segment),
+            APP2 if content.starts_with(ICC_PROFILE) => bytes.extend_from_slice(segment.bytes),
+            APP14 if content.starts_with(ADOBE) => bytes.extend_from_slice(segment.bytes),
             APP0..=APP15 | COM => {}
-            _ => bytes.extend_from_slice(segment),
+            _ => bytes.extend_from_slice(segment.bytes),
         }
-        at = end;
-        if marker == SOS {
-            let coded_end = scan_end(data, at).ok_or(LeftOut::Damaged)?;
-            bytes.extend_from_slice(&data[at..coded_end]);
-            at = coded_end;
-        }
+        remaining = match segment.marker {
+            EOI => break,
+            SOS => {
+                let coded_end = scan_end(rest).ok_or(LeftOut::Damaged)?;
+                bytes.extend_from_slice(&rest[..coded_end]);
+                &rest[coded_end..]
+            }
+            _ => rest,
+        };
     }
     let (width, height) = size.ok_or(LeftOut::Damaged)?;
     Ok(Cleaned {
@@ -284,8 +241,8 @@ fn clean_jpeg(data: &[u8]) -> Result<Cleaned, LeftOut> {
 
 /// Where a scan's coded data ends: at the first marker other than a restart.
 /// Inside coded data, a byte 0xFF is followed by 0x00.
-fn scan_end(data: &[u8], from: usize) -> Option<usize> {
-    let mut at = from;
+fn scan_end(data: &[u8]) -> Option<usize> {
+    let mut at = 0;
     loop {
         at += data.get(at..)?.iter().position(|byte| *byte == 0xFF)?;
         match data.get(at + 1)? {

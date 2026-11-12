@@ -46,6 +46,7 @@ The Rust core is trusted, and the webview is not ([ADR-0004](../adr/0004-keep-sy
 - The main window is at least 800 pixels wide, so the sidebar never switches to its narrow-screen sheet, whose text is built into the component ([patches](../../apps/desktop/src/lib/components/ui/PATCHES.md)).
 - `useHttpsScheme` is true and stays true, so the app's origin, and with it the webview's storage, never moves.
 - The isolation pattern is not used. [ADR-0004](../adr/0004-keep-system-access-in-the-rust-core.md) explains why.
+- The Browser plugin's pages are WebView2 webviews that the core creates itself, outside Tauri's webview manager, as child windows of the main window over the pane. They get no IPC, no capability and no script from Mannie, and the core clamps their placement to the window ([ADR-0063](../adr/0063-give-agents-an-isolated-browser-beside-the-conversation.md)).
 
 ## 5. Rendering untrusted content
 
@@ -123,6 +124,7 @@ apps/desktop/
 | Credential store | Windows Credential Manager                            | Secret Service (GNOME Keyring or KWallet). Without one, credentials cannot be saved (V7).                                                                                                                                                                                       |
 | Installer        | NSIS, per user                                        | deb and rpm packages                                                                                                                                                                                                                                                            |
 | System tray      | Notification area; clicking the icon opens the window | AppIndicator (libayatana-appindicator on Debian and Ubuntu, libappindicator-gtk3 on Fedora). Clicks on the icon are not delivered, so the menu opens the window. GNOME shows the icon only with the AppIndicator extension; without it, starting Mannie again shows the window. |
+| Browser plugin   | WebView2 pages hosted by the core                     | Not available: WebKitGTK has no DevTools Protocol; the plugin says so on the Plugins page                                                                                                                                                                                       |
 | Known issues     | None recorded yet                                     | Some NVIDIA drivers render WebKitGTK incorrectly with DMABUF. The workaround is documented once V1 confirms it.                                                                                                                                                                 |
 
 Each UI change is checked on both webviews before it merges.

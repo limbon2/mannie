@@ -10,6 +10,7 @@ import type {
   ChannelBatch,
   ChannelLoad,
   ChannelLoadSummary,
+  SurfaceReport,
   ValidationDelta,
   ValidationTrayItem,
   ValidationWindowState,
@@ -61,6 +62,10 @@ export interface ChannelLoadReport {
 
 /** The harness's interface for the end-to-end tests. */
 export interface ValidationHarness {
+  /** Evaluates an expression in a Browser page, and returns its value as JSON, or `null` (V12). */
+  browserEvaluate(conversationId: string, tabId: string, expression: string): Promise<string | null>;
+  /** Where each Browser page window of a conversation is (V12). */
+  browserSurface(conversationId: string): Promise<SurfaceReport[]>;
   /**
    * Calls a command that the fixture plugin does not declare, and returns
    * the code of the refusal that the transport reports, or `allowed`.
@@ -319,6 +324,9 @@ window.mannieValidation = {
   closeMainWindow: async () => {
     unwrap(await commands.validationCloseMainWindow());
   },
+  browserEvaluate: async (conversationId, tabId, expression) =>
+    unwrap(await commands.validationBrowserEvaluate(conversationId, tabId, expression)),
+  browserSurface: async (conversationId) => unwrap(await commands.validationBrowserSurface(conversationId)),
   createProviderProfile,
   cspViolations: () => [...violations],
   deleteProviderProfiles,

@@ -116,10 +116,10 @@ pub enum NotRunReason {
     OverBudget,
     /// The provider profile does not use tools.
     ToolsOff,
-    /// A worker's policy ceiling forbids the operation (docs/features/
-    /// workers/host-and-ceiling.md, the ceiling).
+    /// The policy forbids the operation, for example under a worker's
+    /// ceiling or because the owner declined a browser site.
     Refused {
-        /// What the ceiling forbids.
+        /// Why the policy refuses the operation.
         refusal: Refusal,
     },
     /// The owner turned off the plugin of the tool, or of the agent that the
@@ -136,7 +136,7 @@ pub enum NotRunReason {
     },
 }
 
-/// What a worker's policy ceiling forbids.
+/// What the policy refuses outright.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum Refusal {
@@ -161,6 +161,10 @@ pub enum Refusal {
     /// A worker runs no plugin's statements on databases, for the same
     /// reason (ADR-0056).
     NoDatabases,
+    /// Browser sessions belong to the desktop (ADR-0063).
+    NoBrowser,
+    /// The owner denied this browser site for the current run (ADR-0063).
+    BrowserSiteDenied,
 }
 
 /// Why an operation that was executing ended without its result while the

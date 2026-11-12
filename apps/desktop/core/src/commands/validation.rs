@@ -282,6 +282,35 @@ pub(crate) async fn validation_seed_conversation(
         })
 }
 
+/// Where each Browser page window of a conversation is: shown, enabled,
+/// focused and placed in the main window's client pixels (V12). The pages are
+/// native windows that WebDriver cannot see.
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn validation_browser_surface(
+    core: State<'_, Core>,
+    conversation_id: ConversationId,
+) -> Result<Vec<crate::browser::SurfaceReport>, CommandError<ValidationError>> {
+    let browser = core.browser().ok_or(ValidationError::CoreUnavailable)?;
+    Ok(browser.validation_surfaces(&conversation_id).await)
+}
+
+/// Evaluates an expression in a Browser page and returns its value as JSON,
+/// or `null` when the page cannot answer (V12).
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn validation_browser_evaluate(
+    core: State<'_, Core>,
+    conversation_id: ConversationId,
+    tab_id: String,
+    expression: String,
+) -> Result<Option<String>, CommandError<ValidationError>> {
+    let browser = core.browser().ok_or(ValidationError::CoreUnavailable)?;
+    Ok(browser
+        .validation_evaluate(&conversation_id, &tab_id, &expression)
+        .await)
+}
+
 /// The links that `open_link` would have opened, in order.
 #[tauri::command]
 #[specta::specta]

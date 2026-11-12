@@ -143,6 +143,8 @@ impl Tool for RemoteShell {
                 | ToolAccess::Program(_)
                 | ToolAccess::ExternalTool(_)
                 | ToolAccess::TerminalCommand(_)
+                | ToolAccess::BrowserControl(_)
+                | ToolAccess::BrowserAction(_)
                 | ToolAccess::Database(_) => None,
             })
             .collect::<Vec<_>>()

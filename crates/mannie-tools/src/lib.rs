@@ -15,6 +15,7 @@
 
 mod activity;
 mod background;
+pub mod browser;
 mod ceiling;
 mod digest;
 mod environment;
@@ -60,7 +61,9 @@ pub use mentions::{
 };
 pub use output::output_page;
 pub use paths::{FolderError, canonical_folder, is_inside as path_is_inside, workspace_folder};
-pub use policy::{Grants, PolicyInputs, SavedRule, Verdict, decide, saved_rule};
+pub use policy::{
+    BrowserSiteConsent, Grants, PolicyInputs, SavedRule, Verdict, decide, saved_rule,
+};
 pub use programs::{
     MAX_PROGRAM_INPUT_BYTES, MAX_PROGRAM_OUTPUT_BYTES, MAX_PROGRAM_TIMEOUT, PROGRAM_ERROR_BYTES,
     ProgramEnding, ProgramNotFound, ProgramOutput, ProgramRun, ServerProgram, ServerProgramError,
@@ -86,6 +89,7 @@ pub use supervisor::{
 };
 pub use system::{ShellFacts, SystemFacts};
 pub use tool::{
-    ArchivedOutput, Done, Execution, PermissionClass, PrepareError, Prepared, Tool, ToolContext,
+    ArchivedOutput, BrowserContinuation, Done, Execution, PermissionClass, PrepareError, Prepared,
+    Tool, ToolContext,
 };
 pub use tools::{plugin_path_access, read_skill_tool, spawn_failure, stopped};

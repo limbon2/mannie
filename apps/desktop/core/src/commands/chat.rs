@@ -261,7 +261,9 @@ pub(crate) async fn delete_conversation(
     runtime(&core)?
         .delete_conversation(&input.conversation_id)
         .await
-        .map_err(refused("delete_conversation"))
+        .map_err(refused("delete_conversation"))?;
+    core.end_conversation_browser(&input.conversation_id).await;
+    Ok(())
 }
 
 /// Chooses the profile of a conversation's next replies, or the default.

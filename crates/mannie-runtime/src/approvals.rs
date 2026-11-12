@@ -8,7 +8,9 @@
 
 use mannie_tools::saved_rule;
 use mannie_types::ids::{ConversationId, PartId};
-use mannie_types::tools::{ApprovalChoice, ApprovalRequest, DecideApproval, ToolsError};
+use mannie_types::tools::{
+    ApprovalChoice, ApprovalReason, ApprovalRequest, DecideApproval, ToolsError,
+};
 use tokio::sync::oneshot;
 
 use crate::{Runtime, lock};
@@ -16,11 +18,19 @@ use crate::{Runtime, lock};
 /// Refuses a choice that the request does not offer, so the UI cannot widen
 /// what an approval allows. A worker's request offers only Allow once and
 /// Deny, whatever the master sends, so its ceiling stays what its
-/// configuration says (ADR-0028, decision 5).
+/// configuration says (ADR-0028, decision 5). Browser site consent can last
+/// for the run or conversation. Browser control is a one-time choice (ADR-0063).
 fn check_choice(request: &ApprovalRequest, choice: &ApprovalChoice) -> Result<(), ToolsError> {
     let once = matches!(choice, ApprovalChoice::AllowOnce | ApprovalChoice::Deny);
-    if request.host.is_some() && !once {
-        return Err(ToolsError::GrantNotPossible);
+    if !once {
+        let browser_site = request.reasons.contains(&ApprovalReason::BrowserSite);
+        let browser_control = request.reasons.contains(&ApprovalReason::BrowserControl);
+        if request.host.is_some()
+            || browser_control
+            || browser_site && !matches!(choice, ApprovalChoice::AllowForConversation)
+        {
+            return Err(ToolsError::GrantNotPossible);
+        }
     }
     match choice {
         ApprovalChoice::AllowOnce | ApprovalChoice::Deny => Ok(()),

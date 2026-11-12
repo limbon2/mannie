@@ -9,6 +9,7 @@
 //! a run that works on a task, a child's or, on a worker, one that the master
 //! assigned (ADR-0028).
 
+mod browser;
 mod child;
 mod commands;
 mod gathering;
@@ -25,7 +26,7 @@ use mannie_provider::{EventStream, ProviderError, ProviderEvent};
 use mannie_store::{
     Applied, Change, Durability, NewArchive, NewPart, ProviderItem, RuntimeStoreError,
 };
-use mannie_tools::{result_limit, split_activity};
+use mannie_tools::{BrowserSiteConsent, result_limit, split_activity};
 use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{ConversationId, PartId, ProfileId, RunId, TurnId};
 use mannie_types::run::{FinishReason, RunActivity, RunFailure, RunOutcome, RunState, Usage};
@@ -229,6 +230,8 @@ pub(crate) struct RunActor {
     calls: Vec<StepCall>,
     /// The model calls of this run that made tool calls.
     tool_rounds: u32,
+    /// Site decisions of this run, keyed by plugin, session and origin.
+    browser_sites: Vec<BrowserSiteConsent>,
     /// The tool calls of this run that counted against its budget.
     tool_calls: u32,
     /// The token counts of every call of the run together.
@@ -349,6 +352,7 @@ impl Runtime {
             step: StepState::default(),
             calls: Vec::new(),
             tool_rounds: 0,
+            browser_sites: Vec::new(),
             tool_calls: 0,
             usage: None,
             notes: 0,

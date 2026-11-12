@@ -7,6 +7,8 @@
 | Deciders | Owner                                                                                                                                                                                                                                                                                                                                                        |
 | Related  | [ADR-0020](0020-complete-the-ui-shell-slots.md), [ADR-0006](0006-use-shadcn-svelte-through-its-cli.md), [ADR-0002](0002-grow-through-extension-points.md), [Extension points](../architecture/extension-points.md#37-ui-shell-slots), [Desktop app](../architecture/desktop-app.md#6-frontend-structure), [Child agents](../features/child-agents/README.md) |
 
+[ADR-0064](0064-let-browser-access-follow-the-conversation.md) adds SDK options to open a background panel, replace a launcher panel in place and update an open panel's label.
+
 ## Context
 
 - [Child agents](../features/child-agents/README.md) let the owner open a child's whole conversation. The owner decided on 2026-10-15 that it opens in a side panel docked beside the parent's conversation, and that side panels will grow, as in the Claude app and Codex, so later features can show their own content there ([D18](../roadmap/milestones.md#5-decisions)). Open panels show as tabs, and they belong to the conversation that opened them.

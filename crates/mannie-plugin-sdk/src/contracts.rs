@@ -21,7 +21,7 @@ pub use mannie_types::chat::{ChatError, CheckpointRef, EarlierTurns, LoadEarlier
 pub use mannie_types::ids::{ArchiveId, ConversationId, ProfileId, ProjectId, TaskId, WorkerId};
 // The keys of the owner's SQLite files that a plugin registers, and the IDs
 // of the owner operations on them (ADR-0056, decisions 2 and 8).
-pub use mannie_types::ids::{DatabaseKey, DatabaseOperationId};
+pub use mannie_types::ids::{DatabaseKey, DatabaseOperationId, RunId};
 // What a statement on a database does, which the core reads from SQLite
 // (ADR-0056, decision 5), and what lets a write run on a worker's database,
 // where it comes from and why the worker's ceiling refuses a request

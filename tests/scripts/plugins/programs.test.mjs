@@ -95,6 +95,8 @@ describe('FORBIDDEN_CRATE', () => {
       'glib',
       'webkit2gtk',
       'webkit2gtk-sys',
+      'webview2-com',
+      'webview2-com-sys',
       'soup3',
     ]) {
       assert.match(name, FORBIDDEN_CRATE);
@@ -102,7 +104,7 @@ describe('FORBIDDEN_CRATE', () => {
   });
 
   it('leaves similar names alone', () => {
-    for (const name of ['taoism', 'glibc-version', 'gtkish', 'tokio', 'windows-service']) {
+    for (const name of ['taoism', 'glibc-version', 'gtkish', 'tokio', 'webview', 'windows-service']) {
       assert.doesNotMatch(name, FORBIDDEN_CRATE);
     }
   });

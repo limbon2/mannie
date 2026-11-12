@@ -11,14 +11,14 @@ use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
 use mannie_store::Store;
 use mannie_types::context::Attachment;
-use mannie_types::ids::{ArchiveId, ConversationId, PartId};
+use mannie_types::ids::{ArchiveId, ConversationId, PartId, RunId};
 use mannie_types::images::ImageBytes;
 use mannie_types::tools::{
-    Access, CitedItemView, Decision, ProcessRecord, ToolFailure, ToolOutcome,
+    Access, BrowserAccess, CitedItemView, Decision, ProcessRecord, ToolFailure, ToolOutcome,
 };
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::background::BackgroundCommands;
 use crate::environment::CommandEnvironment;
@@ -45,6 +45,8 @@ pub enum PermissionClass {
 pub struct ToolContext {
     /// The conversation the call belongs to.
     pub conversation_id: ConversationId,
+    /// The live run that owns the call, if the caller is the runtime.
+    pub run_id: Option<RunId>,
     /// The conversation's workspace, in canonical form.
     pub workspace: Option<PathBuf>,
     /// The store, which holds archived outputs.
@@ -180,7 +182,12 @@ pub struct Execution {
     /// a write on a worker's database states (ADR-0057, decision 7); `None`
     /// for a call that needed no authorization.
     pub decision: Option<Decision>,
+    /// Sends requests to resume navigation during an active browser call.
+    pub browser: Option<mpsc::Sender<BrowserContinuation>>,
 }
+
+/// An intercepted browser request and the runtime's authorization channel.
+pub type BrowserContinuation = (BrowserAccess, oneshot::Sender<bool>);
 
 /// A tool in the registry (docs/architecture/extension-points.md, tool
 /// registry).
@@ -206,6 +213,11 @@ pub trait Tool: Send + Sync + fmt::Debug {
 
     /// Whether the tool changes anything.
     fn class(&self) -> PermissionClass;
+
+    /// Whether the prepared call performs an operation.
+    fn has_side_effects(&self, _accesses: &[Access]) -> bool {
+        self.class() == PermissionClass::SideEffects
+    }
 
     /// Whether a model call is offered the tool, which the runtime asks for
     /// every call. Most tools are always offered.

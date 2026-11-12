@@ -381,6 +381,8 @@ pub(crate) fn mentions(call: &ToolCallView, needle: &str) -> bool {
         | Access::TerminalCommand { command, .. } => command.contains(needle),
         Access::Project { name, folder, .. } => name.contains(needle) || folder.contains(needle),
         Access::Database { statement, .. } => statement.contains(needle),
+        Access::BrowserAction { origin, .. } => origin.contains(needle),
+        Access::BrowserControl { .. } => false,
         Access::Program {
             arguments,
             working_directory,
@@ -664,7 +666,9 @@ fn owner_choice(task: &Task, call: &ToolCallView) -> ApprovalChoice {
             | Access::Database { .. }
             | Access::Program { .. }
             | Access::ExternalTool { .. }
-            | Access::TerminalCommand { .. } => false,
+            | Access::TerminalCommand { .. }
+            | Access::BrowserControl { .. }
+            | Access::BrowserAction { .. } => false,
         });
     if allowed {
         ApprovalChoice::AllowOnce

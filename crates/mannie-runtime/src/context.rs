@@ -325,6 +325,19 @@ fn append_call(reply: &mut Reply, part: &ModelPart, shape: RequestShape<'_>) {
     let Some(call) = &part.tool_call else {
         return;
     };
+    // A held browser request has its own journal entry. Only the model's
+    // original tool call belongs in provider history.
+    if call.accesses.iter().any(|access| {
+        matches!(
+            access,
+            mannie_types::tools::Access::BrowserAction {
+                action: mannie_types::tools::BrowserAction::ContinueNavigation,
+                ..
+            }
+        )
+    }) {
+        return;
+    }
     // A model without tools reads every image of a result as a line.
     let sent: &[(u32, ImageInput)] = if shape.tools.is_empty() {
         &[]
@@ -502,6 +515,8 @@ fn not_run(reason: &NotRunReason, tool: &str) -> String {
             Refusal::NoExternalTools => texts::NO_EXTERNAL_TOOLS.to_owned(),
             Refusal::NoTerminals => texts::NO_TERMINALS.to_owned(),
             Refusal::NoDatabases => texts::NO_DATABASES.to_owned(),
+            Refusal::NoBrowser => texts::NO_BROWSER.to_owned(),
+            Refusal::BrowserSiteDenied => texts::BROWSER_SITE_DENIED.to_owned(),
         },
         NotRunReason::PluginOff {
             plugin,

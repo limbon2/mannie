@@ -119,6 +119,8 @@ fn volume(access: &Access) -> Option<&str> {
         | Access::Program { .. }
         | Access::ExternalTool { .. }
         | Access::TerminalCommand { .. }
+        | Access::BrowserControl { .. }
+        | Access::BrowserAction { .. }
         | Access::Database { .. } => None,
     }
 }

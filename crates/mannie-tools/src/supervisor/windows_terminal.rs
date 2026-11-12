@@ -358,13 +358,13 @@ fn coordinates(columns: u16, rows: u16) -> COORD {
 }
 
 /// A NUL-terminated wide string.
-fn wide(text: &OsStr) -> Vec<u16> {
+pub(super) fn wide(text: &OsStr) -> Vec<u16> {
     text.encode_wide().chain(std::iter::once(0)).collect()
 }
 
 /// The command line of the shell and its arguments, NUL-terminated, quoted
 /// for the parsing that Windows programs share (`CommandLineToArgvW`).
-fn command_line(program: &Path, arguments: &[OsString]) -> Vec<u16> {
+pub(super) fn command_line(program: &Path, arguments: &[OsString]) -> Vec<u16> {
     let mut line: Vec<u16> = Vec::new();
     append_argument(&mut line, program.as_os_str());
     for argument in arguments {
@@ -412,7 +412,7 @@ fn append_argument(line: &mut Vec<u16>, argument: &OsStr) {
 /// The environment as `CreateProcessW` takes it: `NAME=value` entries, each
 /// NUL-terminated, sorted by name without regard to case as Windows keeps
 /// them, then one more NUL.
-fn environment_block(environment: &[(OsString, OsString)]) -> Vec<u16> {
+pub(super) fn environment_block(environment: &[(OsString, OsString)]) -> Vec<u16> {
     let mut sorted: Vec<&(OsString, OsString)> = environment.iter().collect();
     sorted.sort_by_key(|(name, _value)| name.to_string_lossy().to_uppercase());
     let mut block: Vec<u16> = Vec::new();

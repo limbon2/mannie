@@ -9,27 +9,29 @@
 //! conversation run one at a time, and a run holds no model slot while its
 //! tools run or wait.
 
+use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
 use mannie_store::{Change, Durability, NewArchive, NewToolImage};
 use mannie_tools::{
-    Ceiling, CommandEnvironment, Done, Execution, Grants, PermissionClass, PolicyInputs,
-    PrepareError, ProjectFacts, SavedRule, StopReason, StopSignal, Tool, ToolContext, Verdict,
-    decide, digest, result_limit, saved_rule,
+    Ceiling, CommandEnvironment, Done, Execution, Grants, PolicyInputs, PrepareError, ProjectFacts,
+    SavedRule, StopReason, StopSignal, Tool, ToolContext, Verdict, decide, digest, result_limit,
+    saved_rule,
 };
 use mannie_types::ceiling::CeilingMode;
 use mannie_types::context::Attachment;
 use mannie_types::ids::ProjectId;
 use mannie_types::run::{RunActivity, RunFailure};
 use mannie_types::tools::{
-    Access, ApprovalChoice, ApprovalRequest, ArchiveRef, CommandRule, Decision, GrantScope,
-    Interruption, NotRunReason, ProcessRecord, ProgramRule, Refusal, RemoteCommandRule,
+    Access, ApprovalChoice, ApprovalReason, ApprovalRequest, ArchiveRef, CommandRule, Decision,
+    GrantScope, Interruption, NotRunReason, ProcessRecord, ProgramRule, Refusal, RemoteCommandRule,
     TerminalCommandRule, ToolCallStatus, ToolImageRef, ToolOutcome, ToolResult, ToolsSettings,
 };
 use tokio::sync::oneshot;
 
+use super::browser::BrowserRequests;
 use super::{Ending, MAX_DETAIL_CHARS, RunActor, StepCall, halt};
 use crate::approvals::Answer;
 use crate::background::BackgroundPort;
@@ -66,7 +68,7 @@ enum Watched {
 
 /// Waits until turning a plugin off aborts an execution of its tool, or
 /// forever for a call without such a signal.
-async fn aborted(abort: Option<&StopSignal>) {
+pub(super) async fn aborted(abort: Option<&StopSignal>) {
     match abort {
         Some(abort) => abort.stopped().await,
         None => std::future::pending().await,
@@ -97,7 +99,7 @@ fn decision_of(answer: Answer) -> (Option<ApprovalChoice>, Decision) {
 /// What a call needs from its surroundings, read again for every call, so a
 /// change of the project, the settings, a grant or a rule applies from the
 /// next call.
-struct Surroundings {
+pub(super) struct Surroundings {
     context: ToolContext,
     settings: ToolsSettings,
     /// The conversation's own grants.
@@ -270,12 +272,15 @@ impl RunActor {
                 }
                 Verdict::Ask(request) => *request,
                 Verdict::Refused(refusal) => {
-                    tracing::info!(run = %self.run, part = %call.part_id, tool = %call.document.tool, refusal = ?refusal, "the worker's ceiling refused a tool call");
+                    tracing::info!(run = %self.run, part = %call.part_id, tool = %call.document.tool, refusal = ?refusal, "the policy refused a tool call");
                     self.end_call(call, NotRunReason::Refused { refusal });
                     return Ok(CallEnd::Ran);
                 }
             };
             let (choice, decision) = decision_of(self.ask(&mut call, &accesses, &request).await?);
+            let decision = self
+                .remember_approval(&request, &accesses, choice.as_ref(), decision)
+                .await?;
             call.document.decision = Some(decision);
             call.document.decided_at = Some(self.now());
             if !decision.allows() {
@@ -285,9 +290,6 @@ impl RunActor {
                 self.finish_call(&call);
                 self.flush(Durability::Full).await?;
                 return Ok(CallEnd::Denied);
-            }
-            if let Some(choice) = &choice {
-                self.remember(choice, &request).await;
             }
             // The owner may have turned off the tool's plugin while the call
             // waited, and a plugin that is off prepares nothing again
@@ -305,6 +307,16 @@ impl RunActor {
                 .await?
             {
                 Ok(again) => {
+                    // The owner may have already returned control while this
+                    // handoff waited. Dispatch only the approved handoff, whose
+                    // host revalidates the current session before changing it.
+                    if request.reasons.contains(&ApprovalReason::BrowserControl)
+                        && !again
+                            .iter()
+                            .any(|access| matches!(access, Access::BrowserControl { .. }))
+                    {
+                        break;
+                    }
                     let unchanged = digest(&again) == request.digest;
                     accesses = again;
                     if unchanged {
@@ -329,7 +341,7 @@ impl RunActor {
     }
 
     /// What the policy decides about a call's accesses in its surroundings.
-    fn verdict(
+    pub(super) fn verdict(
         &self,
         accesses: &[Access],
         surroundings: &Surroundings,
@@ -356,6 +368,7 @@ impl RunActor {
                 ceiling: surroundings.ceiling.as_ref(),
                 host: surroundings.host.as_deref(),
                 full_access: surroundings.full_access,
+                browser_sites: &self.browser_sites,
             },
         )
     }
@@ -373,7 +386,7 @@ impl RunActor {
         arguments: String,
         accesses: Vec<Access>,
     ) -> Result<CallEnd, Ending> {
-        let side_effects = tool.class() == PermissionClass::SideEffects;
+        let side_effects = tool.has_side_effects(&accesses);
         let offered = setup.plugin_tool(&call.document.tool);
         let execution_guard = match offered {
             None => None,
@@ -410,6 +423,7 @@ impl RunActor {
         tracing::debug!(part = %call.part_id, accesses = ?accesses, "the accesses of a tool call");
         let stop = StopSignal::new();
         let (process_sender, process) = oneshot::channel();
+        let (browser_sender, mut browser) = BrowserRequests::for_call(setup, &call, &accesses);
         let execution = tool.execute(Execution {
             context: surroundings.context,
             arguments,
@@ -419,15 +433,30 @@ impl RunActor {
             part_id: Some(call.part_id.clone()),
             activity: call.document.activity.clone(),
             decision: call.document.decision,
+            browser: browser_sender,
         });
         let abort = execution_guard.as_ref().map(|guard| guard.abort.clone());
         let watched = self
-            .watch(execution, &stop, process, &mut call, abort.as_ref())
+            .watch(
+                execution,
+                &stop,
+                process,
+                &mut call,
+                abort.as_ref(),
+                &mut browser,
+            )
             .await;
         // After the plugin's work is done or dropped, so a plugin that turns
         // off waits for it.
         drop(execution_guard);
-        let (done, halted) = match watched? {
+        let watched = watched?;
+        let denied = browser.as_mut().is_some_and(|browser| {
+            let succeeded = matches!(&watched, Watched::Ended { done, halted: None }
+                if matches!(&done.outcome, ToolOutcome::Plugin { failure: None, uncertain: false, .. }));
+            browser.finish(self, succeeded);
+            browser.denied()
+        });
+        let (done, halted) = match watched {
             Watched::Ended { done, halted } => (*done, halted),
             Watched::Aborted => {
                 let plugin = offered.map_or_else(String::new, |offered| offered.plugin.clone());
@@ -441,7 +470,11 @@ impl RunActor {
             None => {
                 self.complete_call(call, done);
                 self.flush(Durability::Full).await?;
-                Ok(CallEnd::Ran)
+                Ok(if denied {
+                    CallEnd::Denied
+                } else {
+                    CallEnd::Ran
+                })
             }
             Some(ending) => {
                 // The core let a plugin's work go without its result
@@ -498,6 +531,7 @@ impl RunActor {
         mut process: oneshot::Receiver<ProcessRecord>,
         call: &mut StepCall,
         abort: Option<&StopSignal>,
+        browser: &mut Option<BrowserRequests<'_>>,
     ) -> Result<Watched, Ending> {
         let mut halted: Option<Ending> = None;
         let mut process_pending = true;
@@ -506,6 +540,11 @@ impl RunActor {
             tokio::select! {
                 done = &mut execution => return Ok(Watched::Ended { done: Box::new(done), halted }),
                 () = aborted(abort), if halted.is_none() => return Ok(Watched::Aborted),
+                (requests, request) = BrowserRequests::receive(browser.as_mut()), if halted.is_none() => {
+                    if let Some(done) = Box::pin(requests.authorize(self, request, &mut execution, abort)).await? {
+                        return Ok(Watched::Ended { done: Box::new(done), halted });
+                    }
+                }
                 command = self.commands.recv(), if halted.is_none() => {
                     let ending = halt(command);
                     // A revoked lease ends the run on purpose, as a stop does.
@@ -538,6 +577,19 @@ impl RunActor {
         accesses: &[Access],
         request: &ApprovalRequest,
     ) -> Result<Answer, Ending> {
+        self.ask_until(call, accesses, request, std::future::pending())
+            .await?
+            .ok_or(Ending::Interrupted)
+    }
+
+    /// Asks the owner until an answer arrives or the operation is withdrawn.
+    pub(super) async fn ask_until(
+        &mut self,
+        call: &mut StepCall,
+        accesses: &[Access],
+        request: &ApprovalRequest,
+        canceled: impl Future<Output = ()>,
+    ) -> Result<Option<Answer>, Ending> {
         call.document.status = ToolCallStatus::AwaitingApproval;
         call.document.accesses = accesses.to_vec();
         call.document.request = Some(request.clone());
@@ -557,7 +609,15 @@ impl RunActor {
         // parent shows).
         self.publish_approval(call, &applied);
         tracing::info!(run = %self.run, part = %call.part_id, tool = %call.document.tool, reasons = ?request.reasons, "a tool call waits for the owner");
-        let answer = self.wait(answer).await;
+        let answer = self
+            .wait(async {
+                tokio::select! {
+                    biased;
+                    () = canceled => Ok(None),
+                    answer = answer => answer.map(Some),
+                }
+            })
+            .await;
         drop(waiting);
         self.withdraw_approval();
         answer?.map_err(|_withdrawn| Ending::Interrupted)
@@ -649,12 +709,38 @@ impl RunActor {
         Ok(store.turn_request(&self.turn).await?)
     }
 
-    /// Saves what the owner's choice allows beyond this call: the request's
-    /// grants, for the conversation, its project or every conversation, or a
-    /// rule built from the request's command. A failure to save leaves this
-    /// call allowed, and the next call asks again. A child's grants "for this
-    /// conversation" belong to its parent, so they cover the parent and all
-    /// its children.
+    /// Records the approval and returns the decision to put in the journal.
+    async fn remember_approval(
+        &mut self,
+        request: &ApprovalRequest,
+        accesses: &[Access],
+        choice: Option<&ApprovalChoice>,
+        decision: Decision,
+    ) -> Result<Decision, Ending> {
+        let Some(choice) = choice else {
+            return Ok(decision);
+        };
+        if request.reasons.contains(&ApprovalReason::BrowserSite) {
+            match choice {
+                ApprovalChoice::AllowOnce => {
+                    self.remember_browser_sites(accesses, true);
+                    return Ok(Decision::BrowserSite);
+                }
+                ApprovalChoice::Deny => self.remember_browser_sites(accesses, false),
+                ApprovalChoice::AllowForConversation => {
+                    self.remember_browser_grants(request).await?;
+                }
+                _ => {}
+            }
+        } else if decision.allows() {
+            self.remember(choice, request).await;
+        }
+        Ok(decision)
+    }
+
+    /// Saves a grant or rule beyond this call. A failure to save leaves this
+    /// call allowed. A child's grants for the conversation cover its parent
+    /// and all of the parent's children.
     async fn remember(&self, choice: &ApprovalChoice, request: &ApprovalRequest) {
         let store = &self.runtime.inner.store;
         let ids = &self.runtime.inner.ids;
@@ -757,7 +843,7 @@ impl RunActor {
     /// Reads what the policy and the tool need, fresh for this call: the
     /// workspace, the project and the grants of the authority conversation,
     /// which for a child agent is its parent (ADR-0024, decision 3).
-    async fn surroundings(&self, setup: &Setup) -> Result<Surroundings, Ending> {
+    pub(super) async fn surroundings(&self, setup: &Setup) -> Result<Surroundings, Ending> {
         let inner = &self.runtime.inner;
         let summary = inner.store.conversation_summary(&self.authority).await?;
         let workspace = summary
@@ -824,6 +910,7 @@ impl RunActor {
         // Archives belong to the conversation of the call, also a child's.
         let context = ToolContext {
             conversation_id: self.conversation.clone(),
+            run_id: Some(self.run.clone()),
             workspace,
             store: inner.store.clone(),
             result_limit: result_limit(budget_bytes(setup.budget)),

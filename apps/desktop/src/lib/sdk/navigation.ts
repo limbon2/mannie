@@ -9,7 +9,7 @@ import { page } from '$app/state';
 import type { Attachment } from '#lib/generated/bindings.js';
 import { activities, type NavigateOptions } from '#lib/state/activities.svelte.js';
 import { conversationDraft } from '#lib/state/conversation-draft.svelte.js';
-import { type OpenPanelOptions, sidePanels } from '#lib/state/side-panels.svelte.js';
+import { type OpenPanelOptions, type PanelLabel, sidePanels } from '#lib/state/side-panels.svelte.js';
 import {
   PROVIDER_SETTINGS_SECTION,
   openConversation as showConversation,
@@ -18,6 +18,7 @@ import {
 } from '#lib/utils/chat-urls.js';
 import { PLUGINS_SETTINGS_SECTION } from '#lib/utils/plugins-messages.js';
 import { openSettings } from '#lib/utils/settings-sections.js';
+import { openPanel } from '#lib/utils/side-panels.js';
 
 export type { NavigateOptions } from '#lib/state/activities.svelte.js';
 export type { OpenPanelOptions } from '#lib/state/side-panels.svelte.js';
@@ -78,6 +79,14 @@ export function openProvidersPage(): Promise<void> {
 /** Opens a side panel of a kind that the plugin registered, beside the main view, or shows it if it is open. */
 export function openSidePanel(kind: string, argument: string, options?: OpenPanelOptions): Promise<void> {
   return sidePanels.open(kind, argument, options);
+}
+
+/** Updates the tab label of an open side panel without showing it. */
+export function setSidePanelLabel(kind: string, argument: string, label: PanelLabel): void {
+  const { key } = openPanel(kind, argument);
+  if (sidePanels.state.panels.some((panel) => panel.key === key)) {
+    sidePanels.setLabel(key, label);
+  }
 }
 
 /**

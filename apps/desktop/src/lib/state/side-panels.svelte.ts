@@ -39,6 +39,10 @@ export interface OpenPanelOptions {
   readonly label?: PanelLabel;
   /** The control that opened the panel, where the focus returns when it closes. */
   readonly opener?: HTMLElement | null;
+  /** The argument of a same-kind panel to close as this one opens. */
+  readonly replaceArgument?: string;
+  /** Whether to show the panel. Background opens keep the current panel and leave a full strip alone. */
+  readonly show?: boolean;
   /**
    * Whether the panel's heading takes the focus once it shows; true unless
    * nothing that the owner did opened the panel.
@@ -122,7 +126,16 @@ export class SidePanels {
    */
   async open(kind: string, argument: string, options: OpenPanelOptions = {}): Promise<void> {
     const panel = openPanel(kind, argument);
-    const { label, opener, takesFocus = true } = options;
+    const { label, replaceArgument, show = true, takesFocus = true } = options;
+    const replacing = replaceArgument !== undefined && replaceArgument !== argument;
+    const replaced = replacing ? openPanel(kind, replaceArgument).key : null;
+    const state = this.state;
+    const kept = replaced === null ? state : withPanelClosed(state, replaced);
+    const next = withPanelOpened(kept, panel, show);
+    if (next === kept) {
+      return;
+    }
+    const opener = options.opener ?? (replaced === null ? undefined : this.#openers.get(replaced));
     // A panel that named itself keeps its name over the opener's hint.
     const hasHint = label !== undefined;
     const isNamed = this.#labels.has(panel.key);
@@ -132,10 +145,11 @@ export class SidePanels {
     if (opener) {
       this.#openers.set(panel.key, opener);
     }
-    if (takesFocus) {
+    const focusPanel = show && takesFocus;
+    if (focusPanel) {
       this.focusRequest = panel.key;
     }
-    await this.#navigate(withPanelOpened(this.state, panel));
+    await this.#navigate(next);
   }
 
   /** Names the tab of the panel `key`, once the panel knows what it shows. */

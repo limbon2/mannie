@@ -155,7 +155,8 @@ fn grants_cover(scopes: &[GrantScope], write: &HostWrite<'_>) -> bool {
             | GrantScope::RemoteCommand { .. }
             | GrantScope::Program { .. }
             | GrantScope::ExternalTool { .. }
-            | GrantScope::TerminalCommand { .. } => false,
+            | GrantScope::TerminalCommand { .. }
+            | GrantScope::BrowserSite { .. } => false,
         })
     };
     !write.statements.is_empty()

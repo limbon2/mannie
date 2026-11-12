@@ -56,6 +56,8 @@ pub(crate) fn path_of(access: &Access) -> Result<(PathBuf, &str), ToolFailure> {
         | Access::Program { .. }
         | Access::ExternalTool { .. }
         | Access::TerminalCommand { .. }
+        | Access::BrowserControl { .. }
+        | Access::BrowserAction { .. }
         | Access::Database { .. } => Err(ToolFailure::PathChanged),
     }
 }

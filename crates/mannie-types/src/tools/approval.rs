@@ -52,6 +52,10 @@ pub enum ApprovalReason {
     /// A change of a registered database's schema, which no grant covers
     /// (ADR-0056, decision 7).
     DatabaseSchema,
+    /// The agent has no browser grant for this origin.
+    BrowserSite,
+    /// The agent requests the handoff of a browser the owner controls.
+    BrowserControl,
 }
 
 /// What a grant covers.
@@ -143,6 +147,13 @@ pub enum GrantScope {
         host: TerminalHost,
         /// The command's text.
         command: String,
+    },
+    /// An exact browser origin in the conversation that holds this grant.
+    BrowserSite {
+        /// The plugin whose tool acts on the site.
+        plugin: String,
+        /// The canonical HTTP or HTTPS origin, with its scheme and port.
+        origin: String,
     },
     /// The same statement text on the same registered database, with any
     /// parameters (ADR-0056, decision 7). It covers writes, never a schema
@@ -327,6 +338,8 @@ pub enum Decision {
     /// conversation's places, which runs without asking (ADR-0061,
     /// decision 8).
     Skill,
+    /// The owner allowed this browser origin for the current run (ADR-0063).
+    BrowserSite,
 }
 
 impl Decision {

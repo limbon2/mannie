@@ -124,6 +124,8 @@ impl Tool for ServerTools {
                 | ToolAccess::RemoteCommand(_)
                 | ToolAccess::Program(_)
                 | ToolAccess::TerminalCommand(_)
+                | ToolAccess::BrowserControl(_)
+                | ToolAccess::BrowserAction(_)
                 | ToolAccess::Database(_) => None,
             })
             .collect();

@@ -34,6 +34,42 @@ pub struct Grants<'a> {
     pub always: &'a [GrantScope],
 }
 
+/// A site decision kept only by the run whose owner made it (ADR-0063).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrowserSiteConsent {
+    plugin: String,
+    session: String,
+    origin: String,
+    allowed: bool,
+}
+
+impl BrowserSiteConsent {
+    /// Records the origin and session of a browser access.
+    pub fn of(access: &Access, allowed: bool) -> Option<Self> {
+        let Access::BrowserAction {
+            plugin,
+            session,
+            origin,
+            ..
+        } = access
+        else {
+            return None;
+        };
+        Some(Self {
+            plugin: plugin.clone(),
+            session: session.clone(),
+            origin: origin.clone(),
+            allowed,
+        })
+    }
+
+    /// Whether this decision covers the access's exact site.
+    pub fn covers(&self, access: &Access) -> bool {
+        matches!(access, Access::BrowserAction { plugin, session, origin, .. }
+            if *plugin == self.plugin && *session == self.session && *origin == self.origin)
+    }
+}
+
 /// What the policy decides on.
 #[derive(Debug, Clone, Copy)]
 pub struct PolicyInputs<'a> {
@@ -78,9 +114,12 @@ pub struct PolicyInputs<'a> {
     /// On a worker, its name, which an approval request shows.
     pub host: Option<&'a str>,
     /// On the master, whether the conversation is in full access, which the
-    /// owner switched on (ADR-0029): every operation runs without asking.
+    /// owner switched on (ADR-0029). Browser sites still ask (ADR-0063).
     /// On a worker, its ceiling's mode decides instead.
     pub full_access: bool,
+    /// The browser site decisions of the current run. The runtime never
+    /// saves them (ADR-0063).
+    pub browser_sites: &'a [BrowserSiteConsent],
 }
 
 /// What the policy decided about an operation.
@@ -94,14 +133,16 @@ pub enum Verdict {
     /// The owner decides. The request is boxed because it is far larger than
     /// the other verdicts.
     Ask(Box<ApprovalRequest>),
-    /// A worker's ceiling forbids the operation; nobody can allow it.
+    /// The policy forbids the operation.
     Refused(Refusal),
 }
 
 /// Decides about an operation. A conversation in full access allows every
 /// operation, Mannie's own folders included (ADR-0029, decision 3), except a
 /// write on a worker's database whose host does not take the master's full
-/// access (ADR-0057, decision 6). Otherwise it is allowed only when every
+/// access (ADR-0057, decision 6), unapproved browser sites and requests for
+/// browser control (ADR-0063).
+/// Otherwise it is allowed only when every
 /// access is:
 ///
 /// 1. an access inside Mannie's data or log folders asks;
@@ -195,9 +236,10 @@ pub fn decide(accesses: &[Access], inputs: &PolicyInputs<'_>) -> Verdict {
 
 /// Whether the master's full access allows an access: every access but a
 /// write or a change of a schema on a worker's database whose host does not
-/// take it (ADR-0057, decision 6).
+/// take it (ADR-0057, decision 6) and browser actions (ADR-0063).
 fn takes_full_access(access: &Access) -> bool {
     match access {
+        Access::BrowserAction { .. } | Access::BrowserControl { .. } => false,
         Access::Database { home, class, .. } => {
             *class == StatementClass::Read || home.takes_full_access()
         }
@@ -215,6 +257,13 @@ fn takes_full_access(access: &Access) -> bool {
 /// refused: a write or a change of a schema on a read-only worker's
 /// database is refused, as its host would refuse it (ADR-0057, decision 6).
 fn decide_on_master(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decision, Hold> {
+    if let Some(site) = inputs.browser_sites.iter().find(|site| site.covers(access)) {
+        return if site.allowed {
+            Ok(Decision::BrowserSite)
+        } else {
+            Err(Hold::Refuse(Refusal::BrowserSiteDenied))
+        };
+    }
     if let Access::Database {
         home:
             DatabaseHome::Worker {
@@ -330,6 +379,9 @@ fn decide_under_ceiling(
         Access::ExternalTool { .. } => Err(Hold::Refuse(Refusal::NoExternalTools)),
         Access::TerminalCommand { .. } => Err(Hold::Refuse(Refusal::NoTerminals)),
         Access::Database { .. } => Err(Hold::Refuse(Refusal::NoDatabases)),
+        Access::BrowserAction { .. } | Access::BrowserControl { .. } => {
+            Err(Hold::Refuse(Refusal::NoBrowser))
+        }
     }
 }
 
@@ -445,6 +497,21 @@ fn decide_access(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decision,
         Access::ExternalTool { .. } => decide_external_tool(access, inputs),
         Access::TerminalCommand { .. } => decide_terminal_command(access, inputs),
         Access::Database { .. } => decide_database(access, inputs),
+        Access::BrowserAction { plugin, origin, .. } => {
+            let allowed = inputs.grants.conversation.iter().any(|grant| {
+                matches!(
+                    grant,
+                    GrantScope::BrowserSite { plugin: granted_plugin, origin: granted_origin }
+                        if granted_plugin == plugin && granted_origin == origin
+                )
+            });
+            if allowed {
+                Ok(Decision::Grant)
+            } else {
+                Err(ApprovalReason::BrowserSite)
+            }
+        }
+        Access::BrowserControl { .. } => Err(ApprovalReason::BrowserControl),
     }
 }
 
@@ -509,7 +576,8 @@ fn covers_database(grant: &GrantScope, plugin: &str, key: &DatabaseKey, statemen
         | GrantScope::RemoteCommand { .. }
         | GrantScope::Program { .. }
         | GrantScope::ExternalTool { .. }
-        | GrantScope::TerminalCommand { .. } => false,
+        | GrantScope::TerminalCommand { .. }
+        | GrantScope::BrowserSite { .. } => false,
     }
 }
 
@@ -714,7 +782,7 @@ fn stronger(current: Decision, source: Decision) -> Decision {
         Decision::Rule | Decision::HostRule => 5,
         Decision::AlwaysGrant => 4,
         Decision::ProjectGrant => 3,
-        Decision::Grant => 2,
+        Decision::Grant | Decision::BrowserSite => 2,
         Decision::OwnerNamedProject | Decision::RegisteredDatabase | Decision::Skill => 1,
         _ => 0,
     };
@@ -737,7 +805,8 @@ fn covers_path(grant: &GrantScope, path: &Path, mode: AccessMode) -> bool {
         | GrantScope::Program { .. }
         | GrantScope::ExternalTool { .. }
         | GrantScope::TerminalCommand { .. }
-        | GrantScope::Database { .. } => false,
+        | GrantScope::Database { .. }
+        | GrantScope::BrowserSite { .. } => false,
     }
 }
 
@@ -765,7 +834,8 @@ fn covers_command(grant: &GrantScope, command: &str, directory: &Path, backgroun
         | GrantScope::Program { .. }
         | GrantScope::ExternalTool { .. }
         | GrantScope::TerminalCommand { .. }
-        | GrantScope::Database { .. } => false,
+        | GrantScope::Database { .. }
+        | GrantScope::BrowserSite { .. } => false,
     }
 }
 
@@ -797,7 +867,8 @@ fn covers_remote_command(
         | GrantScope::Program { .. }
         | GrantScope::ExternalTool { .. }
         | GrantScope::TerminalCommand { .. }
-        | GrantScope::Database { .. } => false,
+        | GrantScope::Database { .. }
+        | GrantScope::BrowserSite { .. } => false,
     }
 }
 
@@ -821,7 +892,8 @@ fn covers_terminal_command(
         | GrantScope::RemoteCommand { .. }
         | GrantScope::Program { .. }
         | GrantScope::ExternalTool { .. }
-        | GrantScope::Database { .. } => false,
+        | GrantScope::Database { .. }
+        | GrantScope::BrowserSite { .. } => false,
     }
 }
 
@@ -853,7 +925,8 @@ fn covers_external_tool(
         | GrantScope::RemoteCommand { .. }
         | GrantScope::Program { .. }
         | GrantScope::TerminalCommand { .. }
-        | GrantScope::Database { .. } => false,
+        | GrantScope::Database { .. }
+        | GrantScope::BrowserSite { .. } => false,
     }
 }
 
@@ -886,7 +959,8 @@ fn covers_program(grant: &GrantScope, run: &RunKey<'_>) -> bool {
         | GrantScope::RemoteCommand { .. }
         | GrantScope::ExternalTool { .. }
         | GrantScope::TerminalCommand { .. }
-        | GrantScope::Database { .. } => false,
+        | GrantScope::Database { .. }
+        | GrantScope::BrowserSite { .. } => false,
     }
 }
 
@@ -919,8 +993,8 @@ fn grants_for(asking: &[&Access]) -> Vec<GrantScope> {
 /// The grant that covers an access: its mode in the folder itself for a
 /// folder, in the folder of a file; the same command in the same working
 /// directory; the same command on the same remote host; the same run of an
-/// installed program with its effects; or the same statement on the same
-/// database.
+/// installed program with its effects; the same statement on the same
+/// database; or the same browser origin.
 fn grant_scope(access: &Access) -> Option<GrantScope> {
     match access {
         Access::Path {
@@ -949,7 +1023,11 @@ fn grant_scope(access: &Access) -> Option<GrantScope> {
                 background: *background,
             })
         }
-        Access::Project { .. } => None,
+        Access::Project { .. } | Access::BrowserControl { .. } => None,
+        Access::BrowserAction { plugin, origin, .. } => Some(GrantScope::BrowserSite {
+            plugin: plugin.clone(),
+            origin: origin.clone(),
+        }),
         Access::RemoteCommand {
             plugin,
             target,
@@ -1040,6 +1118,7 @@ fn database_grant(access: &Access) -> Option<GrantScope> {
 /// Whether one grant covers everything another covers.
 fn scope_covers(wider: &GrantScope, narrower: &GrantScope) -> bool {
     match (wider, narrower) {
+        (GrantScope::BrowserSite { .. }, GrantScope::BrowserSite { .. }) => wider == narrower,
         (
             GrantScope::Path { mode, folder },
             GrantScope::Path {

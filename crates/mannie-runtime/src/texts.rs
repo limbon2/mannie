@@ -283,6 +283,12 @@ pub const NO_TERMINALS: &str = "Not run: this host types no commands into termin
 /// runs no plugin (ADR-0056).
 pub const NO_DATABASES: &str = "Not run: this host runs no statements on databases.";
 
+/// The result of a browser action that a worker refused (ADR-0063).
+pub const NO_BROWSER: &str = "Not run: browser sessions belong to the desktop.";
+
+/// The result of a browser action on a site the owner already declined.
+pub const BROWSER_SITE_DENIED: &str = "The owner denied this browser site for the current run.";
+
 /// The result of a call that names a database that the plugin has not
 /// registered (ADR-0056).
 pub fn database_not_registered(key: &str) -> String {

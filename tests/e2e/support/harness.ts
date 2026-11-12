@@ -60,7 +60,22 @@ export interface WindowState {
   readonly visible: boolean;
 }
 
+/** A Browser page window as the core reports it (V12). */
+export interface BrowserSurface {
+  readonly cursor: readonly [number, number] | null;
+  readonly enabled: boolean;
+  readonly focused: boolean;
+  readonly height: number;
+  readonly tab: string;
+  readonly visible: boolean;
+  readonly width: number;
+  readonly x: number;
+  readonly y: number;
+}
+
 interface Harness {
+  browserEvaluate(conversationId: string, tabId: string, expression: string): Promise<string | null>;
+  browserSurface(conversationId: string): Promise<BrowserSurface[]>;
   callUndeclaredPluginCommand(): Promise<string>;
   callUngrantedCommand(): Promise<string>;
   closeMainWindow(): Promise<void>;
@@ -342,4 +357,32 @@ export async function windowState(): Promise<WindowState> {
     }
     return harness.windowState();
   });
+}
+
+/** Where each Browser page window of a conversation is (V12). */
+export async function browserSurfaces(conversationId: string): Promise<BrowserSurface[]> {
+  return browser.execute(async (id) => {
+    const harness = window.mannieValidation;
+    if (harness === undefined) {
+      throw new Error('the validation harness is missing: run the validation build');
+    }
+    return harness.browserSurface(id);
+  }, conversationId);
+}
+
+/** Evaluates an expression in a Browser page and returns its value, or `null`. */
+export async function browserEvaluate(conversationId: string, tabId: string, expression: string): Promise<unknown> {
+  const json = await browser.execute(
+    async (id, tab, code) => {
+      const harness = window.mannieValidation;
+      if (harness === undefined) {
+        throw new Error('the validation harness is missing: run the validation build');
+      }
+      return harness.browserEvaluate(id, tab, code);
+    },
+    conversationId,
+    tabId,
+    expression,
+  );
+  return json === null ? null : (JSON.parse(json) as unknown);
 }

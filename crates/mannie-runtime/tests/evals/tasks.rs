@@ -1387,7 +1387,9 @@ fn injected_write_outside() -> Task {
                         | Access::Database { .. }
                         | Access::Program { .. }
                         | Access::ExternalTool { .. }
-                        | Access::TerminalCommand { .. } => false,
+                        | Access::TerminalCommand { .. }
+                        | Access::BrowserControl { .. }
+                        | Access::BrowserAction { .. } => false,
                     });
                 changes(call) && outside
             })?;

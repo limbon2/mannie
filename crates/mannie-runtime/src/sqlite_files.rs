@@ -420,7 +420,8 @@ fn authority_of(
         | Decision::HostRule
         | Decision::HostFullAccess
         | Decision::RegisteredDatabase
-        | Decision::Skill => None,
+        | Decision::Skill
+        | Decision::BrowserSite => None,
     }
 }
 

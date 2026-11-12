@@ -23,19 +23,24 @@ use std::ptr;
 use mannie_types::tools::ProcessRecord;
 use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, Command};
-use windows_sys::Win32::Foundation::{FILETIME, HANDLE, INVALID_HANDLE_VALUE, MAX_PATH};
+use windows_sys::Win32::Foundation::{
+    FILETIME, HANDLE, INVALID_HANDLE_VALUE, MAX_PATH, WAIT_TIMEOUT,
+};
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
 };
 use windows_sys::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION,
-    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    JobObjectExtendedLimitInformation, SetInformationJobObject, TerminateJobObject,
+    AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob,
+    JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
+    QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
 };
 use windows_sys::Win32::System::SystemInformation::GetSystemDirectoryW;
 use windows_sys::Win32::System::Threading::{
-    CREATE_NO_WINDOW, CREATE_SUSPENDED, GetProcessTimes, OpenThread, ResumeThread,
-    THREAD_SUSPEND_RESUME,
+    CREATE_NO_WINDOW, CREATE_SUSPENDED, GetProcessTimes, OpenProcess, OpenThread,
+    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_QUOTA, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+    ResumeThread, THREAD_SUSPEND_RESUME, TerminateProcess, WaitForSingleObject,
 };
 
 use super::CommandSpec;
@@ -373,4 +378,168 @@ pub(super) fn creation_time(process: RawHandle) -> Option<String> {
         let time = (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime);
         time.to_string()
     })
+}
+
+/// A kill-on-close job for a process tree that Mannie did not start itself,
+/// such as the browser process of a WebView2 environment (ADR-0063,
+/// decision 4). The tree's processes join it after they started, so a
+/// process that their root started earlier, or that left the job, is outside
+/// it; the caller ends those through their root.
+#[derive(Debug)]
+pub struct ProcessTreeJob {
+    job: OwnedHandle,
+}
+
+impl ProcessTreeJob {
+    /// Creates an empty job that ends its processes when it is dropped.
+    ///
+    /// # Errors
+    ///
+    /// The system's error when the job cannot be created.
+    pub fn new() -> io::Result<Self> {
+        Ok(Self { job: create_job()? })
+    }
+
+    /// Puts a running process into the job. A process that is in it already
+    /// succeeds.
+    ///
+    /// # Errors
+    ///
+    /// The system's error when the process cannot be opened or assigned.
+    pub fn assign(&self, process_id: u32) -> io::Result<()> {
+        let process = open_process(
+            process_id,
+            PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
+        )?;
+        let mut inside = 0;
+        // SAFETY: both handles are valid for the call, and `inside` is a
+        // writable BOOL that lives until it returns.
+        let checked = unsafe {
+            IsProcessInJob(
+                process.as_raw_handle() as HANDLE,
+                self.job.as_raw_handle() as HANDLE,
+                &raw mut inside,
+            )
+        };
+        if checked != 0 && inside != 0 {
+            return Ok(());
+        }
+        assign(&self.job, process.as_raw_handle())
+    }
+
+    /// Ends every process in the job at once.
+    ///
+    /// # Errors
+    ///
+    /// The system's error when the job cannot be terminated.
+    pub fn terminate(&self) -> io::Result<()> {
+        // SAFETY: the job handle is valid for as long as `self` lives.
+        let ended = unsafe { TerminateJobObject(self.job.as_raw_handle() as HANDLE, 1) };
+        if ended == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    /// The number of processes that are still in the job.
+    ///
+    /// # Errors
+    ///
+    /// The system's error when the job cannot be queried.
+    pub fn active_processes(&self) -> io::Result<u32> {
+        // SAFETY: the structure is plain data, for which all zeros is a valid
+        // value.
+        let mut accounting: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { mem::zeroed() };
+        let size = u32::try_from(size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>())
+            .map_err(io::Error::other)?;
+        // SAFETY: the job handle is valid, and the pointer and size describe
+        // `accounting`, which lives until the call returns.
+        let queried = unsafe {
+            QueryInformationJobObject(
+                self.job.as_raw_handle() as HANDLE,
+                JobObjectBasicAccountingInformation,
+                (&raw mut accounting).cast(),
+                size,
+                ptr::null_mut(),
+            )
+        };
+        if queried == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(accounting.ActiveProcesses)
+    }
+}
+
+/// Whether a process with this ID is still running.
+#[must_use]
+pub fn process_running(process_id: u32) -> bool {
+    let Ok(process) = open_process(
+        process_id,
+        PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+    ) else {
+        return false;
+    };
+    // SAFETY: the process handle is valid for the call.
+    unsafe { WaitForSingleObject(process.as_raw_handle() as HANDLE, 0) == WAIT_TIMEOUT }
+}
+
+/// Ends a process by its ID. A process that has ended already succeeds.
+pub fn terminate_process(process_id: u32) {
+    if let Ok(process) = open_process(process_id, PROCESS_TERMINATE) {
+        // SAFETY: the process handle is valid for the call. A failure means
+        // that the process is ending or gone, which the caller checks.
+        unsafe { TerminateProcess(process.as_raw_handle() as HANDLE, 1) };
+    }
+}
+
+fn open_process(process_id: u32, access: u32) -> io::Result<OwnedHandle> {
+    // SAFETY: OpenProcess takes plain values; the result is checked before
+    // it is used.
+    let raw = unsafe { OpenProcess(access, 0, process_id) };
+    if raw.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `raw` is a new, valid handle that nothing else owns.
+    Ok(unsafe { OwnedHandle::from_raw_handle(raw as RawHandle) })
+}
+
+#[cfg(test)]
+mod process_tree_job_tests {
+    use super::{ProcessTreeJob, process_running};
+
+    #[test]
+    fn terminating_the_job_ends_a_process_that_joined_it_after_starting() {
+        let mut child = std::process::Command::new("cmd.exe")
+            .args(["/d", "/c", "ping -n 30 127.0.0.1 > nul"])
+            .spawn()
+            .unwrap();
+        let job = ProcessTreeJob::new().unwrap();
+        job.assign(child.id()).unwrap();
+        // Assigning again is harmless.
+        job.assign(child.id()).unwrap();
+        assert!(job.active_processes().unwrap() >= 1);
+        job.terminate().unwrap();
+        child.wait().unwrap();
+        assert!(!process_running(child.id()));
+        assert_eq!(job.active_processes().unwrap(), 0);
+    }
+
+    #[test]
+    fn dropping_the_job_ends_its_processes() {
+        let mut child = std::process::Command::new("cmd.exe")
+            .args(["/d", "/c", "ping -n 30 127.0.0.1 > nul"])
+            .spawn()
+            .unwrap();
+        let job = ProcessTreeJob::new().unwrap();
+        job.assign(child.id()).unwrap();
+        drop(job);
+        child.wait().unwrap();
+        assert!(!process_running(child.id()));
+    }
+
+    #[test]
+    fn a_missing_process_cannot_join() {
+        let job = ProcessTreeJob::new().unwrap();
+        assert!(job.assign(u32::MAX - 3).is_err());
+    }
 }

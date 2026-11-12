@@ -1,0 +1,26 @@
+[package]
+name = "mannie-browser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Browser tools and the conversation browser pane (ADR-0063)."
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+base64 = { workspace = true }
+mannie-plugin-sdk = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+specta = { workspace = true }
+
+[dev-dependencies]
+# The test service's status stream.
+futures-util = { workspace = true }
+mannie-plugin-harness = { workspace = true }
+mannie-plugin-sdk = { workspace = true, features = ["host"] }
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+[lints]
+workspace = true

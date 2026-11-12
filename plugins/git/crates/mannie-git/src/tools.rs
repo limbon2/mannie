@@ -288,6 +288,8 @@ pub(crate) async fn authorized_layout(
             | ToolAccess::Program(_)
             | ToolAccess::ExternalTool(_)
             | ToolAccess::TerminalCommand(_)
+            | ToolAccess::BrowserControl(_)
+            | ToolAccess::BrowserAction(_)
             | ToolAccess::Database(_) => None,
         })
         .collect();

@@ -8,9 +8,11 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+# Boxed futures, so that the registry holds tools as trait objects.
+# A browser replay sends the request's body to DevTools as base64 (ADR-0063).
+base64 = { workspace = true }
 # The names of temporary files of atomic writes.
 fastrand = { workspace = true }
-# Boxed futures, so that the registry holds tools as trait objects.
 futures-util = { workspace = true }
 globset = { workspace = true }
 ignore = { workspace = true }
@@ -22,6 +24,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 # Revisions of files and digests of accesses.
 sha2 = { workspace = true }
+tempfile = { workspace = true }
 thiserror = { workspace = true }
 # The times of files, in the results that the model reads.
 time = { workspace = true }
@@ -30,12 +33,13 @@ time = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
+url = { workspace = true }
+zeroize = { workspace = true }
 
 [dev-dependencies]
-tempfile = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "process", "rt", "rt-multi-thread", "sync", "time"] }
 
-[target.'cfg(target_os = "freebsd")'.dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 libc = { workspace = true }
 
 [target."cfg(unix)".dependencies]

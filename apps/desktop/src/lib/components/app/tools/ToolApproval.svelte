@@ -26,7 +26,11 @@
 
   let { accesses, conversationId, partId, request }: Props = $props();
 
+  const browserSite = $derived(request.reasons.includes('browser_site'));
+  const browserControl = $derived(request.reasons.includes('browser_control'));
   const deciding = $derived(toolsActions.deciding.includes(partId));
+  const offersGrants = $derived(!browserSite && !browserControl && request.grants.length > 0);
+  const offersRule = $derived(!browserSite && !browserControl && request.rule !== null);
   const inProject = $derived(request.project !== null && request.project !== undefined);
   /** The computer that runs the task of the operation, by the name its card shows, or `null` for this computer. */
   const host = $derived(request.host ?? null);
@@ -59,7 +63,7 @@
       </ul>
     </div>
   {/if}
-  {#if request.grants.length > 0}
+  {#if offersGrants}
     <div class="flex flex-col gap-1">
       <p class="text-xs font-medium text-muted-foreground">{m.tools_approval_covers()}</p>
       <ul class="list-disc ps-5 text-sm break-all">
@@ -69,11 +73,23 @@
       </ul>
     </div>
   {/if}
+  {#if browserSite}
+    <p class="text-sm">{m.tools_approval_browser_scope()}</p>
+  {/if}
   <div class="flex flex-wrap gap-2">
-    <Button disabled={deciding} size="sm" onclick={() => decide({ choice: 'allow_once' })}>
-      {m.tools_allow_once()}
-    </Button>
-    {#if request.grants.length > 0}
+    {#if browserSite}
+      <Button disabled={deciding} size="sm" onclick={() => decide({ choice: 'allow_for_conversation' })}>
+        {m.tools_allow_browser_site_for_conversation()}
+      </Button>
+      <Button disabled={deciding} size="sm" variant="outline" onclick={() => decide({ choice: 'allow_once' })}>
+        {m.tools_allow_browser_site()}
+      </Button>
+    {:else}
+      <Button disabled={deciding} size="sm" onclick={() => decide({ choice: 'allow_once' })}>
+        {browserControl ? m.tools_allow_browser_control() : m.tools_allow_once()}
+      </Button>
+    {/if}
+    {#if offersGrants}
       <DropdownMenu.Root>
         <DropdownMenu.Trigger>
           {#snippet child({ props })}
@@ -100,7 +116,7 @@
         </DropdownMenu.Content>
       </DropdownMenu.Root>
     {/if}
-    {#if request.rule !== null}
+    {#if offersRule}
       <Button
         disabled={deciding}
         size="sm"

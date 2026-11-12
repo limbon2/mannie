@@ -34,18 +34,22 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use tokio::sync::{mpsc, oneshot};
+
 use serde::{Deserialize, Serialize};
 
 use crate::BoxFuture;
 use crate::contracts::{
-    AccessMode, ArchiveId, ConversationId, DatabaseKey, ImageBytes, ProgramEffect, StatementClass,
-    ToolHint, ToolServerEndpoint,
+    AccessMode, ArchiveId, ConversationId, DatabaseKey, ImageBytes, ProgramEffect, RunId,
+    StatementClass, ToolHint, ToolServerEndpoint,
 };
 use crate::contributions::{ExtensionPoint, IdRule};
 use crate::points::context::ContextItem;
 use crate::services::background_commands::BackgroundTicket;
 use crate::services::sqlite_files::{DatabaseTicket, Statement, WorkerDatabase};
 use crate::services::terminals::{ExpectedHost, TerminalHostRef};
+
+pub use mannie_types::tools::{BrowserAccess, BrowserAction, BrowserControlAccess};
 
 /// The point of plugins' tools, whose entries are [`PluginTool`]s named by
 /// their tools' names.
@@ -191,6 +195,10 @@ pub enum ToolAccess {
     /// A statement on a database that the owner registered for the plugin
     /// (ADR-0056, decision 5).
     Database(DatabaseAccess),
+    /// An action on an isolated browser session (ADR-0063).
+    BrowserAction(BrowserAccess),
+    /// A request to return control of the browser to the agent.
+    BrowserControl(BrowserControlAccess),
 }
 
 /// A statement on a database that the owner registered for the plugin, as a
@@ -579,6 +587,12 @@ pub enum ToolEffect {
     /// run without asking; its calls are not journaled, and the explore
     /// agent may be offered it (ADR-0056, decision 6).
     ReadsDatabases,
+    /// It observes a loaded browser page under site policy. When the owner
+    /// has control it may request a separately journaled handoff (ADR-0063).
+    ReadsBrowser,
+    /// It controls an isolated browser under site policy. Browser changes
+    /// and handoffs are operations (ADR-0063).
+    BrowserActions,
 }
 
 /// Where a plugin's tool is offered, which the core decides for each model
@@ -677,6 +691,21 @@ impl PluginTool {
         self
     }
 
+    /// The same tool, controlling the browser under site policy (ADR-0063).
+    #[must_use]
+    pub fn with_browser_actions(mut self) -> Self {
+        self.effect = ToolEffect::BrowserActions;
+        self
+    }
+
+    /// The same tool, observing the browser's loaded page under site policy
+    /// or asking the owner to return control (ADR-0063).
+    #[must_use]
+    pub fn with_browser_reads(mut self) -> Self {
+        self.effect = ToolEffect::ReadsBrowser;
+        self
+    }
+
     /// The same tool, offered only where `offering` says.
     #[must_use]
     pub fn offered_where(mut self, offering: ToolOffering) -> Self {
@@ -696,6 +725,9 @@ pub struct ToolCall {
     pub arguments: String,
     /// The conversation of the agent that made the call.
     pub conversation_id: ConversationId,
+    /// The live run of the call, supplied by the host.
+    #[serde(skip)]
+    pub run_id: Option<RunId>,
     /// The conversation's workspace, the canonical folder of its project, or
     /// none for a general conversation (ADR-0038, decision 1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -716,9 +748,18 @@ impl ToolCall {
         Self {
             arguments,
             conversation_id,
+            run_id: None,
             workspace: None,
             attachments: Vec::new(),
         }
+    }
+
+    /// The same call, in the host's live run.
+    #[cfg(feature = "host")]
+    #[must_use]
+    pub fn with_run(mut self, run_id: Option<RunId>) -> Self {
+        self.run_id = run_id;
+        self
     }
 
     /// The same call, in the conversation's workspace.
@@ -755,6 +796,95 @@ const DEFAULT_RESULT_LIMIT: u32 = 64 * 1024;
 
 const fn default_result_limit() -> u32 {
     DEFAULT_RESULT_LIMIT
+}
+
+/// An intercepted request and its authorization channel.
+type BrowserContinuation = (BrowserAccess, oneshot::Sender<bool>);
+
+/// Evidence of the browser accesses that the core authorized for a live call.
+/// The browser still checks that the prepared target is current at dispatch.
+#[derive(Debug, Clone)]
+pub struct BrowserAuthorization {
+    plugin: String,
+    conversation: ConversationId,
+    run: RunId,
+    authorized: Arc<[BrowserAccess]>,
+    control: Option<BrowserControlAccess>,
+    continuations: mpsc::Sender<BrowserContinuation>,
+}
+
+impl PartialEq for BrowserAuthorization {
+    fn eq(&self, other: &Self) -> bool {
+        self.continuations.same_channel(&other.continuations)
+            && self.plugin == other.plugin
+            && self.conversation == other.conversation
+            && self.run == other.run
+            && self.authorized == other.authorized
+            && self.control == other.control
+    }
+}
+
+impl Eq for BrowserAuthorization {}
+
+impl BrowserAuthorization {
+    /// Issues a ticket for an execution. Only the core can issue tickets.
+    #[cfg(feature = "host")]
+    pub fn issue(
+        plugin: String,
+        conversation: ConversationId,
+        run: RunId,
+        authorized: Vec<BrowserAccess>,
+        control: Option<BrowserControlAccess>,
+        continuations: mpsc::Sender<BrowserContinuation>,
+    ) -> Self {
+        Self {
+            plugin,
+            conversation,
+            run,
+            authorized: authorized.into(),
+            control,
+            continuations,
+        }
+    }
+
+    /// The plugin that owns the authorized action.
+    pub fn plugin_id(&self) -> &str {
+        &self.plugin
+    }
+
+    /// The conversation whose browser session the tool may use.
+    pub fn conversation_id(&self) -> &ConversationId {
+        &self.conversation
+    }
+
+    /// The live run for which the host issued this ticket.
+    pub fn run_id(&self) -> &RunId {
+        &self.run
+    }
+
+    /// Whether this live ticket covers this exact prepared access.
+    pub fn permits(&self, access: &BrowserAccess) -> bool {
+        !self.continuations.is_closed() && self.authorized.contains(access)
+    }
+
+    /// Whether the owner explicitly allowed this exact live browser handoff.
+    pub fn permits_control(&self, access: &BrowserControlAccess) -> bool {
+        !self.continuations.is_closed() && self.control.as_ref() == Some(access)
+    }
+
+    /// Waits for authorization to resume the exact held navigation. The
+    /// runtime records the operation before granting permission to resume.
+    pub async fn authorize(&self, access: BrowserAccess) -> bool {
+        if access.action != BrowserAction::ContinueNavigation
+            || !self.authorized.iter().any(|initial| {
+                initial.action != BrowserAction::Observe && initial.session == access.session
+            })
+        {
+            return false;
+        }
+        let (reply, answer) = oneshot::channel();
+        self.continuations.send((access, reply)).await.is_ok() && answer.await.unwrap_or(false)
+    }
 }
 
 /// A call of a plugin's tool that the core authorized and now executes.
@@ -800,6 +930,9 @@ pub struct ToolExecution {
     /// schema (ADR-0056, decision 6).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub database: Option<DatabaseTicket>,
+    /// The in-process browser authorization issued to a live tool call.
+    #[serde(skip)]
+    pub browser: Option<BrowserAuthorization>,
 }
 
 impl ToolExecution {
@@ -818,6 +951,7 @@ impl ToolExecution {
             background: None,
             attachments: Vec::new(),
             database: None,
+            browser: None,
         }
     }
 
@@ -868,6 +1002,14 @@ impl ToolExecution {
     #[must_use]
     pub fn with_background(mut self, ticket: BackgroundTicket) -> Self {
         self.background = Some(ticket);
+        self
+    }
+
+    /// The same execution, with its live browser authorization.
+    #[cfg(feature = "host")]
+    #[must_use]
+    pub fn with_browser(mut self, authorization: BrowserAuthorization) -> Self {
+        self.browser = Some(authorization);
         self
     }
 

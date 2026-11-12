@@ -13,6 +13,7 @@
 //! found in `plugins/` (ADR-0035, decisions 3 and 4), so this crate names no
 //! plugin.
 
+mod browser;
 mod commands;
 mod credentials;
 mod export;

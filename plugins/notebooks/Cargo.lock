@@ -1079,6 +1079,7 @@ dependencies = [
 name = "mannie-tools"
 version = "0.6.1"
 dependencies = [
+ "base64 0.22.1",
  "fastrand",
  "futures-util",
  "globset",
@@ -1092,14 +1093,17 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
  "thiserror",
  "time",
  "tokio",
  "tokio-util",
  "tracing",
+ "url",
  "winapi-util",
  "windows-sys 0.61.2",
  "windows-version",
+ "zeroize",
 ]
 
 [[package]]

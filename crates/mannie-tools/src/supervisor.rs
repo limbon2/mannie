@@ -8,6 +8,7 @@
 //! each unsafe block says why it is sound.
 
 mod background;
+pub(crate) mod browser;
 #[cfg(any(windows, target_os = "linux", target_os = "freebsd"))]
 mod capture;
 #[cfg(target_os = "freebsd")]
@@ -22,7 +23,7 @@ mod unix;
 #[cfg(target_os = "linux")]
 mod unix_terminal;
 #[cfg(windows)]
-mod windows;
+pub(crate) mod windows;
 #[cfg(windows)]
 mod windows_terminal;
 

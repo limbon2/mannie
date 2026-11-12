@@ -312,6 +312,8 @@ const APP_COMMANDS: &[&str] = &[
 /// a grant is refused (V1).
 const VALIDATION_COMMANDS: &[&str] = &[
     "stream_validation_events",
+    "validation_browser_evaluate",
+    "validation_browser_surface",
     "validation_close_main_window",
     "validation_expire_chatgpt_token",
     "validation_opened_links",

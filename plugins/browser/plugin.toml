@@ -1,0 +1,12 @@
+#:schema ../../crates/mannie-plugin-sdk/plugin.schema.json
+# Browser sessions beside a conversation (ADR-0063).
+
+id = "browser"
+sdk = 1
+order = 80
+
+[rust]
+entry = "mannie-browser"
+
+[services]
+browser = 1

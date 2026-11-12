@@ -106,6 +106,7 @@ impl MentionContext {
                 ceiling: self.ceiling.as_ref(),
                 host: None,
                 full_access: self.full_access,
+                browser_sites: &[],
             },
         )
     }

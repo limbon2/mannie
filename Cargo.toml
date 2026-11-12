@@ -119,8 +119,12 @@ tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 url = "2.5.8"
 uuid = { version = "1.28.0", features = ["v7"] }
+# The Browser plugin's pages: WebView2 hosted by the desktop core outside
+# Tauri's webview manager (ADR-0063). Both are in the lock through Tauri.
+webview2-com = "0.39.1"
 # The identity of a file on Windows: its volume serial number and file index.
 winapi-util = "0.1.11"
+windows = "0.62.2"
 windows-native-keyring-store = "1.1.0"
 # Job Objects and the other Windows calls of the process supervisor
 # (ADR-0014).
@@ -188,8 +192,9 @@ string_lit_chars_any = "warn"
 suspicious_xor_used_as_pow = "warn"
 todo = "warn"
 try_err = "warn"
-# unsafe is limited to the platform modules of the process supervisor, and
-# every block there explains why it is sound (engineering standards).
+# unsafe is limited to the platform modules of the process supervisor and the
+# WebView2 module of the desktop core, and every block there explains why it is
+# sound (engineering standards, ADR-0063).
 undocumented_unsafe_blocks = "warn"
 unimplemented = "warn"
 unnecessary_safety_comment = "warn"
@@ -217,8 +222,8 @@ trivial_numeric_casts = "warn"
 unit_bindings = "warn"
 # Items that other crates cannot reach are pub(crate), so each crate's API stays small.
 unreachable_pub = "warn"
-# Platform modules of the process supervisor opt in with
-# #![expect(unsafe_code, reason = "...")].
+# Platform modules of the process supervisor and the desktop core's WebView2
+# module opt in with #![expect(unsafe_code, reason = "...")].
 unsafe_code = "deny"
 unsafe_op_in_unsafe_fn = "deny"
 unused_import_braces = "warn"

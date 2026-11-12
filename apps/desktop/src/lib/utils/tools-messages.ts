@@ -4,6 +4,7 @@
 // description. Paths and commands are content: they enter a message as its
 // arguments and render as text.
 import type {
+  Access,
   AccessMode,
   ApprovalReason,
   DatabaseHome,
@@ -322,6 +323,12 @@ export function notRunMessage(reason: NotRunReason): string {
 /** What the ceiling of the computer that runs a task forbids. */
 export function refusalMessage(refusal: Refusal): string {
   switch (refusal) {
+    case 'browser_site_denied': {
+      return m.tools_refusal_browser_site_denied();
+    }
+    case 'no_browser': {
+      return m.tools_refusal_no_browser();
+    }
     case 'no_programs_on_host': {
       return m.tools_refusal_no_programs_on_host();
     }
@@ -349,6 +356,12 @@ export function refusalMessage(refusal: Refusal): string {
 /** Why the policy asks the owner about an operation. */
 export function approvalReasonMessage(reason: ApprovalReason): string {
   switch (reason) {
+    case 'browser_control': {
+      return m.tools_reason_browser_control();
+    }
+    case 'browser_site': {
+      return m.tools_reason_browser_site();
+    }
     case 'change_in_workspace': {
       return m.tools_reason_change_in_workspace();
     }
@@ -415,6 +428,9 @@ export function decisionMessage(decision: Decision): string {
     case 'always_grant': {
       return m.tools_decision_always_grant();
     }
+    case 'browser_site': {
+      return m.tools_decision_browser_site();
+    }
     case 'denied': {
       return m.tools_decision_denied();
     }
@@ -468,6 +484,27 @@ export function accessModeLabel(mode: AccessMode): string {
     }
     case 'write': {
       return m.tools_mode_write();
+    }
+  }
+}
+
+/** What the agent will do on the browser site. */
+export function browserActionLabel(action: Extract<Access, { kind: 'browser_action' }>['action']): string {
+  switch (action) {
+    case 'continue_navigation': {
+      return m.tools_access_browser_continue_navigation();
+    }
+    case 'interact': {
+      return m.tools_access_browser_interact();
+    }
+    case 'navigate': {
+      return m.tools_access_browser_navigate();
+    }
+    case 'observe': {
+      return m.tools_access_browser_observe();
+    }
+    case 'tabs': {
+      return m.tools_access_browser_tabs();
     }
   }
 }
@@ -689,6 +726,9 @@ export function terminalRulePlace(target: TerminalTarget): string {
 
 /** What a grant allows, such as "Changing files in D:\Projects\app". */
 export function grantScopeMessage(scope: GrantScope): string {
+  if (scope.kind === 'browser_site') {
+    return m.tools_grant_browser_site({ origin: scope.origin });
+  }
   if (scope.kind === 'command') {
     return m.tools_grant_command({ command: scope.command, folder: scope.workingDirectory });
   }

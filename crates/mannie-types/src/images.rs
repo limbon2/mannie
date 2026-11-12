@@ -13,6 +13,8 @@ use specta::Type;
 use crate::chat::ChatError;
 use crate::ids::{ConversationId, PartId};
 
+pub mod jpeg;
+
 /// The most images that one message carries.
 pub const MAX_IMAGES: usize = 10;
 

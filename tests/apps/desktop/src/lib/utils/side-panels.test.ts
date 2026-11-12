@@ -135,6 +135,23 @@ describe('opening, showing and closing', () => {
     expect(state.shown).toBe(THREE.key);
   });
 
+  it('opens a panel in the background without changing the visible panel', () => {
+    const original = { panels: [ONE, TWO], shown: ONE.key };
+
+    expect(withPanelOpened(original, THREE, false)).toEqual({
+      panels: [ONE, TWO, THREE],
+      shown: ONE.key,
+    });
+    expect(withPanelOpened(original, TWO, false)).toBe(original);
+  });
+
+  it('leaves a full strip alone when opening a panel in the background', () => {
+    const panels = Array.from({ length: MAX_OPEN_PANELS }, (_, index) => openPanel('example', String(index)));
+    const original = { panels, shown: panels[0]?.key ?? null };
+
+    expect(withPanelOpened(original, ONE, false)).toBe(original);
+  });
+
   it('shows only a panel that is open', () => {
     const state: SidePanelState = { panels: [ONE, TWO], shown: TWO.key };
 

@@ -97,12 +97,13 @@ pub struct FeatureSection {
 /// The services that only a plugin may declare, never one of its features:
 /// those whose sections of the manifest, module of the store or executor
 /// belong to the plugin.
-pub const PLUGIN_ONLY_SERVICES: [&str; 5] = [
+pub const PLUGIN_ONLY_SERVICES: [&str; 6] = [
     "store",
     "secrets",
     "processes",
     "executor-host",
     "credentials",
+    "browser",
 ];
 
 /// The `[rust]` table of a manifest: the plugin's Rust code.

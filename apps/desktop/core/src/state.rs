@@ -30,6 +30,7 @@ use mannie_types::startup::StartupProblem;
 use mannie_types::window::WindowSettings;
 use tauri::{App, Manager};
 
+use crate::browser::BrowserProvider;
 use crate::credentials::{KeyringVault, SecretsProvider};
 use crate::file_dialog::FileDialogProvider;
 use crate::ipc::subscriptions::Subscriptions;
@@ -44,6 +45,7 @@ struct Services {
     store: Store,
     runtime: Runtime,
     plugins: PluginHost,
+    browser: Arc<BrowserProvider>,
 }
 
 #[derive(Debug)]
@@ -119,6 +121,26 @@ impl Core {
             .map(|services| &services.plugins)
     }
 
+    /// The Browser provider, for the validation commands (V12).
+    #[cfg(feature = "validation")]
+    pub(crate) fn browser(&self) -> Option<&BrowserProvider> {
+        self.inner
+            .services
+            .as_ref()
+            .ok()
+            .map(|services| services.browser.as_ref())
+    }
+
+    /// Releases a conversation's browser session when the owner deletes it.
+    pub(crate) async fn end_conversation_browser(
+        &self,
+        conversation: &mannie_types::ids::ConversationId,
+    ) {
+        if let Ok(services) = &self.inner.services {
+            services.browser.deleted(conversation).await;
+        }
+    }
+
     /// Why the core did not start, if it did not.
     pub(crate) fn problem(&self) -> Option<&StartupProblem> {
         self.inner.services.as_ref().err()
@@ -178,6 +200,11 @@ impl Core {
     pub(crate) fn page_loaded(&self) {
         self.inner.subscriptions.cancel_all();
         self.inner.window_requests.unsubscribe();
+        // The Browser pane's pages float over the app; the old page's panes
+        // are gone, so no page may stay (ADR-0063, decision 5).
+        if let Ok(services) = &self.inner.services {
+            services.browser.page_loaded();
+        }
     }
 
     /// Records a link that a validation build would have opened.
@@ -217,6 +244,11 @@ impl Core {
     /// afterwards.
     pub(crate) async fn shutdown(&self) {
         self.inner.subscriptions.cancel_all();
+        // Browser sessions end first, their processes before their folders,
+        // so that no request of theirs outlives Mannie (ADR-0063, decision 4).
+        if let Ok(services) = &self.inner.services {
+            services.browser.shutdown().await;
+        }
         if let Some(runtime) = self.runtime() {
             runtime.shutdown().await;
         }
@@ -404,6 +436,12 @@ fn start_runtime(
     // owner's SQLite files, which the owner chooses in that dialog.
     let mut services: Vec<Arc<dyn ServiceProvider>> = runtime.service_providers();
     services.push(runtime.sqlite_files_provider(Some(file_dialog.database_chooser())));
+    let browser = Arc::new(BrowserProvider::new(
+        store.clone(),
+        app.handle().clone(),
+        store.path().with_file_name("browser"),
+    ));
+    services.push(Arc::<BrowserProvider>::clone(&browser));
     let file_dialog: Arc<dyn ServiceProvider> = file_dialog;
     services.extend(mannie_store::service_providers(&store));
     services.push(Arc::new(SecretsProvider::new(vault)));
@@ -430,6 +468,7 @@ fn start_runtime(
         store,
         runtime,
         plugins,
+        browser,
     })
 }
 

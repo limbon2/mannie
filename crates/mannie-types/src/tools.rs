@@ -21,7 +21,9 @@ mod question;
 mod settings;
 mod terminal;
 
-pub use access::{Access, AccessMode, EntryCount};
+pub use access::{
+    Access, AccessMode, BrowserAccess, BrowserAction, BrowserControlAccess, EntryCount,
+};
 pub use approval::{
     ApprovalChoice, ApprovalReason, ApprovalRequest, DecideApproval, Decision, GrantScope,
     RemoteTarget, RuleProposal,

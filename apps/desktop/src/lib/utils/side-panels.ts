@@ -98,13 +98,17 @@ export function withSidePanels(search: string, state: SidePanelState): URLSearch
 }
 
 /**
- * The panels after opening `panel`: it shows, in a tab of its own at the end
- * when it is new, and the oldest panels close beyond the limit.
+ * Opens a panel at the end. Foreground opens show it and can evict the oldest panel.
+ * Background opens preserve the visible panel and leave a full strip alone.
  */
-export function withPanelOpened(state: SidePanelState, panel: OpenPanel): SidePanelState {
+export function withPanelOpened(state: SidePanelState, panel: OpenPanel, show = true): SidePanelState {
   const isOpen = state.panels.some((open) => open.key === panel.key);
+  const backgroundUnavailable = !show && (isOpen || state.panels.length >= MAX_OPEN_PANELS);
+  if (backgroundUnavailable) {
+    return state;
+  }
   const panels = isOpen ? state.panels : [...state.panels, panel].slice(-MAX_OPEN_PANELS);
-  return { panels, shown: panel.key };
+  return { panels, shown: show ? panel.key : (state.shown ?? panel.key) };
 }
 
 /** The panels with the panel `key` shown, when it is open. */

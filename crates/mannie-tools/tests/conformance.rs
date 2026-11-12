@@ -54,6 +54,7 @@ impl Harness {
         let store = Store::open(&folder.path().join("mannie.sqlite"), &options).unwrap();
         let context = ToolContext {
             conversation_id: ConversationId::parse("0199e0f2-0000-7000-8000-000000000001").unwrap(),
+            run_id: None,
             workspace: Some(root.clone()),
             store,
             result_limit: mannie_tools::RESULT_LIMIT_BYTES,
@@ -124,6 +125,7 @@ impl Harness {
             part_id: Some(PartId::parse(CALL_PART).unwrap()),
             activity: None,
             decision: None,
+            browser: None,
         })
         .await
     }
@@ -871,6 +873,8 @@ fn path_accesses(accesses: &[Access]) -> Vec<(String, AccessMode, bool)> {
             | Access::Program { .. }
             | Access::ExternalTool { .. }
             | Access::TerminalCommand { .. }
+            | Access::BrowserControl { .. }
+            | Access::BrowserAction { .. }
             | Access::Database { .. } => {
                 panic!("not a path access: {access:?}")
             }

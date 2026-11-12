@@ -2418,6 +2418,7 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "specta",
  "specta-typescript",
  "tauri",
@@ -2429,6 +2430,10 @@ dependencies = [
  "time",
  "tokio",
  "tracing",
+ "url",
+ "webview2-com",
+ "windows",
+ "zeroize",
 ]
 
 [[package]]
@@ -2608,6 +2613,7 @@ dependencies = [
 name = "mannie-tools"
 version = "0.6.1"
 dependencies = [
+ "base64 0.22.1",
  "fastrand",
  "futures-util",
  "globset",
@@ -2627,9 +2633,11 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "url",
  "winapi-util",
  "windows-sys 0.61.2",
  "windows-version",
+ "zeroize",
 ]
 
 [[package]]

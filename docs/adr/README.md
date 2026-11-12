@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                           |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Living index                                                                                                                                                                              |
-| Last updated | 2026-11-08                                                                                                                                                                                |
+| Last updated | 2026-11-12                                                                                                                                                                                |
 | Related      | [ADR-0001](0001-record-architecture-decisions.md), [Template](0000-template.md), [Decisions](../roadmap/milestones.md#5-decisions), [Validations](../roadmap/milestones.md#4-validations) |
 
 [ADR-0001](0001-record-architecture-decisions.md) describes the process, and new ADRs start from the [template](0000-template.md).
@@ -80,3 +80,5 @@ Each ADR has exactly one of these statuses:
 | [0060](0060-let-agents-save-plans-that-the-owner-runs.md)                              | Let agents save plans that the owner runs later                                               | Accepted (D49)         | M17        |
 | [0061](0061-let-agents-use-the-skills-that-the-owner-installs.md)                      | Let agents use the skills that the owner installs                                             | Accepted (D50)         | M18        |
 | [0062](0062-let-the-owner-pay-for-model-calls-with-a-chatgpt-plan.md)                  | Let the owner pay for model calls with a ChatGPT plan                                         | Accepted (D51)         | M19        |
+| [0063](0063-give-agents-an-isolated-browser-beside-the-conversation.md)                | Give agents an isolated browser beside the conversation                                       | Accepted (D57)         | V12        |
+| [0064](0064-let-browser-access-follow-the-conversation.md)                             | Let browser access follow the conversation                                                    | Accepted (D57)         | V12        |

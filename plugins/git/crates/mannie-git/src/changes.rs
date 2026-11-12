@@ -492,6 +492,8 @@ fn normalized(access: &ToolAccess) -> ToolAccess {
         ToolAccess::RemoteCommand(_)
         | ToolAccess::ExternalTool(_)
         | ToolAccess::TerminalCommand(_)
+        | ToolAccess::BrowserControl(_)
+        | ToolAccess::BrowserAction(_)
         | ToolAccess::Database(_) => access.clone(),
     }
 }
@@ -547,6 +549,8 @@ pub(crate) mod testing {
                     | ToolAccess::RemoteCommand(_)
                     | ToolAccess::ExternalTool(_)
                     | ToolAccess::TerminalCommand(_)
+                    | ToolAccess::BrowserControl(_)
+                    | ToolAccess::BrowserAction(_)
                     | ToolAccess::Database(_) => None,
                 })
                 .flatten()

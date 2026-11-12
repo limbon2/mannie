@@ -10,7 +10,7 @@ use mannie_types::tools::{
     TerminalHost, TerminalTarget, ToolHint, ToolServerEndpoint, ToolsError, effect_keys,
 };
 
-use super::{Grants, PolicyInputs, SavedRule, Verdict, decide, saved_rule};
+use super::{BrowserSiteConsent, Grants, PolicyInputs, SavedRule, Verdict, decide, saved_rule};
 use crate::ceiling::Ceiling;
 use crate::digest::digest;
 
@@ -118,6 +118,7 @@ struct Inputs {
     ceiling: Option<Ceiling>,
     host: Option<String>,
     full_access: bool,
+    browser_sites: Vec<BrowserSiteConsent>,
 }
 
 impl Inputs {
@@ -140,6 +141,7 @@ impl Inputs {
             ceiling: None,
             host: None,
             full_access: false,
+            browser_sites: Vec::new(),
         }
     }
 
@@ -181,6 +183,7 @@ impl Inputs {
                 ceiling: self.ceiling.as_ref(),
                 host: self.host.as_deref(),
                 full_access: self.full_access,
+                browser_sites: &self.browser_sites,
             },
         )
     }
@@ -2679,4 +2682,100 @@ fn a_read_of_a_project_s_skill_keeps_the_workspace_as_its_source() {
         inputs.decide(&[read("/work/.agents/skills/pdf/SKILL.md")]),
         Verdict::Allowed(Decision::Workspace)
     );
+}
+
+#[test]
+fn a_browser_grant_matches_only_its_plugin_session_and_exact_origin() {
+    use mannie_types::tools::{BrowserAccess, BrowserAction};
+
+    let action = |plugin: &str, origin: &str, session: &str| {
+        Access::from_browser(
+            plugin.to_owned(),
+            BrowserAccess::new(
+                origin.to_owned(),
+                session.to_owned(),
+                "document-1".to_owned(),
+                BrowserAction::Observe,
+            ),
+        )
+    };
+    let origin = "http://127.0.0.1:8000";
+    let mut inputs = Inputs {
+        full_access: true,
+        ..Inputs::new()
+    };
+    assert!(matches!(
+        inputs.decide(&[action("browser", origin, "session-1")]),
+        Verdict::Ask(_)
+    ));
+    let granted = action("browser", origin, "session-1");
+    inputs
+        .browser_sites
+        .push(BrowserSiteConsent::of(&granted, true).unwrap());
+    assert_eq!(
+        inputs.decide(&[action("browser", origin, "session-1")]),
+        Verdict::Allowed(Decision::BrowserSite),
+    );
+    for access in [
+        action("browser", "http://127.0.0.1:8001", "session-1"),
+        action("browser", "https://127.0.0.1:8000", "session-1"),
+        action("browser", origin, "session-2"),
+        action("other-browser", origin, "session-1"),
+    ] {
+        assert!(matches!(inputs.decide(&[access]), Verdict::Ask(_)));
+    }
+    assert_eq!(
+        Inputs::worker(CeilingMode::FullAccess).decide(&[action("browser", origin, "session-1")]),
+        Verdict::Refused(Refusal::NoBrowser),
+    );
+    inputs.browser_sites[0] = BrowserSiteConsent::of(&granted, false).unwrap();
+    assert_eq!(
+        inputs.decide(&[granted]),
+        Verdict::Refused(Refusal::BrowserSiteDenied),
+    );
+}
+
+#[test]
+fn a_saved_browser_site_is_scoped_to_its_conversation_plugin_and_exact_origin() {
+    use mannie_types::tools::{BrowserAccess, BrowserAction};
+
+    let origin = "https://example.test:8443";
+    let scope = GrantScope::BrowserSite {
+        plugin: "browser".to_owned(),
+        origin: origin.to_owned(),
+    };
+    let action = |plugin: &str, origin: &str| {
+        Access::from_browser(
+            plugin.to_owned(),
+            BrowserAccess::new(
+                origin.to_owned(),
+                "new-session".to_owned(),
+                "page".to_owned(),
+                BrowserAction::Interact,
+            ),
+        )
+    };
+    let mut inputs = Inputs {
+        full_access: true,
+        project_grants: vec![scope.clone()],
+        always_grants: vec![scope.clone()],
+        ..Inputs::new()
+    };
+    assert!(matches!(
+        inputs.decide(&[action("browser", origin)]),
+        Verdict::Ask(request) if request.grants == [scope.clone()]
+    ));
+    inputs.grants.push(scope);
+    assert_eq!(
+        inputs.decide(&[action("browser", origin)]),
+        Verdict::Allowed(Decision::Grant)
+    );
+    for access in [
+        action("other-browser", origin),
+        action("browser", "http://example.test:8443"),
+        action("browser", "https://sub.example.test:8443"),
+        action("browser", "https://example.test"),
+    ] {
+        assert!(matches!(inputs.decide(&[access]), Verdict::Ask(_)));
+    }
 }
