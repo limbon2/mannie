@@ -572,7 +572,7 @@ impl BoundBrowser {
         if running >= MAX_SESSIONS {
             return Err(BrowserError::LimitReached);
         }
-        let started = self.registry.engine.start().await.map_err(error)?;
+        let started = Engine::start(&self.registry.engine).await.map_err(error)?;
         let views = started.host;
         let host: Arc<dyn ChromeHost> = Arc::<dyn SessionHost>::clone(&views);
         let gate: Arc<dyn ChromeNavigation> = Arc::<NavigationGate>::clone(&slot.gate);

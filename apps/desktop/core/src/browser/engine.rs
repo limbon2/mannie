@@ -112,16 +112,16 @@ impl Engine {
 
     /// Starts a session with its own folder, processes and job.
     #[cfg(windows)]
-    pub(crate) async fn start(&self) -> Result<StartedSession, ChromeError> {
+    pub(crate) async fn start(engine: &Self) -> Result<StartedSession, ChromeError> {
         if !Self::supported() {
             return Err(ChromeError::NotInstalled);
         }
-        super::webview2::start(self.ui.clone(), &self.root).await
+        super::webview2::start(engine.ui.clone(), &engine.root).await
     }
 
     /// Reports that this platform has no browser engine.
     #[cfg(not(windows))]
-    pub(crate) fn start(&self) -> std::future::Ready<Result<StartedSession, ChromeError>> {
+    pub(crate) fn start(_engine: &Self) -> std::future::Ready<Result<StartedSession, ChromeError>> {
         std::future::ready(Err(ChromeError::Incompatible))
     }
 }
