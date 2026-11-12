@@ -921,7 +921,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "mannie-mcp"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -944,7 +944,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-mcp-testing"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "base64 0.22.1",
  "http-body-util",
@@ -958,7 +958,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-plugin-harness"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "futures-util",
  "mannie-plugin-sdk",
@@ -973,7 +973,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-plugin-sdk"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "base64 0.22.1",
  "futures-util",
@@ -992,7 +992,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-plugins"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "futures-util",
  "mannie-plugin-sdk",
@@ -1006,7 +1006,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-provider"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -1028,7 +1028,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-runtime"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "base64 0.22.1",
  "fastrand",
@@ -1053,7 +1053,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-store"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "mannie-plugin-sdk",
  "mannie-types",
@@ -1071,7 +1071,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-tools"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "base64 0.22.1",
  "fastrand",
@@ -1102,7 +1102,7 @@ dependencies = [
 
 [[package]]
 name = "mannie-types"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "serde",
  "specta",
