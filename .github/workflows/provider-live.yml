@@ -11,7 +11,9 @@
 # MANNIE_LIVE_<NAME>_BASE_URL and MANNIE_LIVE_<NAME>_MODEL, the secret
 # MANNIE_LIVE_<NAME>_API_KEY when the server needs a key, and, where they
 # apply, the variables MANNIE_LIVE_<NAME>_REASONING_EFFORT, _CONTEXT_WINDOW and
-# _SERVER_VERSION (crates/mannie-provider/tests/live.rs).
+# _SERVER_VERSION (crates/mannie-provider/tests/live.rs). The step that runs
+# the live tests names each NAME's secret in full, so a new NAME adds its
+# secret there.
 name: Provider live tests
 
 on:
@@ -71,7 +73,17 @@ jobs:
       - name: Run the live tests
         if: steps.settings.outputs.configured == 'true'
         env:
-          MANNIE_LIVE_API_KEY: ${{ secrets[format('MANNIE_LIVE_{0}_API_KEY', matrix.name)] }}
+          # GitHub sends a job that builds a secret's name with format() every
+          # secret of the repository, the release signing key among them, so
+          # each secret is named in full and the job receives only these.
+          MANNIE_LIVE_API_KEY: >-
+            ${{ (matrix.name == 'OPENAI_RESPONSES' && secrets.MANNIE_LIVE_OPENAI_RESPONSES_API_KEY)
+            || (matrix.name == 'OPENAI_CHAT' && secrets.MANNIE_LIVE_OPENAI_CHAT_API_KEY)
+            || (matrix.name == 'OPENROUTER' && secrets.MANNIE_LIVE_OPENROUTER_API_KEY)
+            || (matrix.name == 'VLLM' && secrets.MANNIE_LIVE_VLLM_API_KEY)
+            || (matrix.name == 'SGLANG' && secrets.MANNIE_LIVE_SGLANG_API_KEY)
+            || (matrix.name == 'LM_STUDIO' && secrets.MANNIE_LIVE_LM_STUDIO_API_KEY)
+            || '' }}
         run: cargo test --locked -p mannie-provider --features testing --test live -- --ignored --nocapture
 
   ollama:
