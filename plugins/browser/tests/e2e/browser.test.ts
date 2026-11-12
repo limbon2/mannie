@@ -383,7 +383,20 @@ function privateBrowserProfiles(): string[] {
     .map((entry) => entry.name);
 }
 
-describe('Browser pane', () => {
+if (process.platform !== 'win32') {
+  it('explains that Browser requires Windows when enabled on an unsupported system', async () => {
+    await waitForApp();
+    await openSettings('plugins.settings');
+
+    const plugin = '[data-plugin="browser"]';
+    await expect($(plugin)).toHaveAttribute('data-plugin-state', 'off');
+    await $(`${plugin} [data-plugin-switch]`).click();
+    await waitForShownText(`${plugin}[data-plugin-state="failed"] [role="status"]`, /Browser needs Windows/u);
+  });
+}
+
+const describeBrowserPane = process.platform === 'win32' ? describe : describe.skip;
+describeBrowserPane('Browser pane', () => {
   let provider: ProviderServer;
   let site: Site;
 
