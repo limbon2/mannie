@@ -87,7 +87,7 @@ ring = "0.17.14"
 rusqlite = { version = "0.41.1", features = ["bundled"] }
 # Safe calls of Unix file and process functions: `openat` without following
 # links, child subreapers and process file descriptors (ADR-0014).
-rustix = "1.1.5"
+rustix = "1.1.6"
 # ring is the only crypto provider (ADR-0008); rustls's default features would
 # add aws-lc.
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
