@@ -39,6 +39,8 @@ pub(crate) struct SurfaceReport {
     pub(crate) visible: bool,
     /// The visible agent cursor's hotspot in page-window pixels.
     pub(crate) cursor: Option<(i32, i32)>,
+    /// The sRGB color used to paint the agent cursor's accent.
+    pub(crate) cursor_accent: Option<[u8; 3]>,
     /// Whether owner input reaches it.
     pub(crate) enabled: bool,
     /// Whether it has the keyboard focus.

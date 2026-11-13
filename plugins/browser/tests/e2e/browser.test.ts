@@ -252,7 +252,11 @@ async function allowBrowserSite(): Promise<string> {
   return waitForCompleteReply();
 }
 
-async function clickBrowserTarget(page: Record<string, unknown>, name: string): Promise<string> {
+async function clickBrowserTarget(
+  page: Record<string, unknown>,
+  name: string,
+  checkCursor?: () => Promise<void>,
+): Promise<string> {
   const target = await cursorTarget(name);
   await sendLines([
     callMessage('browser_interact', {
@@ -263,6 +267,7 @@ async function clickBrowserTarget(page: Record<string, unknown>, name: string): 
     callMessage('browser_observe', { screenshot: false }),
   ]);
   await waitForCursorAt(name, target);
+  await checkCursor?.();
   return waitForCompleteReply();
 }
 
@@ -287,17 +292,21 @@ async function waitForSurface(
 ): Promise<BrowserSurface> {
   const { conversationId, tabId } = await shownTab();
   let last: BrowserSurface | undefined;
-  await browser.waitUntil(
-    async () => {
-      const [placeholder, scale] = await browser.execute((selector) => {
-        const element = document.querySelector(selector);
-        return [element?.getBoundingClientRect().toJSON() as DOMRect, window.devicePixelRatio] as const;
-      }, VIEWPORT);
-      last = (await browserSurfaces(conversationId)).find((surface) => surface.tab === tabId);
-      return last === undefined ? false : accept(last, placeholder, scale);
-    },
-    { timeout: 15_000, timeoutMsg: `${message}: ${JSON.stringify(last)}` },
-  );
+  try {
+    await browser.waitUntil(
+      async () => {
+        const [placeholder, scale] = await browser.execute((selector) => {
+          const element = document.querySelector(selector);
+          return [element?.getBoundingClientRect().toJSON() as DOMRect, window.devicePixelRatio] as const;
+        }, VIEWPORT);
+        last = (await browserSurfaces(conversationId)).find((surface) => surface.tab === tabId);
+        return last === undefined ? false : accept(last, placeholder, scale);
+      },
+      { timeout: 15_000, timeoutMsg: message },
+    );
+  } catch (cause) {
+    throw new Error(`${message}: ${JSON.stringify(last)}`, { cause });
+  }
   if (last === undefined) {
     throw new Error(message);
   }
@@ -341,6 +350,38 @@ async function waitForCursorAt(name: string, [x, y]: [number, number]): Promise<
       cause: error,
     });
   }
+}
+
+/** Samples the effective CSS primary after optionally changing the app's palette or mode. */
+async function cursorAccent(primaryRose: boolean | null, dark: boolean | null): Promise<readonly number[]> {
+  return browser.execute(
+    (rose, isDark) => {
+      const root = document.documentElement;
+      if (rose !== null) {
+        root.classList.toggle('palette-primary-rose', rose);
+      }
+      if (isDark !== null) {
+        root.classList.toggle('dark', isDark);
+      }
+      const context = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+      if (context === null) {
+        throw new Error('could not sample the active primary color');
+      }
+      context.fillStyle = getComputedStyle(root).getPropertyValue('--primary');
+      context.fillRect(0, 0, 1, 1);
+      return Array.from(context.getImageData(0, 0, 1, 1).data.slice(0, 3));
+    },
+    primaryRose,
+    dark,
+  );
+}
+
+async function waitForCursorAccent(expected: readonly number[], message: string): Promise<void> {
+  await waitForSurface(({ cursor, cursorAccent: actual }) => {
+    const isVisible = cursor !== null;
+    const matches = JSON.stringify(actual) === JSON.stringify(expected);
+    return isVisible && matches;
+  }, message);
 }
 
 /** Reads a value in the shown tab's page. */
@@ -498,7 +539,21 @@ describeBrowserPane('Browser pane', () => {
     const ready = await waitForSurface(coversPlaceholder, 'the agent page did not appear');
     expect(ready.cursor).toBeNull();
 
-    const firstClick = await clickBrowserTarget(observation(arrived), 'First target');
+    const defaultAccent = await cursorAccent(null, null);
+    expect(ready.cursorAccent).toEqual(defaultAccent);
+    const wasDark = await browser.execute(() => document.documentElement.classList.contains('dark'));
+    const firstClick = await clickBrowserTarget(observation(arrived), 'First target', async () => {
+      const roseAccent = await cursorAccent(true, null);
+      expect(roseAccent).not.toEqual(defaultAccent);
+      await waitForCursorAccent(roseAccent, 'the visible agent cursor did not pick up the new primary color');
+      const otherModeAccent = await cursorAccent(true, !wasDark);
+      expect(otherModeAccent).not.toEqual(roseAccent);
+      await waitForCursorAccent(
+        otherModeAccent,
+        'the visible agent cursor did not pick up the new light or dark shade',
+      );
+    });
+    await cursorAccent(false, wasDark);
     expect(firstClick).toContain('First pressed');
     await waitForShownText($(ACTIVITY), 'The agent clicked on the page.');
     expect(await clickBrowserTarget(observation(firstClick), 'Second target')).toContain('Second pressed');

@@ -509,6 +509,8 @@ Exit criteria:
 
 Accepted features go into new milestones as they arrive, and each of those milestones ends with a 0.x release. A later decision declares 1.0, with its own gate: a security review, user documentation, and another look at code signing (D16). Desktop updates were part of that gate, and M20 builds them (D55).
 
+- [Interface colors](../features/interface-colors.md) is in development with its release milestone open.
+
 ## 4. Validations
 
 Each validation settles one or more Proposed ADRs. The validation code stays in the repository as tests or benchmarks. The [M0 validation results](m0-validation.md), the [M1 validation results](m1-validation.md), the [M2 validation results](m2-validation.md), the [M3 validation results](m3-validation.md), the [M4 validation results](m4-validation.md), the [M5 validation results](m5-validation.md), the [M9 validation results](m9-validation.md), the [M12 validation results](m12-validation.md), the [M14 validation results](m14-validation.md), the [M19 validation results](m19-validation.md) and the [M20 validation results](m20-validation.md) record what each milestone's validations showed.

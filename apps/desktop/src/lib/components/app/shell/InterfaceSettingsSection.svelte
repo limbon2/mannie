@@ -14,6 +14,8 @@
   import { settingsFailureMessage } from '#lib/utils/error-messages.js';
   import { availableLocales, languageName, systemLocale } from '#lib/utils/languages.js';
 
+  import InterfacePaletteSettings from './InterfacePaletteSettings.svelte';
+
   interface LanguageItem {
     readonly label: string;
     readonly value: string;
@@ -126,4 +128,5 @@
       {/each}
     </RadioGroup.Root>
   </Field.Set>
+  <InterfacePaletteSettings />
 </Field.Group>

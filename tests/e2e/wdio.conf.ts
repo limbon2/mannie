@@ -11,7 +11,13 @@ import { existsSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { basename, isAbsolute, join, resolve, sep } from 'node:path';
 
-import { applicationPath, plantDatabaseFromTheFuture, repository, resetDataDirectory } from './support/app.ts';
+import {
+  applicationPath,
+  dataDirectory,
+  plantDatabaseFromTheFuture,
+  repository,
+  resetDataDirectory,
+} from './support/app.ts';
 import { shardOf } from './support/shard.ts';
 
 const DRIVER_PORT = 4444;
@@ -38,6 +44,15 @@ function nativeDriverArguments(): string[] {
   const useInstalledDriver = process.platform === 'win32' && existsSync(edgeDriver);
   return useInstalledDriver ? ['--native-driver', edgeDriver] : [];
 }
+
+const tauriOptions = {
+  application: applicationPath(),
+  // Edge WebDriver otherwise creates a fresh temporary profile on every
+  // session. The validation data folder is reset once per spec, so a
+  // restart inside the spec reopens the same webview storage.
+  webviewOptions:
+    process.platform === 'win32' ? { userDataFolder: join(dataDirectory(), 'webdriver-profile') } : undefined,
+};
 
 /** Resolves once something listens on the port, or rejects after the timeout. */
 async function waitForPort(port: number, timeoutMillis: number): Promise<void> {
@@ -68,7 +83,7 @@ export const config: WebdriverIO.Config = {
   capabilities: [
     {
       // @ts-expect-error -- tauri-driver's capability is not part of the WebdriverIO types.
-      'tauri:options': { application: applicationPath() },
+      'tauri:options': tauriOptions,
     },
   ],
   // Driver requests stay on this machine. Retrying a failed new session

@@ -10,6 +10,20 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Swatches preview each color independently of the active palette. */
+@theme static {
+  --color-palette-swatch-blue: var(--color-blue-500);
+  --color-palette-swatch-teal: var(--color-teal-500);
+  --color-palette-swatch-green: var(--color-green-500);
+  --color-palette-swatch-amber: var(--color-amber-500);
+  --color-palette-swatch-violet: var(--color-violet-500);
+  --color-palette-swatch-rose: var(--color-rose-500);
+  --color-palette-swatch-neutral: var(--color-neutral-500);
+  --color-palette-swatch-slate: var(--color-slate-500);
+  --color-palette-swatch-stone: var(--color-stone-500);
+  --color-palette-swatch-olive: var(--color-olive-500);
+}
+
 :root {
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
@@ -19,6 +33,8 @@
   --popover-foreground: oklch(0.145 0 0);
   --primary: oklch(0.205 0 0);
   --primary-foreground: oklch(0.985 0 0);
+  --tooltip: color-mix(in oklab, var(--primary) 78%, var(--popover));
+  --tooltip-foreground: var(--primary-foreground);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
@@ -28,9 +44,10 @@
   --accent-foreground: oklch(0.205 0 0);
   /* Darker than the preset's 0.577, whose text on its own 10% tint, as in destructive buttons, has a contrast of 4:1, below WCAG 2.1 AA. This gives 5.6:1. */
   --destructive: oklch(0.5 0.2 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --ring: var(--primary);
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
@@ -44,7 +61,7 @@
   --sidebar-accent: oklch(0.97 0 0);
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar-ring: var(--ring);
   /*
    * The lines that a diff adds and removes (ADR-0039): a tint behind the line
    * and a color for its marker. Foreground text on a tint has a contrast
@@ -74,9 +91,9 @@
   --accent-foreground: oklch(0.985 0 0);
   /* Lighter than the preset's 0.704, whose text on its own 20% tint over a popover has a contrast of 4.6:1, at the edge of WCAG 2.1 AA. This gives 5.2:1. */
   --destructive: oklch(0.76 0.17 22.216);
+  --destructive-foreground: oklch(0.205 0 0);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
@@ -89,11 +106,112 @@
   --sidebar-accent: oklch(0.269 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
   --diff-added: oklch(0.3 0.06 145);
   --diff-added-foreground: oklch(0.85 0.12 145);
   --diff-removed: oklch(0.3 0.07 25);
   --diff-removed-foreground: oklch(0.85 0.1 25);
+}
+
+:root.palette-primary-blue {
+  --palette-primary-light: var(--color-blue-900);
+  --palette-primary-dark: var(--color-blue-200);
+}
+
+:root.palette-primary-teal {
+  --palette-primary-light: var(--color-teal-900);
+  --palette-primary-dark: var(--color-teal-200);
+}
+
+:root.palette-primary-green {
+  --palette-primary-light: var(--color-green-900);
+  --palette-primary-dark: var(--color-green-200);
+}
+
+:root.palette-primary-amber {
+  --palette-primary-light: var(--color-amber-900);
+  --palette-primary-dark: var(--color-amber-200);
+}
+
+:root.palette-primary-violet {
+  --palette-primary-light: var(--color-violet-900);
+  --palette-primary-dark: var(--color-violet-200);
+}
+
+:root.palette-primary-rose {
+  --palette-primary-light: var(--color-rose-900);
+  --palette-primary-dark: var(--color-rose-200);
+}
+
+/* These shades keep text readable on the primary button's translucent hover background. */
+:root:is(
+  .palette-primary-blue,
+  .palette-primary-teal,
+  .palette-primary-green,
+  .palette-primary-amber,
+  .palette-primary-violet,
+  .palette-primary-rose
+) {
+  --primary: var(--palette-primary-light);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+
+  &.dark {
+    --primary: var(--palette-primary-dark);
+  }
+}
+
+:root.palette-surface-slate {
+  --palette-surface-50: var(--color-slate-50);
+  --palette-surface-100: var(--color-slate-100);
+  --palette-surface-200: var(--color-slate-200);
+  --palette-surface-700: var(--color-slate-700);
+  --palette-surface-800: var(--color-slate-800);
+  --palette-surface-900: var(--color-slate-900);
+  --palette-surface-950: var(--color-slate-950);
+}
+
+:root.palette-surface-stone {
+  --palette-surface-50: var(--color-stone-50);
+  --palette-surface-100: var(--color-stone-100);
+  --palette-surface-200: var(--color-stone-200);
+  --palette-surface-700: var(--color-stone-700);
+  --palette-surface-800: var(--color-stone-800);
+  --palette-surface-900: var(--color-stone-900);
+  --palette-surface-950: var(--color-stone-950);
+}
+
+:root.palette-surface-olive {
+  --palette-surface-50: var(--color-olive-50);
+  --palette-surface-100: var(--color-olive-100);
+  --palette-surface-200: var(--color-olive-200);
+  --palette-surface-700: var(--color-olive-700);
+  --palette-surface-800: var(--color-olive-800);
+  --palette-surface-900: var(--color-olive-900);
+  --palette-surface-950: var(--color-olive-950);
+}
+
+:root:is(.palette-surface-slate, .palette-surface-stone, .palette-surface-olive) {
+  --background: var(--palette-surface-50);
+  --card: var(--background);
+  --popover: var(--background);
+  --secondary: var(--palette-surface-100);
+  --muted: var(--secondary);
+  --accent: var(--secondary);
+  --sidebar: var(--palette-surface-100);
+  --sidebar-accent: var(--palette-surface-200);
+  --border: var(--palette-surface-200);
+  --input: var(--border);
+  --sidebar-border: var(--border);
+
+  &.dark {
+    --background: var(--palette-surface-950);
+    --card: var(--palette-surface-900);
+    --popover: var(--card);
+    --secondary: var(--palette-surface-800);
+    --sidebar: var(--card);
+    --sidebar-accent: var(--secondary);
+    --border: var(--palette-surface-700);
+  }
 }
 
 @theme inline {
@@ -117,6 +235,7 @@
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-destructive: var(--destructive);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
@@ -128,6 +247,8 @@
   --color-primary: var(--primary);
   --color-popover-foreground: var(--popover-foreground);
   --color-popover: var(--popover);
+  --color-tooltip-foreground: var(--tooltip-foreground);
+  --color-tooltip: var(--tooltip);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
   --color-foreground: var(--foreground);
@@ -143,7 +264,7 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border outline-ring;
   }
   body {
     @apply bg-background text-foreground;
@@ -242,4 +363,91 @@
   [data-slot="alert"]:has(> svg) > [data-slot="alert-title"] {
     grid-column-start: 2;
   }
+}
+
+/* The translucent registry ring can fall below 3:1 even with a dark primary.
+   Keep the existing ring size and separate invalid-field status colors. */
+[class~="focus-visible:ring-ring/50"]:focus-visible:not([aria-invalid="true"]),
+[class~="has-focus-visible:ring-ring/50"]:has(:focus-visible),
+[data-slot="field-label"]:has(> [data-slot="field"]):has(:focus-visible),
+[data-slot="input-group"]:has([data-slot="input-group-control"]:focus-visible):not(:has([aria-invalid="true"])) {
+  --tw-ring-color: var(--ring);
+}
+
+[class~="focus-visible:ring-ring/50"][aria-invalid="true"]:focus-visible,
+[data-slot="input-group"]:has([data-slot="input-group-control"][aria-invalid="true"]:focus-visible) {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+
+[data-slot="tooltip-content"] [data-slot="kbd"] {
+  background-color: color-mix(in oklab, var(--tooltip), var(--primary) 45%);
+  color: var(--tooltip-foreground);
+}
+
+/*
+ * Active items tint the surface they sit on. Keep the tint separate from
+ * --accent, which is also used for neutral hover states and terminal selection.
+ */
+[data-sidebar="sidebar"] {
+  --selection-base: var(--sidebar);
+}
+
+:is(
+  [data-slot="command"],
+  [data-slot="select-content"],
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-mention-list]
+) {
+  --selection-base: var(--popover);
+}
+
+[data-slot="tabs-list"][data-variant="default"] {
+  --selection-base: var(--muted);
+}
+
+:is(
+  [data-sidebar="menu-button"][data-active="true"],
+  [data-sidebar="menu-sub-button"][data-active="true"],
+  [data-slot="command-item"][data-selected],
+  [data-slot="select-item"]:is([data-selected], [data-highlighted]),
+  [data-slot="dropdown-menu-item"][data-highlighted]:not([data-variant="destructive"]),
+  [data-slot="dropdown-menu-sub-trigger"]:is([data-highlighted], [data-state="open"]),
+  [data-slot="dropdown-menu-radio-item"]:is([aria-checked="true"], [data-highlighted]),
+  [data-slot="dropdown-menu-checkbox-item"]:is([aria-checked="true"], [aria-checked="mixed"], [data-highlighted]),
+  [data-slot="tabs-list"][data-variant="default"] > [data-slot="tabs-trigger"][aria-selected="true"],
+  [data-side-panel-tab]:has(> [role="tab"][aria-selected="true"]),
+  [data-slot="table-row"][data-state="selected"],
+  [data-mention-option][aria-selected="true"],
+  button[aria-current="true"]
+) {
+  background-color: color-mix(in oklab, var(--primary) 8%, var(--selection-base, var(--background)));
+  color: var(--primary);
+}
+
+/* Distinguish the keyboard's active option from the value already selected. */
+:is(
+  [data-slot="command-item"][data-selected],
+  [data-slot="select-item"][data-highlighted],
+  [data-slot="dropdown-menu-item"][data-highlighted]:not([data-variant="destructive"]),
+  [data-slot="dropdown-menu-sub-trigger"][data-highlighted],
+  [data-slot="dropdown-menu-radio-item"][data-highlighted],
+  [data-slot="dropdown-menu-checkbox-item"][data-highlighted],
+  [data-mention-option][aria-selected="true"]
+) {
+  outline: 1px solid var(--primary);
+  outline-offset: -1px;
+}
+
+[data-slot="tabs-list"][data-variant="line"] > [data-slot="tabs-trigger"][aria-selected="true"],
+[data-sidebar="menu-sub-button"][data-active="true"] > svg:not([role="img"]),
+[data-slot="command-item"][data-selected] > :is(svg, [data-slot="command-shortcut"]),
+[data-slot="select-item"][data-selected] > span:first-child > .lucide-check,
+:is([data-slot="dropdown-menu-radio-item-indicator"], [data-slot="dropdown-menu-checkbox-item-indicator"]) > svg {
+  color: var(--primary);
+}
+
+[data-slot="tabs-list"][data-variant="line"] > [data-slot="tabs-trigger"][aria-selected="true"]::after {
+  background-color: var(--primary);
 }

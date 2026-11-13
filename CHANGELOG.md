@@ -4,6 +4,14 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+### Added
+
+- Choose primary and surface colors independently in Interface settings. Mannie applies the colors as you choose them and remembers them on this device.
+
+### Fixed
+
+- Apply the palette to keyboard focus rings, tooltips, and selection highlights. Keep destructive buttons readable on hover.
+
 ## 0.8.0 - 2026-11-13
 
 ### Added

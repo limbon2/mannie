@@ -167,6 +167,7 @@ pub(super) fn place(session: u64, placement: &BrowserPlacement) {
     let Some(tab) = tab_ui(session, &placement.tab_id) else {
         return;
     };
+    cursor::set_accent(&tab, placement.cursor_accent);
     // SAFETY: the container is a live window of this thread.
     let Ok(parent) = (unsafe { windows::Win32::UI::WindowsAndMessaging::GetParent(tab.container) })
     else {
