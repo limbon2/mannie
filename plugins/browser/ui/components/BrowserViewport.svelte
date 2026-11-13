@@ -14,6 +14,9 @@
   let still = $state.raw<BrowserFrame | null>(null);
   let hidden = $state(false);
 
+  // Browser status changes can replace the tab record without changing the native surface's identity.
+  const surfaceConversationId = $derived(conversationId);
+  const surfaceTabId = $derived(tabId);
   const shownStill = $derived(hidden ? still : null);
 
   async function showStill(): Promise<void> {
@@ -25,7 +28,7 @@
 
   function surface(element: HTMLElement): () => void {
     return followSurface(element, {
-      conversationId,
+      conversationId: surfaceConversationId,
       onHidden(covered) {
         if (covered === hidden) {
           return;
@@ -37,7 +40,7 @@
           still = null;
         }
       },
-      tabId,
+      tabId: surfaceTabId,
     });
   }
 </script>

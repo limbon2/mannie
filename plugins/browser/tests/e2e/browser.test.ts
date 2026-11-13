@@ -252,12 +252,8 @@ async function allowBrowserSite(): Promise<string> {
   return waitForCompleteReply();
 }
 
-async function clickBrowserTarget(
-  page: Record<string, unknown>,
-  name: string,
-  checkCursor?: () => Promise<void>,
-): Promise<string> {
-  const target = await cursorTarget(name);
+async function clickBrowserTarget(page: Record<string, unknown>, name: string, checkAccent = false): Promise<string> {
+  await startCursorSample(await cursorTarget(name), checkAccent);
   await sendLines([
     callMessage('browser_interact', {
       action: { kind: 'click', target: { kind: 'element', reference: reference(page.outline, 'name', name) } },
@@ -266,9 +262,9 @@ async function clickBrowserTarget(
     'next',
     callMessage('browser_observe', { screenshot: false }),
   ]);
-  await waitForCursorAt(name, target);
-  await checkCursor?.();
-  return waitForCompleteReply();
+  const reply = await waitForCompleteReply();
+  await expectCursorSample(name);
+  return reply;
 }
 
 /** The conversation and tab that the visible Browser panel shows. */
@@ -333,55 +329,107 @@ async function cursorTarget(name: string): Promise<[number, number]> {
   return target as [number, number];
 }
 
-async function waitForCursorAt(name: string, [x, y]: [number, number]): Promise<void> {
-  let seen: BrowserSurface['cursor'] = null;
-  try {
-    await waitForSurface(({ cursor }) => {
-      if (cursor === null) {
-        return false;
-      }
-      seen = cursor;
-      const nearX = Math.abs(cursor[0] - x) <= 2;
-      const nearY = Math.abs(cursor[1] - y) <= 2;
-      return nearX && nearY;
-    }, `the agent cursor did not reach ${name}`);
-  } catch (error) {
-    throw new Error(`Expected the agent cursor at ${name} (${String(x)}, ${String(y)}), saw ${JSON.stringify(seen)}`, {
-      cause: error,
-    });
+declare global {
+  interface Window {
+    browserCursorSample?: Promise<string | null>;
   }
 }
 
-/** Samples the effective CSS primary after optionally changing the app's palette or mode. */
-async function cursorAccent(primaryRose: boolean | null, dark: boolean | null): Promise<readonly number[]> {
-  return browser.execute(
-    (rose, isDark) => {
-      const root = document.documentElement;
-      if (rose !== null) {
-        root.classList.toggle('palette-primary-rose', rose);
+/** Starts before the click so the webview can sample and recolor the cursor without WebDriver delays. */
+async function startCursorSample(target: readonly [number, number], checkAccent: boolean): Promise<void> {
+  const { conversationId, tabId } = await shownTab();
+  await browser.execute(
+    (conversation, tab, [x, y], checkColor) => {
+      const harness = window.mannieValidation;
+      if (harness === undefined) {
+        throw new Error('the validation harness is missing');
       }
-      if (isDark !== null) {
-        root.classList.toggle('dark', isDark);
-      }
-      const context = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
-      if (context === null) {
-        throw new Error('could not sample the active primary color');
-      }
-      context.fillStyle = getComputedStyle(root).getPropertyValue('--primary');
-      context.fillRect(0, 0, 1, 1);
-      return Array.from(context.getImageData(0, 0, 1, 1).data.slice(0, 3));
+
+      const waitForCursor = async (stage: string, accent: string | null, whileVisible = false): Promise<void> => {
+        const deadline = performance.now() + 15_000;
+        let surface: BrowserSurface | undefined;
+        while (performance.now() < deadline) {
+          surface = (await harness.browserSurface(conversation)).find((entry) => entry.tab === tab);
+          const cursor = surface?.cursor;
+          const isVisible = cursor !== undefined && cursor !== null;
+          if (isVisible) {
+            const nearX = Math.abs(cursor[0] - x) <= 2;
+            const nearY = Math.abs(cursor[1] - y) <= 2;
+            const matchesAccent = accent === null || JSON.stringify(surface?.cursorAccent) === accent;
+            if (nearX && nearY && matchesAccent) {
+              return;
+            }
+          } else if (whileVisible) {
+            break;
+          }
+          await new Promise<void>((resolve) => {
+            window.setTimeout(resolve, 50);
+          });
+        }
+        const expected = accent === null ? '' : ` with RGB ${accent}`;
+        throw new Error(
+          `${stage}: expected a visible cursor at (${String(x)}, ${String(y)})${expected}, saw ${JSON.stringify(surface)}`,
+        );
+      };
+
+      window.browserCursorSample = (async () => {
+        if (!checkColor) {
+          await waitForCursor('position', null);
+          return null;
+        }
+
+        const root = document.documentElement;
+        const wasRose = root.classList.contains('palette-primary-rose');
+        const wasDark = root.classList.contains('dark');
+        const canvas = document.createElement('canvas');
+        canvas.width = 1;
+        canvas.height = 1;
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        if (context === null) {
+          throw new Error('could not sample the active primary color');
+        }
+        const readPrimary = (): string => {
+          context.fillStyle = getComputedStyle(root).getPropertyValue('--primary');
+          context.fillRect(0, 0, 1, 1);
+          return JSON.stringify(Array.from(context.getImageData(0, 0, 1, 1).data.slice(0, 3)));
+        };
+
+        try {
+          const original = readPrimary();
+          await waitForCursor('initial primary', original);
+
+          root.classList.add('palette-primary-rose');
+          const rose = readPrimary();
+          if (rose === original) {
+            throw new Error(`selecting Rose left the CSS primary at ${rose}`);
+          }
+          await waitForCursor('Rose primary', rose, true);
+
+          root.classList.toggle('dark', !wasDark);
+          const otherMode = readPrimary();
+          if (otherMode === rose) {
+            throw new Error(`switching Light/Dark left the CSS primary at ${rose}`);
+          }
+          await waitForCursor('Light/Dark change', otherMode, true);
+          return null;
+        } finally {
+          root.classList.toggle('palette-primary-rose', wasRose);
+          root.classList.toggle('dark', wasDark);
+        }
+      })().catch((error: unknown) => (error instanceof Error ? error.message : String(error)));
     },
-    primaryRose,
-    dark,
+    conversationId,
+    tabId,
+    target,
+    checkAccent,
   );
 }
 
-async function waitForCursorAccent(expected: readonly number[], message: string): Promise<void> {
-  await waitForSurface(({ cursor, cursorAccent: actual }) => {
-    const isVisible = cursor !== null;
-    const matches = JSON.stringify(actual) === JSON.stringify(expected);
-    return isVisible && matches;
-  }, message);
+async function expectCursorSample(name: string): Promise<void> {
+  const failure = await browser.execute(() => window.browserCursorSample ?? 'the cursor sampler did not start');
+  if (failure !== null) {
+    throw new Error(`Expected the agent cursor at ${name}. ${failure}`);
+  }
 }
 
 /** Reads a value in the shown tab's page. */
@@ -539,21 +587,7 @@ describeBrowserPane('Browser pane', () => {
     const ready = await waitForSurface(coversPlaceholder, 'the agent page did not appear');
     expect(ready.cursor).toBeNull();
 
-    const defaultAccent = await cursorAccent(null, null);
-    expect(ready.cursorAccent).toEqual(defaultAccent);
-    const wasDark = await browser.execute(() => document.documentElement.classList.contains('dark'));
-    const firstClick = await clickBrowserTarget(observation(arrived), 'First target', async () => {
-      const roseAccent = await cursorAccent(true, null);
-      expect(roseAccent).not.toEqual(defaultAccent);
-      await waitForCursorAccent(roseAccent, 'the visible agent cursor did not pick up the new primary color');
-      const otherModeAccent = await cursorAccent(true, !wasDark);
-      expect(otherModeAccent).not.toEqual(roseAccent);
-      await waitForCursorAccent(
-        otherModeAccent,
-        'the visible agent cursor did not pick up the new light or dark shade',
-      );
-    });
-    await cursorAccent(false, wasDark);
+    const firstClick = await clickBrowserTarget(observation(arrived), 'First target', true);
     expect(firstClick).toContain('First pressed');
     await waitForShownText($(ACTIVITY), 'The agent clicked on the page.');
     expect(await clickBrowserTarget(observation(firstClick), 'Second target')).toContain('Second pressed');
