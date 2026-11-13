@@ -252,7 +252,12 @@ async function allowBrowserSite(): Promise<string> {
   return waitForCompleteReply();
 }
 
-async function clickBrowserTarget(page: Record<string, unknown>, name: string, checkAccent = false): Promise<string> {
+async function clickBrowserTarget(
+  page: Record<string, unknown>,
+  name: string,
+  feedback: string,
+  checkAccent = false,
+): Promise<string> {
   await startCursorSample(await cursorTarget(name), checkAccent);
   await sendLines([
     callMessage('browser_interact', {
@@ -263,6 +268,7 @@ async function clickBrowserTarget(page: Record<string, unknown>, name: string, c
     callMessage('browser_observe', { screenshot: false }),
   ]);
   const reply = await waitForCompleteReply();
+  expect(reply).toContain(feedback);
   await expectCursorSample(name);
   return reply;
 }
@@ -587,10 +593,9 @@ describeBrowserPane('Browser pane', () => {
     const ready = await waitForSurface(coversPlaceholder, 'the agent page did not appear');
     expect(ready.cursor).toBeNull();
 
-    const firstClick = await clickBrowserTarget(observation(arrived), 'First target', true);
-    expect(firstClick).toContain('First pressed');
+    const firstClick = await clickBrowserTarget(observation(arrived), 'First target', 'First pressed', true);
     await waitForShownText($(ACTIVITY), 'The agent clicked on the page.');
-    expect(await clickBrowserTarget(observation(firstClick), 'Second target')).toContain('Second pressed');
+    await clickBrowserTarget(observation(firstClick), 'Second target', 'Second pressed');
 
     await clickWithText(`${PANEL} button:not(:disabled)`, 'Take over');
     await waitForShownText($(PANEL), expect.stringContaining('You have control'));
