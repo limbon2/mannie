@@ -252,8 +252,8 @@ async function allowBrowserSite(): Promise<string> {
   return waitForCompleteReply();
 }
 
-async function clickBrowserTarget(page: Record<string, unknown>, name: string): Promise<string> {
-  const target = await cursorTarget(name);
+async function clickBrowserTarget(page: Record<string, unknown>, name: string, feedback: string): Promise<string> {
+  await sampleCursor(await cursorTarget(name));
   await sendLines([
     callMessage('browser_interact', {
       action: { kind: 'click', target: { kind: 'element', reference: reference(page.outline, 'name', name) } },
@@ -262,8 +262,10 @@ async function clickBrowserTarget(page: Record<string, unknown>, name: string): 
     'next',
     callMessage('browser_observe', { screenshot: false }),
   ]);
-  await waitForCursorAt(name, target);
-  return waitForCompleteReply();
+  const reply = await waitForCompleteReply();
+  expect(reply).toContain(feedback);
+  await expectSampledCursor(name);
+  return reply;
 }
 
 /** The conversation and tab that the visible Browser panel shows. */
@@ -324,22 +326,53 @@ async function cursorTarget(name: string): Promise<[number, number]> {
   return target as [number, number];
 }
 
-async function waitForCursorAt(name: string, [x, y]: [number, number]): Promise<void> {
-  let seen: BrowserSurface['cursor'] = null;
-  try {
-    await waitForSurface(({ cursor }) => {
-      if (cursor === null) {
-        return false;
+interface CursorSample {
+  readonly matched: boolean;
+  readonly surface: BrowserSurface | null;
+  readonly target: readonly [number, number];
+}
+
+declare global {
+  interface Window {
+    browserCursorSample?: Promise<CursorSample>;
+  }
+}
+
+/** Samples the native cursor while WebDriver sends the message that moves it. */
+async function sampleCursor(target: readonly [number, number]): Promise<void> {
+  const { conversationId, tabId } = await shownTab();
+  await browser.execute(
+    (conversation, tab, point) => {
+      const harness = window.mannieValidation;
+      if (harness === undefined) {
+        throw new Error('the validation harness is missing');
       }
-      seen = cursor;
-      const nearX = Math.abs(cursor[0] - x) <= 2;
-      const nearY = Math.abs(cursor[1] - y) <= 2;
-      return nearX && nearY;
-    }, `the agent cursor did not reach ${name}`);
-  } catch (error) {
-    throw new Error(`Expected the agent cursor at ${name} (${String(x)}, ${String(y)}), saw ${JSON.stringify(seen)}`, {
-      cause: error,
-    });
+      window.browserCursorSample = (async () => {
+        const deadline = performance.now() + 15_000;
+        let surface: BrowserSurface | null = null;
+        while (performance.now() < deadline) {
+          surface = (await harness.browserSurface(conversation)).find((entry) => entry.tab === tab) ?? null;
+          const cursor = surface?.cursor;
+          if (cursor != null && Math.abs(cursor[0] - point[0]) <= 2 && Math.abs(cursor[1] - point[1]) <= 2) {
+            return { matched: true, surface, target: point };
+          }
+          await new Promise<void>((resolve) => {
+            window.setTimeout(resolve, 50);
+          });
+        }
+        return { matched: false, surface, target: point };
+      })();
+    },
+    conversationId,
+    tabId,
+    target,
+  );
+}
+
+async function expectSampledCursor(name: string): Promise<void> {
+  const sample = await browser.execute(() => window.browserCursorSample);
+  if (sample?.matched !== true) {
+    throw new Error(`Expected the agent cursor at ${name}, saw ${JSON.stringify(sample)}`);
   }
 }
 
@@ -498,10 +531,9 @@ describeBrowserPane('Browser pane', () => {
     const ready = await waitForSurface(coversPlaceholder, 'the agent page did not appear');
     expect(ready.cursor).toBeNull();
 
-    const firstClick = await clickBrowserTarget(observation(arrived), 'First target');
-    expect(firstClick).toContain('First pressed');
+    const firstClick = await clickBrowserTarget(observation(arrived), 'First target', 'First pressed');
     await waitForShownText($(ACTIVITY), 'The agent clicked on the page.');
-    expect(await clickBrowserTarget(observation(firstClick), 'Second target')).toContain('Second pressed');
+    await clickBrowserTarget(observation(firstClick), 'Second target', 'Second pressed');
 
     await clickWithText(`${PANEL} button:not(:disabled)`, 'Take over');
     await waitForShownText($(PANEL), expect.stringContaining('You have control'));
