@@ -1,17 +1,14 @@
-//! Canonical certificate identities for owner-confirmed session exceptions.
+//! Canonical certificate identities for owner-confirmed exceptions.
 
 #[cfg(windows)]
 use std::collections::HashMap;
 use std::net::Ipv6Addr;
-use std::sync::Arc;
 #[cfg(windows)]
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
-use mannie_plugin_sdk::contracts::ConversationId;
 #[cfg(windows)]
 use mannie_plugin_sdk::services::browser::BrowserCertificateException;
 use mannie_plugin_sdk::services::browser::BrowserError;
-use mannie_store::Store;
 use url::Host;
 #[cfg(windows)]
 use url::Url;
@@ -38,7 +35,8 @@ impl CertificatePin {
         })
     }
 
-    pub(super) fn fingerprint_text(&self) -> String {
+    #[cfg(any(windows, test))]
+    fn fingerprint_text(&self) -> String {
         use std::fmt::Write as _;
 
         let mut text = String::with_capacity(64);
@@ -54,29 +52,6 @@ impl CertificatePin {
             hostname: self.hostname.clone(),
             fingerprint: self.fingerprint_text(),
         }
-    }
-
-    pub(super) async fn record_confirmation(
-        &self,
-        store: &Store,
-        conversation: &ConversationId,
-        session_id: &str,
-    ) -> Result<(), BrowserError> {
-        store
-            .record_browser_certificate_confirmation(
-                conversation,
-                session_id,
-                &self.hostname,
-                &self.fingerprint,
-            )
-            .await
-            .map_err(|error| {
-                tracing::warn!(
-                    error.code = error.code(),
-                    "could not record a Browser certificate confirmation"
-                );
-                BrowserError::CertificateJournalFailed
-            })
     }
 }
 
@@ -200,21 +175,11 @@ mod tests {
         assert!(parse_fingerprint(&separated.replace(':', "-")).is_none());
     }
 
-    #[tokio::test]
-    async fn a_journal_failure_refuses_the_certificate_confirmation() {
-        let directory = tempfile::tempdir().unwrap();
-        let options = mannie_store::StoreOptions::new(
-            directory.path().join("backups"),
-            Arc::new(mannie_types::clock::SystemClock),
-        );
-        let store = Store::open(&directory.path().join("test.sqlite"), &options).unwrap();
-        let missing = ConversationId::parse("0199e0f2-0000-7000-8000-000000000001").unwrap();
+    #[test]
+    fn certificate_pin_uses_the_canonical_hostname_and_fingerprint() {
         let pin = CertificatePin::parse("LOCALHOST", &"AB".repeat(32)).unwrap();
+        assert_eq!(pin.hostname, "localhost");
         assert_eq!(pin.fingerprint_text(), "ab".repeat(32));
-        assert_eq!(
-            pin.record_confirmation(&store, &missing, "session").await,
-            Err(BrowserError::CertificateJournalFailed)
-        );
     }
 
     #[cfg(windows)]

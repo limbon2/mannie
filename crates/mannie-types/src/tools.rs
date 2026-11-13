@@ -22,7 +22,8 @@ mod settings;
 mod terminal;
 
 pub use access::{
-    Access, AccessMode, BrowserAccess, BrowserAction, BrowserControlAccess, EntryCount,
+    Access, AccessMode, BrowserAccess, BrowserAction, BrowserControlAccess,
+    BrowserCredentialAccess, EntryCount,
 };
 pub use approval::{
     ApprovalChoice, ApprovalReason, ApprovalRequest, DecideApproval, Decision, GrantScope,

@@ -491,19 +491,8 @@ async fn end_session(shared: &Arc<Shared>) -> bool {
 }
 
 impl PageViews for WebView2Session {
-    fn trust_certificate(&self, pin: CertificatePin) -> Result<(), ChromeError> {
-        if self.shared.certificate_deadline_reached() {
-            return Err(ChromeError::Disconnected);
-        }
-        let mut certificates = lock(&self.shared.certificates);
-        if self.shared.stopping() || self.shared.certificate_expired.load(Ordering::Acquire) {
-            return Err(ChromeError::Disconnected);
-        }
-        certificates.add(pin)
-    }
-
     fn revoke_certificate(&self, pin: &CertificatePin) -> bool {
-        if !lock(&self.shared.certificates).could_use(pin) {
+        if !lock(&self.shared.certificates).allowed(pin) {
             return false;
         }
         self.shared

@@ -16,6 +16,7 @@ use mannie_provider::Content;
 use mannie_runtime::testing::{
     Harness, HarnessOptions, SeenPart, Transcript, add_plugin, reply, tool_calls,
 };
+use mannie_store::StoredSiteCredential;
 use mannie_types::chat::{SendMessage, StartConversation};
 use mannie_types::ids::{ConversationId, PartId};
 use mannie_types::tools::{
@@ -30,11 +31,13 @@ const TOOL: &str = "test_browser_navigate";
 const PLUGIN: &str = "test-browser";
 const START: &str = "http://127.0.0.1:8000";
 const DESTINATION: &str = "http://127.0.0.1:8001";
+const CREDENTIAL: &str = "0199e0f2-0000-7000-8000-000000000001";
 
 #[derive(Deserialize)]
 struct Visit {
     origin: String,
     redirect: Option<String>,
+    credential: Option<String>,
 }
 
 #[derive(Debug)]
@@ -49,7 +52,8 @@ impl Tool for Browser {
                 "type": "object",
                 "properties": {
                     "origin": {"type": "string"},
-                    "redirect": {"type": "string"}
+                    "redirect": {"type": "string"},
+                    "credential": {"type": "string"}
                 },
                 "required": ["origin"],
                 "additionalProperties": false
@@ -61,6 +65,16 @@ impl Tool for Browser {
         async move {
             assert!(call.run_id.is_some());
             let visit: Visit = serde_json::from_str(&call.arguments).unwrap();
+            if let Some(reference) = visit.credential {
+                let site = browser_access(visit.origin, BrowserAction::Interact);
+                let credential = site
+                    .clone()
+                    .with_credential(reference, "Account password".to_owned());
+                return Ok(vec![
+                    ToolAccess::BrowserAction(site),
+                    ToolAccess::BrowserAction(credential),
+                ]);
+            }
             Ok(vec![ToolAccess::BrowserAction(browser_access(
                 visit.origin,
                 BrowserAction::Navigate,
@@ -73,8 +87,17 @@ impl Tool for Browser {
         async move {
             let visit: Visit = serde_json::from_str(&execution.arguments).unwrap();
             let ticket = execution.browser.unwrap();
-            assert_eq!(ticket.plugin_id(), PLUGIN);
             assert_eq!(ticket.conversation_id(), &execution.conversation_id);
+            if let Some(reference) = visit.credential {
+                assert_eq!(ticket.plugin_id(), "browser");
+                let site = browser_access(visit.origin, BrowserAction::Interact);
+                assert!(ticket.permits(&site));
+                assert!(
+                    ticket.permits(&site.with_credential(reference, "Account password".to_owned()))
+                );
+                return ToolResult::new("The credential was allowed.");
+            }
+            assert_eq!(ticket.plugin_id(), PLUGIN);
             assert!(ticket.permits(&browser_access(visit.origin, BrowserAction::Navigate)));
             if let Some(redirect) = visit.redirect
                 && !ticket
@@ -151,6 +174,10 @@ async fn decide(
 }
 
 async fn browser_harness() -> Harness {
+    browser_harness_for(PLUGIN).await
+}
+
+async fn browser_harness_for(plugin: &str) -> Harness {
     let harness = Harness::with_options(HarnessOptions {
         use_tools: true,
         ..HarnessOptions::default()
@@ -158,7 +185,7 @@ async fn browser_harness() -> Harness {
     .await;
     add_plugin(
         &harness.runtime,
-        PLUGIN,
+        plugin,
         Contributions::new().add::<Tools>(
             PluginTool::new(Arc::new(Browser), AgentSelector::Conversations).with_browser_actions(),
         ),
@@ -175,6 +202,117 @@ async fn browser_harness() -> Harness {
         .await
         .unwrap();
     harness
+}
+
+async fn save_test_credential(harness: &Harness) {
+    assert!(
+        harness
+            .store
+            .stage_browser_site_credential(StoredSiteCredential {
+                reference: CREDENTIAL.to_owned(),
+                origin: START.to_owned(),
+                label: "Account password".to_owned(),
+            })
+            .await
+            .unwrap()
+    );
+    assert!(
+        harness
+            .store
+            .activate_browser_site_credential(CREDENTIAL)
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn credential_consent_survives_turns_and_stays_in_one_conversation() {
+    let harness = browser_harness_for("browser").await;
+    save_test_credential(&harness).await;
+    let fill = json!({"origin": START, "credential": CREDENTIAL}).to_string();
+    harness
+        .model
+        .push_reply(tool_calls(&[("fill", TOOL, &fill)]));
+    harness.model.push_reply(reply("Filled."));
+    let started = harness
+        .runtime
+        .start_conversation(StartConversation::new("Fill."))
+        .await
+        .unwrap();
+    let conversation = started.conversation_id;
+    let transcript = harness
+        .wait_until(&conversation, |transcript| waiting(transcript, 0).is_some())
+        .await;
+    let (part_id, request) = waiting(&transcript, 0).unwrap();
+    assert_eq!(
+        request.reasons,
+        [
+            ApprovalReason::BrowserSite,
+            ApprovalReason::BrowserCredential
+        ]
+    );
+    assert!(matches!(request.grants.as_slice(), [
+        GrantScope::BrowserSite { .. },
+        GrantScope::BrowserCredential { reference, .. },
+    ] if reference == CREDENTIAL));
+    harness
+        .runtime
+        .decide_approval(DecideApproval {
+            conversation_id: conversation.clone(),
+            part_id,
+            digest: request.digest,
+            choice: ApprovalChoice::AllowForConversation,
+        })
+        .await
+        .unwrap();
+    let transcript = harness.wait_for_run(&conversation, &started.run_id).await;
+    assert_eq!(
+        transcript.tool_calls(0)[0].status,
+        ToolCallStatus::Completed
+    );
+
+    harness
+        .model
+        .push_reply(tool_calls(&[("again", TOOL, &fill)]));
+    harness.model.push_reply(reply("Filled again."));
+    let next = harness
+        .runtime
+        .send_message(SendMessage::new(conversation.clone(), "Fill again."))
+        .await
+        .unwrap();
+    let transcript = harness.wait_for_run(&conversation, &next.run_id).await;
+    assert_eq!(transcript.tool_calls(1)[0].decision, Some(Decision::Grant));
+
+    harness
+        .model
+        .push_reply(tool_calls(&[("new", TOOL, &fill)]));
+    harness.model.push_reply(reply("Denied."));
+    let other = harness
+        .runtime
+        .start_conversation(StartConversation::new("Try the same credential."))
+        .await
+        .unwrap();
+    let transcript = harness
+        .wait_until(&other.conversation_id, |transcript| {
+            waiting(transcript, 0).is_some()
+        })
+        .await;
+    let (part_id, request) = waiting(&transcript, 0).unwrap();
+    assert!(request.reasons.contains(&ApprovalReason::BrowserCredential));
+    harness
+        .runtime
+        .decide_approval(DecideApproval {
+            conversation_id: other.conversation_id.clone(),
+            part_id,
+            digest: request.digest,
+            choice: ApprovalChoice::Deny,
+        })
+        .await
+        .unwrap();
+    let transcript = harness
+        .wait_for_run(&other.conversation_id, &other.run_id)
+        .await;
+    assert_eq!(transcript.tool_calls(0)[0].status, ToolCallStatus::Denied);
 }
 
 #[tokio::test]

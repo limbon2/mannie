@@ -14,7 +14,10 @@ use super::{ChromeBatchFailure, ChromeError, ChromeInput, ChromeTarget, lock};
 const MAX_INPUT_BYTES: usize = 16_384;
 const MAX_PROTECTED_VALUES: usize = 32;
 
-const FILL_FIELD: &str = "function (value, allowPassword, allowTextarea) {
+const FILL_FIELD: &str = "function (value, allowPassword, allowTextarea, protectedOrigin) {
+    const atExpectedOrigin = () => protectedOrigin === null
+        || (this.ownerDocument === document && location.origin === protectedOrigin);
+    if (!atExpectedOrigin()) return false;
     let prototype;
     if (this instanceof HTMLInputElement) {
         if (!['text', 'email', 'password', 'search', 'tel', 'url', 'number'].includes(this.type)) return false;
@@ -27,7 +30,7 @@ const FILL_FIELD: &str = "function (value, allowPassword, allowTextarea) {
     }
     if (!this.isConnected || this.disabled || this.readOnly || !this.getClientRects().length) return false;
     HTMLElement.prototype.focus.call(this);
-    if (!this.isConnected || this.disabled || this.readOnly) return false;
+    if (!this.isConnected || this.disabled || this.readOnly || !atExpectedOrigin()) return false;
     Object.getOwnPropertyDescriptor(prototype, 'value').set.call(this, value);
     EventTarget.prototype.dispatchEvent.call(this, new Event('input', { bubbles: true, composed: true }));
     EventTarget.prototype.dispatchEvent.call(this, new Event('change', { bubbles: true }));
@@ -123,10 +126,33 @@ impl Chrome {
             ChromeInput::Press { key } => self.inner.press(&context, &key).await?,
             ChromeInput::Scroll { x, y } => self.inner.scroll(&context, x, y).await?,
         }
+        self.finish_input(&context).await
+    }
+
+    /// Fills a protected value, then returns the navigation settlement. The
+    /// caller can release the credential lease once the field has received it.
+    pub async fn dispatch_credential(
+        &self,
+        tab: &str,
+        revision: &str,
+        origin: &str,
+        target: ChromeTarget,
+        value: String,
+    ) -> Result<impl Future<Output = Result<(), ChromeError>> + use<'_>, ChromeError> {
+        let context = self.inner.context(tab, Some(revision))?;
+        if context.origin.as_deref() != Some(origin) {
+            return Err(ChromeError::CrossOriginTarget);
+        }
+        self.inner.begin_input(&context, true)?;
+        self.inner.fill(&context, target, value, true).await?;
+        Ok(async move { self.finish_input(&context).await })
+    }
+
+    async fn finish_input(&self, context: &Context) -> Result<(), ChromeError> {
         self.inner
             .settle()
             .await
-            .map_err(|error| self.inner.dispatched(&context, error))?;
+            .map_err(|error| self.inner.dispatched(context, error))?;
         self.inner.outcome()
     }
 }
@@ -449,6 +475,16 @@ impl Driver {
         let world = self.world(context).await?;
         let node = self.node(context, backend, world).await?;
         self.revalidate(context)?;
+        let protected_origin = if protected {
+            Some(
+                context
+                    .origin
+                    .as_deref()
+                    .ok_or(ChromeError::CrossOriginTarget)?,
+            )
+        } else {
+            None
+        };
 
         if protected {
             let mut state = lock(&self.state);
@@ -483,6 +519,7 @@ impl Driver {
                 FILL_FIELD,
                 json!([
                     { "value": text.as_str() }, { "value": protected }, { "value": !protected },
+                    { "value": protected_origin },
                 ]),
             )
             .await?;

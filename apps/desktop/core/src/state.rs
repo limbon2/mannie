@@ -508,6 +508,7 @@ fn start_runtime(
         store.clone(),
         app.handle().clone(),
         store.path().with_file_name("browser"),
+        Arc::<KeyringVault>::clone(&vault),
     ));
     services.push(Arc::<BrowserProvider>::clone(&browser));
     let file_dialog: Arc<dyn ServiceProvider> = file_dialog;

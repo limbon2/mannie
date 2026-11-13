@@ -1,14 +1,9 @@
 //! Owner-confirmed Browser certificate exceptions and their journal.
 
-use mannie_types::ids::ConversationId;
 use rusqlite::params;
 
 use crate::{Durability, Store, StoreError};
 
-const CONFIRM: &str = "INSERT INTO browser_certificate_confirmations
-    (conversation_id, session_id, hostname, fingerprint, confirmed_at)
-    VALUES (?1, ?2, ?3, ?4, ?5)
-    ON CONFLICT (session_id, hostname, fingerprint) DO NOTHING";
 const LIST_SAVED: &str =
     "SELECT hostname, fingerprint FROM browser_saved_certificates ORDER BY hostname";
 const SAVE: &str = "INSERT INTO browser_saved_certificates (hostname, fingerprint)
@@ -22,47 +17,12 @@ const RECORD_CHANGE: &str = "INSERT INTO browser_certificate_trust_changes
     (hostname, fingerprint, action, recorded_at) VALUES (?1, ?2, ?3, ?4)";
 
 #[cfg(test)]
-pub(crate) const STATEMENTS: &[&str] = &[
-    CONFIRM,
-    LIST_SAVED,
-    SAVE,
-    SAVED_FINGERPRINT,
-    FORGET,
-    RECORD_CHANGE,
-];
+pub(crate) const STATEMENTS: &[&str] =
+    &[LIST_SAVED, SAVE, SAVED_FINGERPRINT, FORGET, RECORD_CHANGE];
 
 impl Store {
-    /// Commits the owner's confirmation before the live engine can use it.
-    pub async fn record_browser_certificate_confirmation(
-        &self,
-        conversation: &ConversationId,
-        session_id: &str,
-        hostname: &str,
-        fingerprint: &[u8; 32],
-    ) -> Result<(), StoreError> {
-        let conversation = conversation.to_string();
-        let session_id = session_id.to_owned();
-        let hostname = hostname.to_owned();
-        let fingerprint = *fingerprint;
-        let confirmed_at = self.clock().now().as_millis();
-        self.write(Durability::Full, move |transaction| {
-            transaction.execute(
-                CONFIRM,
-                params![
-                    conversation,
-                    session_id,
-                    hostname,
-                    &fingerprint[..],
-                    confirmed_at
-                ],
-            )?;
-            Ok(())
-        })
-        .await
-    }
-
     /// Lists the owner's saved trust by hostname. Session-only confirmations
-    /// are kept in their own journal.
+    /// remain in their original journal for audit history.
     pub async fn list_browser_saved_certificates(
         &self,
     ) -> Result<Vec<(String, [u8; 32])>, StoreError> {
@@ -133,6 +93,7 @@ mod tests {
 
     use mannie_types::clock::SystemClock;
     use mannie_types::ids::ConversationId;
+    use rusqlite::params;
 
     use crate::runtime::{Change, NewConversation};
     use crate::schema::CORE_MODULES;
@@ -298,12 +259,15 @@ mod tests {
             .await
             .unwrap();
         store
-            .record_browser_certificate_confirmation(
-                &conversation,
-                "fixture",
-                "localhost",
-                &[1; 32],
-            )
+            .write(Durability::Full, move |transaction| {
+                transaction.execute(
+                    "INSERT INTO browser_certificate_confirmations
+                        (conversation_id, session_id, hostname, fingerprint, confirmed_at)
+                        VALUES (?1, 'fixture', 'localhost', ?2, 0)",
+                    params![conversation.to_string(), &[1_u8; 32][..]],
+                )?;
+                Ok(())
+            })
             .await
             .unwrap();
         drop(store);

@@ -2,20 +2,10 @@
 // core sends through `browser_follow`, and the owner's controls. The
 // subscription is the lease of the session's native pages: while no pane
 // follows the conversation, its pages hide (ADR-0064, decision 5).
-import {
-  batchChannel,
-  call,
-  type ChannelMessage,
-  type PluginCallFailure,
-  type PluginOutcome,
-  type SubscriptionId,
-  unsubscribe,
-} from '@mannie/plugin-sdk/ipc';
+import { batchChannel, call, type ChannelMessage, type SubscriptionId, unsubscribe } from '@mannie/plugin-sdk/ipc';
 
 import {
   type BrowserControl,
-  type BrowserCredential,
-  type BrowserError,
   type BrowserStatus_Serialize as BrowserStatus,
   channels,
   commands,
@@ -53,29 +43,25 @@ export class BrowserSession {
     }
   }
 
-  control(action: BrowserControl, tabId: string | null): Promise<boolean> {
-    return this.#change(() =>
-      call(() => commands.browserControl({ action, conversationId: this.conversationId, tabId })),
-    );
-  }
-
-  credential(action: BrowserCredential): Promise<boolean> {
-    return this.#change(() => call(() => commands.browserCredential({ action, conversationId: this.conversationId })));
-  }
-
-  trustCertificate(
-    sessionId: string,
-    hostname: string,
-    fingerprint: string,
-    showFailure: (message: string) => void,
-  ): Promise<boolean> {
-    return this.#change(
-      () =>
-        call(() =>
-          commands.browserTrustCertificate({ conversationId: this.conversationId, fingerprint, hostname, sessionId }),
-        ),
-      (failure) => showFailure(browserFailureMessage(failure)),
-    );
+  async control(action: BrowserControl, tabId: string | null): Promise<boolean> {
+    if (this.busy) {
+      return false;
+    }
+    this.busy = true;
+    this.failure = null;
+    try {
+      const result = await call(() => commands.browserControl({ action, conversationId: this.conversationId, tabId }));
+      if (!result.ok) {
+        // The status stream reports certificate rejection in the affected tab.
+        const reportedInTab = result.failure.kind === 'core' && result.failure.error.code === 'certificate_rejected';
+        if (!reportedInTab) {
+          this.failure = browserFailureMessage(result.failure);
+        }
+      }
+      return result.ok;
+    } finally {
+      this.busy = false;
+    }
   }
 
   /** Moves keyboard focus into a tab's page, in takeover. */
@@ -83,32 +69,6 @@ export class BrowserSession {
     const outcome = await call(() => commands.browserFocus({ conversationId: this.conversationId, tabId }));
     if (!outcome.ok) {
       this.failure = browserFailureMessage(outcome.failure);
-    }
-  }
-
-  async #change(
-    run: () => Promise<PluginOutcome<unknown, BrowserError>>,
-    showFailure: (failure: PluginCallFailure<BrowserError>) => void = (failure) => {
-      // The status stream reports certificate rejection in the affected tab.
-      const reportedInTab = failure.kind === 'core' && failure.error.code === 'certificate_rejected';
-      if (!reportedInTab) {
-        this.failure = browserFailureMessage(failure);
-      }
-    },
-  ): Promise<boolean> {
-    if (this.busy) {
-      return false;
-    }
-    this.busy = true;
-    this.failure = null;
-    try {
-      const result = await run();
-      if (!result.ok) {
-        showFailure(result.failure);
-      }
-      return result.ok;
-    } finally {
-      this.busy = false;
     }
   }
 

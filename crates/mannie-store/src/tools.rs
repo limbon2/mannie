@@ -465,7 +465,13 @@ impl Store {
         }
         let documents = new
             .iter()
-            .map(|grant| Ok((grant.id.as_str().to_owned(), to_json(&grant.scope)?)))
+            .map(|grant| {
+                Ok((
+                    grant.id.as_str().to_owned(),
+                    to_json(&grant.scope)?,
+                    grant.scope.clone(),
+                ))
+            })
             .collect::<Result<Vec<_>, ToolsStoreError>>()?;
         self.transact(Durability::Full, move |transaction| {
             let exists = transaction
@@ -478,7 +484,24 @@ impl Store {
                     ToolsStoreError::ConversationNotFound,
                 ));
             }
-            for (id, scope) in &documents {
+            for (id, scope, typed_scope) in &documents {
+                if let GrantScope::BrowserCredential {
+                    plugin,
+                    origin,
+                    reference,
+                    ..
+                } = typed_scope
+                    && (plugin != "browser"
+                        || !crate::browser_credentials::site_credential_is_active(
+                            transaction,
+                            origin,
+                            reference,
+                        )?)
+                {
+                    return Err(TransactError::Rejected(ToolsStoreError::invalid(
+                        "the Browser credential is no longer available",
+                    )));
+                }
                 transaction.prepare_cached(INSERT_GRANT)?.execute(params![
                     id,
                     conversation,

@@ -9,6 +9,8 @@
 
 This revision follows D61. D60 records the original decision to trust a certificate for one session.
 
+[ADR-0067](0067-manage-browser-trust-and-credentials-in-settings.md) refines the Browser controls and Settings.
+
 ## Context
 
 The owner needs Browser to open HTTPS sites that use self-signed server certificates without re-entering the same fingerprint in every session. [ADR-0064](0064-give-agents-an-isolated-browser-beside-the-conversation.md), decision 8, requires the host to cancel server certificate errors. Trusting a private certificate in Windows can make it available to WebView2 and other applications that use the same store.

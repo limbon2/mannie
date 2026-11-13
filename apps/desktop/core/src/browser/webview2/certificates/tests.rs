@@ -1,47 +1,26 @@
 use super::Certificates;
 use super::verify::{decode_pem, verified_leaf};
 use crate::browser::certificate::CertificatePin;
-use mannie_tools::browser::ChromeError;
 use windows::Win32::Foundation::FILETIME;
 
 const SERVER: &str = include_str!("server.pem");
 const VALID_TIME: FILETIME = filetime(134_116_992_000_000_000); // 2026-01-01 UTC
 
 #[test]
-fn temporary_pins_take_precedence_and_only_exact_live_pins_need_revocation() {
+fn only_exact_pins_allowed_by_the_session_need_revocation() {
     let saved_pin = CertificatePin {
         hostname: "localhost".into(),
         fingerprint: [1; 32],
     };
-    let temporary = CertificatePin {
+    let replacement = CertificatePin {
         fingerprint: [2; 32],
         ..saved_pin.clone()
     };
     let mut certificates = Certificates::default();
-    let saved = [(saved_pin.hostname.clone(), saved_pin.fingerprint)]
-        .into_iter()
-        .collect();
-
-    assert_eq!(
-        certificates.fingerprint("localhost", Some(&saved)),
-        Some(saved_pin.fingerprint)
-    );
-    assert!(!certificates.could_use(&saved_pin));
-    certificates.add(temporary.clone()).unwrap();
-    assert_eq!(
-        certificates.fingerprint("localhost", Some(&saved)),
-        Some(temporary.fingerprint)
-    );
-    assert!(certificates.could_use(&temporary));
-    assert!(!certificates.could_use(&saved_pin));
-
-    let mut certificates = Certificates::default();
+    assert!(!certificates.allowed(&saved_pin));
     certificates.allowed.insert(saved_pin.clone());
-    assert!(certificates.could_use(&saved_pin));
-    assert_eq!(
-        certificates.add(temporary),
-        Err(ChromeError::CertificateConflict)
-    );
+    assert!(certificates.allowed(&saved_pin));
+    assert!(!certificates.allowed(&replacement));
 }
 
 const fn filetime(ticks: u64) -> FILETIME {
@@ -103,24 +82,4 @@ fn certificate_verifier_refuses_weak_inapplicable_or_non_self_signed_leafs() {
     let mut tampered = decode_pem(SERVER).unwrap();
     *tampered.last_mut().unwrap() ^= 1;
     assert!(verified_leaf(&tampered, "localhost", Some(&VALID_TIME)).is_none());
-}
-
-#[test]
-fn session_certificate_pins_are_idempotent_and_cannot_be_replaced() {
-    let mut certificates = Certificates::default();
-    let pin = CertificatePin {
-        hostname: "localhost".into(),
-        fingerprint: [1; 32],
-    };
-    certificates.add(pin.clone()).unwrap();
-    certificates.add(pin).unwrap();
-    let replacement = CertificatePin {
-        hostname: "localhost".into(),
-        fingerprint: [2; 32],
-    };
-    assert!(matches!(
-        certificates.add(replacement),
-        Err(ChromeError::CertificateConflict)
-    ));
-    assert_eq!(certificates.pins.get("localhost"), Some(&[1; 32]));
 }

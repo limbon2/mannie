@@ -58,6 +58,18 @@ pub enum BrowserAction {
     ContinueNavigation,
     /// Sends input to a page.
     Interact,
+    /// Enters an owner-saved site credential into a page.
+    FillCredential,
+}
+
+/// Non-secret identity shown when a saved credential needs approval.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserCredentialAccess {
+    /// Immutable opaque reference of the saved credential.
+    pub reference: String,
+    /// The owner's label for the credential.
+    pub label: String,
 }
 
 /// An origin and session revision that the browser prepared for an action.
@@ -72,6 +84,9 @@ pub struct BrowserAccess {
     pub revision: String,
     /// The kind of action the tool prepared.
     pub action: BrowserAction,
+    /// The credential identified by a protected fill.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential: Option<BrowserCredentialAccess>,
 }
 
 impl BrowserAccess {
@@ -83,7 +98,16 @@ impl BrowserAccess {
             session,
             revision,
             action,
+            credential: None,
         }
+    }
+
+    /// Adds the saved credential that this access is requesting permission to fill.
+    #[must_use]
+    pub fn with_credential(mut self, reference: String, label: String) -> Self {
+        self.action = BrowserAction::FillCredential;
+        self.credential = Some(BrowserCredentialAccess { reference, label });
+        self
     }
 
     /// An access names an exact canonical origin and opaque, bounded IDs.
@@ -95,6 +119,16 @@ impl BrowserAccess {
             })
             && is_browser_id(&self.session)
             && is_browser_id(&self.revision)
+            && match (&self.credential, self.action) {
+                (Some(credential), BrowserAction::FillCredential) => {
+                    is_browser_id(&credential.reference)
+                        && !credential.label.trim().is_empty()
+                        && credential.label.len() <= 80
+                        && !credential.label.chars().any(char::is_control)
+                }
+                (None, BrowserAction::FillCredential) | (Some(_), _) => false,
+                (None, _) => true,
+            }
     }
 }
 
@@ -309,6 +343,9 @@ pub enum Access {
         revision: String,
         /// The kind of action the tool prepared.
         action: BrowserAction,
+        /// The credential identified by a protected fill.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        credential: Option<BrowserCredentialAccess>,
     },
     /// A request to return an isolated browser session to the agent.
     BrowserControl {
@@ -366,6 +403,7 @@ impl Access {
             session: access.session,
             revision: access.revision,
             action: access.action,
+            credential: access.credential,
         }
     }
 

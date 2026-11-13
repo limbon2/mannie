@@ -8,10 +8,10 @@ import type {
   ConversationEvent,
   ConversationSnapshot,
   ConversationUpdate,
-  PartView,
+  PartView_Serialize,
   RunView,
   ToolCallStatus,
-  ToolCallView,
+  ToolCallView_Serialize,
   TurnView,
 } from '../../../../../../apps/desktop/src/lib/generated/bindings.js';
 import {
@@ -39,7 +39,7 @@ function run(id: string, turnId: string, state: RunView['state']): RunView {
   };
 }
 
-function userPart(id: string, turnId: string, text: string): PartView {
+function userPart(id: string, turnId: string, text: string): PartView_Serialize {
   return {
     content: { kind: 'user_text', text },
     createdAt: 0,
@@ -51,19 +51,29 @@ function userPart(id: string, turnId: string, text: string): PartView {
   };
 }
 
-function textPart(id: string, turnId: string, runId: string, position: number, text: string): PartView {
+function textPart(id: string, turnId: string, runId: string, position: number, text: string): PartView_Serialize {
   return { content: { kind: 'text', text }, createdAt: 0, id, position, runId, state: 'streaming', turnId };
 }
 
-function toolPart(id: string, turnId: string, runId: string, position: number, status: ToolCallStatus): PartView {
-  const call: ToolCallView = {
+function toolPart(
+  id: string,
+  turnId: string,
+  runId: string,
+  position: number,
+  status: ToolCallStatus,
+): PartView_Serialize {
+  const call: ToolCallView_Serialize = {
     accesses: [],
     activity: null,
     arguments: '{"path":"notes.md"}',
     argumentsCut: false,
+    cited: [],
     decision: null,
     endedAt: null,
+    interruption: null,
     notRun: null,
+    plugin: null,
+    questions: [],
     request: null,
     result: null,
     startedAt: null,
@@ -73,7 +83,7 @@ function toolPart(id: string, turnId: string, runId: string, position: number, s
   return { content: { call, kind: 'tool_call' }, createdAt: 0, id, position, runId, state: 'streaming', turnId };
 }
 
-function mentionPart(id: string, turnId: string, position: number): PartView {
+function mentionPart(id: string, turnId: string, position: number): PartView_Serialize {
   const mention = {
     key: 'src/main.rs',
     label: 'src/main.rs',

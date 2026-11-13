@@ -6,10 +6,16 @@ Changes to the Browser plugin. Releases collect its entries in the [Mannie chang
 
 ### Added
 
-- Let the owner trust a self-signed HTTPS certificate by hostname and fingerprint for one Browser session or save and forget the trust across sessions.
+- Add Browser Settings for trusted hosts and saved site credentials. An agent needs consent for each credential in its conversation.
+- Open and create tabs from the Browser menu beside Terminal.
+
+### Changed
+
+- Remove the Browser pane's options menu. Trusted hosts and site credentials stay under **Settings > Browser**.
 
 ### Fixed
 
 - Use Mannie's primary color for the agent cursor and its click highlight.
 - Keep the agent cursor visible during tab status updates.
-- Widen the certificate form, clarify the hostname field, and label the session credentials button.
+- Accept bare domains in the Browser address bar and let the owner dismiss browser errors.
+- Group Browser pane actions at the end of the toolbar and use the SSH Hosts settings pattern for trusted hosts and site credentials.

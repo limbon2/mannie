@@ -9,6 +9,7 @@
 mod actions;
 #[cfg(any(windows, test))]
 mod certificate;
+mod credentials;
 mod engine;
 #[cfg(windows)]
 mod webview2;
@@ -19,19 +20,22 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use futures_util::FutureExt as _;
-use mannie_plugin_sdk::contracts::ConversationId;
+use mannie_plugin_sdk::contracts::{ConversationId, Secret};
 use mannie_plugin_sdk::host::{BindRefusal, PluginBinding, ServiceProvider};
 use mannie_plugin_sdk::ids::Contributor;
 use mannie_plugin_sdk::points::tools::{
     BrowserAccess, BrowserAction, BrowserAuthorization, BrowserControlAccess,
 };
 use mannie_plugin_sdk::service::{BoundService, Service};
+#[cfg(windows)]
+use mannie_plugin_sdk::services::browser::BrowserCertificateException;
 use mannie_plugin_sdk::services::browser::{
-    Browser, BrowserActivity, BrowserApi, BrowserCertificateException, BrowserControl,
-    BrowserControlMode, BrowserCredential, BrowserCredentialRef, BrowserError, BrowserFrame,
+    Browser, BrowserActivity, BrowserApi, BrowserControl, BrowserControlMode, BrowserCredential,
+    BrowserCredentialRef, BrowserError, BrowserFillValue, BrowserFrame, BrowserInteraction,
     BrowserPlacement, BrowserRequest, BrowserResult, BrowserStatus,
 };
 use mannie_plugin_sdk::{BoxFuture, BoxStream};
+use mannie_runtime::CredentialVault;
 use mannie_store::Store;
 use mannie_tools::browser::{
     Chrome, ChromeHost, ChromeNavigation, ChromeRequest, cleanup_browser_profiles,
@@ -39,20 +43,19 @@ use mannie_tools::browser::{
 use serde_json::json;
 use tauri::AppHandle;
 use tokio::sync::{Mutex as AsyncMutex, watch};
+#[cfg(feature = "validation")]
 use zeroize::Zeroizing;
 
 use self::actions::{error, stable_revision};
 #[cfg(windows)]
 use self::certificate::{CertificatePin, SavedCertificates, store_failure};
+use self::credentials::SiteCredentials;
 #[cfg(feature = "validation")]
 pub(crate) use self::engine::SurfaceReport;
 pub(crate) use self::engine::clear_engine_variables;
 use self::engine::{Engine, SessionHost};
 
 const MAX_SESSIONS: usize = 8;
-const MAX_CREDENTIALS: usize = 16;
-#[cfg(windows)]
-const MAX_CERTIFICATE_EXCEPTIONS: usize = 32;
 /// How often a status stream compares the session's status with the last
 /// one it sent.
 const STATUS_INTERVAL: Duration = Duration::from_millis(100);
@@ -70,6 +73,7 @@ pub(crate) struct BrowserProvider {
 #[derive(Debug)]
 struct Registry {
     store: Store,
+    credentials: SiteCredentials,
     engine: Engine,
     generation: AtomicU64,
     bindings: Mutex<Bindings>,
@@ -105,11 +109,17 @@ struct Bindings {
 }
 
 impl BrowserProvider {
-    pub(crate) fn new(store: Store, app: AppHandle, root: std::path::PathBuf) -> Self {
+    pub(crate) fn new(
+        store: Store,
+        app: AppHandle,
+        root: std::path::PathBuf,
+        vault: Arc<dyn CredentialVault>,
+    ) -> Self {
         cleanup_browser_profiles(&root);
         let (page, _) = watch::channel(0);
         Self {
             registry: Arc::new(Registry {
+                credentials: SiteCredentials::new(store.clone(), vault),
                 store,
                 engine: Engine::new(app, root),
                 generation: AtomicU64::new(0),
@@ -263,13 +273,10 @@ struct BoundBrowser {
 #[derive(Default)]
 struct Session {
     id: Option<String>,
-    certificate_exceptions: Vec<BrowserCertificateException>,
     chrome: Option<Arc<Chrome>>,
     views: Option<Arc<dyn SessionHost>>,
     active: Option<String>,
     epoch: u64,
-    next_credential: u64,
-    credentials: HashMap<String, Credential>,
     needs_observation: bool,
     last_observation: Option<actions::TargetObservation>,
     failure: Option<BrowserError>,
@@ -279,17 +286,6 @@ struct Session {
 impl std::fmt::Debug for Session {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.debug_struct("Session").finish_non_exhaustive()
-    }
-}
-
-struct Credential {
-    descriptor: BrowserCredentialRef,
-    value: Zeroizing<String>,
-}
-
-impl std::fmt::Debug for Credential {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_struct("Credential").finish_non_exhaustive()
     }
 }
 
@@ -352,8 +348,6 @@ impl Slot {
             state.epoch += 1;
             state.active = None;
             state.id = None;
-            state.certificate_exceptions.clear();
-            state.credentials.clear();
             state.needs_observation = false;
             state.last_observation = None;
             state.views = None;
@@ -726,121 +720,12 @@ impl BoundBrowser {
         Ok(())
     }
 
-    async fn change_credential(
-        &self,
-        conversation: ConversationId,
-        action: BrowserCredential,
-    ) -> Result<(), BrowserError> {
+    fn site_credential_catalog(&self) -> Result<&SiteCredentials, BrowserError> {
         self.ensure_bound()?;
-        let slot = self
-            .existing(&conversation)
-            .ok_or(BrowserError::SessionMissing)?;
-        let _operation = slot.operation.lock().await;
-        slot.ensure_live()?;
-        let mut state = lock(&slot.state);
-        if state.chrome.is_none() {
-            return Err(BrowserError::SessionMissing);
+        if self.owner.plugin_id().as_str() != "browser" {
+            return Err(BrowserError::NavigationDenied);
         }
-        match action {
-            BrowserCredential::Set {
-                origin: site,
-                label,
-                value,
-            } => {
-                let value = Zeroizing::new(value);
-                let origin = actions::credential_origin(&site)?;
-                if label.is_empty()
-                    || label.len() > 80
-                    || value.is_empty()
-                    || value.len() > 8192
-                    || label.contains(value.as_str())
-                {
-                    return Err(BrowserError::InvalidBrowserInput);
-                }
-                if state.credentials.len() >= MAX_CREDENTIALS {
-                    return Err(BrowserError::LimitReached);
-                }
-                state.next_credential += 1;
-                let reference = format!("credential-{}", state.next_credential);
-                let descriptor = BrowserCredentialRef {
-                    reference: reference.clone(),
-                    origin,
-                    label,
-                };
-                state
-                    .credentials
-                    .insert(reference, Credential { descriptor, value });
-            }
-            BrowserCredential::Remove { reference } => {
-                if state.credentials.remove(&reference).is_none() {
-                    return Err(BrowserError::CredentialMissing);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    #[cfg(windows)]
-    async fn trust_session_certificate(
-        &self,
-        conversation: ConversationId,
-        session_id: String,
-        hostname: String,
-        fingerprint: String,
-    ) -> Result<(), BrowserError> {
-        self.ensure_bound()?;
-        let pin = CertificatePin::parse(&hostname, &fingerprint)?;
-        let slot = self
-            .existing(&conversation)
-            .ok_or(BrowserError::SessionMissing)?;
-        let _operation = slot.operation.lock().await;
-        slot.ensure_live()?;
-        let _startup = self.registry.startup.lock().await;
-        self.ensure_bound()?;
-        if lock(&self.registry.certificates.revocations).contains_key(&pin) {
-            return Err(BrowserError::CertificateRevocationFailed);
-        }
-        let fingerprint_text = pin.fingerprint_text();
-        {
-            let state = lock(&slot.state);
-            certificate_session(&state, &session_id)?;
-            if let Some(existing) = state
-                .certificate_exceptions
-                .iter()
-                .find(|entry| entry.hostname == pin.hostname)
-            {
-                return if existing.fingerprint == fingerprint_text {
-                    Ok(())
-                } else {
-                    Err(BrowserError::CertificateConflict)
-                };
-            }
-            if state.certificate_exceptions.len() >= MAX_CERTIFICATE_EXCEPTIONS {
-                return Err(BrowserError::LimitReached);
-            }
-        }
-
-        pin.record_confirmation(&self.registry.store, &conversation, &session_id)
-            .await?;
-
-        // The native engine can end without taking the operation lock.
-        // Hold the binding and session state while publishing to that exact engine.
-        let bindings = lock(&self.registry.bindings);
-        if bindings.generations.get(&self.owner) != Some(&self.generation)
-            || !bindings
-                .sessions
-                .get(&(self.owner.clone(), conversation))
-                .is_some_and(|current| Arc::ptr_eq(current, &slot))
-        {
-            return Err(BrowserError::SessionMissing);
-        }
-        slot.ensure_live()?;
-        let mut state = lock(&slot.state);
-        let views = certificate_session(&state, &session_id)?;
-        let exception = pin.descriptor();
-        views.trust_certificate(pin).map_err(error)?;
-        state.certificate_exceptions.push(exception);
-        Ok(())
+        Ok(&self.registry.credentials)
     }
 
     /// Called under `startup`, which also serializes saved-pin mutations.
@@ -1004,6 +889,57 @@ impl BoundBrowser {
         Ok(Some(BrowserAccess::new(site, session, revision, action)))
     }
 
+    async fn credential_access(
+        &self,
+        access: &BrowserAccess,
+        request: &BrowserRequest,
+    ) -> Result<Option<BrowserAccess>, BrowserError> {
+        let BrowserRequest::Interact {
+            action:
+                BrowserInteraction::Fill {
+                    value: BrowserFillValue::Credential { reference },
+                    ..
+                },
+            ..
+        } = request
+        else {
+            return Ok(None);
+        };
+        let credential = self
+            .site_credential_catalog()?
+            .find(&access.origin, reference)
+            .await?;
+        Ok(Some(
+            BrowserAccess::new(
+                access.origin.clone(),
+                access.session.clone(),
+                access.revision.clone(),
+                BrowserAction::FillCredential,
+            )
+            .with_credential(credential.reference, credential.label),
+        ))
+    }
+
+    async fn check_access(
+        &self,
+        slot: &Slot,
+        request: &BrowserRequest,
+        ticket: &BrowserAuthorization,
+    ) -> Result<BrowserAccess, BrowserError> {
+        let access = self
+            .access(Some(slot), request)?
+            .ok_or(BrowserError::NavigationDenied)?;
+        if !ticket.permits(&access) {
+            return Err(BrowserError::StaleTarget);
+        }
+        if let Some(credential) = self.credential_access(&access, request).await?
+            && !ticket.permits(&credential)
+        {
+            return Err(BrowserError::StaleTarget);
+        }
+        Ok(access)
+    }
+
     fn control_access(&self, slot: &Slot) -> Result<Option<BrowserControlAccess>, BrowserError> {
         self.ensure_bound()?;
         slot.ensure_live()?;
@@ -1091,15 +1027,10 @@ impl BoundBrowser {
         {
             return Err(BrowserError::NavigationDenied);
         }
-        let slot = self.slot(conversation).await?;
+        let slot = self.slot(conversation.clone()).await?;
         let _operation = slot.operation.lock().await;
         let gate_revision = slot.gate.0.borrow().revision;
-        let access = self
-            .access(Some(&slot), &request)?
-            .ok_or(BrowserError::NavigationDenied)?;
-        if !ticket.permits(&access) {
-            return Err(BrowserError::StaleTarget);
-        }
+        let access = self.check_access(&slot, &request, &ticket).await?;
         if lock(&slot.state).needs_observation && !matches!(request, BrowserRequest::Observe { .. })
         {
             return Err(BrowserError::OperationUncertain);
@@ -1120,7 +1051,17 @@ impl BoundBrowser {
                 gate_revision,
             )?)
         };
-        let result = actions::agent_input(&slot, &chrome, request, &access.origin).await;
+        let result = actions::agent_input(
+            &slot,
+            &chrome,
+            request,
+            actions::AgentAccess {
+                conversation: &conversation,
+                origin: &access.origin,
+                catalog: self.site_credential_catalog().ok(),
+            },
+        )
+        .await;
         drop(scope);
         if observing && gate_revision != slot.gate.0.borrow().revision {
             return Err(BrowserError::StaleTarget);
@@ -1228,33 +1169,15 @@ impl BoundBrowser {
     }
 }
 
-#[cfg(any(windows, test))]
-fn certificate_session<'a>(
-    state: &'a Session,
-    session_id: &str,
-) -> Result<&'a Arc<dyn SessionHost>, BrowserError> {
-    if state.id.as_deref() != Some(session_id) {
-        return Err(BrowserError::SessionMissing);
-    }
-    state.views.as_ref().ok_or(BrowserError::SessionMissing)
-}
-
 /// The pane's status of a session.
 fn status(slot: &Slot) -> BrowserStatus {
-    let (chrome, views, failure, mut credentials, session_id, certificate_exceptions) = {
+    let (chrome, views, failure, session_id) = {
         let state = lock(&slot.state);
-        let credentials: Vec<_> = state
-            .credentials
-            .values()
-            .map(|secret| secret.descriptor.clone())
-            .collect();
         (
             state.chrome.clone(),
             state.views.clone(),
             state.failure,
-            credentials,
             state.id.clone(),
-            state.certificate_exceptions.clone(),
         )
     };
     let Some(chrome) = chrome else {
@@ -1263,7 +1186,6 @@ fn status(slot: &Slot) -> BrowserStatus {
             ..BrowserStatus::default()
         };
     };
-    credentials.sort_by(|left, right| left.reference.cmp(&right.reference));
     let active_tab = slot.active(&chrome);
     let control = slot.gate.0.borrow().mode;
     let activity = (control == BrowserControlMode::Agent)
@@ -1275,7 +1197,6 @@ fn status(slot: &Slot) -> BrowserStatus {
         });
     BrowserStatus {
         session_id,
-        certificate_exceptions,
         control: Some(control),
         tabs: chrome
             .tabs()
@@ -1286,7 +1207,7 @@ fn status(slot: &Slot) -> BrowserStatus {
         activity,
         focus_return: views.and_then(|views| views.focus_return()),
         failure: None,
-        credentials,
+        credentials: Vec::new(),
     }
 }
 
@@ -1309,10 +1230,8 @@ async fn watch_end(slot: Arc<Slot>, chrome: Arc<Chrome>, epoch: u64) {
             });
             state.epoch += 1;
             state.id = None;
-            state.certificate_exceptions.clear();
             state.views = None;
             state.chrome = None;
-            state.credentials.clear();
             state.active = None;
             state.needs_observation = false;
             state.last_observation = None;
@@ -1379,35 +1298,50 @@ impl BrowserApi for BoundBrowser {
 
     fn credential(
         &self,
-        conversation: ConversationId,
-        action: BrowserCredential,
+        _conversation: ConversationId,
+        _action: BrowserCredential,
     ) -> BoxFuture<'static, Result<(), BrowserError>> {
-        let browser = self.clone();
-        async move { browser.change_credential(conversation, action).await }.boxed()
+        std::future::ready(Err(BrowserError::SessionCredentialsRetired)).boxed()
     }
 
-    fn trust_certificate(
+    fn site_credentials(
         &self,
-        conversation: ConversationId,
-        session_id: String,
-        hostname: String,
-        fingerprint: String,
-    ) -> BoxFuture<'static, Result<(), BrowserError>> {
-        #[cfg(windows)]
-        {
-            let browser = self.clone();
-            async move {
+    ) -> BoxFuture<'static, Result<Vec<BrowserCredentialRef>, BrowserError>> {
+        let browser = self.clone();
+        async move { browser.site_credential_catalog()?.list().await }.boxed()
+    }
+
+    fn add_site_credential(
+        &self,
+        origin: String,
+        label: String,
+        value: Secret,
+    ) -> BoxFuture<'static, Result<BrowserCredentialRef, BrowserError>> {
+        let browser = self.clone();
+        async move {
+            tokio::spawn(async move {
                 browser
-                    .trust_session_certificate(conversation, session_id, hostname, fingerprint)
+                    .site_credential_catalog()?
+                    .add(origin, label, value)
                     .await
-            }
-            .boxed()
+            })
+            .await
+            .map_err(|_join| BrowserError::CredentialCatalogFailed)?
         }
-        #[cfg(not(windows))]
-        {
-            drop((conversation, session_id, hostname, fingerprint));
-            std::future::ready(Err(BrowserError::BrowserIncompatible)).boxed()
+        .boxed()
+    }
+
+    fn remove_site_credential(
+        &self,
+        reference: String,
+    ) -> BoxFuture<'static, Result<(), BrowserError>> {
+        let browser = self.clone();
+        async move {
+            tokio::spawn(async move { browser.site_credential_catalog()?.remove(reference).await })
+                .await
+                .map_err(|_join| BrowserError::CredentialCatalogFailed)?
         }
+        .boxed()
     }
 
     #[cfg(windows)]
@@ -1464,11 +1398,15 @@ impl BrowserApi for BoundBrowser {
         conversation: ConversationId,
         request: BrowserRequest,
     ) -> BoxFuture<'static, Result<Vec<BrowserAccess>, BrowserError>> {
-        let slot = self.existing(&conversation);
-        std::future::ready(
-            self.access(slot.as_deref(), &request)
-                .map(|access| access.into_iter().collect()),
-        )
+        let browser = self.clone();
+        async move {
+            let slot = browser.existing(&conversation);
+            let Some(access) = browser.access(slot.as_deref(), &request)? else {
+                return Ok(Vec::new());
+            };
+            let credential = browser.credential_access(&access, &request).await?;
+            Ok(std::iter::once(access).chain(credential).collect())
+        }
         .boxed()
     }
 
@@ -1511,18 +1449,6 @@ impl BrowserApi for BoundBrowser {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn an_old_confirmation_cannot_select_a_restarted_certificate_session() {
-        let state = Session {
-            id: Some("new-session".to_owned()),
-            ..Session::default()
-        };
-        assert!(matches!(
-            certificate_session(&state, "old-session"),
-            Err(BrowserError::SessionMissing)
-        ));
-    }
 
     #[test]
     fn old_owner_consent_cannot_resume_a_new_takeover() {

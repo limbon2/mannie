@@ -1,68 +1,43 @@
 <script lang="ts">
+  import { FieldHelp } from '@mannie/plugin-sdk/components';
   import * as Alert from '@mannie/plugin-sdk/components/alert';
   import * as AlertDialog from '@mannie/plugin-sdk/components/alert-dialog';
   import { Button } from '@mannie/plugin-sdk/components/button';
   import * as Dialog from '@mannie/plugin-sdk/components/dialog';
+  import * as Empty from '@mannie/plugin-sdk/components/empty';
   import * as Field from '@mannie/plugin-sdk/components/field';
   import { Input } from '@mannie/plugin-sdk/components/input';
+  import * as Item from '@mannie/plugin-sdk/components/item';
+  import { Skeleton } from '@mannie/plugin-sdk/components/skeleton';
+  import CircleAlertIcon from '@mannie/plugin-sdk/icons/circle-alert';
+  import ShieldCheckIcon from '@mannie/plugin-sdk/icons/shield-check';
   import { call } from '@mannie/plugin-sdk/ipc';
+  import { onMount } from 'svelte';
 
   import { type BrowserCertificateException, commands } from '../generated/bindings.js';
   import { m } from '../generated/messages.js';
   import { browserFailureMessage } from '../utils/browser-messages.js';
 
-  interface Props {
-    busy: boolean;
-    exceptions: BrowserCertificateException[];
-    sessionId: string | null;
-    trust: (
-      sessionId: string,
-      hostname: string,
-      fingerprint: string,
-      showFailure: (message: string) => void,
-    ) => Promise<boolean>;
-  }
-
-  let { busy, exceptions, sessionId, trust }: Props = $props();
+  let { heading = $bindable(null) }: { heading?: HTMLElement | null } = $props();
   const id = $props.id();
-  let open = $state(false);
-  let openedSessionId = $state<string | null>(null);
   let failure = $state<string | null>(null);
+  let saveFailure = $state<string | null>(null);
+  let adding = $state(false);
+  let hostnameInput = $state<HTMLInputElement | null>(null);
+  let addTrigger = $state<HTMLButtonElement | null>(null);
   let notice = $state('');
-  let savedExceptions = $state.raw<BrowserCertificateException[] | null>(null);
-  let loading = $state(false);
+  let saved = $state.raw<BrowserCertificateException[]>([]);
+  let loading = $state(true);
   let listFailure = $state<string | null>(null);
-  let changing = $state(false);
-  let pendingForget = $state.raw<BrowserCertificateException | null>(null);
-  const disabled = $derived(busy || changing);
-  const canTrustSession = $derived(openedSessionId !== null && openedSessionId === sessionId);
-  const sessionTrustDisabled = $derived(disabled || !canTrustSession);
-  const showSessionExceptions = $derived(canTrustSession && exceptions.length > 0);
+  let busy = $state(false);
 
-  function setOpen(next: boolean): void {
-    if (changing) {
-      return;
-    }
-    open = next;
-    if (next) {
-      openedSessionId = sessionId;
-      pendingForget = null;
-      failure = null;
-      notice = '';
-      void loadSavedExceptions();
-    }
-  }
-
-  async function loadSavedExceptions(): Promise<void> {
-    if (loading) {
-      return;
-    }
-    loading = true;
+  async function load(showLoading = true): Promise<void> {
+    loading = showLoading;
     listFailure = null;
     try {
       const outcome = await call(() => commands.browserSavedCertificates());
       if (outcome.ok) {
-        savedExceptions = outcome.data;
+        saved = outcome.data;
       } else {
         listFailure = browserFailureMessage(outcome.failure);
       }
@@ -71,11 +46,18 @@
     }
   }
 
-  async function confirm(event: SubmitEvent): Promise<void> {
+  function focusHostname(event: Event): void {
+    if (hostnameInput !== null) {
+      event.preventDefault();
+      hostnameInput.focus();
+    }
+  }
+
+  async function save(event: SubmitEvent): Promise<void> {
     event.preventDefault();
     const form = event.currentTarget;
-    const canSubmit = form instanceof HTMLFormElement && !disabled;
-    if (!canSubmit) {
+    const canSave = form instanceof HTMLFormElement && !busy;
+    if (!canSave) {
       return;
     }
     const data = new FormData(form);
@@ -85,111 +67,128 @@
     if (!hasFields) {
       return;
     }
-    const saved = event.submitter instanceof HTMLButtonElement && event.submitter.value === 'saved';
-    const confirmedSession = canTrustSession ? openedSessionId : null;
-    failure = null;
-    changing = true;
+    busy = true;
+    saveFailure = null;
+    notice = '';
     try {
-      let accepted = false;
-      if (saved) {
-        accepted = await saveCertificate(hostname, fingerprint);
-      } else if (confirmedSession !== null) {
-        accepted = await trust(confirmedSession, hostname, fingerprint, (message) => {
-          failure = message;
-        });
-      } else {
-        failure = m.browser_error_session_missing();
-      }
-      if (accepted) {
+      const outcome = await call(() => commands.browserSaveCertificate({ fingerprint, hostname }));
+      if (outcome.ok) {
         form.reset();
-        open = false;
-        notice = saved ? m.browser_certificate_trust_saved() : m.browser_certificate_saved();
+        notice = m.browser_certificate_trust_saved();
+        await load(false);
+        adding = false;
+      } else {
+        saveFailure = browserFailureMessage(outcome.failure);
       }
     } finally {
-      changing = false;
+      busy = false;
     }
   }
 
-  async function saveCertificate(hostname: string, fingerprint: string): Promise<boolean> {
-    const outcome = await call(() => commands.browserSaveCertificate({ fingerprint, hostname }));
-    if (!outcome.ok) {
-      failure = browserFailureMessage(outcome.failure);
-    }
-    return outcome.ok;
-  }
-
-  async function forgetCertificate({ fingerprint, hostname }: BrowserCertificateException): Promise<void> {
-    if (disabled) {
+  async function forget({ fingerprint, hostname }: BrowserCertificateException): Promise<void> {
+    if (busy) {
       return;
     }
-    pendingForget = null;
+    busy = true;
     failure = null;
-    changing = true;
+    notice = '';
     try {
       const outcome = await call(() => commands.browserForgetCertificate({ fingerprint, hostname }));
       if (outcome.ok) {
-        open = false;
         notice = m.browser_certificate_forgotten({ hostname });
+        heading?.focus();
+        await load(false);
       } else {
         failure = browserFailureMessage(outcome.failure);
       }
     } finally {
-      changing = false;
+      busy = false;
     }
   }
+
+  onMount(() => {
+    void load();
+  });
 </script>
 
-<Dialog.Root bind:open={() => open, setOpen}>
-  <Dialog.Trigger>
-    {#snippet child({ props })}
-      <Button {...props} data-browser-certificates="" {disabled} size="sm" variant="outline">
-        {m.browser_certificate_trust()}
-      </Button>
-    {/snippet}
-  </Dialog.Trigger>
-  <Dialog.Content class="grid-cols-[minmax(0,1fr)] sm:max-w-lg" showCloseButton={false}>
-    <Dialog.Header>
-      <Dialog.Title>{m.browser_certificate_exceptions()}</Dialog.Title>
-      <Dialog.Description>{m.browser_certificate_description()}</Dialog.Description>
-    </Dialog.Header>
-    {#if failure !== null}
+<section class="flex min-w-0 flex-col gap-4" aria-labelledby={id} data-browser-trusted-hosts="">
+  <h3 bind:this={heading} {id} class="font-medium focus-visible:ring-2 focus-visible:ring-ring" tabindex="-1">
+    {m.browser_certificate_exceptions()}
+  </h3>
+  {#if failure !== null}
+    <Alert.Root variant="destructive">
+      <CircleAlertIcon />
+      <Alert.Title>{m.browser_certificate_change_failed()}</Alert.Title>
+      <Alert.Description>{failure}</Alert.Description>
+    </Alert.Root>
+  {/if}
+  <Dialog.Root
+    bind:open={adding}
+    onOpenChange={(open) => {
+      if (open) {
+        saveFailure = null;
+      }
+    }}
+  >
+    {#if loading}
+      <div class="flex flex-col gap-3" aria-busy="true">
+        <span class="sr-only" role="status">{m.browser_certificate_loading()}</span>
+        <Skeleton class="h-24 w-full" />
+      </div>
+    {:else if listFailure !== null}
       <Alert.Root variant="destructive">
-        <Alert.Title>{m.browser_error_title()}</Alert.Title>
-        <Alert.Description>{failure}</Alert.Description>
+        <CircleAlertIcon />
+        <Alert.Title>{m.browser_certificate_load_failed()}</Alert.Title>
+        <Alert.Description>{listFailure}</Alert.Description>
+        <Alert.Action>
+          <Button disabled={busy} size="sm" variant="outline" onclick={() => void load()}>{m.browser_retry()}</Button>
+        </Alert.Action>
       </Alert.Root>
-    {/if}
-    <section class="flex flex-col gap-2" aria-labelledby={`${id}-saved`}>
-      <h3 id={`${id}-saved`} class="font-medium">{m.browser_certificate_saved_list()}</h3>
-      {#if loading}
-        <p class="text-muted-foreground" role="status">{m.browser_certificate_loading()}</p>
-      {:else if listFailure !== null}
-        <Alert.Root variant="destructive">
-          <Alert.Title>{m.browser_error_title()}</Alert.Title>
-          <Alert.Description>{listFailure}</Alert.Description>
-        </Alert.Root>
-        <Button class="self-start" {disabled} size="sm" variant="outline" onclick={() => void loadSavedExceptions()}>
-          {m.browser_retry()}
-        </Button>
-      {:else if savedExceptions?.length === 0}
-        <p class="text-muted-foreground">{m.browser_certificate_empty()}</p>
-      {:else if savedExceptions !== null}
-        <ul class="flex flex-col gap-2">
-          {#each savedExceptions as exception (exception.hostname)}
-            <li class="flex items-center justify-between gap-2" data-browser-saved-certificate="">
-              <div class="flex min-w-0 flex-col gap-1">
-                <span class="wrap-anywhere" data-content dir="auto">{exception.hostname}</span>
-                <code class="text-xs wrap-anywhere text-muted-foreground" data-content>{exception.fingerprint}</code>
-              </div>
-              <AlertDialog.Root
-                bind:open={() => pendingForget === exception, (next) => (pendingForget = next ? exception : null)}
+    {:else if saved.length === 0}
+      <Empty.Root class="border">
+        <Empty.Header>
+          <Empty.Media variant="icon"><ShieldCheckIcon /></Empty.Media>
+          <Empty.Title>{m.browser_certificate_empty()}</Empty.Title>
+          <Empty.Description>{m.browser_certificate_empty_description()}</Empty.Description>
+        </Empty.Header>
+        <Empty.Content>
+          <Dialog.Trigger>
+            {#snippet child({ props })}
+              <Button {...props} data-browser-certificate-add="" disabled={busy} bind:ref={addTrigger}>
+                {m.browser_certificate_add()}
+              </Button>
+            {/snippet}
+          </Dialog.Trigger>
+        </Empty.Content>
+      </Empty.Root>
+    {:else}
+      <div>
+        <Dialog.Trigger>
+          {#snippet child({ props })}
+            <Button {...props} data-browser-certificate-add="" disabled={busy} variant="outline" bind:ref={addTrigger}>
+              {m.browser_certificate_add()}
+            </Button>
+          {/snippet}
+        </Dialog.Trigger>
+      </div>
+      <Item.Group aria-labelledby={id}>
+        {#each saved as exception (exception.hostname)}
+          <Item.Root data-browser-saved-certificate="" role="listitem" variant="outline">
+            <Item.Content class="min-w-0">
+              <Item.Title class="wrap-anywhere" data-content dir="ltr">{exception.hostname}</Item.Title>
+              <code class="text-xs wrap-anywhere text-muted-foreground" data-content dir="ltr"
+                >{exception.fingerprint}</code
               >
+            </Item.Content>
+            <Item.Actions>
+              <AlertDialog.Root>
                 <AlertDialog.Trigger>
                   {#snippet child({ props })}
                     <Button
                       {...props}
                       aria-label={m.browser_certificate_forget_label({ hostname: exception.hostname })}
                       data-browser-certificate-forget=""
-                      {disabled}
+                      disabled={busy}
                       size="sm"
                       variant="outline"
                     >
@@ -208,85 +207,98 @@
                     <AlertDialog.Cancel>{m.browser_cancel()}</AlertDialog.Cancel>
                     <AlertDialog.Action
                       data-browser-certificate-forget-confirm=""
-                      {disabled}
+                      disabled={busy}
                       variant="destructive"
-                      onclick={() => void forgetCertificate(exception)}
+                      onclick={() => void forget(exception)}
                     >
                       {m.browser_certificate_forget()}
                     </AlertDialog.Action>
                   </AlertDialog.Footer>
                 </AlertDialog.Content>
               </AlertDialog.Root>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </section>
-    {#if showSessionExceptions}
-      <section class="flex flex-col gap-2" aria-labelledby={`${id}-session`}>
-        <h3 id={`${id}-session`} class="font-medium">{m.browser_certificate_session_list()}</h3>
-        <ul class="flex flex-col gap-2">
-          {#each exceptions as exception (exception.hostname)}
-            <li class="flex flex-col gap-1" data-browser-certificate-exception="">
-              <span class="wrap-anywhere" data-content dir="auto">{exception.hostname}</span>
-              <code class="text-xs wrap-anywhere text-muted-foreground" data-content>{exception.fingerprint}</code>
-            </li>
-          {/each}
-        </ul>
-      </section>
+            </Item.Actions>
+          </Item.Root>
+        {/each}
+      </Item.Group>
     {/if}
-    <form class="flex flex-col gap-4" novalidate onsubmit={(event) => void confirm(event)}>
-      <Field.FieldGroup>
-        <Field.Field>
-          <Field.Label for={`${id}-hostname`}>{m.browser_certificate_hostname()}</Field.Label>
-          <Input
-            id={`${id}-hostname`}
-            name="hostname"
-            aria-describedby={`${id}-hostname-description`}
-            autocomplete="off"
-            data-browser-certificate-hostname=""
-            maxlength={1024}
-            required
-            spellcheck={false}
-          />
-          <Field.Description id={`${id}-hostname-description`}>
-            {m.browser_certificate_hostname_description()}
-          </Field.Description>
-        </Field.Field>
-        <Field.Field>
-          <Field.Label for={`${id}-fingerprint`}>{m.browser_certificate_fingerprint()}</Field.Label>
-          <Input
-            id={`${id}-fingerprint`}
-            name="fingerprint"
-            aria-describedby={`${id}-fingerprint-description`}
-            autocomplete="off"
-            data-browser-certificate-fingerprint=""
-            maxlength={128}
-            required
-            spellcheck={false}
-          />
-          <Field.Description id={`${id}-fingerprint-description`}>
-            {m.browser_certificate_fingerprint_description()}
-          </Field.Description>
-        </Field.Field>
-      </Field.FieldGroup>
-      <Dialog.Footer class="flex-wrap">
-        <Dialog.Close>
-          {#snippet child({ props })}
-            <Button {...props} {disabled} type="button" variant="outline">{m.browser_close()}</Button>
-          {/snippet}
-        </Dialog.Close>
-        {#if openedSessionId !== null}
-          <Button data-browser-certificate-trust="" disabled={sessionTrustDisabled} type="submit" variant="outline">
-            {m.browser_certificate_trust_session()}
-          </Button>
+    <Dialog.Content
+      class="sm:max-w-lg"
+      showCloseButton={false}
+      onCloseAutoFocus={(event: Event) => {
+        event.preventDefault();
+        (addTrigger?.disabled === false ? addTrigger : heading)?.focus();
+      }}
+      onOpenAutoFocus={focusHostname}
+    >
+      <form class="flex flex-col gap-4" data-browser-certificate-dialog="" onsubmit={(event) => void save(event)}>
+        <Dialog.Header>
+          <Dialog.Title>{m.browser_certificate_add()}</Dialog.Title>
+          <Dialog.Description>{m.browser_certificate_description()}</Dialog.Description>
+        </Dialog.Header>
+        {#if saveFailure !== null}
+          <Alert.Root variant="destructive">
+            <CircleAlertIcon />
+            <Alert.Title>{m.browser_certificate_change_failed()}</Alert.Title>
+            <Alert.Description>{saveFailure}</Alert.Description>
+          </Alert.Root>
         {/if}
-        <Button data-browser-certificate-save="" {disabled} type="submit" value="saved">
-          {m.browser_certificate_save()}
-        </Button>
-      </Dialog.Footer>
-    </form>
-  </Dialog.Content>
-</Dialog.Root>
-
-<span class="sr-only" role="status">{notice}</span>
+        <Field.FieldGroup>
+          <Field.Field>
+            <div class="flex items-center gap-1">
+              <Field.Label for={`${id}-hostname`}>{m.browser_certificate_hostname()}</Field.Label>
+              <FieldHelp
+                id={`${id}-hostname-help`}
+                field={m.browser_certificate_hostname()}
+                text={m.browser_certificate_hostname_description()}
+              />
+            </div>
+            <Input
+              id={`${id}-hostname`}
+              name="hostname"
+              aria-describedby={`${id}-hostname-help`}
+              autocomplete="off"
+              data-browser-certificate-hostname=""
+              dir="ltr"
+              maxlength={1024}
+              placeholder={m.browser_certificate_hostname_placeholder()}
+              required
+              spellcheck={false}
+              bind:ref={hostnameInput}
+            />
+          </Field.Field>
+          <Field.Field>
+            <div class="flex items-center gap-1">
+              <Field.Label for={`${id}-fingerprint`}>{m.browser_certificate_fingerprint()}</Field.Label>
+              <FieldHelp
+                id={`${id}-fingerprint-help`}
+                field={m.browser_certificate_fingerprint()}
+                text={m.browser_certificate_fingerprint_description()}
+              />
+            </div>
+            <Input
+              id={`${id}-fingerprint`}
+              name="fingerprint"
+              aria-describedby={`${id}-fingerprint-help`}
+              autocomplete="off"
+              data-browser-certificate-fingerprint=""
+              dir="ltr"
+              maxlength={128}
+              placeholder={m.browser_certificate_fingerprint_placeholder()}
+              required
+              spellcheck={false}
+            />
+          </Field.Field>
+        </Field.FieldGroup>
+        <Dialog.Footer>
+          <Dialog.Close>
+            {#snippet child({ props })}
+              <Button {...props} type="button" variant="outline">{m.browser_cancel()}</Button>
+            {/snippet}
+          </Dialog.Close>
+          <Button data-browser-certificate-save="" disabled={busy} type="submit">{m.browser_certificate_save()}</Button>
+        </Dialog.Footer>
+      </form>
+    </Dialog.Content>
+  </Dialog.Root>
+  <span class="sr-only" role="status">{notice}</span>
+</section>

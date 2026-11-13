@@ -1,16 +1,15 @@
-//! Saved and session-scoped server certificate exceptions (ADR-0066).
+//! Saved server certificate exceptions (ADR-0066).
 
 #[cfg(test)]
 mod tests;
 mod verify;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::ffi::c_void;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use mannie_tools::browser::ChromeError;
 use sha2::{Digest, Sha256};
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_ALWAYS_ALLOW,
@@ -35,48 +34,17 @@ use verify::{decode_pem, verified_leaf};
 /// its processes and close any pooled connections before `NotAfter`.
 const SHUTDOWN_MARGIN: Duration = Duration::from_secs(5);
 const TICKS_PER_SECOND: u64 = 10_000_000;
-/// The owner's pins and the earliest cutoff for any WebView2 allowance.
+/// The saved pins that WebView2 allowed and the earliest cutoff.
 #[derive(Default)]
 pub(super) struct Certificates {
-    pins: HashMap<String, [u8; 32]>,
     allowed: HashSet<CertificatePin>,
     expiry: Option<ExpiryTimer>,
     cutoff: Option<u64>,
 }
 
 impl Certificates {
-    pub(super) fn add(&mut self, pin: CertificatePin) -> Result<(), ChromeError> {
-        if self.allowed.iter().any(|allowed| {
-            allowed.hostname == pin.hostname && allowed.fingerprint != pin.fingerprint
-        }) {
-            return Err(ChromeError::CertificateConflict);
-        }
-        match self.pins.entry(pin.hostname) {
-            std::collections::hash_map::Entry::Occupied(entry) => {
-                if *entry.get() != pin.fingerprint {
-                    return Err(ChromeError::CertificateConflict);
-                }
-            }
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(pin.fingerprint);
-            }
-        }
-        Ok(())
-    }
-
-    pub(super) fn could_use(&self, pin: &CertificatePin) -> bool {
-        self.pins.get(&pin.hostname) == Some(&pin.fingerprint) || self.allowed.contains(pin)
-    }
-
-    fn fingerprint(
-        &self,
-        hostname: &str,
-        saved: Option<&HashMap<String, [u8; 32]>>,
-    ) -> Option<[u8; 32]> {
-        self.pins
-            .get(hostname)
-            .or_else(|| saved.and_then(|saved| saved.get(hostname)))
-            .copied()
+    pub(super) fn allowed(&self, pin: &CertificatePin) -> bool {
+        self.allowed.contains(pin)
     }
 
     pub(super) fn due(&self) -> bool {
@@ -232,7 +200,7 @@ fn allow_if_trusted(
     };
     let fingerprint = {
         let saved = lock(&shared.saved_certificates);
-        lock(&shared.certificates).fingerprint(&hostname, saved.as_ref())
+        saved.as_ref().and_then(|pins| pins.get(&hostname)).copied()
     };
     let Some(fingerprint) = fingerprint else {
         return Ok(false);
@@ -259,7 +227,7 @@ fn allow_if_trusted(
     let mut certificates = lock(&shared.certificates);
     if shared.stopping()
         || shared.certificate_expired.load(Ordering::Acquire)
-        || certificates.fingerprint(&pin.hostname, saved.as_ref()) != Some(pin.fingerprint)
+        || saved.as_ref().and_then(|pins| pins.get(&pin.hostname)) != Some(&pin.fingerprint)
         || !certificates.arm(shared, not_after)?
     {
         return Ok(false);

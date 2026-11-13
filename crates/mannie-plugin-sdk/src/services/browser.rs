@@ -6,7 +6,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use crate::contracts::ConversationId;
+use crate::contracts::{ConversationId, Secret};
 use crate::points::tools::{BrowserAccess, BrowserAuthorization, BrowserControlAccess};
 use crate::service::Service;
 use crate::{BoxFuture, BoxStream};
@@ -63,20 +63,35 @@ pub trait BrowserApi: Send + Sync + fmt::Debug {
         tab: Option<String>,
         action: BrowserControl,
     ) -> BoxFuture<'static, Result<(), BrowserError>>;
-    /// Change a session credential from the owner.
+    /// Legacy session credential command. A host that retired session
+    /// credentials refuses this request without saving its value.
     fn credential(
         &self,
         conversation: ConversationId,
         action: BrowserCredential,
     ) -> BoxFuture<'static, Result<(), BrowserError>>;
-    /// Record an owner-confirmed certificate exception in a live session.
-    fn trust_certificate(
+    /// Lists the owner's saved site credential metadata.
+    fn site_credentials(
         &self,
-        conversation: ConversationId,
-        session_id: String,
-        hostname: String,
-        fingerprint: String,
-    ) -> BoxFuture<'static, Result<(), BrowserError>>;
+    ) -> BoxFuture<'static, Result<Vec<BrowserCredentialRef>, BrowserError>> {
+        Box::pin(std::future::ready(Err(BrowserError::BrowserIncompatible)))
+    }
+    /// Saves a credential for the specified exact HTTP or HTTPS origin.
+    fn add_site_credential(
+        &self,
+        _origin: String,
+        _label: String,
+        _value: Secret,
+    ) -> BoxFuture<'static, Result<BrowserCredentialRef, BrowserError>> {
+        Box::pin(std::future::ready(Err(BrowserError::BrowserIncompatible)))
+    }
+    /// Removes the specified saved credential and its conversation grants.
+    fn remove_site_credential(
+        &self,
+        _reference: String,
+    ) -> BoxFuture<'static, Result<(), BrowserError>> {
+        Box::pin(std::future::ready(Err(BrowserError::BrowserIncompatible)))
+    }
     /// Lists the owner's saved certificate pins for Browser sessions.
     fn saved_certificates(
         &self,
@@ -158,18 +173,12 @@ pub enum BrowserError {
     NavigationDenied,
     /// A top-level navigation failed certificate verification.
     #[error(
-        "the site's certificate was rejected. The owner can add a trusted self-signed certificate in the Browser pane"
+        "the site's certificate was rejected. The owner can add a trusted self-signed certificate in Browser settings"
     )]
     CertificateRejected,
     /// The browser session ended at the approved certificate's expiry cutoff.
     #[error("the browser session ended because a trusted certificate was about to expire")]
     CertificateExpired,
-    /// An exception already exists for this hostname with a different certificate.
-    #[error("end this browser session before trusting a different certificate for this hostname")]
-    CertificateConflict,
-    /// The owner confirmation could not be recorded.
-    #[error("the certificate exception could not be recorded")]
-    CertificateJournalFailed,
     /// The saved certificate registry could not be read or changed.
     #[error("saved Browser certificates could not be read or changed")]
     CertificateStoreFailed,
@@ -199,6 +208,18 @@ pub enum BrowserError {
     /// The referenced secret cannot be used at this origin.
     #[error("this credential is unavailable at the field's origin")]
     CredentialMissing,
+    /// The operating-system credential store could not be used.
+    #[error("the Browser could not use the operating-system credential store")]
+    CredentialStoreUnavailable,
+    /// The saved credential metadata or journal could not be used.
+    #[error("the Browser could not read or change the site credential catalog")]
+    CredentialCatalogFailed,
+    /// A credential at this exact origin already has this label.
+    #[error("a saved credential already has this label at this origin")]
+    CredentialAlreadyExists,
+    /// The old session-only IPC command is no longer supported by the host.
+    #[error("session credentials have been retired. Add a site credential from Browser settings")]
+    SessionCredentialsRetired,
     /// The desktop's browser resource limit was reached.
     #[error("the browser session or tab limit was reached")]
     LimitReached,
@@ -218,8 +239,6 @@ impl BrowserError {
             Self::NavigationDenied => "navigation_denied",
             Self::CertificateRejected => "certificate_rejected",
             Self::CertificateExpired => "certificate_expired",
-            Self::CertificateConflict => "certificate_conflict",
-            Self::CertificateJournalFailed => "certificate_journal_failed",
             Self::CertificateStoreFailed => "certificate_store_failed",
             Self::CertificateSavedConflict => "certificate_saved_conflict",
             Self::CertificateRevocationFailed => "certificate_revocation_failed",
@@ -229,6 +248,10 @@ impl BrowserError {
             Self::InvalidBrowserInput => "invalid_browser_input",
             Self::NotFound => "not_found",
             Self::CredentialMissing => "credential_missing",
+            Self::CredentialStoreUnavailable => "credential_store_unavailable",
+            Self::CredentialCatalogFailed => "credential_catalog_failed",
+            Self::CredentialAlreadyExists => "credential_already_exists",
+            Self::SessionCredentialsRetired => "session_credentials_retired",
             Self::LimitReached => "limit_reached",
         }
     }
@@ -257,9 +280,6 @@ pub struct BrowserStatus {
     /// Opaque identity of the current engine session, for owner confirmations.
     #[serde(default)]
     pub session_id: Option<String>,
-    /// The owner-confirmed certificate exceptions of this session.
-    #[serde(default)]
-    pub certificate_exceptions: Vec<BrowserCertificateException>,
     /// The active control mode, if a session is running.
     pub control: Option<BrowserControlMode>,
     /// The session's tabs.
@@ -274,7 +294,8 @@ pub struct BrowserStatus {
     pub focus_return: Option<BrowserFocusReturn>,
     /// Why the last session ended on its own, until a new one starts.
     pub failure: Option<BrowserError>,
-    /// References to credentials provided by the owner.
+    /// Legacy session credential references. Hosts with saved site
+    /// credentials leave this field empty.
     pub credentials: Vec<BrowserCredentialRef>,
 }
 
@@ -325,6 +346,9 @@ pub struct BrowserTab {
     /// The latest top-level navigation error, when reported by the native engine.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub navigation_error: Option<BrowserError>,
+    /// Identifies separate occurrences of the same top-level navigation error.
+    #[serde(default)]
+    pub navigation_error_sequence: u32,
 }
 
 /// Where the pane wants a tab's page, in the app webview's CSS pixels. The

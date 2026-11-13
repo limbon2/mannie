@@ -177,6 +177,8 @@ export interface SidePanelKind {
   readonly component: Component<SidePanelProps>;
   /** The tab's label until the panel names itself. */
   readonly defaultLabel: Message;
+  /** Keeps the panel heading for assistive technology and opening focus, without repeating the tab label visually. */
+  readonly hideHeading?: boolean;
   /** An icon from @lucide/svelte, which the tab shows before its label. */
   readonly icon: Component;
   /** Unique among side panel kinds; the address names it, so it has no colon. */

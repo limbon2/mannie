@@ -2,11 +2,11 @@
 
 use std::collections::HashSet;
 
+use mannie_plugin_sdk::contracts::ConversationId;
 use mannie_plugin_sdk::points::tools::BrowserAction;
 use mannie_plugin_sdk::services::browser::{
-    BrowserControl, BrowserCredentialRef, BrowserError, BrowserFillValue, BrowserFrame,
-    BrowserInteraction, BrowserNavigation, BrowserNode, BrowserRequest, BrowserResult, BrowserTab,
-    BrowserTarget,
+    BrowserControl, BrowserError, BrowserFillValue, BrowserFrame, BrowserInteraction,
+    BrowserNavigation, BrowserNode, BrowserRequest, BrowserResult, BrowserTab, BrowserTarget,
 };
 use mannie_tools::browser::{
     Chrome, ChromeError, ChromeFrame, ChromeHost, ChromeInput, ChromeNavigationAction,
@@ -18,7 +18,14 @@ use sha2::{Digest, Sha256};
 use url::Url;
 use zeroize::Zeroizing;
 
+use super::credentials::SiteCredentials;
 use super::{Slot, lock};
+
+pub(super) struct AgentAccess<'a> {
+    pub(super) conversation: &'a ConversationId,
+    pub(super) origin: &'a str,
+    pub(super) catalog: Option<&'a SiteCredentials>,
+}
 
 pub(super) fn error(error: ChromeError) -> BrowserError {
     match error {
@@ -29,7 +36,6 @@ pub(super) fn error(error: ChromeError) -> BrowserError {
         ChromeError::Disconnected | ChromeError::Protocol => BrowserError::BrowserDisconnected,
         ChromeError::Rejected | ChromeError::CrossOriginTarget => BrowserError::NavigationDenied,
         ChromeError::CertificateRejected => BrowserError::CertificateRejected,
-        ChromeError::CertificateConflict => BrowserError::CertificateConflict,
         ChromeError::Stale
         | ChromeError::ScreenshotRequired
         | ChromeError::ViewportChanged
@@ -152,6 +158,7 @@ pub(super) fn browser_tab(tab: ChromeTab) -> BrowserTab {
         title: tab.title,
         loading: tab.loading,
         navigation_error: tab.navigation_error.map(error),
+        navigation_error_sequence: tab.navigation_error_sequence,
     }
 }
 
@@ -354,11 +361,7 @@ fn element(reference: String) -> Result<ChromeTarget, BrowserError> {
     Ok(ChromeTarget::Element(reference))
 }
 
-fn agent_gesture(
-    slot: &Slot,
-    tab: &ChromeTab,
-    action: BrowserInteraction,
-) -> Result<ChromeInput, BrowserError> {
+fn agent_gesture(action: BrowserInteraction) -> Result<ChromeInput, BrowserError> {
     match action {
         BrowserInteraction::Click { target } => Ok(ChromeInput::Click(chrome_target(target)?)),
         BrowserInteraction::Drag { from, to } => Ok(ChromeInput::Drag {
@@ -366,32 +369,20 @@ fn agent_gesture(
             to: chrome_target(to)?,
         }),
         BrowserInteraction::ClickMany { .. } => Err(BrowserError::InvalidBrowserInput),
-        BrowserInteraction::Fill { reference, value } => {
-            let target = element(reference)?;
-            let (text, protected) = match value {
-                BrowserFillValue::Text { text } => {
-                    if text.len() > 8192 {
-                        return Err(BrowserError::InvalidBrowserInput);
-                    }
-                    (text, false)
-                }
-                BrowserFillValue::Credential { reference } => {
-                    let site = origin(&tab.url)?;
-                    let state = lock(&slot.state);
-                    let secret = state
-                        .credentials
-                        .get(&reference)
-                        .filter(|secret| secret.descriptor.origin == site)
-                        .ok_or(BrowserError::CredentialMissing)?;
-                    (secret.value.as_str().to_owned(), true)
-                }
-            };
+        BrowserInteraction::Fill {
+            reference,
+            value: BrowserFillValue::Text { text },
+        } => {
+            if text.len() > 8192 {
+                return Err(BrowserError::InvalidBrowserInput);
+            }
             Ok(ChromeInput::Fill {
-                target,
+                target: element(reference)?,
                 text,
-                protected,
+                protected: false,
             })
         }
+        BrowserInteraction::Fill { .. } => Err(BrowserError::CredentialMissing),
         BrowserInteraction::Select { reference, value } => {
             if value.len() > 8192 {
                 return Err(BrowserError::InvalidBrowserInput);
@@ -412,26 +403,6 @@ fn agent_gesture(
                 return Err(BrowserError::InvalidBrowserInput);
             }
             Ok(ChromeInput::Scroll { x, y })
-        }
-    }
-}
-
-fn protect_observation(
-    text: &mut String,
-    outline: &mut [BrowserNode],
-    credentials: &mut [BrowserCredentialRef],
-    secrets: &[&str],
-) {
-    for field in std::iter::once(text)
-        .chain(outline.iter_mut().map(|node| &mut node.name))
-        .chain(
-            credentials
-                .iter_mut()
-                .map(|credential| &mut credential.label),
-        )
-    {
-        for secret in secrets {
-            *field = field.replace(secret, "[redacted]");
         }
     }
 }
@@ -460,12 +431,12 @@ async fn observe(
     slot: &Slot,
     chrome: &Chrome,
     screenshot: bool,
-    authorized_origin: &str,
+    access: &AgentAccess<'_>,
 ) -> Result<BrowserResult, BrowserError> {
     let tab = current_tab(slot, chrome)?;
     let observation = chrome.observe(&tab, screenshot).await.map_err(error)?;
     let site = origin(&observation.tab.url)?;
-    if site != authorized_origin {
+    if site != access.origin {
         return Err(BrowserError::StaleTarget);
     }
     let screenshot = screenshot_details(&observation);
@@ -476,27 +447,14 @@ async fn observe(
     } else {
         observation.screenshot
     };
-    let mut page = observed_page(observation);
-    let mut state = lock(&slot.state);
-    let mut credentials: Vec<_> = state
-        .credentials
-        .values()
-        .map(|secret| &secret.descriptor)
-        .filter(|secret| secret.origin == site)
-        .cloned()
-        .collect();
-    credentials.sort_by(|left, right| left.reference.cmp(&right.reference));
-    let secrets: Vec<_> = state
-        .credentials
-        .values()
-        .map(|secret| secret.value.as_str())
-        .collect();
-    protect_observation(
-        &mut page.text,
-        &mut page.outline,
-        &mut credentials,
-        &secrets,
-    );
+    let mut credentials = match access.catalog {
+        Some(catalog) => catalog.for_origin(Some(site.clone())).await?,
+        None => Vec::new(),
+    };
+    for credential in &mut credentials {
+        credential.label = chrome.redact_protected(&credential.label);
+    }
+    let page = observed_page(observation);
     let outline: Vec<_> = page
         .outline
         .into_iter()
@@ -512,6 +470,7 @@ async fn observe(
         "credentials": credentials,
         "screenshot": screenshot,
     });
+    let mut state = lock(&slot.state);
     state.last_observation = Some(TargetObservation {
         tab,
         revision: page.revision,
@@ -530,16 +489,16 @@ pub(super) async fn agent_input(
     slot: &Slot,
     chrome: &Chrome,
     request: BrowserRequest,
-    authorized_origin: &str,
+    access: AgentAccess<'_>,
 ) -> Result<BrowserResult, BrowserError> {
     match request {
         BrowserRequest::Tabs => return Err(BrowserError::InvalidBrowserInput),
         BrowserRequest::Observe { screenshot } => {
-            return observe(slot, chrome, screenshot, authorized_origin).await;
+            return observe(slot, chrome, screenshot, &access).await;
         }
         BrowserRequest::Navigate(action) => agent_navigation(slot, chrome, action).await?,
         BrowserRequest::Interact { revision, action } => {
-            return interact(slot, chrome, &revision, action).await;
+            return interact(slot, chrome, &revision, action, &access).await;
         }
     }
     Ok(tab_result(slot, chrome))
@@ -655,6 +614,7 @@ async fn interact(
     chrome: &Chrome,
     revision: &str,
     action: BrowserInteraction,
+    access: &AgentAccess<'_>,
 ) -> Result<BrowserResult, BrowserError> {
     let tab = lookup(chrome, &current_tab(slot, chrome)?)?;
     // An element reference or a point comes from the latest observation, so
@@ -715,11 +675,8 @@ async fn interact(
         });
     }
     // A refused input leaves the page as it was, and its observation usable.
-    let input = agent_gesture(slot, &tab, action)?;
-    if targeted {
-        consume_observation(slot);
-    }
-    match chrome.interact(&tab.id, revision, input).await {
+    let outcome = dispatch_interaction(slot, chrome, &tab, action, access, targeted).await?;
+    match outcome {
         Ok(()) => Ok(tab_result(slot, chrome)),
         Err(ChromeError::ScreenshotRequired) => {
             Ok(StaleInteraction::ScreenshotRequired.result(point))
@@ -728,6 +685,54 @@ async fn interact(
         Err(ChromeError::PointOutOfBounds) => Ok(StaleInteraction::PointOutOfBounds.result(point)),
         Err(failure) => Err(error(failure)),
     }
+}
+
+async fn dispatch_interaction(
+    slot: &Slot,
+    chrome: &Chrome,
+    tab: &ChromeTab,
+    action: BrowserInteraction,
+    access: &AgentAccess<'_>,
+    targeted: bool,
+) -> Result<Result<(), ChromeError>, BrowserError> {
+    let outcome = match action {
+        BrowserInteraction::Fill {
+            reference: field,
+            value: BrowserFillValue::Credential { reference },
+        } => {
+            let target = element(field)?;
+            if origin(&tab.url)? != access.origin {
+                return Err(BrowserError::StaleTarget);
+            }
+            let catalog = access.catalog.ok_or(BrowserError::CredentialMissing)?;
+            let credential = catalog
+                .fill(access.conversation, access.origin, &reference)
+                .await?;
+            consume_observation(slot);
+            let dispatched = chrome
+                .dispatch_credential(
+                    &tab.id,
+                    &tab.revision,
+                    access.origin,
+                    target,
+                    credential.value.expose().to_owned(),
+                )
+                .await;
+            drop(credential);
+            match dispatched {
+                Ok(settlement) => settlement.await,
+                Err(error) => Err(error),
+            }
+        }
+        action => {
+            let input = agent_gesture(action)?;
+            if targeted {
+                consume_observation(slot);
+            }
+            chrome.interact(&tab.id, &tab.revision, input).await
+        }
+    };
+    Ok(outcome)
 }
 
 async fn agent_navigation(
@@ -848,25 +853,10 @@ mod tests {
 
     #[test]
     fn press_takes_named_keys_and_refuses_text() {
-        let slot = Slot::new();
-        let tab = ChromeTab {
-            id: "tab-1".to_owned(),
-            url: "http://127.0.0.1:8123/".to_owned(),
-            title: String::new(),
-            revision: "1".to_owned(),
-            back: None,
-            forward: None,
-            loading: false,
-            navigation_error: None,
-        };
         let press = |key: &str| {
-            agent_gesture(
-                &slot,
-                &tab,
-                BrowserInteraction::Press {
-                    key: key.to_owned(),
-                },
-            )
+            agent_gesture(BrowserInteraction::Press {
+                key: key.to_owned(),
+            })
         };
         assert!(matches!(press("Enter"), Ok(ChromeInput::Press { .. })));
         assert!(matches!(press("ArrowDown"), Ok(ChromeInput::Press { .. })));
@@ -900,28 +890,5 @@ mod tests {
             credential_origin("https://example.com/path"),
             Err(BrowserError::InvalidBrowserInput)
         );
-    }
-
-    #[test]
-    fn redacts_short_credentials_without_changing_references() {
-        let mut text = "Code 1".to_owned();
-        let mut outline = [BrowserNode {
-            role: "textbox".to_owned(),
-            name: "Field 1".to_owned(),
-            reference: Some("2-1".to_owned()),
-            editable: true,
-        }];
-        let mut credentials = [BrowserCredentialRef {
-            reference: "credential-1".to_owned(),
-            origin: "http://localhost:1101".to_owned(),
-            label: "Code 1".to_owned(),
-        }];
-        protect_observation(&mut text, &mut outline, &mut credentials, &["1"]);
-        assert_eq!(text, "Code [redacted]");
-        assert_eq!(outline[0].name, "Field [redacted]");
-        assert_eq!(outline[0].reference.as_deref(), Some("2-1"));
-        assert_eq!(credentials[0].reference, "credential-1");
-        assert_eq!(credentials[0].origin, "http://localhost:1101");
-        assert_eq!(credentials[0].label, "Code [redacted]");
     }
 }

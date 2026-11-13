@@ -9,6 +9,8 @@
 
 [ADR-0065](0065-let-browser-access-follow-the-conversation.md) adds SDK options to open a background panel, replace a launcher panel in place and update an open panel's label.
 
+[ADR-0067](0067-manage-browser-trust-and-credentials-in-settings.md) refines the Browser controls and Settings.
+
 ## Context
 
 - [Child agents](../features/child-agents/README.md) let the owner open a child's whole conversation. The owner decided on 2026-10-15 that it opens in a side panel docked beside the parent's conversation, and that side panels will grow, as in the Claude app and Codex, so later features can show their own content there ([D18](../roadmap/milestones.md#5-decisions)). Open panels show as tabs, and they belong to the conversation that opened them.

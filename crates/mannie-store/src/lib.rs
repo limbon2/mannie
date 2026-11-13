@@ -17,6 +17,7 @@
 //!   reaches (ADR-0056).
 
 mod browser;
+mod browser_credentials;
 pub mod dbfiles;
 mod error;
 mod exports;
@@ -34,6 +35,7 @@ mod updates;
 pub mod validation;
 mod writer;
 
+pub use browser_credentials::StoredSiteCredential;
 pub use error::{DatabaseError, ModuleProblem, StoreError};
 pub use plugin_store::{PluginModule, service_providers};
 pub use provider::chatgpt::{ChatGptSignInRecord, StoredChatGptAccount};
@@ -73,6 +75,7 @@ pub(crate) fn all_statements() -> impl Iterator<Item = &'static str> {
     settings::STATEMENTS
         .iter()
         .chain(browser::STATEMENTS)
+        .chain(browser_credentials::STATEMENTS)
         .chain(exports::STATEMENTS)
         .chain(provider::STATEMENTS)
         .chain(provider::chatgpt::STATEMENTS)

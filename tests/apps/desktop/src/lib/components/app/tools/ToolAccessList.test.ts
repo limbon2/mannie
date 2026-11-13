@@ -11,7 +11,7 @@ import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 
 import ToolAccessList from '../../../../../../../../apps/desktop/src/lib/components/app/tools/ToolAccessList.svelte';
-import type { Access } from '../../../../../../../../apps/desktop/src/lib/generated/bindings.js';
+import type { Access, DatabaseHome } from '../../../../../../../../apps/desktop/src/lib/generated/bindings.js';
 
 const RUN: Access = {
   arguments: ['reset', '--hard', 'HEAD~1'],
@@ -135,18 +135,14 @@ describe('ToolAccessList', () => {
   });
 
   it('names the worker whose host holds a database, and never its ID', () => {
-    const body = shown([
-      {
-        ...STATEMENT,
-        home: {
-          acceptsFullAccess: true,
-          kind: 'worker',
-          mode: 'autonomous',
-          name: 'build-box',
-          worker: '0199e0f2-0000-7000-8000-0000000000aa',
-        },
-      },
-    ]);
+    const home: DatabaseHome = {
+      acceptsFullAccess: true,
+      kind: 'worker',
+      mode: 'autonomous',
+      name: 'build-box',
+      worker: '0199e0f2-0000-7000-8000-0000000000aa',
+    };
+    const body = shown([{ ...STATEMENT, home }]);
 
     expect(body).toContain('build-box');
     expect(body).not.toContain('This computer');

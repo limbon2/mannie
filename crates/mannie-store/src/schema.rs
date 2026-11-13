@@ -396,6 +396,12 @@ const BROWSER: StoreModule = StoreModule {
             description: "create saved Browser certificate trust and its journal",
             sql: include_str!("browser/0002_create_saved_certificates.sql"),
         },
+        Migration {
+            version: 3,
+            legacy_version: None,
+            description: "create the Browser site credential catalog and its journal",
+            sql: include_str!("browser/0003_create_site_credentials.sql"),
+        },
     ]),
     confined: false,
 };

@@ -11,6 +11,8 @@ This revision replaces the text that D56 accepted. That text ran an installed Ch
 
 Later changes: [ADR-0066](0066-let-the-owner-trust-self-signed-browser-certificates.md) supersedes decision 8 in part and permits the owner's temporary and saved exceptions for self-signed server certificates.
 
+[ADR-0067](0067-manage-browser-trust-and-credentials-in-settings.md) refines the Browser controls and Settings.
+
 ## Context
 
 - The owner wants agents to use a real browser that the owner watches and uses beside the conversation, as Codex does: the pane shows the live page, painted by the browser engine, and the agent drives that same tab. Images exist only where the agent asks to see the page. The owner can give the agent sign-in credentials for the session. Localhost and intranet sites are in scope.

@@ -26,10 +26,7 @@ pub(crate) trait PageViews: Send + Sync {
     fn focus(&self, tab: &str) -> Result<(), ChromeError>;
     /// The latest time keyboard focus left a page for the app.
     fn focus_return(&self) -> Option<BrowserFocusReturn>;
-    /// Installs an owner-confirmed pin into this live engine.
-    #[cfg(windows)]
-    fn trust_certificate(&self, pin: CertificatePin) -> Result<(), ChromeError>;
-    /// Blocks native work if this session could still use the forgotten pin.
+    /// Blocks native work if this session allowed the forgotten pin.
     #[cfg(windows)]
     fn revoke_certificate(&self, pin: &CertificatePin) -> bool;
     /// Ends a revoked session and confirms its processes have exited.

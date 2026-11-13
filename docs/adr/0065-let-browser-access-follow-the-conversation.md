@@ -9,6 +9,8 @@
 
 This revision replaces the text that D57 accepted, to fit the live page of [ADR-0064](0064-give-agents-an-isolated-browser-beside-the-conversation.md) (D58).
 
+[ADR-0067](0067-manage-browser-trust-and-credentials-in-settings.md) refines the Browser controls and Settings.
+
 ## Context
 
 The owner wants agents to ask for browser control during takeover, use a granted site across turns, and act on several page controls from one observation. Browser tabs open in the shell's side-panel tabs, and the agent can ask for screenshots. With a live page in the pane, the owner navigates, types and clicks in the page itself during takeover, so the browser sees the owner's actions only as their results: new documents, new origins and changed pages. The owner decided that after takeover the agent gets no screenshot of a document that the owner used until the tab navigates, and that the page's context menu and browser keys work in takeover without save, print, downloads and DevTools (D58).

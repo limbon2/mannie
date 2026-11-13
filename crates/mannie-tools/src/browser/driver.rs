@@ -182,6 +182,7 @@ impl Page {
                 forward: None,
                 loading: false,
                 navigation_error: None,
+                navigation_error_sequence: 0,
             },
             revision: 1,
             elements: HashMap::new(),
@@ -277,6 +278,12 @@ impl Chrome {
             .filter(|page| !matches!(page.phase, PagePhase::Attaching { .. }))
             .map(|page| page.tab.clone())
             .collect()
+    }
+
+    /// Removes copies of values entered through protected fills.
+    #[must_use]
+    pub fn redact_protected(&self, text: &str) -> String {
+        redact(text, &lock(&self.inner.state).protected_values)
     }
 
     /// Whether the session has ended.
@@ -418,6 +425,12 @@ impl Chrome {
                 && chrome_origin(&page.tab.url).is_some()
                 && page.tab.navigation_error.is_none();
             if certificate_error && !certificate_load_committed {
+                if page.tab.navigation_error.is_none()
+                    || page.native_navigation == previous_navigation
+                {
+                    page.tab.navigation_error_sequence =
+                        page.tab.navigation_error_sequence.wrapping_add(1);
+                }
                 page.tab.navigation_error = Some(ChromeError::CertificateRejected);
                 return Err(ChromeError::CertificateRejected);
             }
@@ -726,6 +739,10 @@ impl Driver {
                     && page.native_navigation == Some(id)
                     && certificate_error
                 {
+                    if page.tab.navigation_error.is_none() {
+                        page.tab.navigation_error_sequence =
+                            page.tab.navigation_error_sequence.wrapping_add(1);
+                    }
                     page.tab.navigation_error = Some(ChromeError::CertificateRejected);
                 }
                 Ok(())

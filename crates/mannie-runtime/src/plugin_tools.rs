@@ -882,12 +882,7 @@ fn core_accesses(
                     .all(|access| matches!(access, ToolAccess::Database(_)))
         }
         ToolEffect::ReadsBrowser | ToolEffect::BrowserActions => {
-            let site_actions = accesses.len() <= MAX_ACCESSES && accesses.iter().all(|access| {
-                matches!(access, ToolAccess::BrowserAction(access)
-                    if access.action != BrowserAction::ContinueNavigation
-                        && (access.action == BrowserAction::Observe) == (effect == ToolEffect::ReadsBrowser))
-            });
-            site_actions || matches!(accesses.as_slice(), [ToolAccess::BrowserControl(_)])
+            browser_accesses_fit(effect, &accesses)
         }
         ToolEffect::SideEffects => {
             !accesses.is_empty()
@@ -940,6 +935,34 @@ fn core_accesses(
             }
         })
         .collect()
+}
+
+fn browser_accesses_fit(effect: ToolEffect, accesses: &[ToolAccess]) -> bool {
+    if matches!(accesses, [ToolAccess::BrowserControl(_)]) {
+        return true;
+    }
+    let reads = effect == ToolEffect::ReadsBrowser;
+    accesses.len() <= MAX_ACCESSES
+        && accesses.iter().all(|access| {
+            let ToolAccess::BrowserAction(action) = access else {
+                return false;
+            };
+            match action.action {
+                BrowserAction::ContinueNavigation => false,
+                BrowserAction::Observe => reads,
+                BrowserAction::FillCredential => {
+                    !reads
+                        && accesses.iter().any(|access| {
+                            matches!(access, ToolAccess::BrowserAction(site)
+                    if site.action == BrowserAction::Interact
+                        && site.origin == action.origin
+                        && site.session == action.session
+                        && site.revision == action.revision)
+                        })
+                }
+                _ => !reads,
+            }
+        })
 }
 
 /// What the core found for a statement of a call's database access: the
@@ -1725,13 +1748,14 @@ fn sdk_accesses(accesses: &[Access]) -> Vec<ToolAccess> {
                 session,
                 revision,
                 action,
+                credential,
                 ..
-            } => Some(ToolAccess::BrowserAction(BrowserAccess::new(
-                origin.clone(),
-                session.clone(),
-                revision.clone(),
-                *action,
-            ))),
+            } => {
+                let mut access =
+                    BrowserAccess::new(origin.clone(), session.clone(), revision.clone(), *action);
+                access.credential.clone_from(credential);
+                Some(ToolAccess::BrowserAction(access))
+            }
             Access::BrowserControl {
                 session, revision, ..
             } => Some(ToolAccess::BrowserControl(BrowserControlAccess::new(
