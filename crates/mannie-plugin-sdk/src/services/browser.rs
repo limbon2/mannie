@@ -261,6 +261,9 @@ pub struct BrowserPlacement {
     /// Parts of the rectangle that an overlay such as a tooltip covers,
     /// which the native view leaves out.
     pub clip: Vec<BrowserRect>,
+    /// The app's effective primary color as sRGB bytes for the agent cursor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_accent: Option<[u8; 3]>,
 }
 
 /// A rectangle in CSS pixels.

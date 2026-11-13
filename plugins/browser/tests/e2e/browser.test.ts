@@ -252,8 +252,13 @@ async function allowBrowserSite(): Promise<string> {
   return waitForCompleteReply();
 }
 
-async function clickBrowserTarget(page: Record<string, unknown>, name: string, feedback: string): Promise<string> {
-  await sampleCursor(await cursorTarget(name));
+async function clickBrowserTarget(
+  page: Record<string, unknown>,
+  name: string,
+  feedback: string,
+  checkAccent = false,
+): Promise<string> {
+  await startCursorSample(await cursorTarget(name), checkAccent);
   await sendLines([
     callMessage('browser_interact', {
       action: { kind: 'click', target: { kind: 'element', reference: reference(page.outline, 'name', name) } },
@@ -264,7 +269,7 @@ async function clickBrowserTarget(page: Record<string, unknown>, name: string, f
   ]);
   const reply = await waitForCompleteReply();
   expect(reply).toContain(feedback);
-  await expectSampledCursor(name);
+  await expectCursorSample(name);
   return reply;
 }
 
@@ -289,17 +294,21 @@ async function waitForSurface(
 ): Promise<BrowserSurface> {
   const { conversationId, tabId } = await shownTab();
   let last: BrowserSurface | undefined;
-  await browser.waitUntil(
-    async () => {
-      const [placeholder, scale] = await browser.execute((selector) => {
-        const element = document.querySelector(selector);
-        return [element?.getBoundingClientRect().toJSON() as DOMRect, window.devicePixelRatio] as const;
-      }, VIEWPORT);
-      last = (await browserSurfaces(conversationId)).find((surface) => surface.tab === tabId);
-      return last === undefined ? false : accept(last, placeholder, scale);
-    },
-    { timeout: 15_000, timeoutMsg: `${message}: ${JSON.stringify(last)}` },
-  );
+  try {
+    await browser.waitUntil(
+      async () => {
+        const [placeholder, scale] = await browser.execute((selector) => {
+          const element = document.querySelector(selector);
+          return [element?.getBoundingClientRect().toJSON() as DOMRect, window.devicePixelRatio] as const;
+        }, VIEWPORT);
+        last = (await browserSurfaces(conversationId)).find((surface) => surface.tab === tabId);
+        return last === undefined ? false : accept(last, placeholder, scale);
+      },
+      { timeout: 15_000, timeoutMsg: message },
+    );
+  } catch (cause) {
+    throw new Error(`${message}: ${JSON.stringify(last)}`, { cause });
+  }
   if (last === undefined) {
     throw new Error(message);
   }
@@ -326,55 +335,106 @@ async function cursorTarget(name: string): Promise<[number, number]> {
   return target as [number, number];
 }
 
-interface CursorSample {
-  readonly matched: boolean;
-  readonly surface: BrowserSurface | null;
-  readonly target: readonly [number, number];
-}
-
 declare global {
   interface Window {
-    browserCursorSample?: Promise<CursorSample>;
+    browserCursorSample?: Promise<string | null>;
   }
 }
 
-/** Samples the native cursor while WebDriver sends the message that moves it. */
-async function sampleCursor(target: readonly [number, number]): Promise<void> {
+/** Starts before the click so the webview can sample and recolor the cursor without WebDriver delays. */
+async function startCursorSample(target: readonly [number, number], checkAccent: boolean): Promise<void> {
   const { conversationId, tabId } = await shownTab();
   await browser.execute(
-    (conversation, tab, point) => {
+    (conversation, tab, [x, y], checkColor) => {
       const harness = window.mannieValidation;
       if (harness === undefined) {
         throw new Error('the validation harness is missing');
       }
-      window.browserCursorSample = (async () => {
+
+      const waitForCursor = async (stage: string, accent: string | null, whileVisible = false): Promise<void> => {
         const deadline = performance.now() + 15_000;
-        let surface: BrowserSurface | null = null;
+        let surface: BrowserSurface | undefined;
         while (performance.now() < deadline) {
-          surface = (await harness.browserSurface(conversation)).find((entry) => entry.tab === tab) ?? null;
+          surface = (await harness.browserSurface(conversation)).find((entry) => entry.tab === tab);
           const cursor = surface?.cursor;
-          const nearX = cursor !== undefined && cursor !== null && Math.abs(cursor[0] - point[0]) <= 2;
-          const nearY = cursor !== undefined && cursor !== null && Math.abs(cursor[1] - point[1]) <= 2;
-          if (nearX && nearY) {
-            return { matched: true, surface, target: point };
+          const isVisible = cursor !== undefined && cursor !== null;
+          if (isVisible) {
+            const nearX = Math.abs(cursor[0] - x) <= 2;
+            const nearY = Math.abs(cursor[1] - y) <= 2;
+            const matchesAccent = accent === null || JSON.stringify(surface?.cursorAccent) === accent;
+            if (nearX && nearY && matchesAccent) {
+              return;
+            }
+          } else if (whileVisible) {
+            break;
           }
           await new Promise<void>((resolve) => {
             window.setTimeout(resolve, 50);
           });
         }
-        return { matched: false, surface, target: point };
-      })();
+        const expected = accent === null ? '' : ` with RGB ${accent}`;
+        throw new Error(
+          `${stage}: expected a visible cursor at (${String(x)}, ${String(y)})${expected}, saw ${JSON.stringify(surface)}`,
+        );
+      };
+
+      window.browserCursorSample = (async () => {
+        if (!checkColor) {
+          await waitForCursor('position', null);
+          return null;
+        }
+
+        const root = document.documentElement;
+        const wasRose = root.classList.contains('palette-primary-rose');
+        const wasDark = root.classList.contains('dark');
+        const canvas = document.createElement('canvas');
+        canvas.width = 1;
+        canvas.height = 1;
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        if (context === null) {
+          throw new Error('could not sample the active primary color');
+        }
+        const readPrimary = (): string => {
+          context.fillStyle = getComputedStyle(root).getPropertyValue('--primary');
+          context.fillRect(0, 0, 1, 1);
+          return JSON.stringify(Array.from(context.getImageData(0, 0, 1, 1).data.slice(0, 3)));
+        };
+
+        try {
+          const original = readPrimary();
+          await waitForCursor('initial primary', original);
+
+          root.classList.add('palette-primary-rose');
+          const rose = readPrimary();
+          if (rose === original) {
+            throw new Error(`selecting Rose left the CSS primary at ${rose}`);
+          }
+          await waitForCursor('Rose primary', rose, true);
+
+          root.classList.toggle('dark', !wasDark);
+          const otherMode = readPrimary();
+          if (otherMode === rose) {
+            throw new Error(`switching Light/Dark left the CSS primary at ${rose}`);
+          }
+          await waitForCursor('Light/Dark change', otherMode, true);
+          return null;
+        } finally {
+          root.classList.toggle('palette-primary-rose', wasRose);
+          root.classList.toggle('dark', wasDark);
+        }
+      })().catch((error: unknown) => (error instanceof Error ? error.message : String(error)));
     },
     conversationId,
     tabId,
     target,
+    checkAccent,
   );
 }
 
-async function expectSampledCursor(name: string): Promise<void> {
-  const sample = await browser.execute(() => window.browserCursorSample);
-  if (sample?.matched !== true) {
-    throw new Error(`Expected the agent cursor at ${name}, saw ${JSON.stringify(sample)}`);
+async function expectCursorSample(name: string): Promise<void> {
+  const failure = await browser.execute(() => window.browserCursorSample ?? 'the cursor sampler did not start');
+  if (failure !== null) {
+    throw new Error(`Expected the agent cursor at ${name}. ${failure}`);
   }
 }
 
@@ -533,7 +593,7 @@ describeBrowserPane('Browser pane', () => {
     const ready = await waitForSurface(coversPlaceholder, 'the agent page did not appear');
     expect(ready.cursor).toBeNull();
 
-    const firstClick = await clickBrowserTarget(observation(arrived), 'First target', 'First pressed');
+    const firstClick = await clickBrowserTarget(observation(arrived), 'First target', 'First pressed', true);
     await waitForShownText($(ACTIVITY), 'The agent clicked on the page.');
     await clickBrowserTarget(observation(firstClick), 'Second target', 'Second pressed');
 

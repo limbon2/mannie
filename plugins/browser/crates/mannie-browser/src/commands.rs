@@ -265,6 +265,7 @@ mod tests {
                 scale,
                 visible: true,
                 clip,
+                cursor_accent: None,
             },
         }
     }
@@ -279,6 +280,27 @@ mod tests {
     #[test]
     fn a_placement_accepts_a_measured_rectangle() {
         placement(RECT, 1.5, vec![RECT]).validate().unwrap();
+    }
+
+    #[test]
+    fn a_placement_accepts_an_optional_cursor_accent_as_three_bytes() {
+        let mut input = serde_json::json!({
+            "conversationId": "0199e0f2-0000-7000-8000-000000000004",
+            "placement": { "tabId": "tab-1", "rect": RECT, "scale": 1.0, "visible": true, "clip": [] }
+        });
+        let old: PlaceInput = serde_json::from_value(input.clone()).unwrap();
+        assert_eq!(old.placement.cursor_accent, None);
+        input["placement"]["cursorAccent"] = serde_json::json!([0, 128, 255]);
+        let colored: PlaceInput = serde_json::from_value(input.clone()).unwrap();
+        assert_eq!(colored.placement.cursor_accent, Some([0, 128, 255]));
+        for invalid in [
+            serde_json::json!([0, 128]),
+            serde_json::json!([0, 128, 255, 255]),
+            serde_json::json!([0, 128, 256]),
+        ] {
+            input["placement"]["cursorAccent"] = invalid;
+            serde_json::from_value::<PlaceInput>(input.clone()).unwrap_err();
+        }
     }
 
     #[test]

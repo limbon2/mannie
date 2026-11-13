@@ -47,6 +47,7 @@ fn report(tab: String, ui: &TabUi, focus: HWND) -> SurfaceReport {
         tab,
         visible,
         cursor: cursor::position(ui),
+        cursor_accent: cursor::accent(ui),
         enabled,
         focused,
         x: origin.x,

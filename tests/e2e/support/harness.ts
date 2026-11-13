@@ -63,6 +63,7 @@ export interface WindowState {
 /** A Browser page window as the core reports it (V13). */
 export interface BrowserSurface {
   readonly cursor: readonly [number, number] | null;
+  readonly cursorAccent: readonly [number, number, number] | null;
   readonly enabled: boolean;
   readonly focused: boolean;
   readonly height: number;

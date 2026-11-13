@@ -13,9 +13,9 @@ use std::time::{Duration, Instant};
 use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller3;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CombineRgn, CreateEllipticRgn, CreatePolygonRgn, DC_BRUSH, DeleteObject, EndPaint,
-    FillRect, GetStockObject, HGDIOBJ, HRGN, InvalidateRect, NULL_PEN, PAINTSTRUCT, Polygon,
-    RGN_DIFF, RGN_ERROR, RGN_OR, SelectObject, SetDCBrushColor, SetWindowRgn, WINDING,
+    BeginPaint, CombineRgn, CreateEllipticRgn, CreatePolygonRgn, DC_BRUSH, DeleteObject, Ellipse,
+    EndPaint, FillRect, GetStockObject, HGDIOBJ, HRGN, InvalidateRect, NULL_PEN, PAINTSTRUCT,
+    Polygon, RGN_DIFF, RGN_ERROR, RGN_OR, SelectObject, SetDCBrushColor, SetWindowRgn, WINDING,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
@@ -40,10 +40,30 @@ const PAD: f64 = 22.0;
 const SIZE: f64 = 46.0;
 
 // COLORREF stores its channels in BGR order.
-const ACCENT: COLORREF = COLORREF(0x00f7_782e);
 const OUTLINE: COLORREF = COLORREF(0x00ff_ffff);
 const BODY: COLORREF = COLORREF(0x0029_2421);
-const FACET: COLORREF = COLORREF(0x004b_4541);
+const DEFAULT_ACCENT: [u8; 3] = [46, 120, 247];
+
+#[derive(Clone, Copy)]
+struct Cursor {
+    accent: [u8; 3],
+    motion: Option<Motion>,
+    pulse_radius: Option<i32>,
+}
+
+impl Default for Cursor {
+    fn default() -> Self {
+        Self {
+            accent: DEFAULT_ACCENT,
+            motion: None,
+            pulse_radius: None,
+        }
+    }
+}
+
+fn native_accent([red, green, blue]: [u8; 3]) -> COLORREF {
+    COLORREF(u32::from_le_bytes([red, green, blue, 0]))
+}
 
 #[derive(Clone, Copy)]
 struct Motion {
@@ -86,7 +106,7 @@ impl Motion {
 thread_local! {
     // Only the tab's UI thread creates or paints these windows. No borrow
     // is held across a Win32 call, which can reenter the window procedure.
-    static CURSORS: RefCell<HashMap<*mut c_void, Motion>> = RefCell::new(HashMap::new());
+    static CURSORS: RefCell<HashMap<*mut c_void, Cursor>> = RefCell::new(HashMap::new());
 }
 
 extern "system" fn procedure(
@@ -106,7 +126,7 @@ extern "system" fn procedure(
             return LRESULT(0);
         }
         HIDE_AFTER_NAVIGATION => {
-            if !CURSORS.with_borrow(|cursors| cursors.contains_key(&window.0)) {
+            if motion(window).is_none() {
                 hide_window(window);
             }
             return LRESULT(0);
@@ -164,11 +184,36 @@ pub(super) fn create(container: HWND) -> Option<HWND> {
         }
     };
     match create() {
-        Ok(window) => Some(window),
+        Ok(window) => {
+            CURSORS.with_borrow_mut(|cursors| cursors.insert(window.0, Cursor::default()));
+            Some(window)
+        }
         Err(error) => {
             tracing::debug!(%error, "could not create a browser cursor");
             None
         }
+    }
+}
+
+/// Recolors only the host-owned cursor. The page and its capture stay separate.
+pub(super) fn set_accent(tab: &TabUi, accent: Option<[u8; 3]>) {
+    let Some(window) = tab.cursor else {
+        return;
+    };
+    let accent = accent.unwrap_or(DEFAULT_ACCENT);
+    let repaint = CURSORS.with_borrow_mut(|cursors| {
+        let Some(cursor) = cursors.get_mut(&window.0) else {
+            return false;
+        };
+        if cursor.accent == accent {
+            return false;
+        }
+        cursor.accent = accent;
+        cursor.motion.is_some()
+    });
+    if repaint {
+        // SAFETY: this cursor is a live window on the UI thread.
+        let _invalidated = unsafe { InvalidateRect(Some(window), None, false) };
     }
 }
 
@@ -228,7 +273,10 @@ pub(super) fn show(tab: &TabUi, x: f64, y: f64, pulse: bool) {
     }
     let now = Instant::now();
     CURSORS.with_borrow_mut(|cursors| {
-        let state = cursors.entry(window.0).or_insert(Motion {
+        let Some(cursor) = cursors.get_mut(&window.0) else {
+            return;
+        };
+        let state = cursor.motion.get_or_insert(Motion {
             from: target,
             target,
             started: now,
@@ -267,10 +315,7 @@ pub(super) fn hide_after_navigation(tab: &TabUi) {
     let Some(window) = tab.cursor else {
         return;
     };
-    if CURSORS
-        .with_borrow_mut(|cursors| cursors.remove(&window.0))
-        .is_none()
-    {
+    if clear_motion(window).is_none() {
         return;
     }
     // SAFETY: the target is a live cursor window. Posting does not call it inline.
@@ -281,15 +326,23 @@ pub(super) fn hide_after_navigation(tab: &TabUi) {
 }
 
 fn hide_window(window: HWND) {
-    CURSORS.with_borrow_mut(|cursors| cursors.remove(&window.0));
+    let _previous = clear_motion(window);
     // SAFETY: the cursor belongs to this thread; it may already have no timer.
     drop(unsafe { KillTimer(Some(window), TIMER) });
     // SAFETY: the cursor belongs to this thread and hiding it does not activate it.
     let _was_visible = unsafe { ShowWindow(window, SW_HIDE) };
 }
 
+fn clear_motion(window: HWND) -> Option<Motion> {
+    CURSORS.with_borrow_mut(|cursors| cursors.get_mut(&window.0)?.motion.take())
+}
+
+fn motion(window: HWND) -> Option<Motion> {
+    CURSORS.with_borrow(|cursors| cursors.get(&window.0)?.motion)
+}
+
 fn advance(window: HWND, now: Instant) {
-    let Some(state) = CURSORS.with_borrow(|cursors| cursors.get(&window.0).copied()) else {
+    let Some(state) = motion(window) else {
         hide_window(window);
         return;
     };
@@ -323,14 +376,20 @@ fn render(window: HWND, state: Motion, now: Instant) -> Result<()> {
     if region.is_invalid() {
         return Err(Error::from_thread());
     }
-    if let Some(radius) = state.pulse(now) {
+    let pulse_radius = state.pulse(now).map(|radius| pixels(radius, state.scale));
+    if let Some(radius) = pulse_radius {
         add_ring(
             region,
             padding,
-            pixels(radius, state.scale),
-            pixels(2.0, state.scale).max(1),
+            radius,
+            2 * ring_edge(state.scale) + pixels(2.0, state.scale).max(1),
         );
     }
+    CURSORS.with_borrow_mut(|cursors| {
+        if let Some(cursor) = cursors.get_mut(&window.0) {
+            cursor.pulse_radius = pulse_radius;
+        }
+    });
     // SAFETY: the window and region are live. On success the system owns the region.
     if unsafe { SetWindowRgn(window, Some(region), true) } == 0 {
         delete_region(region);
@@ -351,6 +410,10 @@ fn render(window: HWND, state: Motion, now: Instant) -> Result<()> {
     // SAFETY: the cursor is a live window. This refreshes the glyph after a pulse.
     let _invalidated = unsafe { InvalidateRect(Some(window), None, false) };
     Ok(())
+}
+
+fn ring_edge(scale: f64) -> i32 {
+    pixels(1.0, scale).max(1)
 }
 
 fn add_ring(region: HRGN, center: i32, radius: i32, stroke: i32) {
@@ -395,11 +458,15 @@ fn glyph<const N: usize>(scale: f64, points: &[(i32, i32); N]) -> [POINT; N] {
 }
 
 fn paint(window: HWND) {
-    let state = CURSORS.with_borrow(|cursors| cursors.get(&window.0).copied());
+    let painting = CURSORS.with_borrow(|cursors| {
+        let cursor = cursors.get(&window.0)?;
+        Some((cursor.accent, cursor.motion?, cursor.pulse_radius))
+    });
     let mut paint = PAINTSTRUCT::default();
     // SAFETY: the system sent WM_PAINT for this window and paint is writable.
     let dc = unsafe { BeginPaint(window, &raw mut paint) };
-    if let Some(state) = state {
+    if let Some((accent, state, pulse_radius)) = painting {
+        let accent = native_accent(accent);
         // SAFETY: the stock pen and brush are process-wide GDI objects.
         let pen = unsafe { GetStockObject(NULL_PEN) };
         // SAFETY: as above.
@@ -409,7 +476,7 @@ fn paint(window: HWND) {
         // SAFETY: as above.
         unsafe { SelectObject(dc, brush) };
         // SAFETY: the paint context and brush are live and the paint bounds are readable.
-        unsafe { SetDCBrushColor(dc, ACCENT) };
+        unsafe { SetDCBrushColor(dc, OUTLINE) };
         // SAFETY: as above. The region clips the fill to the arrowhead and ring.
         unsafe {
             FillRect(
@@ -418,6 +485,27 @@ fn paint(window: HWND) {
                 windows::Win32::Graphics::Gdi::HBRUSH(brush.0),
             )
         };
+        // The light and dark edges keep the pulse visible over site colors.
+        // The window region already cuts the center out of both ellipses.
+        if let Some(radius) = pulse_radius {
+            let center = pixels(PAD, state.scale);
+            let edge = ring_edge(state.scale);
+            for (inset, color) in [(edge, BODY), (edge * 2, accent)] {
+                let radius = radius.saturating_sub(inset).max(0);
+                // SAFETY: the stock brush is selected into this paint context.
+                unsafe { SetDCBrushColor(dc, color) };
+                // SAFETY: the paint context is live and the bounds are window-relative.
+                let _drawn = unsafe {
+                    Ellipse(
+                        dc,
+                        center - radius,
+                        center - radius,
+                        center + radius + 1,
+                        center + radius + 1,
+                    )
+                };
+            }
+        }
         let draw = |color, points: &[_]| {
             // SAFETY: the stock brush is selected into this paint context.
             unsafe { SetDCBrushColor(dc, color) };
@@ -432,7 +520,7 @@ fn paint(window: HWND) {
             BODY,
             &glyph(state.scale, &[(2, 3), (17, 10), (9, 12), (6, 19)]),
         );
-        draw(FACET, &glyph(state.scale, &[(2, 3), (9, 12), (6, 19)]));
+        draw(accent, &glyph(state.scale, &[(2, 3), (9, 12), (6, 19)]));
     }
     // SAFETY: this closes the BeginPaint above for the same window and paint structure.
     let _ended = unsafe { EndPaint(window, &raw const paint) };
@@ -448,7 +536,7 @@ pub(super) fn position(tab: &TabUi) -> Option<(i32, i32)> {
     if !unsafe { IsWindowVisible(window) }.as_bool() {
         return None;
     }
-    let state = CURSORS.with_borrow(|cursors| cursors.get(&window.0).copied())?;
+    let state = motion(window)?;
     let mut bounds = RECT::default();
     // SAFETY: the cursor is live and the bounds are writable.
     unsafe { GetWindowRect(window, &raw mut bounds) }.ok()?;
@@ -461,4 +549,20 @@ pub(super) fn position(tab: &TabUi) -> Option<(i32, i32)> {
     unsafe { ScreenToClient(tab.container, &raw mut point) }
         .as_bool()
         .then_some((point.x, point.y))
+}
+
+#[cfg(feature = "validation")]
+pub(super) fn accent(tab: &TabUi) -> Option<[u8; 3]> {
+    let window = tab.cursor?;
+    CURSORS.with_borrow(|cursors| cursors.get(&window.0).map(|cursor| cursor.accent))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cursor_accent_preserves_the_color_channels() {
+        assert_eq!(native_accent([18, 52, 86]), COLORREF(0x0056_3412));
+    }
 }
