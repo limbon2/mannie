@@ -146,7 +146,9 @@ struct Session {
 async fn session() -> Session {
     let ui = UiThread::with(TestUi::start());
     let root = tempfile::tempdir().unwrap();
-    let (host, events) = start_session(ui, root.path()).await.unwrap();
+    let (host, events) = start_session(ui, root.path(), Arc::default())
+        .await
+        .unwrap();
     let (asks_sender, asks) = mpsc::channel(8);
     let gate = Arc::new(Gate {
         quick: Mutex::default(),
@@ -457,7 +459,7 @@ async fn real_webview2_ending_a_session_ends_its_processes_and_folder() {
         .unwrap();
     let shared = &session.host.shared;
     assert!(!lock(&shared.folder).as_ref().unwrap().has_debugging_port());
-    let processes: Vec<u32> = lock(&shared.processes).iter().copied().collect();
+    let processes: Vec<u32> = lock(&shared.processes).keys().copied().collect();
     assert_ne!(processes.len(), 0);
     chrome.end().await;
     for process in processes {
@@ -495,7 +497,7 @@ async fn real_webview2_victim() {
         .await
         .unwrap();
     let processes: Vec<String> = lock(&session.host.shared.processes)
-        .iter()
+        .keys()
         .map(u32::to_string)
         .collect();
     println!("ROOT {}", session.root.path().display());

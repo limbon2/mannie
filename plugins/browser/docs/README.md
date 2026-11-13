@@ -1,11 +1,11 @@
 # Browser
 
-|              |                                                                                                                                                                                      |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Status       | Building                                                                                                                                                                             |
-| Plugin       | `browser`                                                                                                                                                                            |
-| Last updated | 2026-11-13                                                                                                                                                                           |
-| Related      | [ADR-0064](../../../docs/adr/0064-give-agents-an-isolated-browser-beside-the-conversation.md), [ADR-0065](../../../docs/adr/0065-let-browser-access-follow-the-conversation.md), D58 |
+|              |                                                                                                                                                                                                                                                                             |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status       | Building                                                                                                                                                                                                                                                                    |
+| Plugin       | `browser`                                                                                                                                                                                                                                                                   |
+| Last updated | 2026-11-13                                                                                                                                                                                                                                                                  |
+| Related      | [ADR-0064](../../../docs/adr/0064-give-agents-an-isolated-browser-beside-the-conversation.md), [ADR-0065](../../../docs/adr/0065-let-browser-access-follow-the-conversation.md), [ADR-0066](../../../docs/adr/0066-let-the-owner-trust-self-signed-browser-certificates.md) |
 
 ## Intent
 
@@ -20,13 +20,16 @@ The owner wants agents to navigate live pages, press buttons and complete forms 
 - The live tab shows an agent cursor at the points where the agent clicks, drags and scrolls. A press briefly highlights the point. The cursor accent and click highlight use Mannie's primary color for the active light or dark mode. The cursor disappears after a short pause and when the owner takes over or the pane hides.
 - A line under the page says what the agent last did: a click, a fill, a choice, a key or a scroll.
 - The owner can allow an exact origin for the conversation and revoke it in the conversation permissions. The grant covers observations and interactions at that origin, including localhost and intranet sites. A request to another origin fails at once, and after the owner allows it the browser sends it again. A site can load its ordinary resources and make background requests.
+- To open an HTTPS site with a self-signed certificate, get its SHA-256 fingerprint from the site's administrator or server configuration. In the Browser pane, open the certificate dialog and enter the hostname and fingerprint. Choose **Trust for this session** or **Save trust**, then retry the address. Trust covers the exact hostname and certificate across tabs and HTTPS ports. Saved trust works in other Browser conversations and after restarting Mannie. Agent access still requires approval for each origin.
+- Browser keeps one saved and one temporary fingerprint per hostname. A temporary fingerprint takes precedence until the session ends. To remove saved trust, open the certificate dialog and choose **Forget** for the entry. This ends any session that allowed that certificate at that hostname or holds matching temporary trust. To save a replacement, forget the old entry and save the replacement's verified fingerprint.
+- Browser ends the whole session five seconds before the earliest certificate it allowed expires, which closes its tabs and connections. Browser refuses to allow a certificate with five seconds or less left.
 - To let the agent complete a sign-in form, the owner supplies a password or code in the pane's credentials dialog. The browser keeps the value in memory for that session and binds it to the supplied origin. The agent receives a reference it can use to fill a field.
 - The agent can read an outline and page text, request a screenshot, follow links, scroll, press keys, drag to sort lists and move items, and interact with forms. Drag and drop works in the page for the owner as in any browser. The outline includes checkbox states when available. The agent can batch element clicks and observe once after the batch. A stale or ambiguous target stops the batch. After the owner used a tab in takeover, the agent gets no screenshot of that document until the tab navigates.
 - A point click or drag uses the image pixels and revision of a screenshot returned by the latest observation. The screenshot reports its JPEG dimensions. A later text-only observation supersedes the screenshot. If a point target is stale, the agent requests a fresh screenshot and chooses the point again.
 
 ## Fit
 
-The plugin registers browser tools and a conversation side panel. The desktop's browser service hosts each session in a WebView2 environment of its own, checks site approvals, and places the native pages over the pane. The plugin uses generated IPC, the SDK's floating-layer tracker and existing tool image results. [ADR-0064](../../../docs/adr/0064-give-agents-an-isolated-browser-beside-the-conversation.md) and [ADR-0065](../../../docs/adr/0065-let-browser-access-follow-the-conversation.md) define the policy and trust boundary.
+The plugin registers browser tools and a conversation side panel. The desktop's browser service hosts each session in a WebView2 environment of its own, checks site approvals, and places the native pages over the pane. The plugin uses generated IPC, the SDK's floating-layer tracker and existing tool image results. The related ADRs define the browser's trust boundary, site approvals and certificate exceptions.
 
 ## Design
 
@@ -34,15 +37,16 @@ The pane follows the conversation's status through the channel `browser_follow`;
 
 The agent cursor is drawn by Mannie in the tab's native window. It follows the viewport coordinates of the agent's pointer input at the page's display scale. Page content and browser screenshots contain only the page.
 
-Agent tools use the same session through the host's browser service. The service passes each agent operation through the runtime's approval flow. Screenshots use the existing tool image result. A session's folder and protected form values live only for the session. The core keeps conversation site grants with the conversation's permissions.
+Agent tools use the same session through the host's browser service. The service passes each agent operation through the runtime's approval flow. Screenshots use the existing tool image result. A session's folder, protected form values and temporary certificate trust live only for the session. The core stores saved certificate trust in Mannie's database and journals the owner's trust changes. Conversation site grants live with the conversation's permissions. The Windows certificate store needs no change.
 
 ## Acceptance
 
-[V13](../../../docs/roadmap/milestones.md#4-validations) checks the browser and its approval boundary on Windows: live form and sign-in flows, navigation redirects, popups, stale targets, owner takeover, teardown and credential redaction.
+[V13](../../../docs/roadmap/milestones.md#4-validations) checks the browser and its approval boundary on Windows. It covers live forms and sign-in, redirects, popups, stale targets, owner takeover, teardown, credential redaction and temporary and saved certificate trust.
 
 - The driver's tests use a scripted host on every system: `cargo test --locked -p mannie-tools --lib browser`.
 - The real-engine tests use WebView2 and loopback sites: `cargo test --locked -p mannie-desktop-core --lib real_webview2 -- --ignored --test-threads=1`.
 - The desktop test `plugins/browser/tests/e2e/browser.test.ts` checks that the page follows its placeholder, hides under dialogs, takes the keyboard with "Focus page" and returns it with F6, refuses owner input under agent control, comes back after the app reloads, shows the agent cursor at two click targets, clears it on takeover, and runs the agent flows.
-- By hand: browse, type, scroll, select and play a video; drag the splitter; use the context menu and browser keys; take over and resume; let an agent work with the pane closed, the window minimized and in the tray; try a download, a drop from Explorer and a print; quit while an approval is pending, then confirm that no WebView2 process of the session and no `session-*` folder remain.
+- The same desktop test uses loopback HTTPS sites to check that the owner can add an exception and retry, that agent origin approvals stay separate, and that temporary trust ends with the session. It checks that saved trust survives new sessions, conversations and app restarts, and that forgetting an entry or reaching the certificate cutoff closes affected connections.
+- By hand: open an HTTPS site that Windows already trusts, browse, type, scroll, select and play a video; drag the splitter; use the context menu and browser keys; take over and resume; let an agent work with the pane closed, the window minimized and in the tray; try a download, a drop from Explorer and a print; quit while an approval is pending, then confirm that no WebView2 process of the session and no `session-*` folder remain.
 
 A page's own `window.print()` still opens the print dialog in takeover and under agent control: WebView2 has no setting that refuses it, and refusing it from the page would need a script that Mannie injects, which ADR-0064 rules out. The print key and the context menu's Print item are off.

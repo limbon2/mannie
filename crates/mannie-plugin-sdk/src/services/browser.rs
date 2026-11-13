@@ -69,6 +69,36 @@ pub trait BrowserApi: Send + Sync + fmt::Debug {
         conversation: ConversationId,
         action: BrowserCredential,
     ) -> BoxFuture<'static, Result<(), BrowserError>>;
+    /// Record an owner-confirmed certificate exception in a live session.
+    fn trust_certificate(
+        &self,
+        conversation: ConversationId,
+        session_id: String,
+        hostname: String,
+        fingerprint: String,
+    ) -> BoxFuture<'static, Result<(), BrowserError>>;
+    /// Lists the owner's saved certificate pins for Browser sessions.
+    fn saved_certificates(
+        &self,
+    ) -> BoxFuture<'static, Result<Vec<BrowserCertificateException>, BrowserError>> {
+        Box::pin(std::future::ready(Err(BrowserError::BrowserIncompatible)))
+    }
+    /// Saves an owner-confirmed pin across Browser sessions.
+    fn save_certificate(
+        &self,
+        _hostname: String,
+        _fingerprint: String,
+    ) -> BoxFuture<'static, Result<(), BrowserError>> {
+        Box::pin(std::future::ready(Err(BrowserError::BrowserIncompatible)))
+    }
+    /// Forgets exactly this pin and ends sessions that could still use it.
+    fn forget_certificate(
+        &self,
+        _hostname: String,
+        _fingerprint: String,
+    ) -> BoxFuture<'static, Result<(), BrowserError>> {
+        Box::pin(std::future::ready(Err(BrowserError::BrowserIncompatible)))
+    }
     /// Compute the canonical accesses for an agent request without changing the browser.
     fn prepare(
         &self,
@@ -126,6 +156,32 @@ pub enum BrowserError {
     /// The site or requested action was not authorized.
     #[error("the browser action was denied")]
     NavigationDenied,
+    /// A top-level navigation failed certificate verification.
+    #[error(
+        "the site's certificate was rejected. The owner can add a trusted self-signed certificate in the Browser pane"
+    )]
+    CertificateRejected,
+    /// The browser session ended at the approved certificate's expiry cutoff.
+    #[error("the browser session ended because a trusted certificate was about to expire")]
+    CertificateExpired,
+    /// An exception already exists for this hostname with a different certificate.
+    #[error("end this browser session before trusting a different certificate for this hostname")]
+    CertificateConflict,
+    /// The owner confirmation could not be recorded.
+    #[error("the certificate exception could not be recorded")]
+    CertificateJournalFailed,
+    /// The saved certificate registry could not be read or changed.
+    #[error("saved Browser certificates could not be read or changed")]
+    CertificateStoreFailed,
+    /// The owner must forget an existing saved pin before saving its replacement.
+    #[error("forget the saved certificate for this hostname before saving a different one")]
+    CertificateSavedConflict,
+    /// Browser could not confirm that a session's connections closed.
+    #[error("Browser could not finish closing the sessions that trusted this certificate")]
+    CertificateRevocationFailed,
+    /// The owner forgot a saved pin this session could still use.
+    #[error("the browser session ended because a trusted certificate was forgotten")]
+    CertificateRevoked,
     /// The browser requested a native prompt that Mannie cannot serve.
     #[error("this browser prompt is unsupported")]
     UnsupportedPrompt,
@@ -160,6 +216,14 @@ impl BrowserError {
             Self::OwnerControl => "owner_control",
             Self::AgentControl => "agent_control",
             Self::NavigationDenied => "navigation_denied",
+            Self::CertificateRejected => "certificate_rejected",
+            Self::CertificateExpired => "certificate_expired",
+            Self::CertificateConflict => "certificate_conflict",
+            Self::CertificateJournalFailed => "certificate_journal_failed",
+            Self::CertificateStoreFailed => "certificate_store_failed",
+            Self::CertificateSavedConflict => "certificate_saved_conflict",
+            Self::CertificateRevocationFailed => "certificate_revocation_failed",
+            Self::CertificateRevoked => "certificate_revoked",
             Self::UnsupportedPrompt => "unsupported_prompt",
             Self::StaleTarget => "stale_target",
             Self::InvalidBrowserInput => "invalid_browser_input",
@@ -190,6 +254,12 @@ pub enum BrowserControlMode {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowserStatus {
+    /// Opaque identity of the current engine session, for owner confirmations.
+    #[serde(default)]
+    pub session_id: Option<String>,
+    /// The owner-confirmed certificate exceptions of this session.
+    #[serde(default)]
+    pub certificate_exceptions: Vec<BrowserCertificateException>,
     /// The active control mode, if a session is running.
     pub control: Option<BrowserControlMode>,
     /// The session's tabs.
@@ -206,6 +276,16 @@ pub struct BrowserStatus {
     pub failure: Option<BrowserError>,
     /// References to credentials provided by the owner.
     pub credentials: Vec<BrowserCredentialRef>,
+}
+
+/// The certificate that the owner confirmed for one HTTPS hostname.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserCertificateException {
+    /// Canonical hostname shared across HTTPS ports.
+    pub hostname: String,
+    /// SHA-256 fingerprint of the presented certificate, in hexadecimal.
+    pub fingerprint: String,
 }
 
 /// The agent's latest gesture.
@@ -242,6 +322,9 @@ pub struct BrowserTab {
     pub can_go_back: bool,
     /// Whether the tab has a next history entry on a web origin.
     pub can_go_forward: bool,
+    /// The latest top-level navigation error, when reported by the native engine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub navigation_error: Option<BrowserError>,
 }
 
 /// Where the pane wants a tab's page, in the app webview's CSS pixels. The

@@ -28,6 +28,8 @@ pub(super) fn error(error: ChromeError) -> BrowserError {
         }
         ChromeError::Disconnected | ChromeError::Protocol => BrowserError::BrowserDisconnected,
         ChromeError::Rejected | ChromeError::CrossOriginTarget => BrowserError::NavigationDenied,
+        ChromeError::CertificateRejected => BrowserError::CertificateRejected,
+        ChromeError::CertificateConflict => BrowserError::CertificateConflict,
         ChromeError::Stale
         | ChromeError::ScreenshotRequired
         | ChromeError::ViewportChanged
@@ -149,6 +151,7 @@ pub(super) fn browser_tab(tab: ChromeTab) -> BrowserTab {
         url: tab.url,
         title: tab.title,
         loading: tab.loading,
+        navigation_error: tab.navigation_error.map(error),
     }
 }
 
@@ -854,6 +857,7 @@ mod tests {
             back: None,
             forward: None,
             loading: false,
+            navigation_error: None,
         };
         let press = |key: &str| {
             agent_gesture(

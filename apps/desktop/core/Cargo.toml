@@ -87,6 +87,8 @@ tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 tracing = { workspace = true }
 # Browser permission scopes use canonical web origins.
 url = { workspace = true }
+# Opaque identifiers bind Browser commands to the session the owner saw.
+uuid = { workspace = true }
 # The owner's browser credentials and DevTools parameters are wiped after use
 # (ADR-0064, decision 10).
 zeroize = { workspace = true }
@@ -122,7 +124,10 @@ windows = {
   features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
+    "Win32_Security_Cryptography",
     "Win32_System_LibraryLoader",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
   ]

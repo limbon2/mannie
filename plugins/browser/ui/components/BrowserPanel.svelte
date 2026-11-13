@@ -14,12 +14,18 @@
   import XIcon from '@mannie/plugin-sdk/icons/x';
   import type { SidePanelProps } from '@mannie/plugin-sdk/slots';
 
-  import type { BrowserControl, BrowserCredential, BrowserStatus, BrowserTab } from '../generated/bindings.js';
+  import type {
+    BrowserControl,
+    BrowserCredential,
+    BrowserStatus_Serialize as BrowserStatus,
+    BrowserTab,
+  } from '../generated/bindings.js';
   import { m } from '../generated/messages.js';
   import { BrowserSession } from '../state/browser-session.svelte.js';
   import { browserActivityMessage, browserErrorMessage } from '../utils/browser-messages.js';
   import { browserPanelTarget, labelBrowserTab, openBrowserTab } from '../utils/browser-panel.js';
 
+  import BrowserCertificateExceptions from './BrowserCertificateExceptions.svelte';
   import BrowserCredentials from './BrowserCredentials.svelte';
   import BrowserViewport from './BrowserViewport.svelte';
 
@@ -63,6 +69,15 @@
 
   function saveCredential(action: BrowserCredential): Promise<boolean> {
     return session.credential(action);
+  }
+
+  function trustCertificate(
+    sessionId: string,
+    hostname: string,
+    fingerprint: string,
+    showFailure: (message: string) => void,
+  ): Promise<boolean> {
+    return session.trustCertificate(sessionId, hostname, fingerprint, showFailure);
   }
 
   function editAddress(event: Event): void {
@@ -196,46 +211,36 @@
     <Button class="self-start" size="sm" variant="outline" onclick={() => session.follow()}>
       {m.browser_retry()}
     </Button>
-  {:else if status.control === null}
-    <Empty.Root>
-      <Empty.Header>
-        <Empty.Media variant="icon"><GlobeIcon /></Empty.Media>
-        <Empty.Title>{m.browser_empty_title()}</Empty.Title>
-        <Empty.Description>{ended ?? m.browser_empty_description()}</Empty.Description>
-      </Empty.Header>
-      <Empty.Content>
-        <Button disabled={session.busy} onclick={() => void start()}>
-          {#if session.busy}<Spinner
-              aria-hidden="true"
-              aria-label={m.browser_loading()}
-              data-icon="inline-start"
-            />{/if}
-          {m.browser_start()}
-        </Button>
-      </Empty.Content>
-    </Empty.Root>
   {:else}
     <div class="flex flex-wrap items-center gap-2">
-      <span class="me-auto text-sm text-muted-foreground" role="status">
-        {owner ? m.browser_owner_control() : m.browser_agent_control()}
-      </span>
-      {#if owner}
-        <Button disabled={session.busy} size="sm" onclick={() => void control({ kind: 'resume' })}>
-          {m.browser_resume()}
+      {#if status.control !== null}
+        <span class="me-auto text-sm text-muted-foreground" role="status">
+          {owner ? m.browser_owner_control() : m.browser_agent_control()}
+        </span>
+        {#if owner}
+          <Button disabled={session.busy} size="sm" onclick={() => void control({ kind: 'resume' })}>
+            {m.browser_resume()}
+          </Button>
+        {:else}
+          <Button disabled={session.busy} size="sm" onclick={() => void control({ kind: 'take_over' })}>
+            {m.browser_take_over()}
+          </Button>
+        {/if}
+        <Button disabled={session.busy} size="sm" variant="outline" onclick={() => (confirmingEnd = true)}>
+          {m.browser_end()}
         </Button>
-      {:else}
-        <Button disabled={session.busy} size="sm" onclick={() => void control({ kind: 'take_over' })}>
-          {m.browser_take_over()}
-        </Button>
+        <BrowserCredentials
+          busy={session.busy}
+          credentials={status.credentials}
+          failure={session.failure}
+          save={saveCredential}
+        />
       {/if}
-      <Button disabled={session.busy} size="sm" variant="outline" onclick={() => (confirmingEnd = true)}>
-        {m.browser_end()}
-      </Button>
-      <BrowserCredentials
+      <BrowserCertificateExceptions
         busy={session.busy}
-        credentials={status.credentials}
-        failure={session.failure}
-        save={saveCredential}
+        exceptions={status.certificateExceptions}
+        sessionId={status.sessionId}
+        trust={trustCertificate}
       />
       {#if owner}
         <Button
@@ -262,7 +267,25 @@
         {/if}
       {/if}
     </div>
-    {#if tab === undefined}
+    {#if status.control === null}
+      <Empty.Root>
+        <Empty.Header>
+          <Empty.Media variant="icon"><GlobeIcon /></Empty.Media>
+          <Empty.Title>{m.browser_empty_title()}</Empty.Title>
+          <Empty.Description>{ended ?? m.browser_empty_description()}</Empty.Description>
+        </Empty.Header>
+        <Empty.Content>
+          <Button disabled={session.busy} onclick={() => void start()}>
+            {#if session.busy}<Spinner
+                aria-hidden="true"
+                aria-label={m.browser_loading()}
+                data-icon="inline-start"
+              />{/if}
+            {m.browser_start()}
+          </Button>
+        </Empty.Content>
+      </Empty.Root>
+    {:else if tab === undefined}
       {#if activeTab === undefined}
         <p class="text-sm text-muted-foreground">{m.browser_no_tab()}</p>
       {:else}
@@ -314,6 +337,13 @@
         />
         <Button disabled={!interactive} size="sm" type="submit" variant="outline">{m.browser_go()}</Button>
       </form>
+      {#if tab.navigationError?.code === 'certificate_rejected'}
+        <Alert.Root data-browser-certificate-error="" variant="destructive">
+          <CircleAlertIcon />
+          <Alert.Title>{m.browser_error_title()}</Alert.Title>
+          <Alert.Description>{m.browser_error_certificate_rejected()}</Alert.Description>
+        </Alert.Root>
+      {/if}
       {#key tab.id}
         <BrowserViewport conversationId={target.conversationId} tabId={tab.id} />
       {/key}

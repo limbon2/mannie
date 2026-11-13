@@ -16,6 +16,7 @@
 //!   hardened connections of its own, which the service `sqlite-files`
 //!   reaches (ADR-0056).
 
+mod browser;
 pub mod dbfiles;
 mod error;
 mod exports;
@@ -71,6 +72,7 @@ pub enum Durability {
 pub(crate) fn all_statements() -> impl Iterator<Item = &'static str> {
     settings::STATEMENTS
         .iter()
+        .chain(browser::STATEMENTS)
         .chain(exports::STATEMENTS)
         .chain(provider::STATEMENTS)
         .chain(provider::chatgpt::STATEMENTS)

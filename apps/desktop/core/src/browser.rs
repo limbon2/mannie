@@ -7,6 +7,8 @@
 //! status stream, which is their lease.
 
 mod actions;
+#[cfg(any(windows, test))]
+mod certificate;
 mod engine;
 #[cfg(windows)]
 mod webview2;
@@ -25,9 +27,9 @@ use mannie_plugin_sdk::points::tools::{
 };
 use mannie_plugin_sdk::service::{BoundService, Service};
 use mannie_plugin_sdk::services::browser::{
-    Browser, BrowserActivity, BrowserApi, BrowserControl, BrowserControlMode, BrowserCredential,
-    BrowserCredentialRef, BrowserError, BrowserFrame, BrowserPlacement, BrowserRequest,
-    BrowserResult, BrowserStatus,
+    Browser, BrowserActivity, BrowserApi, BrowserCertificateException, BrowserControl,
+    BrowserControlMode, BrowserCredential, BrowserCredentialRef, BrowserError, BrowserFrame,
+    BrowserPlacement, BrowserRequest, BrowserResult, BrowserStatus,
 };
 use mannie_plugin_sdk::{BoxFuture, BoxStream};
 use mannie_store::Store;
@@ -40,6 +42,8 @@ use tokio::sync::{Mutex as AsyncMutex, watch};
 use zeroize::Zeroizing;
 
 use self::actions::{error, stable_revision};
+#[cfg(windows)]
+use self::certificate::{CertificatePin, SavedCertificates, store_failure};
 #[cfg(feature = "validation")]
 pub(crate) use self::engine::SurfaceReport;
 pub(crate) use self::engine::clear_engine_variables;
@@ -47,6 +51,8 @@ use self::engine::{Engine, SessionHost};
 
 const MAX_SESSIONS: usize = 8;
 const MAX_CREDENTIALS: usize = 16;
+#[cfg(windows)]
+const MAX_CERTIFICATE_EXCEPTIONS: usize = 32;
 /// How often a status stream compares the session's status with the last
 /// one it sent.
 const STATUS_INTERVAL: Duration = Duration::from_millis(100);
@@ -68,9 +74,28 @@ struct Registry {
     generation: AtomicU64,
     bindings: Mutex<Bindings>,
     startup: AsyncMutex<()>,
+    #[cfg(windows)]
+    certificates: CertificateRuntime,
     /// Changes each time the app page loads, which ends every lease of a
     /// native view (ADR-0064, decision 5).
     page: watch::Sender<u64>,
+}
+
+#[cfg(windows)]
+#[derive(Default)]
+struct CertificateRuntime {
+    saved: SavedCertificates,
+    engines: Mutex<Vec<Arc<dyn SessionHost>>>,
+    revocations: Mutex<HashMap<CertificatePin, Vec<Arc<dyn SessionHost>>>>,
+}
+
+#[cfg(windows)]
+impl std::fmt::Debug for CertificateRuntime {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CertificateRuntime")
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Default)]
@@ -90,6 +115,8 @@ impl BrowserProvider {
                 generation: AtomicU64::new(0),
                 bindings: Mutex::new(Bindings::default()),
                 startup: AsyncMutex::new(()),
+                #[cfg(windows)]
+                certificates: CertificateRuntime::default(),
                 page,
             }),
         }
@@ -128,11 +155,14 @@ impl BrowserProvider {
     /// Ends every session before Mannie quits: their processes first, then
     /// their folders (ADR-0064, decision 4).
     pub(crate) async fn shutdown(&self) {
-        let sessions: Vec<_> = lock(&self.registry.bindings)
-            .sessions
-            .drain()
-            .map(|(_, session)| session)
-            .collect();
+        let sessions: Vec<_> = {
+            let _startup = self.registry.startup.lock().await;
+            lock(&self.registry.bindings)
+                .sessions
+                .drain()
+                .map(|(_, session)| session)
+                .collect()
+        };
         for session in sessions {
             session.retire().await;
         }
@@ -207,6 +237,7 @@ impl ServiceProvider for BrowserProvider {
         let owner = contributor.clone();
         Box::pin(async move {
             let sessions: Vec<_> = {
+                let _startup = registry.startup.lock().await;
                 let mut bindings = lock(&registry.bindings);
                 bindings.generations.remove(&owner);
                 bindings
@@ -231,6 +262,8 @@ struct BoundBrowser {
 
 #[derive(Default)]
 struct Session {
+    id: Option<String>,
+    certificate_exceptions: Vec<BrowserCertificateException>,
     chrome: Option<Arc<Chrome>>,
     views: Option<Arc<dyn SessionHost>>,
     active: Option<String>,
@@ -318,6 +351,8 @@ impl Slot {
             let mut state = lock(&self.state);
             state.epoch += 1;
             state.active = None;
+            state.id = None;
+            state.certificate_exceptions.clear();
             state.credentials.clear();
             state.needs_observation = false;
             state.last_observation = None;
@@ -572,7 +607,18 @@ impl BoundBrowser {
         if running >= MAX_SESSIONS {
             return Err(BrowserError::LimitReached);
         }
-        let started = Engine::start(&self.registry.engine).await.map_err(error)?;
+        #[cfg(windows)]
+        let started = {
+            self.load_saved_certificates().await?;
+            Engine::start(
+                &self.registry.engine,
+                Arc::clone(&self.registry.certificates.saved),
+            )
+            .await
+        };
+        #[cfg(not(windows))]
+        let started = Engine::start(&self.registry.engine).await;
+        let started = started.map_err(error)?;
         let views = started.host;
         let host: Arc<dyn ChromeHost> = Arc::<dyn SessionHost>::clone(&views);
         let gate: Arc<dyn ChromeNavigation> = Arc::<NavigationGate>::clone(&slot.gate);
@@ -581,8 +627,18 @@ impl BoundBrowser {
             chrome.end().await;
             return Err(BrowserError::SessionMissing);
         }
+        #[cfg(windows)]
+        {
+            let mut engines = lock(&self.registry.certificates.engines);
+            engines.retain(|engine| !engine.certificate_engine_stopped());
+            engines.push(Arc::clone(&views));
+        }
         let epoch = {
             let mut state = lock(&slot.state);
+            #[cfg(windows)]
+            {
+                state.id = Some(uuid::Uuid::now_v7().to_string());
+            }
             state.chrome = Some(Arc::clone(&chrome));
             state.views = Some(Arc::clone(&views));
             state.failure = None;
@@ -722,6 +778,194 @@ impl BoundBrowser {
             }
         }
         Ok(())
+    }
+
+    #[cfg(windows)]
+    async fn trust_session_certificate(
+        &self,
+        conversation: ConversationId,
+        session_id: String,
+        hostname: String,
+        fingerprint: String,
+    ) -> Result<(), BrowserError> {
+        self.ensure_bound()?;
+        let pin = CertificatePin::parse(&hostname, &fingerprint)?;
+        let slot = self
+            .existing(&conversation)
+            .ok_or(BrowserError::SessionMissing)?;
+        let _operation = slot.operation.lock().await;
+        slot.ensure_live()?;
+        let _startup = self.registry.startup.lock().await;
+        self.ensure_bound()?;
+        if lock(&self.registry.certificates.revocations).contains_key(&pin) {
+            return Err(BrowserError::CertificateRevocationFailed);
+        }
+        let fingerprint_text = pin.fingerprint_text();
+        {
+            let state = lock(&slot.state);
+            certificate_session(&state, &session_id)?;
+            if let Some(existing) = state
+                .certificate_exceptions
+                .iter()
+                .find(|entry| entry.hostname == pin.hostname)
+            {
+                return if existing.fingerprint == fingerprint_text {
+                    Ok(())
+                } else {
+                    Err(BrowserError::CertificateConflict)
+                };
+            }
+            if state.certificate_exceptions.len() >= MAX_CERTIFICATE_EXCEPTIONS {
+                return Err(BrowserError::LimitReached);
+            }
+        }
+
+        pin.record_confirmation(&self.registry.store, &conversation, &session_id)
+            .await?;
+
+        // The native engine can end without taking the operation lock.
+        // Hold the binding and session state while publishing to that exact engine.
+        let bindings = lock(&self.registry.bindings);
+        if bindings.generations.get(&self.owner) != Some(&self.generation)
+            || !bindings
+                .sessions
+                .get(&(self.owner.clone(), conversation))
+                .is_some_and(|current| Arc::ptr_eq(current, &slot))
+        {
+            return Err(BrowserError::SessionMissing);
+        }
+        slot.ensure_live()?;
+        let mut state = lock(&slot.state);
+        let views = certificate_session(&state, &session_id)?;
+        let exception = pin.descriptor();
+        views.trust_certificate(pin).map_err(error)?;
+        state.certificate_exceptions.push(exception);
+        Ok(())
+    }
+
+    /// Called under `startup`, which also serializes saved-pin mutations.
+    #[cfg(windows)]
+    async fn load_saved_certificates(&self) -> Result<(), BrowserError> {
+        let saved = &self.registry.certificates.saved;
+        if lock(saved).is_none() {
+            let pins = self
+                .registry
+                .store
+                .list_browser_saved_certificates()
+                .await
+                .map_err(|error| store_failure(&error))?;
+            *lock(saved) = Some(pins.into_iter().collect());
+        }
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    async fn list_saved_certificates(
+        &self,
+    ) -> Result<Vec<BrowserCertificateException>, BrowserError> {
+        let _startup = self.registry.startup.lock().await;
+        self.ensure_bound()?;
+        self.load_saved_certificates().await?;
+        let runtime = &self.registry.certificates;
+        let mut pins: Vec<_> = lock(&runtime.saved)
+            .iter()
+            .flatten()
+            .map(|(hostname, fingerprint)| {
+                CertificatePin {
+                    hostname: hostname.clone(),
+                    fingerprint: *fingerprint,
+                }
+                .descriptor()
+            })
+            .collect();
+        // A failed teardown keeps its row available for another Forget attempt.
+        pins.extend(
+            lock(&runtime.revocations)
+                .keys()
+                .map(CertificatePin::descriptor),
+        );
+        pins.sort_unstable_by(|left, right| left.hostname.cmp(&right.hostname));
+        Ok(pins)
+    }
+
+    #[cfg(windows)]
+    async fn save_certificate_pin(&self, pin: CertificatePin) -> Result<(), BrowserError> {
+        let _startup = self.registry.startup.lock().await;
+        self.ensure_bound()?;
+        self.load_saved_certificates().await?;
+        let runtime = &self.registry.certificates;
+        if lock(&runtime.revocations)
+            .keys()
+            .any(|pending| pending.hostname == pin.hostname)
+        {
+            return Err(BrowserError::CertificateRevocationFailed);
+        }
+        if !self
+            .registry
+            .store
+            .save_browser_certificate(&pin.hostname, &pin.fingerprint)
+            .await
+            .map_err(|error| store_failure(&error))?
+        {
+            return Err(BrowserError::CertificateSavedConflict);
+        }
+        lock(&runtime.saved)
+            .get_or_insert_with(HashMap::new)
+            .insert(pin.hostname, pin.fingerprint);
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    async fn forget_certificate_pin(&self, pin: CertificatePin) -> Result<(), BrowserError> {
+        // Teardown below uses the native host directly. Taking a slot's
+        // operation lock here would deadlock against a concurrent start.
+        let _startup = self.registry.startup.lock().await;
+        self.ensure_bound()?;
+        self.load_saved_certificates().await?;
+        let runtime = &self.registry.certificates;
+        let mut affected = lock(&runtime.revocations).remove(&pin).unwrap_or_default();
+        if affected.is_empty()
+            && self
+                .registry
+                .store
+                .forget_browser_certificate(&pin.hostname, &pin.fingerprint)
+                .await
+                .map_err(|error| store_failure(&error))?
+        {
+            let mut saved = lock(&runtime.saved);
+            if let Some(pins) = saved.as_mut() {
+                pins.remove(&pin.hostname);
+            }
+            // The saved-pin lock excludes the callback's final allowance. An
+            // engine that is already closing can still own live connections.
+            let mut engines = lock(&runtime.engines);
+            engines.retain(|engine| {
+                if engine.certificate_engine_stopped() {
+                    return false;
+                }
+                if engine.revoke_certificate(&pin) {
+                    affected.push(Arc::clone(engine));
+                }
+                true
+            });
+        }
+        let results = futures_util::future::join_all(
+            affected
+                .iter()
+                .map(|engine| engine.finish_certificate_revocation()),
+        )
+        .await;
+        let remaining: Vec<_> = affected
+            .into_iter()
+            .zip(results)
+            .filter_map(|(engine, stopped)| (!stopped).then_some(engine))
+            .collect();
+        if remaining.is_empty() {
+            Ok(())
+        } else {
+            lock(&runtime.revocations).insert(pin, remaining);
+            Err(BrowserError::CertificateRevocationFailed)
+        }
     }
 
     fn access(
@@ -881,15 +1125,23 @@ impl BoundBrowser {
         if observing && gate_revision != slot.gate.0.borrow().revision {
             return Err(BrowserError::StaleTarget);
         }
+        let mut state = lock(&slot.state);
+        if state
+            .chrome
+            .as_ref()
+            .is_none_or(|current| !Arc::ptr_eq(current, &chrome))
+        {
+            return result;
+        }
         match &result {
             Err(BrowserError::OperationUncertain) => {
-                lock(&slot.state).needs_observation = true;
+                state.needs_observation = true;
             }
             Ok(output) if output.failure == Some(BrowserError::OperationUncertain) => {
-                lock(&slot.state).needs_observation = true;
+                state.needs_observation = true;
             }
             Ok(output) if output.data.get("revision").is_some() => {
-                lock(&slot.state).needs_observation = false;
+                state.needs_observation = false;
             }
             _ => {}
         }
@@ -976,9 +1228,20 @@ impl BoundBrowser {
     }
 }
 
+#[cfg(any(windows, test))]
+fn certificate_session<'a>(
+    state: &'a Session,
+    session_id: &str,
+) -> Result<&'a Arc<dyn SessionHost>, BrowserError> {
+    if state.id.as_deref() != Some(session_id) {
+        return Err(BrowserError::SessionMissing);
+    }
+    state.views.as_ref().ok_or(BrowserError::SessionMissing)
+}
+
 /// The pane's status of a session.
 fn status(slot: &Slot) -> BrowserStatus {
-    let (chrome, views, failure, mut credentials) = {
+    let (chrome, views, failure, mut credentials, session_id, certificate_exceptions) = {
         let state = lock(&slot.state);
         let credentials: Vec<_> = state
             .credentials
@@ -990,6 +1253,8 @@ fn status(slot: &Slot) -> BrowserStatus {
             state.views.clone(),
             state.failure,
             credentials,
+            state.id.clone(),
+            state.certificate_exceptions.clone(),
         )
     };
     let Some(chrome) = chrome else {
@@ -1009,6 +1274,8 @@ fn status(slot: &Slot) -> BrowserStatus {
             sequence: activity.sequence,
         });
     BrowserStatus {
+        session_id,
+        certificate_exceptions,
         control: Some(control),
         tabs: chrome
             .tabs()
@@ -1035,19 +1302,27 @@ async fn watch_end(slot: Arc<Slot>, chrome: Arc<Chrome>, epoch: u64) {
                 .as_ref()
                 .is_some_and(|current| Arc::ptr_eq(current, &chrome));
         if same {
-            state.failure = Some(BrowserError::BrowserDisconnected);
+            state.failure = Some(match state.views.as_deref() {
+                Some(views) if views.certificate_revoked() => BrowserError::CertificateRevoked,
+                Some(views) if views.certificate_expired() => BrowserError::CertificateExpired,
+                _ => BrowserError::BrowserDisconnected,
+            });
             state.epoch += 1;
+            state.id = None;
+            state.certificate_exceptions.clear();
             state.views = None;
             state.chrome = None;
             state.credentials.clear();
             state.active = None;
+            state.needs_observation = false;
+            state.last_observation = None;
+            slot.gate.set_mode(BrowserControlMode::Agent);
         }
         same
     };
     if ended_alone {
         tracing::warn!("a browser session ended on its own");
         chrome.end().await;
-        slot.gate.set_mode(BrowserControlMode::Agent);
     }
 }
 
@@ -1111,6 +1386,79 @@ impl BrowserApi for BoundBrowser {
         async move { browser.change_credential(conversation, action).await }.boxed()
     }
 
+    fn trust_certificate(
+        &self,
+        conversation: ConversationId,
+        session_id: String,
+        hostname: String,
+        fingerprint: String,
+    ) -> BoxFuture<'static, Result<(), BrowserError>> {
+        #[cfg(windows)]
+        {
+            let browser = self.clone();
+            async move {
+                browser
+                    .trust_session_certificate(conversation, session_id, hostname, fingerprint)
+                    .await
+            }
+            .boxed()
+        }
+        #[cfg(not(windows))]
+        {
+            drop((conversation, session_id, hostname, fingerprint));
+            std::future::ready(Err(BrowserError::BrowserIncompatible)).boxed()
+        }
+    }
+
+    #[cfg(windows)]
+    fn saved_certificates(
+        &self,
+    ) -> BoxFuture<'static, Result<Vec<BrowserCertificateException>, BrowserError>> {
+        let browser = self.clone();
+        async move { browser.list_saved_certificates().await }.boxed()
+    }
+
+    #[cfg(windows)]
+    fn save_certificate(
+        &self,
+        hostname: String,
+        fingerprint: String,
+    ) -> BoxFuture<'static, Result<(), BrowserError>> {
+        let browser = self.clone();
+        async move {
+            let pin = CertificatePin::parse(&hostname, &fingerprint)?;
+            // The store writer can finish after its caller drops the reply.
+            // Keep the matching runtime update alive once the write starts.
+            tokio::spawn(async move { browser.save_certificate_pin(pin).await })
+                .await
+                .map_err(|error| {
+                    tracing::error!(%error, "the Browser certificate save task stopped");
+                    BrowserError::CertificateStoreFailed
+                })?
+        }
+        .boxed()
+    }
+
+    #[cfg(windows)]
+    fn forget_certificate(
+        &self,
+        hostname: String,
+        fingerprint: String,
+    ) -> BoxFuture<'static, Result<(), BrowserError>> {
+        let browser = self.clone();
+        async move {
+            let pin = CertificatePin::parse(&hostname, &fingerprint)?;
+            // Complete native revocation even if the pane that requested it closes.
+            tokio::spawn(async move { browser.forget_certificate_pin(pin).await })
+                .await
+                .map_err(|error| {
+                    tracing::error!(%error, "the Browser certificate revocation task stopped");
+                    BrowserError::CertificateRevocationFailed
+                })?
+        }
+        .boxed()
+    }
+
     fn prepare(
         &self,
         conversation: ConversationId,
@@ -1163,6 +1511,18 @@ impl BrowserApi for BoundBrowser {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_old_confirmation_cannot_select_a_restarted_certificate_session() {
+        let state = Session {
+            id: Some("new-session".to_owned()),
+            ..Session::default()
+        };
+        assert!(matches!(
+            certificate_session(&state, "old-session"),
+            Err(BrowserError::SessionMissing)
+        ));
+    }
 
     #[test]
     fn old_owner_consent_cannot_resume_a_new_takeover() {

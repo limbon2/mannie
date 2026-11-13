@@ -10,7 +10,9 @@ use futures_util::future::BoxFuture;
 
 pub use crate::supervisor::browser::{BrowserFolder, cleanup_browser_profiles};
 #[cfg(windows)]
-pub use crate::supervisor::windows::{ProcessTreeJob, process_running, terminate_process};
+pub use crate::supervisor::windows::{
+    ProcessHandle, ProcessTreeJob, process_running, terminate_process,
+};
 pub use driver::Chrome;
 pub use host::{ChromeEvent, ChromeHost, ChromeHostFailure, ChromeReply};
 
@@ -80,6 +82,8 @@ pub struct ChromeTab {
     pub forward: Option<String>,
     /// Whether the tab's document is loading.
     pub loading: bool,
+    /// The latest top-level navigation error, when reported by the native engine.
+    pub navigation_error: Option<ChromeError>,
 }
 
 /// The agent's latest gesture in a tab, for the owner's activity line.
@@ -243,6 +247,12 @@ pub enum ChromeError {
     /// The request or the target was refused.
     #[error("the browser request was refused")]
     Rejected,
+    /// A top-level navigation failed certificate verification.
+    #[error("the site's certificate was rejected")]
+    CertificateRejected,
+    /// This session already has a different certificate for the hostname.
+    #[error("this browser session already has a different certificate for this hostname")]
+    CertificateConflict,
     /// The observation or target has changed.
     #[error("the browser page changed. Observe it again")]
     Stale,
@@ -287,6 +297,8 @@ impl ChromeError {
             Self::Disconnected => "browser_disconnected",
             Self::Protocol => "browser_protocol",
             Self::Rejected => "browser_rejected",
+            Self::CertificateRejected => "browser_certificate_rejected",
+            Self::CertificateConflict => "browser_certificate_conflict",
             Self::Stale => "browser_stale",
             Self::ScreenshotRequired => "browser_screenshot_required",
             Self::ViewportChanged => "browser_viewport_changed",

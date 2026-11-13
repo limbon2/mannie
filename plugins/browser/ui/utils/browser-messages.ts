@@ -18,6 +18,30 @@ export function browserErrorMessage(code: string): string | null {
     case 'agent_control': {
       return m.browser_error_agent_control();
     }
+    case 'certificate_rejected': {
+      return m.browser_error_certificate_rejected();
+    }
+    case 'certificate_expired': {
+      return m.browser_error_certificate_expired();
+    }
+    case 'certificate_conflict': {
+      return m.browser_error_certificate_conflict();
+    }
+    case 'certificate_journal_failed': {
+      return m.browser_error_certificate_journal_failed();
+    }
+    case 'certificate_store_failed': {
+      return m.browser_error_certificate_store_failed();
+    }
+    case 'certificate_saved_conflict': {
+      return m.browser_error_certificate_saved_conflict();
+    }
+    case 'certificate_revocation_failed': {
+      return m.browser_error_certificate_revocation_failed();
+    }
+    case 'certificate_revoked': {
+      return m.browser_error_certificate_revoked();
+    }
     case 'credential_missing': {
       return m.browser_error_credential_missing();
     }

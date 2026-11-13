@@ -1,5 +1,5 @@
 //! Generated IPC for the Browser pane: its status, the owner's controls, the
-//! placement of the native page view and session credentials.
+//! placement of the native page view, session credentials and certificate exceptions.
 
 use std::sync::Arc;
 
@@ -8,8 +8,8 @@ use mannie_plugin_sdk::ipc::{
     ChannelSpec, CommandSpec, Handlers, InputRefusal, Interface, Validate,
 };
 use mannie_plugin_sdk::services::browser::{
-    BrowserApi, BrowserControl, BrowserCredential, BrowserError, BrowserFrame, BrowserPlacement,
-    BrowserRect, BrowserStatus,
+    BrowserApi, BrowserCertificateException, BrowserControl, BrowserCredential, BrowserError,
+    BrowserFrame, BrowserPlacement, BrowserRect, BrowserStatus,
 };
 use serde::Deserialize;
 use specta::Type;
@@ -138,6 +138,50 @@ impl Validate for CredentialInput {
     }
 }
 
+#[derive(Debug, Deserialize, Type)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct TrustCertificateInput {
+    conversation_id: ConversationId,
+    session_id: String,
+    hostname: String,
+    fingerprint: String,
+}
+
+impl Validate for TrustCertificateInput {
+    fn validate(&self) -> Result<(), InputRefusal> {
+        validate_certificate_field(&self.session_id, 128, "sessionId")?;
+        validate_pin(&self.hostname, &self.fingerprint)
+    }
+}
+
+fn validate_certificate_field(
+    value: &str,
+    limit: usize,
+    field: &'static str,
+) -> Result<(), InputRefusal> {
+    (!value.trim().is_empty() && value.len() <= limit)
+        .then_some(())
+        .ok_or_else(|| InputRefusal::new(field))
+}
+
+fn validate_pin(hostname: &str, fingerprint: &str) -> Result<(), InputRefusal> {
+    validate_certificate_field(hostname, 1024, "hostname")?;
+    validate_certificate_field(fingerprint, 128, "fingerprint")
+}
+
+#[derive(Debug, Deserialize, Type)]
+#[serde(deny_unknown_fields)]
+struct SavedCertificateInput {
+    hostname: String,
+    fingerprint: String,
+}
+
+impl Validate for SavedCertificateInput {
+    fn validate(&self) -> Result<(), InputRefusal> {
+        validate_pin(&self.hostname, &self.fingerprint)
+    }
+}
+
 macro_rules! command {
     ($spec:ident, $name:literal, $docs:literal, $input:ty, $output:ty) => {
         enum $spec {}
@@ -194,6 +238,34 @@ command!(
     CredentialInput,
     ()
 );
+command!(
+    TrustCertificate,
+    "browser_trust_certificate",
+    "Trust a self-signed server certificate for the current Browser session.",
+    TrustCertificateInput,
+    ()
+);
+command!(
+    SavedCertificates,
+    "browser_saved_certificates",
+    "List the owner's saved Browser certificate pins.",
+    (),
+    Vec<BrowserCertificateException>
+);
+command!(
+    SaveCertificate,
+    "browser_save_certificate",
+    "Save an owner-confirmed certificate pin across Browser sessions.",
+    SavedCertificateInput,
+    ()
+);
+command!(
+    ForgetCertificate,
+    "browser_forget_certificate",
+    "Forget the owner's exact saved Browser certificate pin.",
+    SavedCertificateInput,
+    ()
+);
 
 /// `browser_follow`: the conversation's browser status, first as it is and
 /// then after each change. While it is open, the conversation's pages may
@@ -217,6 +289,10 @@ pub(crate) fn interface() -> Interface {
         .command::<Still>()
         .command::<Control>()
         .command::<Credential>()
+        .command::<TrustCertificate>()
+        .command::<SavedCertificates>()
+        .command::<SaveCertificate>()
+        .command::<ForgetCertificate>()
         .channel::<Follow>()
 }
 
@@ -227,6 +303,10 @@ pub(crate) fn handlers(browser: &Arc<dyn BrowserApi>) -> Handlers {
     let still = Arc::clone(browser);
     let control = Arc::clone(browser);
     let credential = Arc::clone(browser);
+    let trust_certificate = Arc::clone(browser);
+    let saved_certificates = Arc::clone(browser);
+    let save_certificate = Arc::clone(browser);
+    let forget_certificate = Arc::clone(browser);
     let follow = Arc::clone(browser);
     Handlers::new()
         .command::<Status, _, _>(move |input: ConversationInput| {
@@ -246,6 +326,21 @@ pub(crate) fn handlers(browser: &Arc<dyn BrowserApi>) -> Handlers {
         })
         .command::<Credential, _, _>(move |input: CredentialInput| {
             credential.credential(input.conversation_id, input.action)
+        })
+        .command::<TrustCertificate, _, _>(move |input: TrustCertificateInput| {
+            trust_certificate.trust_certificate(
+                input.conversation_id,
+                input.session_id,
+                input.hostname,
+                input.fingerprint,
+            )
+        })
+        .command::<SavedCertificates, _, _>(move |()| saved_certificates.saved_certificates())
+        .command::<SaveCertificate, _, _>(move |input: SavedCertificateInput| {
+            save_certificate.save_certificate(input.hostname, input.fingerprint)
+        })
+        .command::<ForgetCertificate, _, _>(move |input: SavedCertificateInput| {
+            forget_certificate.forget_certificate(input.hostname, input.fingerprint)
         })
         .channel::<Follow, _, _>(move |input: ConversationInput| {
             std::future::ready(Ok::<_, BrowserError>(follow.watch(input.conversation_id)))
@@ -322,5 +417,29 @@ mod tests {
         placement(RECT, 1.0, vec![RECT; MAX_CLIPS + 1])
             .validate()
             .unwrap_err();
+    }
+
+    #[test]
+    fn a_certificate_exception_requires_bounded_input_for_the_current_session() {
+        let mut input = serde_json::json!({
+            "conversationId": "0199e0f2-0000-7000-8000-000000000004",
+            "sessionId": "0199e0f2-0000-7000-8000-000000000005",
+            "hostname": "::1",
+            "fingerprint": "AA".repeat(32),
+        });
+        let parsed: TrustCertificateInput = serde_json::from_value(input.clone()).unwrap();
+        parsed.validate().unwrap();
+
+        for (field, oversized) in [("sessionId", 129), ("hostname", 1025), ("fingerprint", 129)] {
+            let mut invalid = input.clone();
+            invalid[field] = serde_json::json!("a".repeat(oversized));
+            serde_json::from_value::<TrustCertificateInput>(invalid)
+                .unwrap()
+                .validate()
+                .unwrap_err();
+        }
+
+        input.as_object_mut().unwrap().remove("sessionId");
+        serde_json::from_value::<TrustCertificateInput>(input).unwrap_err();
     }
 }

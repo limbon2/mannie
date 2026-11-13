@@ -4,7 +4,6 @@
   import * as Dialog from '@mannie/plugin-sdk/components/dialog';
   import * as Field from '@mannie/plugin-sdk/components/field';
   import { Input } from '@mannie/plugin-sdk/components/input';
-  import KeyRoundIcon from '@mannie/plugin-sdk/icons/key-round';
 
   import type { BrowserCredential, BrowserCredentialRef } from '../generated/bindings.js';
   import { m } from '../generated/messages.js';
@@ -47,15 +46,8 @@
 <Dialog.Root bind:open>
   <Dialog.Trigger>
     {#snippet child({ props })}
-      <Button
-        {...props}
-        aria-label={m.browser_credentials()}
-        data-browser-credentials=""
-        size="icon-sm"
-        title={m.browser_credentials()}
-        variant="ghost"
-      >
-        <KeyRoundIcon />
+      <Button {...props} data-browser-credentials="" size="sm" variant="ghost">
+        {m.browser_credentials()}
       </Button>
     {/snippet}
   </Dialog.Trigger>

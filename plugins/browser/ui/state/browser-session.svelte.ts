@@ -6,6 +6,7 @@ import {
   batchChannel,
   call,
   type ChannelMessage,
+  type PluginCallFailure,
   type PluginOutcome,
   type SubscriptionId,
   unsubscribe,
@@ -15,7 +16,7 @@ import {
   type BrowserControl,
   type BrowserCredential,
   type BrowserError,
-  type BrowserStatus,
+  type BrowserStatus_Serialize as BrowserStatus,
   channels,
   commands,
 } from '../generated/bindings.js';
@@ -62,6 +63,21 @@ export class BrowserSession {
     return this.#change(() => call(() => commands.browserCredential({ action, conversationId: this.conversationId })));
   }
 
+  trustCertificate(
+    sessionId: string,
+    hostname: string,
+    fingerprint: string,
+    showFailure: (message: string) => void,
+  ): Promise<boolean> {
+    return this.#change(
+      () =>
+        call(() =>
+          commands.browserTrustCertificate({ conversationId: this.conversationId, fingerprint, hostname, sessionId }),
+        ),
+      (failure) => showFailure(browserFailureMessage(failure)),
+    );
+  }
+
   /** Moves keyboard focus into a tab's page, in takeover. */
   async focusPage(tabId: string): Promise<void> {
     const outcome = await call(() => commands.browserFocus({ conversationId: this.conversationId, tabId }));
@@ -70,7 +86,16 @@ export class BrowserSession {
     }
   }
 
-  async #change(run: () => Promise<PluginOutcome<unknown, BrowserError>>): Promise<boolean> {
+  async #change(
+    run: () => Promise<PluginOutcome<unknown, BrowserError>>,
+    showFailure: (failure: PluginCallFailure<BrowserError>) => void = (failure) => {
+      // The status stream reports certificate rejection in the affected tab.
+      const reportedInTab = failure.kind === 'core' && failure.error.code === 'certificate_rejected';
+      if (!reportedInTab) {
+        this.failure = browserFailureMessage(failure);
+      }
+    },
+  ): Promise<boolean> {
     if (this.busy) {
       return false;
     }
@@ -79,7 +104,7 @@ export class BrowserSession {
     try {
       const result = await run();
       if (!result.ok) {
-        this.failure = browserFailureMessage(result.failure);
+        showFailure(result.failure);
       }
       return result.ok;
     } finally {

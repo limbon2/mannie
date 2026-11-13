@@ -96,6 +96,16 @@ impl BrowserApi for EmptyBrowser {
         Box::pin(ready(Err(BrowserError::SessionMissing)))
     }
 
+    fn trust_certificate(
+        &self,
+        _conversation: ConversationId,
+        _session_id: String,
+        _hostname: String,
+        _fingerprint: String,
+    ) -> BoxFuture<'static, Result<(), BrowserError>> {
+        Box::pin(ready(Err(BrowserError::SessionMissing)))
+    }
+
     fn prepare(
         &self,
         _conversation: ConversationId,

@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSyn
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import { dataDirectory } from '#e2e/app.ts';
 import {
@@ -22,7 +23,9 @@ import {
   browserEvaluate,
   type BrowserSurface,
   browserSurfaces,
+  chooseTrayItem,
   deleteProviderProfiles,
+  processId,
   setFolderChoice,
 } from '#e2e/harness.ts';
 import {
@@ -38,11 +41,16 @@ import {
 import { MODELS, type ProviderServer, startProviderServer, TOOLS_DONE } from '#e2e/provider-server.ts';
 import { Key } from 'webdriverio';
 
+import { fixtureCertificateInWindowsTrust, selfSignedCertificate, startHttpsSite } from './support/https-site.ts';
+
 const PANEL = '[data-side-panels] [role="tabpanel"][data-state="active"] [data-browser-panel]';
 const VIEWPORT = `${PANEL} [data-browser-viewport]`;
 const STILL = `${VIEWPORT} img`;
 const ACTIVITY = `${PANEL} [data-browser-activity]`;
 const SHELL_TABS = '[data-side-panels] [role="tablist"] [role="tab"]';
+const CERTIFICATE_ERROR = `${PANEL} [data-browser-certificate-error]`;
+const CERTIFICATE_FORM = '[role="dialog"]:has([data-browser-certificate-hostname])';
+const OWNER_ADDRESS = `${PANEL} [aria-label="Address"]:not([readonly])`;
 
 const form = `<!doctype html>
 <html lang="en">
@@ -438,6 +446,98 @@ async function pageValue(expression: string): Promise<unknown> {
   return browserEvaluate(conversationId, tabId, expression);
 }
 
+async function openBrowserConversation(message: string): Promise<void> {
+  await startNewConversation();
+  await sendMessage(message);
+  await waitForCompleteReply();
+  const browserControl = $('[data-browser-control]');
+  await browserControl.waitForClickable();
+  await browserControl.click();
+  await startBrowserSession();
+}
+
+async function startBrowserSession(): Promise<void> {
+  await clickWithText(`${PANEL} button:not(:disabled)`, 'Start browser');
+  await waitForShownText($(PANEL), expect.stringContaining('You have control'));
+  await $(OWNER_ADDRESS).waitForEnabled();
+}
+
+async function endBrowserSession(): Promise<void> {
+  await clickWithText(`${PANEL} button:not(:disabled)`, 'End session');
+  await clickWithText('[role="alertdialog"] button', 'End session');
+  await waitForShownText($(PANEL), expect.stringContaining('No browser session'));
+}
+
+async function restartMannie(): Promise<void> {
+  const previousProcess = await processId();
+  try {
+    await chooseTrayItem('quit');
+  } catch (error) {
+    // The native window can close before WebDriver delivers the reply.
+    const sessionEnded = error instanceof Error && error.message.includes('invalid session id');
+    if (!sessionEnded) {
+      throw error;
+    }
+  }
+  const deadline = Date.now() + 15_000;
+  for (;;) {
+    try {
+      process.kill(previousProcess, 0);
+    } catch (error) {
+      const processGone = error instanceof Error && 'code' in error && error.code === 'ESRCH';
+      if (processGone) {
+        break;
+      }
+      throw error;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error('Mannie did not quit');
+    }
+    await delay(250);
+  }
+
+  await browser.reloadSession();
+  await waitForApp();
+  expect(await processId()).not.toBe(previousProcess);
+}
+
+async function ownerNavigate(url: string): Promise<void> {
+  const address = $(OWNER_ADDRESS);
+  await address.waitForExist();
+  await address.setValue(url);
+  await clickWithText(`${PANEL} button:not(:disabled)`, 'Go');
+  await address.waitForExist();
+}
+
+async function trustCertificate(
+  hostname: string,
+  fingerprint: string,
+  scope: 'saved' | 'session' = 'session',
+): Promise<void> {
+  await $(`${PANEL} [data-browser-certificates]`).click();
+  await $(`${CERTIFICATE_FORM} [data-browser-certificate-hostname]`).setValue(hostname);
+  await $(`${CERTIFICATE_FORM} [data-browser-certificate-fingerprint]`).setValue(fingerprint);
+  const action = scope === 'saved' ? 'save' : 'trust';
+  await $(`${CERTIFICATE_FORM} [data-browser-certificate-${action}]`).click();
+  await $(CERTIFICATE_FORM).waitForDisplayed({ reverse: true });
+}
+
+async function waitForHttpsFixture(path: string): Promise<void> {
+  await browser.waitUntil(
+    async () =>
+      (await pageValue("document.documentElement.dataset.fixtureScript === 'loaded' && location.pathname")) === path,
+    {
+      timeoutMsg: `the HTTPS page at ${path} did not load its script`,
+    },
+  );
+  await $(CERTIFICATE_ERROR).waitForDisplayed({ reverse: true });
+}
+
+async function waitForCertificateError(): Promise<void> {
+  await $(CERTIFICATE_ERROR).waitForDisplayed();
+  expect(await $(CERTIFICATE_FORM).isDisplayed()).toBe(false);
+}
+
 async function exportBrowserConversation(destination: string): Promise<string> {
   await setFolderChoice(destination);
   await $('main [data-conversation-actions]').click();
@@ -676,6 +776,230 @@ describeBrowserPane('Browser pane', () => {
     expect(site.requests).not.toContain('/after-revoke');
     await clickInLatestTurn('Deny');
     await waitForCompleteReply();
+  });
+
+  it('requires the owner to trust the exact certificate and keeps agent approval separate', async () => {
+    const certificate = selfSignedCertificate();
+    const replacement = selfSignedCertificate();
+    const first = await startHttpsSite(certificate);
+    try {
+      const second = await startHttpsSite(certificate);
+      try {
+        const hostname = new URL(first.address).hostname;
+        const sameCertificateOtherHost = first.address.replace('127.0.0.1', 'localhost');
+        first.redirectTo = `${second.address}/redirect-destination`;
+        first.untrustedAsset = `${sameCertificateOtherHost}/background.js`;
+        expect(fixtureCertificateInWindowsTrust(certificate)).toBe(false);
+
+        await openBrowserConversation('Open a conversation for the HTTPS fixture.');
+        await ownerNavigate(`${first.address}/without-exception`);
+        await waitForCertificateError();
+        expect(first.requests).toEqual([]);
+
+        await trustCertificate(hostname, replacement.fingerprint);
+        await ownerNavigate(`${first.address}/wrong-fingerprint`);
+        await waitForCertificateError();
+        expect(first.requests).toEqual([]);
+        await endBrowserSession();
+        await startBrowserSession();
+
+        await trustCertificate(hostname, certificate.fingerprint);
+        expect(first.requests).toEqual([]);
+        await ownerNavigate(`${first.address}/with-background`);
+        await waitForHttpsFixture('/with-background');
+        expect(first.requests).toEqual(expect.arrayContaining(['/with-background', '/fixture.js']));
+        await browser.waitUntil(
+          async () => (await pageValue('document.documentElement.dataset.background')) === 'blocked',
+          {
+            timeoutMsg: 'the asset at the untrusted hostname did not fail',
+          },
+        );
+        expect(first.requests).not.toContain('/background.js');
+        expect(await $(CERTIFICATE_FORM).isDisplayed()).toBe(false);
+        expect(await $(CERTIFICATE_ERROR).isDisplayed()).toBe(false);
+
+        await ownerNavigate(`${sameCertificateOtherHost}/other-host`);
+        await waitForCertificateError();
+        expect(first.requests).not.toContain('/other-host');
+
+        await clickWithText(`${PANEL} button:not(:disabled)`, 'Resume agent');
+        await sendLines([
+          callMessage('browser_navigate', { action: { kind: 'go', url: `${first.address}/agent-site` } }),
+          'next',
+          callMessage('browser_observe', { screenshot: false }),
+        ]);
+        await waitForToolStatus('awaiting_approval');
+        expect(first.requests).not.toContain('/agent-site');
+        await clickInLatestTurn('Allow for this conversation');
+        expect(await waitForCompleteReply()).toContain('Self-signed fixture');
+        expect(first.requests).toContain('/agent-site');
+
+        await send(callMessage('browser_navigate', { action: { kind: 'go', url: `${first.address}/redirect` } }));
+        await waitForToolStatus('awaiting_approval');
+        expect(first.requests).toContain('/redirect');
+        expect(second.requests).toEqual([]);
+        await clickInLatestTurn('Deny');
+        await waitForCompleteReply();
+        expect(second.requests).toEqual([]);
+
+        await sendLines([
+          callMessage('browser_navigate', { action: { kind: 'go', url: `${second.address}/another-port` } }),
+          'next',
+          callMessage('browser_observe', { screenshot: false }),
+        ]);
+        expect(await allowBrowserSite()).toContain('Self-signed fixture');
+        expect(second.requests).toContain('/another-port');
+
+        await clickWithText(`${PANEL} button:not(:disabled)`, 'Take over');
+        await waitForShownText($(PANEL), expect.stringContaining('You have control'));
+        first.rotate(replacement);
+        await ownerNavigate(`${first.address}/rotated`);
+        await waitForCertificateError();
+        expect(first.requests).not.toContain('/rotated');
+
+        await endBrowserSession();
+        await startBrowserSession();
+        await ownerNavigate(`${second.address}/new-session`);
+        await waitForCertificateError();
+        expect(second.requests).not.toContain('/new-session');
+        await trustCertificate(hostname, replacement.fingerprint);
+        await ownerNavigate(`${first.address}/rotated`);
+        await waitForHttpsFixture('/rotated');
+        expect(first.requests).toContain('/rotated');
+        expect(fixtureCertificateInWindowsTrust(certificate)).toBe(false);
+        expect(fixtureCertificateInWindowsTrust(replacement)).toBe(false);
+
+        // Leave the previous session alive to test isolation between conversations.
+        await openBrowserConversation('Open a separate conversation for the same HTTPS fixture.');
+        await clickWithText(`${PANEL} button:not(:disabled)`, 'Resume agent');
+        await send(callMessage('browser_navigate', { action: { kind: 'go', url: `${first.address}/agent-no-pin` } }));
+        await waitForToolStatus('awaiting_approval');
+        await clickInLatestTurn('Allow for this conversation');
+        await waitForCompleteReply();
+        await waitForCertificateError();
+        expect(first.requests).not.toContain('/agent-no-pin');
+        await endBrowserSession();
+      } finally {
+        await second.close();
+      }
+    } finally {
+      await first.close();
+    }
+  });
+
+  it('ends the Browser session and closes a live HTTPS connection before an allowed certificate expires', async () => {
+    await openBrowserConversation('Open a conversation for the short-lived HTTPS fixture.');
+    const certificate = selfSignedCertificate(35);
+    const shortLived = await startHttpsSite(certificate);
+    try {
+      await trustCertificate(new URL(shortLived.address).hostname, certificate.fingerprint);
+      await ownerNavigate(`${shortLived.address}/keep-connection`);
+      await waitForHttpsFixture('/keep-connection');
+      await browser.waitUntil(() => shortLived.requests.includes('/hold'), {
+        timeoutMsg: 'the page did not open a long-lived HTTPS response',
+      });
+      expect(shortLived.holdClosedAt()).toBeUndefined();
+
+      await browser.waitUntil(() => shortLived.holdClosedAt() !== undefined, {
+        timeout: Math.max(1_000, certificate.notAfter - Date.now() + 5_000),
+        timeoutMsg: 'the connection stayed open after certificate expiry',
+      });
+      expect(shortLived.holdClosedAt()).toBeLessThan(certificate.notAfter);
+      await waitForShownText($(PANEL), expect.stringContaining('A trusted certificate was about to expire'));
+
+      await startBrowserSession();
+      await trustCertificate(new URL(shortLived.address).hostname, certificate.fingerprint);
+      await ownerNavigate(`${shortLived.address}/after-cutoff`);
+      await waitForCertificateError();
+      expect(shortLived.requests).not.toContain('/after-cutoff');
+    } finally {
+      await shortLived.close();
+    }
+  });
+
+  it('reuses saved certificate trust after a restart and closes live connections when forgotten', async () => {
+    const certificate = selfSignedCertificate();
+    const replacement = selfSignedCertificate();
+    const saved = await startHttpsSite(certificate);
+    try {
+      const hostname = new URL(saved.address).hostname;
+      await openBrowserConversation('Open a conversation to save HTTPS trust.');
+      await ownerNavigate(`${saved.address}/before-save`);
+      await waitForCertificateError();
+      expect(saved.requests).toEqual([]);
+      await trustCertificate(hostname, certificate.fingerprint, 'saved');
+      await ownerNavigate(`${saved.address}/after-save`);
+      await waitForHttpsFixture('/after-save');
+      await endBrowserSession();
+      await startBrowserSession();
+      await ownerNavigate(`${saved.address}/after-session-end`);
+      await waitForHttpsFixture('/after-session-end');
+
+      await restartMannie();
+      await $('[data-new-conversation]').waitForClickable();
+      await openBrowserConversation('Open a new conversation after restarting Mannie.');
+      await clickWithText(`${PANEL} button:not(:disabled)`, 'Resume agent');
+      await sendLines([
+        callMessage('browser_navigate', { action: { kind: 'go', url: `${saved.address}/after-restart` } }),
+        'next',
+        callMessage('browser_observe', { screenshot: false }),
+      ]);
+      await waitForToolStatus('awaiting_approval');
+      expect(saved.requests).not.toContain('/after-restart');
+      await clickInLatestTurn('Allow for this conversation');
+      expect(await waitForCompleteReply()).toContain('Self-signed fixture');
+      expect(saved.requests).toContain('/after-restart');
+
+      await clickWithText(`${PANEL} button:not(:disabled)`, 'Take over');
+      await waitForShownText($(PANEL), expect.stringContaining('You have control'));
+      saved.rotate(replacement);
+      await ownerNavigate(`${saved.address}/changed-fingerprint`);
+      await waitForCertificateError();
+      expect(saved.requests).not.toContain('/changed-fingerprint');
+
+      saved.rotate(certificate);
+      await ownerNavigate(`${saved.address}/keep-connection`);
+      await waitForHttpsFixture('/keep-connection');
+      await browser.waitUntil(() => saved.requests.includes('/hold'), {
+        timeoutMsg: 'the page did not open a long-lived HTTPS response',
+      });
+      expect(saved.holdClosedAt()).toBeUndefined();
+
+      await $(`${PANEL} [data-browser-certificates]`).click();
+      const entry = $(`${CERTIFICATE_FORM} [data-browser-saved-certificate]`);
+      await expect(entry).toHaveText(expect.stringContaining(hostname));
+      await expect(entry).toHaveText(
+        expect.stringContaining(certificate.fingerprint.replaceAll(':', '').toLowerCase()),
+      );
+      await entry.$('[data-browser-certificate-forget]').click();
+      await clickWithText('[role="alertdialog"] button', 'Cancel');
+      await $('[role="alertdialog"]').waitForDisplayed({ reverse: true });
+      expect(saved.holdClosedAt()).toBeUndefined();
+      await expect(entry).toBeDisplayed();
+
+      await entry.$('[data-browser-certificate-forget]').click();
+      await $('[role="alertdialog"] [data-browser-certificate-forget-confirm]').click();
+      await $(CERTIFICATE_FORM).waitForDisplayed({ reverse: true });
+      await waitForShownText(
+        $(PANEL),
+        expect.stringContaining('Browser ended this session because you removed a certificate'),
+      );
+      await browser.waitUntil(() => saved.holdClosedAt() !== undefined, {
+        timeoutMsg: 'the connection stayed open after the saved trust was removed',
+      });
+
+      await $(`${PANEL} [data-browser-certificates]`).click();
+      await waitForShownText($(CERTIFICATE_FORM), expect.stringContaining('No saved certificates.'));
+      await clickWithText(`${CERTIFICATE_FORM} button`, 'Close');
+      await startBrowserSession();
+      await ownerNavigate(`${saved.address}/after-forgetting`);
+      await waitForCertificateError();
+      expect(saved.requests).not.toContain('/after-forgetting');
+      expect(fixtureCertificateInWindowsTrust(certificate)).toBe(false);
+      await endBrowserSession();
+    } finally {
+      await saved.close();
+    }
   });
 
   it('uses a session password without retaining it in the transcript or export', async () => {
