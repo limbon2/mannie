@@ -432,6 +432,8 @@ describeBrowserPane('Browser pane', () => {
     await browser.waitUntil(async () => (await pageValue('document.title')) === 'Browser fixture', {
       timeoutMsg: 'the page did not load the fixture',
     });
+    // The page can load before Mannie finishes the navigation command.
+    await $(`${PANEL} button[type="submit"]`).waitForEnabled();
     expect(await axeViolations()).toEqual([]);
 
     // The page follows its placeholder when the window changes size.
