@@ -353,7 +353,9 @@ async function sampleCursor(target: readonly [number, number]): Promise<void> {
         while (performance.now() < deadline) {
           surface = (await harness.browserSurface(conversation)).find((entry) => entry.tab === tab) ?? null;
           const cursor = surface?.cursor;
-          if (cursor != null && Math.abs(cursor[0] - point[0]) <= 2 && Math.abs(cursor[1] - point[1]) <= 2) {
+          const nearX = cursor !== undefined && cursor !== null && Math.abs(cursor[0] - point[0]) <= 2;
+          const nearY = cursor !== undefined && cursor !== null && Math.abs(cursor[1] - point[1]) <= 2;
+          if (nearX && nearY) {
             return { matched: true, surface, target: point };
           }
           await new Promise<void>((resolve) => {
