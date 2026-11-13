@@ -45,14 +45,7 @@ function nativeDriverArguments(): string[] {
   return useInstalledDriver ? ['--native-driver', edgeDriver] : [];
 }
 
-const tauriOptions = {
-  application: applicationPath(),
-  // Edge WebDriver otherwise creates a fresh temporary profile on every
-  // session. The validation data folder is reset once per spec, so a
-  // restart inside the spec reopens the same webview storage.
-  webviewOptions:
-    process.platform === 'win32' ? { userDataFolder: join(dataDirectory(), 'webdriver-profile') } : undefined,
-};
+const tauriOptions = { application: applicationPath() };
 
 /** Resolves once something listens on the port, or rejects after the timeout. */
 async function waitForPort(port: number, timeoutMillis: number): Promise<void> {
@@ -111,8 +104,20 @@ export const config: WebdriverIO.Config = {
       ],
   waitforTimeout: 10_000,
 
-  beforeSession: async (_config, _capabilities, specs) => {
+  beforeSession: async (_config, capabilities, specs) => {
     resetDataDirectory();
+    // The shell spec checks local storage across a clean app restart. Edge
+    // WebDriver creates a fresh profile per session for the other specs.
+    const isWindows = process.platform === 'win32';
+    const testsShell = specs.some((spec) => basename(spec) === 'shell.test.ts');
+    if (isWindows && testsShell) {
+      Object.assign(capabilities, {
+        'tauri:options': {
+          ...tauriOptions,
+          webviewOptions: { userDataFolder: join(dataDirectory(), 'webdriver-profile') },
+        },
+      });
+    }
     const startsWithNewerDatabase = specs.some((spec) => basename(spec).startsWith('startup-problem.'));
     if (startsWithNewerDatabase) {
       plantDatabaseFromTheFuture();
