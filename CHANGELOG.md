@@ -4,6 +4,10 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+### Changed
+
+- Show Terminal, Browser and every other conversation control in a new conversation before its first message. A new conversation stays out of the list until you send it, and keeps its unsent message, terminals and browser tabs while you open other conversations.
+
 ## 0.8.1 - 2026-11-14
 
 ### Added

@@ -108,7 +108,7 @@ None.
   | `set_conversation_agent` | Sets a conversation's agent for its next reply, and its profile when the agent names one |
 
 - `AgentError`, with the codes `agents.not_found`, `agents.name_taken`, `agents.field_not_valid`, `agents.builtin`, `agents.kind_changed`, `agents.too_many`, `agents.storage_failed` and `agents.store_unavailable`, and `ChatError::AgentNotFound` for a key that names no conversation agent.
-- `ConversationDraft` gains `agentKey` and `chooseAgent`, which a control of the new conversation pane's message box uses.
+- `ConversationDraft` gains `agentKey` and `chooseAgent`, which a control of the new conversation pane's message box uses. Both are deprecated with the pane, since the agent picker works on the draft conversation of a new conversation ([ADR-0068](../adr/0068-keep-a-draft-conversation-for-each-place.md)).
 
 ### Limits
 

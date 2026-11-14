@@ -122,4 +122,18 @@ describe("the Chat's conversations", () => {
     expect(list.chats.map((conversation) => conversation.title)).toEqual(['General']);
     expect(list.grouped.general.map((conversation) => conversation.title)).toEqual(['General']);
   });
+
+  it('leave out the drafts until their first message, and keep them for the features that look them up (ADR-0068)', () => {
+    const { list } = followedList();
+    const general = { ...summary(null, 'General'), id: '0199e0f2-0000-7000-8000-000000000002' };
+    const draft = { ...summary(PROJECT_ID, ''), draft: true, id: '0199e0f2-0000-7000-8000-000000000003' };
+
+    channel.deliver([{ ...SNAPSHOT, conversations: [general, draft] }]);
+    const whileDraft = list.chats.map((conversation) => conversation.title);
+    channel.deliver([upserted({ ...draft, draft: false, title: 'First message' })]);
+
+    expect(whileDraft).toEqual(['General']);
+    expect(list.find(draft.id)?.title).toBe('First message');
+    expect(list.chats.map((conversation) => conversation.title)).toContain('First message');
+  });
 });

@@ -1,10 +1,9 @@
 // The custom agents feature's entries in the shell's slots (docs/features/
 // custom-agents.md; ADR-0059): the entry of the activity bar with its view and
-// sidebar panel, and the picker in the message box, which also shows in the new
-// conversation pane.
+// sidebar panel, and the picker in the message box, which a new conversation's
+// draft shows too (ADR-0068).
 import BotIcon from '@lucide/svelte/icons/bot';
 
-import AgentDraftPicker from '#lib/components/app/agents/AgentDraftPicker.svelte';
 import AgentPicker from '#lib/components/app/agents/AgentPicker.svelte';
 import AgentsPanel from '#lib/components/app/agents/AgentsPanel.svelte';
 import AgentsView from '#lib/components/app/agents/AgentsView.svelte';
@@ -34,7 +33,6 @@ export function registerAgents(slots: ShellSlots): void {
   });
   slots.conversationControls.register({
     component: AgentPicker,
-    draft: AgentDraftPicker,
     id: 'agents.picker',
     order: 0,
     place: 'message-box',

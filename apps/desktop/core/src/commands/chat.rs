@@ -6,11 +6,12 @@
 use mannie_runtime::Runtime;
 use mannie_types::chat::{
     ChatError, ChatSettings, CheckpointRef, ConversationRef, EarlierTurns, LoadEarlierTurns,
-    RenameConversation, SendMessage, SetConversationAgent, SetConversationProfile,
+    OpenDraft, RenameConversation, SendMessage, SetConversationAgent, SetConversationProfile,
     StartConversation, StartedConversation, StartedReply, StopOutcome, SubscribeConversation,
     Unsubscribe, UpdateChatSettings,
 };
 use mannie_types::context::ChangeAttachment;
+use mannie_types::ids::ConversationId;
 use mannie_types::images::{ImageData, ReadImage};
 use mannie_types::ipc::{ChannelBatch, CommandError};
 use mannie_types::mentions::{
@@ -128,6 +129,20 @@ pub(crate) async fn start_conversation(
         .start_conversation(input)
         .await
         .map_err(refused("start_conversation"))
+}
+
+/// Opens the draft conversation of a place, which the conversation list
+/// leaves out until its first message (ADR-0068).
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn open_draft_conversation(
+    core: State<'_, Core>,
+    input: OpenDraft,
+) -> Result<ConversationId, CommandError<ChatError>> {
+    runtime(&core)?
+        .open_draft(input)
+        .await
+        .map_err(refused("open_draft_conversation"))
 }
 
 /// Adds the owner's message to a conversation and starts the reply.

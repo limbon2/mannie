@@ -9,7 +9,6 @@
   import { conversationList, type ConversationMove } from '#lib/state/conversation-list.svelte.js';
   import { projectActions } from '#lib/state/project-actions.svelte.js';
   import { sidebarCollapse } from '#lib/state/sidebar-collapse.svelte.js';
-  import { startedConversationId } from '#lib/state/started-conversation.js';
   import { openConversationId } from '#lib/utils/chat-urls.js';
 
   import ProjectRow from './ProjectRow.svelte';
@@ -28,16 +27,14 @@
 
   /**
    * When the open conversation moves into a collapsed project, the project
-   * expands, so the owner sees where the conversation went. The conversation
-   * that a first message started counts as open until the view shows it,
-   * since its reply can move it before then. Opening or reloading a
-   * conversation keeps what the owner collapsed.
+   * expands, so the owner sees where the conversation went. A new
+   * conversation is open from the start, as the draft that the view shows
+   * (ADR-0068). Opening or reloading a conversation keeps what the owner
+   * collapsed.
    */
   function revealMove(move: ConversationMove): void {
     const openId = openConversationId();
-    const isOpen = move.conversationId === openId;
-    const isOpening = openId === null && move.conversationId === startedConversationId();
-    if (isOpen || isOpening) {
+    if (move.conversationId === openId) {
       sidebarCollapse.reveal(move.projectId);
     }
   }

@@ -276,6 +276,61 @@ pub struct StartedConversation {
     pub run_id: RunId,
 }
 
+/// The argument of `open_draft_conversation` (ADR-0068): the place whose
+/// draft conversation opens, and what it starts with.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+// Other crates build it with `default` and the `with_` methods, so a new
+// field does not change every caller (ADR-0034, decision 16).
+#[non_exhaustive]
+pub struct OpenDraft {
+    /// The project whose draft opens, or `None` for the general
+    /// conversations' or a home item's.
+    #[serde(default)]
+    pub project_id: Option<ProjectId>,
+    /// The home item whose draft opens, such as a notebook (ADR-0051). A
+    /// draft with a home has no project.
+    #[serde(default)]
+    pub home: Option<AttachmentRef>,
+    /// What the draft gets attached, besides what it holds.
+    #[serde(default)]
+    pub attachments: Vec<AttachmentRef>,
+    /// The agent that the draft's replies take, or `None` to keep its own
+    /// (ADR-0059, decision 6). The built-in agent's name chooses it.
+    #[serde(default)]
+    pub agent_key: Option<String>,
+}
+
+impl OpenDraft {
+    /// The draft of a project, or of the general conversations.
+    #[must_use]
+    pub fn with_project(mut self, project_id: Option<ProjectId>) -> Self {
+        self.project_id = project_id;
+        self
+    }
+
+    /// The draft of a home item.
+    #[must_use]
+    pub fn with_home(mut self, home: Option<AttachmentRef>) -> Self {
+        self.home = home;
+        self
+    }
+
+    /// What the draft gets attached.
+    #[must_use]
+    pub fn with_attachments(mut self, attachments: Vec<AttachmentRef>) -> Self {
+        self.attachments = attachments;
+        self
+    }
+
+    /// The agent that the draft's replies take.
+    #[must_use]
+    pub fn with_agent(mut self, agent_key: Option<String>) -> Self {
+        self.agent_key = agent_key;
+        self
+    }
+}
+
 /// The argument of `send_message`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]

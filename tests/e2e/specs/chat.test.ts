@@ -1,5 +1,6 @@
 // Chat end to end (docs/features/chat/README.md, acceptance): a reply streams
 // from a provider into the conversation view, the conversation list follows,
+// a new conversation keeps its unsent message while the list leaves it out,
 // the owner renames and deletes conversations, and the views work from the
 // keyboard and pass the WCAG 2.1 AA checks.
 import { Key } from 'webdriverio';
@@ -106,6 +107,22 @@ describe('chat', () => {
     await browser.waitUntil(async () => (await listedConversations()).includes('Renamed by the test'), {
       timeoutMsg: 'the list did not show the new title',
     });
+    await waitForShownText($('h1'), 'Renamed by the test');
+  });
+
+  it('keeps the unsent message of a new conversation, whose draft the list leaves out (ADR-0068)', async () => {
+    const listed = await listedConversations();
+    await startNewConversation();
+    await $(COMPOSER).setValue('Not sent yet');
+
+    await $('[data-conversation] a').click();
+    await waitForShownText($('h1'), 'Renamed by the test');
+    await startNewConversation();
+
+    await expect($(COMPOSER)).toHaveValue('Not sent yet');
+    expect(await listedConversations()).toEqual(listed);
+    await $(COMPOSER).clearValue();
+    await $('[data-conversation] a').click();
     await waitForShownText($('h1'), 'Renamed by the test');
   });
 

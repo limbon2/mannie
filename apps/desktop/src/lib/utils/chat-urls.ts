@@ -1,12 +1,13 @@
 // Where the chat view lives (docs/features/chat/conversation-view.md,
 // layout): `?view=chat&conversation=<id>` names the open conversation, and the
-// view without a conversation starts a new one, in the project that
-// `?project=<id>` names (docs/features/chat/projects.md).
+// view without a conversation shows the draft of a new one (ADR-0068), in the
+// project that `?project=<id>` names (docs/features/chat/projects.md).
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 import { page } from '$app/state';
 
 import { conversationDraft } from '#lib/state/conversation-draft.svelte.js';
+import { shownDraft } from '#lib/state/shown-draft.svelte.js';
 
 import { VIEW_PARAMETER } from './views.js';
 
@@ -49,12 +50,31 @@ export async function openConversation(id: string): Promise<void> {
 }
 
 /**
+ * Names the draft that the view shows in the address, once its first message
+ * made it a conversation of the list (ADR-0068). The pane stays, so the
+ * address keeps its side panels, such as the draft's terminal, and the focus
+ * stays in the message box.
+ */
+export async function nameShownDraft(id: string): Promise<void> {
+  const search = new URLSearchParams(page.url.search);
+  search.set(CONVERSATION_PARAMETER, id);
+  search.delete(PROJECT_PARAMETER);
+  // eslint-disable-next-line svelte/no-navigation-without-resolve -- the path is resolve('/'); only the search parameters change, which resolve() does not take
+  await goto(`${resolve('/')}?${search.toString()}`, { replace: true, reset: false });
+}
+
+/**
  * Shows the view of a new conversation, in a project or a general one. It is
  * one of the Chat's, so the draft lets go of a home that a plugin gave it
  * (ADR-0051).
  */
 export async function startNewConversation(projectId: string | null = null): Promise<void> {
   conversationDraft.leaveHome();
+  await showNewConversation(projectId);
+}
+
+/** Shows the view of a new conversation, of the home that the draft holds, if any. */
+export async function showNewConversation(projectId: string | null = null): Promise<void> {
   // eslint-disable-next-line svelte/no-navigation-without-resolve -- the path is resolve('/'); only the search parameters change, which resolve() does not take
   await goto(`${resolve('/')}?${newConversationQuery(projectId)}`);
 }
@@ -67,9 +87,15 @@ function showsChat(): boolean {
   return isMainRoute && isChatView;
 }
 
-/** The conversation that the chat view shows, if it shows one. */
+/**
+ * The conversation that the chat view shows, if it shows one: the one that
+ * the address names, or the draft of a new one (ADR-0068).
+ */
 export function openConversationId(): string | null {
-  return showsChat() ? page.url.searchParams.get(CONVERSATION_PARAMETER) : null;
+  if (!showsChat()) {
+    return null;
+  }
+  return page.url.searchParams.get(CONVERSATION_PARAMETER) ?? shownDraft.id;
 }
 
 /** The project that the pane of a new conversation starts in, if the chat view shows that pane for a project. */

@@ -293,6 +293,8 @@ struct Inner {
     /// Makes assignments one at a time, so a task submitted twice at once is
     /// stored once.
     assigning: tokio::sync::Mutex<()>,
+    /// Opens drafts one at a time, so a place never gets two (ADR-0068).
+    opening_drafts: tokio::sync::Mutex<()>,
     /// The approvals that runs wait for, one per conversation at most, since
     /// a conversation runs its tool calls one at a time.
     approvals: Mutex<HashMap<ConversationId, Pending>>,
@@ -426,21 +428,7 @@ impl Runtime {
         let random = config
             .random_seed
             .map_or_else(fastrand::Rng::new, fastrand::Rng::with_seed);
-        // A section that cannot be read leaves the default limit, and the
-        // settings page shows the failure when the owner opens it.
-        // A machine with task slots of its own, such as a worker, takes its
-        // limit from its composition root; otherwise the child agents
-        // settings limit the children.
-        let parallel = match deps.machine.task_slots {
-            Some(slots) => slots,
-            None => match deps.store.load_settings::<ChildAgentsSettings>().await {
-                Ok(settings) => settings.parallel_children.get(),
-                Err(error) => {
-                    tracing::warn!(%error, error.code = error.code(), "could not read the child agents settings; using the default limit");
-                    ChildAgentsSettings::default().parallel_children.get()
-                }
-            },
-        };
+        let parallel = parallel_children(&deps).await;
         let inner = Inner {
             ids: IdGenerator::new(Arc::clone(&deps.clock)),
             store: deps.store,
@@ -462,6 +450,7 @@ impl Runtime {
             programs: Programs::default(),
             assigned: Arc::default(),
             assigning: tokio::sync::Mutex::new(()),
+            opening_drafts: tokio::sync::Mutex::new(()),
             approvals: Mutex::default(),
             questions: Mutex::default(),
             background: CommandRegistry::default(),
@@ -585,5 +574,23 @@ impl Runtime {
     /// A number in [0, 1) for the retry jitter.
     fn random(&self) -> f64 {
         lock(&self.inner.random).f64()
+    }
+}
+
+/// How many child agents run at once. A machine with task slots of its own,
+/// such as a worker, takes its limit from its composition root; otherwise the
+/// child agents settings limit the children. A section that cannot be read
+/// leaves the default limit, and the settings page shows the failure when the
+/// owner opens it.
+async fn parallel_children(deps: &RuntimeDeps) -> u32 {
+    match deps.machine.task_slots {
+        Some(slots) => slots,
+        None => match deps.store.load_settings::<ChildAgentsSettings>().await {
+            Ok(settings) => settings.parallel_children.get(),
+            Err(error) => {
+                tracing::warn!(%error, error.code = error.code(), "could not read the child agents settings; using the default limit");
+                ChildAgentsSettings::default().parallel_children.get()
+            }
+        },
     }
 }

@@ -4,10 +4,13 @@
 // two show the same conversation, the one that registered last takes the
 // mentions until it goes. A box can also take a text with a mention, such as a
 // plan to run, which waits for a box that does not show yet (ADR-0060, decision
-// 10).
+// 10). A box that goes keeps its unsent message for its conversation, which
+// the next box of that conversation takes, so the owner's text stays while
+// they open another conversation and come back (ADR-0068, decision 7).
+import type { MessageImages } from './message-images.svelte.js';
 import type { MentionChoice } from './message-mentions.svelte.js';
 
-/** The target of the box of the new conversation pane. No conversation has this ID. */
+/** The target of the box of a new conversation's draft. No conversation has this ID. */
 export const NEW_CONVERSATION_BOX = 'new-conversation';
 
 /** What adding a mention to a message box did. */
@@ -27,6 +30,16 @@ export interface MessageBoxEntry {
   readonly mention: (choice: MentionChoice) => Exclude<MentionOutcome, 'not_shown'>;
 }
 
+/** A message that a box kept when it went, which was not sent. */
+export interface UnsentMessage {
+  /** Its images, with those that their sources still prepare. */
+  readonly images: MessageImages;
+  /** The mentions that its text holds. */
+  readonly mentions: readonly MentionChoice[];
+  /** Its text. */
+  readonly text: string;
+}
+
 /** A text and a mention that wait for a box to show. */
 interface Seed {
   readonly choice: MentionChoice;
@@ -37,6 +50,7 @@ interface Seed {
 class MessageBoxes {
   readonly #boxes = new Map<string, MessageBoxEntry[]>();
   readonly #seeds = new Map<string, Seed>();
+  readonly #unsent = new Map<string, UnsentMessage>();
 
   /**
    * Puts a text and a mention into the box of a conversation, or of the new
@@ -56,6 +70,23 @@ class MessageBoxes {
   mention(conversationId: string, choice: MentionChoice): MentionOutcome {
     const box = this.#boxes.get(conversationId)?.at(-1);
     return box === undefined ? 'not_shown' : box.mention(choice);
+  }
+
+  /** Keeps the unsent message of a box that goes, for the next box of its conversation; an empty one keeps nothing. */
+  keepUnsent(conversationId: string, message: UnsentMessage): void {
+    const isEmpty = message.text === '' && message.images.images.length === 0;
+    if (isEmpty) {
+      this.#unsent.delete(conversationId);
+    } else {
+      this.#unsent.set(conversationId, message);
+    }
+  }
+
+  /** Takes the unsent message that a box of the conversation kept, if any. */
+  takeUnsent(conversationId: string): UnsentMessage | undefined {
+    const message = this.#unsent.get(conversationId);
+    this.#unsent.delete(conversationId);
+    return message;
   }
 
   /** Registers the box of a conversation while it shows; the function returned unregisters it. */

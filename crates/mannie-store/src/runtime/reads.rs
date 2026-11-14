@@ -3,8 +3,9 @@
 //! transcript as the model reads it.
 
 use mannie_types::clock::UtcMillis;
+use mannie_types::context::AttachmentRef;
 use mannie_types::context::ContextView;
-use mannie_types::ids::{CheckpointId, ConversationId, PartId, RunId, TurnId};
+use mannie_types::ids::{CheckpointId, ConversationId, PartId, ProjectId, RunId, TurnId};
 use mannie_types::images::{ImageBytes, ImageFormat};
 use mannie_types::run::RunState;
 use mannie_types::tasks::TaskPartDocument;
@@ -48,6 +49,8 @@ const SELECT_ALL_SUMMARIES: &str = concat!(
     " FROM runtime_conversations c WHERE c.parent_conversation_id IS NULL \
      ORDER BY c.updated_at DESC, c.id DESC"
 );
+// The draft of a place (ADR-0068): `IS` matches a missing project or home.
+const SELECT_DRAFT: &str = "SELECT id FROM runtime_conversations      WHERE draft = 1 AND project_id IS ?1 AND home_provider IS ?2 AND home_key IS ?3";
 const SELECT_CHECKPOINTS: &str = "SELECT id, covers_through_turn, content_hash, summary, created_at \
      FROM runtime_checkpoints WHERE conversation_id = ?1 \
      ORDER BY covers_through_turn DESC, created_at DESC";
@@ -101,6 +104,7 @@ const SELECT_ACTIVE_RUN_COUNT: &str =
 #[cfg(test)]
 pub(crate) const STATEMENTS: &[&str] = &[
     SELECT_LAST_SEQ,
+    SELECT_DRAFT,
     SELECT_LATEST_TURNS,
     SELECT_TURNS_BEFORE,
     SELECT_TURN_PARTS,
@@ -333,6 +337,27 @@ impl Store {
             raw.into_iter()
                 .map(rows::RawSummary::into_summary)
                 .collect()
+        })
+        .await
+    }
+
+    /// The draft conversation of a place (ADR-0068): of a project, of a home
+    /// item, or of the general conversations when both are `None`.
+    pub async fn draft_conversation(
+        &self,
+        project_id: Option<&ProjectId>,
+        home: Option<&AttachmentRef>,
+    ) -> Result<Option<ConversationId>, RuntimeStoreError> {
+        let project = project_id.map(|project| project.as_str().to_owned());
+        let provider = home.map(|home| home.provider.clone());
+        let key = home.map(|home| home.key.clone());
+        read_consistently(self, move |connection| {
+            let id: Option<String> = connection
+                .prepare_cached(SELECT_DRAFT)?
+                .query_row(params![project, provider, key], |row| row.get(0))
+                .optional()?;
+            id.map(|id| parse_id(&id, ConversationId::parse))
+                .transpose()
         })
         .await
     }

@@ -100,6 +100,9 @@ const UPDATE_CONTEXT: &str = "UPDATE runtime_conversations \
      SET context = ?2, context_version = ?3, context_usage = ?4 WHERE id = ?1";
 const RENAME: &str =
     "UPDATE runtime_conversations SET title = ?2, title_source = 'owner' WHERE id = ?1";
+const MARK_DRAFT: &str = "UPDATE runtime_conversations SET draft = 1 WHERE id = ?1";
+// A draft that the owner renamed keeps the owner's title (ADR-0068, decision 4).
+const UNDRAFT: &str = "UPDATE runtime_conversations SET draft = 0,      title = CASE WHEN title_source = 'owner' THEN title ELSE ?2 END      WHERE id = ?1 AND draft = 1";
 const SET_PROFILE: &str = "UPDATE runtime_conversations SET profile_id = ?2 WHERE id = ?1";
 const SET_AGENT: &str = "UPDATE runtime_conversations SET agent_key = ?2 WHERE id = ?1";
 const SET_FULL_ACCESS: &str = "UPDATE runtime_conversations SET full_access = ?2 WHERE id = ?1";
@@ -144,6 +147,8 @@ pub(crate) const STATEMENTS: &[&str] = &[
     INSERT_CHECKPOINT,
     UPDATE_CONTEXT,
     RENAME,
+    MARK_DRAFT,
+    UNDRAFT,
     SET_PROFILE,
     SET_FULL_ACCESS,
     SET_PROJECT,
@@ -259,7 +264,9 @@ fn apply_in(
     };
     for (index, change) in changes.into_iter().enumerate() {
         let is_misplaced_create = index > 0 && matches!(change, Change::CreateConversation { .. });
-        if is_misplaced_create {
+        // Only a new conversation becomes a draft (ADR-0068, decision 1).
+        let is_misplaced_draft = !creates && matches!(change, Change::MarkDraft);
+        if is_misplaced_create || is_misplaced_draft {
             return Err(RuntimeStoreError::ConversationExists);
         }
         batch.apply(change)?;
@@ -349,6 +356,8 @@ impl Batch<'_> {
             Change::AddCheckpoint { checkpoint } => self.add_checkpoint(checkpoint),
             Change::UpdateContext { ledger, usage } => self.update_context(&ledger, usage),
             Change::Rename { title } => self.set_summary_field(RENAME, &title),
+            Change::MarkDraft => self.mark_draft(),
+            Change::Undraft { title } => self.undraft(&title),
             Change::SetProfile { profile_id } => self.set_profile(profile_id.as_ref()),
             Change::SetAgent { agent_key } => self.set_summary_field(SET_AGENT, &agent_key),
             Change::SavePlan { title, body } => self.save_plan(&title, &body),
@@ -625,6 +634,26 @@ impl Batch<'_> {
         }
         insert_conversation(self.transaction, self.conversation, conversation, self.now)?;
         self.summary_changed = true;
+        Ok(())
+    }
+
+    fn mark_draft(&mut self) -> Result<(), RuntimeStoreError> {
+        self.transaction
+            .prepare_cached(MARK_DRAFT)?
+            .execute([self.conversation])?;
+        self.summary_changed = true;
+        Ok(())
+    }
+
+    fn undraft(&mut self, title: &str) -> Result<(), RuntimeStoreError> {
+        let changed = self
+            .transaction
+            .prepare_cached(UNDRAFT)?
+            .execute(params![self.conversation, title])?;
+        if changed > 0 {
+            self.append(kinds::CONVERSATION_CHANGED, None, &EventBody::empty())?;
+            self.summary_changed = true;
+        }
         Ok(())
     }
 

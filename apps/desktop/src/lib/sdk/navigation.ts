@@ -14,7 +14,7 @@ import {
   PROVIDER_SETTINGS_SECTION,
   openConversation as showConversation,
   openConversationId as shownConversationId,
-  startNewConversation,
+  showNewConversation,
 } from '#lib/utils/chat-urls.js';
 import { PLUGINS_SETTINGS_SECTION } from '#lib/utils/plugins-messages.js';
 import { openSettings } from '#lib/utils/settings-sections.js';
@@ -25,9 +25,9 @@ export type { OpenPanelOptions } from '#lib/state/side-panels.svelte.js';
 export { openSettings } from '#lib/utils/settings-sections.js';
 
 /**
- * The conversation that the chat view shows, or `null` while it shows none,
- * such as a new conversation's pane; read in a component, it follows the
- * address (ADR-0053, decision 8).
+ * The conversation that the chat view shows, or `null` while it shows none.
+ * A new conversation is the draft of its place (ADR-0068). Read in a
+ * component, it follows the address (ADR-0053, decision 8).
  */
 export function openConversationId(): string | null {
   return shownConversationId();
@@ -54,16 +54,17 @@ export interface NewConversation {
 }
 
 /**
- * Shows the pane of a new conversation, whose first message starts it with
- * the attachments given (ADR-0046, decision 6) and the home (ADR-0051), while
- * the activity bar keeps its selection.
+ * Shows the draft of a new conversation (ADR-0068) with the attachments
+ * given (ADR-0046, decision 6), of the home's place (ADR-0051) or the
+ * project's, while the activity bar keeps its selection.
  */
 export async function startConversation(conversation: NewConversation = {}): Promise<void> {
   const home = conversation.home ?? null;
-  await startNewConversation(home === null ? (conversation.projectId ?? null) : null);
-  // After the pane shows, since showing a new conversation of the Chat lets
-  // go of a home that an earlier draft had.
-  conversationDraft.reset(conversation.attachments ?? [], home);
+  // Before the view shows, so that it opens the draft of the home's place
+  // and gives it the attachments.
+  const projectId = home === null ? (conversation.projectId ?? null) : null;
+  conversationDraft.reset(conversation.attachments ?? [], home, projectId);
+  await showNewConversation(projectId);
 }
 
 /** Opens the Plugins page of the settings, where the owner turns plugins on and off. */

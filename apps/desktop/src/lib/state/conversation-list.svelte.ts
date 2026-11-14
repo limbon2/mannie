@@ -51,14 +51,23 @@ function oldestFirst(left: ProjectView, right: ProjectView): number {
   return left.id.localeCompare(right.id);
 }
 
-/** Whether a conversation is one of the Chat's: it belongs to no plugin's item (ADR-0051). */
+/** Whether a conversation is a draft, which no list shows until its first message (ADR-0068). */
+export function isDraft(conversation: ConversationSummary): boolean {
+  return conversation.draft ?? false;
+}
+
+/**
+ * Whether a conversation is one of the Chat's lists: it belongs to no
+ * plugin's item (ADR-0051) and is not a draft (ADR-0068).
+ */
 export function isChat(conversation: ConversationSummary): boolean {
-  return (conversation.home ?? null) === null;
+  const hasHome = (conversation.home ?? null) !== null;
+  return !hasHome && !isDraft(conversation);
 }
 
 /** The window's conversation list. */
 export class ConversationList {
-  /** Every conversation of the owner, those that belong to a plugin's item too. */
+  /** Every conversation of the owner, those that belong to a plugin's item and the drafts too. */
   conversations: ConversationSummary[] = $state([]);
   /** Why the list could not be read, if it could not. */
   failure: Failure<ChatError> | null = $state(null);

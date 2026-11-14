@@ -219,9 +219,12 @@ export type ConversationControlPlace = 'menu' | 'message-box' | 'toolbar';
 
 /**
  * The conversation that the first message of the new conversation pane
- * starts, as the controls of its message box change it (ADR-0046, decision
- * 6). The core asks each attachment's provider again when the message is
- * sent.
+ * started, as the controls of its message box changed it (ADR-0046, decision
+ * 6).
+ *
+ * Deprecated: a new conversation is a draft conversation, on which every
+ * control works (ADR-0068, decision 8), and nothing passes this any more. It
+ * goes after the deprecation period.
  */
 export interface ConversationDraft {
   /** The agent of the conversation's replies, or `null` for the built-in one (ADR-0059, decision 6). */
@@ -238,7 +241,11 @@ export interface ConversationDraft {
   readonly projectId: string | null;
 }
 
-/** What the control of a new conversation's message box receives. */
+/**
+ * What the control of a new conversation's message box received.
+ *
+ * Deprecated with {@link ConversationDraft} (ADR-0068, decision 8).
+ */
 export interface DraftControlProps {
   /** The conversation that the first message starts. */
   readonly draft: ConversationDraft;
@@ -254,9 +261,11 @@ export interface ConversationControl {
   readonly component: Component<ConversationControlProps>;
   /**
    * The control of a new conversation's message box, for a control of the
-   * message box: it changes what the first message starts, such as its
-   * attachments (ADR-0046, decision 6). Without it, the control shows only
-   * in conversations.
+   * message box (ADR-0046, decision 6).
+   *
+   * Deprecated: the view no longer renders it, since a new conversation is a draft
+   * conversation, which shows `component` like any other (ADR-0068, decision
+   * 8). It goes after the deprecation period.
    */
   readonly draft?: Component<DraftControlProps>;
   /** Unique among conversation controls. */

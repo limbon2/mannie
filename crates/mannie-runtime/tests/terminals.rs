@@ -33,7 +33,7 @@ use mannie_plugin_sdk::services::terminals::{
     TerminalSize, TerminalSpec, Terminals, TerminalsApi,
 };
 use mannie_runtime::testing::{Harness, reply};
-use mannie_types::chat::StartConversation;
+use mannie_types::chat::{OpenDraft, StartConversation};
 use mannie_types::ids::ConversationId;
 use serde_json::json;
 use tokio::sync::mpsc;
@@ -193,6 +193,27 @@ async fn a_shell_of_this_machine_runs_what_is_typed_and_ends_when_closed() {
     assert!(
         ended.is_some(),
         "the output ends with how the terminal ended"
+    );
+}
+
+#[tokio::test]
+async fn a_terminal_opens_in_a_draft_before_its_first_message() {
+    let harness = Harness::start().await;
+    let (_provider, service) = bound(&harness);
+    let shell = plain_shell(&service).await;
+    let draft = harness
+        .runtime
+        .open_draft(OpenDraft::default())
+        .await
+        .unwrap();
+
+    let opened = service
+        .open(TerminalSpec::new(draft.as_str(), shell, size()))
+        .await;
+
+    assert!(
+        opened.is_ok(),
+        "a draft is a conversation of its own (ADR-0068)"
     );
 }
 
