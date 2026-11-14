@@ -4,14 +4,34 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+## 0.8.1 - 2026-11-14
+
 ### Added
 
 - Choose primary and surface colors independently in Interface settings. Mannie applies the colors as you choose them and remembers them on this device.
+
+#### Browser
+
+- Add Browser Settings for trusted hosts and saved site credentials. An agent needs consent for each credential in its conversation.
+- Open and create tabs from the Browser menu beside Terminal.
+
+### Changed
+
+#### Browser
+
+- Remove the Browser pane's options menu. Trusted hosts and site credentials stay under **Settings > Browser**.
 
 ### Fixed
 
 - Apply the palette to keyboard focus rings, tooltips, and selection highlights. Keep destructive buttons readable on hover.
 - Restore the translucent keyboard focus rings on form controls and buttons.
+
+#### Browser
+
+- Use Mannie's primary color for the agent cursor and its click highlight.
+- Keep the agent cursor visible during tab status updates.
+- Accept bare domains in the Browser address bar and let the owner dismiss browser errors.
+- Group Browser pane actions at the end of the toolbar and use the SSH Hosts settings pattern for trusted hosts and site credentials.
 
 ## 0.8.0 - 2026-11-13
 
