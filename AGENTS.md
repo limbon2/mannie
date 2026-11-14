@@ -125,6 +125,14 @@ Documents follow the conventions in [docs/README.md](docs/README.md): a status t
 - Generated code lives only in ignored folders. To change it, edit its source and run the generator.
 - Never put tool caches in the repository: the Cargo registry, the pnpm store and the Vite and Vitest caches stay in their default user locations.
 
+### Task cleanup
+
+- Track temporary resources as you create them, including resources the harness creates outside the repository. Record exact paths, branch names, worktree paths and resource IDs. Use task-specific scratch directories where the tools support them.
+- After verification and before handing control back, preserve the requested deliverables and stop disposable processes you started for the task. Clean up after failure or cancellation when the harness still allows commands to run.
+- If Cargo produced build output, run `cargo clean --target-dir <resolved path>` for each Cargo output directory the task owns. Do this before removing any task worktree. Clean a separate Clippy target if it is outside the target you already cleaned. In existing targets and shared locations, remove only disposable artifacts you can attribute to the task. Preserve reusable dependency and compiler caches, including the inherited Go caches.
+- Remove worktrees created for the task once they are disposable. Use the harness's cleanup command for a worktree it manages, or `git worktree remove` for other worktrees. Verify the specific registration is gone. Confirm that the intended handoff contains the work before deleting a disposable local branch with `git branch -d`. Keep branches needed for review, open pull requests or unique work.
+- Remove task-owned scratch files, logs, screenshots, test profiles and temporary cache directories by verified path or ID, including under harness directories. Preserve deliverables, harness session state and other tasks' files. If cleanup is blocked, report what remains, where it is and why.
+
 ### Working and reporting
 
 - Continue authorized work through implementation and verification. Make reasonable low-risk assumptions and state the ones that affect the result.
