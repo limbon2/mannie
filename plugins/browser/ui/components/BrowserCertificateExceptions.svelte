@@ -18,8 +18,8 @@
   import { m } from '../generated/messages.js';
   import { browserFailureMessage } from '../utils/browser-messages.js';
 
-  let heading = $state<HTMLElement | null>(null);
   const id = $props.id();
+  let heading = $state<HTMLElement | null>(null);
   let failure = $state<string | null>(null);
   let saveFailure = $state<string | null>(null);
   let adding = $state(false);
