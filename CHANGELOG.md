@@ -11,6 +11,7 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 ### Fixed
 
 - Apply the palette to keyboard focus rings, tooltips, and selection highlights. Keep destructive buttons readable on hover.
+- Restore the translucent keyboard focus rings on form controls and buttons.
 
 ## 0.8.0 - 2026-11-13
 

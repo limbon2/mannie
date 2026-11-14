@@ -365,15 +365,6 @@
   }
 }
 
-/* The translucent registry ring can fall below 3:1 even with a dark primary.
-   Keep the existing ring size and separate invalid-field status colors. */
-[class~="focus-visible:ring-ring/50"]:focus-visible:not([aria-invalid="true"]),
-[class~="has-focus-visible:ring-ring/50"]:has(:focus-visible),
-[data-slot="field-label"]:has(> [data-slot="field"]):has(:focus-visible),
-[data-slot="input-group"]:has([data-slot="input-group-control"]:focus-visible):not(:has([aria-invalid="true"])) {
-  --tw-ring-color: var(--ring);
-}
-
 [class~="focus-visible:ring-ring/50"][aria-invalid="true"]:focus-visible,
 [data-slot="input-group"]:has([data-slot="input-group-control"][aria-invalid="true"]:focus-visible) {
   outline: 2px solid var(--ring);

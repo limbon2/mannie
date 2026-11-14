@@ -106,7 +106,6 @@ async function controlColors(selector: string): Promise<{
   background: string;
   border: string;
   foreground: string;
-  ring: string;
   shadow: string;
 }> {
   return browser.execute((query) => {
@@ -119,7 +118,6 @@ async function controlColors(selector: string): Promise<{
       background: style.backgroundColor,
       border: style.borderTopColor,
       foreground: style.color,
-      ring: style.getPropertyValue('--tw-ring-color'),
       shadow: style.boxShadow,
     };
   }, selector);
@@ -341,12 +339,11 @@ describe('the shell', () => {
           await $(`#interface-surface-${surface}`).click();
           await focusLanguage(mode);
           const { surface: background } = await themeColors();
-          const { border, ring, shadow } = await controlColors('#interface-language:focus-visible');
-          expect(shadow).not.toBe('none');
+          const { border, shadow } = await controlColors('#interface-language:focus-visible');
+          expect(shadow).toMatch(/\b0px 0px 0px 3px\b/u);
           expect(
             await lowContrast([
               { background: [background], foreground: border, minimum: 3, name: `${mode}/${surface} focus border` },
-              { background: [background], foreground: ring, minimum: 3, name: `${mode}/${surface} focus ring` },
             ]),
           ).toEqual([]);
         }
