@@ -18,8 +18,38 @@ export function browserErrorMessage(code: string): string | null {
     case 'agent_control': {
       return m.browser_error_agent_control();
     }
+    case 'certificate_rejected': {
+      return m.browser_error_certificate_rejected();
+    }
+    case 'certificate_expired': {
+      return m.browser_error_certificate_expired();
+    }
+    case 'certificate_store_failed': {
+      return m.browser_error_certificate_store_failed();
+    }
+    case 'certificate_saved_conflict': {
+      return m.browser_error_certificate_saved_conflict();
+    }
+    case 'certificate_revocation_failed': {
+      return m.browser_error_certificate_revocation_failed();
+    }
+    case 'certificate_revoked': {
+      return m.browser_error_certificate_revoked();
+    }
     case 'credential_missing': {
       return m.browser_error_credential_missing();
+    }
+    case 'credential_store_unavailable': {
+      return m.browser_error_credential_store_unavailable();
+    }
+    case 'credential_catalog_failed': {
+      return m.browser_error_credential_catalog_failed();
+    }
+    case 'credential_already_exists': {
+      return m.browser_error_credential_already_exists();
+    }
+    case 'session_credentials_retired': {
+      return m.browser_error_session_credentials_retired();
     }
     case 'invalid_browser_input':
     case 'invalid_input':

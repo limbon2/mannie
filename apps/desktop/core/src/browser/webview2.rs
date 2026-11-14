@@ -18,6 +18,7 @@
 )]
 
 mod cdp;
+mod certificates;
 mod cursor;
 mod environment;
 mod surface;
@@ -37,11 +38,10 @@ use std::time::Duration;
 use mannie_plugin_sdk::BoxFuture;
 use mannie_plugin_sdk::services::browser::{BrowserFocusReturn, BrowserPlacement};
 use mannie_tools::browser::{
-    BrowserFolder, ChromeError, ChromeEvent, ChromeHost, ChromeReply, ProcessTreeJob,
-    process_running, terminate_process,
+    BrowserFolder, ChromeError, ChromeEvent, ChromeHost, ChromeReply, ProcessHandle, ProcessTreeJob,
 };
 use tauri::{AppHandle, Manager};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Mutex as AsyncMutex, mpsc, oneshot};
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     ICoreWebView2, ICoreWebView2Controller, ICoreWebView2Deferral, ICoreWebView2Environment,
     ICoreWebView2NewWindowRequestedEventArgs,
@@ -49,6 +49,7 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
 use windows::Win32::Foundation::HWND;
 use zeroize::Zeroizing;
 
+use super::certificate::{CertificatePin, SavedCertificates};
 use super::engine::{PageViews, SessionHost, StartedSession};
 use crate::window::MAIN_WINDOW;
 
@@ -151,10 +152,15 @@ pub(super) struct Shared {
     ui: UiThread,
     events: Mutex<Option<mpsc::Sender<ChromeEvent>>>,
     tabs: Mutex<HashSet<String>>,
-    processes: Mutex<HashSet<u32>>,
+    processes: Mutex<HashMap<u32, ProcessHandle>>,
     job: ProcessTreeJob,
     folder: Mutex<Option<BrowserFolder>>,
     ended: AtomicBool,
+    teardown: AsyncMutex<bool>,
+    saved_certificates: SavedCertificates,
+    certificates: Mutex<certificates::Certificates>,
+    certificate_expired: AtomicBool,
+    certificate_revoked: AtomicBool,
     owner: AtomicBool,
     next_tab: AtomicU64,
     next_popup: AtomicU64,
@@ -163,6 +169,10 @@ pub(super) struct Shared {
 }
 
 impl Shared {
+    fn stopping(&self) -> bool {
+        self.ended.load(Ordering::Acquire) || self.certificate_revoked.load(Ordering::Acquire)
+    }
+
     /// Hands an event to the driver. A full queue or a closed driver ends
     /// the session: closing the channel makes the driver end it.
     fn emit(&self, event: ChromeEvent) {
@@ -179,6 +189,27 @@ impl Shared {
     /// browser process exited.
     fn fail(&self) {
         lock(&self.events).take();
+    }
+
+    /// Terminates only the process instances observed by this session.
+    fn terminate_tracked_processes(&self) {
+        for process in lock(&self.processes).values() {
+            if process.is_running() {
+                process.terminate();
+            }
+        }
+    }
+
+    /// Refuses queued engine work once the deadline for the native cache arrives.
+    pub(super) fn certificate_deadline_reached(&self) -> bool {
+        if self.certificate_expired.load(Ordering::Acquire) {
+            return true;
+        }
+        let due = lock(&self.certificates).due();
+        if due {
+            certificates::expire_session(self);
+        }
+        due
     }
 
     #[cfg(test)]
@@ -259,8 +290,12 @@ pub(super) struct WebView2Session {
 }
 
 /// Creates the engine of new sessions.
-pub(super) async fn start(ui: UiThread, root: &Path) -> Result<StartedSession, ChromeError> {
-    let (session, events) = start_session(ui, root).await?;
+pub(super) async fn start(
+    ui: UiThread,
+    root: &Path,
+    saved_certificates: SavedCertificates,
+) -> Result<StartedSession, ChromeError> {
+    let (session, events) = start_session(ui, root, saved_certificates).await?;
     Ok(StartedSession {
         host: session,
         events,
@@ -270,6 +305,7 @@ pub(super) async fn start(ui: UiThread, root: &Path) -> Result<StartedSession, C
 async fn start_session(
     ui: UiThread,
     root: &Path,
+    saved_certificates: SavedCertificates,
 ) -> Result<(Arc<WebView2Session>, mpsc::Receiver<ChromeEvent>), ChromeError> {
     static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
     let folder = BrowserFolder::create(root).map_err(|error| {
@@ -287,10 +323,15 @@ async fn start_session(
         ui: ui.clone(),
         events: Mutex::new(Some(events)),
         tabs: Mutex::new(HashSet::new()),
-        processes: Mutex::new(HashSet::new()),
+        processes: Mutex::new(HashMap::new()),
         job,
         folder: Mutex::new(Some(folder)),
         ended: AtomicBool::new(false),
+        teardown: AsyncMutex::new(false),
+        saved_certificates,
+        certificates: Mutex::default(),
+        certificate_expired: AtomicBool::new(false),
+        certificate_revoked: AtomicBool::new(false),
         owner: AtomicBool::new(false),
         next_tab: AtomicU64::new(1),
         next_popup: AtomicU64::new(1),
@@ -329,7 +370,7 @@ impl ChromeHost for WebView2Session {
         method: &str,
         params: Zeroizing<String>,
     ) -> Result<ChromeReply, ChromeError> {
-        if self.shared.ended.load(Ordering::Acquire) {
+        if self.shared.stopping() || self.shared.certificate_deadline_reached() {
             return Err(ChromeError::Disconnected);
         }
         if !lock(&self.shared.tabs).contains(tab) {
@@ -348,7 +389,7 @@ impl ChromeHost for WebView2Session {
     fn create_tab(&self) -> BoxFuture<'static, Result<String, ChromeError>> {
         let shared = Arc::clone(&self.shared);
         Box::pin(async move {
-            if shared.ended.load(Ordering::Acquire) {
+            if shared.stopping() || shared.certificate_deadline_reached() {
                 return Err(ChromeError::Disconnected);
             }
             let id = format!("tab-{}", shared.next_tab.fetch_add(1, Ordering::Relaxed));
@@ -392,40 +433,44 @@ impl ChromeHost for WebView2Session {
 
     fn end(&self) -> BoxFuture<'static, ()> {
         let shared = Arc::clone(&self.shared);
-        Box::pin(async move { end_session(&shared).await })
+        Box::pin(async move {
+            end_session(&shared).await;
+        })
     }
 }
 
 /// Ends a session's processes first, then its views, then its folder. A
 /// graceful close could let a request go, and at quit the event loop is
 /// already gone, so the job ends before anything else (ADR-0064, decision 4).
-async fn end_session(shared: &Arc<Shared>) {
-    if shared.ended.swap(true, Ordering::AcqRel) {
-        return;
+async fn end_session(shared: &Arc<Shared>) -> bool {
+    let mut stopped = shared.teardown.lock().await;
+    if *stopped {
+        return true;
     }
+    shared.ended.store(true, Ordering::Release);
     lock(&shared.tabs).clear();
     shared.fail();
     if let Err(error) = shared.job.terminate() {
         tracing::warn!(%error, "could not terminate a browser session's job");
     }
-    let processes: Vec<u32> = lock(&shared.processes).iter().copied().collect();
     let deadline = tokio::time::Instant::now() + EXIT_GRACE;
     loop {
         let job_empty = shared.job.active_processes().is_ok_and(|count| count == 0);
-        let running: Vec<u32> = processes
-            .iter()
-            .copied()
-            .filter(|process| process_running(*process))
-            .collect();
-        if job_empty && running.is_empty() {
+        let tracked_running = lock(&shared.processes)
+            .values()
+            .any(ProcessHandle::is_running);
+        if job_empty && !tracked_running {
+            *stopped = true;
             break;
         }
         if tokio::time::Instant::now() >= deadline {
             // The engine's sandboxed processes left the job; they follow
             // their browser process, and this ends any that did not.
-            for process in running {
-                terminate_process(process);
-            }
+            shared.terminate_tracked_processes();
+            *stopped = shared.job.active_processes().is_ok_and(|count| count == 0)
+                && !lock(&shared.processes)
+                    .values()
+                    .any(ProcessHandle::is_running);
             break;
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
@@ -434,13 +479,53 @@ async fn end_session(shared: &Arc<Shared>) {
     if shared.ui.post(move || tab::close_session(session)).is_err() {
         tracing::debug!("the event loop ended before a browser session's views closed");
     }
-    let folder = lock(&shared.folder).take();
-    if let Some(folder) = folder {
-        folder.remove();
+    if *stopped {
+        let folder = lock(&shared.folder).take();
+        if let Some(folder) = folder {
+            folder.remove();
+        }
+        let certificates = std::mem::take(&mut *lock(&shared.certificates));
+        drop(certificates);
     }
+    *stopped
 }
 
 impl PageViews for WebView2Session {
+    fn revoke_certificate(&self, pin: &CertificatePin) -> bool {
+        if !lock(&self.shared.certificates).allowed(pin) {
+            return false;
+        }
+        self.shared
+            .certificate_revoked
+            .store(true, Ordering::Release);
+        if let Err(error) = self.shared.job.terminate() {
+            tracing::warn!(%error, "could not immediately terminate a revoked Browser session");
+            self.shared.terminate_tracked_processes();
+        }
+        self.shared.fail();
+        true
+    }
+
+    fn finish_certificate_revocation(&self) -> BoxFuture<'static, bool> {
+        let shared = Arc::clone(&self.shared);
+        Box::pin(async move { end_session(&shared).await })
+    }
+
+    fn certificate_engine_stopped(&self) -> bool {
+        self.shared
+            .teardown
+            .try_lock()
+            .is_ok_and(|stopped| *stopped)
+    }
+
+    fn certificate_revoked(&self) -> bool {
+        self.shared.certificate_revoked.load(Ordering::Acquire)
+    }
+
+    fn certificate_expired(&self) -> bool {
+        self.shared.certificate_expired.load(Ordering::Acquire)
+    }
+
     fn place(&self, placement: BrowserPlacement) -> Result<(), ChromeError> {
         if !lock(&self.shared.tabs).contains(&placement.tab_id) {
             return Err(ChromeError::NoTab);

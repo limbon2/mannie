@@ -99,6 +99,22 @@ pub enum ChromeEvent {
         /// The tab.
         tab: String,
     },
+    /// The engine started a top-level navigation.
+    NavigationStarted {
+        /// The tab.
+        tab: String,
+        /// The native navigation ID, shared by redirects.
+        id: u64,
+    },
+    /// The engine completed a top-level navigation.
+    NavigationCompleted {
+        /// The tab.
+        tab: String,
+        /// The native navigation ID.
+        id: u64,
+        /// Whether certificate validation failed.
+        certificate_error: bool,
+    },
     /// The engine closed a tab, for example after `window.close()`.
     TabClosed {
         /// The tab.
@@ -113,6 +129,8 @@ impl fmt::Debug for ChromeEvent {
             Self::Popup { .. } => "Popup",
             Self::Title { .. } => "Title",
             Self::Focused { .. } => "Focused",
+            Self::NavigationStarted { .. } => "NavigationStarted",
+            Self::NavigationCompleted { .. } => "NavigationCompleted",
             Self::TabClosed { .. } => "TabClosed",
         };
         formatter

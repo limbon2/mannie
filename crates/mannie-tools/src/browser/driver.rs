@@ -158,6 +158,7 @@ pub(super) struct Page {
     /// operating system for an agent's drag.
     pub(super) drag_data: Option<Value>,
     issue: Option<ChromeError>,
+    native_navigation: Option<u64>,
     phase: PagePhase,
 }
 
@@ -180,6 +181,8 @@ impl Page {
                 back: None,
                 forward: None,
                 loading: false,
+                navigation_error: None,
+                navigation_error_sequence: 0,
             },
             revision: 1,
             elements: HashMap::new(),
@@ -196,6 +199,7 @@ impl Page {
             owner_used: false,
             drag_data: None,
             issue: None,
+            native_navigation: None,
             phase: PagePhase::Attaching { loading: false },
         }
     }
@@ -274,6 +278,12 @@ impl Chrome {
             .filter(|page| !matches!(page.phase, PagePhase::Attaching { .. }))
             .map(|page| page.tab.clone())
             .collect()
+    }
+
+    /// Removes copies of values entered through protected fills.
+    #[must_use]
+    pub fn redact_protected(&self, text: &str) -> String {
+        redact(text, &lock(&self.inner.state).protected_values)
     }
 
     /// Whether the session has ended.
@@ -371,6 +381,10 @@ impl Chrome {
     ) -> Result<(), ChromeError> {
         let context = self.inner.context(tab, None)?;
         self.inner.begin_input(&context, false)?;
+        let previous_navigation = lock(&self.inner.state)
+            .tabs
+            .get(tab)
+            .and_then(|page| page.native_navigation);
         let destination = match &action {
             ChromeNavigationAction::Go(url) => {
                 Some(chrome_origin(url).ok_or(ChromeError::InvalidAddress)?)
@@ -399,7 +413,34 @@ impl Chrome {
             .await
             .map_err(|error| self.inner.dispatched(&context, error))?;
         self.inner.outcome()?;
-        if result["errorText"].is_string() {
+        let certificate_error = result["errorText"]
+            .as_str()
+            .is_some_and(is_certificate_error);
+        let mut certificate_load_committed = false;
+        if let Some(page) = lock(&self.inner.state).tabs.get_mut(tab) {
+            // WebView2 can report a failed navigation before consulting the
+            // certificate callback. A later checked document commit wins.
+            certificate_load_committed = certificate_error
+                && page.document != context.document
+                && chrome_origin(&page.tab.url).is_some()
+                && page.tab.navigation_error.is_none();
+            if certificate_error && !certificate_load_committed {
+                if page.tab.navigation_error.is_none()
+                    || page.native_navigation == previous_navigation
+                {
+                    page.tab.navigation_error_sequence =
+                        page.tab.navigation_error_sequence.wrapping_add(1);
+                }
+                page.tab.navigation_error = Some(ChromeError::CertificateRejected);
+                return Err(ChromeError::CertificateRejected);
+            }
+            if page.native_navigation != previous_navigation
+                && let Some(error) = page.tab.navigation_error
+            {
+                return Err(error);
+            }
+        }
+        if result["errorText"].is_string() && !certificate_load_committed {
             // A request that waited for the owner failed in the engine and
             // was replayed after approval. The navigation succeeded when the
             // tab now shows the destination.
@@ -679,6 +720,30 @@ impl Driver {
                     && let Some(page) = state.tabs.get_mut(&tab)
                 {
                     page.owner_used = true;
+                }
+                Ok(())
+            }
+            ChromeEvent::NavigationStarted { tab, id } => {
+                if let Some(page) = lock(&self.state).tabs.get_mut(&tab) {
+                    page.native_navigation = Some(id);
+                    page.tab.navigation_error = None;
+                }
+                Ok(())
+            }
+            ChromeEvent::NavigationCompleted {
+                tab,
+                id,
+                certificate_error,
+            } => {
+                if let Some(page) = lock(&self.state).tabs.get_mut(&tab)
+                    && page.native_navigation == Some(id)
+                    && certificate_error
+                {
+                    if page.tab.navigation_error.is_none() {
+                        page.tab.navigation_error_sequence =
+                            page.tab.navigation_error_sequence.wrapping_add(1);
+                    }
+                    page.tab.navigation_error = Some(ChromeError::CertificateRejected);
                 }
                 Ok(())
             }
@@ -1025,6 +1090,9 @@ impl Driver {
         if let Some(host) = origin.as_deref().and_then(origin_host) {
             committed_hosts.insert(host);
         }
+        if !url.starts_with("chrome-error:") && !frame["unreachableUrl"].is_string() {
+            page.tab.navigation_error = None;
+        }
         page.fresh = false;
         string(&frame["id"])?.clone_into(&mut page.main_frame);
         frame["loaderId"]
@@ -1253,6 +1321,10 @@ pub(super) fn redact(text: &str, values: &[Zeroizing<String>]) -> String {
 
 fn string(value: &Value) -> Result<&str, ChromeError> {
     value.as_str().ok_or(ChromeError::Protocol)
+}
+
+fn is_certificate_error(error: &str) -> bool {
+    error.starts_with("net::ERR_CERT_") || error == "net::ERR_SSL_PINNED_KEY_NOT_IN_CERT_CHAIN"
 }
 
 fn origin_host(address: &str) -> Option<String> {

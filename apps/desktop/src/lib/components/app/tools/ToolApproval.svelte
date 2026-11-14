@@ -28,9 +28,10 @@
 
   const browserSite = $derived(request.reasons.includes('browser_site'));
   const browserControl = $derived(request.reasons.includes('browser_control'));
+  const browserCredential = $derived(request.reasons.includes('browser_credential'));
   const deciding = $derived(toolsActions.deciding.includes(partId));
-  const offersGrants = $derived(!browserSite && !browserControl && request.grants.length > 0);
-  const offersRule = $derived(!browserSite && !browserControl && request.rule !== null);
+  const offersGrants = $derived(!browserSite && !browserControl && !browserCredential && request.grants.length > 0);
+  const offersRule = $derived(!browserSite && !browserControl && !browserCredential && request.rule !== null);
   const inProject = $derived(request.project !== null && request.project !== undefined);
   /** The computer that runs the task of the operation, by the name its card shows, or `null` for this computer. */
   const host = $derived(request.host ?? null);
@@ -76,14 +77,19 @@
   {#if browserSite}
     <p class="text-sm">{m.tools_approval_browser_scope()}</p>
   {/if}
+  {#if browserCredential}
+    <p class="text-sm">{m.tools_approval_browser_credential_scope()}</p>
+  {/if}
   <div class="flex flex-wrap gap-2">
-    {#if browserSite}
+    {#if browserCredential || browserSite}
       <Button disabled={deciding} size="sm" onclick={() => decide({ choice: 'allow_for_conversation' })}>
         {m.tools_allow_browser_site_for_conversation()}
       </Button>
-      <Button disabled={deciding} size="sm" variant="outline" onclick={() => decide({ choice: 'allow_once' })}>
-        {m.tools_allow_browser_site()}
-      </Button>
+      {#if !browserCredential}
+        <Button disabled={deciding} size="sm" variant="outline" onclick={() => decide({ choice: 'allow_once' })}>
+          {m.tools_allow_browser_site()}
+        </Button>
+      {/if}
     {:else}
       <Button disabled={deciding} size="sm" onclick={() => decide({ choice: 'allow_once' })}>
         {browserControl ? m.tools_allow_browser_control() : m.tools_allow_once()}

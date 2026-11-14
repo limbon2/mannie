@@ -2,6 +2,8 @@
 //! the settings and native handlers that keep a page inside the session's
 //! rules (ADR-0064, decisions 2 and 8, and ADR-0065, decision 4).
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
@@ -10,9 +12,13 @@ use tokio::sync::oneshot;
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
     COREWEBVIEW2_MOVE_FOCUS_REASON_NEXT, COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS,
-    COREWEBVIEW2_PERMISSION_STATE_DENY, COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_CANCEL,
+    COREWEBVIEW2_PERMISSION_STATE_DENY,
+    COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_COMMON_NAME_IS_INCORRECT,
+    COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_EXPIRED,
+    COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_IS_INVALID,
+    COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_REVOKED, COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN,
     ICoreWebView2, ICoreWebView2_4, ICoreWebView2_5, ICoreWebView2_10, ICoreWebView2_11,
-    ICoreWebView2_13, ICoreWebView2_14, ICoreWebView2_18, ICoreWebView2_25,
+    ICoreWebView2_13, ICoreWebView2_18, ICoreWebView2_25,
     ICoreWebView2AcceleratorKeyPressedEventArgs2, ICoreWebView2ContextMenuItemCollection,
     ICoreWebView2Controller, ICoreWebView2Controller4, ICoreWebView2Profile6,
     ICoreWebView2Settings3,
@@ -22,9 +28,10 @@ use webview2_com::{
     ClientCertificateRequestedEventHandler, ContextMenuRequestedEventHandler,
     CreateCoreWebView2ControllerCompletedHandler, DocumentTitleChangedEventHandler,
     DownloadStartingEventHandler, FocusChangedEventHandler, LaunchingExternalUriSchemeEventHandler,
-    MoveFocusRequestedEventHandler, NavigationStartingEventHandler, NewWindowRequestedEventHandler,
-    PermissionRequestedEventHandler, SaveAsUIShowingEventHandler,
-    ServerCertificateErrorDetectedEventHandler, WindowCloseRequestedEventHandler, take_pwstr,
+    MoveFocusRequestedEventHandler, NavigationCompletedEventHandler,
+    NavigationStartingEventHandler, NewWindowRequestedEventHandler,
+    PermissionRequestedEventHandler, SaveAsUIShowingEventHandler, WindowCloseRequestedEventHandler,
+    take_pwstr,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, VK_C, VK_CONTROL, VK_F6, VK_F12, VK_I, VK_J, VK_P, VK_S, VK_SHIFT, VK_U,
@@ -58,6 +65,10 @@ type Created = oneshot::Sender<Result<(), ChromeError>>;
 
 /// Creates a tab's window and controller, on the main thread.
 pub(super) fn create(shared: &Arc<Shared>, id: String, created: Created) {
+    if shared.stopping() {
+        let _sent = created.send(Err(ChromeError::Disconnected));
+        return;
+    }
     let Some((environment, parent)) = SESSIONS.with_borrow(|sessions| {
         sessions
             .get(&shared.id)
@@ -101,6 +112,11 @@ fn adopt(
     container: windows::Win32::Foundation::HWND,
     controller: ICoreWebView2Controller,
 ) -> Result<(), ChromeError> {
+    if shared.stopping() {
+        // SAFETY: the returned controller is live on this thread and was never published.
+        drop(unsafe { controller.Close() });
+        return Err(ChromeError::Disconnected);
+    }
     let incompatible = |error: windows::core::Error| {
         tracing::warn!(%error, "a browser tab could not be configured");
         ChromeError::Incompatible
@@ -180,21 +196,36 @@ fn configure(
 
 /// The native handlers that replace a browser's own policy: web schemes
 /// only, no permissions, downloads, external programs, authentication
-/// prompts, client certificates or certificate errors, no saving, and a
+/// prompts or client certificates, controlled server certificate exceptions, no saving, and a
 /// context menu without save, print and `DevTools`.
 #[expect(
     clippy::too_many_lines,
     reason = "one handler per native event, each a few lines, read best in one place"
 )]
 fn guard(shared: &Arc<Shared>, id: &str, webview: &ICoreWebView2) -> windows::core::Result<()> {
-    let navigating = NavigationStartingEventHandler::create(Box::new(|_, arguments| {
+    let navigation = Rc::new(RefCell::new(None::<(u64, String)>));
+    let starting_navigation = Rc::clone(&navigation);
+    let starting = Arc::clone(shared);
+    let start_tab = id.to_owned();
+    let navigating = NavigationStartingEventHandler::create(Box::new(move |_, arguments| {
         if let Some(arguments) = arguments {
             let mut uri = PWSTR::null();
             // SAFETY: `uri` is writable, and `take_pwstr` frees it.
             unsafe { arguments.Uri(&raw mut uri) }?;
-            if !web_address(&take_pwstr(uri)) {
+            let uri = take_pwstr(uri);
+            if !web_address(&uri) || starting.stopping() || starting.certificate_deadline_reached()
+            {
                 // SAFETY: a plain value on live event arguments.
                 unsafe { arguments.SetCancel(true) }?;
+            } else {
+                let mut id = 0;
+                // SAFETY: the event arguments are live and the output is writable.
+                unsafe { arguments.NavigationId(&raw mut id) }?;
+                *starting_navigation.borrow_mut() = Some((id, uri));
+                starting.emit(ChromeEvent::NavigationStarted {
+                    tab: start_tab.clone(),
+                    id,
+                });
             }
         }
         Ok(())
@@ -203,6 +234,48 @@ fn guard(shared: &Arc<Shared>, id: &str, webview: &ICoreWebView2) -> windows::co
     // SAFETY: the handler is a COM object that WebView2 keeps, and `token`
     // is writable. The same holds for every registration below.
     unsafe { webview.add_NavigationStarting(&navigating, &raw mut token) }?;
+
+    let completing = Arc::clone(shared);
+    let complete_tab = id.to_owned();
+    let completed_navigation = Rc::clone(&navigation);
+    let completed = NavigationCompletedEventHandler::create(Box::new(move |_, arguments| {
+        if let Some(arguments) = arguments {
+            let mut id = 0;
+            let mut success = windows::core::BOOL::default();
+            let mut status = COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN;
+            // SAFETY: the event arguments are live and the outputs are writable.
+            unsafe { arguments.NavigationId(&raw mut id) }?;
+            // SAFETY: as above.
+            unsafe { arguments.IsSuccess(&raw mut success) }?;
+            if success.as_bool()
+                && completed_navigation
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|(current, _)| *current == id)
+            {
+                completed_navigation.borrow_mut().take();
+            }
+            if !success.as_bool() {
+                // SAFETY: as above.
+                unsafe { arguments.WebErrorStatus(&raw mut status) }?;
+            }
+            let certificate_error = matches!(
+                status,
+                COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_COMMON_NAME_IS_INCORRECT
+                    | COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_EXPIRED
+                    | COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_IS_INVALID
+                    | COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_REVOKED
+            );
+            completing.emit(ChromeEvent::NavigationCompleted {
+                tab: complete_tab.clone(),
+                id,
+                certificate_error,
+            });
+        }
+        Ok(())
+    }));
+    // SAFETY: as above.
+    unsafe { webview.add_NavigationCompleted(&completed, &raw mut token) }?;
 
     let popups = Arc::clone(shared);
     let opener = id.to_owned();
@@ -338,22 +411,21 @@ fn guard(shared: &Arc<Shared>, id: &str, webview: &ICoreWebView2) -> windows::co
     // SAFETY: as above.
     unsafe { menu_api.add_ContextMenuRequested(&menu, &raw mut token) }?;
 
-    let certificate_errors_api: ICoreWebView2_14 = webview.cast()?;
-    let certificate_errors =
-        ServerCertificateErrorDetectedEventHandler::create(Box::new(|_, arguments| {
-            if let Some(arguments) = arguments {
-                // SAFETY: a plain value on live event arguments.
-                unsafe {
-                    arguments.SetAction(COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_CANCEL)
-                }?;
-            }
-            Ok(())
-        }));
-    // SAFETY: as above.
-    unsafe {
-        certificate_errors_api
-            .add_ServerCertificateErrorDetected(&certificate_errors, &raw mut token)
-    }?;
+    let certificate_session = Arc::clone(shared);
+    let certificate_tab = id.to_owned();
+    super::certificates::guard(shared, webview, move |uri| {
+        // WebView2 can report a cancelled navigation after rejecting TLS.
+        // Use its certificate event only for the matching top-level request.
+        if let Some((navigation_id, address)) = navigation.borrow().as_ref()
+            && address == uri
+        {
+            certificate_session.emit(ChromeEvent::NavigationCompleted {
+                tab: certificate_tab.clone(),
+                id: *navigation_id,
+                certificate_error: true,
+            });
+        }
+    })?;
 
     let external_api: ICoreWebView2_18 = webview.cast()?;
     let external = LaunchingExternalUriSchemeEventHandler::create(Box::new(|_, arguments| {

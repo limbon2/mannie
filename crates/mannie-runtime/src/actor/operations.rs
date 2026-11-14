@@ -720,7 +720,11 @@ impl RunActor {
         let Some(choice) = choice else {
             return Ok(decision);
         };
-        if request.reasons.contains(&ApprovalReason::BrowserSite) {
+        if request.reasons.contains(&ApprovalReason::BrowserCredential) {
+            if matches!(choice, ApprovalChoice::AllowForConversation) {
+                self.remember_browser_grants(request).await?;
+            }
+        } else if request.reasons.contains(&ApprovalReason::BrowserSite) {
             match choice {
                 ApprovalChoice::AllowOnce => {
                     self.remember_browser_sites(accesses, true);
@@ -861,7 +865,7 @@ impl RunActor {
         let projects = inner.store.projects().await?;
         let PolicyGrants {
             settings,
-            conversation: grants,
+            conversation: mut grants,
             project: project_grants,
             always: always_grants,
             rules,
@@ -873,6 +877,7 @@ impl RunActor {
             .policy_grants(Some(&self.authority), project.as_ref())
             .await
             .map_err(|failure| internal(&failure.error, failure.what))?;
+        self.set_browser_grants(&mut grants).await?;
         let current = project
             .as_ref()
             .and_then(|id| projects.iter().find(|candidate| candidate.id == *id))
@@ -945,6 +950,29 @@ impl RunActor {
             full_access,
             skill_folders,
         })
+    }
+
+    async fn set_browser_grants(&self, grants: &mut Vec<GrantScope>) -> Result<(), Ending> {
+        if self.authority == self.conversation {
+            return Ok(());
+        }
+        // Browser consent follows the conversation that owns the browser.
+        let is_browser = |scope: &GrantScope| {
+            matches!(
+                scope,
+                GrantScope::BrowserSite { .. } | GrantScope::BrowserCredential { .. }
+            )
+        };
+        grants.retain(|grant| !is_browser(grant));
+        let own = self
+            .runtime
+            .inner
+            .store
+            .grants(&self.conversation)
+            .await
+            .map_err(|error| internal(&error, "load browser grants"))?;
+        grants.extend(own.into_iter().map(|grant| grant.scope).filter(is_browser));
+        Ok(())
     }
 
     /// On a machine with a ceiling, the ceiling of the run's calls, narrowed

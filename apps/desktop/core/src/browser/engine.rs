@@ -8,6 +8,9 @@ use std::sync::Arc;
 use mannie_plugin_sdk::services::browser::{BrowserFocusReturn, BrowserPlacement};
 use mannie_tools::browser::{ChromeError, ChromeEvent, ChromeHost};
 use tauri::AppHandle;
+
+#[cfg(windows)]
+use super::certificate::{CertificatePin, SavedCertificates};
 use tokio::sync::mpsc;
 
 /// The native views of a session's tabs, which the pane places.
@@ -23,6 +26,19 @@ pub(crate) trait PageViews: Send + Sync {
     fn focus(&self, tab: &str) -> Result<(), ChromeError>;
     /// The latest time keyboard focus left a page for the app.
     fn focus_return(&self) -> Option<BrowserFocusReturn>;
+    /// Blocks native work if this session allowed the forgotten pin.
+    #[cfg(windows)]
+    fn revoke_certificate(&self, pin: &CertificatePin) -> bool;
+    /// Ends a revoked session and confirms its processes have exited.
+    #[cfg(windows)]
+    fn finish_certificate_revocation(&self) -> mannie_plugin_sdk::BoxFuture<'static, bool>;
+    /// Whether teardown confirmed that this engine's processes exited.
+    #[cfg(windows)]
+    fn certificate_engine_stopped(&self) -> bool;
+    /// Whether the owner forgot a certificate this session could still use.
+    fn certificate_revoked(&self) -> bool;
+    /// Whether the native engine ended at an approved certificate's expiry cutoff.
+    fn certificate_expired(&self) -> bool;
     /// Where each tab's window is, for the end-to-end tests (V13).
     #[cfg(feature = "validation")]
     fn surfaces(&self) -> mannie_plugin_sdk::BoxFuture<'static, Vec<SurfaceReport>>;
@@ -114,11 +130,14 @@ impl Engine {
 
     /// Starts a session with its own folder, processes and job.
     #[cfg(windows)]
-    pub(crate) async fn start(engine: &Self) -> Result<StartedSession, ChromeError> {
+    pub(crate) async fn start(
+        engine: &Self,
+        saved_certificates: SavedCertificates,
+    ) -> Result<StartedSession, ChromeError> {
         if !Self::supported() {
             return Err(ChromeError::NotInstalled);
         }
-        super::webview2::start(engine.ui.clone(), &engine.root).await
+        super::webview2::start(engine.ui.clone(), &engine.root, saved_certificates).await
     }
 
     /// Reports that this platform has no browser engine.

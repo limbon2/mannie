@@ -54,6 +54,8 @@ pub enum ApprovalReason {
     DatabaseSchema,
     /// The agent has no browser grant for this origin.
     BrowserSite,
+    /// The agent needs consent to enter a saved credential in this conversation.
+    BrowserCredential,
     /// The agent requests the handoff of a browser the owner controls.
     BrowserControl,
 }
@@ -154,6 +156,17 @@ pub enum GrantScope {
         plugin: String,
         /// The canonical HTTP or HTTPS origin, with its scheme and port.
         origin: String,
+    },
+    /// One saved credential at its exact origin in the conversation that holds this grant.
+    BrowserCredential {
+        /// The plugin whose tool enters the credential.
+        plugin: String,
+        /// The canonical HTTP or HTTPS origin.
+        origin: String,
+        /// The credential's immutable, opaque reference.
+        reference: String,
+        /// The label shown in Conversation Permissions.
+        label: String,
     },
     /// The same statement text on the same registered database, with any
     /// parameters (ADR-0056, decision 7). It covers writes, never a schema

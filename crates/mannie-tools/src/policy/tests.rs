@@ -2779,3 +2779,53 @@ fn a_saved_browser_site_is_scoped_to_its_conversation_plugin_and_exact_origin() 
         assert!(matches!(inputs.decide(&[access]), Verdict::Ask(_)));
     }
 }
+
+#[test]
+fn saved_credentials_require_the_exact_conversations_explicit_grant() {
+    use mannie_types::tools::{ApprovalReason, BrowserAccess, BrowserAction};
+
+    let origin = "https://example.test:8443";
+    let label = "Account password".to_owned();
+    let reference = "saved-credential".to_owned();
+    let access = BrowserAccess::new(
+        origin.to_owned(),
+        "session".to_owned(),
+        "page".to_owned(),
+        BrowserAction::Interact,
+    );
+    let site = Access::from_browser("browser".to_owned(), access.clone());
+    let fill = Access::from_browser(
+        "browser".to_owned(),
+        access.with_credential(reference.clone(), label.clone()),
+    );
+    let credential = GrantScope::BrowserCredential {
+        plugin: "browser".to_owned(),
+        origin: origin.to_owned(),
+        reference,
+        label,
+    };
+    let accesses = [site, fill];
+    let mut inputs = Inputs {
+        full_access: true,
+        project_grants: vec![credential.clone()],
+        always_grants: vec![credential.clone()],
+        ..Inputs::new()
+    };
+    assert!(matches!(
+        inputs.decide(&accesses),
+        Verdict::Ask(request)
+            if request.reasons == [ApprovalReason::BrowserSite, ApprovalReason::BrowserCredential]
+    ));
+    inputs
+        .browser_sites
+        .push(BrowserSiteConsent::of(&accesses[0], true).unwrap());
+    assert!(BrowserSiteConsent::of(&accesses[1], true).is_none());
+    assert!(matches!(
+        inputs.decide(&accesses),
+        Verdict::Ask(request)
+            if request.reasons == [ApprovalReason::BrowserCredential]
+                && request.grants == [credential.clone()]
+    ));
+    inputs.grants.push(credential);
+    assert!(matches!(inputs.decide(&accesses), Verdict::Allowed(_)));
+}

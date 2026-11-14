@@ -24,7 +24,7 @@ use mannie_types::tools::ProcessRecord;
 use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, Command};
 use windows_sys::Win32::Foundation::{
-    FILETIME, HANDLE, INVALID_HANDLE_VALUE, MAX_PATH, WAIT_TIMEOUT,
+    FILETIME, HANDLE, INVALID_HANDLE_VALUE, MAX_PATH, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
@@ -411,6 +411,31 @@ impl ProcessTreeJob {
             process_id,
             PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
         )?;
+        self.assign_handle(&process)
+    }
+
+    /// Assigns a browser process to the job and retains its exact identity for
+    /// later teardown. If assignment fails, terminate the process we opened.
+    ///
+    /// # Errors
+    ///
+    /// The system's error if the process cannot be opened or assigned.
+    pub fn adopt(&self, process_id: u32) -> io::Result<ProcessHandle> {
+        let process = ProcessHandle(open_process(
+            process_id,
+            PROCESS_SET_QUOTA
+                | PROCESS_TERMINATE
+                | PROCESS_QUERY_LIMITED_INFORMATION
+                | PROCESS_SYNCHRONIZE,
+        )?);
+        if let Err(error) = self.assign_handle(&process.0) {
+            process.terminate();
+            return Err(error);
+        }
+        Ok(process)
+    }
+
+    fn assign_handle(&self, process: &OwnedHandle) -> io::Result<()> {
         let mut inside = 0;
         // SAFETY: both handles are valid for the call, and `inside` is a
         // writable BOOL that lives until it returns.
@@ -470,6 +495,38 @@ impl ProcessTreeJob {
     }
 }
 
+/// A process identified by its Windows handle, which still refers to the
+/// same process after it exits.
+#[derive(Debug)]
+pub struct ProcessHandle(OwnedHandle);
+
+impl ProcessHandle {
+    /// Retains a process for exit checks and requests termination rights when
+    /// Windows grants them.
+    ///
+    /// # Errors
+    ///
+    /// The system's error if the process cannot be opened for an exit check.
+    pub fn open(process_id: u32) -> io::Result<Self> {
+        open_process(process_id, PROCESS_SYNCHRONIZE | PROCESS_TERMINATE)
+            .or_else(|_| open_process(process_id, PROCESS_SYNCHRONIZE))
+            .map(Self)
+    }
+
+    /// Returns whether the process has yet to signal its exit.
+    #[must_use]
+    pub fn is_running(&self) -> bool {
+        // SAFETY: this owns a valid process handle with synchronize access.
+        unsafe { WaitForSingleObject(self.0.as_raw_handle() as HANDLE, 0) != WAIT_OBJECT_0 }
+    }
+
+    /// Asks Windows to terminate the process if the handle permits it.
+    pub fn terminate(&self) {
+        // SAFETY: the process handle is valid. The caller checks for exit.
+        unsafe { TerminateProcess(self.0.as_raw_handle() as HANDLE, 1) };
+    }
+}
+
 /// Whether a process with this ID is still running.
 #[must_use]
 pub fn process_running(process_id: u32) -> bool {
@@ -514,13 +571,14 @@ mod process_tree_job_tests {
             .spawn()
             .unwrap();
         let job = ProcessTreeJob::new().unwrap();
-        job.assign(child.id()).unwrap();
+        let process = job.adopt(child.id()).unwrap();
         // Assigning again is harmless.
         job.assign(child.id()).unwrap();
+        assert!(process.is_running());
         assert!(job.active_processes().unwrap() >= 1);
         job.terminate().unwrap();
         child.wait().unwrap();
-        assert!(!process_running(child.id()));
+        assert!(!process.is_running());
         assert_eq!(job.active_processes().unwrap(), 0);
     }
 
@@ -540,6 +598,6 @@ mod process_tree_job_tests {
     #[test]
     fn a_missing_process_cannot_join() {
         let job = ProcessTreeJob::new().unwrap();
-        assert!(job.assign(u32::MAX - 3).is_err());
+        job.adopt(u32::MAX - 3).unwrap_err();
     }
 }

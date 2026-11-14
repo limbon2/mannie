@@ -9,10 +9,10 @@ use std::path::{Path, PathBuf};
 use mannie_types::ceiling::CeilingMode;
 use mannie_types::ids::{DatabaseKey, ProjectId};
 use mannie_types::tools::{
-    Access, AccessMode, ApprovalReason, ApprovalRequest, CommandRule, DatabaseHome, Decision,
-    GrantScope, ProgramEffectKey, ProgramRule, ProgramTarget, Refusal, RemoteCommandRule,
-    RemoteTarget, RuleProposal, StatementClass, TerminalCommandRule, TerminalHost, TerminalTarget,
-    ToolServerEndpoint, ToolsError, effect_keys,
+    Access, AccessMode, ApprovalReason, ApprovalRequest, BrowserCredentialAccess, CommandRule,
+    DatabaseHome, Decision, GrantScope, ProgramEffectKey, ProgramRule, ProgramTarget, Refusal,
+    RemoteCommandRule, RemoteTarget, RuleProposal, StatementClass, TerminalCommandRule,
+    TerminalHost, TerminalTarget, ToolServerEndpoint, ToolsError, effect_keys,
 };
 
 use crate::ceiling::Ceiling;
@@ -50,6 +50,7 @@ impl BrowserSiteConsent {
             plugin,
             session,
             origin,
+            credential: None,
             ..
         } = access
         else {
@@ -65,7 +66,7 @@ impl BrowserSiteConsent {
 
     /// Whether this decision covers the access's exact site.
     pub fn covers(&self, access: &Access) -> bool {
-        matches!(access, Access::BrowserAction { plugin, session, origin, .. }
+        matches!(access, Access::BrowserAction { plugin, session, origin, credential: None, .. }
             if *plugin == self.plugin && *session == self.session && *origin == self.origin)
     }
 }
@@ -497,21 +498,57 @@ fn decide_access(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decision,
         Access::ExternalTool { .. } => decide_external_tool(access, inputs),
         Access::TerminalCommand { .. } => decide_terminal_command(access, inputs),
         Access::Database { .. } => decide_database(access, inputs),
-        Access::BrowserAction { plugin, origin, .. } => {
-            let allowed = inputs.grants.conversation.iter().any(|grant| {
-                matches!(
-                    grant,
-                    GrantScope::BrowserSite { plugin: granted_plugin, origin: granted_origin }
-                        if granted_plugin == plugin && granted_origin == origin
-                )
-            });
-            if allowed {
-                Ok(Decision::Grant)
-            } else {
-                Err(ApprovalReason::BrowserSite)
-            }
-        }
+        Access::BrowserAction {
+            plugin,
+            origin,
+            credential,
+            ..
+        } => decide_browser_access(
+            plugin,
+            origin,
+            credential.as_ref(),
+            inputs.grants.conversation,
+        ),
         Access::BrowserControl { .. } => Err(ApprovalReason::BrowserControl),
+    }
+}
+
+/// Browser grants apply only to the exact site or saved credential in a conversation.
+fn decide_browser_access(
+    plugin: &str,
+    origin: &str,
+    credential: Option<&BrowserCredentialAccess>,
+    grants: &[GrantScope],
+) -> Result<Decision, ApprovalReason> {
+    let allowed = grants.iter().any(|grant| match (grant, credential) {
+        (
+            GrantScope::BrowserCredential {
+                plugin: allowed_plugin,
+                origin: allowed_origin,
+                reference,
+                ..
+            },
+            Some(credential),
+        ) => {
+            allowed_plugin == plugin
+                && allowed_origin == origin
+                && reference == &credential.reference
+        }
+        (
+            GrantScope::BrowserSite {
+                plugin: allowed_plugin,
+                origin: allowed_origin,
+            },
+            None,
+        ) => allowed_plugin == plugin && allowed_origin == origin,
+        _ => false,
+    });
+    if allowed {
+        Ok(Decision::Grant)
+    } else if credential.is_some() {
+        Err(ApprovalReason::BrowserCredential)
+    } else {
+        Err(ApprovalReason::BrowserSite)
     }
 }
 
@@ -577,7 +614,8 @@ fn covers_database(grant: &GrantScope, plugin: &str, key: &DatabaseKey, statemen
         | GrantScope::Program { .. }
         | GrantScope::ExternalTool { .. }
         | GrantScope::TerminalCommand { .. }
-        | GrantScope::BrowserSite { .. } => false,
+        | GrantScope::BrowserSite { .. }
+        | GrantScope::BrowserCredential { .. } => false,
     }
 }
 
@@ -806,7 +844,8 @@ fn covers_path(grant: &GrantScope, path: &Path, mode: AccessMode) -> bool {
         | GrantScope::ExternalTool { .. }
         | GrantScope::TerminalCommand { .. }
         | GrantScope::Database { .. }
-        | GrantScope::BrowserSite { .. } => false,
+        | GrantScope::BrowserSite { .. }
+        | GrantScope::BrowserCredential { .. } => false,
     }
 }
 
@@ -835,7 +874,8 @@ fn covers_command(grant: &GrantScope, command: &str, directory: &Path, backgroun
         | GrantScope::ExternalTool { .. }
         | GrantScope::TerminalCommand { .. }
         | GrantScope::Database { .. }
-        | GrantScope::BrowserSite { .. } => false,
+        | GrantScope::BrowserSite { .. }
+        | GrantScope::BrowserCredential { .. } => false,
     }
 }
 
@@ -868,7 +908,8 @@ fn covers_remote_command(
         | GrantScope::ExternalTool { .. }
         | GrantScope::TerminalCommand { .. }
         | GrantScope::Database { .. }
-        | GrantScope::BrowserSite { .. } => false,
+        | GrantScope::BrowserSite { .. }
+        | GrantScope::BrowserCredential { .. } => false,
     }
 }
 
@@ -893,7 +934,8 @@ fn covers_terminal_command(
         | GrantScope::Program { .. }
         | GrantScope::ExternalTool { .. }
         | GrantScope::Database { .. }
-        | GrantScope::BrowserSite { .. } => false,
+        | GrantScope::BrowserSite { .. }
+        | GrantScope::BrowserCredential { .. } => false,
     }
 }
 
@@ -926,7 +968,8 @@ fn covers_external_tool(
         | GrantScope::Program { .. }
         | GrantScope::TerminalCommand { .. }
         | GrantScope::Database { .. }
-        | GrantScope::BrowserSite { .. } => false,
+        | GrantScope::BrowserSite { .. }
+        | GrantScope::BrowserCredential { .. } => false,
     }
 }
 
@@ -960,7 +1003,8 @@ fn covers_program(grant: &GrantScope, run: &RunKey<'_>) -> bool {
         | GrantScope::ExternalTool { .. }
         | GrantScope::TerminalCommand { .. }
         | GrantScope::Database { .. }
-        | GrantScope::BrowserSite { .. } => false,
+        | GrantScope::BrowserSite { .. }
+        | GrantScope::BrowserCredential { .. } => false,
     }
 }
 
@@ -1024,10 +1068,12 @@ fn grant_scope(access: &Access) -> Option<GrantScope> {
             })
         }
         Access::Project { .. } | Access::BrowserControl { .. } => None,
-        Access::BrowserAction { plugin, origin, .. } => Some(GrantScope::BrowserSite {
-            plugin: plugin.clone(),
-            origin: origin.clone(),
-        }),
+        Access::BrowserAction {
+            plugin,
+            origin,
+            credential,
+            ..
+        } => Some(browser_grant_scope(plugin, origin, credential.as_ref())),
         Access::RemoteCommand {
             plugin,
             target,
@@ -1090,6 +1136,25 @@ fn grant_scope(access: &Access) -> Option<GrantScope> {
     }
 }
 
+fn browser_grant_scope(
+    plugin: &str,
+    origin: &str,
+    credential: Option<&BrowserCredentialAccess>,
+) -> GrantScope {
+    match credential {
+        Some(credential) => GrantScope::BrowserCredential {
+            plugin: plugin.to_owned(),
+            origin: origin.to_owned(),
+            reference: credential.reference.clone(),
+            label: credential.label.clone(),
+        },
+        None => GrantScope::BrowserSite {
+            plugin: plugin.to_owned(),
+            origin: origin.to_owned(),
+        },
+    }
+}
+
 /// The grant that covers a statement on a registered database. A grant
 /// covers writes only: a schema change never gets one, a read never asks,
 /// and a write on an ask host's database takes only Allow once (ADR-0057,
@@ -1118,7 +1183,10 @@ fn database_grant(access: &Access) -> Option<GrantScope> {
 /// Whether one grant covers everything another covers.
 fn scope_covers(wider: &GrantScope, narrower: &GrantScope) -> bool {
     match (wider, narrower) {
-        (GrantScope::BrowserSite { .. }, GrantScope::BrowserSite { .. }) => wider == narrower,
+        (GrantScope::BrowserSite { .. }, GrantScope::BrowserSite { .. })
+        | (GrantScope::BrowserCredential { .. }, GrantScope::BrowserCredential { .. }) => {
+            wider == narrower
+        }
         (
             GrantScope::Path { mode, folder },
             GrantScope::Path {

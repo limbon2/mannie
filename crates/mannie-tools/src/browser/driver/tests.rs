@@ -288,6 +288,70 @@ async fn an_approved_origin_continues_and_commits() {
 }
 
 #[tokio::test]
+async fn certificate_errors_are_typed_and_only_the_current_navigation_can_set_them() {
+    let fixture = fixture_with(|method| {
+        if method == "Page.navigate" {
+            return json!({ "errorText": "net::ERR_CERT_AUTHORITY_INVALID" });
+        }
+        page_responses(method)
+    });
+    let tab = fixture.chrome.open_tab().await.unwrap();
+    let result = fixture
+        .chrome
+        .navigate(
+            &tab,
+            ChromeNavigationAction::Go("https://localhost/".to_owned()),
+        )
+        .await;
+    assert_eq!(result, Err(ChromeError::CertificateRejected));
+    assert_eq!(
+        fixture.chrome.tabs()[0].navigation_error,
+        Some(ChromeError::CertificateRejected)
+    );
+
+    for event in [
+        ChromeEvent::NavigationStarted {
+            tab: tab.clone(),
+            id: 1,
+        },
+        ChromeEvent::NavigationCompleted {
+            tab: tab.clone(),
+            id: 1,
+            certificate_error: true,
+        },
+        ChromeEvent::NavigationStarted {
+            tab: tab.clone(),
+            id: 2,
+        },
+        ChromeEvent::NavigationCompleted {
+            tab: tab.clone(),
+            id: 2,
+            certificate_error: true,
+        },
+        ChromeEvent::NavigationCompleted {
+            tab: tab.clone(),
+            id: 2,
+            certificate_error: false,
+        },
+        ChromeEvent::NavigationCompleted {
+            tab: tab.clone(),
+            id: 1,
+            certificate_error: true,
+        },
+    ] {
+        fixture.events.send(event).await.unwrap();
+    }
+    fixture.approve("https://localhost");
+    fixture
+        .pause(&tab, "retry", "https://localhost/", "main", json!({}))
+        .await;
+    fixture.commit(&tab, "https://localhost/", "retry").await;
+    eventually(|| fixture.chrome.tabs()[0].url == "https://localhost/").await;
+    assert_eq!(fixture.chrome.tabs()[0].navigation_error, None);
+    assert_eq!(fixture.chrome.tabs()[0].navigation_error_sequence, 3);
+}
+
+#[tokio::test]
 async fn an_unapproved_request_fails_at_once_and_is_replayed_after_approval() {
     let mut fixture = fixture();
     let tab = fixture.chrome.open_tab().await.unwrap();

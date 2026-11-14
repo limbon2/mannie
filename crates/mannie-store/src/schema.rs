@@ -380,8 +380,34 @@ const UPDATES: StoreModule = StoreModule {
     confined: false,
 };
 
-pub(crate) const CORE_MODULES: [StoreModule; 7] = [
-    SETTINGS, RUNTIME, PROVIDER, TOOLS, EXPORTS, DBFILES, UPDATES,
+/// The owner's saved Browser certificate trust and certificate journals.
+const BROWSER: StoreModule = StoreModule {
+    name: "browser",
+    migrations: Cow::Borrowed(&[
+        Migration {
+            version: 1,
+            legacy_version: None,
+            description: "create the Browser certificate confirmation journal",
+            sql: include_str!("browser/0001_create_certificate_confirmations.sql"),
+        },
+        Migration {
+            version: 2,
+            legacy_version: None,
+            description: "create saved Browser certificate trust and its journal",
+            sql: include_str!("browser/0002_create_saved_certificates.sql"),
+        },
+        Migration {
+            version: 3,
+            legacy_version: None,
+            description: "create the Browser site credential catalog and its journal",
+            sql: include_str!("browser/0003_create_site_credentials.sql"),
+        },
+    ]),
+    confined: false,
+};
+
+pub(crate) const CORE_MODULES: [StoreModule; 8] = [
+    SETTINGS, RUNTIME, PROVIDER, TOOLS, EXPORTS, DBFILES, UPDATES, BROWSER,
 ];
 
 /// The records of a database: each module's name and how many of its

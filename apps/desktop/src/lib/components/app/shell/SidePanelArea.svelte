@@ -104,9 +104,15 @@
       {const kind = $derived(slots.sidePanels.find(panel.kind))}
       {const offOwner = $derived(slots.sidePanels.ownerOff(panel.kind))}
       {const label = $derived(labelOf(panel))}
-      <Tabs.Content class="flex min-h-0 flex-1 flex-col outline-none" tabindex={-1} value={panel.key}>
+      <Tabs.Content
+        class="flex min-h-0 flex-1 flex-col outline-none has-[>h2.sr-only:focus-visible]:ring-2 has-[>h2.sr-only:focus-visible]:ring-ring has-[>h2.sr-only:focus-visible]:ring-inset"
+        tabindex={-1}
+        value={panel.key}
+      >
         <h2
-          class="shrink-0 truncate px-3 pt-3 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          class={kind?.hideHeading
+            ? 'sr-only'
+            : 'shrink-0 truncate px-3 pt-3 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring'}
           {@attach focusWhenOpened(panel.key)}
           data-content={label.isContent ? '' : undefined}
           tabindex="-1"

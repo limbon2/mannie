@@ -118,6 +118,12 @@
         <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs" data-browser-access="">
           <dt class="text-muted-foreground">{m.tools_access_browser_site()}</dt>
           <dd class="font-mono break-all" data-content>{access.origin}</dd>
+          {#if access.credential}
+            <dt class="text-muted-foreground">{m.tools_access_browser_credential()}</dt>
+            <dd class="wrap-anywhere" data-browser-credential-access="" data-content dir="auto">
+              {access.credential.label}
+            </dd>
+          {/if}
         </dl>
       {:else if access.kind === 'database'}
         <div class="flex min-w-0 items-start gap-2">

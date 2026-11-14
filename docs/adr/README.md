@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                           |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Living index                                                                                                                                                                              |
-| Last updated | 2026-11-12                                                                                                                                                                                |
+| Last updated | 2026-11-13                                                                                                                                                                                |
 | Related      | [ADR-0001](0001-record-architecture-decisions.md), [Template](0000-template.md), [Decisions](../roadmap/milestones.md#5-decisions), [Validations](../roadmap/milestones.md#4-validations) |
 
 [ADR-0001](0001-record-architecture-decisions.md) describes the process, and new ADRs start from the [template](0000-template.md).
@@ -83,3 +83,5 @@ Each ADR has exactly one of these statuses:
 | [0063](0063-update-the-desktop-app-from-signed-releases.md)                            | Update the desktop app from signed releases                                                   | Accepted (D55)         | M20        |
 | [0064](0064-give-agents-an-isolated-browser-beside-the-conversation.md)                | Give agents an isolated browser beside the conversation                                       | Accepted (D58)         | V13        |
 | [0065](0065-let-browser-access-follow-the-conversation.md)                             | Let browser access follow the conversation                                                    | Accepted (D58)         | V13        |
+| [0066](0066-let-the-owner-trust-self-signed-browser-certificates.md)                   | Let the owner trust self-signed Browser certificates                                          | Accepted (D61)         | V13        |
+| [0067](0067-manage-browser-trust-and-credentials-in-settings.md)                       | Manage Browser trust and credentials in Settings                                              | Accepted (D62)         | V13        |

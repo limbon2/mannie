@@ -1,10 +1,11 @@
 //! A session's WebView2 environment: its private folder, its switches and
 //! the job that holds its browser process.
 
+use std::collections::hash_map::Entry;
 use std::path::Path;
 use std::sync::Arc;
 
-use mannie_tools::browser::ChromeError;
+use mannie_tools::browser::{ChromeError, ProcessHandle};
 use tokio::sync::oneshot;
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_PROCESS_KIND_BROWSER, CreateCoreWebView2EnvironmentWithOptions,
@@ -185,8 +186,13 @@ fn record_processes(
         }
         if kind == COREWEBVIEW2_PROCESS_KIND_BROWSER {
             adopt_browser_process(shared, process)?;
-        } else {
-            lock(&shared.processes).insert(process);
+        } else if let Entry::Vacant(entry) = lock(&shared.processes).entry(process) {
+            match ProcessHandle::open(process) {
+                Ok(handle) => {
+                    entry.insert(handle);
+                }
+                Err(error) => tracing::debug!(%error, "could not track a Browser subprocess"),
+            }
         }
     }
     Ok(())
@@ -194,13 +200,13 @@ fn record_processes(
 
 /// Puts the session's browser process into its job, once.
 pub(super) fn adopt_browser_process(shared: &Shared, process: u32) -> Result<(), ChromeError> {
-    if !lock(&shared.processes).insert(process) {
-        return Ok(());
-    }
-    shared.job.assign(process).map_err(|error| {
+    let mut processes = lock(&shared.processes);
+    let handle = shared.job.adopt(process).map_err(|error| {
         tracing::warn!(%error, "could not put a browser process into its job");
         ChromeError::Launch
-    })
+    })?;
+    processes.insert(process, handle);
+    Ok(())
 }
 
 fn same_folder(reported: &Path, requested: &Path) -> bool {

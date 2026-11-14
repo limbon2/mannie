@@ -1,15 +1,14 @@
-//! Generated IPC for the Browser pane: its status, the owner's controls, the
-//! placement of the native page view and session credentials.
+//! Generated IPC for the Browser pane and the owner's Browser settings.
 
 use std::sync::Arc;
 
-use mannie_plugin_sdk::contracts::ConversationId;
+use mannie_plugin_sdk::contracts::{ConversationId, Secret};
 use mannie_plugin_sdk::ipc::{
     ChannelSpec, CommandSpec, Handlers, InputRefusal, Interface, Validate,
 };
 use mannie_plugin_sdk::services::browser::{
-    BrowserApi, BrowserControl, BrowserCredential, BrowserError, BrowserFrame, BrowserPlacement,
-    BrowserRect, BrowserStatus,
+    BrowserApi, BrowserCertificateException, BrowserControl, BrowserCredential,
+    BrowserCredentialRef, BrowserError, BrowserFrame, BrowserPlacement, BrowserRect, BrowserStatus,
 };
 use serde::Deserialize;
 use specta::Type;
@@ -138,6 +137,73 @@ impl Validate for CredentialInput {
     }
 }
 
+#[derive(Debug, Deserialize, Type)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AddSiteCredentialInput {
+    origin: String,
+    label: String,
+    value: Secret,
+}
+
+impl Validate for AddSiteCredentialInput {
+    fn validate(&self) -> Result<(), InputRefusal> {
+        let valid_origin = !self.origin.trim().is_empty() && self.origin.len() <= 512;
+        let valid_label = !self.label.trim().is_empty() && self.label.len() <= 80;
+        let valid_value = !self.value.is_empty() && self.value.expose().len() <= 8192;
+        if !valid_origin {
+            return Err(InputRefusal::new("origin"));
+        }
+        if !valid_label {
+            return Err(InputRefusal::new("label"));
+        }
+        valid_value
+            .then_some(())
+            .ok_or_else(|| InputRefusal::new("value"))
+    }
+}
+
+#[derive(Debug, Deserialize, Type)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RemoveSiteCredentialInput {
+    reference: String,
+}
+
+impl Validate for RemoveSiteCredentialInput {
+    fn validate(&self) -> Result<(), InputRefusal> {
+        (self.reference.len() == 36)
+            .then_some(())
+            .ok_or_else(|| InputRefusal::new("reference"))
+    }
+}
+
+fn validate_certificate_field(
+    value: &str,
+    limit: usize,
+    field: &'static str,
+) -> Result<(), InputRefusal> {
+    (!value.trim().is_empty() && value.len() <= limit)
+        .then_some(())
+        .ok_or_else(|| InputRefusal::new(field))
+}
+
+fn validate_pin(hostname: &str, fingerprint: &str) -> Result<(), InputRefusal> {
+    validate_certificate_field(hostname, 1024, "hostname")?;
+    validate_certificate_field(fingerprint, 128, "fingerprint")
+}
+
+#[derive(Debug, Deserialize, Type)]
+#[serde(deny_unknown_fields)]
+struct SavedCertificateInput {
+    hostname: String,
+    fingerprint: String,
+}
+
+impl Validate for SavedCertificateInput {
+    fn validate(&self) -> Result<(), InputRefusal> {
+        validate_pin(&self.hostname, &self.fingerprint)
+    }
+}
+
 macro_rules! command {
     ($spec:ident, $name:literal, $docs:literal, $input:ty, $output:ty) => {
         enum $spec {}
@@ -190,8 +256,50 @@ command!(
 command!(
     Credential,
     "browser_credential",
-    "Change a protected browser session credential.",
+    "Legacy command for a protected browser session credential.",
     CredentialInput,
+    ()
+);
+command!(
+    SiteCredentials,
+    "browser_site_credentials",
+    "List the owner's saved Browser site credentials without their values.",
+    (),
+    Vec<BrowserCredentialRef>
+);
+command!(
+    AddSiteCredential,
+    "browser_add_site_credential",
+    "Save a protected credential for an exact site origin.",
+    AddSiteCredentialInput,
+    BrowserCredentialRef
+);
+command!(
+    RemoveSiteCredential,
+    "browser_remove_site_credential",
+    "Remove an exact saved Browser credential and revoke its grants.",
+    RemoveSiteCredentialInput,
+    ()
+);
+command!(
+    SavedCertificates,
+    "browser_saved_certificates",
+    "List the owner's saved Browser certificate pins.",
+    (),
+    Vec<BrowserCertificateException>
+);
+command!(
+    SaveCertificate,
+    "browser_save_certificate",
+    "Save an owner-confirmed certificate pin across Browser sessions.",
+    SavedCertificateInput,
+    ()
+);
+command!(
+    ForgetCertificate,
+    "browser_forget_certificate",
+    "Forget the owner's exact saved Browser certificate pin.",
+    SavedCertificateInput,
     ()
 );
 
@@ -217,6 +325,12 @@ pub(crate) fn interface() -> Interface {
         .command::<Still>()
         .command::<Control>()
         .command::<Credential>()
+        .command::<SiteCredentials>()
+        .command::<AddSiteCredential>()
+        .command::<RemoveSiteCredential>()
+        .command::<SavedCertificates>()
+        .command::<SaveCertificate>()
+        .command::<ForgetCertificate>()
         .channel::<Follow>()
 }
 
@@ -227,6 +341,12 @@ pub(crate) fn handlers(browser: &Arc<dyn BrowserApi>) -> Handlers {
     let still = Arc::clone(browser);
     let control = Arc::clone(browser);
     let credential = Arc::clone(browser);
+    let site_credentials = Arc::clone(browser);
+    let add_site_credential = Arc::clone(browser);
+    let remove_site_credential = Arc::clone(browser);
+    let saved_certificates = Arc::clone(browser);
+    let save_certificate = Arc::clone(browser);
+    let forget_certificate = Arc::clone(browser);
     let follow = Arc::clone(browser);
     Handlers::new()
         .command::<Status, _, _>(move |input: ConversationInput| {
@@ -246,6 +366,20 @@ pub(crate) fn handlers(browser: &Arc<dyn BrowserApi>) -> Handlers {
         })
         .command::<Credential, _, _>(move |input: CredentialInput| {
             credential.credential(input.conversation_id, input.action)
+        })
+        .command::<SiteCredentials, _, _>(move |()| site_credentials.site_credentials())
+        .command::<AddSiteCredential, _, _>(move |input: AddSiteCredentialInput| {
+            add_site_credential.add_site_credential(input.origin, input.label, input.value)
+        })
+        .command::<RemoveSiteCredential, _, _>(move |input: RemoveSiteCredentialInput| {
+            remove_site_credential.remove_site_credential(input.reference)
+        })
+        .command::<SavedCertificates, _, _>(move |()| saved_certificates.saved_certificates())
+        .command::<SaveCertificate, _, _>(move |input: SavedCertificateInput| {
+            save_certificate.save_certificate(input.hostname, input.fingerprint)
+        })
+        .command::<ForgetCertificate, _, _>(move |input: SavedCertificateInput| {
+            forget_certificate.forget_certificate(input.hostname, input.fingerprint)
         })
         .channel::<Follow, _, _>(move |input: ConversationInput| {
             std::future::ready(Ok::<_, BrowserError>(follow.watch(input.conversation_id)))
@@ -322,5 +456,28 @@ mod tests {
         placement(RECT, 1.0, vec![RECT; MAX_CLIPS + 1])
             .validate()
             .unwrap_err();
+    }
+
+    #[test]
+    fn saved_certificate_requires_bounded_hostname_and_fingerprint() {
+        let input = serde_json::json!({
+            "hostname": "::1",
+            "fingerprint": "AA".repeat(32),
+        });
+        let parsed: SavedCertificateInput = serde_json::from_value(input.clone()).unwrap();
+        parsed.validate().unwrap();
+
+        for (field, oversized) in [("hostname", 1025), ("fingerprint", 129)] {
+            let mut invalid = input.clone();
+            invalid[field] = serde_json::json!("a".repeat(oversized));
+            serde_json::from_value::<SavedCertificateInput>(invalid)
+                .unwrap()
+                .validate()
+                .unwrap_err();
+        }
+
+        let mut invalid = input;
+        invalid["sessionId"] = serde_json::json!("session-1");
+        serde_json::from_value::<SavedCertificateInput>(invalid).unwrap_err();
     }
 }

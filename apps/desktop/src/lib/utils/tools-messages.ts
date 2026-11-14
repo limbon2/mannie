@@ -359,6 +359,9 @@ export function approvalReasonMessage(reason: ApprovalReason): string {
     case 'browser_control': {
       return m.tools_reason_browser_control();
     }
+    case 'browser_credential': {
+      return m.tools_reason_browser_credential();
+    }
     case 'browser_site': {
       return m.tools_reason_browser_site();
     }
@@ -493,6 +496,9 @@ export function browserActionLabel(action: Extract<Access, { kind: 'browser_acti
   switch (action) {
     case 'continue_navigation': {
       return m.tools_access_browser_continue_navigation();
+    }
+    case 'fill_credential': {
+      return m.tools_access_browser_fill_credential();
     }
     case 'interact': {
       return m.tools_access_browser_interact();
@@ -726,6 +732,9 @@ export function terminalRulePlace(target: TerminalTarget): string {
 
 /** What a grant allows, such as "Changing files in D:\Projects\app". */
 export function grantScopeMessage(scope: GrantScope): string {
+  if (scope.kind === 'browser_credential') {
+    return m.tools_grant_browser_credential({ label: scope.label, origin: scope.origin });
+  }
   if (scope.kind === 'browser_site') {
     return m.tools_grant_browser_site({ origin: scope.origin });
   }

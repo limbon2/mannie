@@ -1,5 +1,4 @@
 <script lang="ts">
-  import * as Alert from '@mannie/plugin-sdk/components/alert';
   import * as AlertDialog from '@mannie/plugin-sdk/components/alert-dialog';
   import { Button } from '@mannie/plugin-sdk/components/button';
   import * as Empty from '@mannie/plugin-sdk/components/empty';
@@ -7,30 +6,30 @@
   import { Spinner } from '@mannie/plugin-sdk/components/spinner';
   import ArrowLeftIcon from '@mannie/plugin-sdk/icons/arrow-left';
   import ArrowRightIcon from '@mannie/plugin-sdk/icons/arrow-right';
-  import CircleAlertIcon from '@mannie/plugin-sdk/icons/circle-alert';
   import GlobeIcon from '@mannie/plugin-sdk/icons/globe';
-  import PlusIcon from '@mannie/plugin-sdk/icons/plus';
   import RotateCwIcon from '@mannie/plugin-sdk/icons/rotate-cw';
-  import XIcon from '@mannie/plugin-sdk/icons/x';
   import type { SidePanelProps } from '@mannie/plugin-sdk/slots';
 
-  import type { BrowserControl, BrowserCredential, BrowserStatus, BrowserTab } from '../generated/bindings.js';
+  import type { BrowserControl, BrowserStatus_Serialize as BrowserStatus, BrowserTab } from '../generated/bindings.js';
   import { m } from '../generated/messages.js';
   import { BrowserSession } from '../state/browser-session.svelte.js';
+  import { browserAddress } from '../utils/browser-address.js';
   import { browserActivityMessage, browserErrorMessage } from '../utils/browser-messages.js';
   import { browserPanelTarget, labelBrowserTab, openBrowserTab } from '../utils/browser-panel.js';
 
-  import BrowserCredentials from './BrowserCredentials.svelte';
+  import BrowserErrorAlert from './BrowserErrorAlert.svelte';
   import BrowserViewport from './BrowserViewport.svelte';
 
-  let { argument, close }: SidePanelProps = $props();
+  let { argument }: SidePanelProps = $props();
   let draftAddress = $state<string | null>(null);
   let confirmingEnd = $state(false);
+  let pane = $state<HTMLElement | null>(null);
   let address = $state<HTMLInputElement | null>(null);
-  let focusButton = $state<HTMLButtonElement | null>(null);
+  let keyboardHelp = $state<HTMLElement | null>(null);
   /** The tabs of the last status, to find new ones and changed titles. */
   let knownTabs: ReadonlyMap<string, BrowserTab> | null = null;
   /** The last time focus left a page that the pane has handled. */
+  let focusSessionId: string | null = null;
   let focusSequence: number | null = null;
 
   const target = $derived(browserPanelTarget(argument));
@@ -43,6 +42,7 @@
   const owner = $derived(status?.control === 'owner');
   const interactive = $derived(owner && !session.busy);
   const activity = $derived(activityMessage(status));
+  const certificateRejected = $derived(tab?.navigationError?.code === 'certificate_rejected');
   const ended = $derived(endedMessage(status));
 
   /** The agent's latest gesture while it has control. */
@@ -61,8 +61,25 @@
     return session.control(action, target.tabId);
   }
 
-  function saveCredential(action: BrowserCredential): Promise<boolean> {
-    return session.credential(action);
+  function focusAfterError(): void {
+    address?.focus();
+  }
+
+  function dismissSessionError(): void {
+    session.failure = null;
+    focusAfterError();
+  }
+
+  function focusPage(event: KeyboardEvent): void {
+    const plainF6 = event.key === 'F6' && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
+    const panel = pane?.closest('[role="tabpanel"]');
+    const focused = panel?.contains(document.activeElement) === true;
+    const canFocusPage = focused && owner && tab !== undefined;
+    if (event.defaultPrevented || event.repeat || !plainF6 || !canFocusPage) {
+      return;
+    }
+    event.preventDefault();
+    void session.focusPage(tab.id);
   }
 
   function editAddress(event: Event): void {
@@ -73,7 +90,7 @@
 
   async function navigate(event: SubmitEvent): Promise<void> {
     event.preventDefault();
-    const url = (draftAddress ?? tab?.url ?? '').trim();
+    const url = browserAddress(draftAddress ?? tab?.url ?? '');
     const canNavigate = interactive && url !== '';
     if (!canNavigate) {
       return;
@@ -93,18 +110,6 @@
   async function start(): Promise<void> {
     if (await control({ kind: 'start' })) {
       await showActiveTab(argument);
-    }
-  }
-
-  async function openTab(): Promise<void> {
-    if (await control({ kind: 'open_tab' })) {
-      await showActiveTab(target.tabId === null ? argument : undefined);
-    }
-  }
-
-  async function closeTab(tabId: string): Promise<void> {
-    if (await control({ kind: 'close_tab', tabId })) {
-      close();
     }
   }
 
@@ -157,23 +162,30 @@
     }
   });
 
-  // Focus that leaves the page for the app lands on the pane's controls:
-  // forward on "Focus page", back on the address (ADR-0064, decision 6).
+  // Focus that leaves the native page lands after it, or back at the address.
   $effect(() => {
+    const sessionId = status?.sessionId ?? null;
     const returned = status?.focusReturn ?? null;
-    const handled = returned === null || returned.sequence === focusSequence;
-    if (handled) {
+    if (sessionId !== focusSessionId) {
+      focusSessionId = sessionId;
+      focusSequence = returned?.sequence ?? null;
       return;
     }
-    const first = focusSequence === null;
+    const alreadyHandled = returned === null || returned.sequence === focusSequence;
+    if (alreadyHandled) {
+      return;
+    }
     focusSequence = returned.sequence;
-    if (!first) {
-      (returned.forward ? focusButton : address)?.focus();
+    if (pane?.getClientRects().length) {
+      (returned.forward ? keyboardHelp : address)?.focus();
     }
   });
 </script>
 
+<svelte:window onkeydown={focusPage} />
+
 <section
+  bind:this={pane}
   class="flex h-full min-h-0 min-w-0 flex-col gap-2 overflow-hidden p-3"
   aria-label={m.browser_panel_title()}
   data-browser-conversation={target.conversationId}
@@ -181,11 +193,7 @@
   data-browser-tab={target.tabId ?? undefined}
 >
   {#if session.failure !== null}
-    <Alert.Root variant="destructive">
-      <CircleAlertIcon />
-      <Alert.Title>{m.browser_error_title()}</Alert.Title>
-      <Alert.Description>{session.failure}</Alert.Description>
-    </Alert.Root>
+    <BrowserErrorAlert message={session.failure} onDismiss={dismissSessionError} />
   {/if}
   {#if session.loading}
     <div class="flex items-center gap-2 text-sm text-muted-foreground" role="status">
@@ -196,73 +204,49 @@
     <Button class="self-start" size="sm" variant="outline" onclick={() => session.follow()}>
       {m.browser_retry()}
     </Button>
-  {:else if status.control === null}
-    <Empty.Root>
-      <Empty.Header>
-        <Empty.Media variant="icon"><GlobeIcon /></Empty.Media>
-        <Empty.Title>{m.browser_empty_title()}</Empty.Title>
-        <Empty.Description>{ended ?? m.browser_empty_description()}</Empty.Description>
-      </Empty.Header>
-      <Empty.Content>
-        <Button disabled={session.busy} onclick={() => void start()}>
-          {#if session.busy}<Spinner
-              aria-hidden="true"
-              aria-label={m.browser_loading()}
-              data-icon="inline-start"
-            />{/if}
-          {m.browser_start()}
-        </Button>
-      </Empty.Content>
-    </Empty.Root>
   {:else}
     <div class="flex flex-wrap items-center gap-2">
-      <span class="me-auto text-sm text-muted-foreground" role="status">
-        {owner ? m.browser_owner_control() : m.browser_agent_control()}
-      </span>
-      {#if owner}
-        <Button disabled={session.busy} size="sm" onclick={() => void control({ kind: 'resume' })}>
-          {m.browser_resume()}
-        </Button>
-      {:else}
-        <Button disabled={session.busy} size="sm" onclick={() => void control({ kind: 'take_over' })}>
-          {m.browser_take_over()}
-        </Button>
+      {#if status.control !== null}
+        <span class="me-auto text-sm text-muted-foreground" role="status">
+          {owner ? m.browser_owner_control() : m.browser_agent_control()}
+        </span>
       {/if}
-      <Button disabled={session.busy} size="sm" variant="outline" onclick={() => (confirmingEnd = true)}>
-        {m.browser_end()}
-      </Button>
-      <BrowserCredentials
-        busy={session.busy}
-        credentials={status.credentials}
-        failure={session.failure}
-        save={saveCredential}
-      />
-      {#if owner}
-        <Button
-          aria-label={m.browser_new_tab()}
-          disabled={session.busy}
-          size="icon-sm"
-          title={m.browser_new_tab()}
-          variant="ghost"
-          onclick={() => void openTab()}
-        >
-          <PlusIcon />
-        </Button>
-        {#if tab !== undefined}
-          <Button
-            aria-label={m.browser_close_tab()}
-            disabled={session.busy}
-            size="icon-sm"
-            title={m.browser_close_tab()}
-            variant="ghost"
-            onclick={() => void closeTab(tab.id)}
-          >
-            <XIcon />
+      {#if status.control !== null}
+        <div class="ms-auto flex flex-wrap items-center justify-end gap-2" data-browser-actions="">
+          {#if owner}
+            <Button disabled={session.busy} size="sm" onclick={() => void control({ kind: 'resume' })}>
+              {m.browser_resume()}
+            </Button>
+          {:else}
+            <Button disabled={session.busy} size="sm" onclick={() => void control({ kind: 'take_over' })}>
+              {m.browser_take_over()}
+            </Button>
+          {/if}
+          <Button disabled={session.busy} size="sm" variant="outline" onclick={() => (confirmingEnd = true)}>
+            {m.browser_end()}
           </Button>
-        {/if}
+        </div>
       {/if}
     </div>
-    {#if tab === undefined}
+    {#if status.control === null}
+      <Empty.Root>
+        <Empty.Header>
+          <Empty.Media variant="icon"><GlobeIcon /></Empty.Media>
+          <Empty.Title>{m.browser_empty_title()}</Empty.Title>
+          <Empty.Description>{ended ?? m.browser_empty_description()}</Empty.Description>
+        </Empty.Header>
+        <Empty.Content>
+          <Button disabled={session.busy} onclick={() => void start()}>
+            {#if session.busy}<Spinner
+                aria-hidden="true"
+                aria-label={m.browser_loading()}
+                data-icon="inline-start"
+              />{/if}
+            {m.browser_start()}
+          </Button>
+        </Empty.Content>
+      </Empty.Root>
+    {:else if tab === undefined}
       {#if activeTab === undefined}
         <p class="text-sm text-muted-foreground">{m.browser_no_tab()}</p>
       {:else}
@@ -303,6 +287,7 @@
         </Button>
         <Input
           class="min-w-0 flex-1"
+          aria-keyshortcuts={owner ? 'F6' : undefined}
           aria-label={m.browser_address()}
           autocomplete="off"
           placeholder={m.browser_address_placeholder()}
@@ -312,23 +297,25 @@
           bind:ref={address}
           oninput={editAddress}
         />
-        <Button disabled={!interactive} size="sm" type="submit" variant="outline">{m.browser_go()}</Button>
       </form>
+      {#if certificateRejected}
+        {#key `${status.sessionId ?? ''}:${tab.navigationErrorSequence}`}
+          <BrowserErrorAlert certificate message={m.browser_error_certificate_rejected()} onDismiss={focusAfterError} />
+        {/key}
+      {/if}
       {#key tab.id}
         <BrowserViewport conversationId={target.conversationId} tabId={tab.id} />
       {/key}
       <div class="flex flex-wrap items-center gap-2">
-        <Button
-          data-browser-focus-page=""
-          disabled={!owner}
-          size="sm"
-          variant="outline"
-          bind:ref={focusButton}
-          onclick={() => void session.focusPage(tab.id)}
-        >
-          {m.browser_focus_page()}
-        </Button>
-        <span class="text-xs text-muted-foreground">{m.browser_exit_keyboard()}</span>
+        {#if owner}
+          <span
+            bind:this={keyboardHelp}
+            class="rounded-sm text-xs text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            tabindex="-1"
+          >
+            {m.browser_focus_keyboard()}
+          </span>
+        {/if}
         <span class="ms-auto text-xs text-muted-foreground" aria-live="polite" data-browser-activity="" role="status">
           {activity}
         </span>
