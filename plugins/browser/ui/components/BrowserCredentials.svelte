@@ -17,7 +17,7 @@
   import { m } from '../generated/messages.js';
   import { browserFailureMessage } from '../utils/browser-messages.js';
 
-  let { heading = $bindable(null) }: { heading?: HTMLElement | null } = $props();
+  let heading = $state<HTMLElement | null>(null);
   const id = $props.id();
   let credentials = $state.raw<BrowserCredentialRef[]>([]);
   let loading = $state(true);

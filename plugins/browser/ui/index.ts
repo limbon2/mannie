@@ -6,7 +6,6 @@ import BrowserPanel from './components/BrowserPanel.svelte';
 import BrowserSettingsSection from './components/BrowserSettingsSection.svelte';
 import BrowserToolDetails from './components/BrowserToolDetails.svelte';
 import { m } from './generated/messages.js';
-import { BROWSER_SETTINGS_SECTION } from './state/browser-settings.svelte.js';
 import { browserErrorMessage, browserStartFailureMessage } from './utils/browser-messages.js';
 import { BROWSER_PANEL } from './utils/browser-panel.js';
 
@@ -26,7 +25,7 @@ export default definePlugin({
       component: BrowserSettingsSection,
       description: m.browser_settings_description,
       icon: GlobeIcon,
-      id: BROWSER_SETTINGS_SECTION,
+      id: 'browser.settings',
       order: 75,
       title: m.browser_panel_title,
     });
