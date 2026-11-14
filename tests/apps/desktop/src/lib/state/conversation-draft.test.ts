@@ -1,7 +1,7 @@
-// What a new conversation starts with attached (ADR-0046, decision 6): the
-// draft keeps the owner's order, gives an attachment that it holds its new
-// label, detaches, starts over, and holds the home that a plugin gave it
-// (ADR-0051).
+// What the draft conversation of a new conversation's place gets when it
+// opens next (ADR-0068; ADR-0046, decision 6): the attachments in the order
+// given, the home that a plugin gave (ADR-0051), and an agent, which the view
+// takes once while the home stays.
 import { describe, expect, it } from 'vitest';
 
 import { ConversationDraftState } from '../../../../../../apps/desktop/src/lib/state/conversation-draft.svelte.js';
@@ -9,42 +9,57 @@ import { ConversationDraftState } from '../../../../../../apps/desktop/src/lib/s
 const notebook = (key: string, label: string) => ({ key, label, provider: 'notebooks' });
 
 describe('ConversationDraftState', () => {
-  it('keeps the order of the attachments and takes a new label for one that it holds', () => {
+  it('asks for nothing until it is given attachments or an agent', () => {
     const draft = new ConversationDraftState();
+    const empty = draft.hasIntent;
 
-    draft.attach(notebook('n1', 'Physics'));
-    draft.attach(notebook('n2', 'Optics'));
-    draft.attach(notebook('n1', 'Physics notes'));
+    draft.agentKey = 'plan';
 
-    expect(draft.attachments).toEqual([notebook('n1', 'Physics notes'), notebook('n2', 'Optics')]);
-    expect(draft.refs()).toEqual([
-      { key: 'n1', provider: 'notebooks' },
-      { key: 'n2', provider: 'notebooks' },
-    ]);
+    expect(empty).toBe(false);
+    expect(draft.hasIntent).toBe(true);
   });
 
-  it('detaches one attachment, and starts over with the attachments given or none', () => {
+  it('hands over the attachments and the agent once, and keeps the home (ADR-0068)', () => {
     const draft = new ConversationDraftState();
-    draft.attach(notebook('n1', 'Physics'));
-    draft.attach({ key: 'n1', label: 'Wiki', provider: 'wiki' });
+    draft.reset([notebook('n2', 'Optics'), notebook('n1', 'Physics')], notebook('n1', 'Physics'));
+    draft.agentKey = 'plan';
 
-    draft.detach({ key: 'n1', provider: 'notebooks' });
-    const left = [...draft.attachments];
-    draft.detach({ key: 'n9', provider: 'notebooks' });
-    draft.reset([notebook('n2', 'Optics')]);
-    const reset = [...draft.attachments];
-    draft.reset();
+    const intent = draft.takeIntent();
 
-    expect(left).toEqual([{ key: 'n1', label: 'Wiki', provider: 'wiki' }]);
-    expect(reset).toEqual([notebook('n2', 'Optics')]);
-    expect(draft.attachments).toEqual([]);
+    expect(intent).toEqual({ agentKey: 'plan', attachments: [{ key: 'n2', provider: 'notebooks' }] });
+    expect(draft.hasIntent).toBe(false);
+    expect(draft.home).toEqual({ key: 'n1', provider: 'notebooks' });
+    expect(draft.attachments).toEqual([notebook('n1', 'Physics')]);
   });
 
-  it('holds a home first, keeps it attached, sends it apart, and lets go of it (ADR-0051)', () => {
+  it("is for the place it names, so another place's draft that still shows leaves it alone", () => {
+    const draft = new ConversationDraftState();
+    const anyPlace = [draft.isFor(null), draft.isFor('p1')];
+
+    draft.reset([notebook('n2', 'Optics')], null, 'p1');
+    const forProject = [draft.isFor(null), draft.isFor('p1')];
+    draft.takeIntent();
+
+    expect(anyPlace).toEqual([true, true]);
+    expect(forProject).toEqual([false, true]);
+    expect(draft.isFor(null)).toBe(true);
+  });
+
+  it('writes nothing when it hands over no intent, so the view that opens the draft does not run again', () => {
+    const draft = new ConversationDraftState();
+    draft.reset([notebook('n1', 'Physics')], notebook('n1', 'Physics'));
+    const attachments = draft.attachments;
+
+    const intent = draft.takeIntent();
+
+    expect(intent).toEqual({ agentKey: null, attachments: [] });
+    expect(draft.attachments).toBe(attachments);
+  });
+
+  it('holds a home first, leaves it out of the references, and lets go of it (ADR-0051)', () => {
     const draft = new ConversationDraftState();
 
     draft.reset([notebook('n2', 'Optics'), notebook('n1', 'Physics')], notebook('n1', 'Physics'));
-    draft.detach({ key: 'n1', provider: 'notebooks' });
     const withHome = { attachments: [...draft.attachments], home: draft.home, refs: draft.refs() };
     draft.leaveHome();
 
@@ -57,15 +72,14 @@ describe('ConversationDraftState', () => {
     expect(draft.attachments).toEqual([notebook('n2', 'Optics')]);
   });
 
-  it('starts with the default profile and forgets the chosen one when it starts over', () => {
+  it('forgets the agent and the attachments when it starts over', () => {
     const draft = new ConversationDraftState();
-    expect(draft.profileId).toBeNull();
-
-    draft.profileId = 'work';
+    draft.reset([notebook('n2', 'Optics')]);
     draft.agentKey = 'plan';
+
     draft.reset();
 
-    expect(draft.profileId).toBeNull();
     expect(draft.agentKey).toBeNull();
+    expect(draft.attachments).toEqual([]);
   });
 });

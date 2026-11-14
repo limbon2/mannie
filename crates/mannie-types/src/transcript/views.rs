@@ -98,6 +98,11 @@ pub struct ConversationSummary {
     /// the documents of the Workers link stay as they were.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_key: Option<String>,
+    /// Whether it is the draft of its place, which the conversation list
+    /// leaves out until its first message (ADR-0068). Left out while false,
+    /// so the documents of the Workers link stay as they were.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub draft: bool,
     /// When it was created.
     pub created_at: UtcMillis,
     /// When it last changed. The list shows the most recent first.

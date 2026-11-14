@@ -470,6 +470,18 @@ pub enum Change {
         /// The new title, already checked.
         title: String,
     },
+    /// The conversation is the draft of its place (ADR-0068): it stays out of
+    /// the conversation list until its first message. Only in the batch that
+    /// creates it; refused when its place already has a draft.
+    MarkDraft,
+    /// The first message of a draft makes it an ordinary conversation
+    /// (ADR-0068, decision 4), in the batch of its turn. The title comes from
+    /// the message, unless the owner renamed the draft. A conversation that is
+    /// not a draft stays as it is.
+    Undraft {
+        /// The title from the first message.
+        title: String,
+    },
     /// The owner chose another provider profile, or the default.
     SetProfile {
         /// The profile, or `None` for the default.

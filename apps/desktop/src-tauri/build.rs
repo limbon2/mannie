@@ -261,6 +261,7 @@ const APP_COMMANDS: &[&str] = &[
     "list_skills",
     "list_terminal_command_rules",
     "load_earlier_turns",
+    "open_draft_conversation",
     "open_link",
     "open_release_page",
     "plugin_feature_work",

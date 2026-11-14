@@ -2680,6 +2680,8 @@ mod executor_tasks;
 mod tasks;
 
 mod conversation_export;
+/// The tests of the draft conversations (ADR-0068).
+mod drafts;
 /// The tests of the switches of skills (ADR-0061).
 mod skill_switches;
 /// The tests of the images of tool results (ADR-0044).

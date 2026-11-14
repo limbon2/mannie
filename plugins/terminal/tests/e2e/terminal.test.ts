@@ -1,7 +1,7 @@
 // Terminals in the app (plugins/terminal/docs/README.md, acceptance): the
 // Plugins page lists what the plugin may use; Ctrl+` opens a terminal of this
-// computer beside the conversation, where the owner's command becomes a block
-// of the command list; a command of the agent asks the owner with the
+// computer beside a new conversation before its first message (ADR-0068),
+// where the owner's command becomes a block of the command list; a command of the agent asks the owner with the
 // terminal access and runs once allowed; the reply's citation shows the cited
 // lines and opens them in the terminal; each terminal keeps its view while
 // another tab shows, and follows its terminal again once it shows; a command
@@ -193,12 +193,12 @@ describe('Terminal', () => {
     await leaveSettings();
   });
 
-  it("opens a terminal with Ctrl+` and turns the owner's command into a block", async () => {
+  it("opens a terminal with Ctrl+` before the first message and turns the owner's command into a block", async () => {
     await addProfile(provider.baseUrl, { model: MODELS.tools, name: 'Tools', useTools: true });
     await startNewConversation();
-    // A terminal belongs to a conversation, which its first message starts.
-    await sendMessage('Open a conversation');
-    await waitForCompleteReply();
+    // A new conversation is the draft of its place, which the toolbar's
+    // Terminal button and Ctrl+` work in before its first message (ADR-0068).
+    await expect($('[data-terminal-control]')).toBeDisplayed();
 
     await browser.keys([Key.Ctrl, '`']);
     await $(`${VIEW} .xterm`).waitForDisplayed({ timeout: 30_000 });
@@ -212,6 +212,12 @@ describe('Terminal', () => {
     await axeInBothThemes();
     await browser.keys(Key.Escape);
     await axeInBothThemes();
+
+    // The first message makes the draft a conversation of the list, and its
+    // terminal stays beside it.
+    await sendMessage('Open a conversation');
+    await waitForCompleteReply();
+    await expect($(`${VIEW} .xterm`)).toBeDisplayed();
   });
 
   it('runs an agent’s command once the owner allows it, and cites its output', async () => {

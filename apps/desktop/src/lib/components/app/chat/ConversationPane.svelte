@@ -1,6 +1,7 @@
 <script lang="ts">
   import CircleAlertIcon from '@lucide/svelte/icons/circle-alert';
   import MessageSquareOffIcon from '@lucide/svelte/icons/message-square-off';
+  import MessagesSquareIcon from '@lucide/svelte/icons/messages-square';
   import { onMount, untrack } from 'svelte';
 
   import ConversationActionsMenu from '#lib/components/app/shell/ConversationActionsMenu.svelte';
@@ -14,14 +15,15 @@
   import { type Attachment, commands, type ImageRef, type MentionRef } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
   import { chatActions } from '#lib/state/chat-actions.svelte.js';
+  import { sameKey } from '#lib/state/conversation-draft.svelte.js';
+  import { conversationList } from '#lib/state/conversation-list.svelte.js';
   import { OpenConversation } from '#lib/state/conversation.svelte.js';
   import { pluginStates } from '#lib/state/plugin-states.svelte.js';
   import { providerProfiles } from '#lib/state/provider-profiles.svelte.js';
-  import { takeComposerFocus } from '#lib/state/started-conversation.js';
   import type { ChatFailure } from '#lib/types/chat.js';
   import { call } from '#lib/utils/calls.js';
   import { chatFailureMessage, pluginOffOf } from '#lib/utils/chat-errors.js';
-  import { startNewConversation } from '#lib/utils/chat-urls.js';
+  import { nameShownDraft, startNewConversation } from '#lib/utils/chat-urls.js';
   import { hasActiveRun } from '#lib/utils/conversation-reducer.js';
 
   import AttachmentChips from './AttachmentChips.svelte';
@@ -42,12 +44,19 @@
   // never changes during a pane's life. A child agent's conversation shows
   // read-only: its parent gives it work, and the core refuses the owner's
   // commands on it but Stop. It has no message box, so its toolbar keeps the
-  // context meter.
-  let { id }: { id: string } = $props();
+  // context meter. A new conversation is the draft of its place (ADR-0068):
+  // its pane shows a hint until its first message, after which the address
+  // names it, and every control works on it from the start.
+  interface Props {
+    /** The conversation. */
+    readonly id: string;
+    /** Called once the conversation is gone, such as a draft that the owner deleted. */
+    readonly onGone?: () => void;
+  }
+
+  let { id, onGone }: Props = $props();
 
   const conversation = new OpenConversation(untrack(() => id));
-  /** Whether the message box takes the focus, because the first message of a new conversation opened this pane. */
-  const takesFocus = takeComposerFocus(untrack(() => id));
 
   /** Whether an attachment is being detached, and why the last detach failed (ADR-0046). */
   let detaching = $state(false);
@@ -70,9 +79,35 @@
   /** What the conversation has attached (ADR-0046); a summary of a version before them has none. */
   const attachments = $derived(summary?.attachments ?? []);
 
+  /** Whether it is a draft, which shows the hint of a new conversation until its first message (ADR-0068). */
+  const isDraft = $derived(summary?.draft ?? false);
+  const hasTurns = $derived(transcript.turns.length > 0);
+  const showsHint = $derived(isDraft && !hasTurns);
+  const hintTitle = $derived.by(() => {
+    const home = summary?.home ?? null;
+    if (home !== null) {
+      const label = attachments.find((held) => sameKey(held, home))?.label;
+      if (label !== undefined) {
+        return m.chat_new_title_in_home({ label });
+      }
+    }
+    const projectId = summary?.projectId ?? null;
+    const project = projectId === null ? undefined : conversationList.findProject(projectId);
+    return project === undefined ? m.chat_new_title() : m.chat_new_title_in_project({ project: project.name });
+  });
+
   async function send(text: string, mentions: MentionRef[], images: ImageRef[]): Promise<ChatFailure | null> {
+    const wasDraft = isDraft;
     const outcome = await call(() => commands.sendMessage({ conversationId: id, images, mentions, text }));
-    return outcome.ok ? null : outcome.failure;
+    if (!outcome.ok) {
+      return outcome.failure;
+    }
+    // The first message makes the draft a conversation of the list, which
+    // the address then names, so the next new conversation opens a new draft.
+    if (wasDraft) {
+      void nameShownDraft(id);
+    }
+    return null;
   }
 
   async function detach(attachment: Attachment): Promise<void> {
@@ -86,6 +121,12 @@
   async function stop(): Promise<void> {
     await chatActions.stop(id);
   }
+
+  $effect(() => {
+    if (conversation.status === 'deleted') {
+      untrack(() => onGone?.());
+    }
+  });
 
   // A task conversation of a plugin that is off follows again once the
   // plugin is on (ADR-0030, decision 12).
@@ -192,7 +233,21 @@
     {#if conversation.status === 'ended'}
       <p class="border-b px-4 py-2 text-sm text-muted-foreground">{m.chat_conversation_ended()}</p>
     {/if}
-    <Transcript {conversation} readOnly={isChild} />
+    {#if showsHint}
+      <div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 overflow-y-auto p-6">
+        <Empty.Root>
+          <Empty.Header>
+            <Empty.Media variant="icon">
+              <MessagesSquareIcon />
+            </Empty.Media>
+            <Empty.Title>{hintTitle}</Empty.Title>
+            <Empty.Description>{m.chat_new_description()}</Empty.Description>
+          </Empty.Header>
+        </Empty.Root>
+      </div>
+    {:else}
+      <Transcript {conversation} readOnly={isChild} />
+    {/if}
   {/if}
   {#if isChild}
     <ReadOnlyFooter
@@ -210,8 +265,8 @@
     <Composer
       disabled={noProfile || conversation.status !== 'ready'}
       mentionPlace={{ conversationId: id, kind: 'conversation' }}
+      newConversation={isDraft}
       {replying}
-      takeFocus={takesFocus}
       onSend={send}
       onStop={stop}
     >

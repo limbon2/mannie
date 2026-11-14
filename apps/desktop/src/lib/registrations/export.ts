@@ -1,6 +1,7 @@
 import ExportControl from '#lib/components/app/export/ExportControl.svelte';
 import ExportDialog from '#lib/components/app/export/ExportDialog.svelte';
 import { m } from '#lib/paraglide/messages.js';
+import { conversationList, isDraft } from '#lib/state/conversation-list.svelte.js';
 import { exportActions } from '#lib/state/export-actions.svelte.js';
 import type { ShellSlots } from '#lib/state/shell-slots.svelte.js';
 import { openConversationId } from '#lib/utils/chat-urls.js';
@@ -19,8 +20,11 @@ export function registerExport(slots: ShellSlots): void {
   slots.overlays.register({ component: ExportDialog, id: 'export.result' });
   slots.commands.register({
     available: () => {
-      const hasConversation = openConversationId() !== null;
-      return hasConversation && !exportActions.busy;
+      const id = openConversationId();
+      const conversation = id === null ? undefined : conversationList.find(id);
+      // A draft has no message to export yet (ADR-0068).
+      const exportable = conversation !== undefined && !isDraft(conversation);
+      return exportable && !exportActions.busy;
     },
     group: m.export_command_group,
     id: 'export.conversation',

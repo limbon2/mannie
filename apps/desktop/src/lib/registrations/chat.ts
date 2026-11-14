@@ -23,7 +23,7 @@ import TextPart from '#lib/components/app/chat/TextPart.svelte';
 import UserTextPart from '#lib/components/app/chat/UserTextPart.svelte';
 import { m } from '#lib/paraglide/messages.js';
 import { chatActions } from '#lib/state/chat-actions.svelte.js';
-import { conversationList } from '#lib/state/conversation-list.svelte.js';
+import { conversationList, isDraft } from '#lib/state/conversation-list.svelte.js';
 import { projectActions } from '#lib/state/project-actions.svelte.js';
 import type { ShellSlots } from '#lib/state/shell-slots.svelte.js';
 import {
@@ -42,10 +42,14 @@ import {
   FILES_PROVIDER,
 } from '#lib/utils/file-mentions.js';
 
-/** The open conversation as the list knows it. */
+/** The open conversation as the list knows it; a draft has no title of its own yet (ADR-0068). */
 function openSummary(): ReturnType<typeof conversationList.find> {
   const id = openConversationId();
-  return id === null ? undefined : conversationList.find(id);
+  const summary = id === null ? undefined : conversationList.find(id);
+  if (summary === undefined) {
+    return undefined;
+  }
+  return isDraft(summary) ? undefined : summary;
 }
 
 /** Registers the chat feature. */

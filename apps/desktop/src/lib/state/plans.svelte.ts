@@ -98,10 +98,16 @@ export class Plans {
    */
   async runInNewConversation(plan: PlanSummary): Promise<void> {
     await agents.ensureLoaded();
-    conversationDraft.reset();
-    conversationDraft.agentKey = runningAgent();
-    messageBoxes.fill(NEW_CONVERSATION_BOX, m.plans_run_message(), planChoice(plan));
+    // The intent names the plan's place, so a draft of another place that
+    // still shows leaves it to the plan's draft.
+    conversationDraft.reset([], null, plan.projectId);
+    // The draft may have another agent chosen, so the built-in one is named.
+    conversationDraft.agentKey = runningAgent() ?? DEFAULT_AGENT;
     await startNewConversation(plan.projectId);
+    // Once the view shows the plan's place: the box of another place's draft
+    // is gone by then, and the plan's draft takes the text when its box
+    // shows, or at once when it shows already.
+    messageBoxes.fill(NEW_CONVERSATION_BOX, m.plans_run_message(), planChoice(plan));
   }
 
   /**

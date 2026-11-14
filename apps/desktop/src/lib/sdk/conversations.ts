@@ -12,7 +12,7 @@ import {
   commands,
   type ConversationSummary,
 } from '#lib/generated/bindings.js';
-import { conversationList } from '#lib/state/conversation-list.svelte.js';
+import { conversationList, isDraft } from '#lib/state/conversation-list.svelte.js';
 import type { Failure, Outcome } from '#lib/types/calls.js';
 import type { ContextKind } from '#lib/types/shell-slots.js';
 import { call } from '#lib/utils/calls.js';
@@ -44,12 +44,13 @@ export function followConversations(): void {
 /**
  * The owner's conversations, the most recently changed first, as the window's
  * conversation list knows them; read in a component, it follows the list.
- * Task conversations never show in it. The conversations that belong to a
- * plugin's item carry it as their `home`, and the Chat activity's lists leave
- * them out, so the plugin lists them (ADR-0051).
+ * Task conversations and drafts, which have no message yet, never show in it
+ * (ADR-0068). The conversations that belong to a plugin's item carry it as
+ * their `home`, and the Chat activity's lists leave them out, so the plugin
+ * lists them (ADR-0051).
  */
 export function listConversations(): readonly ConversationSummary[] {
-  return conversationList.conversations;
+  return conversationList.conversations.filter((conversation) => !isDraft(conversation));
 }
 
 /**

@@ -280,6 +280,13 @@ export class MessageMentions {
     return this.inText(text).map((choice) => ({ key: choice.entry.key, provider: choice.provider }));
   }
 
+  /** Takes back the mentions of a message that a box kept unsent, as if the owner had chosen them. */
+  restore(choices: readonly MentionChoice[]): void {
+    for (const choice of choices) {
+      this.#picked.set(choice.entry.token, choice);
+    }
+  }
+
   /** Forgets everything once the message is sent. */
   reset(): void {
     this.close();

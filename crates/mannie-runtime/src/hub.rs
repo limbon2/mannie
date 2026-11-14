@@ -349,6 +349,7 @@ pub(crate) fn localize_summary(
         attachments: master.attachments.clone(),
         home: master.home.clone(),
         agent_key: master.agent_key.clone(),
+        draft: master.draft,
         created_at: master.created_at,
         updated_at: worker.updated_at.max(master.updated_at),
     }

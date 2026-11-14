@@ -1,8 +1,7 @@
 <script lang="ts">
   import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
   import SquareIcon from '@lucide/svelte/icons/square';
-  import { type Snippet, untrack } from 'svelte';
-  import type { Attachment } from 'svelte/attachments';
+  import { onMount, type Snippet, untrack } from 'svelte';
 
   import { Button } from '#lib/components/ui/button/index.js';
   import * as InputGroup from '#lib/components/ui/input-group/index.js';
@@ -31,6 +30,8 @@
   // files of a paste or a drop (ADR-0033, decision 7); the images stay too
   // when sending fails. The box of a conversation takes mentions from views
   // outside it while it shows, such as a terminal's (ADR-0054, decision 4).
+  // The unsent text, mentions and images stay for the conversation when the
+  // box goes, and come back with its next box (ADR-0068, decision 7).
   interface Props {
     /** What the conversation has attached, below the box, such as notebooks (ADR-0046, decision 6). */
     attached?: Snippet;
@@ -43,6 +44,8 @@
     disabled?: boolean;
     /** Where the message is written, which decides what it can mention (ADR-0032). */
     mentionPlace: MentionPlace;
+    /** Whether the box is a new conversation's draft's, which takes a plan to run too (ADR-0060, decision 10). */
+    newConversation?: boolean;
     /** Sends a message with what it mentions and its images; resolves to why it failed, or `null`. */
     onSend: (text: string, mentions: MentionRef[], images: ImageRef[]) => Promise<ChatFailure | null>;
     /** Stops the reply that is being written, when there can be one. */
@@ -51,11 +54,6 @@
     replying?: boolean;
     /** What the row shows before Send, such as the conversation's context meter. */
     status?: Snippet;
-    /**
-     * Whether the box takes the focus once it is enabled, as the box of a
-     * conversation that the first message of a new conversation just opened.
-     */
-    takeFocus?: boolean;
   }
 
   let {
@@ -63,22 +61,25 @@
     controls,
     disabled = false,
     mentionPlace,
+    newConversation = false,
     onSend,
     onStop,
     replying = false,
     status,
-    takeFocus = false,
   }: Props = $props();
 
   const slots = getShellSlots();
   const uid = $props.id();
   const listId = `${uid}-mentions`;
 
-  // The pane asks for the focus only when it opens.
-  let focusPending = untrack(() => takeFocus);
+  /** The conversation whose message the box writes, or the new conversation's box. */
+  const target = untrack(() =>
+    mentionPlace.kind === 'conversation' ? mentionPlace.conversationId : NEW_CONVERSATION_BOX,
+  );
+  const unsent = messageBoxes.takeUnsent(target);
 
   let box: HTMLTextAreaElement | null = $state(null);
-  let text = $state('');
+  let text = $state(unsent?.text ?? '');
   let sending = $state(false);
   let failure = $state<ChatFailure | null>(null);
   /** How many drags with files are over the box, which counts the entries into its children. */
@@ -88,7 +89,8 @@
     () => mentionPlace,
     (provider) => slots.mentionKinds.find(provider),
   );
-  const images = new MessageImages();
+  mentions.restore(unsent?.mentions ?? []);
+  const images = unsent?.images ?? new MessageImages();
   /** The sources of images, in the order of their buttons. */
   const sources = $derived([...slots.imageSources.entries].sort((left, right) => left.order - right.order));
 
@@ -311,30 +313,25 @@
     void send();
   }
 
-  /**
-   * Gives the box the focus once it is enabled, when its pane asked for it.
-   * The pane replaced the one whose box the owner wrote in, so the focus fell
-   * to the page; an element that took the focus since then keeps it.
-   */
-  const takeFocusWhenEnabled: Attachment<HTMLTextAreaElement> = (element) => {
-    const takesFocusNow = focusPending && !disabled;
-    if (!takesFocusNow) {
-      return;
-    }
-    focusPending = false;
-    const focusIsLost = document.activeElement === null || document.activeElement === document.body;
-    if (focusIsLost) {
-      element.focus();
-    }
-  };
-
   // The box of a conversation takes mentions from views outside it while it
   // shows (ADR-0054, decision 4), and the box of a new conversation takes a
   // plan to run (ADR-0060, decision 10). `untrack` keeps a box from registering
   // again as the owner types, because a filled box reads its own text.
   $effect(() => {
-    const target = mentionPlace.kind === 'conversation' ? mentionPlace.conversationId : NEW_CONVERSATION_BOX;
-    return untrack(() => messageBoxes.register(target, { fill: fillFromOutside, mention: mentionFromOutside }));
+    const takesPlans = newConversation && target !== NEW_CONVERSATION_BOX;
+    return untrack(() => {
+      const entry = { fill: fillFromOutside, mention: mentionFromOutside };
+      const unregister = messageBoxes.register(target, entry);
+      const unregisterNew = takesPlans ? messageBoxes.register(NEW_CONVERSATION_BOX, entry) : undefined;
+      return () => {
+        unregister();
+        unregisterNew?.();
+      };
+    });
+  });
+
+  onMount(() => () => {
+    messageBoxes.keepUnsent(target, { images, mentions: mentions.inText(text), text });
   });
 </script>
 
@@ -365,7 +362,6 @@
   >
     <InputGroup.Textarea
       class="max-h-48 min-h-12 px-4 pt-3"
-      {@attach takeFocusWhenEnabled}
       aria-activedescendant={activeOption}
       aria-autocomplete="list"
       aria-controls={listShowsEntries ? listId : undefined}

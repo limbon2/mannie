@@ -85,3 +85,4 @@ Each ADR has exactly one of these statuses:
 | [0065](0065-let-browser-access-follow-the-conversation.md)                             | Let browser access follow the conversation                                                    | Accepted (D58)         | V13        |
 | [0066](0066-let-the-owner-trust-self-signed-browser-certificates.md)                   | Let the owner trust self-signed Browser certificates                                          | Accepted (D61)         | V13        |
 | [0067](0067-manage-browser-trust-and-credentials-in-settings.md)                       | Manage Browser trust and credentials in Settings                                              | Accepted (D62)         | V13        |
+| [0068](0068-keep-a-draft-conversation-for-each-place.md)                               | Keep a draft conversation for each place a new conversation starts                            | Accepted (D63)         | Tests      |

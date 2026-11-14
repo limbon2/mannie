@@ -27,7 +27,7 @@
   import { conversationDraft } from '#lib/state/conversation-draft.svelte.js';
   import { providerProfiles } from '#lib/state/provider-profiles.svelte.js';
   import type { Failure } from '#lib/types/calls.js';
-  import { agentDescription, agentFailureMessage, agentName, DEFAULT_AGENT } from '#lib/utils/agents-messages.js';
+  import { agentDescription, agentFailureMessage, agentName } from '#lib/utils/agents-messages.js';
   import { AGENTS_VIEW, openAgents } from '#lib/utils/agents-urls.js';
   import { CHAT_VIEW } from '#lib/utils/chat-urls.js';
 
@@ -113,7 +113,7 @@
   /** Opens a new conversation with this agent chosen. */
   async function startConversation(): Promise<void> {
     conversationDraft.reset();
-    conversationDraft.agentKey = form.key === DEFAULT_AGENT ? null : form.key;
+    conversationDraft.agentKey = form.key;
     await activities.openView(CHAT_VIEW);
   }
 

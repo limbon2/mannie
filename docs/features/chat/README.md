@@ -45,7 +45,7 @@ None.
 - 2026-10-13: what happens when the window closes during a reply is decided in the [window and tray](../window-and-tray.md) feature (D13).
 - 2026-10-14: the defaults below were chosen when building started. Each one waits for the owner's review, and the part documents give the details.
   - Archived outputs move to M2, together with the first tool results that need them. M1 has no tool results.
-  - A new conversation is created when the owner sends its first message, so the list never holds empty conversations. Its title is the first line of that message, at most 80 characters.
+  - A new conversation is created when the owner sends its first message, so the list never holds empty conversations. Its title is the first line of that message, at most 80 characters. Superseded on 2026-11-14 (D63), below.
   - Only the latest turn can be retried, after its reply failed, was stopped or was interrupted.
   - Mannie retries a transient failure up to five times (six attempts), with a randomized delay between one second and one minute, and waits for `Retry-After` when the provider sends it. A provider that asks for more than ten minutes ends the reply with the time of the next possible attempt.
   - At most eight model calls run at once across all conversations. Replies over the limit wait in order.
@@ -65,6 +65,7 @@ None.
   - Whether the projects are collapsed is remembered in the webview's storage, and a move into a collapsed project expands it.
   - The permissions of a conversation open from the command palette, since the workspace menu that held them is gone, and the Tools settings list the grants for projects and for every conversation.
 - 2026-10-22: the owner decided that the conversation's header loses its menu of Rename, Compact now and Delete, which repeated the conversation list's menu and the context meter's "Compact now".
+- 2026-11-14: the owner decided that a new conversation is a draft conversation, one for each place where a conversation starts: the general conversations, each project and each plugin's home item. The list leaves it out until its first message, which titles it with the first line of the message, unless the owner renamed it. Every control of a conversation, such as Terminal and Browser, works in it from the start, and its unsent message, terminals and browser tabs remain when the owner opens another conversation and comes back ([ADR-0068](../../adr/0068-keep-a-draft-conversation-for-each-place.md), D63).
 
 ## Parts
 

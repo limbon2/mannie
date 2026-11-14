@@ -9,11 +9,11 @@ use mannie_store::{
 };
 use mannie_types::chat::{
     ChatError, ChatSettings, CheckpointRef, EarlierTurns, LoadEarlierTurns, MAX_EARLIER_TURNS,
-    RenameConversation, SendMessage, SetConversationAgent, SetConversationProfile,
+    OpenDraft, RenameConversation, SendMessage, SetConversationAgent, SetConversationProfile,
     StartConversation, StartedConversation, StartedReply, StopOutcome, SubscribeConversation,
     UpdateChatSettings, check_message, check_title, title_from_message,
 };
-use mannie_types::context::{Attachment, AttachmentRef};
+use mannie_types::context::{Attachment, AttachmentRef, ChangeAttachment};
 use mannie_types::ids::{ConversationId, ProfileId, ProjectId};
 use mannie_types::images::check_images;
 use mannie_types::mentions::{MentionRef, check_mentions};
@@ -357,6 +357,118 @@ impl Runtime {
         })
     }
 
+    /// Opens the draft conversation of a place (ADR-0068): the one it has,
+    /// or a new one with no turns, which the conversation list leaves out
+    /// until its first message. The draft gets the attachments and the agent
+    /// that the input names, through the checks of `attach_context` and
+    /// `set_conversation_agent`.
+    pub async fn open_draft(&self, input: OpenDraft) -> Result<ConversationId, ChatError> {
+        self.refuse_when_quitting()?;
+        if input.home.is_some() && input.project_id.is_some() {
+            return Err(ChatError::HomeConversation);
+        }
+        let conversation_id = {
+            // Held from the look-up to the creation, so a place never gets
+            // two drafts.
+            let _opening = self.inner.opening_drafts.lock().await;
+            let existing = self
+                .inner
+                .store
+                .draft_conversation(input.project_id.as_ref(), input.home.as_ref())
+                .await
+                .map_err(store_failure)?;
+            match existing {
+                Some(id) => id,
+                None => {
+                    self.create_draft(input.project_id.clone(), input.home.clone())
+                        .await?
+                }
+            }
+        };
+        let summary = self
+            .inner
+            .store
+            .conversation_summary(&conversation_id)
+            .await
+            .map_err(store_failure)?
+            .ok_or(ChatError::ConversationNotFound)?;
+        for attachment in input.attachments {
+            let held = summary
+                .attachments
+                .iter()
+                .any(|held| held.provider == attachment.provider && held.key == attachment.key);
+            if !held {
+                self.attach_context(ChangeAttachment {
+                    conversation_id: conversation_id.clone(),
+                    attachment,
+                })
+                .await?;
+            }
+        }
+        if let Some(agent_key) = input.agent_key {
+            let current = summary.agent_key.as_deref().unwrap_or(CONVERSATION_AGENT);
+            if agent_key != current {
+                self.set_conversation_agent(SetConversationAgent {
+                    conversation_id: conversation_id.clone(),
+                    agent_key: Some(agent_key),
+                })
+                .await?;
+            }
+        }
+        Ok(conversation_id)
+    }
+
+    /// Creates the draft of a place, as `start_conversation` would create
+    /// its conversation, without a turn and with an empty title.
+    async fn create_draft(
+        &self,
+        project_id: Option<ProjectId>,
+        home: Option<AttachmentRef>,
+    ) -> Result<ConversationId, ChatError> {
+        // No profile is chosen yet, so a window without profiles still opens
+        // a draft, and its message box says why it cannot send.
+        self.refuse_project_being_removed(project_id.as_ref())?;
+        let full_access = self.full_access_for_new_conversations().await;
+        let (attachments, _mentions) = self
+            .starting_attachments(home.as_ref(), Vec::new(), &[])
+            .await?;
+        let conversation_id = self.inner.ids.conversation();
+        let mut changes = vec![
+            Change::CreateConversation {
+                conversation: NewConversation {
+                    id: conversation_id.clone(),
+                    title: String::new(),
+                    profile_id: None,
+                    project_id,
+                    task: None,
+                    home,
+                    agent_key: None,
+                },
+            },
+            Change::MarkDraft,
+        ];
+        if full_access {
+            changes.push(Change::SetFullAccess { enabled: true });
+        }
+        changes.extend(
+            attachments
+                .into_iter()
+                .map(|attachment| Change::Attach { attachment }),
+        );
+        self.inner
+            .hubs
+            .apply(
+                &self.inner.store,
+                &conversation_id,
+                changes,
+                Durability::Full,
+            )
+            .await
+            .map_err(store_failure)?;
+        tracing::info!(conversation = %conversation_id, "a draft conversation was created");
+        Ok(conversation_id)
+    }
+
     /// Adds the owner's message to a conversation and starts the reply. A
     /// mention whose provider gives context attaches what it names, and the
     /// message gathers from it (ADR-0050).
@@ -404,11 +516,24 @@ impl Runtime {
             .await
             .map_err(store_failure)?;
         let turn_id = self.inner.ids.turn();
+        let mut changes: Vec<Change> = Vec::new();
+        // The first message makes a draft an ordinary conversation, titled
+        // as `start_conversation` titles one (ADR-0068, decision 4).
+        if summary.draft {
+            let mut title = title_from_message(&input.text);
+            if title.is_empty()
+                && let Some(first) = images.first()
+            {
+                title = title_from_message(&first.view.name);
+            }
+            changes.push(Change::Undraft { title });
+        }
         // Before the turn, so the run that answers it gathers from them.
-        let mut changes: Vec<Change> = named
-            .into_iter()
-            .map(|attachment| Change::Attach { attachment })
-            .collect();
+        changes.extend(
+            named
+                .into_iter()
+                .map(|attachment| Change::Attach { attachment }),
+        );
         changes.push(Change::StartTurn {
             turn_id: turn_id.clone(),
             user_part_id: self.inner.ids.part(),

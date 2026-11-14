@@ -146,7 +146,19 @@ impl Runtime {
             .project_conversations(&project)
             .await
             .map_err(store_failure)?;
-        let count = u32::try_from(conversations.len()).unwrap_or(u32::MAX);
+        // The owner counts the conversations of the list, which leaves out
+        // the project's draft (ADR-0068); the removal deletes it too.
+        let draft = self
+            .inner
+            .store
+            .draft_conversation(Some(&project), None)
+            .await
+            .map_err(store_failure)?;
+        let listed = conversations
+            .iter()
+            .filter(|conversation| Some(*conversation) != draft.as_ref())
+            .count();
+        let count = u32::try_from(listed).unwrap_or(u32::MAX);
         if count != input.conversations {
             return Err(ChatError::ProjectChanged {
                 conversations: count,
