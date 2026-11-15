@@ -817,6 +817,12 @@ mod tests {
             outcome: ToolOutcome::Edited {
                 path: "notes.md".to_owned(),
                 replacements: 1,
+                change: Some(crate::tools::FileChange {
+                    added: 1,
+                    removed: 1,
+                    hunks: Vec::new(),
+                    truncated: true,
+                }),
             },
             output: "Edited notes.md.".to_owned(),
             archives: Vec::new(),

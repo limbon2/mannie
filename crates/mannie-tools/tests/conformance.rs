@@ -35,6 +35,21 @@ use tempfile::TempDir;
 /// the part of each call.
 const CALL_PART: &str = "0199e0f2-0000-7000-c000-000000000001";
 
+/// The historical change carried by a successful file operation.
+fn saved_change(done: &Done) -> &mannie_types::tools::FileChange {
+    match &done.outcome {
+        ToolOutcome::Written {
+            change: Some(change),
+            ..
+        }
+        | ToolOutcome::Edited {
+            change: Some(change),
+            ..
+        } => change,
+        other => panic!("expected a saved file change, got {other:?}"),
+    }
+}
+
 /// A workspace in a temporary folder, a store and the system tools.
 struct Harness {
     _folder: TempDir,
@@ -910,14 +925,12 @@ async fn write_file_creates_a_file_and_the_folders_above_it() {
         fs::read_to_string(harness.path("src/new/mod.rs")).unwrap(),
         "pub fn a() {}\n"
     );
-    assert_eq!(
-        done.outcome,
-        ToolOutcome::Written {
-            path: harness.text("src/new/mod.rs"),
-            created: true,
-            bytes: 14
-        }
+    assert!(
+        matches!(&done.outcome, ToolOutcome::Written { path, created: true, bytes: 14, .. } if *path == harness.text("src/new/mod.rs"))
     );
+    let change = saved_change(&done);
+    assert_eq!((change.added, change.removed), (1, 0));
+    assert_eq!(change.hunks[0].lines[0].text, "pub fn a() {}");
     assert!(
         done.output
             .contains(&format!("Revision: {}", revision_of(b"pub fn a() {}\n"))),
@@ -980,14 +993,13 @@ async fn write_file_replaces_only_the_revision_it_names() {
         fs::read_to_string(harness.path("notes.txt")).unwrap(),
         "new\n"
     );
-    assert_eq!(
-        done.outcome,
-        ToolOutcome::Written {
-            path: harness.text("notes.txt"),
-            created: false,
-            bytes: 4
-        }
+    assert!(
+        matches!(&done.outcome, ToolOutcome::Written { path, created: false, bytes: 4, .. } if *path == harness.text("notes.txt"))
     );
+    let change = saved_change(&done);
+    assert_eq!((change.added, change.removed), (1, 1));
+    assert_eq!(change.hunks[0].lines[0].text, "old");
+    assert_eq!(change.hunks[0].lines[1].text, "new");
 }
 
 #[tokio::test]
@@ -1053,6 +1065,105 @@ async fn write_file_refuses_large_content_and_read_only_files() {
 }
 
 #[tokio::test]
+async fn saved_file_changes_preserve_encoding_and_survive_later_writes() {
+    let harness = Harness::new();
+    let fixtures: &[(&str, &[u8], &str)] = &[
+        ("utf8.txt", b"\xef\xbb\xbfhi\n", "ok\n"),
+        ("utf16le.txt", b"\xff\xfeh\x00i\x00\n\x00", "ok\n"),
+        ("utf16be.txt", b"\xfe\xff\x00h\x00i\x00\n", "ok\n"),
+        ("crlf.txt", b"hi\r\n", "ok\r\n"),
+    ];
+    for (path, before, content) in fixtures {
+        harness.file(path, before);
+        let done = harness
+            .done(
+                "write_file",
+                json!({
+                    "path": path, "content": content, "expected_revision": revision_of(before),
+                }),
+            )
+            .await;
+        let change = saved_change(&done);
+        assert_eq!((change.added, change.removed), (1, 1));
+        assert_eq!(change.hunks[0].lines[0].text, "hi");
+        assert_eq!(change.hunks[0].lines[1].text, "ok");
+        let after = fs::read(harness.path(path)).unwrap();
+        let unchanged = harness
+            .done(
+                "write_file",
+                json!({
+                    "path": path, "content": "ok\n", "expected_revision": revision_of(&after),
+                }),
+            )
+            .await;
+        assert_eq!(
+            (
+                saved_change(&unchanged).added,
+                saved_change(&unchanged).removed
+            ),
+            (0, 0)
+        );
+        harness.file(path, "changed externally");
+        assert_eq!(saved_change(&done).hunks[0].lines[1].text, "ok");
+    }
+}
+
+#[tokio::test]
+async fn write_file_preserves_a_carriage_return_before_crlf() {
+    let harness = Harness::new();
+    let before = b"old\r\n";
+    harness.file("crlf.txt", before);
+    let done = harness
+        .done(
+            "write_file",
+            json!({
+                "path": "crlf.txt", "content": "new\r\r\n", "expected_revision": revision_of(before),
+            }),
+        )
+        .await;
+
+    assert_eq!(fs::read(harness.path("crlf.txt")).unwrap(), b"new\r\r\n");
+    let change = saved_change(&done);
+    assert_eq!((change.added, change.removed), (1, 1));
+    assert_eq!(change.hunks[0].lines[1].text, "new\r");
+}
+
+#[tokio::test]
+async fn saved_file_changes_account_for_crlf_formed_by_an_edit() {
+    let harness = Harness::new();
+    let before = b"line\r\n";
+    harness.file("crlf.txt", before);
+    let done = harness
+        .done(
+            "edit_file",
+            json!({
+                "path": "crlf.txt", "expected_revision": revision_of(before),
+                "edits": [{ "old_text": "line", "new_text": "line\r" }],
+            }),
+        )
+        .await;
+
+    assert_eq!(fs::read(harness.path("crlf.txt")).unwrap(), before);
+    let change = saved_change(&done);
+    assert_eq!((change.added, change.removed), (0, 0));
+    assert!(change.hunks.is_empty());
+}
+
+#[tokio::test]
+async fn saved_file_changes_count_lines_once_across_multiple_replacements() {
+    let harness = Harness::new();
+    let before = "fn alpha() { beta(); }\n";
+    harness.file("multi.rs", before);
+    let done = harness.done("edit_file", json!({
+        "path": "multi.rs", "expected_revision": revision_of(before.as_bytes()),
+        "edits": [{"old_text": "alpha", "new_text": "gamma"}, {"old_text": "beta", "new_text": "delta"}],
+    })).await;
+    let change = saved_change(&done);
+    assert_eq!((change.added, change.removed), (1, 1));
+    assert_eq!(change.hunks[0].lines[1].text, "fn gamma() { delta(); }");
+}
+
+#[tokio::test]
 async fn edit_file_replaces_exact_text_and_names_the_new_revision() {
     let harness = Harness::new();
     let old = "fn main() {\n    old();\n}\n";
@@ -1071,13 +1182,13 @@ async fn edit_file_replaces_exact_text_and_names_the_new_revision() {
 
     let new = "fn main() {\n    new();\n}\n";
     assert_eq!(fs::read_to_string(harness.path("main.rs")).unwrap(), new);
-    assert_eq!(
-        done.outcome,
-        ToolOutcome::Edited {
-            path: harness.text("main.rs"),
-            replacements: 1
-        }
+    assert!(
+        matches!(&done.outcome, ToolOutcome::Edited { path, replacements: 1, .. } if *path == harness.text("main.rs"))
     );
+    let change = saved_change(&done);
+    assert_eq!((change.added, change.removed), (1, 1));
+    assert_eq!(change.hunks[0].lines[1].text, "    old();");
+    assert_eq!(change.hunks[0].lines[2].text, "    new();");
     assert!(
         done.output
             .contains(&format!("Revision: {}", revision_of(new.as_bytes()))),

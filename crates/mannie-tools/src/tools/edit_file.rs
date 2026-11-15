@@ -10,6 +10,7 @@ use super::change::{locked, path_of, pin_existing, refuse_read_only, unchanged};
 use super::read_file::{MAX_TEXT_FILE_BYTES, not_text, too_large};
 use super::{existing_file, path_access};
 use crate::digest::revision;
+use crate::file_changes::compare;
 use crate::paths::{FinalLink, for_change};
 use crate::results::count;
 use crate::text::{FileText, decode};
@@ -103,7 +104,9 @@ fn edit(target: &Access, input: &Input) -> Result<Done, ToolFailure> {
     }
     let old = decode(&existing.bytes).map_err(|reason| not_text(reason, path_text.clone()))?;
     let text = apply(&old.text, &input.edits, old.crlf)?;
-    let bytes = FileText { text, ..old }.encode();
+    let new = FileText { text, ..old };
+    let change = compare(&old.text, &new.text_for_write());
+    let bytes = new.encode();
     let mut draft = folder.draft(&name)?;
     draft.write(&bytes)?;
     folder.commit_replace(draft, &name, &existing)?;
@@ -116,6 +119,7 @@ fn edit(target: &Access, input: &Input) -> Result<Done, ToolFailure> {
         outcome: ToolOutcome::Edited {
             path: path_text,
             replacements: count(input.edits.len()),
+            change: Some(change),
         },
         archives: Vec::new(),
         images: Vec::new(),

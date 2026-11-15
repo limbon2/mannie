@@ -6,6 +6,7 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ### Added
 
+- Show added and removed line counts and expandable historical diffs for file writes and edits in conversations.
 - Open files and folders from agent replies in the system file manager, by clicking a Markdown link or inline-code path, or through its Open in context submenu.
 
 ### Changed
@@ -14,6 +15,7 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ### Fixed
 
+- Keep large file diffs within their own scroll area so expanding them does not jump the conversation into blank space.
 - Keep bare file URL prefixes in agent replies as inline code instead of links that report path errors.
 
 ## 0.8.1 - 2026-11-14

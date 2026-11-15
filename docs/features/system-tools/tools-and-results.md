@@ -4,7 +4,7 @@
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Status       | Building                                                                                                                                                                                                                                                                                                                             |
 | Milestone    | M2                                                                                                                                                                                                                                                                                                                                   |
-| Last updated | 2026-10-24                                                                                                                                                                                                                                                                                                                           |
+| Last updated | 2026-11-15                                                                                                                                                                                                                                                                                                                           |
 | Part of      | [System tools](README.md)                                                                                                                                                                                                                                                                                                            |
 | Related      | [Tools](../../architecture/tools.md), [ADR-0013](../../adr/0013-journal-every-side-effect.md), [Operations and approvals](operations-and-approvals.md), [Commands](commands.md), [ADR-0044](../../adr/0044-let-tool-results-carry-images-to-the-model.md), [Agent runtime](../../architecture/agent-runtime.md#7-context-management) |
 
@@ -115,6 +115,12 @@ A call that never ran says why: `unknown_tool`, `invalid_arguments` (with what t
 
 ### Data
 
+Successful `write_file` and `edit_file` outcomes carry an optional `change` for the transcript: added and removed line totals, unified hunks with old and new line numbers, and markers for missing final newlines and shortened previews. Older outcomes omit it and keep their earlier presentation. It is stored with the journal record and travels through the existing view and worker link; no migration or additional file read is needed. The model still reads the existing result text.
+
+The tools compare the decoded text before and after the authorized change, accounting for the encoding and line endings they preserve. The comparison is published only after the atomic write succeeds. Creation compares against empty text; unchanged text has zero additions and removals. Later edits never change a saved comparison.
+
+The Rust helper uses `similar` 3.2.1 with its standard text features, under Apache-2.0 ([manifest](https://docs.rs/crate/similar/3.2.1/source/Cargo.toml), verified 2026-11-15). Myers comparison has a 200 ms deadline and three lines of context. A deadline may produce coarser operations; the totals and hunks describe those same operations. The preview keeps at most 500 lines and 64 KiB of serialized change data, including JSON escaping. Counts cover the complete comparison. Omitted lines and shortened line text are marked, with truncation at character boundaries.
+
 Migration `0009` creates `runtime_archives`: the conversation, the tool call's part, the name of the output (such as `stdout`), its text, and its size in bytes and lines. A foreign key to `runtime_parts` deletes an archive with its part, and so with its conversation.
 
 ### Threat notes
@@ -134,6 +140,9 @@ Migration `0009` creates `runtime_archives`: the conversation, the tool call's p
 | Refused paths | UNC, device and verbatim paths, streams, reserved names, trailing dots and spaces, paths on the current drive | None beyond the rules for links                                   |
 
 ## Acceptance
+
+- File change tests cover creation, replacement, multiple edits on one line, unchanged text, repeated lines, Unicode, byte order marks, CRLF, missing final newlines and both preview limits. Counts cover omitted content.
+- The journal and the worker link preserve saved comparisons. Historical outcomes without a comparison still read. A failed operation carries no successful change.
 
 - Every tool passes the conformance suite on Windows and Linux against real folders: each success path and each error code, encodings with their byte order marks and line endings, pages, the result limit and archived outputs.
 - Refused paths are refused by a check of their text alone, before any access to the file system (unit tests).

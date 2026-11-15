@@ -215,6 +215,25 @@ fn the_fields_that_a_later_version_adds_are_ignored() {
 }
 
 #[test]
+fn saved_file_changes_cross_the_link_with_earlier_turns() {
+    let mut fixture = load(NEWEST, "earlier-turns.json").unwrap();
+    let outcome = fixture
+        .pointer_mut("/turns/0/parts/1/content/call/result/outcome")
+        .unwrap();
+    outcome["change"] = serde_json::json!({
+        "added": 1, "removed": 0, "truncated": false,
+        "hunks": [{ "oldStart": 0, "oldLines": 0, "newStart": 1, "newLines": 1,
+            "lines": [{ "kind": "added", "old": null, "new": 1,
+                "text": "built", "noNewline": false, "textTruncated": false }]
+        }]
+    });
+    let typed: EarlierTurns = serde_json::from_value(fixture.clone()).unwrap();
+    let wire = mannie_link::codec::to_json(&typed).unwrap();
+    let read: EarlierTurns = mannie_link::codec::from_json(&wire, "earlier turns").unwrap();
+    assert_eq!(serde_json::to_value(read).unwrap(), fixture);
+}
+
+#[test]
 fn every_fixture_is_a_document_that_this_test_knows() {
     let known: BTreeSet<&str> = documents()
         .iter()

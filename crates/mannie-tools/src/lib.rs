@@ -19,6 +19,7 @@ pub mod browser;
 mod ceiling;
 mod digest;
 mod environment;
+mod file_changes;
 mod identity;
 mod lock;
 mod mentions;

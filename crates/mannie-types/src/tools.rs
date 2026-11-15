@@ -15,6 +15,7 @@ mod call;
 mod commands;
 mod database;
 mod external;
+mod file_change;
 mod outcome;
 mod program;
 mod question;
@@ -49,6 +50,7 @@ pub use database::{
     StatementClass, WriteAuthority, WriteOrigin,
 };
 pub use external::{ToolHint, ToolServerEndpoint};
+pub use file_change::{FileChange, FileChangeHunk, FileChangeLine, FileChangeLineKind};
 pub use outcome::{
     ArchiveRef, CitedItemView, CommandEnding, EntryKind, MAX_TOOL_IMAGE_BYTES, MAX_TOOL_IMAGE_SIDE,
     MAX_TOOL_IMAGES, PathRefusal, SkillFileRefusal, ToolFailure, ToolImageRef, ToolOutcome,

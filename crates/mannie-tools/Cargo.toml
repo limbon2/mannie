@@ -24,6 +24,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 # Revisions of files and digests of accesses.
 sha2 = { workspace = true }
+similar = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 # The times of files, in the results that the model reads.

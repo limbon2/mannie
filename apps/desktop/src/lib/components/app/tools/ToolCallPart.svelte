@@ -24,6 +24,7 @@
     toolKindCall,
   } from '#lib/utils/tool-kinds.js';
   import { commandState, isRunning, startedCommand } from '#lib/utils/tools-background.js';
+  import { savedFileChange } from '#lib/utils/tools-file-changes.js';
   import {
     notRunMessage,
     toolFailureMessage,
@@ -37,6 +38,8 @@
   import QuestionCard from './QuestionCard.svelte';
   import ToolApproval from './ToolApproval.svelte';
   import ToolCallDetails from './ToolCallDetails.svelte';
+  import ToolFileChange from './ToolFileChange.svelte';
+  import ToolFileSummary from './ToolFileSummary.svelte';
 
   // A tool call in the reply (docs/features/system-tools/tool-activity.md,
   // tool calls in the reply): one row, like the row of reasoning, with the
@@ -78,6 +81,8 @@
   const now = $derived(runsCommand || backgroundRuns ? secondClock.now : 0);
   const summary = $derived(call === null ? '' : lineOf(call));
   const activity = $derived(call?.activity ?? null);
+  const file = $derived(savedFileChange(call));
+  const showsSummary = $derived(activity !== null || file !== null);
   const Icon = $derived(kind?.icon ?? toolIcon(call?.tool ?? ''));
   const request = $derived(call?.status === 'awaiting_approval' ? call.request : null);
   const asks = $derived(call?.status === 'awaiting_answer');
@@ -188,7 +193,9 @@
             {:else}
               <Icon class={[status.tone === 'failed' && 'text-destructive']} data-icon="inline-start" />
             {/if}
-            {#if activity === null}
+            {#if file !== null}
+              <ToolFileSummary {file} />
+            {:else if activity === null}
               <span class="truncate">{summary}</span>
             {:else}
               <span class="truncate" data-content dir="auto">{activity}</span>
@@ -209,7 +216,13 @@
         {/snippet}
       </Collapsible.Trigger>
       <Collapsible.Content class="ms-3 mt-1 flex min-w-0 flex-col gap-2 border-s-2 ps-3">
-        {#if activity !== null}
+        {#if file !== null}
+          <ToolFileChange {file} />
+          {#if activity !== null}
+            <p class="text-sm wrap-anywhere" data-content dir="auto">{activity}</p>
+          {/if}
+        {/if}
+        {#if showsSummary}
           <p class="text-sm wrap-anywhere">{summary}</p>
         {/if}
         {#if explanation !== null}
