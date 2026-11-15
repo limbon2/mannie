@@ -11,6 +11,8 @@ import {
   addProject,
   callMessage,
   clickWithText,
+  COMPOSER,
+  LATEST_MAIN_TURN,
   sendMessage,
   startConversationIn,
   startNewConversation,
@@ -22,6 +24,7 @@ import { axeViolations, waitForAnimations, waitForApp } from '../support/page.ts
 import { MODELS, type ProviderServer, startProviderServer } from '../support/provider-server.ts';
 
 const LINK = 'main [data-file-link]';
+const CHILD_LINK = '[data-side-panels] [role="tabpanel"]:not([hidden]) [data-file-link]';
 
 describe('file links', () => {
   let provider: ProviderServer;
@@ -133,6 +136,7 @@ describe('file links', () => {
     await browser.waitUntil(async () => (await $$('[data-slot="context-menu-content"]')).length === 0);
     await expect($('//main//button[@data-file-link and normalize-space(.)="Folder"]')).toBeFocused();
     expect(await openedFileLinks()).toHaveLength(5);
+    await browser.releaseActions();
   });
 
   it('reports missing and deleted paths without recording another action', async () => {
@@ -159,19 +163,33 @@ describe('file links', () => {
     await deleteProviderProfiles();
     await addProfile(provider.baseUrl, { model: MODELS.tools, name: 'File link tools', useTools: true });
     await startConversationIn(project);
-    await sendMessage(
-      callMessage('start_task', {
-        agent: 'explore',
-        background: false,
-        instruction: callMessage('read_file', { path: 'child.md' }),
-        title: 'Read the reference',
-      }),
+    const script = callMessage('start_task', {
+      agent: 'explore',
+      background: false,
+      instruction: callMessage('read_file', { path: 'child.md' }),
+      title: 'Read the reference',
+    });
+    const box = await $(COMPOSER);
+    // WebKit's keyboard driver can change underscores in the provider script.
+    await browser.execute(
+      (selector: string, text: string) => {
+        const composer = document.querySelector<HTMLTextAreaElement>(selector);
+        if (composer === null) {
+          throw new Error('the page has no message box');
+        }
+        composer.value = text;
+        composer.dispatchEvent(new Event('input', { bubbles: true }));
+      },
+      COMPOSER,
+      script,
     );
+    expect(await box.getValue()).toBe(script);
+    await $('[data-composer] button[type="submit"]').click();
     await waitForCompleteReply();
-    const open = await $('main [data-task-open]');
+    const open = await $(`${LATEST_MAIN_TURN} [data-task-open]`);
     await open.scrollIntoView({ block: 'center' });
     await open.click();
-    await browser.waitUntil(async () => (await $$('[data-side-panels] [data-file-link]')).length > 0);
+    await $(CHILD_LINK).waitForDisplayed({ timeout: 10_000 });
     const panelAddress = new URL(await browser.getUrl());
     for (const parameter of ['panel', 'shown-panel']) {
       for (const value of panelAddress.searchParams.getAll(parameter)) {
@@ -181,7 +199,7 @@ describe('file links', () => {
     await browser.url(generalAddress.href);
     await waitForApp();
     await expect($('//main//button[@data-file-link and normalize-space(.)="Relative"]')).toBeDisplayed();
-    await clickWithText('[data-side-panels] [data-file-link]', 'Child file');
+    await clickWithText(CHILD_LINK, 'Child file');
     await actions(6);
     expect((await openedFileLinks())[5]).toMatchObject({ path: realpathSync(source), kind: 'file' });
     await $('[data-side-panel-close]').click();
