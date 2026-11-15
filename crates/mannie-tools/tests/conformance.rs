@@ -1146,7 +1146,10 @@ async fn saved_file_changes_account_for_crlf_formed_by_an_edit() {
     assert_eq!(fs::read(harness.path("crlf.txt")).unwrap(), before);
     let change = saved_change(&done);
     assert_eq!((change.added, change.removed), (0, 0));
-    assert!(change.hunks.is_empty());
+    assert_eq!(
+        change.hunks,
+        Vec::<mannie_types::tools::FileChangeHunk>::new()
+    );
 }
 
 #[tokio::test]
