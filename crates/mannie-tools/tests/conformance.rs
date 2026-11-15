@@ -63,6 +63,7 @@ impl Harness {
         let folder = tempfile::tempdir().unwrap();
         let workspace = folder.path().join("work");
         fs::create_dir(&workspace).unwrap();
+
         let root = PathBuf::from(mannie_tools::canonical_folder(&workspace).unwrap());
         let clock: Arc<dyn Clock> = Arc::new(SystemClock);
         let options = StoreOptions::new(folder.path().join("backups"), clock);
@@ -95,6 +96,7 @@ impl Harness {
     /// A path in the workspace.
     fn path(&self, relative: &str) -> PathBuf {
         let mut path = self.root.clone();
+
         for name in relative.split('/') {
             path.push(name);
         }
@@ -118,6 +120,7 @@ impl Harness {
 
     async fn prepare(&self, tool: &str, arguments: &Value) -> Result<Prepared, PrepareError> {
         let tool = self.registry.get(tool).unwrap();
+
         tool.prepare(self.context.clone(), arguments.to_string())
             .await
     }
@@ -131,6 +134,7 @@ impl Harness {
         stop: StopSignal,
     ) -> Done {
         let tool = self.registry.get(tool).unwrap();
+
         tool.execute(Execution {
             context: self.context.clone(),
             arguments: arguments.to_string(),
@@ -277,6 +281,7 @@ async fn list_directory_lists_entries_sorted_by_name_in_pages() {
 #[tokio::test]
 async fn list_directory_stays_within_the_result_limit() {
     let harness = with_small_limit(Harness::new(), 4096);
+
     for index in 0..400 {
         harness.file(&format!("file-{index:03}.txt"), "x");
     }
@@ -525,6 +530,7 @@ async fn find_files_matches_names_and_paths_and_skips_ignored_files() {
 #[tokio::test]
 async fn find_files_pages_its_matches() {
     let harness = Harness::new();
+
     for index in 0..5 {
         harness.file(&format!("file-{index}.txt"), "");
     }
@@ -1035,6 +1041,7 @@ async fn write_file_keeps_the_encoding_and_the_line_endings() {
 async fn write_file_refuses_large_content_and_read_only_files() {
     let harness = Harness::new();
     harness.file("locked.txt", "locked");
+
     let path = harness.path("locked.txt");
     let mut permissions = fs::metadata(&path).unwrap().permissions();
     permissions.set_readonly(true);
@@ -1073,8 +1080,10 @@ async fn saved_file_changes_preserve_encoding_and_survive_later_writes() {
         ("utf16be.txt", b"\xfe\xff\x00h\x00i\x00\n", "ok\n"),
         ("crlf.txt", b"hi\r\n", "ok\r\n"),
     ];
+
     for (path, before, content) in fixtures {
         harness.file(path, before);
+
         let done = harness
             .done(
                 "write_file",
@@ -1113,6 +1122,7 @@ async fn write_file_preserves_a_carriage_return_before_crlf() {
     let harness = Harness::new();
     let before = b"old\r\n";
     harness.file("crlf.txt", before);
+
     let done = harness
         .done(
             "write_file",
@@ -1133,6 +1143,7 @@ async fn saved_file_changes_account_for_crlf_formed_by_an_edit() {
     let harness = Harness::new();
     let before = b"line\r\n";
     harness.file("crlf.txt", before);
+
     let done = harness
         .done(
             "edit_file",
@@ -1157,6 +1168,7 @@ async fn saved_file_changes_count_lines_once_across_multiple_replacements() {
     let harness = Harness::new();
     let before = "fn alpha() { beta(); }\n";
     harness.file("multi.rs", before);
+
     let done = harness.done("edit_file", json!({
         "path": "multi.rs", "expected_revision": revision_of(before.as_bytes()),
         "edits": [{"old_text": "alpha", "new_text": "gamma"}, {"old_text": "beta", "new_text": "delta"}],
@@ -1205,6 +1217,7 @@ async fn a_failing_edit_changes_nothing() {
     let harness = Harness::new();
     let text = "a\nb\na\n";
     harness.file("list.txt", text);
+
     let revision = revision_of(text.as_bytes());
     let edit =
         |edits: Value| json!({ "path": "list.txt", "expected_revision": revision, "edits": edits });
@@ -1389,6 +1402,7 @@ async fn move_path_moves_files_and_folders_and_never_replaces() {
             json!({ "source": "a.txt", "destination": "b.txt" }),
         )
         .await;
+
     let folder = harness
         .done(
             "move_path",
@@ -1451,6 +1465,7 @@ async fn delete_path_deletes_files_folders_and_links() {
     let folder = harness
         .done("delete_path", json!({ "path": "build", "recursive": true }))
         .await;
+
     harness.done("delete_path", json!({ "path": "link" })).await;
 
     assert!(!harness.path("a.txt").exists());
@@ -1500,6 +1515,7 @@ async fn delete_path_deletes_files_folders_and_links() {
 async fn a_file_replaced_after_the_authorization_is_not_changed() {
     let harness = Harness::new();
     harness.file("notes.txt", "old");
+
     let arguments =
         json!({ "path": "notes.txt", "content": "new", "expected_revision": revision_of(b"old") });
     let prepared = harness.prepare("write_file", &arguments).await.unwrap();
@@ -1507,6 +1523,7 @@ async fn a_file_replaced_after_the_authorization_is_not_changed() {
     // Another program replaces the file with one of the same content.
     harness.file("other.txt", "old");
     fs::rename(harness.path("other.txt"), harness.path("notes.txt")).unwrap();
+
     let done = harness
         .execute(
             "write_file",
@@ -1528,11 +1545,13 @@ async fn a_folder_swapped_for_a_link_after_the_authorization_is_not_changed() {
     let harness = Harness::new();
     harness.folder("project");
     harness.folder("elsewhere");
+
     let arguments = json!({ "path": "project/new.txt", "content": "x" });
     let prepared = harness.prepare("write_file", &arguments).await.unwrap();
 
     fs::rename(harness.path("project"), harness.path("project-old")).unwrap();
     link_folder(&harness.path("project"), &harness.path("elsewhere"));
+
     let done = harness
         .execute(
             "write_file",
@@ -1555,10 +1574,12 @@ async fn a_folder_swapped_for_a_link_after_the_authorization_is_not_changed() {
 async fn a_folder_whose_content_changed_is_not_deleted() {
     let harness = Harness::new();
     harness.file("build/one.txt", "1");
+
     let arguments = json!({ "path": "build", "recursive": true });
     let prepared = harness.prepare("delete_path", &arguments).await.unwrap();
 
     harness.file("build/added.txt", "2");
+
     let done = harness
         .execute(
             "delete_path",
@@ -1615,6 +1636,7 @@ async fn run_command_reports_the_exit_code_and_both_streams() {
 async fn run_command_runs_in_the_working_directory_with_unicode_output() {
     let harness = Harness::new();
     harness.folder("sub");
+
     let command = shell(
         "(Get-Location).Path; Write-Output 'Grüße, мир'",
         "pwd; printf 'Grüße, мир\\n'",
@@ -1664,6 +1686,7 @@ async fn run_command_receives_only_allowed_variables() {
         .collect();
     source.push(("MANNIE_TEST_SECRET".into(), "planted-value".into()));
     harness.context.environment = Arc::new(CommandEnvironment::new(&[], source));
+
     let command = shell(
         "Get-ChildItem env: | ForEach-Object { $_.Name + '=' + $_.Value }",
         "env",
@@ -1798,6 +1821,7 @@ async fn stop_ends_a_command_within_a_second() {
     let stopping = async {
         // PowerShell takes a while to start; the stop comes once it runs.
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
         let stopped_at = std::time::Instant::now();
         stopper.stop(StopReason::Stopped);
         stopped_at
@@ -1889,6 +1913,7 @@ async fn move_to_project_moves_a_general_conversation_into_the_project_it_names(
         all: Arc::from(vec![project.clone()]),
         moves: Arc::<RecordedMoves>::clone(&moves),
     };
+
     let arguments = json!({ "project": "Mannie" });
 
     let prepared = harness
@@ -1907,6 +1932,7 @@ async fn move_to_project_moves_a_general_conversation_into_the_project_it_names(
         .failure("move_to_project", json!({ "project": "elsewhere" }))
         .await;
     harness.context.projects.current = Some(project.clone());
+
     let moved_again = harness.failure("move_to_project", arguments).await;
 
     assert_eq!(
@@ -1995,6 +2021,7 @@ impl BackgroundCommands for ScriptedCommands {
             request.spec.text,
             request.spec.working_directory,
         ));
+
         let number = u32::try_from(starts.len()).unwrap();
         Box::pin(async move { Ok(Started { number }) })
     }
@@ -2005,6 +2032,7 @@ impl BackgroundCommands for ScriptedCommands {
         _stop: StopSignal,
     ) -> BoxFuture<'static, Result<CommandRead, ToolFailure>> {
         self.reads.lock().unwrap().push(request);
+
         let answer = self.read.lock().unwrap().clone().expect("a scripted read");
         Box::pin(async move { answer })
     }
@@ -2015,6 +2043,7 @@ impl BackgroundCommands for ScriptedCommands {
         number: u32,
     ) -> BoxFuture<'static, Result<CommandStop, ToolFailure>> {
         self.stops.lock().unwrap().push((conversation, number));
+
         let answer = self.stop.lock().unwrap().clone().expect("a scripted stop");
         Box::pin(async move { answer })
     }
@@ -2361,6 +2390,7 @@ async fn stop_command_has_no_accesses_and_says_how_the_command_ended() {
         unread: 14,
         remote: false,
     }));
+
     let arguments = json!({ "command": 3 });
 
     let prepared = harness.prepare("stop_command", &arguments).await.unwrap();
@@ -2431,6 +2461,7 @@ impl Harness {
         // The home folder lies beside the workspace, outside it.
         let home = self.root.parent().expect("the workspace has a parent");
         let folder = home.join("home").join(".agents").join("skills").join(name);
+
         for (relative, content) in files {
             let path = folder.join(relative);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -2445,6 +2476,7 @@ impl Harness {
         self.registry
             .register(mannie_tools::read_skill_tool())
             .unwrap();
+
         let shelved = skills
             .iter()
             .map(|(name, folder, is_on)| mannie_tools::ShelvedSkill {
@@ -2606,6 +2638,7 @@ async fn read_skill_refuses_unknown_skills_paths_that_leave_the_skill_and_secret
         ],
     );
     fs::write(folder.parent().unwrap().join("outside.md"), "Outside.\n").unwrap();
+
     let harness = harness.with_skills(&[("pdf", &folder, true)]);
     let read = |path: Value| json!({ "name": "pdf", "path": path, "offset": null, "limit": null });
 

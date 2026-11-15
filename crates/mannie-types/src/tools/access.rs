@@ -112,23 +112,28 @@ impl BrowserAccess {
 
     /// An access names an exact canonical origin and opaque, bounded IDs.
     pub fn is_canonical(&self) -> bool {
-        self.origin.len() <= 512
-            && url::Url::parse(&self.origin).is_ok_and(|url| {
-                matches!(url.scheme(), "http" | "https")
-                    && url.origin().ascii_serialization() == self.origin
-            })
+        if self.origin.len() > 512 {
+            return false;
+        }
+
+        let canonical_origin = url::Url::parse(&self.origin).is_ok_and(|url| {
+            let exact_origin = url.origin().ascii_serialization() == self.origin;
+            matches!(url.scheme(), "http" | "https") && exact_origin
+        });
+        let valid_credential = match (&self.credential, self.action) {
+            (Some(credential), BrowserAction::FillCredential) => {
+                let valid_label = !credential.label.trim().is_empty()
+                    && credential.label.len() <= 80
+                    && !credential.label.chars().any(char::is_control);
+                is_browser_id(&credential.reference) && valid_label
+            }
+            (None, BrowserAction::FillCredential) | (Some(_), _) => false,
+            (None, _) => true,
+        };
+        canonical_origin
             && is_browser_id(&self.session)
             && is_browser_id(&self.revision)
-            && match (&self.credential, self.action) {
-                (Some(credential), BrowserAction::FillCredential) => {
-                    is_browser_id(&credential.reference)
-                        && !credential.label.trim().is_empty()
-                        && credential.label.len() <= 80
-                        && !credential.label.chars().any(char::is_control)
-                }
-                (None, BrowserAction::FillCredential) | (Some(_), _) => false,
-                (None, _) => true,
-            }
+            && valid_credential
     }
 }
 
@@ -155,11 +160,15 @@ impl BrowserControlAccess {
 }
 
 fn is_browser_id(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 256
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
+    let fits = !value.is_empty() && value.len() <= 256;
+
+    if !fits {
+        return false;
+    }
+
+    value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
 }
 
 /// One access of an operation. Authorization decides on accesses, never on
@@ -459,6 +468,7 @@ mod tests {
             access.origin = invalid.to_owned();
             assert!(!access.is_canonical(), "{invalid}");
         }
+
         access.origin = "https://site.example".to_owned();
         access.revision = "input value".to_owned();
         assert!(!access.is_canonical());

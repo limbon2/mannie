@@ -121,7 +121,7 @@ function groupOfVariable(declaration) {
  * @param {any} statement A top-level statement of the instance script.
  * @returns {string}
  */
-function groupOf(statement) {
+export function svelteStatementGroup(statement) {
   const isExport = statement.type === 'ExportNamedDeclaration';
   const node = isExport && statement.declaration ? statement.declaration : statement;
   if (TYPE_DECLARATIONS.has(node.type)) {
@@ -164,9 +164,7 @@ function isModuleScript(element) {
 export const svelteScriptOrder = {
   meta: {
     type: 'suggestion',
-    docs: {
-      description: 'Enforce one order of the statements in Svelte component scripts',
-    },
+    docs: { description: 'Enforce one order of the statements in Svelte component scripts' },
     messages: {
       order:
         'Move this {{item}} above the {{group}}. A component script reads: imports, types, props, state, ' +
@@ -200,7 +198,7 @@ export const svelteScriptOrder = {
         let reachedIndex = -1;
         let hasOtherStatements = false;
         for (const statement of element.body) {
-          const group = groupOf(statement);
+          const group = svelteStatementGroup(statement);
           if (group === 'other') {
             if (reachedIndex === effectsIndex) {
               report(statement, group, 'effects');

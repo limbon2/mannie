@@ -109,6 +109,7 @@ implicit_hasher = "allow"
 infinite_loop = "warn"
 # Ignoring a Result needs a handled error or a stated reason.
 let_underscore_must_use = "warn"
+literal_string_with_formatting_args = "warn"
 lossy_float_literal = "warn"
 # Errors keep their source.
 map_err_ignore = "warn"

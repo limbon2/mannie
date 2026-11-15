@@ -4,9 +4,9 @@
 // description. Paths and commands are content: they enter a message as its
 // arguments and render as text.
 import type {
-  Access,
   AccessMode,
   ApprovalReason,
+  BrowserAction,
   DatabaseHome,
   Decision,
   DiscardedWork,
@@ -492,7 +492,7 @@ export function accessModeLabel(mode: AccessMode): string {
 }
 
 /** What the agent will do on the browser site. */
-export function browserActionLabel(action: Extract<Access, { kind: 'browser_action' }>['action']): string {
+export function browserActionLabel(action: BrowserAction): string {
   switch (action) {
     case 'continue_navigation': {
       return m.tools_access_browser_continue_navigation();
@@ -718,9 +718,8 @@ function toolHintPhrase(hint: ToolHint): string {
  */
 export function toolHintsMessage(hints: readonly ToolHint[]): string {
   const phrases = hints.map((hint) => toolHintPhrase(hint));
-  return m.tools_access_external_hints({
-    hints: new Intl.ListFormat(undefined, { type: 'conjunction' }).format(phrases),
-  });
+  const joined = new Intl.ListFormat(undefined, { type: 'conjunction' }).format(phrases);
+  return m.tools_access_external_hints({ hints: joined });
 }
 
 /** Where a rule of terminals applies: the terminals of one shell on this machine, or of one host (ADR-0053, decision 5). */
@@ -755,13 +754,14 @@ export function grantScopeMessage(scope: GrantScope): string {
     return m.tools_grant_remote_command({ command: scope.command, endpoint: scope.endpoint, host: scope.label });
   }
   if (scope.kind === 'terminal_command') {
-    return scope.host.kind === 'this_machine'
-      ? m.tools_grant_terminal_command_here({ command: scope.command, shell: scope.host.shell })
-      : m.tools_grant_terminal_command({
-          command: scope.command,
-          endpoint: scope.host.endpoint,
-          host: scope.host.label,
-        });
+    if (scope.host.kind === 'this_machine') {
+      return m.tools_grant_terminal_command_here({ command: scope.command, shell: scope.host.shell });
+    }
+    return m.tools_grant_terminal_command({
+      command: scope.command,
+      endpoint: scope.host.endpoint,
+      host: scope.host.label,
+    });
   }
   if (scope.kind === 'program') {
     const run = programRunText([scope.name, ...scope.arguments]);

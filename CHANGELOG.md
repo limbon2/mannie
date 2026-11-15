@@ -4,6 +4,15 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+### Changed
+
+- Audit inline TypeScript object annotations and blank lines between Rust statement groups.
+- Audit blank lines between reactive state, ordinary mutable variables, and constants in Svelte scripts.
+- Audit blank lines between statement groups and expand object literals that mix inline callbacks with other properties.
+- Check compound Rust conditions, block nesting and string placeholders in the Rust lint workflow.
+- Check for blank lines between multiline sections in Svelte templates.
+- Add code readability checks to ESLint and a separate audit for stricter layout and Svelte handlers.
+
 ## 0.8.2 - 2026-11-15
 
 ### Added

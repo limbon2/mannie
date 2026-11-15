@@ -91,9 +91,11 @@ impl Tool for CommitTool {
         async move {
             let arguments: Value = serde_json::from_str(&call.arguments)
                 .map_err(|error| ToolRefusal::new(error.to_string()))?;
+
             let workspace = call
                 .workspace
                 .ok_or_else(|| ToolRefusal::new("The conversation has no workspace."))?;
+
             let texts = |key: &str| -> Vec<String> {
                 arguments[key]
                     .as_array()
@@ -106,6 +108,7 @@ impl Tool for CommitTool {
             let program = arguments["program"].as_str().unwrap_or_default();
             let mut run =
                 ProgramAccess::new(program, &workspace, texts("arguments")).with_state(STATE);
+
             for name in texts("hooks") {
                 run = run.with_effect(hook(&name));
             }
@@ -163,6 +166,7 @@ impl Setup {
             })
             .await
             .unwrap();
+
         let workspace = tempfile::tempdir().unwrap();
         let project = harness
             .runtime
@@ -439,7 +443,9 @@ async fn full_access_runs_a_program_without_asking() {
         &commit("git", &["push", "--force-with-lease"], &["pre-push"]),
     )]));
     setup.harness.model.push_reply(reply("Pushed."));
+
     let (conversation, run) = setup.start("OWNER: get ready").await;
+
     setup.harness.wait_for_run(&conversation, &run).await;
     setup
         .harness

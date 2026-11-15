@@ -177,8 +177,11 @@ pub(crate) fn offered_tools(
     let desktop = runtime.machine().assigned_agent.is_none();
     let can_offer =
         |entry: &PluginTool| (desktop || !browser_effect(entry.effect)) && offers(entry, agent);
+
     for registered in snapshot.items::<Tools>() {
-        if agent.gets_plugin(registered.plugin.as_str()) && can_offer(&registered.entry) {
+        let enabled = agent.gets_plugin(registered.plugin.as_str());
+
+        if enabled && can_offer(&registered.entry) {
             offered.push(adapted(
                 registered.plugin.as_str(),
                 registered.feature.as_ref().map(FeatureId::as_str),
@@ -191,13 +194,18 @@ pub(crate) fn offered_tools(
     }
     let fixed = fixed_names(&runtime.inner.tools.registry, snapshot);
     let mut seen: HashSet<&str> = HashSet::new();
+
     for set in snapshot.published() {
         for tool in set.tools.iter() {
             let name = tool.spec.name.as_str();
+
             if fixed.contains(name) || !seen.insert(name) {
                 continue;
             }
-            if agent.gets_plugin(set.plugin.as_str()) && can_offer(tool) {
+
+            let enabled = agent.gets_plugin(set.plugin.as_str());
+
+            if enabled && can_offer(tool) {
                 offered.push(adapted(
                     set.plugin.as_str(),
                     set.feature.as_ref().map(FeatureId::as_str),
@@ -277,12 +285,16 @@ pub(crate) fn kept_published(
     tools: Vec<PluginTool>,
 ) -> Vec<PluginTool> {
     let mut taken = fixed_names(registry, snapshot);
+
     for set in snapshot.published() {
-        if set.plugin != *plugin || set.source != source {
+        let different_source = set.plugin != *plugin || set.source != source;
+
+        if different_source {
             taken.extend(set.tools.iter().map(|tool| tool.spec.name.clone()));
         }
     }
     let mut kept: Vec<PluginTool> = Vec::new();
+
     for tool in tools {
         let name = tool.spec.name.clone();
         let marker_breaks = matches!(
@@ -302,6 +314,7 @@ pub(crate) fn kept_published(
         } else {
             None
         };
+
         if let Some(reason) = reason {
             tracing::warn!(
                 plugin = %plugin,
@@ -324,9 +337,8 @@ pub(crate) fn kept_published(
 fn offers(entry: &PluginTool, agent: &AgentDefinition) -> bool {
     let browser = browser_effect(entry.effect);
     let acts = entry.effect == ToolEffect::SideEffects || browser;
-    offered_to(&entry.offered_to, agent)
-        && !(agent.read_only && acts)
-        && (!browser || agent.requester == Requester::Owner)
+    let owner = agent.requester == Requester::Owner;
+    offered_to(&entry.offered_to, agent) && !(agent.read_only && acts) && (!browser || owner)
 }
 
 fn browser_effect(effect: ToolEffect) -> bool {
@@ -403,8 +415,10 @@ pub(crate) fn check_plugin_tools<'a>(
     tools: impl IntoIterator<Item = &'a PluginTool>,
 ) -> Result<(), ContributionRefusal> {
     let mut names: Vec<&str> = Vec::new();
+
     for entry in tools {
         let name = entry.spec.name.as_str();
+
         if !is_tool_name(name) {
             return Err(ContributionRefusal::new(
                 Tools::NAME,
@@ -414,6 +428,7 @@ pub(crate) fn check_plugin_tools<'a>(
                 ),
             ));
         }
+
         let taken = registry.get(name).is_some()
             || TASK_TOOLS.contains(&name)
             || name == ASK_OWNER
@@ -421,6 +436,7 @@ pub(crate) fn check_plugin_tools<'a>(
             || plugin_tools.contains(&name)
             || executor_tools.contains(&name)
             || names.contains(&name);
+
         if taken {
             return Err(ContributionRefusal::new(
                 Tools::NAME,
@@ -459,6 +475,7 @@ pub(crate) fn check_plugin_tools<'a>(
                 ),
             ));
         }
+
         names.push(name);
     }
     Ok(())
@@ -491,17 +508,32 @@ fn reached_keys(offering: &ToolOffering, attachments: &[Attachment]) -> Vec<Stri
     }
 }
 
+fn bounded_plain_text(text: &str, max_chars: usize) -> bool {
+    let fits = !text.is_empty() && text.chars().count() <= max_chars;
+
+    if !fits {
+        return false;
+    }
+
+    !text.chars().any(char::is_control)
+}
+
 /// Whether a marker names one entry of a folder: 1 to 64 characters without
 /// a separator, a colon or a control character, and neither `.` nor `..`, so
 /// the search for it never leaves the folders that it climbs.
 fn is_valid_marker(marker: &str) -> bool {
-    !marker.is_empty()
+    let valid_name = !marker.is_empty()
         && marker.chars().count() <= MAX_MARKER_CHARS
         && marker != "."
-        && marker != ".."
-        && !marker
-            .chars()
-            .any(|character| matches!(character, '/' | '\\' | ':') || character.is_control())
+        && marker != "..";
+
+    if !valid_name {
+        return false;
+    }
+
+    !marker
+        .chars()
+        .any(|character| matches!(character, '/' | '\\' | ':') || character.is_control())
 }
 
 /// Whether a tool with `offering` is offered where `availability` says: a
@@ -545,11 +577,16 @@ fn holds_marker(workspace: &Path, marker: &str) -> bool {
 /// Whether a failure code keeps the SDK's rules: 1 to 64 lower-case letters
 /// and underscores.
 fn is_valid_code(code: &str) -> bool {
-    !code.is_empty()
-        && code.chars().count() <= MAX_FAILURE_CODE_CHARS
-        && code
-            .chars()
-            .all(|character| character.is_ascii_lowercase() || character == '_')
+    let fits = !code.is_empty() && code.chars().count() <= MAX_FAILURE_CODE_CHARS;
+
+    if !fits {
+        return false;
+    }
+
+    code.chars().all(|character| {
+        let underscore = character == '_';
+        character.is_ascii_lowercase() || underscore
+    })
 }
 
 /// An output within `limit` bytes. A longer one is cut at a character and
@@ -558,6 +595,7 @@ fn within_limit(mut output: String, limit: usize) -> String {
     if output.len() <= limit {
         return output;
     }
+
     let note = texts::plugin_output_cut(output.len());
     // The cut output, a line break and the note fit in the limit.
     let end = output.floor_char_boundary(limit.saturating_sub(note.len() + 1));
@@ -719,6 +757,7 @@ impl Tool for PluginToolAdapter {
             .with_archive_ids(reserved.clone())
             .with_workspace(context.workspace)
             .with_attachments(reached_keys(&self.offering, &context.attachments));
+
         if let Some(guard) = &ticket {
             tool_execution = tool_execution.with_background(guard.ticket());
         }
@@ -728,6 +767,7 @@ impl Tool for PluginToolAdapter {
         if let Some(browser) = browser {
             tool_execution = tool_execution.with_browser(browser);
         }
+
         let running = self.tool.execute(tool_execution);
         let plugin = self.plugin.clone();
         let side_effects = self.has_side_effects(&accesses);
@@ -821,13 +861,16 @@ async fn resolved_programs(
     accesses: &[ToolAccess],
 ) -> Result<HashMap<String, ResolvedProgram>, PrepareError> {
     let mut resolved = HashMap::new();
+
     for access in accesses {
         let ToolAccess::Program(run) = access else {
             continue;
         };
+
         if resolved.contains_key(&run.name) {
             continue;
         }
+
         let Some(section) = runtime.inner.programs.declared(plugin, &run.name) else {
             return Err(broken(plugin));
         };
@@ -840,6 +883,7 @@ async fn resolved_programs(
             .locate_program(&run.name)
             .await
             .map_err(|_not_found| not_found())?;
+
         let path = path.to_str().ok_or_else(not_found)?.to_owned();
         resolved.insert(
             run.name.clone(),
@@ -901,9 +945,12 @@ fn core_accesses(
         .iter()
         .filter(|access| matches!(access, ToolAccess::RemoteCommand(remote) if remote.background))
         .count();
-    if !fits || in_background > 1 {
+    let invalid_accesses = !fits || in_background > 1;
+
+    if invalid_accesses {
         return Err(broken(plugin));
     }
+
     accesses
         .into_iter()
         .map(|access| match access {
@@ -925,12 +972,14 @@ fn core_accesses(
                 if !access.is_canonical() {
                     return Err(broken(plugin));
                 }
+
                 Ok(Access::from_browser(plugin.to_owned(), access))
             }
             ToolAccess::BrowserControl(access) => {
                 if !access.is_canonical() {
                     return Err(broken(plugin));
                 }
+
                 Ok(Access::from_browser_control(plugin.to_owned(), access))
             }
         })
@@ -941,28 +990,37 @@ fn browser_accesses_fit(effect: ToolEffect, accesses: &[ToolAccess]) -> bool {
     if matches!(accesses, [ToolAccess::BrowserControl(_)]) {
         return true;
     }
+
     let reads = effect == ToolEffect::ReadsBrowser;
-    accesses.len() <= MAX_ACCESSES
-        && accesses.iter().all(|access| {
-            let ToolAccess::BrowserAction(action) = access else {
-                return false;
-            };
-            match action.action {
-                BrowserAction::ContinueNavigation => false,
-                BrowserAction::Observe => reads,
-                BrowserAction::FillCredential => {
-                    !reads
-                        && accesses.iter().any(|access| {
-                            matches!(access, ToolAccess::BrowserAction(site)
+
+    if accesses.len() > MAX_ACCESSES {
+        return false;
+    }
+
+    accesses.iter().all(|access| {
+        let ToolAccess::BrowserAction(action) = access else {
+            return false;
+        };
+
+        match action.action {
+            BrowserAction::ContinueNavigation => false,
+            BrowserAction::Observe => reads,
+            BrowserAction::FillCredential => {
+                if reads {
+                    return false;
+                }
+
+                accesses.iter().any(|access| {
+                    matches!(access, ToolAccess::BrowserAction(site)
                     if site.action == BrowserAction::Interact
                         && site.origin == action.origin
                         && site.session == action.session
                         && site.revision == action.revision)
-                        })
-                }
-                _ => !reads,
+                })
             }
-        })
+            _ => !reads,
+        }
+    })
 }
 
 /// What the core found for a statement of a call's database access: the
@@ -1003,14 +1061,17 @@ async fn resolved_databases(
     limit: usize,
 ) -> Result<ResolvedDatabases, PrepareError> {
     let mut resolved = resolved_on_workers(plugin, effect, accesses, limit).await?;
+
     for access in accesses {
         let ToolAccess::Database(database) = access else {
             continue;
         };
         let entry = (database.key.clone(), database.statement.clone());
+
         if database.worker.is_some() || resolved.contains_key(&entry) {
             continue;
         }
+
         let registration = match runtime.inner.store.db_file(plugin, &database.key).await {
             Ok(registration) => registration,
             Err(RegistryError::NotFound) => {
@@ -1031,6 +1092,7 @@ async fn resolved_databases(
                 }));
             }
         };
+
         if engine_values(&database.statement.parameters).is_err() {
             return Err(database_refused(
                 plugin,
@@ -1039,6 +1101,7 @@ async fn resolved_databases(
                 limit,
             ));
         }
+
         let (path, identity, text) = (
             registration.path.clone(),
             registration.identity.clone(),
@@ -1058,7 +1121,9 @@ async fn resolved_databases(
                 ));
             }
         };
+
         check_class(plugin, effect, class, registration.read_only, limit)?;
+
         let parameters = database
             .statement
             .parameters
@@ -1112,6 +1177,7 @@ async fn resolved_on_workers(
         )
     };
     let mut groups: Vec<OnWorker> = Vec::new();
+
     for access in accesses {
         let ToolAccess::Database(access) = access else {
             continue;
@@ -1119,6 +1185,7 @@ async fn resolved_on_workers(
         let Some(database) = &access.worker else {
             continue;
         };
+
         match groups.iter_mut().find(|group| group.key == access.key) {
             Some(group) if group.database != *database => return Err(facts_refused()),
             Some(group) => {
@@ -1135,14 +1202,21 @@ async fn resolved_on_workers(
     }
     let named_here = accesses.iter().any(|access| match access {
         ToolAccess::Database(access) => {
-            access.worker.is_none() && groups.iter().any(|group| group.key == access.key)
+            if access.worker.is_some() {
+                return false;
+            }
+
+            groups.iter().any(|group| group.key == access.key)
         }
         _other => false,
     });
+
     if named_here {
         return Err(facts_refused());
     }
+
     let mut resolved = HashMap::new();
+
     for group in groups {
         resolve_on_worker(plugin, effect, group, limit, &mut resolved).await?;
     }
@@ -1162,6 +1236,7 @@ async fn resolve_on_worker(
         database,
         statements,
     } = group;
+
     if let Err(failure) = checked_worker_database(&database) {
         let (code, detail) = match failure {
             SqliteFilesError::SchemaTooLarge => (
@@ -1183,6 +1258,7 @@ async fn resolve_on_worker(
             limit,
         ));
     }
+
     let schema = database.schema.clone();
     let texts: Vec<String> = statements
         .iter()
@@ -1200,16 +1276,22 @@ async fn resolve_on_worker(
         dbfiles::run(move |_cancel| dbfiles::classify_all_on_schema(schema.statements(), &texts))
             .await
             .map_err(statement_refused)?;
+
     let home = DatabaseHome::Worker {
         worker: database.host.worker.clone(),
         name: database.host.name.clone(),
         mode: database.host.mode,
         accepts_full_access: database.host.accepts_full_access,
     };
+
     for (statement, class) in statements.into_iter().zip(classes) {
         let class = class.map_err(statement_refused)?;
         check_class(plugin, effect, class, database.read_only, limit)?;
-        if class != StatementClass::Read && database.host.mode == CeilingMode::ReadOnly {
+
+        let writes_to_read_only_host =
+            class != StatementClass::Read && database.host.mode == CeilingMode::ReadOnly;
+
+        if writes_to_read_only_host {
             return Err(database_refused(
                 plugin,
                 "database_read_only_host",
@@ -1217,6 +1299,7 @@ async fn resolve_on_worker(
                 limit,
             ));
         }
+
         let parameters = statement
             .parameters
             .iter()
@@ -1249,15 +1332,18 @@ fn check_class(
     limit: usize,
 ) -> Result<(), PrepareError> {
     let is_write = class != StatementClass::Read;
-    let refusal = if effect == ToolEffect::ReadsDatabases && is_write {
+    let expects_reads = effect == ToolEffect::ReadsDatabases;
+    let expects_writes = effect == ToolEffect::SideEffects;
+    let refusal = if expects_reads && is_write {
         Some(("database_not_a_read", texts::DATABASE_NOT_A_READ))
-    } else if effect == ToolEffect::SideEffects && !is_write {
+    } else if expects_writes && !is_write {
         Some(("database_read_in_change", texts::DATABASE_READ_IN_CHANGE))
     } else if is_write && read_only {
         Some(("database_read_only", texts::DATABASE_READ_ONLY))
     } else {
         None
     };
+
     match refusal {
         Some((code, detail)) => Err(database_refused(plugin, code, detail.to_owned(), limit)),
         None => Ok(()),
@@ -1302,13 +1388,16 @@ async fn resolved_terminal_hosts(
     accesses: &[ToolAccess],
 ) -> Result<ResolvedTerminalHosts, PrepareError> {
     let mut resolved = HashMap::new();
+
     for access in accesses {
         let ToolAccess::TerminalCommand(typed) = access else {
             continue;
         };
+
         if resolved.contains_key(&typed.host) {
             continue;
         }
+
         let Some(host) = runtime.resolve_terminal_host(&typed.host).await else {
             return Err(PrepareError::Failed(match &typed.host {
                 TerminalHostRef::ThisMachine { shell } => ToolFailure::ShellMissing {
@@ -1334,9 +1423,7 @@ fn terminal_access(
     terminals: &ResolvedTerminalHosts,
 ) -> Option<Access> {
     let (host, identity) = terminals.get(&typed.host)?.clone();
-    let plain = |text: &str, max_chars: usize| {
-        !text.is_empty() && text.chars().count() <= max_chars && !text.chars().any(char::is_control)
-    };
+    let plain = bounded_plain_text;
     // A control character, a line break among them, would type more than
     // the command that the owner approved.
     let command_fits =
@@ -1346,9 +1433,11 @@ fn terminal_access(
         .state
         .as_deref()
         .is_none_or(|state| plain(state, MAX_STATE_CHARS));
+
     if !(command_fits && shell_fits && state_fits) {
         return None;
     }
+
     Some(Access::TerminalCommand {
         plugin: plugin.to_owned(),
         host,
@@ -1367,9 +1456,7 @@ fn terminal_access(
 /// parameter whose name looks like a secret's (ADR-0043, decision 7). The
 /// hints come sorted and once each.
 fn external_access(plugin: &str, external: ExternalToolAccess) -> Option<Access> {
-    let fits = |text: &str, max_chars: usize| {
-        !text.is_empty() && text.chars().count() <= max_chars && !text.chars().any(char::is_control)
-    };
+    let fits = bounded_plain_text;
     let names_fit = fits(&external.target, MAX_TARGET_CHARS)
         && fits(&external.label, MAX_LABEL_CHARS)
         && fits(&external.tool, MAX_EXTERNAL_TOOL_CHARS)
@@ -1389,9 +1476,11 @@ fn external_access(plugin: &str, external: ExternalToolAccess) -> Option<Access>
         }
         ToolServerEndpoint::Url { url } => is_server_url(url),
     };
+
     if !(names_fit && arguments_fit && endpoint_fits) {
         return None;
     }
+
     let mut hints: Vec<ToolHint> = external.hints;
     hints.sort_unstable();
     hints.dedup();
@@ -1425,13 +1514,11 @@ fn is_server_url(url: &str) -> bool {
     let secret_in_query = parsed
         .query_pairs()
         .any(|(name, _value)| looks_like_secret(&camel_case_apart(&name)));
-    clean
-        && matches!(parsed.scheme(), "http" | "https")
-        && parsed.host().is_some()
+    let valid_authority = parsed.host().is_some()
         && parsed.username().is_empty()
         && parsed.password().is_none()
-        && parsed.fragment().is_none()
-        && !secret_in_query
+        && parsed.fragment().is_none();
+    clean && matches!(parsed.scheme(), "http" | "https") && valid_authority && !secret_in_query
 }
 
 /// A name with its camel-case words apart, such as `access_Token` for
@@ -1439,10 +1526,12 @@ fn is_server_url(url: &str) -> bool {
 fn camel_case_apart(name: &str) -> String {
     let mut apart = String::with_capacity(name.len() + 4);
     let mut after_lower = false;
+
     for character in name.chars() {
         if after_lower && character.is_ascii_uppercase() {
             apart.push('_');
         }
+
         after_lower = character.is_ascii_lowercase() || character.is_ascii_digit();
         apart.push(character);
     }
@@ -1470,15 +1559,18 @@ fn program_access(
         && !run.arguments.iter().any(|argument| argument.contains('\0'));
     let effects_fit = run.effects.len() <= MAX_EFFECTS && run.effects.iter().all(effect_fits);
     let state_fits = run.state.as_ref().is_none_or(|state| {
-        !state.is_empty() && state.chars().count() <= MAX_STATE_CHARS && !state.contains('\0')
+        let fits = !state.is_empty() && state.chars().count() <= MAX_STATE_CHARS;
+        fits && !state.contains('\0')
     });
     let Some(directory) = run.working_directory.to_str() else {
         return Err(broken(plugin));
     };
     let fits = arguments_fit && effects_fit && state_fits && run.working_directory.is_absolute();
+
     if !fits {
         return Err(broken(plugin));
     }
+
     let working_directory =
         workspace_folder(directory).map_err(|error| folder_failure(directory, error))?;
     Ok(Access::Program {
@@ -1511,14 +1603,18 @@ fn folder_failure(directory: &str, error: FolderError) -> PrepareError {
 /// and an endpoint without a password, which never reaches an approval or
 /// the journal (T-47).
 fn effect_fits(effect: &ProgramEffect) -> bool {
-    let fits = |text: &str, max_chars: usize| {
-        !text.is_empty() && text.chars().count() <= max_chars && !text.chars().any(char::is_control)
-    };
+    let fits = bounded_plain_text;
     let list_fits = |count: u32, items: &[String]| {
-        items.len() <= MAX_EFFECT_ITEMS
-            && usize::try_from(count).is_ok_and(|count| count >= items.len())
-            && items.iter().all(|item| fits(item, MAX_EFFECT_TEXT_CHARS))
+        let fits_capacity = items.len() <= MAX_EFFECT_ITEMS
+            && usize::try_from(count).is_ok_and(|count| count >= items.len());
+
+        if !fits_capacity {
+            return false;
+        }
+
+        items.iter().all(|item| fits(item, MAX_EFFECT_TEXT_CHARS))
     };
+
     match effect {
         ProgramEffect::Network { endpoint } => {
             fits(endpoint, MAX_ENDPOINT_CHARS) && !holds_password(endpoint)
@@ -1561,14 +1657,17 @@ fn broken(plugin: &str) -> PrepareError {
 /// state that is empty, too long or holds NUL, break the SDK's rules.
 fn path_access(plugin: &str, path: PathAccess) -> Result<Access, PrepareError> {
     let state_fits = path.state.as_ref().is_none_or(|state| {
-        !state.is_empty() && state.chars().count() <= MAX_STATE_CHARS && !state.contains('\0')
+        let fits = !state.is_empty() && state.chars().count() <= MAX_STATE_CHARS;
+        fits && !state.contains('\0')
     });
     let Some(text) = path.path.to_str() else {
         return Err(broken(plugin));
     };
+
     if !state_fits || !path.path.is_absolute() {
         return Err(broken(plugin));
     }
+
     plugin_path_access(text, path.mode, path.state).map_err(PrepareError::Failed)
 }
 
@@ -1610,6 +1709,7 @@ fn card_data(plugin: &str, data: Option<serde_json::Value>) -> Option<String> {
         .is_object()
         .then(|| serde_json::to_string(&data).ok())
         .flatten();
+
     match text {
         Some(text) if text.len() <= MAX_TOOL_DATA_BYTES => Some(text),
         _ => {
@@ -1640,9 +1740,7 @@ fn kept_code(plugin: &str, code: String) -> String {
 /// or `None` when a text is empty, too long or holds a control character.
 /// The command may span lines, which only keeps it from a grant or a rule.
 fn remote_access(plugin: &str, remote: RemoteCommandAccess) -> Option<Access> {
-    let fits = |text: &str, max_chars: usize| {
-        !text.is_empty() && text.chars().count() <= max_chars && !text.chars().any(char::is_control)
-    };
+    let fits = bounded_plain_text;
     let command_fits = !remote.command.trim().is_empty()
         && remote.command.len() <= MAX_ARGUMENTS_BYTES
         && !remote.command.contains('\0');
@@ -1665,106 +1763,108 @@ fn remote_access(plugin: &str, remote: RemoteCommandAccess) -> Option<Access> {
 /// statement on a database is left out: the call's ticket holds it, with the
 /// digest of its parameters, which the service checks.
 fn sdk_accesses(accesses: &[Access]) -> Vec<ToolAccess> {
-    accesses
-        .iter()
-        .filter_map(|access| match access {
-            Access::RemoteCommand {
-                target,
-                label,
-                endpoint,
-                identity,
-                command,
-                background,
-                ..
-            } => {
-                let access = RemoteCommandAccess::new(
-                    target.clone(),
-                    label.clone(),
-                    endpoint.clone(),
-                    identity.clone(),
-                    command.clone(),
-                );
-                Some(ToolAccess::RemoteCommand(if *background {
-                    access.in_background()
-                } else {
-                    access
-                }))
+    accesses.iter().filter_map(sdk_access).collect()
+}
+
+fn sdk_access(access: &Access) -> Option<ToolAccess> {
+    match access {
+        Access::RemoteCommand {
+            target,
+            label,
+            endpoint,
+            identity,
+            command,
+            background,
+            ..
+        } => {
+            let access = RemoteCommandAccess::new(
+                target.clone(),
+                label.clone(),
+                endpoint.clone(),
+                identity.clone(),
+                command.clone(),
+            );
+            Some(ToolAccess::RemoteCommand(if *background {
+                access.in_background()
+            } else {
+                access
+            }))
+        }
+        Access::Path {
+            path, mode, state, ..
+        } => {
+            let access = PathAccess::new(path.clone(), *mode);
+            Some(ToolAccess::Path(match state {
+                Some(state) => access.with_state(state.clone()),
+                None => access,
+            }))
+        }
+        Access::Program {
+            name,
+            arguments,
+            working_directory,
+            effects,
+            state,
+            ..
+        } => {
+            let mut access =
+                ProgramAccess::new(name.clone(), working_directory.clone(), arguments.clone());
+
+            for effect in effects {
+                access = access.with_effect(effect.clone());
             }
-            Access::Path {
-                path, mode, state, ..
-            } => {
-                let access = PathAccess::new(path.clone(), *mode);
-                Some(ToolAccess::Path(match state {
-                    Some(state) => access.with_state(state.clone()),
-                    None => access,
-                }))
-            }
-            Access::Program {
-                name,
-                arguments,
-                working_directory,
-                effects,
-                state,
-                ..
-            } => {
-                let mut access =
-                    ProgramAccess::new(name.clone(), working_directory.clone(), arguments.clone());
-                for effect in effects {
-                    access = access.with_effect(effect.clone());
-                }
-                Some(ToolAccess::Program(match state {
-                    Some(state) => access.with_state(state.clone()),
-                    None => access,
-                }))
-            }
-            Access::ExternalTool {
-                target,
-                label,
-                endpoint,
-                tool,
-                title,
-                arguments,
-                hints,
-                ..
-            } => {
-                let access = ExternalToolAccess::new(
-                    target.clone(),
-                    label.clone(),
-                    endpoint.clone(),
-                    tool.clone(),
-                    arguments.clone(),
-                )
-                .with_hints(hints.clone());
-                Some(ToolAccess::ExternalTool(match title {
-                    Some(title) => access.with_title(title.clone()),
-                    None => access,
-                }))
-            }
-            Access::TerminalCommand { .. } => {
-                sdk_terminal_command(access).map(ToolAccess::TerminalCommand)
-            }
-            Access::BrowserAction {
-                origin,
-                session,
-                revision,
-                action,
-                credential,
-                ..
-            } => {
-                let mut access =
-                    BrowserAccess::new(origin.clone(), session.clone(), revision.clone(), *action);
-                access.credential.clone_from(credential);
-                Some(ToolAccess::BrowserAction(access))
-            }
-            Access::BrowserControl {
-                session, revision, ..
-            } => Some(ToolAccess::BrowserControl(BrowserControlAccess::new(
-                session.clone(),
-                revision.clone(),
-            ))),
-            Access::Command { .. } | Access::Project { .. } | Access::Database { .. } => None,
-        })
-        .collect()
+            Some(ToolAccess::Program(match state {
+                Some(state) => access.with_state(state.clone()),
+                None => access,
+            }))
+        }
+        Access::ExternalTool {
+            target,
+            label,
+            endpoint,
+            tool,
+            title,
+            arguments,
+            hints,
+            ..
+        } => {
+            let access = ExternalToolAccess::new(
+                target.clone(),
+                label.clone(),
+                endpoint.clone(),
+                tool.clone(),
+                arguments.clone(),
+            )
+            .with_hints(hints.clone());
+            Some(ToolAccess::ExternalTool(match title {
+                Some(title) => access.with_title(title.clone()),
+                None => access,
+            }))
+        }
+        Access::TerminalCommand { .. } => {
+            sdk_terminal_command(access).map(ToolAccess::TerminalCommand)
+        }
+        Access::BrowserAction {
+            origin,
+            session,
+            revision,
+            action,
+            credential,
+            ..
+        } => {
+            let mut access =
+                BrowserAccess::new(origin.clone(), session.clone(), revision.clone(), *action);
+            access.credential.clone_from(credential);
+            Some(ToolAccess::BrowserAction(access))
+        }
+        Access::BrowserControl {
+            session, revision, ..
+        } => Some(ToolAccess::BrowserControl(BrowserControlAccess::new(
+            session.clone(),
+            revision.clone(),
+        ))),
+        Access::Command { .. } | Access::Project { .. } | Access::Database { .. } => None,
+    }
 }
 
 /// A command in a terminal as its plugin's tool knows it: the host as the
@@ -1808,12 +1908,14 @@ fn sdk_terminal_command(access: &Access) -> Option<TerminalCommandAccess> {
     };
     let mut terminal_access =
         TerminalCommandAccess::new(reference, *terminal, shell.clone(), command.clone());
+
     if let Some(state) = state {
         terminal_access = terminal_access.with_state(state.clone());
     }
     if let Some(expect) = expect {
         terminal_access = terminal_access.expecting(expect);
     }
+
     Some(terminal_access)
 }
 
@@ -1828,6 +1930,7 @@ fn kept_archives(
 ) -> Vec<ArchivedOutput> {
     let mut used: HashSet<ArchiveId> = HashSet::new();
     let mut kept = Vec::new();
+
     for archive in archives {
         let name_fits = !archive.name.is_empty()
             && archive.name.chars().count() <= MAX_ARCHIVE_NAME_CHARS
@@ -1836,6 +1939,7 @@ fn kept_archives(
             && !used.contains(&archive.id)
             && name_fits
             && archive.content.len() <= MAX_TOOL_ARCHIVE_BYTES;
+
         if !fits {
             tracing::error!(
                 plugin,
@@ -1843,6 +1947,7 @@ fn kept_archives(
             );
             continue;
         }
+
         used.insert(archive.id.clone());
         kept.push(ArchivedOutput {
             id: archive.id,
@@ -1948,6 +2053,7 @@ mod tests {
             vec![remote("key-1", "box", "uptime")],
             (0..17).map(|_| read(folder.path())).collect(),
         ];
+
         for accesses in broken {
             assert_eq!(
                 core_accesses("shell", ToolEffect::ReadsFiles, accesses.clone()),
@@ -1981,6 +2087,7 @@ mod tests {
             ),
             ToolAccess::Path(PathAccess::new(folder.path(), AccessMode::Read).with_state("a\0b")),
         ];
+
         for access in broken {
             assert_eq!(
                 core_accesses("shell", ToolEffect::SideEffects, vec![access.clone()]),
@@ -2123,6 +2230,7 @@ mod tests {
             run(&["reset"]).with_effect(discards(21, 21)),
             run(&["reset"]).with_effect(discards(1, 2)),
         ];
+
         for access in broken {
             assert_eq!(
                 super::core_accesses(
@@ -2138,6 +2246,7 @@ mod tests {
             );
         }
         let mut too_many = run(&["commit"]);
+
         for _ in 0..33 {
             too_many = too_many.with_effect(hook());
         }
@@ -2257,6 +2366,7 @@ mod tests {
         fs::create_dir_all(repository.join("app")).unwrap();
         fs::create_dir_all(&other).unwrap();
         fs::create_dir(repository.join(MARKER)).unwrap();
+
         let in_repository = project_at(&repository.join("app"));
         let outside = project_at(&other);
         let general = Availability::of_projects(None, &[]);
@@ -2285,6 +2395,7 @@ mod tests {
         assert!(!is_offered(&marked, &found, &general));
         // A run keeps what it found for a workspace; the next run looks again.
         fs::create_dir(other.join(MARKER)).unwrap();
+
         let in_other = Availability::of_projects(Some(&outside), &[]);
         assert!(!is_offered(&marked, &found, &in_other));
         assert!(is_offered(&marked, &fresh(), &in_other));
@@ -2476,6 +2587,7 @@ mod tests {
                 ],
             ),
         ];
+
         for (effect, accesses) in cases {
             assert_eq!(
                 core_accesses("shell", effect, accesses.clone()),
@@ -2571,6 +2683,7 @@ mod tests {
         let url = server_url("https://mcp.example.com/mcp");
         let mut cut = server_call("Issues", url.clone(), "create_issue");
         cut.arguments = "{\"title\":\"\0\"}".to_owned();
+
         let calls = [
             server_call("", url.clone(), "create_issue"),
             server_call("Iss\u{7}ues", url.clone(), "create_issue"),
@@ -2633,6 +2746,7 @@ mod tests {
                 "create_issue",
             ),
         ];
+
         for call in calls {
             assert_eq!(
                 core_accesses(
@@ -2668,6 +2782,7 @@ mod tests {
             server_program("npx", &["-y", "@modelcontextprotocol/server-everything"]),
             server_program("C:\\Tools\\server.exe", &[]),
         ];
+
         for endpoint in endpoints {
             let accesses = core_accesses(
                 "shell",

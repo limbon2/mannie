@@ -152,11 +152,15 @@ impl Acting {
             .git
             .output(self.run(["stash", "create"]))
             .await?;
+
         let commit = created.text().trim().to_owned();
+
         if !is_object_id(&commit) {
             return Ok(None);
         }
+
         let message = format!("Mannie: before {operation}");
+
         self.reading
             .git
             .output(self.run(["stash", "store", "-m", message.as_str(), commit.as_str()]))
@@ -195,6 +199,7 @@ pub(crate) async fn changed_paths(
     .map(str::to_owned)
     .to_vec();
     command.extend(pathspecs.iter().cloned());
+
     let ran = reading.git.output(reading.run(command)).await?;
     let status =
         parse_status(&ran.output).map_err(|error| GitFailure::failed(&error.to_string()))?;
@@ -233,6 +238,7 @@ pub(crate) async fn branch_tip(
             format!("refs/heads/{name}^{{commit}}"),
         ]))
         .await?;
+
     let oid = ran.text().trim().to_owned();
     Ok((ran.succeeded() && is_object_id(&oid)).then_some(oid))
 }
@@ -245,10 +251,12 @@ pub(crate) async fn check_branch_name(
     name: &str,
 ) -> Result<(), GitFailure> {
     check_branch(argument, name)?;
+
     let ran = reading
         .git
         .run(reading.run(["check-ref-format", "--branch", name]))
         .await?;
+
     if ran.succeeded() {
         Ok(())
     } else {
@@ -273,6 +281,7 @@ impl RepositoryLocks {
             let mut locks = self.locks.lock().unwrap_or_else(PoisonError::into_inner);
             Arc::clone(locks.entry(key).or_default())
         };
+
         lock.lock_owned().await
     }
 }
@@ -327,6 +336,7 @@ impl<T: ChangeTool> Tool for ChangingTool<T> {
             // A change that failed may still have moved something, such as
             // an operation that stopped; the panels read again either way.
             changes.notify();
+
             let answer = match executed {
                 Ok(answer) => answer,
                 Err(failure) => return failure.result(),
@@ -336,6 +346,7 @@ impl<T: ChangeTool> Tool for ChangingTool<T> {
                 archive_ids: &execution.archive_ids,
             };
             let result = fitted(answer.text, room);
+
             match answer.data {
                 Some(data) => result.with_data(data),
                 None => result,
@@ -352,6 +363,7 @@ async fn prepare<T: ChangeTool>(git: &Git, call: &ToolCall) -> Result<Vec<ToolAc
     let layout = Layout::discover(git, &folder, None).await?;
     let reading = Reading::open(git, layout, PREPARATION_ROOM, None).await?;
     let plan = T::plan(&reading, &arguments).await?;
+
     accesses(&reading, &plan).await
 }
 
@@ -369,6 +381,7 @@ async fn execute<T: ChangeTool>(
     let reading = Reading::open(git, layout, room, None).await?;
     let plan = T::plan(&reading, &arguments).await?;
     let planned = accesses(&reading, &plan).await?;
+
     if !same_accesses(&planned, &execution.authorized) {
         tracing::info!(
             tool = T::NAME,
@@ -376,6 +389,7 @@ async fn execute<T: ChangeTool>(
         );
         return Err(GitFailure::RepositoryChanged);
     }
+
     T::act(&Acting { reading }, &arguments, plan).await
 }
 
@@ -389,6 +403,7 @@ pub(crate) async fn accesses<P>(
     let mut accesses = vec![ToolAccess::Path(
         PathAccess::new(&layout.top, AccessMode::Write).with_state(state.clone()),
     )];
+
     for folder in layout.read_folders().into_iter().skip(1) {
         // The repository's git folders change too; the object folders that
         // it borrows only give objects.
@@ -399,18 +414,23 @@ pub(crate) async fn accesses<P>(
         } else {
             AccessMode::Read
         };
+
         accesses.push(ToolAccess::Path(PathAccess::new(folder, mode)));
     }
     let mut effects = hooks(reading, plan.change).await?;
     effects.extend(configured_programs(&reading.settings, plan.change));
     effects.extend(plan.effects.iter().cloned());
+
     if !effects.is_empty() {
         let mut run = ProgramAccess::new(GIT, &layout.top, plan.command.clone()).with_state(state);
+
         for effect in effects {
             run = run.with_effect(effect);
         }
+
         accesses.push(ToolAccess::Program(run));
     }
+
     Ok(accesses)
 }
 
@@ -424,6 +444,7 @@ async fn repository_state(reading: &Reading, tips: &[String]) -> Result<String, 
         .git
         .run(reading.run(["rev-parse", "--verify", "--quiet", "HEAD"]))
         .await?;
+
     let head = if head.succeeded() {
         head.text().trim().to_owned()
     } else {
@@ -433,6 +454,7 @@ async fn repository_state(reading: &Reading, tips: &[String]) -> Result<String, 
         .git
         .run(reading.run(["symbolic-ref", "--quiet", "HEAD"]))
         .await?;
+
     let branch = if branch.succeeded() {
         branch.text().trim().to_owned()
     } else {
@@ -446,6 +468,7 @@ async fn repository_state(reading: &Reading, tips: &[String]) -> Result<String, 
                 .with_output_limit(16 * 1024 * 1024),
         )
         .await?;
+
     let operation =
         Operation::read(&reading.layout.git_dir).map_or("none", |operation| operation.kind.name());
     Ok(format!(
@@ -470,9 +493,11 @@ fn normalized(access: &ToolAccess) -> ToolAccess {
     match access {
         ToolAccess::Path(path) => {
             let mut normal = PathAccess::new(comparable(&path.path), path.mode);
+
             if let Some(state) = &path.state {
                 normal = normal.with_state(state.clone());
             }
+
             ToolAccess::Path(normal)
         }
         ToolAccess::Program(run) => {
@@ -481,12 +506,15 @@ fn normalized(access: &ToolAccess) -> ToolAccess {
                 comparable(&run.working_directory),
                 run.arguments.clone(),
             );
+
             for effect in &run.effects {
                 normal = normal.with_effect(effect.clone());
             }
+
             if let Some(state) = &run.state {
                 normal = normal.with_state(state.clone());
             }
+
             ToolAccess::Program(normal)
         }
         ToolAccess::RemoteCommand(_)
@@ -503,7 +531,12 @@ fn normalized(access: &ToolAccess) -> ToolAccess {
 fn same_accesses(planned: &[ToolAccess], authorized: &[ToolAccess]) -> bool {
     let planned: Vec<ToolAccess> = planned.iter().map(normalized).collect();
     let authorized: Vec<ToolAccess> = authorized.iter().map(normalized).collect();
-    planned.len() == authorized.len() && planned.iter().all(|access| authorized.contains(access))
+
+    if planned.len() != authorized.len() {
+        return false;
+    }
+
+    planned.iter().all(|access| authorized.contains(access))
 }
 
 #[cfg(test)]
@@ -578,6 +611,7 @@ pub(crate) mod testing {
                 .with_workspace(self.workspace)
                 .with_authorized(accesses)
                 .with_result_limit(64 * 1024);
+
             self.tool.execute(execution).await
         }
     }
@@ -598,6 +632,7 @@ pub(crate) mod testing {
             ToolCall::new(arguments.clone(), conversation()).with_workspace(workspace.clone());
         let accesses = tool.prepare(call).await.map_err(|refusal| {
             let result = ToolResult::new(refusal.detail);
+
             match refusal.code {
                 Some(code) => result.with_failure(code),
                 None => result,

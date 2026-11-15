@@ -177,10 +177,14 @@ pub fn decide(accesses: &[Access], inputs: &PolicyInputs<'_>) -> Verdict {
     if accesses.is_empty() {
         return Verdict::Unrestricted;
     }
+
     let full_access = inputs.full_access && inputs.ceiling.is_none();
-    if full_access && accesses.iter().all(takes_full_access) {
+    let all_full_access = full_access && accesses.iter().all(takes_full_access);
+
+    if all_full_access {
         return Verdict::Allowed(Decision::FullAccess);
     }
+
     let mut decision = if inputs.ceiling.is_some() {
         Decision::AllowedFolder
     } else {
@@ -188,12 +192,14 @@ pub fn decide(accesses: &[Access], inputs: &PolicyInputs<'_>) -> Verdict {
     };
     let mut reasons: Vec<ApprovalReason> = Vec::new();
     let mut asking: Vec<&Access> = Vec::new();
+
     for access in accesses {
         let held = match inputs.ceiling {
             Some(ceiling) => decide_under_ceiling(access, ceiling, inputs),
             None if full_access && takes_full_access(access) => Ok(Decision::FullAccess),
             None => decide_on_master(access, inputs),
         };
+
         match held {
             Ok(source) => decision = stronger(decision, source),
             Err(Hold::Refuse(refusal)) => return Verdict::Refused(refusal),
@@ -201,10 +207,12 @@ pub fn decide(accesses: &[Access], inputs: &PolicyInputs<'_>) -> Verdict {
                 if !reasons.contains(&reason) {
                     reasons.push(reason);
                 }
+
                 asking.push(access);
             }
         }
     }
+
     if asking.is_empty() {
         return Verdict::Allowed(decision);
     }
@@ -220,6 +228,7 @@ pub fn decide(accesses: &[Access], inputs: &PolicyInputs<'_>) -> Verdict {
             host: inputs.host.map(str::to_owned),
         }));
     }
+
     let protected = reasons.contains(&ApprovalReason::MannieFolder);
     Verdict::Ask(Box::new(ApprovalRequest {
         digest: digest(accesses),
@@ -242,7 +251,8 @@ fn takes_full_access(access: &Access) -> bool {
     match access {
         Access::BrowserAction { .. } | Access::BrowserControl { .. } => false,
         Access::Database { home, class, .. } => {
-            *class == StatementClass::Read || home.takes_full_access()
+            let reads = *class == StatementClass::Read;
+            reads || home.takes_full_access()
         }
         Access::Path { .. }
         | Access::Command { .. }
@@ -274,10 +284,14 @@ fn decide_on_master(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decisi
         class,
         ..
     } = access
-        && *class != StatementClass::Read
     {
-        return Err(Hold::Refuse(Refusal::ReadOnlyHost));
+        let writes = *class != StatementClass::Read;
+
+        if writes {
+            return Err(Hold::Refuse(Refusal::ReadOnlyHost));
+        }
     }
+
     decide_access(access, inputs).map_err(Hold::Ask)
 }
 
@@ -307,22 +321,26 @@ fn decide_under_ceiling(
     let autonomous = ceiling.mode == CeilingMode::Autonomous;
     let full_access = ceiling.mode == CeilingMode::FullAccess;
     let runs_anything = matches!(access, Access::Path { .. } | Access::Command { .. });
+
     if full_access && runs_anything {
         return Ok(Decision::HostFullAccess);
     }
     match access {
         Access::Path { path, mode, .. } => {
             let path = Path::new(path);
+
             if mode.changes() && read_only {
                 return Err(Hold::Refuse(Refusal::ReadOnlyHost));
             }
             if is_protected(path, inputs) {
                 return Err(Hold::Ask(ApprovalReason::MannieFolder));
             }
+
             let inside = ceiling
                 .allowed_folders
                 .iter()
                 .any(|folder| is_inside(path, folder));
+
             if inside && (!mode.changes() || autonomous) {
                 return Ok(Decision::AllowedFolder);
             }
@@ -330,6 +348,7 @@ fn decide_under_ceiling(
             {
                 return Ok(decision);
             }
+
             Err(Hold::Ask(if inside {
                 ApprovalReason::HostAsks
             } else {
@@ -345,18 +364,23 @@ fn decide_under_ceiling(
             if read_only {
                 return Err(Hold::Refuse(Refusal::ReadOnlyHost));
             }
+
             let directory = Path::new(working_directory);
+
             if is_protected(directory, inputs) {
                 return Err(Hold::Ask(ApprovalReason::MannieFolder));
             }
+
             let Some(words) = command_words(command) else {
                 return Err(Hold::Ask(ApprovalReason::Command));
             };
+
             if let Some(decision) = granted(&inputs.grants, |grant| {
                 covers_command(grant, command, directory, *background)
             }) {
                 return Ok(decision);
             }
+
             // The host's rules come from its configuration, and a ceiling
             // that allows a command allows it in the background too, for as
             // long as its task runs (ADR-0041, decision 9).
@@ -365,9 +389,11 @@ fn decide_under_ceiling(
                     .rules
                     .iter()
                     .any(|rule| rule_matches(rule, &words, directory));
+
             if ruled {
                 return Ok(Decision::HostRule);
             }
+
             Err(Hold::Ask(ApprovalReason::Command))
         }
         Access::Project { .. } => Err(Hold::Refuse(Refusal::NoProjectsOnHost)),
@@ -393,27 +419,33 @@ fn decide_path(
     inputs: &PolicyInputs<'_>,
 ) -> Result<Decision, ApprovalReason> {
     let path = Path::new(path);
+
     if is_protected(path, inputs) {
         return Err(ApprovalReason::MannieFolder);
     }
+
     let in_workspace = inputs
         .workspace
         .is_some_and(|workspace| is_inside(path, workspace));
+
     if in_workspace && (!mode.changes() || inputs.allow_changes_in_workspace) {
         return Ok(Decision::Workspace);
     }
+
     // The owner installed or turned on the skill, and only reads pass: a
     // change in a skill's folder asks as any other change does.
     let in_skill = inputs
         .skill_folders
         .iter()
         .any(|folder| is_inside(path, folder));
+
     if in_skill && !mode.changes() {
         return Ok(Decision::Skill);
     }
     if let Some(decision) = granted(&inputs.grants, |grant| covers_path(grant, path, mode)) {
         return Ok(decision);
     }
+
     Err(match (inputs.workspace, in_workspace) {
         (None, _) => ApprovalReason::NoWorkspace,
         (Some(_), true) => ApprovalReason::ChangeInWorkspace,
@@ -432,29 +464,36 @@ fn decide_access(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decision,
             ..
         } => {
             let directory = Path::new(working_directory);
+
             if is_protected(directory, inputs) {
                 return Err(ApprovalReason::MannieFolder);
             }
+
             let Some(words) = command_words(command) else {
                 return Err(ApprovalReason::Command);
             };
+
             if let Some(decision) = granted(&inputs.grants, |grant| {
                 covers_command(grant, command, directory, *background)
             }) {
                 return Ok(decision);
             }
+
             let ruled = inputs.rules.iter().any(|rule| {
                 covers_mode(rule.background, *background) && rule_matches(rule, &words, directory)
             });
+
             if ruled {
                 return Ok(Decision::Rule);
             }
+
             Err(ApprovalReason::Command)
         }
         Access::Project { name, folder, .. } => {
             let named = inputs
                 .owner_request
                 .is_some_and(|request| names_project(request, name, folder));
+
             if named {
                 Ok(Decision::OwnerNamedProject)
             } else {
@@ -479,19 +518,23 @@ fn decide_access(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decision,
                 target,
                 endpoint,
             };
+
             if let Some(decision) = granted(&inputs.grants, |grant| {
                 covers_remote_command(grant, &host, command, *background)
             }) {
                 return Ok(decision);
             }
+
             let ruled = inputs.remote_rules.iter().any(|rule| {
                 covers_mode(rule.background, *background)
                     && host.is(&rule.target)
                     && starts_with_words(&words, &rule.words)
             });
+
             if ruled {
                 return Ok(Decision::Rule);
             }
+
             Err(ApprovalReason::RemoteCommand)
         }
         Access::Program { .. } => decide_program(access, inputs),
@@ -530,9 +573,9 @@ fn decide_browser_access(
             },
             Some(credential),
         ) => {
-            allowed_plugin == plugin
-                && allowed_origin == origin
-                && reference == &credential.reference
+            let same_site = allowed_plugin == plugin && allowed_origin == origin;
+            let same_credential = reference == &credential.reference;
+            same_site && same_credential
         }
         (
             GrantScope::BrowserSite {
@@ -540,9 +583,14 @@ fn decide_browser_access(
                 origin: allowed_origin,
             },
             None,
-        ) => allowed_plugin == plugin && allowed_origin == origin,
+        ) => {
+            let same_plugin = allowed_plugin == plugin;
+            let same_origin = allowed_origin == origin;
+            same_plugin && same_origin
+        }
         _ => false,
     });
+
     if allowed {
         Ok(Decision::Grant)
     } else if credential.is_some() {
@@ -572,6 +620,7 @@ fn decide_database(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decisio
     else {
         return Err(ApprovalReason::DatabaseWrite);
     };
+
     match class {
         StatementClass::Read => Ok(Decision::RegisteredDatabase),
         StatementClass::Write if takes_grants(home) => granted(&inputs.grants, |grant| {
@@ -607,7 +656,11 @@ fn covers_database(grant: &GrantScope, plugin: &str, key: &DatabaseKey, statemen
             key: granted_key,
             statement: granted,
             ..
-        } => granted_plugin == plugin && granted_key == key && granted == statement,
+        } => {
+            let same_database = granted_plugin == plugin && granted_key == key;
+            let same_statement = granted == statement;
+            same_database && same_statement
+        }
         GrantScope::Path { .. }
         | GrantScope::Command { .. }
         | GrantScope::RemoteCommand { .. }
@@ -640,18 +693,22 @@ fn decide_terminal_command(
     let Some(words) = terminal_command_words(command, host) else {
         return Err(ApprovalReason::TerminalCommand);
     };
+
     if let Some(decision) = granted(&inputs.grants, |grant| {
         covers_terminal_command(grant, plugin, host, command)
     }) {
         return Ok(decision);
     }
+
     let ruled = inputs
         .terminal_rules
         .iter()
         .any(|rule| rule.target.covers(plugin, host) && starts_with_words(&words, &rule.words));
+
     if ruled {
         return Ok(Decision::Rule);
     }
+
     Err(ApprovalReason::TerminalCommand)
 }
 
@@ -686,6 +743,7 @@ fn decide_program(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decision
     let Some(run) = RunKey::of(access) else {
         return Err(ApprovalReason::Program);
     };
+
     if is_protected(Path::new(run.working_directory), inputs) {
         return Err(ApprovalReason::MannieFolder);
     }
@@ -699,6 +757,7 @@ fn decide_program(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decision
     {
         return Ok(Decision::Rule);
     }
+
     Err(ApprovalReason::Program)
 }
 
@@ -768,10 +827,13 @@ fn program_rule_matches(rule: &ProgramRule, run: &RunKey<'_>) -> bool {
         .folder
         .as_ref()
         .is_none_or(|folder| is_inside(Path::new(run.working_directory), Path::new(folder)));
-    same_program
-        && in_folder
-        && starts_with_words(&run.words(), &rule.words)
-        && covers_effects(&target.effects, &run.effects)
+
+    if !same_program || !in_folder {
+        return false;
+    }
+
+    let words = run.words();
+    starts_with_words(&words, &rule.words) && covers_effects(&target.effects, &run.effects)
 }
 
 /// The parts of a remote host that decide what a grant or a rule covers: its
@@ -785,9 +847,10 @@ struct HostKey<'a> {
 impl HostKey<'_> {
     /// Whether a rule's or a proposal's target is this host.
     fn is(&self, target: &RemoteTarget) -> bool {
-        target.plugin == self.plugin
-            && target.target == self.target
-            && target.endpoint == self.endpoint
+        let same_plugin = target.plugin == self.plugin;
+        let same_target = target.target == self.target;
+        let same_endpoint = target.endpoint == self.endpoint;
+        same_plugin && same_target && same_endpoint
     }
 }
 
@@ -824,6 +887,7 @@ fn stronger(current: Decision, source: Decision) -> Decision {
         Decision::OwnerNamedProject | Decision::RegisteredDatabase | Decision::Skill => 1,
         _ => 0,
     };
+
     if rank(source) > rank(current) {
         source
     } else {
@@ -837,7 +901,11 @@ fn covers_path(grant: &GrantScope, path: &Path, mode: AccessMode) -> bool {
         GrantScope::Path {
             mode: granted,
             folder,
-        } => *granted == mode && is_inside(path, Path::new(folder)),
+        } => {
+            let same_mode = *granted == mode;
+            let folder = Path::new(folder);
+            same_mode && is_inside(path, folder)
+        }
         GrantScope::Command { .. }
         | GrantScope::RemoteCommand { .. }
         | GrantScope::Program { .. }
@@ -864,8 +932,10 @@ fn covers_command(grant: &GrantScope, command: &str, directory: &Path, backgroun
             working_directory,
             background: granted_background,
         } => {
-            granted == command
-                && is_same_path(directory, Path::new(working_directory))
+            let same_command = granted == command;
+            let working_directory = Path::new(working_directory);
+            same_command
+                && is_same_path(directory, working_directory)
                 && covers_mode(*granted_background, background)
         }
         GrantScope::Path { .. }
@@ -896,11 +966,10 @@ fn covers_remote_command(
             background: granted_background,
             ..
         } => {
-            plugin == host.plugin
-                && target == host.target
-                && endpoint == host.endpoint
-                && granted == command
-                && covers_mode(*granted_background, background)
+            let same_host =
+                plugin == host.plugin && target == host.target && endpoint == host.endpoint;
+            let same_command = granted == command;
+            same_host && same_command && covers_mode(*granted_background, background)
         }
         GrantScope::Path { .. }
         | GrantScope::Command { .. }
@@ -927,7 +996,11 @@ fn covers_terminal_command(
             plugin: granted_plugin,
             host: granted_host,
             command: granted,
-        } => granted_plugin == plugin && granted_host.same_as(host) && granted == command,
+        } => {
+            let same_plugin = granted_plugin == plugin;
+            let same_command = granted == command;
+            same_plugin && granted_host.same_as(host) && same_command
+        }
         GrantScope::Path { .. }
         | GrantScope::Command { .. }
         | GrantScope::RemoteCommand { .. }
@@ -957,10 +1030,11 @@ fn covers_external_tool(
             tool: granted_tool,
             ..
         } => {
-            granted_plugin == plugin
+            let same_server = granted_plugin == plugin
                 && granted_target == target
-                && granted_endpoint == endpoint
-                && granted_tool == tool
+                && granted_endpoint == endpoint;
+            let same_tool = granted_tool == tool;
+            same_server && same_tool
         }
         GrantScope::Path { .. }
         | GrantScope::Command { .. }
@@ -986,15 +1060,15 @@ fn covers_program(grant: &GrantScope, run: &RunKey<'_>) -> bool {
             working_directory,
             effects,
         } => {
-            plugin == run.plugin
+            let same_invocation = plugin == run.plugin
                 && name == run.name
                 && program == run.program
                 && fixed.as_slice() == run.fixed
-                && arguments.as_slice() == run.arguments
-                && is_same_path(
-                    Path::new(run.working_directory),
-                    Path::new(working_directory),
-                )
+                && arguments.as_slice() == run.arguments;
+            let requested_directory = Path::new(run.working_directory);
+            let granted_directory = Path::new(working_directory);
+            same_invocation
+                && is_same_path(requested_directory, granted_directory)
                 && covers_effects(effects, &run.effects)
         }
         GrantScope::Path { .. }
@@ -1010,24 +1084,29 @@ fn covers_program(grant: &GrantScope, run: &RunKey<'_>) -> bool {
 
 /// Whether a rule allows a command.
 fn rule_matches(rule: &CommandRule, words: &[String], directory: &Path) -> bool {
-    starts_with_words(words, &rule.words)
-        && rule
-            .folder
-            .as_ref()
-            .is_none_or(|folder| is_inside(directory, Path::new(folder)))
+    if !starts_with_words(words, &rule.words) {
+        return false;
+    }
+
+    rule.folder
+        .as_ref()
+        .is_none_or(|folder| is_inside(directory, Path::new(folder)))
 }
 
 /// What "Allow for" grants for the accesses that asked: nothing when one of
 /// them cannot be granted.
 fn grants_for(asking: &[&Access]) -> Vec<GrantScope> {
     let mut kept: Vec<GrantScope> = Vec::new();
+
     for access in asking {
         let Some(scope) = grant_scope(access) else {
             return Vec::new();
         };
+
         if kept.iter().any(|existing| scope_covers(existing, &scope)) {
             continue;
         }
+
         kept.retain(|existing| !scope_covers(&scope, existing));
         kept.push(scope);
     }
@@ -1193,7 +1272,12 @@ fn scope_covers(wider: &GrantScope, narrower: &GrantScope) -> bool {
                 mode: narrower_mode,
                 folder: narrower_folder,
             },
-        ) => mode == narrower_mode && is_inside(Path::new(narrower_folder), Path::new(folder)),
+        ) => {
+            let same_mode = mode == narrower_mode;
+            let narrower_folder = Path::new(narrower_folder);
+            let folder = Path::new(folder);
+            same_mode && is_inside(narrower_folder, folder)
+        }
         (
             GrantScope::Command {
                 command,
@@ -1206,8 +1290,11 @@ fn scope_covers(wider: &GrantScope, narrower: &GrantScope) -> bool {
                 background: narrower_background,
             },
         ) => {
-            command == narrower_command
-                && is_same_path(Path::new(narrower_directory), Path::new(working_directory))
+            let same_command = command == narrower_command;
+            let narrower_directory = Path::new(narrower_directory);
+            let working_directory = Path::new(working_directory);
+            same_command
+                && is_same_path(narrower_directory, working_directory)
                 && covers_mode(*background, *narrower_background)
         }
         _ => plugin_scope_covers(wider, narrower),
@@ -1236,11 +1323,11 @@ fn plugin_scope_covers(wider: &GrantScope, narrower: &GrantScope) -> bool {
                 ..
             },
         ) => {
-            plugin == narrower_plugin
+            let same_host = plugin == narrower_plugin
                 && target == narrower_target
-                && endpoint == narrower_endpoint
-                && command == narrower_command
-                && covers_mode(*background, *narrower_background)
+                && endpoint == narrower_endpoint;
+            let same_command = command == narrower_command;
+            same_host && same_command && covers_mode(*background, *narrower_background)
         }
         (
             GrantScope::Program {
@@ -1262,15 +1349,19 @@ fn plugin_scope_covers(wider: &GrantScope, narrower: &GrantScope) -> bool {
                 effects: narrower_effects,
             },
         ) => {
-            plugin == narrower_plugin
+            let same_invocation = plugin == narrower_plugin
                 && name == narrower_name
                 && program == narrower_program
                 && fixed == narrower_fixed
-                && arguments == narrower_arguments
-                && is_same_path(Path::new(narrower_directory), Path::new(working_directory))
+                && arguments == narrower_arguments;
+            let narrower_directory = Path::new(narrower_directory);
+            let working_directory = Path::new(working_directory);
+            same_invocation
+                && is_same_path(narrower_directory, working_directory)
                 && covers_effects(effects, narrower_effects)
         }
         (
+            GrantScope::ExternalTool { .. },
             GrantScope::ExternalTool {
                 plugin,
                 target,
@@ -1278,33 +1369,15 @@ fn plugin_scope_covers(wider: &GrantScope, narrower: &GrantScope) -> bool {
                 tool,
                 ..
             },
-            GrantScope::ExternalTool {
-                plugin: narrower_plugin,
-                target: narrower_target,
-                endpoint: narrower_endpoint,
-                tool: narrower_tool,
-                ..
-            },
-        ) => {
-            plugin == narrower_plugin
-                && target == narrower_target
-                && endpoint == narrower_endpoint
-                && tool == narrower_tool
-        }
+        ) => covers_external_tool(wider, plugin, target, endpoint, tool),
         (
+            GrantScope::TerminalCommand { .. },
             GrantScope::TerminalCommand {
                 plugin,
                 host,
                 command,
             },
-            GrantScope::TerminalCommand {
-                plugin: narrower_plugin,
-                host: narrower_host,
-                command: narrower_command,
-            },
-        ) => {
-            plugin == narrower_plugin && host.same_as(narrower_host) && command == narrower_command
-        }
+        ) => covers_terminal_command(wider, plugin, host, command),
         (
             GrantScope::Database { .. },
             GrantScope::Database {
@@ -1396,9 +1469,11 @@ fn program_rule_for(accesses: &[Access]) -> Option<RuleProposal> {
     let is_beside_paths = accesses
         .iter()
         .all(|access| matches!(access, Access::Path { .. } | Access::Program { .. }));
+
     if !(is_alone && is_beside_paths) {
         return None;
     }
+
     let words = run.words();
     Some(RuleProposal {
         words,
@@ -1470,10 +1545,14 @@ pub fn saved_rule(
     limit_to_folder: bool,
 ) -> Result<SavedRule, ToolsError> {
     let count = usize::try_from(prefix_words).unwrap_or(usize::MAX);
-    if count == 0 || count > proposal.words.len() {
+    let invalid_prefix = count == 0 || count > proposal.words.len();
+
+    if invalid_prefix {
         return Err(ToolsError::RulePrefixInvalid);
     }
+
     let words = proposal.words[..count].to_vec();
+
     if let Some(target) = &proposal.terminal {
         // A terminal's folder is wherever earlier commands left it, so the
         // rule is limited to its host and never to a folder.
@@ -1482,6 +1561,7 @@ pub fn saved_rule(
             words,
         });
     }
+
     let folder = limit_to_folder.then(|| proposal.folder.clone());
     Ok(match (&proposal.remote, &proposal.program) {
         (Some(target), _) => SavedRule::Remote {

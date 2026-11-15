@@ -23,6 +23,7 @@ const VIEW = '[data-agents-view]';
 const EDITOR = '[data-agent-editor]';
 const PICKER = 'main [data-agent-picker]';
 const CUSTOM_KEY = 'custom.reviewer';
+
 /** The bodies of the requests for the tools scenario so far, as text to search, the latest last. */
 function toolsBodies(provider: ProviderServer): Record<string, unknown>[] {
   return provider.requests().flatMap(({ body }) => (body?.model === MODELS.tools ? [body] : []));
@@ -79,6 +80,7 @@ describe('custom agents', () => {
 
   before(async () => {
     provider = await startProviderServer();
+
     await waitForApp();
     await addProfile(provider.baseUrl, { model: MODELS.tools, name: 'Tools', useTools: true });
   });
@@ -156,9 +158,8 @@ describe('custom agents', () => {
   it('duplicates a built-in agent into one of the owner’s', async () => {
     await $('[data-agent-row="conversation"]').click();
     await $('[data-agent-duplicate]').click();
-    await browser.waitUntil(async () => browser.execute(() => document.querySelector('[data-agent-save]') !== null), {
-      timeoutMsg: 'the copy did not open',
-    });
+    const copyOpened = async () => browser.execute(() => document.querySelector('[data-agent-save]') !== null);
+    await browser.waitUntil(copyOpened, { timeoutMsg: 'the copy did not open' });
     await expect($('[data-agent-name]')).toHaveValue('Default copy');
     await fill('[data-agent-name]', 'Careful');
     await fill('[data-agent-instructions]', 'MARKER Be careful.');

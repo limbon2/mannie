@@ -18,6 +18,10 @@
 
   import AccessText from './AccessText.svelte';
 
+  interface Props {
+    accesses: readonly Access[];
+  }
+
   // What an operation touches, exactly as the core prepared it: canonical
   // paths with their access modes, a command with its shell and working
   // directory, a command on a remote host with the host, its address and its
@@ -33,7 +37,9 @@
   // (docs/features/system-tools/tool-activity.md).
   // Paths, commands, statements, values, arguments, names and a server's
   // words are content, and render as text in their own elements (T-3).
-  let { accesses }: { accesses: readonly Access[] } = $props();
+  let { accesses }: Props = $props();
+
+  const credentialContent = { 'data-browser-credential-access': '', 'data-content': '' };
 </script>
 
 <ul class="flex flex-col gap-2">
@@ -44,6 +50,7 @@
           <Badge class="mt-px" variant="outline">{accessModeLabel(access.mode)}</Badge>
           <span class="min-w-0 font-mono text-xs break-all" data-content>{access.path}</span>
         </div>
+
         {#if access.entries !== null}
           <p class="text-xs text-muted-foreground">
             {m.tools_access_entries({ entries: entryCountMessage(access.entries) })}
@@ -67,6 +74,7 @@
             <dd class="font-mono break-all" data-content>{programRunText(access.fixed)}</dd>
           {/if}
         </dl>
+
         {#if access.effects.length > 0}
           <p class="text-xs font-medium text-muted-foreground">{m.tools_access_program_effects()}</p>
           <ul class="flex list-disc flex-col gap-1 ps-5 text-sm" data-program-effects="">
@@ -120,7 +128,7 @@
           <dd class="font-mono break-all" data-content>{access.origin}</dd>
           {#if access.credential}
             <dt class="text-muted-foreground">{m.tools_access_browser_credential()}</dt>
-            <dd class="wrap-anywhere" data-browser-credential-access="" data-content dir="auto">
+            <dd class="wrap-anywhere" {...credentialContent} dir="auto">
               {access.credential.label}
             </dd>
           {/if}
@@ -134,6 +142,7 @@
         {#if access.statementCut ?? false}
           <p class="text-xs text-muted-foreground">{m.tools_access_database_statement_cut()}</p>
         {/if}
+
         {#if access.parameters.length > 0}
           <p class="text-xs font-medium text-muted-foreground">{m.tools_access_database_values()}</p>
           <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs" data-database-values="">
@@ -143,11 +152,13 @@
             {/each}
           </dl>
         {/if}
+
         {#if access.parameterCount > access.parameters.length}
           <p class="text-xs text-muted-foreground">
             {m.tools_access_database_values_more({ count: access.parameterCount - access.parameters.length })}
           </p>
         {/if}
+
         <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs" data-database="">
           <dt class="text-muted-foreground">{m.tools_access_database()}</dt>
           <dd class="break-all" data-content dir="auto">{access.name}</dd>
@@ -162,6 +173,7 @@
         {#if access.argumentsCut ?? false}
           <p class="text-xs text-muted-foreground">{m.tools_access_external_arguments_cut()}</p>
         {/if}
+
         <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs" data-external-tool="">
           {#if access.title !== null}
             <dt class="text-muted-foreground">{m.tools_access_external_title()}</dt>
@@ -174,6 +186,7 @@
           </dt>
           <dd class="font-mono break-all" data-content>{toolServerEndpointText(access.endpoint)}</dd>
         </dl>
+
         {#if access.hints.length > 0}
           <p class="text-xs text-muted-foreground" data-content data-tool-hints="">{toolHintsMessage(access.hints)}</p>
         {/if}
@@ -182,6 +195,7 @@
         {#if access.background ?? false}
           <p class="text-xs font-medium" data-background-access="">{m.tools_access_background()}</p>
         {/if}
+
         {#if access.kind === 'command'}
           <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs">
             <dt class="text-muted-foreground">{m.tools_access_shell()}</dt>

@@ -75,6 +75,7 @@ use mannie_tools::{Ceiling, MutationLock, SystemFacts, ToolRegistry};
 use mannie_types::clock::Clock;
 use mannie_types::ids::{CheckpointId, ConversationId, ProfileId, ProjectId, RunId};
 use mannie_types::tasks::ChildAgentsSettings;
+use mannie_types::tools::ProcessRecord;
 use tokio::sync::{Semaphore, mpsc, watch};
 
 pub use agents::{
@@ -376,6 +377,12 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+async fn end_leftover_commands(records: Vec<ProcessRecord>) {
+    for record in &records {
+        mannie_tools::end_leftover_command(record).await;
+    }
+}
+
 impl Runtime {
     /// Starts the runtime. Runs and background commands that were active when
     /// Mannie last ended become interrupted first, before any command can
@@ -385,27 +392,34 @@ impl Runtime {
         config: RuntimeConfig,
     ) -> Result<Self, RuntimeStoreError> {
         deps.store.recover_exports().await?;
+
         let uncertain = deps.store.recover_db_operations().await?;
+
         if uncertain > 0 {
             tracing::warn!(
                 operations = uncertain,
                 "owner operations on databases ran when Mannie ended and may have taken effect"
             );
         }
+
         let recovered = deps.store.recover_interrupted_runs().await?;
+
         if !recovered.is_empty() {
             tracing::info!(
                 runs = recovered.len(),
                 "recovered runs that were active when Mannie ended"
             );
         }
+
         let commands = deps.store.recover_background_commands().await?;
+
         if !commands.is_empty() {
             tracing::info!(
                 commands = commands.len(),
                 "interrupted background commands that ran when Mannie ended"
             );
         }
+
         // What is left of commands that ran when Mannie ended is ended in the
         // background, as a best effort; their calls are uncertain already,
         // and their background commands interrupted (ADR-0041).
@@ -415,16 +429,14 @@ impl Runtime {
             .filter_map(|call| call.process.clone())
             .chain(commands.into_iter().filter_map(|command| command.process))
             .collect();
+
         if !leftovers.is_empty() {
-            tokio::spawn(async move {
-                for record in &leftovers {
-                    mannie_tools::end_leftover_command(record).await;
-                }
-            });
+            tokio::spawn(end_leftover_commands(leftovers));
         }
         if let Some(skills) = &deps.skills {
             skills.load(&deps.store).await?;
         }
+
         let random = config
             .random_seed
             .map_or_else(fastrand::Rng::new, fastrand::Rng::with_seed);
@@ -474,6 +486,7 @@ impl Runtime {
         let runtime = Self {
             inner: Arc::new(inner),
         };
+
         runtime.load_custom_agents().await?;
         runtime.load_chatgpt_view().await;
         Ok(runtime)
@@ -519,27 +532,19 @@ impl Runtime {
     /// with them their executors, before.
     pub async fn shutdown(&self) {
         self.inner.shutting_down.store(true, Ordering::SeqCst);
-        let mut ended = Vec::new();
-        {
-            let busy = lock(&self.inner.busy);
-            for entry in busy.values() {
-                if let Busy::Running(handle) = entry {
-                    // A full mailbox already holds a Stop, which ends the run
-                    // too.
-                    let _delivered = handle.mailbox.try_send(Command::Shutdown);
-                    ended.push(handle.ended.clone());
-                }
-            }
-        }
+
+        let mut ended = self.request_shutdown();
         let all_ended = futures_util::future::join_all(
             ended.iter_mut().map(|ended| ended.wait_for(|ended| *ended)),
         );
+
         if tokio::time::timeout(self.inner.config.shutdown_timeout, all_ended)
             .await
             .is_err()
         {
             tracing::warn!("runs did not end in time; the next start marks them as interrupted");
         }
+
         // After the runs, so no start is under way, and before the hubs, so
         // the ends reach the subscribers.
         self.end_background_commands().await;
@@ -550,9 +555,24 @@ impl Runtime {
         self.quit_chatgpt().await;
         self.inner.hubs.shut_down().await;
         self.inner.assigned.shut_down();
+
         if let Err(error) = self.inner.store.flush().await {
             tracing::warn!(%error, error.code = error.code(), "could not make the store durable while quitting");
         }
+    }
+
+    fn request_shutdown(&self) -> Vec<watch::Receiver<bool>> {
+        let mut ended = Vec::new();
+        let busy = lock(&self.inner.busy);
+
+        for entry in busy.values() {
+            if let Busy::Running(handle) = entry {
+                // A full mailbox already holds a Stop, which ends the run too.
+                let _delivered = handle.mailbox.try_send(Command::Shutdown);
+                ended.push(handle.ended.clone());
+            }
+        }
+        ended
     }
 
     /// Whether an active run uses a profile.

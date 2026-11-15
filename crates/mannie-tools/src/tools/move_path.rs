@@ -39,31 +39,38 @@ impl TypedTool for MovePath {
     fn prepare(context: &ToolContext, input: &Input) -> Result<Vec<Access>, PrepareError> {
         let workspace = context.workspace.as_deref();
         let source = for_change(workspace, &input.source, FinalLink::Keep)?;
+
         if !source.exists() {
             return Err(ToolFailure::NotFound {
                 path: source.path.display().to_string(),
             }
             .into());
         }
+
         let destination = for_change(workspace, &input.destination, FinalLink::Follow)?;
+
         if destination.exists() {
             return Err(ToolFailure::AlreadyExists {
                 path: destination.path.display().to_string(),
             }
             .into());
         }
+
         existing_parent(&destination.path)?;
         if is_inside(&destination.path, &source.path) {
             return Err(PrepareError::invalid(
                 "the destination is inside the source",
             ));
         }
+
         let is_folder = source.is_folder();
         let delete = path_access(&source, AccessMode::Delete, is_folder)?;
         let create = create_access(&destination.path, is_folder)?;
+
         if volume(&delete) != volume(&create) {
             return Err(ToolFailure::DifferentVolume.into());
         }
+
         Ok(vec![delete, create])
     }
 
@@ -75,38 +82,43 @@ impl TypedTool for MovePath {
             ..
         } = execution;
         let lock = context.clone();
-        async move {
-            locked(&lock, move || {
-                unchanged(&accesses, Self::prepare(&context, &input))?;
-                let [source, destination] = accesses.as_slice() else {
-                    return Err(ToolFailure::PathChanged);
-                };
-                let (source_path, source_identity) = path_of(source)?;
-                let (destination_path, destination_identity) = path_of(destination)?;
-                let (source_folder, source_name) = pin_existing(&source_path, source_identity)?;
-                let (destination_folder, names) =
-                    pin_missing(&destination_path, destination_identity)?;
-                let [destination_name] = names.as_slice() else {
-                    return Err(ToolFailure::PathChanged);
-                };
-                source_folder.move_entry(&source_name, &destination_folder, destination_name)?;
-                let source_text = source_path.display().to_string();
-                let destination_text = destination_path.display().to_string();
-                Ok(Done {
-                    output: format!("Moved {source_text} to {destination_text}.\n"),
-                    outcome: ToolOutcome::Moved {
-                        source: source_text,
-                        destination: destination_text,
-                    },
-                    archives: Vec::new(),
-                    images: Vec::new(),
-                    cited: Vec::new(),
-                })
-            })
-            .await
-        }
-        .boxed()
+        async move { locked(&lock, move || move_authorized(&context, &input, &accesses)).await }
+            .boxed()
     }
+}
+
+/// Rechecks and moves the authorized paths while the mutation lock is held.
+fn move_authorized(
+    context: &ToolContext,
+    input: &Input,
+    accesses: &[Access],
+) -> Result<Done, ToolFailure> {
+    unchanged(accesses, MovePath::prepare(context, input))?;
+
+    let [source, destination] = accesses else {
+        return Err(ToolFailure::PathChanged);
+    };
+    let (source_path, source_identity) = path_of(source)?;
+    let (destination_path, destination_identity) = path_of(destination)?;
+    let (source_folder, source_name) = pin_existing(&source_path, source_identity)?;
+    let (destination_folder, names) = pin_missing(&destination_path, destination_identity)?;
+    let [destination_name] = names.as_slice() else {
+        return Err(ToolFailure::PathChanged);
+    };
+    source_folder.move_entry(&source_name, &destination_folder, destination_name)?;
+
+    let source_text = source_path.display().to_string();
+    let destination_text = destination_path.display().to_string();
+    Ok(Done {
+        output: format!("Moved {source_text} to {destination_text}.\n"),
+        outcome: ToolOutcome::Moved {
+            source: source_text,
+            destination: destination_text,
+        },
+        archives: Vec::new(),
+        images: Vec::new(),
+        cited: Vec::new(),
+    })
 }
 
 /// The volume or device part of an access's identity.

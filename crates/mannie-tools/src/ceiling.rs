@@ -104,6 +104,7 @@ pub fn decide_database_request(
     request: &DatabaseRequest<'_>,
 ) -> HostDecision {
     let path = ordinary(request.path);
+
     if request
         .protected
         .iter()
@@ -111,14 +112,17 @@ pub fn decide_database_request(
     {
         return HostDecision::Refused(HostDatabaseRefusal::WorkerFolder);
     }
+
     let full_access = ceiling.mode == CeilingMode::FullAccess;
     let inside = ceiling
         .allowed_folders
         .iter()
         .any(|folder| is_inside(&path, folder));
+
     if !inside && !full_access {
         return HostDecision::Refused(HostDatabaseRefusal::OutsideAllowedFolders);
     }
+
     let Some(write) = request.write else {
         return HostDecision::Runs;
     };
@@ -136,6 +140,7 @@ pub fn decide_database_request(
             WriteAuthority::FullAccess => accepts_master_full_access,
         },
     };
+
     if accepted {
         HostDecision::Runs
     } else {
@@ -149,7 +154,11 @@ pub fn decide_database_request(
 fn grants_cover(scopes: &[GrantScope], write: &HostWrite<'_>) -> bool {
     let covered = |text: &str| {
         scopes.iter().any(|scope| match scope {
-            GrantScope::Database { key, statement, .. } => key == write.key && statement == text,
+            GrantScope::Database { key, statement, .. } => {
+                let same_database = key == write.key;
+                let same_statement = statement == text;
+                same_database && same_statement
+            }
             GrantScope::Path { .. }
             | GrantScope::Command { .. }
             | GrantScope::RemoteCommand { .. }
@@ -160,11 +169,15 @@ fn grants_cover(scopes: &[GrantScope], write: &HostWrite<'_>) -> bool {
             | GrantScope::BrowserCredential { .. } => false,
         })
     };
-    !write.statements.is_empty()
-        && write
-            .statements
-            .iter()
-            .all(|statement| statement.class == StatementClass::Write && covered(statement.text))
+
+    if write.statements.is_empty() {
+        return false;
+    }
+
+    write.statements.iter().all(|statement| {
+        let writes = statement.class == StatementClass::Write;
+        writes && covered(statement.text)
+    })
 }
 
 #[cfg(test)]
@@ -369,14 +382,17 @@ mod tests {
             CeilingMode::Autonomous,
             CeilingMode::FullAccess,
         ] {
-            for class in [StatementClass::Write, StatementClass::Schema] {
-                for authority in [WriteAuthority::OwnerAction, allowed_once()] {
-                    assert_eq!(
-                        Case::write(class, authority.clone()).decide(mode, false),
-                        HostDecision::Runs,
-                        "{mode:?} {class:?} {authority:?}"
-                    );
-                }
+            for (class, authority) in [
+                (StatementClass::Write, WriteAuthority::OwnerAction),
+                (StatementClass::Write, allowed_once()),
+                (StatementClass::Schema, WriteAuthority::OwnerAction),
+                (StatementClass::Schema, allowed_once()),
+            ] {
+                assert_eq!(
+                    Case::write(class, authority.clone()).decide(mode, false),
+                    HostDecision::Runs,
+                    "{mode:?} {class:?} {authority:?}"
+                );
             }
         }
     }
@@ -420,9 +436,11 @@ mod tests {
     #[test]
     fn grants_that_do_not_cover_the_write_go_to_the_owner() {
         let mut other_database = grant(UPDATE);
+
         if let GrantScope::Database { key, .. } = &mut other_database {
             *key = DatabaseKey::parse("0199e0f2-0000-7000-8000-0000000000ef").unwrap();
         }
+
         for scopes in [
             vec![grant("UPDATE parts SET stock = 0")],
             vec![other_database],

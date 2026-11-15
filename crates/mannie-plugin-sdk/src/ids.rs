@@ -165,17 +165,20 @@ impl PluginId {
         if id.starts_with(TAURI_PLUGIN_CRATE_PREFIX) {
             return Err(IdError::TauriPrefix { id: echoed(id) });
         }
+
         let prefix = prefix_of(id);
         let nested_core = CORE_TABLE_PREFIXES
             .iter()
             .copied()
             .find(|core| prefixes_nest(&prefix, core));
+
         if let Some(core) = nested_core {
             return Err(IdError::NestsCorePrefix {
                 id: echoed(id),
                 core,
             });
         }
+
         Ok(Self(id.to_owned()))
     }
 
@@ -256,6 +259,7 @@ impl FeatureId {
         if !has_plugin_id_syntax(id) {
             return Err(IdError::FeatureSyntax { id: echoed(id) });
         }
+
         Ok(Self(id.to_owned()))
     }
 
@@ -419,10 +423,14 @@ pub fn prefixes_nest(a: &str, b: &str) -> bool {
 /// extension points, such as the IDs of mention providers and image sources:
 /// the plugin's ID itself, or the plugin's ID, a dot and more (decision 6).
 pub fn owned_by(plugin: &str, id: &str) -> bool {
-    id == plugin
-        || id
-            .strip_prefix(plugin)
-            .is_some_and(|rest| rest.len() > 1 && rest.starts_with('.'))
+    if id == plugin {
+        return true;
+    }
+
+    id.strip_prefix(plugin).is_some_and(|rest| {
+        let has_suffix = rest.len() > 1;
+        has_suffix && rest.starts_with('.')
+    })
 }
 
 /// Whether a text is lower-case words of letters and digits joined by single
@@ -432,13 +440,17 @@ fn has_plugin_id_syntax(id: &str) -> bool {
         .chars()
         .next()
         .is_some_and(|first| first.is_ascii_lowercase());
-    starts_with_letter
-        && id.split('-').all(|word| {
-            !word.is_empty()
-                && word
-                    .chars()
-                    .all(|character| character.is_ascii_lowercase() || character.is_ascii_digit())
-        })
+
+    if !starts_with_letter {
+        return false;
+    }
+
+    id.split('-').all(|word| {
+        let valid_characters = word
+            .chars()
+            .all(|character| character.is_ascii_lowercase() || character.is_ascii_digit());
+        !word.is_empty() && valid_characters
+    })
 }
 
 /// The prefix of an ID that has the syntax of a plugin ID.
