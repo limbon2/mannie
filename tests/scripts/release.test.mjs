@@ -732,6 +732,7 @@ describe('manifestProblems', () => {
   it('says when a platform is not one of the desktop app', () => {
     const pair = fixedKeyPair(7);
     const manifest = parsedManifest(pair.privateKey);
+
     manifest.platforms['darwin-aarch64-app'] = { signature: '', url: `${DOWNLOADS}/mannie-1.2.3-macos.app.tar.gz` };
 
     assert.deepEqual(manifestProblems(JSON.stringify(manifest), pair.publicKey, releaseFiles()), [
@@ -750,6 +751,7 @@ describe('manifestProblems', () => {
       undefined,
     ]) {
       const manifest = parsedManifest(pair.privateKey);
+
       manifest.platforms['linux-x86_64-deb'].url = url;
       assert.deepEqual(manifestProblems(JSON.stringify(manifest), pair.publicKey, releaseFiles()), [
         `linux-x86_64-deb: the address is not an HTTPS address of ${name}`,
@@ -777,6 +779,7 @@ describe('manifestProblems', () => {
 
     for (const signatureText of [byAnotherKey, 'not a signature', '', undefined]) {
       const manifest = parsedManifest(pair.privateKey);
+
       manifest.platforms['linux-x86_64-deb'].signature = signatureText;
       assert.deepEqual(manifestProblems(JSON.stringify(manifest), pair.publicKey, releaseFiles()), [
         `linux-x86_64-deb: the signature of ${name} is not valid`,
@@ -805,6 +808,7 @@ describe('manifestProblems', () => {
       { file: name, version: '1.2.2' },
     ]) {
       const manifest = parsedManifest(pair.privateKey);
+
       manifest.platforms['linux-x86_64-deb'].signature = manifestSignature(contentOf(name), pair.privateKey, signed);
       assert.deepEqual(manifestProblems(JSON.stringify(manifest), pair.publicKey, releaseFiles()), [
         `linux-x86_64-deb: the signature is not one of ${name} in version 1.2.3`,
@@ -817,6 +821,7 @@ describe('manifestProblems', () => {
   it('says when the installers of an older release are announced as a newer version', () => {
     const pair = fixedKeyPair(7);
     const manifest = parsedManifest(pair.privateKey);
+
     manifest.version = '1.2.4';
     for (const entry of Object.values(manifest.platforms)) {
       entry.url = entry.url.replace('mannie-1.2.3-', 'mannie-1.2.4-');
@@ -851,6 +856,7 @@ describe('manifestProblems', () => {
   it('names every problem of a manifest', () => {
     const pair = fixedKeyPair(7);
     const manifest = parsedManifest(pair.privateKey);
+
     manifest.platforms['linux-x86_64-rpm'].url = 'http://example.com/mannie-1.2.3-linux-x86_64.rpm';
     manifest.platforms['darwin-aarch64-app'] = manifest.platforms['linux-x86_64-deb'];
     const files = releaseFiles().filter((file) => !file.name.endsWith('.rpm'));

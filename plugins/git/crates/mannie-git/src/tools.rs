@@ -114,6 +114,7 @@ impl Reading {
         revision: &str,
     ) -> Result<String, GitFailure> {
         check_revision(argument, revision)?;
+
         let ran = self
             .git
             .run(self.run([
@@ -123,7 +124,9 @@ impl Reading {
                 format!("{revision}^{{commit}}"),
             ]))
             .await?;
+
         let oid = ran.text().trim().to_owned();
+
         if ran.succeeded() && is_object_id(&oid) {
             Ok(oid)
         } else {
@@ -144,6 +147,7 @@ impl Reading {
                 return Ok(format!("{left}{separator}{right}"));
             }
         }
+
         self.commit(argument, text).await
     }
 }
@@ -211,11 +215,8 @@ impl<T: ReadTool> ReadingTool<T> {
 /// Reads a call's arguments.
 pub(crate) fn read_arguments<A: DeserializeOwned>(text: &str) -> Result<A, GitFailure> {
     // A model that calls a tool without arguments may send nothing.
-    let text = if text.trim().is_empty() || text.trim() == "null" {
-        "{}"
-    } else {
-        text
-    };
+    let empty = text.trim().is_empty() || text.trim() == "null";
+    let text = if empty { "{}" } else { text };
     serde_json::from_str(text).map_err(|error| GitFailure::InvalidArgument {
         detail: format!("The arguments are not valid: {error}."),
     })
@@ -247,6 +248,7 @@ impl<T: ReadTool> Tool for ReadingTool<T> {
                 archive_ids: &execution.archive_ids,
             };
             let result = fitted(answer.text, room);
+
             match answer.data {
                 Some(data) => result.with_data(data),
                 None => result,
@@ -269,8 +271,10 @@ async fn execute<T: ReadTool>(git: &Git, execution: &ToolExecution) -> Result<An
     let arguments: T::Arguments = read_arguments(&execution.arguments)?;
     let layout = authorized_layout(git, &execution.authorized).await?;
     T::check(&arguments, &layout)?;
+
     let room = usize::try_from(execution.result_limit).unwrap_or(usize::MAX);
     let reading = Reading::open(git, layout, room, None).await?;
+
     T::answer(reading, arguments).await
 }
 
@@ -300,6 +304,7 @@ pub(crate) async fn authorized_layout(
         let folder = comparable(folder);
         allowed.iter().any(|allowed| is_inside(&folder, allowed))
     });
+
     if stays_inside {
         Ok(layout)
     } else {
@@ -312,6 +317,7 @@ pub(crate) async fn authorized_layout(
 pub(crate) fn comparable(path: &Path) -> PathBuf {
     let resolved = std::fs::canonicalize(path).unwrap_or_else(|_error| path.to_path_buf());
     let text = resolved.to_string_lossy();
+
     if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
         return PathBuf::from(format!(r"\\{rest}"));
     }
@@ -332,6 +338,7 @@ pub(crate) fn pathspecs_or_all(
     let refused = |detail: &str| GitFailure::InvalidArgument {
         detail: detail.to_owned(),
     };
+
     match (paths.is_empty(), all) {
         // The run's folder is the repository's top.
         (true, true) => Ok(vec![".".to_owned()]),
@@ -362,9 +369,11 @@ pub(crate) const NOTE_ROOM: usize = 400;
 /// out.
 pub(crate) fn cut_line(line: &str) -> String {
     let total = line.chars().count();
+
     if total <= MAX_LINE_CHARS {
         return line.to_owned();
     }
+
     let kept: String = line.chars().take(MAX_LINE_CHARS).collect();
     format!("{kept} [{} more characters]", total - MAX_LINE_CHARS)
 }
@@ -377,15 +386,18 @@ pub(crate) fn fitting_data<D: Serialize>(
     build: impl Fn(usize) -> D,
 ) -> Option<serde_json::Value> {
     let mut kept = items;
+
     loop {
         let data = serde_json::to_value(build(kept)).ok()?;
         let size = serde_json::to_string(&data).map_or(usize::MAX, |text| text.len());
+
         if size <= MAX_TOOL_DATA_BYTES {
             return Some(data);
         }
         if kept == 0 {
             return None;
         }
+
         kept /= 2;
     }
 }
@@ -447,6 +459,7 @@ pub(crate) mod testing {
             .with_workspace(workspace)
             .with_authorized(accesses)
             .with_result_limit(room);
+
         tool.execute(execution).await
     }
 }
@@ -488,6 +501,7 @@ mod tests {
             let command = TestRepository::marking_command(&marker, key, then);
             repository.git(&["config", key, &command]);
         }
+
         repository.write("a.txt", "one and two\n");
         // The planted programs do run under git's own reads.
         repository.git(&["status", "--porcelain"]);
@@ -506,21 +520,27 @@ mod tests {
         };
         let status = call_with::<GitStatus>(&host, &repository, json!({}), ROOM).await;
         ran_nothing("git_status", &status);
+
         let unstaged = call_with::<GitDiff>(&host, &repository, json!({}), ROOM).await;
         ran_nothing("git_diff", &unstaged);
+
         let from_head =
             call_with::<GitDiff>(&host, &repository, json!({ "from": "HEAD" }), ROOM).await;
         ran_nothing("git_diff from HEAD", &from_head);
+
         let show = call_with::<GitShow>(&host, &repository, json!({}), ROOM).await;
         ran_nothing("git_show", &show);
+
         let blame =
             call_with::<GitBlame>(&host, &repository, json!({ "path": "a.txt" }), ROOM).await;
         ran_nothing("git_blame", &blame);
+
         let lines = json!({ "lines": { "path": "a.txt", "start": 1, "end": 1 } });
         ran_nothing(
             "git_log",
             &call_with::<GitLog>(&host, &repository, lines, ROOM).await,
         );
+
         let grep =
             call_with::<GitGrep>(&host, &repository, json!({ "pattern": "two" }), ROOM).await;
         ran_nothing("git_grep", &grep);

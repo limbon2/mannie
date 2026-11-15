@@ -2588,6 +2588,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mannie-rust-lint"
+version = "0.8.1"
+dependencies = [
+ "proc-macro2",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "mannie-secrets"
 version = "0.8.1"
 dependencies = [

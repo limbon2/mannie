@@ -15,6 +15,7 @@
     "@eslint-community/eslint-plugin-eslint-comments": "4.8.1",
     "@eslint/compat": "2.1.1",
     "@eslint/js": "10.0.1",
+    "@stylistic/eslint-plugin": "5.10.0",
     "@sveltejs/load-config": "0.2.3",
     "@sveltejs/mcp": "0.1.26",
     "@types/mocha": "10.0.10",

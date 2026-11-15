@@ -385,7 +385,9 @@ fn cut_for_view(text: &str) -> (&str, bool) {
     if text.len() <= MAX_VIEW_ARGUMENTS_BYTES {
         return (text, false);
     }
+
     let mut end = MAX_VIEW_ARGUMENTS_BYTES;
+
     while !text.is_char_boundary(end) {
         end -= 1;
     }
@@ -398,6 +400,7 @@ fn cut_for_view(text: &str) -> (&str, bool) {
 /// ADR-0056, decision 7).
 fn view_access(access: &Access) -> Access {
     let mut shown = access.clone();
+
     match &mut shown {
         Access::ExternalTool {
             arguments,
@@ -411,12 +414,14 @@ fn view_access(access: &Access) -> Access {
         } => cut_text_for_view(statement, statement_cut),
         _uncut => {}
     }
+
     shown
 }
 
 /// Cuts a text of an access for the view, and marks the cut.
 fn cut_text_for_view(text: &mut String, marked: &mut bool) {
     let (start, cut) = cut_for_view(text);
+
     if cut {
         *text = start.to_owned();
         *marked = true;
@@ -795,6 +800,7 @@ mod tests {
         let mut plugin_call =
             ToolCallDocument::receiving("call_1".to_owned(), "git_status".to_owned());
         plugin_call.plugin = Some("git".to_owned());
+
         let core_call = ToolCallDocument::receiving("call_2".to_owned(), "read_file".to_owned());
 
         assert_eq!(

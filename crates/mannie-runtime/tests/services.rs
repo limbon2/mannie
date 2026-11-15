@@ -99,9 +99,11 @@ impl Setup {
         tokio::time::timeout(WAIT, async move {
             loop {
                 let submissions = executor.submissions();
+
                 if submissions.len() >= count {
                     return submissions;
                 }
+
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
@@ -119,6 +121,7 @@ impl Setup {
             &give("box-01", "Build it", "Build the backend."),
         )]));
         self.parent(reply("Done."));
+
         let (conversation, run) = self.start("OWNER: build it on the box").await;
         let [submission] = self.submissions(1).await.try_into().unwrap();
         (conversation, run, submission)
@@ -311,9 +314,11 @@ async fn the_runtimes_providers_bind_the_executor_host_credentials_processes_bac
 async fn the_executor_host_reads_and_changes_only_tasks_of_its_kind() {
     let setup = Setup::new().await;
     let (conversation, run, submission) = setup.give_task().await;
+
     setup
         .publish(FakeExecutor::state(&submission, 2, TaskState::Running))
         .await;
+
     let runtime = &setup.harness.runtime;
     let store = &setup.harness.store;
     let own = executor_host(runtime, FAKE_EXECUTOR_KIND);
@@ -359,9 +364,11 @@ async fn the_executor_host_reads_and_changes_only_tasks_of_its_kind() {
         .parent_has_full_access(submission.conversation_id.clone())
         .await;
     let parent_full_access = own.parent_has_full_access(conversation.clone()).await;
+
     setup
         .publish(FakeExecutor::reported(&submission, 3, "Built."))
         .await;
+
     let transcript = setup.harness.wait_for_run(&conversation, &run).await;
 
     let expected = ExecutorTask::new(
@@ -415,10 +422,12 @@ async fn the_executor_host_reads_and_changes_only_tasks_of_its_kind() {
 async fn ending_a_task_of_the_kind_that_ended_keeps_its_first_ending() {
     let setup = Setup::new().await;
     let (conversation, run, submission) = setup.give_task().await;
+
     setup
         .publish(FakeExecutor::reported(&submission, 2, "Built."))
         .await;
     setup.harness.wait_for_run(&conversation, &run).await;
+
     let own = executor_host(&setup.harness.runtime, FAKE_EXECUTOR_KIND);
 
     own.end_task(submission.task_id.clone(), TaskState::Canceled)
@@ -461,6 +470,7 @@ async fn a_plugin_cannot_publish_another_kinds_task_state() {
         .publish_task_state(FakeExecutor::reported(&submission, 2, "Built."))
         .await
         .unwrap();
+
     setup.harness.wait_for_run(&conversation, &run).await;
 
     assert_eq!(forged, None);
@@ -493,14 +503,17 @@ async fn a_plugin_cannot_publish_another_kinds_task_state() {
 async fn the_executor_hosts_outbox_holds_only_the_deletions_of_its_kind() {
     let setup = Setup::new().await;
     let (conversation, run, submission) = setup.give_task().await;
+
     setup
         .publish(FakeExecutor::reported(&submission, 2, "Built."))
         .await;
     setup.harness.wait_for_run(&conversation, &run).await;
+
     let own = executor_host(&setup.harness.runtime, FAKE_EXECUTOR_KIND);
     let other = executor_host(&setup.harness.runtime, OTHER_KIND);
     let mut changes = own.outbox_changes();
     changes.borrow_and_update();
+
     let target = FakeExecutor::target("box-01").target_id;
     let deletion = OutboxItem::new(target.clone(), submission.conversation_id.clone());
 
@@ -510,8 +523,10 @@ async fn the_executor_hosts_outbox_holds_only_the_deletions_of_its_kind() {
         .delete_conversation(&conversation)
         .await
         .unwrap();
+
     let outbox_of_other = other.outbox().await.unwrap();
     other.drop_outbox(vec![deletion.clone()]).await.unwrap();
+
     let dropped_by_other = other.drop_target_outbox(target.clone()).await.unwrap();
     let outbox_of_own = own.outbox().await.unwrap();
     let dropped_by_own = own.drop_target_outbox(target).await.unwrap();
@@ -539,6 +554,7 @@ async fn a_lend_for_an_active_task_of_the_kind_and_its_runs_profile_is_lent() {
         .await
         .unwrap()
         .expect("the profile has a credential");
+
     setup
         .publish(FakeExecutor::reported(&submission, 2, "Built."))
         .await;
@@ -575,6 +591,7 @@ async fn a_permitted_lend_of_a_profile_without_a_credential_or_a_deleted_one_len
         )
         .await
         .unwrap();
+
     let without_credential = credentials(&setup.harness.runtime, FAKE_EXECUTOR_KIND)
         .lend(task.clone(), profile.id.clone())
         .await;
@@ -625,7 +642,9 @@ async fn a_permitted_lend_whose_credential_cannot_be_read_fails_and_lends_once_i
     // The parent's next model call reads the credential too, so the vault
     // reads again before the task reports.
     setup.harness.vault.fail_reads(None);
+
     let readable = lender.lend(submission.task_id.clone(), profile).await;
+
     setup
         .publish(FakeExecutor::reported(&submission, 2, "Built."))
         .await;
@@ -654,10 +673,12 @@ async fn a_lend_is_refused_for_another_kind_another_profile_an_ended_task_and_an
         .await;
     let other_profile = own.lend(task.clone(), second.id.clone()).await;
     let unknown = own.lend(unknown_task(), profile.clone()).await;
+
     setup
         .publish(FakeExecutor::reported(&submission, 2, "Built."))
         .await;
     setup.harness.wait_for_run(&conversation, &run).await;
+
     let ended = own.lend(task, profile).await;
 
     for (case, refused) in [
@@ -677,10 +698,12 @@ async fn a_lend_is_refused_for_another_kind_another_profile_an_ended_task_and_an
 async fn a_follow_up_lends_the_profile_of_the_run_that_gave_it() {
     let setup = Setup::new().await;
     let (conversation, run, first) = setup.give_task().await;
+
     setup
         .publish(FakeExecutor::reported(&first, 2, "Built."))
         .await;
     setup.harness.wait_for_run(&conversation, &run).await;
+
     let first_profile = setup.harness.profile.id.clone();
     let second = setup.second_profile("sk-second-credential").await;
     // The owner chooses another profile for the parent's next replies; the
@@ -708,6 +731,7 @@ async fn a_follow_up_lends_the_profile_of_the_run_that_gave_it() {
         ))
         .await
         .unwrap();
+
     let [_, follow_up_task] = setup.submissions(2).await.try_into().unwrap();
     // The reply ends with Mannie while the follow-up runs on, and the lend
     // reads the store, so it holds after the restart.

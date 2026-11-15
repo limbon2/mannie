@@ -209,10 +209,12 @@ async fn a_new_database_gets_the_whole_schema_in_wal_mode_without_a_backup() {
 async fn an_existing_database_is_copied_before_it_is_migrated() {
     let fixture = Fixture::new();
     let store = fixture.open(&[FIRST]).unwrap();
+
     add_note(&store, "written at schema version 1").await;
     drop(store);
 
     fixture.clock.advance(1_000);
+
     let store = fixture.open(&[FIRST, SECOND]).unwrap();
     drop(store);
 
@@ -248,8 +250,10 @@ async fn reopening_an_up_to_date_database_makes_no_copy() {
 async fn a_newer_schema_is_refused_and_left_untouched() {
     let fixture = Fixture::new();
     let store = fixture.open(&[FIRST, SECOND]).unwrap();
+
     add_note(&store, "written by a newer version").await;
     drop(store);
+
     let before = fs::read(fixture.database()).unwrap();
 
     let error = fixture.open(&[FIRST]).unwrap_err();
@@ -279,6 +283,7 @@ async fn a_newer_schema_is_refused_and_left_untouched() {
 async fn a_failed_migration_is_rolled_back_and_keeps_the_previous_version() {
     let fixture = Fixture::new();
     let store = fixture.open(&[FIRST]).unwrap();
+
     add_note(&store, "kept").await;
     drop(store);
 
@@ -479,6 +484,7 @@ async fn a_module_registered_after_the_conversion_carries_over_its_migrations() 
     let older_options = fixture.options().with_plugin_modules([module(BEFORE)]);
     drop(Store::open_as_before_m5(&fixture.database(), &older_options, 22).unwrap());
     drop(fixture.open_latest().unwrap());
+
     let converted = records(&fixture.database());
 
     let store = Store::open(
@@ -492,6 +498,7 @@ async fn a_module_registered_after_the_conversion_carries_over_its_migrations() 
                 "SELECT name FROM sqlite_schema WHERE type = 'table' AND name LIKE 'workers_%' \
                  ORDER BY name",
             )?;
+
             let rows = select.query_map([], |row| row.get(0))?;
             rows.collect()
         })
@@ -545,6 +552,7 @@ async fn a_user_version_past_the_list_before_m5_without_records_is_refused() {
     let connection = Connection::open(fixture.database()).unwrap();
     connection.pragma_update(None, "user_version", 50).unwrap();
     drop(connection);
+
     let before = fs::read(fixture.database()).unwrap();
 
     let error = fixture.open_latest().unwrap_err();
@@ -598,6 +606,7 @@ async fn the_store_of_a_module_reaches_only_the_modules_that_it_opened_with() {
         )
         .await
         .unwrap();
+
     let bodies = module.query(sdk::Statement::new(SELECT)).await.unwrap();
 
     assert!(
@@ -620,6 +629,7 @@ async fn a_failed_write_is_rolled_back() {
         })
         .await
         .unwrap_err();
+
     add_note(&store, "committed").await;
     drop(store);
 
@@ -641,6 +651,7 @@ async fn readers_see_committed_writes_of_both_durabilities() {
         })
         .await
         .unwrap();
+
     let count: i64 = store
         .read(|connection| {
             connection.query_row("SELECT count(*) FROM tests_notes", [], |row| row.get(0))
@@ -661,6 +672,7 @@ async fn settings_default_until_saved_and_round_trip() {
         locale: Some(LocaleTag::parse("pt-BR").unwrap()),
     };
     store.save_settings(&chosen).await.unwrap();
+
     let saved: InterfaceSettings = store.load_settings().await.unwrap();
 
     assert_eq!(initial, InterfaceSettings::default());
@@ -1051,6 +1063,7 @@ async fn a_database_from_the_tools_schema_is_upgraded_for_task_conversations() {
 async fn a_database_from_the_child_agents_schema_is_upgraded_for_worker_tasks() {
     let fixture = Fixture::new();
     let older = fixture.open_before_m5(16);
+
     seed_child_agents_schema(&older).await;
     drop(older);
     assert_eq!(user_version(&fixture.database()), 16);
@@ -1113,6 +1126,7 @@ async fn a_database_from_the_child_agents_schema_is_upgraded_for_worker_tasks() 
         ]
     );
     refused.unwrap_err();
+
     let violations: Vec<String> = upgraded
         .read(|connection| {
             let mut check = connection.prepare("PRAGMA foreign_key_check")?;
@@ -1134,6 +1148,7 @@ async fn a_database_from_the_child_agents_schema_is_upgraded_for_worker_tasks() 
 async fn a_database_of_0_2_0_names_the_executor_of_a_workers_task() {
     let fixture = Fixture::new();
     let older = fixture.open_before_m5(22);
+
     seed_worker_task(&older).await;
     drop(older);
 
@@ -1256,12 +1271,14 @@ fn worker_task_id(number: u32) -> TaskId {
 async fn a_database_of_0_2_0_keeps_its_workers_tasks_in_every_state() {
     let fixture = Fixture::new();
     let older = fixture.open_before_m5(22);
+
     seed_worker_tasks_in_every_state(&older).await;
     drop(older);
 
     let upgraded = fixture.open_latest().unwrap();
 
     let mut expected_active = Vec::new();
+
     for (number, state, ending) in WORKER_TASKS_IN_EVERY_STATE {
         let task = upgraded
             .task(&worker_task_id(number))
@@ -1312,6 +1329,7 @@ async fn a_database_of_0_2_0_keeps_its_workers_tasks_in_every_state() {
 async fn a_task_that_0_2_0_delegated_names_the_profile_of_its_run() {
     let fixture = Fixture::new();
     let older = fixture.open_before_m5(22);
+
     seed_worker_task(&older).await;
     seed_worker_tasks_in_every_state(&older).await;
     drop(older);
@@ -1368,6 +1386,7 @@ async fn seed_worker_tasks_in_every_state(older: &Store) {
          VALUES ('{run}', '{parent}', '{turn}', 'conversation', '0199e0f2-0000-7000-8000-000000000001', \
          '0199e0f2-0000-7000-8000-000000000001:1', 'stopped', 1, '{{}}', 1, 1, 3, 0);"
     );
+
     for (number, state, ending) in WORKER_TASKS_IN_EVERY_STATE {
         let conversation = format!("0199e0f2-7a1b-7c3d-8e4f-0000000002{number:02}");
         let part = format!("0199e0f2-7a1b-7c3d-8e4f-0000000004{number:02}");
@@ -1376,6 +1395,7 @@ async fn seed_worker_tasks_in_every_state(older: &Store) {
         let state = state.as_str().unwrap();
         let ending = ending.map_or_else(|| "NULL".to_owned(), |text| format!("'{text}'"));
         let ended_at = if ending == "NULL" { "NULL" } else { "2" };
+
         write!(
             sql,
             " INSERT INTO runtime_conversations (id, title, title_source, profile_id, last_seq, \
@@ -1400,6 +1420,7 @@ async fn seed_worker_tasks_in_every_state(older: &Store) {
         )
         .unwrap();
     }
+
     older
         .write(Durability::Full, move |transaction| {
             transaction.execute_batch(&sql)
@@ -1534,6 +1555,7 @@ async fn task_indexes(store: &Store) -> Vec<String> {
             let mut select = connection.prepare(
                 "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'runtime_tasks' AND sql IS NOT NULL ORDER BY name",
             )?;
+
             let rows = select.query_map([], |row| row.get::<_, String>(0))?;
             rows.collect()
         })

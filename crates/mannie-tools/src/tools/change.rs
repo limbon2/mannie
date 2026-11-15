@@ -24,6 +24,7 @@ where
     T: Send + 'static,
 {
     let _guard = context.mutations.acquire().await;
+
     blocking(work).await
 }
 
@@ -80,6 +81,7 @@ pub(crate) fn pin_existing(
 ) -> Result<(PinnedFolder, OsString), ToolFailure> {
     let (parent, name) = split(path)?;
     let folder = PinnedFolder::open(parent)?;
+
     match folder.entry(&name)? {
         Some((found, _)) if found == identity => Ok((folder, name)),
         _ => Err(ToolFailure::PathChanged),
@@ -105,15 +107,20 @@ pub(crate) fn pin_missing(
         }
     };
     names.reverse();
+
     let folder = PinnedFolder::open(existing)?;
+
     if folder.identity()? != identity {
         return Err(ToolFailure::PathChanged);
     }
-    if let Some(first) = names.first()
-        && folder.entry(first)?.is_some()
-    {
-        return Err(ToolFailure::PathChanged);
+    if let Some(first) = names.first() {
+        let appeared = folder.entry(first)?.is_some();
+
+        if appeared {
+            return Err(ToolFailure::PathChanged);
+        }
     }
+
     Ok((folder, names))
 }
 
@@ -125,6 +132,7 @@ pub(crate) fn create_folders(
     names: &[OsString],
 ) -> Result<(PinnedFolder, u32), ToolFailure> {
     let mut created = 0_u32;
+
     if let Some((_, folders)) = names.split_last() {
         for name in folders {
             folder.create_folder(name)?;
@@ -132,6 +140,7 @@ pub(crate) fn create_folders(
             created += 1;
         }
     }
+
     Ok((folder, created))
 }
 
@@ -139,6 +148,7 @@ pub(crate) fn create_folders(
 pub(crate) fn missing_folders(path: &Path) -> Result<Vec<PathBuf>, ToolFailure> {
     let mut missing = Vec::new();
     let mut current = path.parent();
+
     while let Some(folder) = current {
         match fs::symlink_metadata(folder) {
             Ok(metadata) if metadata.is_dir() => break,
@@ -154,6 +164,7 @@ pub(crate) fn missing_folders(path: &Path) -> Result<Vec<PathBuf>, ToolFailure> 
             Err(error) => return Err(io_failure(&error, folder)),
         }
     }
+
     missing.reverse();
     Ok(missing)
 }
@@ -179,5 +190,6 @@ pub(crate) fn refuse_read_only(path: &Path, metadata: &fs::Metadata) -> Result<(
             path: path.display().to_string(),
         });
     }
+
     Ok(())
 }

@@ -66,11 +66,12 @@ const MAX_FULL_CONTEXT_MESSAGES: usize = 2;
 /// holds, so older excerpts become lines.
 pub(crate) fn chosen_context(turns: &[ModelTurn]) -> HashSet<PartId> {
     let holds_items = |part: &ModelPart| {
-        part.kind == Some(PartKind::Context)
-            && part
-                .context
-                .as_ref()
-                .is_some_and(|context| !context.items.is_empty())
+        let context_part = part.kind == Some(PartKind::Context);
+        let has_items = part
+            .context
+            .as_ref()
+            .is_some_and(|context| !context.items.is_empty());
+        context_part && has_items
     };
     turns
         .iter()
@@ -94,12 +95,15 @@ pub(crate) type SentImages = HashMap<PartId, Vec<(u32, ImageInput)>>;
 /// first.
 pub(crate) fn build_request(shape: RequestShape<'_>, turns: &[ModelTurn]) -> ModelRequest {
     let mut messages = Vec::new();
+
     for turn in turns {
         append_turn(&mut messages, turn, shape);
     }
+
     if let Some(note) = shape.note {
         messages.push(Message::text(Role::User, note));
     }
+
     ModelRequest {
         model: shape.model.to_owned(),
         instructions: shape.instructions.to_owned(),
@@ -130,11 +134,13 @@ impl Reply {
 
     /// Whether the reply wrote anything that the model reads.
     fn wrote_something(&self) -> bool {
-        !self.results.is_empty()
-            || self
-                .content
-                .iter()
-                .any(|content| matches!(content, Content::Text(_) | Content::ToolCall { .. }))
+        if !self.results.is_empty() {
+            return true;
+        }
+
+        self.content
+            .iter()
+            .any(|content| matches!(content, Content::Text(_) | Content::ToolCall { .. }))
     }
 }
 
@@ -159,21 +165,25 @@ fn append_turn(messages: &mut Vec<Message>, turn: &ModelTurn, shape: RequestShap
     let mut calling_attempt: Option<u32> = None;
     // Whether the heading of the message's excerpts came already.
     let mut excerpts_headed = false;
+
     for part in &turn.parts {
-        if let Some(run) = &part.run_id
-            && current_run != Some(run)
-        {
+        let new_run = part.run_id.as_ref().filter(|run| current_run != Some(*run));
+
+        if let Some(run) = new_run {
             if let Some(previous) = current_run
                 && let Some(kept) = turn.kept_runs.iter().find(|kept| kept.run_id == *previous)
             {
                 end_run(messages, &mut reply, Some(kept.state));
             }
+
             current_run = Some(run);
             calling_attempt = None;
         }
+
         let is_call = part.kind.is_some_and(PartKind::is_call);
         let next_step = calling_attempt.is_some_and(|attempt| attempt != part.attempt);
         let follows_results = !reply.results.is_empty();
+
         if follows_results && (!is_call || next_step) {
             // The next model call of the reply starts after the results.
             reply.flush(messages);
@@ -190,6 +200,7 @@ fn append_turn(messages: &mut Vec<Message>, turn: &ModelTurn, shape: RequestShap
                 } else {
                     vec![Content::Text(part.text.clone())]
                 };
+
                 messages.push(Message {
                     role: Role::User,
                     content,
@@ -224,6 +235,7 @@ fn append_turn(messages: &mut Vec<Message>, turn: &ModelTurn, shape: RequestShap
                     }),
                     None => Content::Text(texts::IMAGE_MISSING.to_owned()),
                 };
+
                 match messages.last_mut() {
                     Some(owner) if owner.role == Role::User => owner.content.push(content),
                     _ => messages.push(Message {
@@ -245,9 +257,9 @@ fn append_turn(messages: &mut Vec<Message>, turn: &ModelTurn, shape: RequestShap
                     .provider_item
                     .as_ref()
                     .filter(|item| item.binding == shape.binding);
-                if shape.interface == ApiInterface::Responses
-                    && let Some(item) = item
-                {
+                let responses = shape.interface == ApiInterface::Responses;
+
+                if responses && let Some(item) = item {
                     reply.content.push(Content::ProviderItem(item.item.clone()));
                 }
             }
@@ -269,12 +281,14 @@ fn append_turn(messages: &mut Vec<Message>, turn: &ModelTurn, shape: RequestShap
                 .push(Content::Text(texts::unknown_part(&part.kind_name))),
         }
     }
+
     // A kept run may end the turn, before the current run wrote anything.
     if let Some(previous) = current_run
         && let Some(kept) = turn.kept_runs.iter().find(|kept| kept.run_id == *previous)
     {
         end_run(messages, &mut reply, Some(kept.state));
     }
+
     end_run(messages, &mut reply, turn.run_state);
 }
 
@@ -284,13 +298,17 @@ fn context_for_model(part: &ModelPart, full: bool, headed: &mut bool) -> String 
     let Some(context) = &part.context else {
         return texts::CONTEXT_MISSING.to_owned();
     };
+
     if !full {
         return attachments::context_line(context);
     }
+
     let text = attachments::context_text(context);
+
     if context.items.is_empty() || *headed {
         return text;
     }
+
     *headed = true;
     format!("{}\n\n{text}", texts::CONTEXT_HEADING)
 }
@@ -306,10 +324,12 @@ fn end_run(messages: &mut Vec<Message>, reply: &mut Reply, state: Option<RunStat
         }
         _ => None,
     };
+
     if reply.results.is_empty() {
         if let Some(marker) = marker {
             reply.content.push(Content::Text(marker.to_owned()));
         }
+
         reply.flush(messages);
     } else {
         reply.flush(messages);
@@ -325,6 +345,7 @@ fn append_call(reply: &mut Reply, part: &ModelPart, shape: RequestShape<'_>) {
     let Some(call) = &part.tool_call else {
         return;
     };
+
     // A held browser request has its own journal entry. Only the model's
     // original tool call belongs in provider history.
     if call.accesses.iter().any(|access| {
@@ -338,6 +359,7 @@ fn append_call(reply: &mut Reply, part: &ModelPart, shape: RequestShape<'_>) {
     }) {
         return;
     }
+
     // A model without tools reads every image of a result as a line.
     let sent: &[(u32, ImageInput)] = if shape.tools.is_empty() {
         &[]
@@ -349,6 +371,7 @@ fn append_call(reply: &mut Reply, part: &ModelPart, shape: RequestShape<'_>) {
         call,
         sent,
     );
+
     if shape.tools.is_empty() {
         let arguments: String = part.text.chars().take(MAX_TEXT_CALL_ARGUMENTS).collect();
         reply.content.push(Content::Text(texts::tool_call_as_text(
@@ -356,6 +379,7 @@ fn append_call(reply: &mut Reply, part: &ModelPart, shape: RequestShape<'_>) {
         )));
         return;
     }
+
     reply.content.push(Content::ToolCall {
         call_id: call.call_id.clone(),
         name: call.tool.clone(),
@@ -384,6 +408,7 @@ pub(crate) fn with_unsent_images(
     let Some(stored) = &call.result else {
         return result;
     };
+
     for image in &stored.images {
         if sent
             .iter()
@@ -394,6 +419,7 @@ pub(crate) fn with_unsent_images(
         if !result.is_empty() {
             result.push('\n');
         }
+
         result.push_str(&texts::tool_image_not_sent(
             image.position.saturating_add(1),
             image.format,
@@ -429,9 +455,11 @@ pub(crate) fn part_result(
     let Some(section) = section else {
         return call_result(&part.id, call, left_out, requester);
     };
+
     if left_out.contains(&part.id) && tasks::returned_reports(section) {
         return texts::report_left_out(&tasks::reported_numbers(section));
     }
+
     tasks::task_result(section).unwrap_or_else(|| call_result(&part.id, call, left_out, requester))
 }
 
@@ -536,6 +564,7 @@ fn flush_reply(messages: &mut Vec<Message>, reply: &mut Vec<Content>) {
     let leads_somewhere = reply
         .iter()
         .any(|content| matches!(content, Content::Text(_) | Content::ToolCall { .. }));
+
     if leads_somewhere {
         messages.push(Message {
             role: Role::Assistant,

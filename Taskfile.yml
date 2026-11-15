@@ -162,6 +162,11 @@ tasks:
       # memory; four save little more and take almost 4 GB (ADR-0037).
       - pnpm exec eslint --max-warnings 0 --concurrency 2 .
 
+  lint:readability:
+    desc: Audit additional JavaScript, TypeScript and Svelte readability rules (pass paths after --)
+    cmds:
+      - pnpm exec eslint --config eslint.readability.config.js --concurrency 2 {{if .CLI_ARGS}}{{.CLI_ARGS}}{{else}}.{{end}}
+
   lint:types:
     desc: Type-check the desktop app and its unit tests (svelte-check), and the end-to-end tests (tsc)
     cmds:
@@ -180,18 +185,29 @@ tasks:
       - node scripts/check-link-contracts.mjs
 
   lint:rust:
-    desc: Check that every crate inherits its workspace's lints and that every workspace repeats the root's settings, then run Clippy with warnings denied in every workspace and the launcher, and on the library crates that each plugin ships with the core's rule against direct native calls, all in target/clippy
+    desc: Check Rust lint inheritance and named conditions, then run Clippy and the plugin native-call checks in target/clippy
     # Clippy builds in a target folder of its own, so that it runs beside the
     # builds in target/ (ADR-0037, decision 2).
     env:
       CARGO_TARGET_DIR: target/clippy
     cmds:
       - node scripts/check-workspace-lints.mjs
+      - task: lint:rust:named-conditions
       - node scripts/plugins/each.mjs --launcher -- cargo clippy --manifest-path {manifest} --workspace --all-targets --all-features --locked -- -D warnings
       # The library crates that each plugin's entry crate ships make only the
       # direct file-write, process and socket calls that the plugin's manifest
       # grants under [native] (ADR-0035, decision 6).
       - node scripts/plugins/check-native.mjs
+
+  lint:rust:named-conditions:
+    desc: Check the parts of compound Rust conditions (pass files after -- to focus the check)
+    cmds:
+      - cargo run --locked --quiet --package mannie-rust-lint -- {{.CLI_ARGS}}
+
+  lint:rust:spacing:
+    desc: Audit blank lines between Rust statement groups (pass files after -- to focus the check)
+    cmds:
+      - cargo run --locked --quiet --package mannie-rust-lint -- --statement-group-spacing {{.CLI_ARGS}}
 
   lint:deps:
     desc: Check the dependencies' advisories, licenses, bans and sources in every Cargo workspace and the launcher (cargo-deny), the worker's graph (V5), the boundaries between the core and the plugins, and the desktop app's npm licenses

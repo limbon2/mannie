@@ -80,10 +80,17 @@ This rule exists because coding agents keep rebuilding shadcn components from me
 
   `task fmt` runs them in that order.
 
-- Use descriptive names and straightforward control flow. Avoid nested ternaries, dense chains and several side effects in one expression.
+  Run `task lint:readability -- path/to/file.svelte` for additional layout, handler and type annotation checks. Run `task lint:rust:spacing -- path/to/file.rs` for Rust statement spacing. Review edits to Svelte markup for changes to rendered whitespace. Use `task fmt` for the canonical layout.
+
+- Write one statement per line and indent function bodies and control-flow blocks consistently. Use blank lines between logical groups of imports, declarations, functions and template sections. Keep related lines together.
+- Use descriptive names and straightforward control flow. Break up nested ternaries, dense chains and expressions with several side effects. When wrapping a call, collection or element, give each argument, entry or attribute its own line when it helps show the structure. Keep simple constructs compact.
+- Give inline object shapes in TypeScript variable, parameter and return annotations a named type alias or interface. Use the same rule for Svelte `$props()` declarations. Related member shapes can stay inside the named type.
+- In Rust, use blank lines to separate guard clauses, setup, loops and distinct operations. Leave a blank line after a multiline fallible binding before the next binding. Keep related declarations and updates together. Keep immediate checks beside the operations they validate and cleanup beside the return that follows it.
+- In Svelte templates, put block markers such as `{#if}`, `{:else}` and `{/if}` and nested elements on separate lines. Leave a blank line between adjacent multiline sections. Indent children to show the structure and preserve intentional whitespace in inline text.
+- Keep inline callbacks and event handlers to a single straightforward call or assignment. Move multi-step, branching, asynchronous or nested logic into a named function or method. Name it for the action it performs, and pass it directly when the signatures match.
 - Extract modules around real responsibilities. Avoid speculative abstractions and layers with a single implementation, unless an ADR asks for them.
-- Comments explain what the code cannot: security reasoning, ordering requirements, protocol quirks, the ADR behind a choice. Do not write comments that repeat the code.
-- Improve the code you touch, but do not reformat unrelated files.
+- Add comments where readers need context the code cannot show, such as a security invariant, a required operation order or a protocol quirk. Link to the relevant ADR when it explains a decision. Update comments when the reasoning changes and remove comments that only repeat the code.
+- Preserve behavior in readability-only edits, including error handling and operation order. Improve the code you touch and avoid unrelated reformatting.
 
 ### Scope and implementation
 

@@ -125,7 +125,8 @@ mod tests {
     fn service_names_are_lower_case_words_joined_by_hyphens() {
         for service in SERVICES {
             let words_are_valid = service.name.split('-').all(|word| {
-                !word.is_empty() && word.chars().all(|character| character.is_ascii_lowercase())
+                let lower_case = word.chars().all(|character| character.is_ascii_lowercase());
+                !word.is_empty() && lower_case
             });
             assert!(words_are_valid, "{}", service.name);
         }

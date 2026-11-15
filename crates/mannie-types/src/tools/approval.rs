@@ -410,6 +410,7 @@ mod tests {
                 limit_to_folder: false,
             },
         ];
+
         for choice in &choices {
             assert!(Decision::of_choice(choice).allows(), "{choice:?}");
         }

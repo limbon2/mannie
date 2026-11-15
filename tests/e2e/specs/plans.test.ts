@@ -23,6 +23,7 @@ const PICKER = 'main [data-agent-picker]';
 const CARD = `${LATEST_MAIN_TURN} [data-plan-card]`;
 const PANEL = '[data-plan-panel]';
 const PLAN_BODY = '# Steps\n\n1. Add the switch.\n2. Add the tests.\n';
+
 /** The bodies of the requests for the tools scenario so far, as text to search, the latest last. */
 function toolsBodies(provider: ProviderServer): Record<string, unknown>[] {
   return provider.requests().flatMap(({ body }) => (body?.model === MODELS.tools ? [body] : []));
@@ -60,6 +61,7 @@ describe('plans', () => {
 
   before(async () => {
     provider = await startProviderServer();
+
     await waitForApp();
     await addProfile(provider.baseUrl, { model: MODELS.tools, name: 'Tools', useTools: true });
   });

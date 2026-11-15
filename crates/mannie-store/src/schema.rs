@@ -461,13 +461,16 @@ impl Schema {
             .query_row(HAS_RECORDS, [], |_| Ok(()))
             .optional()?
             .is_some();
-        if user_version < MODULE_RECORDS || !has_records {
+        let legacy_schema = user_version < MODULE_RECORDS || !has_records;
+
+        if legacy_schema {
             return Ok(Self {
                 user_version,
                 records: None,
                 legacy_version: user_version,
             });
         }
+
         let mut select = connection.prepare(SELECT_RECORDS)?;
         let rows = select.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
         let records = rows.collect::<rusqlite::Result<Records>>()?;
@@ -495,36 +498,36 @@ impl Schema {
             database,
             supported,
         };
-        match &self.records {
-            Some(records) => {
-                for module in modules {
-                    let recorded = records.get(module.name).copied().unwrap_or(0);
-                    if recorded > module.version() {
-                        tracing::error!(
-                            module = module.name,
-                            database = recorded,
-                            supported = module.version(),
-                            "refused a database written by a newer version of Mannie"
-                        );
-                        return Err(StoreError::ModuleTooNew {
-                            path: path.to_path_buf(),
-                            module: module.name.to_owned(),
-                            database: recorded,
-                            supported: module.version(),
-                        });
-                    }
-                }
-                Ok(())
-            }
-            None if self.user_version > LAST_LEGACY_VERSION => {
+        let Some(records) = &self.records else {
+            if self.user_version > LAST_LEGACY_VERSION {
                 tracing::error!(
                     database = self.user_version,
                     "refused a database written by a newer version of Mannie"
                 );
-                Err(too_new(self.user_version, LAST_LEGACY_VERSION))
+                return Err(too_new(self.user_version, LAST_LEGACY_VERSION));
             }
-            None => Ok(()),
+            return Ok(());
+        };
+
+        for module in modules {
+            let recorded = records.get(module.name).copied().unwrap_or(0);
+
+            if recorded > module.version() {
+                tracing::error!(
+                    module = module.name,
+                    database = recorded,
+                    supported = module.version(),
+                    "refused a database written by a newer version of Mannie"
+                );
+                return Err(StoreError::ModuleTooNew {
+                    path: path.to_path_buf(),
+                    module: module.name.to_owned(),
+                    database: recorded,
+                    supported: module.version(),
+                });
+            }
         }
+        Ok(())
     }
 
     /// The records as they stand: the stored ones, and for each module
@@ -532,6 +535,7 @@ impl Schema {
     /// `user_version` before M5 covers.
     pub(crate) fn current_records(&self, modules: &[StoreModule]) -> Records {
         let mut records = self.records.clone().unwrap_or_default();
+
         for module in modules {
             if !records.contains_key(module.name) {
                 records.insert(module.name.to_owned(), self.carried_over(module));
@@ -570,10 +574,14 @@ impl Schema {
     /// has no record, or a module has migrations that it lacks.
     pub(crate) fn needs_changes(&self, modules: &[StoreModule]) -> bool {
         let records = self.current_records(modules);
-        !self.unrecorded(modules).is_empty()
-            || modules
-                .iter()
-                .any(|module| records.get(module.name).copied().unwrap_or(0) < module.version())
+
+        if !self.unrecorded(modules).is_empty() {
+            return true;
+        }
+
+        modules
+            .iter()
+            .any(|module| records.get(module.name).copied().unwrap_or(0) < module.version())
     }
 }
 
@@ -602,6 +610,7 @@ pub(crate) fn back_up(
         path: backup_directory.to_path_buf(),
         source,
     })?;
+
     let file_name = database
         .file_name()
         .map_or_else(|| "database".into(), |name| name.to_string_lossy());
@@ -681,6 +690,7 @@ pub(crate) fn migrate(
 ) -> Result<(), StoreError> {
     let mut records = schema.current_records(modules);
     let unrecorded = schema.unrecorded(modules);
+
     if !unrecorded.is_empty() {
         let _span = tracing::info_span!("record_modules", from = schema.user_version).entered();
         let failed = |source: rusqlite::Error| StoreError::Records {
@@ -689,12 +699,14 @@ pub(crate) fn migrate(
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(failed)?;
+
         if schema.records.is_none() {
             transaction.execute_batch(CREATE_RECORDS).map_err(failed)?;
             transaction
                 .execute(INSERT_LEGACY, params![schema.legacy_version])
                 .map_err(failed)?;
         }
+
         for module in &unrecorded {
             let version = records.get(module.name).copied().unwrap_or(0);
             transaction
@@ -704,14 +716,17 @@ pub(crate) fn migrate(
                 )
                 .map_err(failed)?;
         }
+
         transaction
             .pragma_update(None, "user_version", records_user_version(&records))
             .map_err(failed)?;
         transaction.commit().map_err(failed)?;
         tracing::info!("recorded the version of each module");
     }
+
     for module in modules {
         let applied = records.get(module.name).copied().unwrap_or(0);
+
         for migration in module
             .migrations
             .iter()
@@ -731,15 +746,18 @@ pub(crate) fn migrate(
                 source: DatabaseError(source),
             };
             records.insert(module.name.to_owned(), migration.version);
+
             let transaction = connection
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(failed)?;
+
             if module.confined {
                 run_plugin_migration(&transaction, module.name, migration.version, migration.sql)
                     .map_err(failed)?;
             } else {
                 transaction.execute_batch(migration.sql).map_err(failed)?;
             }
+
             transaction
                 .execute(
                     UPSERT_RECORD,
@@ -819,6 +837,7 @@ mod tests {
     #[test]
     fn the_core_covers_its_part_of_the_list_before_m5_once_each() {
         let mut seen = BTreeSet::new();
+
         for module in every_module() {
             let legacy: Vec<u32> = module
                 .migrations

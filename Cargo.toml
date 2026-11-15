@@ -75,6 +75,8 @@ mannie-types = { path = "crates/mannie-types" }
 # core verifies with it a desktop installer's signature as
 # `scripts/release.mjs` writes it (ADR-0063).
 minisign-verify = "0.3.0"
+# The source checker uses the parser's spans to report where conditions need names.
+proc-macro2 = "1.0.107"
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 regex = "1.13.1"
 # Without the default TLS feature, which brings the aws-lc crypto provider that
@@ -107,6 +109,7 @@ specta = { version = "=2.0.0-rc.25", features = ["derive"] }
 # written; tauri-specta already depends on it (ADR-0034, decision 9).
 specta-serde = "=0.0.12"
 specta-typescript = "=0.0.12"
+syn = "2.0.119"
 tauri = "2.12.3"
 tauri-build = "2.7.2"
 tauri-plugin-opener = "2.7.1"
@@ -170,6 +173,7 @@ implicit_hasher = "allow"
 infinite_loop = "warn"
 # Ignoring a Result needs a handled error or a stated reason.
 let_underscore_must_use = "warn"
+literal_string_with_formatting_args = "warn"
 lossy_float_literal = "warn"
 # Errors keep their source.
 map_err_ignore = "warn"

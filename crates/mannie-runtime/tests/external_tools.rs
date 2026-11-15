@@ -98,6 +98,7 @@ impl Tool for ServerTools {
         async move {
             let arguments: Value = serde_json::from_str(&call.arguments)
                 .map_err(|error| ToolRefusal::new(error.to_string()))?;
+
             let text = |key: &str| arguments[key].as_str().unwrap_or_default().to_owned();
             let server = text("server");
             let access = ExternalToolAccess::new(
@@ -241,6 +242,7 @@ async fn decide(
 /// Waits until a call waits for the owner and answers it with `choice`.
 async fn answer(harness: &Harness, conversation: &ConversationId, choice: ApprovalChoice) {
     let waiting = request_of(harness, conversation).await;
+
     decide(harness, conversation, waiting, choice).await;
 }
 
@@ -249,6 +251,7 @@ async fn a_tool_servers_call_asks_with_its_tool_and_runs_what_was_authorized_onc
     let harness = harness().await;
     let servers = Arc::new(ServerTools::new());
     add_plugin(&harness.runtime, PLUGIN, with_servers(&servers)).unwrap();
+
     let payload = r#"{"title":"Crash on start"}"#;
     harness.model.push_reply(tool_calls(&[(
         "call_1",
@@ -259,6 +262,7 @@ async fn a_tool_servers_call_asks_with_its_tool_and_runs_what_was_authorized_onc
 
     let (conversation, run) = start(&harness, "OWNER: file the crash").await;
     let (part, request) = request_of(&harness, &conversation).await;
+
     decide(
         &harness,
         &conversation,
@@ -266,6 +270,7 @@ async fn a_tool_servers_call_asks_with_its_tool_and_runs_what_was_authorized_onc
         ApprovalChoice::AllowOnce,
     )
     .await;
+
     let transcript = harness.wait_for_run(&conversation, &run).await;
 
     assert_eq!(request.reasons, vec![ApprovalReason::ExternalTool]);
@@ -311,9 +316,11 @@ async fn a_grant_for_the_conversation_covers_the_same_tool_of_the_same_server_wi
             &calling(server, tool, payload),
         )]));
     }
+
     harness.model.push_reply(reply("Done."));
 
     let (conversation, run) = start(&harness, "OWNER: file both").await;
+
     answer(
         &harness,
         &conversation,
@@ -322,6 +329,7 @@ async fn a_grant_for_the_conversation_covers_the_same_tool_of_the_same_server_wi
     .await;
     answer(&harness, &conversation, ApprovalChoice::Deny).await;
     answer(&harness, &conversation, ApprovalChoice::Deny).await;
+
     let transcript = harness.wait_for_run(&conversation, &run).await;
 
     let decisions: Vec<_> = transcript
@@ -366,12 +374,16 @@ async fn a_grant_for_every_conversation_covers_the_tool_elsewhere_and_no_new_ser
     harness.model.push_reply(reply("Done."));
 
     let (first, first_run) = start(&harness, "OWNER: file one").await;
+
     answer(&harness, &first, ApprovalChoice::AllowAlways).await;
     harness.wait_for_run(&first, &first_run).await;
+
     let (second, second_run) = start(&harness, "OWNER: file another").await;
+
     // A server that the owner registered again at the same endpoint has
     // another key, so the grant does not cover it.
     answer(&harness, &second, ApprovalChoice::Deny).await;
+
     let transcript = harness.wait_for_run(&second, &second_run).await;
 
     let decisions: Vec<_> = transcript
@@ -435,6 +447,7 @@ async fn a_server_that_moved_after_the_approval_is_asked_about_again() {
         &calling("issues", "create_issue", "{}"),
     )]));
     harness.model.push_reply(reply("Filed."));
+
     let moved = url("https://mcp.example.net/mcp");
 
     let (conversation, run) = start(&harness, "OWNER: file it").await;
@@ -447,7 +460,9 @@ async fn a_server_that_moved_after_the_approval_is_asked_about_again() {
         ApprovalChoice::AllowForConversation,
     )
     .await;
+
     let second = request_of(&harness, &conversation).await;
+
     decide(
         &harness,
         &conversation,
@@ -455,6 +470,7 @@ async fn a_server_that_moved_after_the_approval_is_asked_about_again() {
         ApprovalChoice::AllowOnce,
     )
     .await;
+
     let transcript = harness.wait_for_run(&conversation, &run).await;
 
     assert_eq!(first.0, second.0);
@@ -477,6 +493,7 @@ async fn the_view_cuts_long_arguments_of_a_tool_servers_call_and_the_tool_gets_t
     let harness = harness().await;
     let servers = Arc::new(ServerTools::new());
     add_plugin(&harness.runtime, PLUGIN, with_servers(&servers)).unwrap();
+
     let payload = json!({ "body": "x".repeat(MAX_VIEW_ARGUMENTS_BYTES * 2) }).to_string();
     harness.model.push_reply(tool_calls(&[(
         "call_1",
@@ -486,7 +503,9 @@ async fn the_view_cuts_long_arguments_of_a_tool_servers_call_and_the_tool_gets_t
     harness.model.push_reply(reply("Filed."));
 
     let (conversation, run) = start(&harness, "OWNER: file the long one").await;
+
     answer(&harness, &conversation, ApprovalChoice::AllowOnce).await;
+
     let transcript = harness.wait_for_run(&conversation, &run).await;
 
     let [call] = transcript.tool_calls(0).try_into().unwrap();

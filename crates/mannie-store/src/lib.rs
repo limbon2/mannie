@@ -104,20 +104,22 @@ mod tests {
         let statements: Vec<&'static str> = super::all_statements().collect();
         assert_ne!(statements.len(), 0);
         let failures = store
-            .read(move |connection| {
-                Ok(statements
-                    .into_iter()
-                    .filter_map(|sql| {
-                        connection
-                            .prepare(sql)
-                            .err()
-                            .map(|error| format!("{sql}: {error}"))
-                    })
-                    .collect::<Vec<_>>())
-            })
+            .read(move |connection| Ok(statement_failures(connection, &statements)))
             .await
             .unwrap();
 
         assert!(failures.is_empty(), "{failures:#?}");
+    }
+
+    fn statement_failures(connection: &rusqlite::Connection, statements: &[&str]) -> Vec<String> {
+        statements
+            .iter()
+            .filter_map(|sql| {
+                connection
+                    .prepare(sql)
+                    .err()
+                    .map(|error| format!("{sql}: {error}"))
+            })
+            .collect()
     }
 }

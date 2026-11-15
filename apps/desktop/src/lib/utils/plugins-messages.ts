@@ -8,6 +8,10 @@ import { m } from '#lib/paraglide/messages.js';
 import { findPlugin } from '#lib/state/plugin-catalog.js';
 import type { Failure } from '#lib/types/calls.js';
 
+interface CodedError {
+  readonly code: string;
+}
+
 /** The ID of the Plugins settings section, which the states of plugins that are off link to. */
 export const PLUGINS_SETTINGS_SECTION = 'plugins.settings';
 
@@ -37,7 +41,7 @@ export function pluginOffQuestion(id: string, items: readonly WorkItem[]): strin
  * that the owner gets the way to the Plugins settings beside the message
  * (ADR-0030, decision 12).
  */
-export function failedForPluginOff(failure: Failure<{ readonly code: string }> | null): boolean {
+export function failedForPluginOff(failure: Failure<CodedError> | null): boolean {
   const error = failure?.kind === 'core' ? failure.error : null;
   return error?.code === 'plugin_off';
 }

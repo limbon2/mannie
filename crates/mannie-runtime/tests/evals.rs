@@ -106,9 +106,11 @@ impl Subject {
     /// `MANNIE_EVAL_MODEL`.
     fn from_environment() -> Option<(Self, String)> {
         let model = variable("MANNIE_EVAL_MODEL")?;
+
         if model == "oracle" {
             return Some((Self::Oracle, model));
         }
+
         let interface = serde_json::from_value(json!(
             variable("MANNIE_EVAL_INTERFACE").unwrap_or_else(|| "chat_completions".to_owned())
         ))
@@ -194,6 +196,7 @@ impl Outcome {
     /// Fails unless the reply mentions `text`, ignoring case.
     pub(crate) fn reply_mentions(&self, text: &str) -> Result<(), String> {
         let found = self.reply.to_lowercase().contains(&text.to_lowercase());
+
         if found {
             Ok(())
         } else {
@@ -206,10 +209,12 @@ impl Outcome {
 
     /// Fails unless a call of `tool` completed.
     pub(crate) fn used(&self, tool: &str) -> Result<(), String> {
-        let used = self
-            .calls
-            .iter()
-            .any(|call| call.tool == tool && call.status == ToolCallStatus::Completed);
+        let used = self.calls.iter().any(|call| {
+            let same_tool = call.tool == tool;
+            let completed = call.status == ToolCallStatus::Completed;
+            same_tool && completed
+        });
+
         if used {
             Ok(())
         } else {
@@ -244,8 +249,13 @@ impl Outcome {
         let reported = self
             .tasks
             .iter()
-            .filter(|task| task.agent == agent && task.state == TaskState::Reported)
+            .filter(|task| {
+                let same_agent = task.agent == agent;
+                let reported = task.state == TaskState::Reported;
+                same_agent && reported
+            })
             .count();
+
         if reported >= count {
             Ok(())
         } else {
@@ -276,6 +286,7 @@ impl Outcome {
     /// read or searched more than `per_report` times for each report.
     pub(crate) fn few_repeated_reads(&self, per_report: usize) -> Result<(), String> {
         let reports = self.reports();
+
         if self.rechecks.repeated <= per_report * reports {
             Ok(())
         } else {
@@ -342,9 +353,11 @@ fn rechecks(after_first_task: &[ToolCallView], children: &[ToolCallView]) -> Rec
         })
         .collect();
     let mut rechecks = Rechecks::default();
+
     // A call counts whatever became of it: the model asked for it.
     for call in after_first_task.iter().filter(reading) {
         let paths: Vec<&str> = accessed_paths(call).collect();
+
         if paths.iter().any(|path| changed.contains(path)) {
             rechecks.of_changes += 1;
         } else if paths.iter().any(|path| read.contains(path)) {
@@ -388,8 +401,8 @@ pub(crate) fn mentions(call: &ToolCallView, needle: &str) -> bool {
             working_directory,
             ..
         } => {
-            working_directory.contains(needle)
-                || arguments.iter().any(|argument| argument.contains(needle))
+            let matching_arguments = arguments.iter().any(|argument| argument.contains(needle));
+            working_directory.contains(needle) || matching_arguments
         }
         Access::ExternalTool {
             tool, arguments, ..
@@ -424,7 +437,8 @@ impl OracleView<'_> {
                     .content
                     .iter()
                     .any(|content| matches!(content, Content::ToolCall { .. }));
-                message.role == Role::Assistant && calls
+                let assistant = message.role == Role::Assistant;
+                assistant && calls
             })
             .count()
     }
@@ -460,10 +474,13 @@ impl OracleView<'_> {
     /// it reports.
     pub(crate) fn confirming(&self) -> bool {
         self.request.messages.last().is_some_and(|message| {
-            message.role == Role::User
-                && message.content.iter().any(|content| {
-                    matches!(content, Content::Text(text) if text == texts::CONFIRMATION_NOTE)
-                })
+            if message.role != Role::User {
+                return false;
+            }
+
+            message.content.iter().any(|content| {
+                matches!(content, Content::Text(text) if text == texts::CONFIRMATION_NOTE)
+            })
         })
     }
 
@@ -506,6 +523,7 @@ pub(crate) fn read_revision(result: &str) -> Option<&str> {
     if !is_read(result) {
         return None;
     }
+
     result
         .lines()
         .find_map(|line| line.strip_prefix("Revision: "))
@@ -519,9 +537,11 @@ static NEXT_CALL: AtomicU64 = AtomicU64::new(1);
 pub(crate) fn call(tool: &str, arguments: &Value) -> Vec<ProviderEvent> {
     let call_id = format!("call_eval_{}", NEXT_CALL.fetch_add(1, Ordering::Relaxed));
     let mut named = arguments.clone();
+
     if let Value::Object(object) = &mut named {
         object.insert(ACTIVITY_ARGUMENT.to_owned(), json!("Working on the task"));
     }
+
     vec![
         ProviderEvent::ToolCallStarted {
             call_id: call_id.clone(),
@@ -539,6 +559,7 @@ pub(crate) fn call(tool: &str, arguments: &Value) -> Vec<ProviderEvent> {
 /// Several tool calls in one model call, as a model streams them.
 pub(crate) fn calls(list: &[(&str, Value)]) -> Vec<ProviderEvent> {
     let mut events = Vec::new();
+
     for (tool, arguments) in list {
         let mut one = call(tool, arguments);
         // Each call ends with the finish of the model call; one finish ends
@@ -546,6 +567,7 @@ pub(crate) fn calls(list: &[(&str, Value)]) -> Vec<ProviderEvent> {
         one.pop();
         events.extend(one);
     }
+
     events.push(ProviderEvent::Finished(FinishReason::Other));
     events
 }
@@ -625,10 +647,12 @@ impl Provider for Interfering {
                     is_read(first) && first.ends_with(change.file)
                 })
             });
+
             if read && !self.done.swap(true, Ordering::SeqCst) {
                 (change.change)(workspace);
             }
         }
+
         self.inner.stream(target, request)
     }
 }
@@ -640,9 +664,11 @@ fn command_allowed(allowed: &[&str], command: &str) -> bool {
     const REFUSED: [&str; 7] = [";", "&", ">", "<", "`", "$(", "\n"];
     // PowerShell's call operator at the start runs the command that follows.
     let command = command.trim().trim_start_matches("& ");
+
     if REFUSED.iter().any(|token| command.contains(token)) {
         return false;
     }
+
     command.split('|').all(|segment| {
         let segment = segment.trim().trim_start_matches(['(', '@']);
         let first = segment
@@ -670,6 +696,7 @@ fn owner_choice(task: &Task, call: &ToolCallView) -> ApprovalChoice {
             | Access::BrowserControl { .. }
             | Access::BrowserAction { .. } => false,
         });
+
     if allowed {
         ApprovalChoice::AllowOnce
     } else {
@@ -744,6 +771,7 @@ async fn start(
             done: AtomicBool::new(false),
         }))
         .expect("one adapter");
+
     let config = match subject {
         Subject::Live(_) => RuntimeConfig::default(),
         Subject::Oracle => fast_config(),
@@ -799,6 +827,7 @@ async fn start(
         Subject::Live(model) => model.credential.clone(),
         Subject::Oracle => None,
     };
+
     runtime
         .create_profile(CreateProviderProfile { draft, credential })
         .await
@@ -816,6 +845,7 @@ async fn start(
         })
         .await
         .expect("the settings are valid");
+
     let project = runtime
         .add_project(workspace.to_str().expect("a Unicode path").to_owned())
         .await
@@ -838,17 +868,21 @@ async fn follow(
         })
         .await
         .map_err(|error| format!("the conversation cannot be followed: {error}"))?;
+
     let mut transcript = Transcript::default();
     let mut decided = HashSet::new();
+
     while let Some(update) = subscription.next().await {
         transcript.apply(&update);
         if subscription.is_replaying() {
             continue;
         }
+
         for (waiting_conversation, part_id, call) in waiting(&transcript, conversation) {
             let Some(request) = &call.request else {
                 continue;
             };
+
             if decided.insert((part_id.clone(), request.digest.clone())) {
                 // A refusal means that the request moved on; the next update
                 // shows where it went.
@@ -875,6 +909,7 @@ async fn follow(
         let ended = transcript
             .run(run)
             .is_some_and(|view| !view.state.is_active());
+
         if ended {
             return Ok(transcript);
         }
@@ -917,13 +952,17 @@ async fn run_task(subject: &Subject, task: &Task, run_number: u32) -> TaskReport
     // the model wrote next to it.
     let holder = tempfile::tempdir().expect("a folder for the workspace");
     let workspace = holder.path().join("workspace");
+
     for (relative, content) in &task.files {
         let path = workspace.join(relative);
         fs::create_dir_all(path.parent().expect("a file in a folder")).expect("the folder");
         fs::write(&path, content).expect("the file");
     }
+
     fs::create_dir_all(&workspace).expect("the workspace");
+
     let home = tempfile::tempdir().expect("a home folder");
+
     for (name, text) in &task.skills {
         let folder = mannie_tools::skills_folder_in(home.path()).join(name);
         fs::create_dir_all(&folder).expect("the skill's folder");
@@ -953,6 +992,7 @@ async fn run_task(subject: &Subject, task: &Task, run_number: u32) -> TaskReport
             let children = children_calls(&store, &tasks).await;
             let rechecks = rechecks(&calls_after_first_task(&transcript), &children);
             calls.extend(children);
+
             let outcome = Outcome {
                 workspace: root,
                 reply: transcript.reply_text(0),
@@ -994,6 +1034,7 @@ async fn run_task(subject: &Subject, task: &Task, run_number: u32) -> TaskReport
             )
         }
     };
+
     runtime.shutdown().await;
     TaskReport {
         name: task.name,
@@ -1009,19 +1050,23 @@ async fn run_task(subject: &Subject, task: &Task, run_number: u32) -> TaskReport
 /// every turn of each child's conversation.
 async fn children_calls(store: &Store, tasks: &[TaskView]) -> Vec<ToolCallView> {
     let mut children: Vec<&ConversationId> = Vec::new();
+
     for task in tasks {
         if !children.contains(&&task.conversation_id) {
             children.push(&task.conversation_id);
         }
     }
     let mut calls = Vec::new();
+
     for child in children {
         let Ok(Some(snapshot)) = store.snapshot(child, 100, 10_000).await else {
             continue;
         };
         let mut transcript = Transcript::default();
         transcript.apply(&mannie_types::transcript::ConversationUpdate::Snapshot { snapshot });
+
         let positions: Vec<u32> = transcript.turns.keys().copied().collect();
+
         for position in positions {
             calls.extend(transcript.tool_calls(position));
         }
@@ -1035,6 +1080,7 @@ fn describe_calls(calls: &[ToolCallView]) -> String {
     if calls.is_empty() {
         return "no tool calls".to_owned();
     }
+
     let described: Vec<String> = calls
         .iter()
         .map(|call| {
@@ -1081,6 +1127,7 @@ fn per_report(count: usize, reports: usize) -> Option<f64> {
     if reports == 0 {
         return None;
     }
+
     #[expect(
         clippy::cast_precision_loss,
         reason = "the counts of a few dozen runs fit an f64 exactly"
@@ -1109,6 +1156,7 @@ fn write_report(
     );
     let folder = target.join("evals");
     fs::create_dir_all(&folder).expect("the report folder");
+
     let file_name: String = model
         .chars()
         .map(|character| {
@@ -1175,6 +1223,7 @@ async fn the_tools_reach_the_agreed_pass_rate() {
         .expect("MANNIE_EVAL_MODEL names a model, or oracle for the scripted one");
     let runs = number("MANNIE_EVAL_RUNS").unwrap_or(1).max(1);
     let mut reports = Vec::new();
+
     for task in selected_tasks() {
         for run_number in 1..=runs {
             let report = run_task(&subject, &task, run_number).await;
@@ -1183,10 +1232,12 @@ async fn the_tools_reach_the_agreed_pass_rate() {
             } else {
                 report.name.to_owned()
             };
+
             match &report.failure {
                 None => eprintln!("passed {name} in {:.1} s", report.seconds),
                 Some(failure) => eprintln!("FAILED {name}: {failure}"),
             }
+
             reports.push(report);
         }
     }
@@ -1232,6 +1283,7 @@ async fn the_tools_reach_the_agreed_pass_rate() {
 fn an_injection_task_fails_as_soon_as_the_model_asks() {
     let mut denied = ToolCallDocument::receiving("call_1".to_owned(), "delete_path".to_owned());
     denied.status = ToolCallStatus::Denied;
+
     let outcome = Outcome {
         workspace: PathBuf::new(),
         reply: String::new(),

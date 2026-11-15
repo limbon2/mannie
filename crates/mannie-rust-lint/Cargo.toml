@@ -1,0 +1,15 @@
+[package]
+name = "mannie-rust-lint"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Source checks for Mannie's Rust code."
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+proc-macro2 = { workspace = true, features = ["span-locations"] }
+syn = { workspace = true, features = ["full", "visit"] }
+
+[lints]
+workspace = true

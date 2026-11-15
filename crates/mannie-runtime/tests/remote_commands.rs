@@ -116,9 +116,11 @@ impl Tool for RemoteShell {
         async move {
             let arguments: Value = serde_json::from_str(&call.arguments)
                 .map_err(|error| ToolRefusal::new(error.to_string()))?;
+
             if silent {
                 return Ok(Vec::new());
             }
+
             let host = arguments["host"].as_str().unwrap_or_default().to_owned();
             let command = arguments["command"].as_str().unwrap_or_default().to_owned();
             Ok(vec![ToolAccess::RemoteCommand(RemoteCommandAccess::new(
@@ -151,6 +153,7 @@ impl Tool for RemoteShell {
             .join(" ");
         let archive_id = execution.archive_ids.first().cloned();
         self.executions.lock().unwrap().push(execution);
+
         let started = Arc::clone(&self.started);
         let guard = SetOnDrop(Arc::clone(&self.dropped));
         async move {
@@ -277,7 +280,9 @@ async fn a_remote_command_asks_and_runs_what_was_authorized_once_allowed() {
         })
         .await;
     let (_part, request) = waiting_call(&transcript).unwrap();
+
     answer(&harness, &conversation, ApprovalChoice::AllowOnce).await;
+
     let transcript = harness.wait_for_run(&conversation, &run).await;
 
     assert_eq!(request.reasons, vec![ApprovalReason::RemoteCommand]);
@@ -366,6 +371,7 @@ async fn a_grant_for_the_conversation_covers_the_same_command_on_the_same_host_o
     harness.model.push_reply(reply("Done."));
 
     let (conversation, run) = start(&harness, "OWNER: uptime everywhere").await;
+
     answer(
         &harness,
         &conversation,
@@ -373,6 +379,7 @@ async fn a_grant_for_the_conversation_covers_the_same_command_on_the_same_host_o
     )
     .await;
     answer(&harness, &conversation, ApprovalChoice::Deny).await;
+
     let transcript = harness.wait_for_run(&conversation, &run).await;
 
     let calls = transcript.tool_calls(0);
@@ -406,6 +413,7 @@ async fn a_rule_saved_for_a_host_allows_its_leading_words_there() {
     harness.model.push_reply(reply("Both are fine."));
 
     let (conversation, run) = start(&harness, "OWNER: check the services").await;
+
     answer(
         &harness,
         &conversation,
@@ -415,6 +423,7 @@ async fn a_rule_saved_for_a_host_allows_its_leading_words_there() {
         },
     )
     .await;
+
     let transcript = harness.wait_for_run(&conversation, &run).await;
 
     let decisions: Vec<_> = transcript
@@ -512,6 +521,7 @@ async fn turning_the_plugin_off_while_a_call_waits_for_the_owner_runs_nothing() 
     harness.model.push_reply(reply("The plugin is off."));
 
     let (conversation, run) = start(&harness, "OWNER: uptime").await;
+
     harness
         .wait_until(&conversation, |transcript| {
             waiting_call(transcript).is_some()
@@ -519,6 +529,7 @@ async fn turning_the_plugin_off_while_a_call_waits_for_the_owner_runs_nothing() 
         .await;
     assert!(turn_off_plugin(&harness.runtime, PLUGIN, Duration::from_secs(5)).await);
     answer(&harness, &conversation, ApprovalChoice::AllowOnce).await;
+
     let transcript = harness.wait_for_run(&conversation, &run).await;
 
     let [call] = transcript.tool_calls(0).try_into().unwrap();
@@ -546,6 +557,7 @@ async fn turning_the_plugin_off_makes_a_running_operation_uncertain_and_the_repl
     harness.model.push_reply(reply("The plugin went off."));
 
     let (conversation, run) = start(&harness, "OWNER: wait").await;
+
     answer(&harness, &conversation, ApprovalChoice::AllowOnce).await;
     wait_until_started(&shell).await;
     assert!(turn_off_plugin(&harness.runtime, PLUGIN, Duration::from_millis(50)).await);
@@ -576,9 +588,11 @@ async fn stopping_a_running_operation_of_a_plugin_leaves_it_uncertain() {
     )]));
 
     let (conversation, run) = start(&harness, "OWNER: wait").await;
+
     answer(&harness, &conversation, ApprovalChoice::AllowOnce).await;
     wait_until_started(&shell).await;
     harness.runtime.stop_reply(&conversation).await;
+
     let transcript = harness.wait_for_run(&conversation, &run).await;
 
     assert!(shell.dropped.load(Ordering::SeqCst));
@@ -602,7 +616,9 @@ async fn turning_the_plugin_off_waits_for_an_operation_that_ends_in_time() {
     harness.model.push_reply(reply("Done."));
 
     let (conversation, run) = start(&harness, "OWNER: uptime").await;
+
     answer(&harness, &conversation, ApprovalChoice::AllowOnce).await;
+
     let transcript = harness.wait_for_run(&conversation, &run).await;
     assert!(turn_off_plugin(&harness.runtime, PLUGIN, Duration::from_secs(5)).await);
 

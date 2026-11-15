@@ -2,15 +2,15 @@
 // ESLint for every TypeScript, Svelte and JavaScript file. `task lint:ts` runs
 // it with --max-warnings 0, so a warning fails like an error. `task fmt` applies
 // the fixable rules, including the sorting rules, before Prettier formats.
-// Prettier owns the layout, the Tailwind class order (prettier-plugin-tailwindcss)
-// and CSS declaration order; ESLint owns correctness and the order of imports,
-// exports, type members and Svelte attributes.
+// Prettier owns indentation, wrapping, Tailwind class order and CSS declaration
+// order. ESLint also checks readability choices that Prettier preserves.
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import comments from '@eslint-community/eslint-plugin-eslint-comments/configs';
 import { includeIgnoreFile } from '@eslint/compat';
 import js from '@eslint/js';
+import stylistic from '@stylistic/eslint-plugin';
 import { loadConfig } from '@sveltejs/load-config';
 import prettier from 'eslint-config-prettier';
 import tailwind from 'eslint-plugin-better-tailwindcss';
@@ -21,6 +21,7 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 import mannie from './scripts/eslint/plugin.mjs';
+import { declarationPadding } from './scripts/eslint/statement-group-spacing.mjs';
 
 const desktopApp = join(import.meta.dirname, 'apps/desktop');
 
@@ -110,7 +111,7 @@ const textAttributes = [
   'title',
 ];
 
-const typeScriptFiles = ['**/*.ts', '**/*.mts', '**/*.cts'];
+const typeScriptFiles = ['**/*.ts', '**/*.mts', '**/*.cts', '**/*.tsx'];
 const svelteFiles = ['**/*.svelte', '**/*.svelte.ts'];
 const javaScriptFiles = ['**/*.js', '**/*.mjs', '**/*.cjs'];
 
@@ -186,9 +187,7 @@ export default defineConfig(
   {
     name: 'mannie/svelte-parser',
     files: svelteFiles,
-    languageOptions: {
-      parserOptions: { parser: tseslint.parser, svelteConfig },
-    },
+    languageOptions: { parserOptions: { parser: tseslint.parser, svelteConfig } },
   },
   {
     name: 'mannie/javascript',
@@ -202,9 +201,7 @@ export default defineConfig(
   {
     name: 'mannie/rules',
     plugins: { mannie, perfectionist },
-    settings: {
-      perfectionist: { ignoreCase: true, type: 'natural' },
-    },
+    settings: { perfectionist: { ignoreCase: true, type: 'natural' } },
     rules: {
       // Suppressions are narrow and say why: `// eslint-disable-next-line rule -- reason`.
       '@eslint-community/eslint-comments/no-use': [
@@ -364,9 +361,7 @@ export default defineConfig(
     name: 'mannie/desktop-app',
     files: uiFiles,
     plugins: { 'better-tailwindcss': tailwind },
-    settings: {
-      'better-tailwindcss': { entryPoint: join(desktopApp, 'src/app.css') },
-    },
+    settings: { 'better-tailwindcss': { entryPoint: join(desktopApp, 'src/app.css') } },
     rules: {
       // The webview reaches the core only through the generated IPC bindings,
       // and state lives in runes (engineering standards, TypeScript and Svelte).
@@ -480,13 +475,22 @@ export default defineConfig(
     },
   },
 
-  // Last: turn off every rule that would fight Prettier's layout.
+  // Disable competing layout rules before enabling the checks that can run with Prettier.
   prettier,
   {
     name: 'mannie/after-prettier',
+    files: [...javaScriptFiles, ...typeScriptFiles, ...svelteFiles],
+    plugins: { '@stylistic': stylistic },
     rules: {
       // eslint-config-prettier turns curly off; "all" never conflicts with Prettier.
       curly: ['error', 'all'],
+      '@stylistic/max-statements-per-line': ['error', { max: 1 }],
+      'mannie/multiline-object-properties': 'error',
     },
+  },
+  {
+    name: 'mannie/declaration-padding',
+    files: [...javaScriptFiles, ...typeScriptFiles],
+    rules: { '@stylistic/padding-line-between-statements': ['error', ...declarationPadding] },
   },
 );

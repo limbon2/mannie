@@ -145,11 +145,16 @@ pub fn is_tool_name(name: &str) -> bool {
     let starts_with_letter = characters
         .next()
         .is_some_and(|first| first.is_ascii_lowercase());
-    starts_with_letter
-        && name.len() <= MAX_TOOL_NAME_CHARS
-        && characters.all(|character| {
-            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_'
-        })
+    let valid_prefix = starts_with_letter && name.len() <= MAX_TOOL_NAME_CHARS;
+
+    if !valid_prefix {
+        return false;
+    }
+
+    characters.all(|character| {
+        let underscore = character == '_';
+        character.is_ascii_lowercase() || character.is_ascii_digit() || underscore
+    })
 }
 
 const fn strict_by_default() -> bool {
@@ -326,10 +331,11 @@ impl TerminalCommandAccess {
     /// the tool made: the same host, terminal, state and command. The core
     /// adds the expected endpoint and identity, which the tool did not know.
     pub fn same_request(&self, prepared: &Self) -> bool {
-        self.host == prepared.host
-            && self.terminal == prepared.terminal
-            && self.state == prepared.state
-            && self.command == prepared.command
+        let same_host = self.host == prepared.host;
+        let same_terminal = self.terminal == prepared.terminal;
+        let same_state = self.state == prepared.state;
+        let same_command = self.command == prepared.command;
+        same_host && same_terminal && same_state && same_command
     }
 }
 
@@ -815,12 +821,11 @@ pub struct BrowserAuthorization {
 
 impl PartialEq for BrowserAuthorization {
     fn eq(&self, other: &Self) -> bool {
-        self.continuations.same_channel(&other.continuations)
-            && self.plugin == other.plugin
+        let same_owner = self.plugin == other.plugin
             && self.conversation == other.conversation
-            && self.run == other.run
-            && self.authorized == other.authorized
-            && self.control == other.control
+            && self.run == other.run;
+        let same_permissions = self.authorized == other.authorized && self.control == other.control;
+        self.continuations.same_channel(&other.continuations) && same_owner && same_permissions
     }
 }
 
@@ -869,21 +874,34 @@ impl BrowserAuthorization {
 
     /// Whether the owner explicitly allowed this exact live browser handoff.
     pub fn permits_control(&self, access: &BrowserControlAccess) -> bool {
-        !self.continuations.is_closed() && self.control.as_ref() == Some(access)
+        let authorized = self.control.as_ref() == Some(access);
+        !self.continuations.is_closed() && authorized
     }
 
     /// Waits for authorization to resume the exact held navigation. The
     /// runtime records the operation before granting permission to resume.
     pub async fn authorize(&self, access: BrowserAccess) -> bool {
-        if access.action != BrowserAction::ContinueNavigation
-            || !self.authorized.iter().any(|initial| {
-                initial.action != BrowserAction::Observe && initial.session == access.session
-            })
-        {
+        if access.action != BrowserAction::ContinueNavigation {
             return false;
         }
+
+        let authorized = self.authorized.iter().any(|initial| {
+            let interactive = initial.action != BrowserAction::Observe;
+            let same_session = initial.session == access.session;
+            interactive && same_session
+        });
+
+        if !authorized {
+            return false;
+        }
+
         let (reply, answer) = oneshot::channel();
-        self.continuations.send((access, reply)).await.is_ok() && answer.await.unwrap_or(false)
+
+        if self.continuations.send((access, reply)).await.is_err() {
+            return false;
+        }
+
+        answer.await.unwrap_or(false)
     }
 }
 
@@ -1374,10 +1392,12 @@ mod tests {
     #[test]
     fn a_name_is_lower_case_snake_case_of_at_most_64_characters() {
         let longest = format!("n{}", "o".repeat(MAX_TOOL_NAME_CHARS - 1));
+
         for valid in ["notes", "notes_find", "n2", "a_b_c_", &longest] {
             assert!(is_tool_name(valid), "{valid}");
         }
         let too_long = format!("{longest}o");
+
         for invalid in [
             "",
             "_notes",

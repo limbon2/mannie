@@ -3,6 +3,7 @@
 
 # The crates are internal, so lints may suggest changes to public signatures.
 avoid-breaking-exported-api = false
+excessive-nesting-threshold = 4
 
 # Tests may unwrap, panic, print and use dbg!; production code may not.
 allow-dbg-in-tests = true

@@ -143,12 +143,14 @@ the owner's answer, then call it again if you still need it.";
 /// One question with the owner's answer, in the result of `ask_owner`.
 pub fn question_answer(question: &str, chosen: &[&str], own_words: Option<&str>) -> String {
     let mut lines = vec![format!("Question: {question}")];
+
     if !chosen.is_empty() {
         lines.push(format!("Answer: {}", chosen.join("; ")));
     }
     if let Some(words) = own_words {
         lines.push(format!("In the owner's own words: {words}"));
     }
+
     lines.join("\n")
 }
 
@@ -171,6 +173,7 @@ pub fn environment(tools: &ToolEnvironment<'_>) -> String {
         format!("- Operating system: {}", tools.system),
         format!("- Shell for run_command: {shell}"),
     ];
+
     if let Some(project) = tools.project {
         lines.push(format!(
             "- Workspace: {}, the folder of the project {}",
@@ -178,6 +181,7 @@ pub fn environment(tools: &ToolEnvironment<'_>) -> String {
         ));
         return lines.join("\n");
     }
+
     lines.push(
         "- Workspace: none, because this conversation belongs to no project: use absolute paths"
             .to_owned(),
@@ -185,14 +189,17 @@ pub fn environment(tools: &ToolEnvironment<'_>) -> String {
     if tools.projects.is_empty() {
         return lines.join("\n");
     }
+
     lines.push("- The owner's projects, with their folders:".to_owned());
     for project in tools.projects.iter().rev().take(MAX_LISTED_PROJECTS) {
         lines.push(format!("  - {}: {}", project.name, project.folder));
     }
     let unlisted = tools.projects.len().saturating_sub(MAX_LISTED_PROJECTS);
+
     if unlisted > 0 {
         lines.push(format!("  - and {unlisted} more"));
     }
+
     lines.push(
         "When the owner's request is about one of these projects, call move_to_project first, so that your tools work in its folder."
             .to_owned(),
@@ -550,12 +557,14 @@ something, say so plainly before you answer from general knowledge or other tool
         None => "The owner attached the sources listed below to this conversation.".to_owned(),
     };
     let mut parts = vec![purpose, SOURCES_USE.to_owned()];
+
     if sources.excerpts {
         parts.push(SOURCES_EXCERPTS.to_owned());
     }
     if !sources.outline.trim().is_empty() {
         parts.push(format!("The attached sources:\n{}", sources.outline.trim()));
     }
+
     parts.join("\n\n")
 }
 
@@ -573,6 +582,7 @@ pub const CONTEXT_MISSING: &str =
 /// "Waves"`.
 fn quoted_labels(labels: &[&str]) -> String {
     let quoted: Vec<String> = labels.iter().map(|label| format!("\"{label}\"")).collect();
+
     match quoted.as_slice() {
         [] => "sources".to_owned(),
         [one] => one.clone(),
@@ -667,6 +677,7 @@ pub fn context_timed_out(labels: &[&str]) -> String {
 /// request does not send again (ADR-0046, decision 4).
 pub fn context_not_repeated(labels: &[&str], first: u32, last: u32) -> String {
     let labels = quoted_labels(labels);
+
     if first == last {
         format!(
             "[Excerpt [{first}] from the attached {labels} went with this message and is not repeated.]"
@@ -824,9 +835,11 @@ pub const ROSTER_HEADING: &str =
 /// for, the owner's words for a custom agent.
 pub fn roster_section(entries: &[(&str, &str)]) -> String {
     let mut text = ROSTER_HEADING.to_owned();
+
     for (name, description) in entries {
         text.push_str("\n- ");
         text.push_str(name);
+
         if !description.is_empty() {
             text.push_str(": ");
             text.push_str(description);
@@ -860,12 +873,14 @@ request does not need, and say which ones you skipped.";
 pub fn agent_instructions(own: &str, stages: &[Stage<'_>]) -> String {
     let own = own.trim();
     let mut text = own.to_owned();
+
     if stages.is_empty() {
         return text;
     }
     if !text.is_empty() {
         text.push_str("\n\n");
     }
+
     text.push_str(STAGES_HEADING);
     for (index, stage) in stages.iter().enumerate() {
         text.push('\n');
@@ -1305,6 +1320,7 @@ pub struct NotedCommand {
 fn duration_text(duration: Duration) -> String {
     let seconds = duration.as_secs();
     let (hours, minutes) = (seconds / 3600, seconds / 60 % 60);
+
     match (hours, minutes) {
         (0, 0) => format!("{seconds} s"),
         (0, minutes) => format!("{minutes} min {} s", seconds % 60),
@@ -1330,6 +1346,7 @@ pub fn noted_command(command: &NotedCommand) -> String {
         (None, Some(signal)) => format!(" by the signal {signal}"),
         (None, None) => String::new(),
     };
+
     match command.ending {
         None => format!("{name} has run for {ran}; {unread} new lines are unread."),
         Some(BackgroundEnding::Exited) => {
@@ -1375,6 +1392,7 @@ pub fn background_note(commands: &[NotedCommand]) -> String {
 /// earlier agent in the conversation left behind (ADR-0059, decision 13).
 pub fn background_note_without_read(commands: &[NotedCommand]) -> String {
     let mut note = "Background commands of this conversation:".to_owned();
+
     for command in commands {
         note.push_str("\n- ");
         note.push_str(&noted_command(command));
