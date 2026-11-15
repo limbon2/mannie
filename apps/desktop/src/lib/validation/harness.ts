@@ -5,7 +5,7 @@
 import { pluginTransport } from '@mannie/plugin-sdk/transport';
 import { Channel } from '@tauri-apps/api/core';
 
-import { commands as appCommands, type CreateProviderProfile } from '#lib/generated/bindings.js';
+import { commands as appCommands, type CreateProviderProfile, type ResolvedFileLink } from '#lib/generated/bindings.js';
 import type {
   ChannelBatch,
   ChannelLoad,
@@ -84,6 +84,8 @@ export interface ValidationHarness {
   /** Makes the ChatGPT account's access token expire, so the next call refreshes it. */
   expireChatGptToken(): Promise<void>;
   insertHostileHtml(payloads: readonly string[]): Promise<boolean>;
+  /** File-manager actions recorded without launching an external window. */
+  openedFileLinks(): Promise<ResolvedFileLink[]>;
   /** The links that the app would have opened in the browser. */
   openedLinks(): Promise<string[]>;
   probeScripts(): Promise<ScriptProbe>;
@@ -349,6 +351,7 @@ window.mannieValidation = {
   deleteProviderProfiles,
   insertHostileHtml,
   openedLinks: async () => commands.validationOpenedLinks(),
+  openedFileLinks: async () => commands.validationOpenedFileLinks(),
   probeScripts,
   processId: async () => commands.validationProcessId(),
   runChannelLoad,

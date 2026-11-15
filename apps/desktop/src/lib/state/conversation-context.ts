@@ -7,7 +7,7 @@
 // side panel, shows read-only, without Retry and without the message box.
 import { createContext } from 'svelte';
 
-import type { BackgroundCommandView } from '#lib/generated/bindings.js';
+import type { BackgroundCommandView, ConversationId } from '#lib/generated/bindings.js';
 
 import type { CitedItem } from './citations.js';
 
@@ -17,6 +17,8 @@ export interface ConversationContext {
   readonly backgroundCommands: readonly BackgroundCommandView[];
   /** The stored excerpt of a provider's key that the conversation's messages hold, which a reply's cite link names. */
   readonly cited: (provider: string, key: string) => CitedItem | undefined;
+  /** The containing transcript, independent of the active main conversation. */
+  readonly conversationId: ConversationId;
   /** Whether the owner cannot act on the conversation here, so its parts offer no Retry. */
   readonly readOnly: boolean;
 }

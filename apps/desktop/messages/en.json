@@ -1893,5 +1893,19 @@
       }
     }
   ],
-  "updates_cancel": "Cancel"
+  "updates_cancel": "Cancel",
+  "markdown_file_unsupported_target": "This application cannot open file references. Choose the file manager and try again.",
+  "markdown_file_open_in": "Open in",
+  "markdown_file_explorer": "File Explorer",
+  "markdown_file_manager": "File manager",
+  "markdown_file_pending": "Opening file location…",
+  "markdown_file_invalid": "This path cannot be opened. Use a local file or folder path.",
+  "markdown_file_not_local": "This path is not on this computer. Open it on its own host.",
+  "markdown_file_no_project": "This relative path has no project. Use an absolute path or move the conversation into a project.",
+  "markdown_file_conversation_missing": "This conversation no longer exists. Open the location from another conversation.",
+  "markdown_file_not_found": "This file or folder does not exist. Check the path and try again.",
+  "markdown_file_unsupported_kind": "Only regular files and folders can be shown in the file manager.",
+  "markdown_file_unavailable": "The location could not be checked. Check access to the folder and try again.",
+  "markdown_file_open_failed": "The file manager could not be opened. Check that a file manager is installed and try again.",
+  "markdown_file_checking": "Checking file location…"
 }

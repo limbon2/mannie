@@ -9,6 +9,8 @@
 
 Later changes: [ADR-0046](0046-let-plugins-attach-context-to-conversations.md) refines decision 2: a reply's markers of citations become a node of their own in the render tree.
 
+Later changes: [ADR-0069](0069-open-local-paths-from-agent-responses.md) permits owner-initiated local file-manager navigation from replies.
+
 ## Context
 
 Verified 2026-10-14:

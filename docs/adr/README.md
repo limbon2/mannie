@@ -86,3 +86,4 @@ Each ADR has exactly one of these statuses:
 | [0066](0066-let-the-owner-trust-self-signed-browser-certificates.md)                   | Let the owner trust self-signed Browser certificates                                          | Accepted (D61)         | V13        |
 | [0067](0067-manage-browser-trust-and-credentials-in-settings.md)                       | Manage Browser trust and credentials in Settings                                              | Accepted (D62)         | V13        |
 | [0068](0068-keep-a-draft-conversation-for-each-place.md)                               | Keep a draft conversation for each place a new conversation starts                            | Accepted (D63)         | Tests      |
+| [0069](0069-open-local-paths-from-agent-responses.md)                                  | Open local paths from agent responses                                                         | Accepted (D64)         | Tests      |

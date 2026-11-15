@@ -35,6 +35,9 @@
   let { conversation, readOnly = false }: Props = $props();
 
   setConversationContext({
+    get conversationId() {
+      return conversation.id;
+    },
     get backgroundCommands() {
       return conversation.transcript.backgroundCommands;
     },
