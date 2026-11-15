@@ -80,7 +80,7 @@ describe('file links', () => {
     expect(await $$(LINK)).toHaveLength(4);
     await clickWithText(LINK, 'File');
     await actions(1);
-    expect((await openedFileLinks())[0]).toMatchObject({ path: realpathSync(file), kind: 'file' });
+    expect((await openedFileLinks())[0]).toMatchObject({ path: realpathSync.native(file), kind: 'file' });
     expect(await $('[role="alertdialog"]').isExisting()).toBe(false);
   });
 
@@ -98,8 +98,8 @@ describe('file links', () => {
     await browser.keys(Key.Space);
     await actions(3);
     expect((await openedFileLinks()).slice(1)).toEqual([
-      expect.objectContaining({ path: realpathSync(source), kind: 'file' }),
-      expect.objectContaining({ path: realpathSync(source), kind: 'file' }),
+      expect.objectContaining({ path: realpathSync.native(source), kind: 'file' }),
+      expect.objectContaining({ path: realpathSync.native(source), kind: 'file' }),
     ]);
   });
 
@@ -115,7 +115,7 @@ describe('file links', () => {
     expect(await openedFileLinks()).toHaveLength(3);
     await item.click();
     await actions(4);
-    expect((await openedFileLinks())[3]).toMatchObject({ path: realpathSync(directory), kind: 'directory' });
+    expect((await openedFileLinks())[3]).toMatchObject({ path: realpathSync.native(directory), kind: 'directory' });
     await browser.waitUntil(async () => folder.isFocused(), {
       timeoutMsg: await browser.execute(() => document.activeElement?.outerHTML ?? 'no focus'),
     });
@@ -204,7 +204,7 @@ describe('file links', () => {
     await expect($('//main//button[@data-file-link and normalize-space(.)="Relative"]')).toBeDisplayed();
     await $(CHILD_LINK).click();
     await actions(6);
-    expect((await openedFileLinks())[5]).toMatchObject({ path: realpathSync(source), kind: 'file' });
+    expect((await openedFileLinks())[5]).toMatchObject({ path: realpathSync.native(source), kind: 'file' });
     await $('[data-side-panel-tab]:has([role="tab"][aria-selected="true"]) [data-side-panel-close]').click();
   });
 });
