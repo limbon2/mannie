@@ -4,6 +4,8 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+## 0.8.2 - 2026-11-15
+
 ### Added
 
 - Show added and removed line counts and expandable historical diffs for file writes and edits in conversations.
