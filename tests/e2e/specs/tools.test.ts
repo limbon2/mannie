@@ -269,7 +269,7 @@ describe('system tools', () => {
     await row.click();
     await expect($('[data-file-change]')).toBeDisplayed();
     await expect($('[data-file-change]')).toHaveText(expect.stringContaining('old 0'));
-    await browser.execute((button: HTMLButtonElement) => button.focus(), await row);
+    await browser.execute((button: HTMLElement) => button.focus(), await row);
     await expect(row).toBeFocused();
     await browser.keys(Key.Enter);
     await expect($('[data-file-change]')).not.toBeDisplayed();

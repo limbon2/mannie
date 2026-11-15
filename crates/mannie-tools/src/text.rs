@@ -49,7 +49,7 @@ impl FileText {
         }
     }
 
-    /// The content as read_file will show it when preserving CRLF.
+    /// The content as `read_file` will show it when preserving CRLF.
     pub(crate) fn text_for_write(&self) -> Cow<'_, str> {
         if self.crlf && self.text.contains("\r\n") {
             Cow::Owned(self.text.replace("\r\n", "\n"))
