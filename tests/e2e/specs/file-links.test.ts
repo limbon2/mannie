@@ -24,7 +24,9 @@ import { axeViolations, waitForAnimations, waitForApp } from '../support/page.ts
 import { MODELS, type ProviderServer, startProviderServer } from '../support/provider-server.ts';
 
 const LINK = 'main [data-file-link]';
-const CHILD_LINK = '[data-side-panels] [role="tabpanel"]:not([hidden]) [data-file-link]';
+const CHILD_LINK =
+  '//section[@data-side-panels]//*[@role="tabpanel" and not(@hidden)]' +
+  '//*[@data-part-kind="text"]//button[@data-file-link and normalize-space(.)="Child file"]';
 
 describe('file links', () => {
   let provider: ProviderServer;
@@ -199,9 +201,9 @@ describe('file links', () => {
     await browser.url(generalAddress.href);
     await waitForApp();
     await expect($('//main//button[@data-file-link and normalize-space(.)="Relative"]')).toBeDisplayed();
-    await clickWithText(CHILD_LINK, 'Child file');
+    await $(CHILD_LINK).click();
     await actions(6);
     expect((await openedFileLinks())[5]).toMatchObject({ path: realpathSync(source), kind: 'file' });
-    await $('[data-side-panel-close]').click();
+    await $('[data-side-panel-tab]:has([role="tab"][aria-selected="true"]) [data-side-panel-close]').click();
   });
 });
