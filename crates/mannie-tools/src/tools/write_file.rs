@@ -3,7 +3,7 @@
 
 use futures_util::FutureExt;
 use futures_util::future::BoxFuture;
-use mannie_types::tools::{Access, AccessMode, ToolFailure, ToolOutcome};
+use mannie_types::tools::{Access, AccessMode, FileChange, ToolFailure, ToolOutcome};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -14,6 +14,7 @@ use super::change::{
 use super::read_file::{MAX_TEXT_FILE_BYTES, not_text, too_large};
 use super::{existing_file, path_access};
 use crate::digest::revision;
+use crate::file_changes::compare;
 use crate::paths::{FinalLink, for_change};
 use crate::results::count;
 use crate::text::{FileText, decode};
@@ -109,11 +110,12 @@ fn create(target: &Access, content: String) -> Result<Done, ToolFailure> {
     let (folder, names) = pin_missing(&path, identity)?;
     let (folder, _) = create_folders(folder, &names)?;
     let name = names.last().ok_or(ToolFailure::PathChanged)?;
+    let change = compare("", &content);
     let bytes = FileText::new_file(content).encode();
     let mut draft = folder.draft(name)?;
     draft.write(&bytes)?;
     folder.commit_new(draft, name)?;
-    Ok(written(&path.display().to_string(), true, &bytes))
+    Ok(written(&path.display().to_string(), true, &bytes, change))
 }
 
 /// Replaces the file when its revision still matches, keeping its encoding,
@@ -128,19 +130,20 @@ fn replace(target: &Access, content: &str, expected: &str) -> Result<Done, ToolF
         return Err(ToolFailure::RevisionMismatch { current });
     }
     let old = decode(&existing.bytes).map_err(|reason| not_text(reason, path_text.clone()))?;
-    let bytes = FileText {
+    let new = FileText {
         text: content.to_owned(),
         ..old
-    }
-    .encode();
+    };
+    let change = compare(&old.text, &new.text_for_write());
+    let bytes = new.encode();
     let mut draft = folder.draft(&name)?;
     draft.write(&bytes)?;
     folder.commit_replace(draft, &name, &existing)?;
-    Ok(written(&path_text, false, &bytes))
+    Ok(written(&path_text, false, &bytes, change))
 }
 
 /// The result of a write, with the file's new revision.
-fn written(path: &str, created: bool, bytes: &[u8]) -> Done {
+fn written(path: &str, created: bool, bytes: &[u8], change: FileChange) -> Done {
     let verb = if created { "Created" } else { "Replaced" };
     Done {
         output: format!(
@@ -152,6 +155,7 @@ fn written(path: &str, created: bool, bytes: &[u8]) -> Done {
             path: path.to_owned(),
             created,
             bytes: count(bytes.len()),
+            change: Some(change),
         },
         archives: Vec::new(),
         images: Vec::new(),

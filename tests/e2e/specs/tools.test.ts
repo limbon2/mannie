@@ -6,9 +6,12 @@
 // Stop ends a running command, a waiting request survives a reload, and a
 // command that was running when the app died is never run again. The fixture
 // provider's tools scenario calls the tool that each message names.
+import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
+
+import { Key } from 'webdriverio';
 
 import {
   addProfile,
@@ -35,6 +38,7 @@ import {
   leaveSettings,
   openSettings,
   runCommand,
+  shownText,
   waitForAnimations,
   waitForApp,
   waitForShownText,
@@ -111,6 +115,21 @@ async function overflowAroundTranscript(): Promise<string[]> {
       element = element.parentElement;
     }
     return overflowing;
+  });
+}
+
+/** Scrollable space below the transcript's actual content, excluding a viewport taller than its content. */
+async function blankSpaceInTranscript(): Promise<number> {
+  return browser.execute(() => {
+    const transcript = document.querySelector<HTMLElement>('main [role="region"]');
+    if (transcript === null) {
+      throw new Error('the transcript is missing');
+    }
+    const content = transcript.firstElementChild;
+    if (content === null) {
+      throw new Error('the transcript has no content');
+    }
+    return transcript.scrollHeight - Math.max(transcript.clientHeight, content.getBoundingClientRect().height);
   });
 }
 
@@ -233,6 +252,112 @@ describe('system tools', () => {
 
     expect(await waitForCompleteReply()).toContain(TOOLS_DONE);
     expect(readFileSync(join(workspace, 'summary.txt'), 'utf8')).toBe('done');
+  });
+
+  it('shows saved file diffs with counts, keyboard controls and history after another edit', async () => {
+    await startConversationIn(project);
+    const before = Array.from({ length: 8 }, (_, index) => `old ${String(index)}\n`).join('');
+    const after = Array.from({ length: 13 }, (_, index) => `new ${String(index)}\n`).join('');
+    await send(callMessage('write_file', { activity: 'Writing the example', path: 'changes.txt', content: before }));
+    await waitForToolStatus('awaiting_approval');
+    await expect($('main article:last-of-type [data-file-added]')).not.toBeExisting();
+    await clickInLatestTurn('Allow once');
+    await waitForCompleteReply();
+    let row = $('main article:last-of-type [data-tool-toggle]');
+    await waitForShownText(row, expect.stringContaining('changes.txt'));
+    await expect(row).toHaveText(expect.stringContaining('+8'));
+    expect(await shownText(await row)).not.toContain('Writing the example');
+    await row.click();
+    await waitForShownText('[data-file-change]', expect.stringContaining('old 0'));
+    await browser.execute((button: HTMLElement) => button.focus(), await row);
+    await expect(row).toBeFocused();
+    await browser.keys(Key.Enter);
+    await expect($('[data-file-change]')).not.toBeDisplayed();
+    await browser.keys(Key.Space);
+    await expect($('[data-file-change]')).toBeDisplayed();
+    await axeInBothThemes();
+
+    await send(
+      callMessage('edit_file', {
+        activity: 'Replacing the example',
+        path: 'changes.txt',
+        expected_revision: `sha256:${createHash('sha256').update(before).digest('hex')}`,
+        edits: [{ old_text: before, new_text: after }],
+      }),
+    );
+    await waitForToolStatus('awaiting_approval');
+    await clickInLatestTurn('Allow once');
+    await waitForCompleteReply();
+    row = $('main article:last-of-type [data-tool-toggle]');
+    await expect(row).toHaveText(expect.stringContaining('+13'));
+    await expect(row).toHaveText(expect.stringContaining('−8'));
+    await row.click();
+    await expect($('main article:last-of-type [data-file-change]')).toBeDisplayed();
+    expect(await $$('main article:last-of-type [data-file-line="added"]').length).toBe(13);
+    expect(await $$('main article:last-of-type [data-file-line="removed"]').length).toBe(8);
+    expect(readFileSync(join(workspace, 'changes.txt'), 'utf8')).toBe(after);
+    await axeInBothThemes();
+
+    writeFileSync(join(workspace, 'changes.txt'), 'a later external edit');
+    await browser.refresh();
+    await waitForApp();
+    row = $('main article:last-of-type [data-tool-toggle]');
+    await expect(row).toHaveText(expect.stringContaining('+13'));
+    await row.click();
+    await waitForShownText('main article:last-of-type [data-file-change]', expect.stringContaining('new 12'));
+    const firstRow = $('main article:first-of-type [data-tool-toggle]');
+    await expect(firstRow).toHaveText(expect.stringContaining('+8'));
+    await firstRow.click();
+    await waitForShownText('main article:first-of-type [data-file-change]', expect.stringContaining('old 0'));
+
+    await send(
+      callMessage('edit_file', {
+        path: 'changes.txt',
+        expected_revision: 'sha256:00',
+        edits: [{ old_text: 'old', new_text: 'wrong' }],
+      }),
+    );
+    await waitForToolStatus('awaiting_approval');
+    await clickInLatestTurn('Deny');
+    await waitForCompleteReply();
+    await expect($('main article:last-of-type [data-file-added]')).not.toBeExisting();
+    await expect($('main article:last-of-type [data-file-change]')).not.toBeExisting();
+  });
+
+  it('keeps a large diff inside its own scroll area without blank space below the conversation', async () => {
+    await startConversationIn(project);
+    const content = Array.from({ length: 400 }, (_, index) => `line ${String(index + 1)}\n`).join('');
+    await send(callMessage('write_file', { path: 'large-change.txt', content }));
+    await waitForToolStatus('awaiting_approval');
+    await clickInLatestTurn('Allow once');
+    await waitForCompleteReply();
+    const row = $('main article:last-of-type [data-tool-toggle]');
+    await expect(row).toHaveText(expect.stringContaining('+400'));
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await row.scrollIntoView({ block: 'center' });
+      await row.click();
+      await waitForAnimations();
+      const diff = $('main article:last-of-type [data-file-change] [role="region"]');
+      await expect(diff).toBeDisplayed();
+      expect(await blankSpaceInTranscript()).toBeLessThanOrEqual(1);
+      expect(await overflowAroundTranscript()).toEqual([]);
+      await diff.scrollIntoView({ block: 'center' });
+      await browser.execute(() => {
+        document.querySelector<HTMLElement>('[data-file-change] [role="region"]')?.focus({ preventScroll: true });
+      });
+      await browser.keys(Key.End);
+      await browser.waitUntil(
+        async () =>
+          browser.execute(() => (document.querySelector('[data-file-change] [role="region"]')?.scrollTop ?? 0) > 0),
+        { timeoutMsg: 'the large diff did not scroll from the keyboard' },
+      );
+      expect(await blankSpaceInTranscript()).toBeLessThanOrEqual(1);
+      await row.scrollIntoView({ block: 'center' });
+      await row.click();
+      await waitForAnimations();
+      expect(await blankSpaceInTranscript()).toBeLessThanOrEqual(1);
+    }
   });
 
   it('asks before a change without taking the focus, and runs the change once allowed', async () => {

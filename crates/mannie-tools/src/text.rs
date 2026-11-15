@@ -49,14 +49,21 @@ impl FileText {
         }
     }
 
-    /// The bytes to write, in the file's encoding and line endings.
-    pub(crate) fn encode(&self) -> Vec<u8> {
-        let text: Cow<'_, str> = if self.crlf {
-            // Content that already has CRLF keeps it, without doubling the CR.
-            Cow::Owned(self.text.replace("\r\n", "\n").replace('\n', "\r\n"))
+    /// The content as `read_file` will show it when preserving CRLF.
+    pub(crate) fn text_for_write(&self) -> Cow<'_, str> {
+        if self.crlf && self.text.contains("\r\n") {
+            Cow::Owned(self.text.replace("\r\n", "\n"))
         } else {
             Cow::Borrowed(&self.text)
-        };
+        }
+    }
+
+    /// The bytes to write, in the file's encoding and line endings.
+    pub(crate) fn encode(&self) -> Vec<u8> {
+        let mut text = self.text_for_write();
+        if self.crlf {
+            text = Cow::Owned(text.replace('\n', "\r\n"));
+        }
         match self.encoding {
             Encoding::Utf8 => text.as_bytes().to_vec(),
             Encoding::Utf8WithBom => [&UTF8_BOM[..], text.as_bytes()].concat(),

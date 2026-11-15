@@ -166,6 +166,35 @@ describe('the chat and window views in the pseudo-locale', () => {
     expect(await uncataloguedText()).toEqual([]);
   });
 
+  it('shows saved file changes in the pseudo-locale at a narrow window width', async () => {
+    const folder = mkdtempSync(join(tmpdir(), 'mannie-e2e-file-diff-locale-'));
+    const size = await browser.getWindowSize();
+    try {
+      await sendMessage(
+        callMessage('write_file', {
+          activity: 'Writing a long example',
+          path: join(folder, 'long-example.txt'),
+          content: 'long content '.repeat(200),
+        }),
+      );
+      const waiting = $('main [data-tool-status="awaiting_approval"]');
+      await waiting.waitForDisplayed({ timeout: 30_000 });
+      const decisions = await waiting.$$('button:not([data-tool-toggle]):not([data-allow-for])');
+      await decisions[0]?.click();
+      await waitForCompleteReply();
+      await $('main article:last-of-type [data-tool-toggle]').click();
+      await $('main article:last-of-type [data-file-change]').waitForDisplayed();
+      await browser.setWindowSize(900, 700);
+      await waitForAnimations();
+      expect(await uncataloguedText()).toEqual([]);
+      expect(await overflowsHorizontally()).toBe(false);
+      expect(await axeViolations()).toEqual([]);
+    } finally {
+      await browser.setWindowSize(size.width, size.height);
+      rmSync(folder, { force: true, recursive: true, maxRetries: 20, retryDelay: 250 });
+    }
+  });
+
   it('shows only catalog text in a question, its choice of the owner’s own words and its answers', async () => {
     // The previous test left the Tools profile on. The question and its
     // options are the model's content, outside the catalog.

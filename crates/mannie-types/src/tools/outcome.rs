@@ -408,6 +408,9 @@ pub enum ToolOutcome {
         created: bool,
         /// The bytes written.
         bytes: u32,
+        /// The saved text comparison; absent in older records.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        change: Option<super::file_change::FileChange>,
     },
     /// `edit_file` changed a file.
     Edited {
@@ -415,6 +418,9 @@ pub enum ToolOutcome {
         path: String,
         /// The replacements made.
         replacements: u32,
+        /// The saved text comparison; absent in older records.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        change: Option<super::file_change::FileChange>,
     },
     /// `create_directory` created folders.
     FolderCreated {
@@ -720,6 +726,7 @@ mod tests {
             serde_json::to_value(ToolOutcome::Edited {
                 path: "notes.md".to_owned(),
                 replacements: 2,
+                change: None,
             })
             .unwrap(),
             serde_json::json!({ "kind": "edited", "path": "notes.md", "replacements": 2 })
@@ -761,5 +768,21 @@ mod tests {
                 "uncertain": false,
             })
         );
+    }
+
+    #[test]
+    fn historical_file_outcomes_read_without_a_change() {
+        let edited = serde_json::json!({ "kind": "edited", "path": "a.txt", "replacements": 1 });
+        let written =
+            serde_json::json!({ "kind": "written", "path": "a.txt", "created": true, "bytes": 3 });
+        for value in [edited, written] {
+            let outcome: ToolOutcome = serde_json::from_value(value.clone()).unwrap();
+            assert!(matches!(
+                outcome,
+                ToolOutcome::Edited { change: None, .. }
+                    | ToolOutcome::Written { change: None, .. }
+            ));
+            assert_eq!(serde_json::to_value(outcome).unwrap(), value);
+        }
     }
 }
