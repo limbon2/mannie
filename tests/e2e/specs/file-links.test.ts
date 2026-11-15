@@ -24,9 +24,10 @@ import { axeViolations, waitForAnimations, waitForApp } from '../support/page.ts
 import { MODELS, type ProviderServer, startProviderServer } from '../support/provider-server.ts';
 
 const LINK = 'main [data-file-link]';
+// The child report can include the same Markdown in more than one text part.
 const CHILD_LINK =
-  '//section[@data-side-panels]//*[@role="tabpanel" and not(@hidden)]' +
-  '//*[@data-part-kind="text"]//button[@data-file-link and normalize-space(.)="Child file"]';
+  '(//section[@data-side-panels]//*[@role="tabpanel" and not(@hidden)]' +
+  '//*[@data-part-kind="text"]//button[@data-file-link and normalize-space(.)="Child file"])[1]';
 
 describe('file links', () => {
   let provider: ProviderServer;
