@@ -38,6 +38,7 @@ import {
   leaveSettings,
   openSettings,
   runCommand,
+  shownText,
   waitForAnimations,
   waitForApp,
   waitForShownText,
@@ -263,12 +264,11 @@ describe('system tools', () => {
     await clickInLatestTurn('Allow once');
     await waitForCompleteReply();
     let row = $('main article:last-of-type [data-tool-toggle]');
-    await expect(row).toHaveText(expect.stringContaining('changes.txt'));
+    await waitForShownText(row, expect.stringContaining('changes.txt'));
     await expect(row).toHaveText(expect.stringContaining('+8'));
-    await expect(row).not.toHaveText(expect.stringContaining('Writing the example'));
+    expect(await shownText(await row)).not.toContain('Writing the example');
     await row.click();
-    await expect($('[data-file-change]')).toBeDisplayed();
-    await expect($('[data-file-change]')).toHaveText(expect.stringContaining('old 0'));
+    await waitForShownText('[data-file-change]', expect.stringContaining('old 0'));
     await browser.execute((button: HTMLElement) => button.focus(), await row);
     await expect(row).toBeFocused();
     await browser.keys(Key.Enter);
@@ -292,6 +292,7 @@ describe('system tools', () => {
     await expect(row).toHaveText(expect.stringContaining('+13'));
     await expect(row).toHaveText(expect.stringContaining('−8'));
     await row.click();
+    await expect($('main article:last-of-type [data-file-change]')).toBeDisplayed();
     expect(await $$('main article:last-of-type [data-file-line="added"]').length).toBe(13);
     expect(await $$('main article:last-of-type [data-file-line="removed"]').length).toBe(8);
     expect(readFileSync(join(workspace, 'changes.txt'), 'utf8')).toBe(after);
@@ -303,11 +304,11 @@ describe('system tools', () => {
     row = $('main article:last-of-type [data-tool-toggle]');
     await expect(row).toHaveText(expect.stringContaining('+13'));
     await row.click();
-    await waitForShownText($('main article:last-of-type [data-file-change]'), expect.stringContaining('new 12'));
+    await waitForShownText('main article:last-of-type [data-file-change]', expect.stringContaining('new 12'));
     const firstRow = $('main article:first-of-type [data-tool-toggle]');
     await expect(firstRow).toHaveText(expect.stringContaining('+8'));
     await firstRow.click();
-    await expect($('main article:first-of-type [data-file-change]')).toHaveText(expect.stringContaining('old 0'));
+    await waitForShownText('main article:first-of-type [data-file-change]', expect.stringContaining('old 0'));
 
     await send(
       callMessage('edit_file', {
