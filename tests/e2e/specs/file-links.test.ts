@@ -15,7 +15,6 @@ import {
   startConversationIn,
   startNewConversation,
   TEST_CREDENTIAL,
-  useProfile,
   waitForCompleteReply,
 } from '../support/chat.ts';
 import { deleteProviderProfiles, openedFileLinks } from '../support/harness.ts';
@@ -157,9 +156,9 @@ describe('file links', () => {
 
   it('resolves the child panel’s project beside a different main conversation', async () => {
     const generalAddress = new URL(await browser.getUrl());
+    await deleteProviderProfiles();
     await addProfile(provider.baseUrl, { model: MODELS.tools, name: 'File link tools', useTools: true });
     await startConversationIn(project);
-    await useProfile('File link tools');
     await sendMessage(
       callMessage('start_task', {
         agent: 'explore',
@@ -181,6 +180,7 @@ describe('file links', () => {
     }
     await browser.url(generalAddress.href);
     await waitForApp();
+    await expect($('//main//button[@data-file-link and normalize-space(.)="Relative"]')).toBeDisplayed();
     await clickWithText('[data-side-panels] [data-file-link]', 'Child file');
     await actions(6);
     expect((await openedFileLinks())[5]).toMatchObject({ path: realpathSync(source), kind: 'file' });
