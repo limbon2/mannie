@@ -4,7 +4,7 @@
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Building                                                                                                                                                                                                                                                                                                                                                                                            |
 | Milestone    | M1                                                                                                                                                                                                                                                                                                                                                                                                  |
-| Last updated | 2026-11-08                                                                                                                                                                                                                                                                                                                                                                                          |
+| Last updated | 2026-11-15                                                                                                                                                                                                                                                                                                                                                                                          |
 | Part of      | [Chat](README.md)                                                                                                                                                                                                                                                                                                                                                                                   |
 | Related      | [ADR-0020](../../adr/0020-complete-the-ui-shell-slots.md), [ADR-0021](../../adr/0021-render-model-output-as-markdown-with-micromark.md), [ADR-0004](../../adr/0004-keep-system-access-in-the-rust-core.md), [ADR-0019](../../adr/0019-keep-visible-text-in-message-catalogs.md), [Desktop app](../../architecture/desktop-app.md#5-rendering-untrusted-content), [ChatGPT plan](../chatgpt-plan.md) |
 
@@ -50,13 +50,25 @@ The renderer follows [ADR-0021](../../adr/0021-render-model-output-as-markdown-w
 
 - `micromark` with the GFM extensions parses the text into a syntax tree, which Mannie's own Svelte components render. No component inserts HTML, so nothing in the text becomes markup the renderer did not choose.
 - Raw HTML in the text is shown as text.
-- Links render as buttons, never as elements with an `href`, so the webview never follows them or connects to their host. Activating one asks the core to check the URL; the core returns it in a normalized form, with internationalized host names shown in their ASCII form, and refuses everything except `http` and `https`. A dialog shows the URL in full with "Open in browser" and "Cancel". "Open in browser" asks the core again, which checks the URL again and opens it with the system's browser.
+- Web links render as buttons, never as elements with an `href`, so the webview never follows them or connects to their host. Activating one asks the core to check the URL; the core returns it in a normalized form, with internationalized host names shown in their ASCII form, and refuses everything except `http` and `https`. A dialog shows the URL in full with "Open in browser" and "Cancel". "Open in browser" asks the core again, which checks the URL again and opens it with the system's browser.
 - Images are never loaded. Their place shows the image's description and a link button to its address.
 - Code blocks render as text, with the language from the fence as a label and a "Copy" button that uses the clipboard API and says so when copying fails.
 - Tables, task lists, strikethrough and autolinks from GFM render as the elements they describe. Footnotes render as plain text.
 - Text over 200 KB, or nesting deeper than 32 levels, renders as plain text.
 - Short texts are parsed on the main thread. Longer or denser texts, whose parse could take long, are parsed in a Web Worker that gives up after three seconds and shows the text as plain text instead ([ADR-0021](../../adr/0021-render-model-output-as-markdown-with-micromark.md), decision 8).
 - While a reply streams, the text is parsed at most once per frame, and the part of the text before the last complete block is parsed only once.
+
+### Local file links
+
+[ADR-0069](../../adr/0069-open-local-paths-from-agent-responses.md) adds local navigation to Markdown links and paths that occupy an entire inline-code span. The owner approved the plan in D64. A click reveals a regular file in its containing folder or opens a folder itself, immediately. Right-click or the keyboard context-menu key opens "Open in", whose submenu offers "File Explorer" on Windows and "File manager" on Linux. Inline paths keep their code styling. Ordinary prose, commands, fenced code and inline code already inside a link gain no extra buttons. Bare file URL prefixes, such as `file://` and `file:///`, stay inline code; automatic file URL links need a local path after the prefix.
+
+The desktop's Rust core resolves native absolute paths, project-relative paths and local file URLs. Relative paths use the containing conversation's persisted workspace, including a local child's inherited workspace, and never the currently selected conversation or the process's working directory. A general conversation needs an absolute path. Absolute paths may lie outside the project. References may include a line or column as `:42`, `:42:7` or `#L42`; an existing literal filename takes precedence. Only file URLs decode URL escapes. Spaces and Unicode are preserved, and filesystem links resolve before opening.
+
+The added commands `resolve_file_link` and `open_file_link` use typed bindings and main-window capabilities. Resolution launches nothing. Opening checks the original reference again and accepts only the fixed file-manager destination. On Linux, if revealing an item fails, the core opens its containing directory. No regular file reaches the default-application opener. Controls, device paths, remote file URLs, UNC paths, known worker or executor conversations, and special files are refused. Errors use catalog codes; inaccessible, missing and deleted paths and launch failures have actionable messages. Pending actions prevent duplicate activation, and responses for old references cannot replace the current state.
+
+This is owner navigation and grants the agent no permission. The existing web confirmation, citation rendering and hostile-content protections remain in effect. The core records the action's outcome through tracing without putting a path in a log. There is no storage migration, agent tool or plugin extension point.
+
+Discovering installed applications, saved application preferences, worker and SSH file access, and additional context-aware menu actions are Unscheduled. This version offers only the desktop's file manager.
 
 ### The message box
 
@@ -107,5 +119,13 @@ The clipboard API needs a secure context, which the app's origin is on both webv
 - Axe finds no WCAG 2.1 AA violation in the conversation view, the conversation list, the dialogs and the settings sections, in the light and dark themes.
 - In the pseudo-locale, every piece of text outside content comes from the catalog, and no layout overflows.
 - The hostile corpus runs no script and opens no connection, through the renderer's unit tests and through the end-to-end path from the mock provider.
-- A link opens only after the dialog shows its normalized URL and the owner confirms, and `javascript:`, `data:` and `file:` links do not open.
+- A web link opens only after the dialog shows its normalized URL and the owner confirms; `javascript:` and `data:` links do not open. Local file URLs follow the file-link rules above.
 - A reply of 32 KB streams at 200 tokens per second while the view keeps up and answers input within 50 ms (performance test).
+
+### Local file-link acceptance
+
+- Markdown and inline paths open their local file or folder through Rust, from mouse, Enter, Space and the context submenu; Escape closes the menu and restores focus.
+- Rendering, streaming and opening the menu launch nothing. A user activation records exactly one action in validation builds, and no file is executed or opened with its associated program.
+- Tests cover native paths, file URLs, spaces, Unicode, source locations, literal filename precedence, conversation and child project isolation, missing project context, remote and invalid inputs, missing/deleted paths, filesystem links, unavailable file managers and stale UI replies.
+- Hostile Markdown still emits no content-derived navigation attributes, nested buttons, scripts or remote loads. Web links still require confirmation and citations still open their existing source UI.
+- Native checks exercise Windows File Explorer and Linux file-manager behavior; the UI remains keyboard accessible and passes axe and pseudo-locale checks.

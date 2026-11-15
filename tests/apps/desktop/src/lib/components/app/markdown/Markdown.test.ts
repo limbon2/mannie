@@ -80,6 +80,22 @@ describe('Markdown', () => {
     expect(html).toContain('<button');
   });
 
+  it('renders a path inside a Markdown label with only one button', () => {
+    const html = renderMarkdown('[`src/main.rs`](src/main.rs)');
+    expect(html.match(/<button\b/gu)).toHaveLength(1);
+    expect(html).toContain('<code');
+    expect(startTags(html).filter((tag) => FORBIDDEN_ATTRIBUTE.test(tag))).toEqual([]);
+  });
+
+  it('keeps a file URL prefix inert beside a complete file link', () => {
+    const url = 'file:///D:/Programming/playground/AngryBird-Clone/game.js';
+    const html = renderMarkdown(`\`file://\` URL: [${url}](${url})`);
+    expect(html.match(/<button\b/gu)).toHaveLength(1);
+    expect(html).toMatch(/<code\b[^>]*>file:\/\/<\/code>/u);
+    expect(html).not.toContain('role="alert"');
+    expect(startTags(html).filter((tag) => FORBIDDEN_ATTRIBUTE.test(tag))).toEqual([]);
+  });
+
   it('shows raw HTML as escaped text', () => {
     const html = renderMarkdown('<script>window.compromised = true;</script>');
 

@@ -59,6 +59,8 @@
     "allow-load-earlier-turns",
     "allow-open-draft-conversation",
     "allow-open-link",
+    "allow-resolve-file-link",
+    "allow-open-file-link",
     "allow-open-release-page",
     "allow-plugin-feature-work",
     "allow-plugin-work",

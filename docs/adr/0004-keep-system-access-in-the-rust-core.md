@@ -9,6 +9,8 @@
 
 Later changes: [ADR-0034](0034-build-plugins-on-a-plugin-sdk.md) refines decision 3: a plugin's command gets its permission at build time through its inlined plugin, and only the main window receives grants. [ADR-0038](0038-let-plugins-run-installed-programs-in-the-owners-projects.md) refines decision 2: a plugin's command may run a program that its manifest declares to read a project's folders, which the core checks as it checks a model's reads. [ADR-0043](0043-let-plugins-offer-the-tools-of-tool-servers.md) refines decision 2: a plugin's settings commands take the program, arguments, folder and URL of a tool server that the owner typed, which Rust checks. [ADR-0053](0053-let-plugins-offer-terminals.md) refines decision 2: what the owner types into a terminal reaches its shell as typed, without the policy, and the plugin's commands still check that the terminal belongs to the conversation and cap the input's size.
 
+Later changes: [ADR-0069](0069-open-local-paths-from-agent-responses.md) permits owner-initiated local file-manager navigation from replies.
+
 ## Context
 
 Verified 2026-10-13:

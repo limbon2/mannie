@@ -10,6 +10,7 @@
     "allow-validation-close-main-window",
     "allow-validation-expire-chatgpt-token",
     "allow-validation-opened-links",
+    "allow-validation-opened-file-links",
     "allow-validation-process-id",
     "allow-validation-seed-conversation",
     "allow-validation-set-chatgpt-mock",

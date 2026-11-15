@@ -13,6 +13,7 @@ pub mod chat;
 pub mod clock;
 pub mod context;
 pub mod export;
+pub mod file_links;
 pub mod ids;
 pub mod images;
 pub mod interface;

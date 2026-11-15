@@ -79,6 +79,8 @@ struct Inner {
     /// The links that validation builds record instead of opening.
     #[cfg(feature = "validation")]
     opened_links: Mutex<Vec<String>>,
+    #[cfg(feature = "validation")]
+    opened_file_links: Mutex<Vec<mannie_types::file_links::ResolvedFileLink>>,
     /// The answer that the next folder dialog of a validation build gives
     /// instead of opening.
     #[cfg(feature = "validation")]
@@ -107,6 +109,18 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl Core {
+    /// Records a validated local action instead of launching a file manager.
+    #[cfg(feature = "validation")]
+    pub(crate) fn record_opened_file_link(&self, link: mannie_types::file_links::ResolvedFileLink) {
+        lock(&self.inner.opened_file_links).push(link);
+    }
+
+    /// The local actions recorded by the validation build.
+    #[cfg(feature = "validation")]
+    pub(crate) fn opened_file_links(&self) -> Vec<mannie_types::file_links::ResolvedFileLink> {
+        lock(&self.inner.opened_file_links).clone()
+    }
+
     /// The store, unless it did not open.
     pub(crate) fn store(&self) -> Option<&Store> {
         self.inner
@@ -325,6 +339,8 @@ pub(crate) fn start(app: &App, plugins: Vec<PluginEntry>) -> Core {
             file_dialog,
             #[cfg(feature = "validation")]
             opened_links: Mutex::default(),
+            #[cfg(feature = "validation")]
+            opened_file_links: Mutex::default(),
             #[cfg(feature = "validation")]
             folder_choice: Mutex::default(),
         }),

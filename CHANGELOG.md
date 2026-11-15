@@ -4,9 +4,17 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+### Added
+
+- Open files and folders from agent replies in the system file manager, by clicking a Markdown link or inline-code path, or through its Open in context submenu.
+
 ### Changed
 
 - Show Terminal, Browser and every other conversation control in a new conversation before its first message. A new conversation stays out of the list until you send it, and keeps its unsent message, terminals and browser tabs while you open other conversations.
+
+### Fixed
+
+- Keep bare file URL prefixes in agent replies as inline code instead of links that report path errors.
 
 ## 0.8.1 - 2026-11-14
 

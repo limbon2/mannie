@@ -10,6 +10,7 @@ import { gfmFromMarkdown } from 'mdast-util-gfm';
 import { gfm } from 'micromark-extension-gfm';
 
 import { citeTarget } from './citations.js';
+import { isInlineFilePath } from './file-links.js';
 
 /** Text longer than this, in UTF-8 bytes, renders as plain text. */
 export const MAX_MARKDOWN_BYTES = 200 * 1024;
@@ -397,7 +398,11 @@ function convert(node: Nodes | RootContent, context: Context): RenderNode[] {
       return url === undefined ? [text(sourceOf(node, context))] : [image(url, node.alt ?? '', context)];
     }
     case 'inlineCode': {
-      return [{ kind: 'inline_code', value: node.value }];
+      const code: RenderNode = { kind: 'inline_code', value: node.value };
+      if (!context.inLink && isInlineFilePath(node.value)) {
+        return [{ children: [code], kind: 'link', url: node.value }];
+      }
+      return [code];
     }
     case 'link': {
       return [link(node.url, node, context)];

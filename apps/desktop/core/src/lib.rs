@@ -18,6 +18,7 @@ mod commands;
 mod credentials;
 mod export;
 mod file_dialog;
+mod file_links;
 mod folder_dialog;
 mod ipc;
 mod links;

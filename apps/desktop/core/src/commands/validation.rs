@@ -358,3 +358,16 @@ pub(crate) fn validation_set_update_outcome(core: State<'_, Core>, outcome: Opti
 pub(crate) fn validation_update_installs(core: State<'_, Core>) -> Vec<String> {
     core.updates().validation_installs()
 }
+
+/// The local locations a validation build would have opened.
+#[tauri::command]
+#[specta::specta]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri hands command arguments over by value"
+)]
+pub(crate) fn validation_opened_file_links(
+    core: State<'_, Core>,
+) -> Vec<mannie_types::file_links::ResolvedFileLink> {
+    core.opened_file_links()
+}

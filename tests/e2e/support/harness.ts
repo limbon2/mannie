@@ -107,6 +107,7 @@ interface Harness {
   deleteProviderProfiles(): Promise<number>;
   expireChatGptToken(): Promise<void>;
   insertHostileHtml(payloads: readonly string[]): Promise<boolean>;
+  openedFileLinks(): Promise<{ kind: 'directory' | 'file'; path: string }[]>;
   openedLinks(): Promise<string[]>;
   probeScripts(): Promise<ScriptProbe>;
   processId(): Promise<number>;
@@ -452,5 +453,16 @@ export async function updateInstalls(): Promise<string[]> {
       throw new Error('the validation harness is missing: run the validation build');
     }
     return harness.updateInstalls();
+  });
+}
+
+/** The local navigation actions recorded by the validation build. */
+export async function openedFileLinks(): Promise<{ kind: 'directory' | 'file'; path: string }[]> {
+  return browser.execute(async () => {
+    const harness = window.mannieValidation;
+    if (harness === undefined) {
+      throw new Error('the validation harness is missing');
+    }
+    return harness.openedFileLinks();
   });
 }
