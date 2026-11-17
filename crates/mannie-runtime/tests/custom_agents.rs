@@ -32,7 +32,7 @@ use mannie_types::agents::{AgentDraft, AgentError, AgentField, AgentKind, AgentS
 use mannie_types::chat::{ChatError, SendMessage, SetConversationAgent, StartConversation};
 use mannie_types::ids::{ConversationId, ProfileId, RunId};
 use mannie_types::provider::{CreateProviderProfile, ProfileAccess, ProfileDraft, ReasoningEffort};
-use mannie_types::run::{RunFailure, RunState};
+use mannie_types::run::{RunActivity, RunFailure, RunState};
 use mannie_types::tasks::{TaskState, UpdateChildAgentsSettings};
 use mannie_types::tools::{SetFullAccess, UpdateToolsSettings};
 use serde_json::{Value, json};
@@ -866,7 +866,11 @@ async fn deleting_an_agent_leaves_a_reply_that_runs_with_what_it_started() {
     let (conversation, run) = setup.start("Hi", Some(&agent.key)).await;
     setup
         .harness
-        .wait_until(&conversation, |transcript| transcript.run(&run).is_some())
+        .wait_until(&conversation, |transcript| {
+            transcript
+                .run(&run)
+                .is_some_and(|view| view.activity == Some(RunActivity::Writing))
+        })
         .await;
     setup
         .harness
