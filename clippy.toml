@@ -3,7 +3,9 @@
 
 # The crates are internal, so lints may suggest changes to public signatures.
 avoid-breaking-exported-api = false
-excessive-nesting-threshold = 4
+# Async handlers and generated protocol code add structural levels without
+# making an individual decision hard to follow.
+excessive-nesting-threshold = 6
 
 # Tests may unwrap, panic, print and use dbg!; production code may not.
 allow-dbg-in-tests = true

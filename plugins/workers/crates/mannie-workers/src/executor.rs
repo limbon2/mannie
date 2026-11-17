@@ -52,6 +52,12 @@ const WORKERS_SECTION_POSITION: u32 = 310;
 /// it gives up on the task.
 const SUBMIT_TIMEOUT: Duration = Duration::from_secs(30);
 
+fn worker_is_connected(views: &[WorkerView], worker: &WorkerId) -> bool {
+    views
+        .iter()
+        .any(|view| view.id == *worker && view.status == WorkerStatus::Connected)
+}
+
 /// The refusal codes of the executor, which the UI shows the plugin's
 /// messages for (ADR-0031, decision 6). They are the names of 0.2.0's
 /// refusals.
@@ -481,11 +487,7 @@ impl WorkersExecutor {
                         // The borrow that `wait_for` returns is dropped at
                         // once, so it never holds up the list's changes.
                         workers
-                            .wait_for(|views| {
-                                views.iter().any(|view| {
-                                    view.id == *worker && view.status == WorkerStatus::Connected
-                                })
-                            })
+                            .wait_for(|views| worker_is_connected(views, worker))
                             .await
                             .is_ok()
                     };

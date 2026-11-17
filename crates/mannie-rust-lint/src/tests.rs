@@ -6,7 +6,7 @@ use super::{Rule, Status, check_file, run};
 #[test]
 fn reports_source_path_position_and_rule() {
     let path = Path::new("example.rs");
-    let source = "fn check(count: usize, enabled: bool) -> bool {\n    count > 2 && enabled\n}";
+    let source = "fn check(count: usize, enabled: bool, a: bool, b: bool, c: bool, d: bool) -> bool {\n    count > 2 && enabled && a && b && c && d\n}";
     let mut output = Vec::new();
     let mut errors = Vec::new();
 

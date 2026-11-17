@@ -484,16 +484,16 @@ pub async fn serve_http(options: HttpOptions) -> std::io::Result<HttpServer> {
                     let expected = expected.clone();
                     let signs_in = signs_in.clone();
                     async move {
-                        if let Some(authorization) = signs_in {
-                            if Authorization::handles(request.uri().path()) {
-                                return Ok::<_, Infallible>(authorization.answer(request).await);
-                            }
-                            if !authorization.takes(&request) {
-                                return Ok(authorization.challenge());
-                            }
-                        } else if !is_authorized(&request, expected.as_deref()) {
-                            return Ok(unauthorized());
-                        }
+                        let request = match authorize_request(
+                            request,
+                            signs_in.as_deref(),
+                            expected.as_deref(),
+                        )
+                        .await
+                        {
+                            Ok(request) => request,
+                            Err(response) => return Ok::<_, Infallible>(*response),
+                        };
                         hyper::service::Service::call(&inner, request).await
                     }
                 });
@@ -511,6 +511,24 @@ pub async fn serve_http(options: HttpOptions) -> std::io::Result<HttpServer> {
         stop: Some(stop),
         authorization,
     })
+}
+
+async fn authorize_request(
+    request: Request<Incoming>,
+    signs_in: Option<&Authorization>,
+    expected: Option<&str>,
+) -> Result<Request<Incoming>, Box<oauth::Answer>> {
+    if let Some(authorization) = signs_in {
+        if Authorization::handles(request.uri().path()) {
+            return Err(Box::new(authorization.answer(request).await));
+        }
+        if !authorization.takes(&request) {
+            return Err(Box::new(authorization.challenge()));
+        }
+    } else if !is_authorized(&request, expected) {
+        return Err(Box::new(unauthorized()));
+    }
+    Ok(request)
 }
 
 /// Whether a request carries the `Authorization` header that the server

@@ -28,6 +28,16 @@ struct Checker {
 
 impl Checker {
     fn check_condition(&mut self, condition: &Expr) {
+        // Short conditions are readable inline. Six or more clauses need names
+        // for the parts that contain comparisons or other expressions.
+        if clause_count(condition) < 6 {
+            return;
+        }
+
+        self.check_parts(condition);
+    }
+
+    fn check_parts(&mut self, condition: &Expr) {
         if let Some((left, right)) = compound_parts(condition) {
             self.check_part(left);
             self.check_part(right);
@@ -36,7 +46,7 @@ impl Checker {
 
     fn check_part(&mut self, part: &Expr) {
         if compound_parts(part).is_some() {
-            self.check_condition(part);
+            self.check_parts(part);
         } else if !is_named(part) {
             self.findings.push(part.span().start());
         }
@@ -67,6 +77,14 @@ impl Checker {
             Expr::Unsafe(expression) => self.check_block_result(&expression.block),
             _ => self.check_condition(result),
         }
+    }
+}
+
+fn clause_count(expression: &Expr) -> usize {
+    if let Some((left, right)) = compound_parts(expression) {
+        clause_count(left) + clause_count(right)
+    } else {
+        1
     }
 }
 

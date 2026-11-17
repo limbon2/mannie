@@ -144,13 +144,20 @@ impl Driver {
         let document_y = measure("pageY")? + measure("offsetY")?;
         let page_scale = measure("scale")?;
         let scale = (device_width / width) * page_scale;
-        if !(1.0..=20_000.0).contains(&width)
-            || !(1.0..=20_000.0).contains(&height)
-            || !scale.is_finite()
-            || (width.min(height) * scale).round() < 1.0
-            || (width.max(height) * scale).round() > f64::from(u32::MAX)
-            || document_x.abs() >= 1.0e9
-            || document_y.abs() >= 1.0e9
+        let invalid_width = !(1.0..=20_000.0).contains(&width);
+        let invalid_height = !(1.0..=20_000.0).contains(&height);
+        let invalid_scale = !scale.is_finite();
+        let too_small = (width.min(height) * scale).round() < 1.0;
+        let too_large = (width.max(height) * scale).round() > f64::from(u32::MAX);
+        let invalid_x = document_x.abs() >= 1.0e9;
+        let invalid_y = document_y.abs() >= 1.0e9;
+        if invalid_width
+            || invalid_height
+            || invalid_scale
+            || too_small
+            || too_large
+            || invalid_x
+            || invalid_y
         {
             return Err(ChromeError::Stale);
         }

@@ -254,6 +254,7 @@ mod tests {
             }
         }"#;
         let folder = if cfg!(windows) { r"D:\work" } else { "/work" };
+        let token_reference = concat!("Bearer ${", "input:token}");
         let vscode = serde_json::json!({
             "inputs": [{ "id": "token", "type": "promptString", "password": true }],
             "servers": {
@@ -261,7 +262,7 @@ mod tests {
                 "remote": {
                     "type": "http",
                     "url": "https://mcp.example.com/mcp",
-                    "headers": { "Authorization": "Bearer ${input:token}" }
+                    "headers": { "Authorization": token_reference }
                 }
             }
         })

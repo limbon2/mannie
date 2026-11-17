@@ -12,6 +12,7 @@
     clippy::default_trait_access,
     clippy::doc_markdown,
     clippy::empty_structs_with_brackets,
+    clippy::excessive_nesting,
     clippy::too_many_lines,
     clippy::trivially_copy_pass_by_ref,
     reason = "generated code, which the protobuf files and the generators shape"

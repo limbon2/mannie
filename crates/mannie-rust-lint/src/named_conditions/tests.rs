@@ -9,8 +9,8 @@ fn flagged_lines(source: &str) -> Vec<usize> {
 }
 
 #[test]
-fn flags_the_comparison_and_iterator_chain_in_the_api_guard() {
-    let source = r#"fn check(variable: Variable, names: &mut Names) {
+fn flags_the_comparison_and_iterator_chain_in_a_dense_guard() {
+    let source = r#"fn check(variable: Variable, names: &mut Names, enabled: bool, authorized: bool) {
     if variable.name.is_empty()
         || variable.name.len() > 128
         || !variable
@@ -18,6 +18,8 @@ fn flags_the_comparison_and_iterator_chain_in_the_api_guard() {
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || b"_.-".contains(&byte))
         || !names.insert(&variable.name)
+        || !enabled
+        || !authorized
     {}
 }"#;
 
@@ -50,16 +52,17 @@ fn accepts_named_bindings_paths_calls_patterns_and_whole_predicates() {
 }
 
 #[test]
-fn checks_nested_parts_under_negation_and_parentheses() {
-    let source = "fn check(values: &[bool], index: usize, enabled: bool) {
-    if !(enabled || (index < values.len() && values[index + 1])) {}
+fn checks_dense_parts_under_negation_and_parentheses() {
+    let source =
+        "fn check(values: &[bool], index: usize, enabled: bool, a: bool, b: bool, c: bool) {
+    if !(enabled || (index < values.len() && values[index + 1]) || a || b || c) {}
 }";
 
     assert_eq!(flagged_lines(source), [2, 2]);
 }
 
 #[test]
-fn checks_while_match_guards_function_returns_and_closure_results() {
+fn accepts_short_conditions_in_while_match_returns_and_closures() {
     let source = "fn check(limit: usize, enabled: bool, mut index: usize) -> bool {
     while index < limit && enabled { index += 1; }
     match index {
@@ -77,19 +80,33 @@ fn checks_while_match_guards_function_returns_and_closure_results() {
     }
 }";
 
-    assert_eq!(flagged_lines(source), [2, 4, 4, 7, 9, 12]);
+    assert_eq!(flagged_lines(source), [0usize; 0]);
 }
 
 #[test]
-fn checks_trait_and_impl_method_results() {
+fn checks_dense_closure_match_guard_and_function_results() {
+    let source = "fn check(left: i32, enabled: bool, a: bool, b: bool, c: bool, d: bool) -> bool {
+    let predicate = || left > 0 && enabled && a && b && c && d;
+    match left {
+        n if n > 0 && enabled && a && b && c && d => return predicate() && enabled && a && b && c && d,
+        _ => {}
+    }
+    left > 0 && enabled && a && b && c && d
+}";
+
+    assert_eq!(flagged_lines(source), [2, 4, 7]);
+}
+
+#[test]
+fn checks_dense_trait_and_impl_method_results() {
     let source = "trait Check {
-    fn check(&self, count: usize, enabled: bool) -> bool {
-        count > 2 && enabled
+    fn check(&self, count: usize, enabled: bool, a: bool, b: bool, c: bool, d: bool) -> bool {
+        count > 2 && enabled && a && b && c && d
     }
 }
 impl Check for Value {
-    fn check(&self, count: usize, enabled: bool) -> bool {
-        (count > 5) && enabled
+    fn check(&self, count: usize, enabled: bool, a: bool, b: bool, c: bool, d: bool) -> bool {
+        (count > 5) && enabled && a && b && c && d
     }
 }";
 

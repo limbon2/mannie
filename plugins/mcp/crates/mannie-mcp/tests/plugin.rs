@@ -226,6 +226,7 @@ async fn names_and_prefixes_stay_apart_and_inputs_break_no_rule() {
 async fn a_pasted_configuration_previews_without_values_and_imports_the_chosen_servers() {
     let secrets = Arc::new(FakeSecrets::new());
     let hosted = hosted(&secrets).await;
+    let token_reference = concat!("Bearer ${", "input:token}");
     let text = json!({
         "mcpServers": {
             "files": {
@@ -235,7 +236,7 @@ async fn a_pasted_configuration_previews_without_values_and_imports_the_chosen_s
             "remote": {
                 "type": "http",
                 "url": "https://mcp.example.com/mcp",
-                "headers": { "Authorization": "Bearer ${input:token}" }
+                "headers": { "Authorization": token_reference }
             },
             "events": { "url": "https://mcp.example.com/sse" }
         }

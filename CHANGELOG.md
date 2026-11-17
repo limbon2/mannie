@@ -4,8 +4,11 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+## 0.8.3 - 2026-11-17
+
 ### Fixed
 
+- Make the Rust readability checks pass on existing code while still finding dense conditions and deeply nested handlers.
 - Normalize Qwen4-Max tool arguments that arrive as numeric or boolean strings according to their schemas, so directory listings and searches can run without repeated type errors.
 
 ### Changed

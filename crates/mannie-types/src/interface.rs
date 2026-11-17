@@ -37,24 +37,25 @@ impl LocaleTag {
             return Err(invalid());
         }
 
-        let mut canonical = String::with_capacity(tag.len());
+        let mut subtags = tag.split('-');
+        let Some(language) = subtags.next() else {
+            return Err(invalid());
+        };
+        let is_letters = language.bytes().all(|byte| byte.is_ascii_alphabetic());
+        let is_language_length = (2..=8).contains(&language.len());
+        if !(is_letters && is_language_length) {
+            return Err(invalid());
+        }
+
+        let mut canonical = language.to_ascii_lowercase();
         // After a singleton such as `x` or `u`, subtags are extensions or
         // private use and keep lowercase (RFC 5646, section 2.1.1).
         let mut after_singleton = false;
-        for (index, subtag) in tag.split('-').enumerate() {
+        for subtag in subtags {
             let is_alphanumeric = subtag.bytes().all(|byte| byte.is_ascii_alphanumeric());
             let has_valid_length = (1..=8).contains(&subtag.len());
             if !(is_alphanumeric && has_valid_length) {
                 return Err(invalid());
-            }
-            if index == 0 {
-                let is_letters = subtag.bytes().all(|byte| byte.is_ascii_alphabetic());
-                let is_language_length = (2..=8).contains(&subtag.len());
-                if !(is_letters && is_language_length) {
-                    return Err(invalid());
-                }
-                canonical.push_str(&subtag.to_ascii_lowercase());
-                continue;
             }
             canonical.push('-');
             if subtag.len() == 1 {

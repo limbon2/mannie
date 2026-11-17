@@ -27,3 +27,12 @@ slow-timeout = { period = "60s", terminate-after = 5 }
 [[profile.default.overrides]]
 filter = "test(=stopping_the_parent_ends_every_child_within_a_second)"
 threads-required = "num-test-threads"
+
+[[profile.default.overrides]]
+filter = "test(=stop_ends_a_running_command_and_its_reply_within_a_second)"
+threads-required = "num-test-threads"
+
+# Competing process tests can make separate command ends arrive in one wake-up.
+[[profile.default.overrides]]
+filter = "test(=a_conversation_wakes_at_most_six_times_an_hour)"
+threads-required = "num-test-threads"

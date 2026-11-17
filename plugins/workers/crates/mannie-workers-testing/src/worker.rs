@@ -240,6 +240,21 @@ async fn relay_connection(inbound: TcpStream, outbound: TcpStream, answers_lost:
     }
 }
 
+async fn connect_relay(
+    inbound: TcpStream,
+    target: String,
+    mut cut: watch::Receiver<u64>,
+    answers_lost: Arc<AtomicBool>,
+) {
+    let Ok(outbound) = TcpStream::connect(&target).await else {
+        return;
+    };
+    tokio::select! {
+        () = relay_connection(inbound, outbound, answers_lost) => {}
+        _cut = cut.changed() => {}
+    }
+}
+
 impl Relay {
     /// A relay to `target`.
     ///
@@ -267,17 +282,9 @@ impl Relay {
                         continue;
                     }
                     let target = lock(&target).clone();
-                    let mut cut = cut.subscribe();
+                    let cut = cut.subscribe();
                     let answers_lost = Arc::clone(&answers_lost);
-                    tokio::spawn(async move {
-                        let Ok(outbound) = TcpStream::connect(&target).await else {
-                            return;
-                        };
-                        tokio::select! {
-                            () = relay_connection(inbound, outbound, answers_lost) => {}
-                            _cut = cut.changed() => {}
-                        }
-                    });
+                    tokio::spawn(connect_relay(inbound, target, cut, answers_lost));
                 }
             })
         };

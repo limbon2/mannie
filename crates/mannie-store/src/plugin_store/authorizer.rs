@@ -151,25 +151,30 @@ impl Policy {
                 column_name: "",
             } if context.database_name.is_none() => self.owns(table_name),
             AuthAction::Read { table_name, .. } => {
-                (main
-                    && (self.owns(table_name)
-                        || (migration && table_name == "sqlite_master")
-                        // ADD COLUMN on a STRICT table or one with CHECK
-                        // constraints runs quick_check on it.
-                        || (migration && table_name == "pragma_quick_check")))
-                    || (migration && temp && table_name == "sqlite_temp_master")
+                let owns_table = self.owns(table_name);
+                let reads_master = migration && table_name == "sqlite_master";
+                // ADD COLUMN on a STRICT table or one with CHECK constraints
+                // runs quick_check on it.
+                let runs_quick_check = migration && table_name == "pragma_quick_check";
+                let reads_main = main && (owns_table || reads_master || runs_quick_check);
+                let reads_temp = migration && temp && table_name == "sqlite_temp_master";
+                reads_main || reads_temp
             }
             AuthAction::Update { table_name, .. } => {
-                (main && (self.owns(table_name) || (migration && table_name == "sqlite_master")))
-                    || (migration && temp && table_name == "sqlite_temp_master")
+                let owns_table = self.owns(table_name);
+                let updates_master = migration && table_name == "sqlite_master";
+                let updates_main = main && (owns_table || updates_master);
+                let updates_temp = migration && temp && table_name == "sqlite_temp_master";
+                updates_main || updates_temp
             }
             AuthAction::Delete { table_name } => {
                 main && (self.owns(table_name) || (migration && table_name == "sqlite_master"))
             }
             AuthAction::Insert { table_name } => {
-                main && (self.owns(table_name)
-                    || (migration && table_name == "sqlite_master")
-                    || (migration && self.may_insert_into == Some(table_name)))
+                let owns_table = self.owns(table_name);
+                let inserts_master = migration && table_name == "sqlite_master";
+                let exempt_insert = migration && self.may_insert_into == Some(table_name);
+                main && (owns_table || inserts_master || exempt_insert)
             }
             AuthAction::CreateTable { table_name } | AuthAction::DropTable { table_name } => {
                 migration && main && self.owns(table_name)

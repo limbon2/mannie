@@ -534,8 +534,19 @@ async fn a_limit_of_two_runs_two_children_and_a_larger_limit_starts_the_third() 
         child.turns[&0].run.as_ref().unwrap().state,
         RunState::Queued
     );
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    let still = setup.harness.snapshot(&conversation).await;
+    let still = setup
+        .harness
+        .wait_until(&conversation, |transcript| {
+            let has_accepted = count(&transcript.tasks(0), TaskState::Accepted) == 1;
+            let waiting_for_tasks = transcript.run(&run).is_some_and(|run| {
+                matches!(
+                    run.activity,
+                    Some(RunActivity::WaitingForTasks { count: 3, .. })
+                )
+            });
+            has_accepted && waiting_for_tasks
+        })
+        .await;
     assert_eq!(count(&still.tasks(0), TaskState::Accepted), 1);
     // The reply waits for its tasks.
     let parent_run = still.run(&run).unwrap();
