@@ -70,6 +70,19 @@ beforeEach(() => {
 });
 
 describe('AgentForm', () => {
+  it('preserves retired tool limits and accepts drafts without them', () => {
+    const legacy = new AgentForm(view({ maxToolCalls: 250, maxToolRounds: 100 }));
+    const withoutLimits = draft();
+    delete withoutLimits.maxToolCalls;
+    delete withoutLimits.maxToolRounds;
+    const form = new AgentForm({ draft: withoutLimits, key: null });
+
+    expect(legacy.draft()).toEqual(expect.objectContaining({ maxToolCalls: 250, maxToolRounds: 100 }));
+    expect(form.draft()).toEqual(expect.objectContaining({ maxToolCalls: 0, maxToolRounds: 0 }));
+    expect(legacy.dirty).toBe(false);
+    expect(form.dirty).toBe(false);
+  });
+
   it('holds no changes until the owner makes one, and none for a built-in agent', () => {
     const form = new AgentForm(view());
     const builtin = new AgentForm(view({}, true));

@@ -42,9 +42,6 @@ pub(crate) struct RequestShape<'a> {
     pub(crate) tools: &'a [ToolDefinition],
     /// Whether the model may call them in this call.
     pub(crate) tool_choice: ToolChoice,
-    /// A note after the turns, such as the one that the reply used up its
-    /// tool calls.
-    pub(crate) note: Option<&'a str>,
     /// Tool calls whose results are left out to save space.
     pub(crate) left_out: &'a HashSet<PartId>,
     /// Whom the agent answers to, which decides how results address it.
@@ -98,10 +95,6 @@ pub(crate) fn build_request(shape: RequestShape<'_>, turns: &[ModelTurn]) -> Mod
 
     for turn in turns {
         append_turn(&mut messages, turn, shape);
-    }
-
-    if let Some(note) = shape.note {
-        messages.push(Message::text(Role::User, note));
     }
 
     ModelRequest {

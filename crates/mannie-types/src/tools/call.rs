@@ -112,7 +112,7 @@ pub enum NotRunReason {
     /// It came after a question in the same step, so the model wrote it
     /// before it saw the answer (ADR-0058, decision 6).
     AfterQuestion,
-    /// The reply used up its tool calls.
+    /// A retired tool-call limit refused it. Kept for old transcripts (ADR-0072).
     OverBudget,
     /// The provider profile does not use tools.
     ToolsOff,

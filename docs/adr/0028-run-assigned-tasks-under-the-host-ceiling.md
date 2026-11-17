@@ -9,6 +9,8 @@
 
 Later changes: [ADR-0041](0041-let-agents-run-commands-in-the-background.md) refines decisions 2 and 5: the `worker` agent gets the tools of background commands, and a ceiling that allows a command allows it in the background for as long as its task runs.
 
+Later change: [ADR-0072](0072-remove-tool-round-and-call-caps.md) supersedes the tool-round and tool-call limits in decision 2. Worker runs no longer enforce either limit.
+
 ## Context
 
 - A worker runs the same runtime as the master ([ADR-0015](0015-run-an-agent-runtime-on-every-machine.md)). Its tasks come from the master over the link, each with an instruction, a provider profile and possibly a narrower policy ([ADR-0027](0027-delegate-tasks-to-workers-through-a-runtime-port.md)).

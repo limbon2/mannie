@@ -232,7 +232,7 @@ pub(crate) struct RunActor {
     tool_rounds: u32,
     /// Site decisions of this run, keyed by plugin, session and origin.
     browser_sites: Vec<BrowserSiteConsent>,
-    /// The tool calls of this run that counted against its budget.
+    /// The tool calls of this run, for progress and logging.
     tool_calls: u32,
     /// The token counts of every call of the run together.
     usage: Option<Usage>,
@@ -572,7 +572,7 @@ impl RunActor {
                             // Children may need the model slot that the
                             // reply would hold while it waits for them.
                             permit = None;
-                            if !self.await_reply_tasks(&setup).await? {
+                            if !self.await_reply_tasks().await? {
                                 return Ok(finish);
                             }
                         }
@@ -647,21 +647,16 @@ impl RunActor {
             }
             return self.end_of_reply().await;
         }
-        if !setup.uses_tools() || self.tools_used_up(setup) {
-            // The request offered no tools, or asked for none, and the server
-            // sent calls anyway: they do not run, and the reply ends.
-            let reason = if setup.uses_tools() {
-                NotRunReason::OverBudget
-            } else {
-                NotRunReason::ToolsOff
-            };
+        if !setup.uses_tools() {
+            // A server may send calls even when the profile has tools off.
             for call in calls {
-                self.end_call(call, reason.clone());
+                self.end_call(call, NotRunReason::ToolsOff);
             }
             self.flush(Durability::Full).await?;
             return self.end_of_reply().await;
         }
-        self.tool_rounds += 1;
+
+        self.tool_rounds = self.tool_rounds.saturating_add(1);
         // The calls are stored before any of them runs.
         self.flush(Durability::Full).await?;
         Ok(AfterStep::RunTools(calls))
@@ -741,18 +736,11 @@ impl RunActor {
             .map_err(|_closed| Ending::Interrupted)
     }
 
-    /// Whether the reply used up its tool rounds or its tool calls.
-    fn tools_used_up(&self, setup: &Setup) -> bool {
-        self.tool_rounds >= setup.agent.max_tool_rounds
-            || self.tool_calls >= setup.agent.max_tool_calls
-    }
-
     /// Prepares a call, and compacts first when the context runs low. When a
     /// compacted context still runs low, the latest turn's older tool results
     /// are left out.
     async fn prepare(&mut self, setup: &Setup) -> Result<Prepared, Ending> {
         let options = CallOptions {
-            tools_used_up: setup.uses_tools() && self.tools_used_up(setup),
             leave_out_results: false,
         };
         let mut prepared = self
@@ -774,7 +762,6 @@ impl RunActor {
         if setup.uses_tools() && compaction::needed(prepared.size.projected, setup.budget) {
             let leave_out = CallOptions {
                 leave_out_results: true,
-                ..options
             };
             prepared = self
                 .runtime

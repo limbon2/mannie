@@ -4,7 +4,7 @@
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Building                                                                                                                                                                                                                                                                                                        |
 | Milestone    | M17                                                                                                                                                                                                                                                                                                             |
-| Last updated | 2026-11-07                                                                                                                                                                                                                                                                                                      |
+| Last updated | 2026-11-17                                                                                                                                                                                                                                                                                                      |
 | Related      | [ADR-0059](../adr/0059-let-the-owner-define-agents.md), [Plans](plans.md), [Child agents](child-agents/README.md), [Questions to the owner](questions.md), [Extension points](../architecture/extension-points.md#32-agent-definitions), [Security](../architecture/security.md), [Feature protocol](README.md) |
 
 ## Intent
@@ -27,7 +27,8 @@ The owner wants to create and edit agents in the app, "easily created and edited
   - The steps: an ordered list, each with a title, what to do, who does it, "Several at the same time" and "Ask me first". "Move up" and "Move down" change the order.
   - The tools, as groups, and a switch for each plugin with tools.
   - The child agents it may give tasks to: all, or those the owner checks.
-  - The limits, under a collapsed heading: tasks per reply, tool rounds and tool calls.
+  - The task-count limit, under a collapsed heading, for conversation agents. Tool rounds and calls have no cap ([ADR-0072](../adr/0072-remove-tool-round-and-call-caps.md)).
+  - Stored drafts and IPC retain the retired `maxToolRounds` and `maxToolCalls` fields for compatibility. Missing fields default to zero, existing values round-trip, and neither value limits execution.
 - "Save" stores the agent, which applies from the next reply or task. A reply that is running keeps what it started with. Leaving with changes that are not saved asks first.
 - "Delete" asks first. Conversations that use the agent go back to Default, and a child agent's earlier tasks stay in their conversations but take no follow-ups. An agent that named a deleted child no longer offers it, and its editor no longer lists it.
 
@@ -92,6 +93,8 @@ None.
 
 ## Design
 
+The retired `maxToolRounds` and `maxToolCalls` fields remain in drafts and IPC for compatibility, default to zero when omitted, and are ignored by the runtime. Existing saved values round-trip without imposing a limit ([ADR-0072](../adr/0072-remove-tool-round-and-call-caps.md)).
+
 ### Contracts
 
 - `StartConversation.agent_key`, with `with_agent`, and `ConversationSummary.agent_key`, which a summary without an agent leaves out.
@@ -122,8 +125,6 @@ None.
 | A step's title      | 80 characters, not blank                        | The types           |
 | A step's text       | 4,096 characters, not blank                     | The types           |
 | Tasks per reply     | 0 to 200, and 0 without the group of task tools | The types           |
-| Tool rounds         | 1 to 500                                        | The types           |
-| Tool calls          | 1 to 2,000                                      | The types           |
 
 ### The tool groups
 

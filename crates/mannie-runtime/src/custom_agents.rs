@@ -317,8 +317,8 @@ fn blank(kind: AgentKind) -> AgentDraft {
             AgentKind::Conversation => 20,
             AgentKind::Child => 0,
         },
-        max_tool_rounds: 100,
-        max_tool_calls: 250,
+        max_tool_rounds: 0,
+        max_tool_calls: 0,
     }
 }
 
@@ -363,8 +363,8 @@ fn orchestrator() -> AgentDraft {
         plugins: Some(Vec::new()),
         children: None,
         max_tasks: 50,
-        max_tool_rounds: 100,
-        max_tool_calls: 250,
+        max_tool_rounds: 0,
+        max_tool_calls: 0,
     }
 }
 
@@ -388,8 +388,8 @@ fn plan() -> AgentDraft {
         plugins: None,
         children: None,
         max_tasks: 20,
-        max_tool_rounds: 100,
-        max_tool_calls: 250,
+        max_tool_rounds: 0,
+        max_tool_calls: 0,
     }
 }
 

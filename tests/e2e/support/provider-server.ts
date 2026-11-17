@@ -210,7 +210,6 @@ const MANNIE_NOTES = [
   'Your last response was empty.',
   'Continue with the next step',
   'You wrote a tool call as text.',
-  'You have used all the tool calls',
   // The message that carries the images of a step's results on Chat
   // Completions (crates/mannie-provider/src/chat_completions.rs).
   'The images of the result of the tool call',

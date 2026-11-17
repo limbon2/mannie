@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                           |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Living index                                                                                                                                                                              |
-| Last updated | 2026-11-13                                                                                                                                                                                |
+| Last updated | 2026-11-17                                                                                                                                                                                |
 | Related      | [ADR-0001](0001-record-architecture-decisions.md), [Template](0000-template.md), [Decisions](../roadmap/milestones.md#5-decisions), [Validations](../roadmap/milestones.md#4-validations) |
 
 [ADR-0001](0001-record-architecture-decisions.md) describes the process, and new ADRs start from the [template](0000-template.md).
@@ -87,3 +87,4 @@ Each ADR has exactly one of these statuses:
 | [0067](0067-manage-browser-trust-and-credentials-in-settings.md)                       | Manage Browser trust and credentials in Settings                                              | Accepted (D62)         | V13        |
 | [0068](0068-keep-a-draft-conversation-for-each-place.md)                               | Keep a draft conversation for each place a new conversation starts                            | Accepted (D63)         | Tests      |
 | [0069](0069-open-local-paths-from-agent-responses.md)                                  | Open local paths from agent responses                                                         | Accepted (D64)         | Tests      |
+| [0072](0072-remove-tool-round-and-call-caps.md)                                        | Remove tool-round and tool-call caps                                                          | Accepted (D67)         | Tests      |

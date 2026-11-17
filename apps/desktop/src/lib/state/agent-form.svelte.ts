@@ -53,6 +53,7 @@ export class AgentForm {
   failure: Failure<AgentError> | null = $state(null);
   instructions = $state('');
   maxTasks = $state(0);
+  // Retired fields round-trip older drafts; they are not editable (ADR-0072).
   maxToolCalls = $state(0);
   maxToolRounds = $state(0);
   name = $state('');
@@ -98,8 +99,8 @@ export class AgentForm {
     this.description = draft.description;
     this.instructions = draft.instructions;
     this.maxTasks = draft.maxTasks;
-    this.maxToolCalls = draft.maxToolCalls;
-    this.maxToolRounds = draft.maxToolRounds;
+    this.maxToolCalls = draft.maxToolCalls ?? 0;
+    this.maxToolRounds = draft.maxToolRounds ?? 0;
     this.name = draft.name;
     this.plugins = namesOf(draft.plugins);
     this.profileId = draft.profileId;

@@ -113,7 +113,6 @@ fn shape(interface: ApiInterface) -> RequestShape<'static> {
         reasoning_effort: ReasoningEffort::Low,
         tools: &[],
         tool_choice: ToolChoice::Auto,
-        note: None,
         left_out: &NOTHING_LEFT_OUT,
         requester: Requester::Owner,
         tool_images: &NO_IMAGES,
@@ -800,30 +799,6 @@ fn a_kept_run_ends_with_its_marker_before_the_next_run() {
             Message::text(Role::Assistant, "It says hello."),
         ]
     );
-}
-
-#[test]
-fn a_note_ends_the_request() {
-    let turns = [turn(
-        0,
-        Some(RunState::Running),
-        vec![part(1, Some(PartKind::UserText), "Go")],
-    )];
-
-    let request = build_request(
-        RequestShape {
-            note: Some(texts::TOOL_BUDGET_USED),
-            tool_choice: ToolChoice::None,
-            ..with_tools(ApiInterface::ChatCompletions)
-        },
-        &turns,
-    );
-
-    assert_eq!(
-        request.messages.last(),
-        Some(&Message::text(Role::User, texts::TOOL_BUDGET_USED))
-    );
-    assert_eq!(request.tool_choice, ToolChoice::None);
 }
 
 /// A task part: a call of a task tool with its task section.

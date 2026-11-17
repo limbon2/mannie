@@ -38,7 +38,11 @@
   // Edits one agent (docs/features/custom-agents.md). A built-in agent shows
   // read-only with Duplicate. Saving applies from the next reply or task, and
   // leaving with changes that are not saved asks first.
-  let { source }: { source: AgentForm | AgentView } = $props();
+  interface Props {
+    source: AgentForm | AgentView;
+  }
+
+  let { source }: Props = $props();
 
   // The page keys the editor by the agent, so one editor keeps one form.
   const form = untrack(() => (source instanceof AgentForm ? source : new AgentForm(source)));
@@ -326,34 +330,26 @@
   {/if}
 
   {#if !locked}
-    <Collapsible.Root>
-      <Collapsible.Trigger>
-        {#snippet child({ props })}
-          <Button {...props} class="-ms-2" data-agent-limits="" size="sm" type="button" variant="ghost">
-            {m.agents_limits_title()}
-            <ChevronDownIcon data-icon="inline-end" />
-          </Button>
-        {/snippet}
-      </Collapsible.Trigger>
-      <Collapsible.Content>
-        <Field.Group class="mt-2 sm:flex-row">
-          {#if !isChild}
+    {#if !isChild}
+      <Collapsible.Root>
+        <Collapsible.Trigger>
+          {#snippet child({ props })}
+            <Button {...props} class="-ms-2" data-agent-limits="" size="sm" type="button" variant="ghost">
+              {m.agents_limits_title()}
+              <ChevronDownIcon data-icon="inline-end" />
+            </Button>
+          {/snippet}
+        </Collapsible.Trigger>
+        <Collapsible.Content>
+          <Field.Group class="mt-2 sm:flex-row">
             <Field.Field data-invalid={invalid('max_tasks')}>
               <Field.Label for="agent-max-tasks">{m.agents_limit_tasks()}</Field.Label>
               <Input id="agent-max-tasks" max={200} min={0} type="number" bind:value={form.maxTasks} />
             </Field.Field>
-          {/if}
-          <Field.Field data-invalid={invalid('max_tool_rounds')}>
-            <Field.Label for="agent-max-rounds">{m.agents_limit_rounds()}</Field.Label>
-            <Input id="agent-max-rounds" max={500} min={1} type="number" bind:value={form.maxToolRounds} />
-          </Field.Field>
-          <Field.Field data-invalid={invalid('max_tool_calls')}>
-            <Field.Label for="agent-max-calls">{m.agents_limit_calls()}</Field.Label>
-            <Input id="agent-max-calls" max={2000} min={1} type="number" bind:value={form.maxToolCalls} />
-          </Field.Field>
-        </Field.Group>
-      </Collapsible.Content>
-    </Collapsible.Root>
+          </Field.Group>
+        </Collapsible.Content>
+      </Collapsible.Root>
+    {/if}
 
     {#if form.failure !== null}
       <Alert.Root variant="destructive">

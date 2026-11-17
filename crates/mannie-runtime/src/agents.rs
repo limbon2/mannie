@@ -96,9 +96,9 @@ pub struct AgentDefinition {
     /// The most continuation notes in one turn (docs/architecture/
     /// agent-runtime.md, model quirks and early stops).
     pub max_continuation_notes: u32,
-    /// The most model calls with tool calls in one reply.
+    /// Retired limit, kept for source compatibility. Ignored (ADR-0072).
     pub max_tool_rounds: u32,
-    /// The most tool calls in one reply.
+    /// Retired limit, kept for source compatibility. Ignored (ADR-0072).
     pub max_tool_calls: u32,
     /// The most tasks that one reply may start or follow up.
     pub max_tasks: u32,
@@ -264,8 +264,7 @@ const GENERAL_AGENT_TOOLS: [&str; 18] = [
 ];
 
 /// The conversation agent: the base instructions, the system tools and the
-/// task tools, with 100 rounds and 250 calls of tools in one reply (owner
-/// decision of 2026-10-14) and 20 tasks.
+/// task tools, with 20 tasks per reply and no tool-call cap (ADR-0072).
 pub const CONVERSATION: AgentDefinition = AgentDefinition {
     name: Cow::Borrowed(CONVERSATION_AGENT),
     base: CONVERSATION_AGENT,
@@ -278,13 +277,12 @@ pub const CONVERSATION: AgentDefinition = AgentDefinition {
     children: None,
     profile: None,
     max_continuation_notes: 2,
-    max_tool_rounds: 100,
-    max_tool_calls: 250,
+    max_tool_rounds: 0,
+    max_tool_calls: 0,
     max_tasks: 20,
 };
 
-/// The explore child agent: the read-only tools, with 50 rounds and 150 calls
-/// of tools for one task.
+/// The explore child agent: the read-only tools, without a tool-call cap.
 pub const EXPLORE: AgentDefinition = AgentDefinition {
     name: Cow::Borrowed(EXPLORE_AGENT),
     base: EXPLORE_AGENT,
@@ -297,13 +295,13 @@ pub const EXPLORE: AgentDefinition = AgentDefinition {
     children: None,
     profile: None,
     max_continuation_notes: 2,
-    max_tool_rounds: 50,
-    max_tool_calls: 150,
+    max_tool_rounds: 0,
+    max_tool_calls: 0,
     max_tasks: 0,
 };
 
 /// The general child agent: every system tool but the move into a project,
-/// with the conversation agent's budgets of tools.
+/// without a tool-call cap.
 pub const GENERAL: AgentDefinition = AgentDefinition {
     name: Cow::Borrowed(GENERAL_AGENT),
     base: GENERAL_AGENT,
@@ -316,8 +314,8 @@ pub const GENERAL: AgentDefinition = AgentDefinition {
     children: None,
     profile: None,
     max_continuation_notes: 2,
-    max_tool_rounds: 100,
-    max_tool_calls: 250,
+    max_tool_rounds: 0,
+    max_tool_calls: 0,
     max_tasks: 0,
 };
 

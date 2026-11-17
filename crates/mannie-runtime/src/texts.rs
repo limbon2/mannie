@@ -207,10 +207,6 @@ pub fn environment(tools: &ToolEnvironment<'_>) -> String {
     lines.join("\n")
 }
 
-/// The note after the tool calls of a reply are used up.
-pub const TOOL_BUDGET_USED: &str =
-    "You have used all the tool calls this reply allows. Answer the owner now, without tools.";
-
 /// The note after a step that stopped at a colon, once tools were used.
 pub const CONTINUE_NOTE: &str = "Continue with the next step, or give the owner your final answer.";
 
@@ -1113,10 +1109,6 @@ pub const CHILD_CONTINUATION_NOTE: &str = "Your last response was empty. Continu
 /// The note of a child after a step that stopped at a colon.
 pub const CHILD_CONTINUE_NOTE: &str = "Continue with the next step, or write your report.";
 
-/// The note of a child after its tool calls are used up.
-pub const CHILD_TOOL_BUDGET_USED: &str =
-    "You have used all the tool calls this task allows. Write your report now, without tools.";
-
 /// The result of a call that the owner denied, for a child.
 pub const CHILD_DENIED: &str = "The owner denied this operation. Do not repeat it or reach the same \
 result another way; say in your report what you could not do.";
@@ -1452,15 +1444,6 @@ pub fn continue_note(requester: Requester) -> &'static str {
     match requester {
         Requester::Owner => CONTINUE_NOTE,
         Requester::Agent => CHILD_CONTINUE_NOTE,
-    }
-}
-
-/// The note after the tool calls of a reply are used up, for an agent that
-/// answers to `requester`.
-pub fn tool_budget_used(requester: Requester) -> &'static str {
-    match requester {
-        Requester::Owner => TOOL_BUDGET_USED,
-        Requester::Agent => CHILD_TOOL_BUDGET_USED,
     }
 }
 

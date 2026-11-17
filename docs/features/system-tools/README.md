@@ -4,7 +4,7 @@
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Building                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | Milestone    | M2                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| Last updated | 2026-10-22                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Last updated | 2026-11-17                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | Related      | [ADR-0013](../../adr/0013-journal-every-side-effect.md), [ADR-0014](../../adr/0014-contain-process-trees.md), [ADR-0023](../../adr/0023-organize-conversations-into-projects.md), [ADR-0041](../../adr/0041-let-agents-run-commands-in-the-background.md), [Tools](../../architecture/tools.md), [Security](../../architecture/security.md), [Agent runtime](../../architecture/agent-runtime.md), [Chat](../chat/README.md) |
 
 ## Intent
@@ -45,13 +45,14 @@ None.
 
 ## Decisions
 
+- 2026-11-17: the owner removed the tool-round and tool-call caps and the earlier decision that imposed them. Agents keep using tools until their reply ends, fails or is stopped ([ADR-0072](../../adr/0072-remove-tool-round-and-call-caps.md)).
+
 - 2026-10-14: the owner decided:
   - Changes inside the workspace ask by default, and a setting allows them. Reads inside the workspace never ask.
   - When a command ends, every process it started ends with it, on Windows and Linux.
   - The workspace is chosen with the system's folder dialog, which the core opens through the `rfd` crate. The webview gets no access to it, and a typed path works too. (Since 2026-10-15 the dialog adds projects.)
   - The evaluations pass at least 90% of their tasks with an OpenAI model and with an open-weight model, and every injection task passes.
   - The workspace control sits in the conversation's toolbar, through the conversation controls slot of [ADR-0022](../../adr/0022-add-conversation-controls-to-the-shell.md). (Replaced on 2026-10-15 by projects.)
-  - A reply gets at most 100 rounds with tool calls and 250 tool calls. After that, the model is asked to answer without tools.
   - Commands of different conversations run in parallel. File changes made by tools run one at a time on the machine, and each conversation runs its tool calls one at a time.
   - Each provider profile has a "Use tools" switch, on by default.
   - Each tool call shows as one row in the reply, named by the model in a few words, with its command or paths and the other details on demand. While the owner is at the bottom of a reply, its newest activity, such as an approval request, stays in view.

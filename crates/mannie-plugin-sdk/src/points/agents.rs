@@ -44,9 +44,9 @@ pub struct AgentBudgets {
     /// The most continuation notes in one turn (docs/architecture/
     /// agent-runtime.md, model quirks and early stops).
     pub continuation_notes: u32,
-    /// The most model calls with tool calls in one reply.
+    /// Retired limit, kept for compatibility. The runtime ignores it (ADR-0072).
     pub tool_rounds: u32,
-    /// The most tool calls in one reply.
+    /// Retired limit, kept for compatibility. The runtime ignores it (ADR-0072).
     pub tool_calls: u32,
     /// The most tasks that one reply may start or follow up.
     pub tasks: u32,

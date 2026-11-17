@@ -4,7 +4,7 @@
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Status       | Building                                                                                                                                                                                                                                                                                                                 |
 | Milestone    | M4                                                                                                                                                                                                                                                                                                                       |
-| Last updated | 2026-10-21                                                                                                                                                                                                                                                                                                               |
+| Last updated | 2026-11-17                                                                                                                                                                                                                                                                                                               |
 | Part of      | [Workers](README.md)                                                                                                                                                                                                                                                                                                     |
 | Related      | [ADR-0028](../../../docs/adr/0028-run-assigned-tasks-under-the-host-ceiling.md), [Workers architecture](architecture.md#workers), [Operations and approvals](../../../docs/features/system-tools/operations-and-approvals.md), [Tools](../../../docs/architecture/tools.md#4-authorization), [Delegation](delegation.md) |
 
@@ -29,11 +29,11 @@ The name and the purpose come from the configuration. In the master, the owner c
 
 ### The worker agent
 
-| Definition | Answers to | Tools                                                                          | Rounds, calls | Tasks per reply |
+| Definition | Answers to | Tools                                                                          | Tool-call cap | Tasks per reply |
 | ---------- | ---------- | ------------------------------------------------------------------------------ | ------------- | --------------- |
-| worker     | An agent   | Every system tool but `move_to_project`, with the tools of background commands | 100, 250      | 0               |
+| worker     | An agent   | Every system tool but `move_to_project`, with the tools of background commands | None          | 0               |
 
-Only the worker registers it. It reads the child's confirmation note before it reports, and the child's notes about empty answers, budgets and denials. Its tools work on its own host with its service's account, within the ceiling.
+Only the worker registers it. It reads the child's confirmation note before it reports, and the child's notes about empty answers and denials. Its tools work on its own host with its service's account, within the ceiling.
 
 ### The text the model sees
 

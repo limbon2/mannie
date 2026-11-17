@@ -159,7 +159,7 @@ impl RunActor {
     /// that do not run in the background reported (ADR-0024, decision 5). A
     /// denial skips the rest of the calls, and so does a question, because the
     /// model wrote the calls after it before it saw the answer (ADR-0058,
-    /// decision 6). Calls beyond the reply's budget do not run.
+    /// decision 6).
     pub(super) async fn run_calls(
         &mut self,
         setup: &Setup,
@@ -176,11 +176,8 @@ impl RunActor {
                 self.end_call(call, NotRunReason::AfterQuestion);
                 continue;
             }
-            if self.tool_calls >= setup.agent.max_tool_calls {
-                self.end_call(call, NotRunReason::OverBudget);
-                continue;
-            }
-            self.tool_calls += 1;
+
+            self.tool_calls = self.tool_calls.saturating_add(1);
             self.publish_progress(call.document.activity.clone());
             if call.task.is_some() {
                 Box::pin(self.run_task_call(setup, call)).await?;

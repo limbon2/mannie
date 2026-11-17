@@ -356,9 +356,6 @@ impl Setup {
 /// How a call is prepared.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct CallOptions {
-    /// The reply used up its tool calls: the model may not call tools, and a
-    /// note asks it to answer.
-    pub(crate) tools_used_up: bool,
     /// Even after compaction the context runs low: the latest turn's older
     /// tool results are left out (docs/features/system-tools/tool-calls.md,
     /// context).
@@ -954,7 +951,6 @@ impl Runtime {
                 .await?
         };
         let shape = Shaping {
-            options,
             instructions: &instructions,
             definitions: &definitions,
             left_out: &left_out,
@@ -1347,7 +1343,6 @@ async fn read_machine_instructions(path: Option<PathBuf>) -> Option<String> {
 /// What a call's request is built from, besides its run's setup and the
 /// turns.
 struct Shaping<'a> {
-    options: CallOptions,
     instructions: &'a str,
     definitions: &'a [ToolDefinition],
     /// The older results of the latest turn, left out when the context runs
@@ -1363,7 +1358,6 @@ struct Shaping<'a> {
 /// turns that the model reads, with the results and the images that the
 /// shaping leaves out.
 fn call_request(setup: &Setup, shaping: &Shaping<'_>, turns: &[ModelTurn]) -> ModelRequest {
-    let options = shaping.options;
     let shape = RequestShape {
         instructions: shaping.instructions,
         model: &setup.model,
@@ -1372,13 +1366,7 @@ fn call_request(setup: &Setup, shaping: &Shaping<'_>, turns: &[ModelTurn]) -> Mo
         max_output_tokens: setup.output_limit,
         reasoning_effort: setup.reasoning_effort,
         tools: shaping.definitions,
-        tool_choice: if options.tools_used_up {
-            ToolChoice::None
-        } else {
-            ToolChoice::Auto
-        },
-        note: (options.tools_used_up && setup.uses_tools())
-            .then(|| texts::tool_budget_used(setup.requester())),
+        tool_choice: ToolChoice::Auto,
         left_out: shaping.left_out,
         requester: setup.requester(),
         tool_images: shaping.tool_images,

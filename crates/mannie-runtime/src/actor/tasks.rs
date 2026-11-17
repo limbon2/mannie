@@ -581,12 +581,9 @@ impl RunActor {
     /// unread then, a note of Mannie's own asks the model to read them, once
     /// for each task, and the reply continues: `Ok(true)`. The note names
     /// the tasks and holds none of their text (T-21).
-    pub(super) async fn await_reply_tasks(&mut self, setup: &Setup) -> Result<bool, Ending> {
+    pub(super) async fn await_reply_tasks(&mut self) -> Result<bool, Ending> {
         self.await_tasks(|_task| true).await?;
-        // A model without tool calls left cannot call wait_for_tasks.
-        if self.tools_used_up(setup) {
-            return Ok(false);
-        }
+
         let unread = self.tasks.take_unread();
         if unread.is_empty() {
             return Ok(false);

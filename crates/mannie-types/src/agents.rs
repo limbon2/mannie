@@ -40,10 +40,10 @@ pub const MAX_STEP_TEXT_CHARS: usize = 4_096;
 /// The most tasks that an agent's reply may start or follow up.
 pub const MAX_AGENT_TASKS: u32 = 200;
 
-/// The most model calls with tool calls in one reply of an agent.
+/// Retired validation limit, kept for source compatibility (ADR-0072).
 pub const MAX_AGENT_TOOL_ROUNDS: u32 = 500;
 
-/// The most tool calls in one reply of an agent.
+/// Retired validation limit, kept for source compatibility (ADR-0072).
 pub const MAX_AGENT_TOOL_CALLS: u32 = 2_000;
 
 /// The most names in one of a draft's lists of tools, plugins or children.
@@ -110,9 +110,11 @@ pub struct AgentDraft {
     pub children: Option<Vec<String>>,
     /// The most tasks that one reply may start or follow up.
     pub max_tasks: u32,
-    /// The most model calls with tool calls in one reply.
+    /// Retired limit, preserved in stored drafts and IPC but ignored (ADR-0072).
+    #[serde(default)]
     pub max_tool_rounds: u32,
-    /// The most tool calls in one reply.
+    /// Retired limit, preserved in stored drafts and IPC but ignored (ADR-0072).
+    #[serde(default)]
     pub max_tool_calls: u32,
 }
 
@@ -168,23 +170,11 @@ impl AgentDraft {
                 return Err(invalid(field));
             }
         }
-        for (value, range, field) in [
-            (self.max_tasks, 0..=MAX_AGENT_TASKS, AgentField::MaxTasks),
-            (
-                self.max_tool_rounds,
-                1..=MAX_AGENT_TOOL_ROUNDS,
-                AgentField::MaxToolRounds,
-            ),
-            (
-                self.max_tool_calls,
-                1..=MAX_AGENT_TOOL_CALLS,
-                AgentField::MaxToolCalls,
-            ),
-        ] {
-            if !range.contains(&value) {
-                return Err(invalid(field));
-            }
+
+        if self.max_tasks > MAX_AGENT_TASKS {
+            return Err(invalid(AgentField::MaxTasks));
         }
+
         Ok(Self {
             name,
             description,
@@ -541,18 +531,36 @@ mod tests {
     }
 
     #[test]
-    fn each_limit_has_its_range() {
+    fn task_limits_are_checked_and_retired_tool_limits_are_ignored() {
         let mut tasks = draft();
         tasks.max_tasks = MAX_AGENT_TASKS + 1;
         assert_eq!(refused(&tasks), Some(AgentField::MaxTasks));
 
         let mut rounds = draft();
         rounds.max_tool_rounds = 0;
-        assert_eq!(refused(&rounds), Some(AgentField::MaxToolRounds));
+        assert!(rounds.check_fields().is_ok());
 
         let mut calls = draft();
         calls.max_tool_calls = MAX_AGENT_TOOL_CALLS + 1;
-        assert_eq!(refused(&calls), Some(AgentField::MaxToolCalls));
+        assert!(calls.check_fields().is_ok());
+    }
+
+    #[test]
+    fn retired_tool_limits_read_from_old_drafts_or_default_to_zero() {
+        let original = draft();
+        let mut value = serde_json::to_value(&original).unwrap();
+        let restored: AgentDraft = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(restored, original);
+
+        let fields = value.as_object_mut().unwrap();
+        fields.remove("maxToolRounds");
+        fields.remove("maxToolCalls");
+
+        let restored: AgentDraft = serde_json::from_value(value).unwrap();
+
+        assert_eq!(restored.max_tool_rounds, 0);
+        assert_eq!(restored.max_tool_calls, 0);
+        assert!(restored.check_fields().is_ok());
     }
 
     #[test]

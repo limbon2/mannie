@@ -37,19 +37,16 @@ impl RunActor {
     }
 
     /// Before a reply ends: a reply with ends untold continues once with the
-    /// note, unless its tool calls are used up, as a reply with unread
-    /// reports does. An end after this wakes the agent once the reply ended.
+    /// note. An end after this wakes the agent once the reply ended.
     pub(super) async fn note_ends_before_the_end(
         &mut self,
         setup: &Setup,
         finish: FinishReason,
     ) -> Result<bool, Ending> {
         let may_continue = matches!(finish, FinishReason::Stop | FinishReason::Other);
-        if self.end_notes >= MAX_END_NOTES
-            || !may_continue
-            || !setup.uses_tools()
-            || self.tools_used_up(setup)
-        {
+        let notes_used_up = self.end_notes >= MAX_END_NOTES;
+
+        if notes_used_up || !may_continue || !setup.uses_tools() {
             return Ok(false);
         }
         let noted = self.note_command_ends(setup).await?;

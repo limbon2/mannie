@@ -4,6 +4,10 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+### Fixed
+
+- Remove tool-round and tool-call caps so long assignments can continue, including child and worker tasks; remove the obsolete limits from the agent editor.
+
 ## 0.8.3 - 2026-11-17
 
 ### Fixed

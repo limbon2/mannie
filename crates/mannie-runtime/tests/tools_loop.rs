@@ -644,11 +644,12 @@ async fn unknown_tools_and_invalid_arguments_do_not_run() {
 }
 
 #[tokio::test]
-async fn a_reply_that_used_up_its_tools_answers_without_them() {
+async fn tool_calls_continue_past_retired_round_and_call_limits() {
     let mut agents = AgentRegistry::new();
     agents
         .register(AgentDefinition {
             max_tool_rounds: 1,
+            max_tool_calls: 1,
             ..CONVERSATION
         })
         .unwrap();
@@ -660,30 +661,46 @@ async fn a_reply_that_used_up_its_tools_answers_without_them() {
     .await;
     setup.file("a.txt", "a");
     let read = arguments(Path::new("a.txt"));
-    setup
-        .harness
-        .model
-        .push_reply(tool_calls(&[("call_1", "read_file", &read)]));
-    // The model calls a tool although the request asked for none.
-    setup
-        .harness
-        .model
-        .push_reply(tool_calls(&[("call_2", "read_file", &read)]));
+
+    // Cross both former built-in caps, as well as the stored limits above.
+    for round in 0..101 {
+        let ids = [
+            format!("call_{round}_a"),
+            format!("call_{round}_b"),
+            format!("call_{round}_c"),
+        ];
+        setup.harness.model.push_reply(tool_calls(&[
+            (&ids[0], "read_file", &read),
+            (&ids[1], "read_file", &read),
+            (&ids[2], "read_file", &read),
+        ]));
+    }
+
+    setup.harness.model.push_reply(reply("Finished reading."));
 
     let (conversation, run) = setup.start("Read a.txt").await;
     let transcript = setup.harness.wait_for_run(&conversation, &run).await;
 
     let requests = setup.harness.model.reply_requests();
-    assert_eq!(requests[1].tool_choice, ToolChoice::None);
+    assert_eq!(requests.len(), 102);
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.tool_choice == ToolChoice::Auto)
+    );
     assert_eq!(
-        requests[1].messages.last().map(|message| &message.content),
-        Some(&vec![Content::Text(texts::TOOL_BUDGET_USED.to_owned())])
+        requests.last().unwrap().messages.last().unwrap().role,
+        Role::Tool
     );
     assert_eq!(transcript.run_state(&run), Some(RunState::Completed));
-    assert_eq!(
-        the_call(&transcript, 1).not_run,
-        Some(NotRunReason::OverBudget)
+    let calls = transcript.tool_calls(0);
+    assert_eq!(calls.len(), 303);
+    assert!(
+        calls
+            .iter()
+            .all(|call| call.status == ToolCallStatus::Completed && call.not_run.is_none())
     );
+    assert_eq!(transcript.reply_text(0), "Finished reading.");
 }
 
 #[tokio::test]
