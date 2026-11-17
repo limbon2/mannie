@@ -466,7 +466,7 @@ fn a_slow_subscriber_falls_behind_and_catches_up_from_its_cursor() {
             from_first_event: true,
             reconnect_after: 2,
             reconnects: 0,
-            pace_ms: 15,
+            pace_ms: 100,
         },
         SubscriberPlan {
             start_delay_ms: 5,
