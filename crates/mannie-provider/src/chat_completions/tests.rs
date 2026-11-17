@@ -23,7 +23,12 @@ fn translator(server: ServerKind) -> ChatTranslator {
         &client,
         "qwen3",
         quirks_for(ApiInterface::ChatCompletions, Some(server)),
-        true,
+        &[crate::provider::ToolDefinition {
+            name: "read_file".to_owned(),
+            description: "Reads a file.".to_owned(),
+            parameters: json!({"type": "object"}),
+            strict: true,
+        }],
     )
 }
 

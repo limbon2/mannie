@@ -9,7 +9,7 @@ use serde_json::{Map, Value, json};
 use crate::errors::{self, Context, ErrorDetails};
 use crate::provider::{
     Content, EventStream, ImageInput, ModelRequest, Provider, ProviderError, ProviderEvent, Role,
-    Target, ToolChoice,
+    Target, ToolChoice, ToolDefinition,
 };
 use crate::quirks::{EffortShape, OutputLimitField, Quirks};
 use crate::sse::SseEvent;
@@ -47,12 +47,8 @@ impl Provider for ChatCompletionsAdapter {
             target.credential.as_ref(),
             body.to_string().into_bytes(),
         );
-        let translator = ChatTranslator::new(
-            &self.client,
-            &request.model,
-            target.quirks,
-            !request.tools.is_empty(),
-        );
+        let translator =
+            ChatTranslator::new(&self.client, &request.model, target.quirks, &request.tools);
         stream::drive(
             self.client.clone(),
             Call {
@@ -323,9 +319,9 @@ struct ChatTranslator {
 }
 
 impl ChatTranslator {
-    fn new(client: &HttpClient, model: &str, quirks: Quirks, tools_offered: bool) -> Self {
+    fn new(client: &HttpClient, model: &str, quirks: Quirks, tools: &[ToolDefinition]) -> Self {
         // A call written as text is a call only when the model had tools.
-        let finds_calls_in_text = quirks.tools.calls_in_text && tools_offered;
+        let finds_calls_in_text = quirks.tools.calls_in_text && !tools.is_empty();
         Self {
             client: client.clone(),
             model: model.to_owned(),
@@ -333,7 +329,7 @@ impl ChatTranslator {
             think: ThinkSplitter::new(quirks.think_tags),
             text_calls: ToolTextSplitter::new(finds_calls_in_text, TextStream::Text),
             reasoning_calls: ToolTextSplitter::new(finds_calls_in_text, TextStream::Reasoning),
-            calls: ToolCalls::new(),
+            calls: ToolCalls::for_model(model, tools),
             finish: None,
             usage: None,
         }

@@ -8,6 +8,20 @@
 
 use mannie_types::provider::{ApiInterface, ServerKind};
 
+/// Models observed returning numbers and booleans as strings in tool calls.
+/// The Qwen4-Max regression fixtures reconstruct the owner's 2026-11-17
+/// conversation export; they are not recordings of an HTTP stream.
+const STRINGIFIED_TOOL_ARGUMENT_MODELS: &[&str] = &["qwen4-max"];
+
+/// Match direct model IDs and routed IDs such as `qwen/qwen4-max:exacto`.
+pub(crate) fn stringified_tool_arguments(model: &str) -> bool {
+    let model = model.rsplit('/').next().unwrap_or(model);
+    let model = model.split(':').next().unwrap_or(model);
+    STRINGIFIED_TOOL_ARGUMENT_MODELS
+        .iter()
+        .any(|known| model.eq_ignore_ascii_case(known))
+}
+
 /// The field of a Chat Completions request that limits the answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputLimitField {

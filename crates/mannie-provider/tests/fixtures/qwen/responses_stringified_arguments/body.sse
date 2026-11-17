@@ -1,0 +1,33 @@
+event: response.output_item.added
+data: {"item":{"arguments":"","call_id":"call_0","id":"fc_0","name":"list_directory","type":"function_call"},"output_index":0,"type":"response.output_item.added"}
+
+event: response.function_call_arguments.delta
+data: {"delta":"{\"activity\": \"Loo","item_id":"fc_0","type":"response.function_call_arguments.delta"}
+
+event: response.function_call_arguments.delta
+data: {"delta":"king at the project layout\", \"limit\": \"200\", \"offset\": \"0\", \"path\": null}","item_id":"fc_0","type":"response.function_call_arguments.delta"}
+
+event: response.function_call_arguments.done
+data: {"arguments":"{\"activity\": \"Looking at the project layout\", \"limit\": \"200\", \"offset\": \"0\", \"path\": null}","item_id":"fc_0","type":"response.function_call_arguments.done"}
+
+event: response.output_item.done
+data: {"item":{"arguments":"{\"activity\": \"Looking at the project layout\", \"limit\": \"200\", \"offset\": \"0\", \"path\": null}","call_id":"call_0","id":"fc_0","name":"list_directory","status":"completed","type":"function_call"},"output_index":0,"type":"response.output_item.done"}
+
+event: response.output_item.added
+data: {"item":{"arguments":"","call_id":"call_1","id":"fc_1","name":"search_text","type":"function_call"},"output_index":1,"type":"response.output_item.added"}
+
+event: response.function_call_arguments.delta
+data: {"delta":"{\"activity\": \"Fin","item_id":"fc_1","type":"response.function_call_arguments.delta"}
+
+event: response.function_call_arguments.delta
+data: {"delta":"ding shell detection code\", \"case_sensitive\": \"false\", \"glob\": null, \"include_ignored\": null, \"limit\": \"100\", \"offset\": \"0\", \"path\": null, \"query\": \"pwsh\", \"regex\": \"false\"}","item_id":"fc_1","type":"response.function_call_arguments.delta"}
+
+event: response.function_call_arguments.done
+data: {"arguments":"{\"activity\": \"Finding shell detection code\", \"case_sensitive\": \"false\", \"glob\": null, \"include_ignored\": null, \"limit\": \"100\", \"offset\": \"0\", \"path\": null, \"query\": \"pwsh\", \"regex\": \"false\"}","item_id":"fc_1","type":"response.function_call_arguments.done"}
+
+event: response.output_item.done
+data: {"item":{"arguments":"{\"activity\": \"Finding shell detection code\", \"case_sensitive\": \"false\", \"glob\": null, \"include_ignored\": null, \"limit\": \"100\", \"offset\": \"0\", \"path\": null, \"query\": \"pwsh\", \"regex\": \"false\"}","call_id":"call_1","id":"fc_1","name":"search_text","status":"completed","type":"function_call"},"output_index":1,"type":"response.output_item.done"}
+
+event: response.completed
+data: {"response":{"status":"completed"},"type":"response.completed"}
+

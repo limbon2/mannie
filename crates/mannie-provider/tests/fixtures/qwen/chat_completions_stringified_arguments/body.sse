@@ -1,0 +1,12 @@
+data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"{\"activity\": \"Loo","name":"list_directory"},"id":"call_0","index":0,"type":"function"}]},"finish_reason":null,"index":0}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"king at the project layout\", \"limit\": \"200\", \"offset\": \"0\", \"path\": null}"},"index":0}]},"finish_reason":null,"index":0}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"{\"activity\": \"Fin","name":"search_text"},"id":"call_1","index":1,"type":"function"}]},"finish_reason":null,"index":0}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"ding shell detection code\", \"case_sensitive\": \"false\", \"glob\": null, \"include_ignored\": null, \"limit\": \"100\", \"offset\": \"0\", \"path\": null, \"query\": \"pwsh\", \"regex\": \"false\"}"},"index":1}]},"finish_reason":null,"index":0}]}
+
+data: {"choices":[{"delta":{},"finish_reason":"tool_calls","index":0}]}
+
+data: [DONE]
+

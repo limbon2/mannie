@@ -16,7 +16,7 @@ use serde_json::{Map, Value, json};
 use crate::errors::{self, Context, ErrorDetails};
 use crate::provider::{
     Content, EventStream, ImageInput, ModelRequest, Provider, ProviderError, ProviderEvent, Role,
-    Target, ToolChoice,
+    Target, ToolChoice, ToolDefinition,
 };
 use crate::quirks::{Quirks, ResponsesShape};
 use crate::sse::SseEvent;
@@ -50,7 +50,8 @@ impl Provider for ResponsesAdapter {
             target.credential.as_ref(),
             body.to_string().into_bytes(),
         );
-        let translator = ResponsesTranslator::new(&self.client, &request.model, target.quirks);
+        let translator =
+            ResponsesTranslator::new(&self.client, &request.model, target.quirks, &request.tools);
         stream::drive(
             self.client.clone(),
             Call {
@@ -276,13 +277,13 @@ struct ResponsesTranslator {
 }
 
 impl ResponsesTranslator {
-    fn new(client: &HttpClient, model: &str, quirks: Quirks) -> Self {
+    fn new(client: &HttpClient, model: &str, quirks: Quirks, tools: &[ToolDefinition]) -> Self {
         Self {
             client: client.clone(),
             model: model.to_owned(),
             quirks,
             last_summary: None,
-            calls: ToolCalls::new(),
+            calls: ToolCalls::for_model(model, tools),
         }
     }
 

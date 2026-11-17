@@ -7,11 +7,15 @@
 //! off, is started but never completed, so the runtime tells the model that
 //! the call was cut off.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use mannie_types::tools::MAX_ARGUMENTS_BYTES;
+use serde_json::Value;
 
-use crate::provider::ProviderEvent;
+use crate::provider::{ProviderEvent, ToolDefinition};
+use crate::quirks::stringified_tool_arguments;
+
+mod arguments;
 
 /// One call while it streams.
 #[derive(Debug)]
@@ -37,11 +41,26 @@ pub(crate) struct ToolCalls {
     generated: u32,
     /// Calls that arrived complete at once, for their keys.
     completed: u32,
+    /// Offered schemas, only when the model needs scalar normalization.
+    parameters: HashMap<String, Value>,
 }
 
 impl ToolCalls {
     pub(crate) fn new() -> Self {
         Self::default()
+    }
+
+    pub(crate) fn for_model(model: &str, tools: &[ToolDefinition]) -> Self {
+        let mut calls = Self::new();
+
+        if stringified_tool_arguments(model) {
+            calls.parameters = tools
+                .iter()
+                .map(|tool| (tool.name.clone(), tool.parameters.clone()))
+                .collect();
+        }
+
+        calls
     }
 
     fn find(&mut self, key: &str) -> Option<&mut PendingCall> {
@@ -104,7 +123,7 @@ impl ToolCalls {
     /// Ends one call: it is complete, unless its arguments were too large.
     pub(crate) fn end(&mut self, key: &str, out: &mut Vec<ProviderEvent>) {
         if let Some(index) = self.calls.iter().position(|call| call.key == key) {
-            Self::end_call(&mut self.calls[index], out);
+            Self::end_call(&mut self.calls[index], &self.parameters, out);
         }
     }
 
@@ -115,7 +134,7 @@ impl ToolCalls {
         for (index, call) in self.calls.iter_mut().enumerate() {
             let is_cut = cut_off && Some(index) == last_started;
             if !is_cut {
-                Self::end_call(call, out);
+                Self::end_call(call, &self.parameters, out);
             }
         }
     }
@@ -157,15 +176,22 @@ impl ToolCalls {
         }
     }
 
-    fn end_call(call: &mut PendingCall, out: &mut Vec<ProviderEvent>) {
+    fn end_call(
+        call: &mut PendingCall,
+        parameters: &HashMap<String, Value>,
+        out: &mut Vec<ProviderEvent>,
+    ) {
         if call.ended {
             return;
         }
+
         call.ended = true;
+
         let (Some(call_id), Some(name)) = (call.call_id.clone(), call.name.clone()) else {
             tracing::warn!("a server sent a tool call without a name; it is dropped");
             return;
         };
+
         if call.oversized {
             tracing::warn!(
                 tool = %name,
@@ -173,10 +199,18 @@ impl ToolCalls {
             );
             return;
         }
+
+        let raw_arguments = std::mem::take(&mut call.arguments);
+        let arguments = parameters
+            .get(&name)
+            .and_then(|schema| arguments::normalize(&raw_arguments, schema))
+            .filter(|normalized| normalized.len() <= MAX_ARGUMENTS_BYTES)
+            .unwrap_or(raw_arguments);
+
         out.push(ProviderEvent::ToolCall {
             call_id,
             name,
-            arguments: std::mem::take(&mut call.arguments),
+            arguments,
         });
     }
 }
@@ -196,9 +230,10 @@ fn append_arguments(call: &mut PendingCall, arguments: &str) {
 #[cfg(test)]
 mod tests {
     use mannie_types::tools::MAX_ARGUMENTS_BYTES;
+    use serde_json::json;
 
     use super::ToolCalls;
-    use crate::provider::ProviderEvent;
+    use crate::provider::{ProviderEvent, ToolDefinition};
 
     fn started(call_id: &str, name: &str) -> ProviderEvent {
         ProviderEvent::ToolCallStarted {
@@ -295,5 +330,108 @@ mod tests {
         calls.end_all(false, &mut out);
 
         assert_eq!(out, [started("a", "write_file")]);
+    }
+
+    fn list_directory() -> ToolDefinition {
+        ToolDefinition {
+            name: "list_directory".to_owned(),
+            description: "Lists a directory.".to_owned(),
+            parameters: json!({
+                "type": "object",
+                "properties": {"limit": {"type": ["integer", "null"]}}
+            }),
+            strict: true,
+        }
+    }
+
+    #[test]
+    fn only_the_affected_models_and_offered_tools_normalize_arguments() {
+        let raw = r#"{"limit":"200"}"#;
+        for model in ["qwen4-max", "qwen/qwen4-max", "Qwen/Qwen4-Max:exacto"] {
+            let mut calls = ToolCalls::for_model(model, &[list_directory()]);
+            let mut out = Vec::new();
+
+            calls.update("0", Some("a"), Some("list_directory"), raw, &mut out);
+            calls.update("1", Some("b"), Some("unknown_tool"), raw, &mut out);
+            calls.end_all(false, &mut out);
+
+            assert_eq!(
+                out,
+                [
+                    started("a", "list_directory"),
+                    started("b", "unknown_tool"),
+                    complete("a", "list_directory", r#"{"limit":200}"#),
+                    complete("b", "unknown_tool", raw),
+                ],
+                "{model}"
+            );
+        }
+
+        for model in [
+            "gpt-6-luna",
+            "qwen3-max",
+            "qwen4-max-preview",
+            "qwen4-max-other",
+            "other-qwen4-max",
+        ] {
+            let mut calls = ToolCalls::for_model(model, &[list_directory()]);
+            let mut out = Vec::new();
+
+            calls.update("0", Some("a"), Some("list_directory"), raw, &mut out);
+            calls.end_all(false, &mut out);
+
+            assert_eq!(
+                out,
+                [
+                    started("a", "list_directory"),
+                    complete("a", "list_directory", raw),
+                ],
+                "{model}"
+            );
+        }
+    }
+
+    #[test]
+    fn normalization_never_completes_an_oversized_or_cut_off_call() {
+        let mut calls = ToolCalls::for_model("qwen4-max", &[list_directory()]);
+        let mut out = Vec::new();
+        let oversized = format!(
+            r#"{{"limit":"200","extra":"{}"}}"#,
+            "x".repeat(MAX_ARGUMENTS_BYTES)
+        );
+
+        calls.update("0", Some("a"), Some("list_directory"), &oversized, &mut out);
+        calls.update(
+            "1",
+            Some("b"),
+            Some("list_directory"),
+            r#"{"limit":"200"}"#,
+            &mut out,
+        );
+        calls.end_all(true, &mut out);
+
+        assert_eq!(
+            out,
+            [
+                started("a", "list_directory"),
+                started("b", "list_directory")
+            ]
+        );
+    }
+
+    #[test]
+    fn a_tool_call_found_in_text_uses_the_same_normalization() {
+        let mut calls = ToolCalls::for_model("qwen4-max", &[list_directory()]);
+        let mut out = Vec::new();
+
+        calls.complete("list_directory", r#"{"limit":"200"}"#, &mut out);
+
+        assert_eq!(
+            out,
+            [
+                started("call_mannie_1", "list_directory"),
+                complete("call_mannie_1", "list_directory", r#"{"limit":200}"#),
+            ]
+        );
     }
 }

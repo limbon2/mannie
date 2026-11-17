@@ -23,6 +23,7 @@ fn translator() -> ResponsesTranslator {
         &client,
         "gpt-6-luna",
         quirks_for(ApiInterface::Responses, None),
+        &[],
     )
 }
 
@@ -556,7 +557,8 @@ fn an_endpoint_request_has_no_namespace_and_no_phase() {
 fn a_namespaced_call_in_the_stream_keeps_its_plain_name() {
     let clock = Arc::new(ManualClock::new(UtcMillis::from_millis(0)));
     let client = HttpClient::new(clock).unwrap();
-    let mut translator = ResponsesTranslator::new(&client, "gpt-6.1-sol", chatgpt_plan_quirks());
+    let mut translator =
+        ResponsesTranslator::new(&client, "gpt-6.1-sol", chatgpt_plan_quirks(), &[]);
     let item = json!({
         "type": "function_call",
         "id": "fc_1",

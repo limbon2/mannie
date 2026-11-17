@@ -1,0 +1,128 @@
+{
+  "server": "other",
+  "interface": "chat_completions",
+  "provenance": "constructed",
+  "notes": "Reconstructed from the first two tool calls in the owner-provided 2026-11-17 Qwen4-Max conversation export, using Qwen/Alibaba directly. Argument values are observed; SSE framing, IDs, request, and the Responses variant are constructed. This is not a captured HTTP stream.",
+  "sources": [
+    "https://docs.qwencloud.com/developer-guides/tool-calling/function-calling"
+  ],
+  "verifiedOn": "2026-11-17",
+  "request": {
+    "model": "qwen4-max",
+    "messages": [
+      {
+        "role": "user",
+        "text": "List the project and find pwsh references."
+      }
+    ],
+    "maxOutputTokens": 1024,
+    "tools": [
+      {
+        "name": "list_directory",
+        "description": "Lists a directory.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "activity": {
+              "type": "string"
+            },
+            "limit": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "offset": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "path": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "activity",
+            "limit",
+            "offset",
+            "path"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "search_text",
+        "description": "Searches text.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "activity": {
+              "type": "string"
+            },
+            "case_sensitive": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "glob": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "include_ignored": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "limit": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "offset": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "path": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "query": {
+              "type": "string"
+            },
+            "regex": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "activity",
+            "case_sensitive",
+            "glob",
+            "include_ignored",
+            "limit",
+            "offset",
+            "path",
+            "query",
+            "regex"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ]
+  }
+}

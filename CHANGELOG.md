@@ -4,6 +4,10 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+### Fixed
+
+- Normalize Qwen4-Max tool arguments that arrive as numeric or boolean strings according to their schemas, so directory listings and searches can run without repeated type errors.
+
 ### Changed
 
 - Audit inline TypeScript object annotations and blank lines between Rust statement groups.

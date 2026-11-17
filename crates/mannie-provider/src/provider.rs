@@ -185,8 +185,8 @@ pub enum ProviderEvent {
         call_id: String,
         /// The tool.
         name: String,
-        /// The arguments as the model wrote them: a JSON object as text, which
-        /// the runtime checks.
+        /// The arguments after provider quirk normalization: a JSON object
+        /// as text, which the runtime checks.
         arguments: String,
     },
     /// The token counts of the call.

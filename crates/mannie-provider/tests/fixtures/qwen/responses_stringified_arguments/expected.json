@@ -1,0 +1,34 @@
+{
+  "error": null,
+  "events": [
+    {
+      "toolCallStarted": {
+        "callId": "call_0",
+        "name": "list_directory"
+      }
+    },
+    {
+      "toolCall": {
+        "callId": "call_0",
+        "name": "list_directory",
+        "arguments": "{\"activity\":\"Looking at the project layout\",\"limit\":200,\"offset\":0,\"path\":null}"
+      }
+    },
+    {
+      "toolCallStarted": {
+        "callId": "call_1",
+        "name": "search_text"
+      }
+    },
+    {
+      "toolCall": {
+        "callId": "call_1",
+        "name": "search_text",
+        "arguments": "{\"activity\":\"Finding shell detection code\",\"case_sensitive\":false,\"glob\":null,\"include_ignored\":null,\"limit\":100,\"offset\":0,\"path\":null,\"query\":\"pwsh\",\"regex\":false}"
+      }
+    },
+    {
+      "finished": "stop"
+    }
+  ]
+}

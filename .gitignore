@@ -39,3 +39,5 @@ apps/desktop/project.inlang/*
 # Operating system files.
 Thumbs.db
 .DS_Store
+
+.tmp/
