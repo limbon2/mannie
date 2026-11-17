@@ -49,6 +49,7 @@ This rule exists because coding agents keep rebuilding shadcn components from me
 
 - Add components only with the pinned CLI, from `apps/desktop`: `pnpm shadcn-svelte add <name>`. Never write a registry component by hand, paste one from another project, or port one from the React version of shadcn/ui. The agent skill's examples run `shadcn-svelte@latest`; in this repository, run the pinned CLI instead.
 - Before you use or add a component, read its documentation page, `https://shadcn-svelte.com/docs/components/<name>.md`. The index of all pages is `https://shadcn-svelte.com/llms.txt`. Then check `apps/desktop/components.json` and `apps/desktop/src/lib/components/ui/` for what is already installed.
+- Use the matching shadcn-svelte component for each control. Plugins use these components through the TypeScript plugin SDK. Fix issues in Mannie's usage or theme where they originate. Report defects in upstream components without patching their implementation to silence a check.
 - Use the shadcn-svelte agent skill in `.claude/skills/shadcn-svelte/` (Codex: `.agents/skills/shadcn-svelte/`). It is vendored as its authors wrote it; update it with `pnpm dlx skills@1.7.2 add huntabyte/shadcn-svelte --skill shadcn-svelte --agent claude-code codex --copy -y`, which records it in `skills-lock.json`.
 - Do not edit files in `apps/desktop/src/lib/components/ui/`. Customize through the theme tokens and through components in `apps/desktop/src/lib/components/app/`. If a change inside `ui/` is unavoidable, record it with its reason in `apps/desktop/src/lib/components/ui/PATCHES.md`, which also lists the components' built-in English text and how the app avoids it.
 - When shadcn-svelte has no matching component, compose one in `apps/desktop/src/lib/components/app/` from installed components and bits-ui primitives. Read the bits-ui documentation first: `https://bits-ui.com/llms.txt` lists a page for every primitive.
@@ -96,7 +97,7 @@ This rule exists because coding agents keep rebuilding shadcn components from me
 
 - Keep to the scope of the request and of the current milestone, and do not pull later features forward.
 - Read the relevant code, configuration and documentation before assuming anything. Take the build, test and format commands from `Taskfile.yml`.
-- Make the smallest coherent change that fully solves the problem. No unrelated refactors, features or dependency upgrades.
+- Deliver the full agreed scope at production quality. Do not take shortcuts, ship an MVP or prototype, or defer requested behavior to a later version. Only the owner can reduce the agreed scope.
 - Keep the owner's changes and existing behavior outside the requested scope. Investigate unexpected differences before overwriting or reverting anything.
 
 ### Interfaces and visible text
@@ -104,7 +105,8 @@ This rule exists because coding agents keep rebuilding shadcn components from me
 - The app opens straight into the working view. Do not add landing, welcome or onboarding screens, slogans or decorative pages.
 - Labels say literally what happens, such as "Stop", "Retry" or "Allow once".
 - Every view has loading, empty and error states, and an error says what failed and what the owner can do.
-- The UI meets WCAG 2.1 AA and works fully from the keyboard.
+- Every action works from the keyboard, with visible focus.
+- Use the same shell regions, navigation and form layouts as comparable Mannie views. Compare the rendered result with an existing view and check the controls in both themes, including open menus and expanded sections.
 - The interface is English for now and must stay ready for other languages: messages from the catalog, dates and numbers through `Intl`, layouts that survive longer text, and logical (start and end) styling in Mannie's own components.
 
 ### Writing
