@@ -39,6 +39,7 @@ ignore = [
   { id = "RUSTSEC-2026-0370", reason = "zvariant is unmaintained and merged into zbus 6, with no known vulnerability; it comes through zbus 5, which the credential store and Tauri's plugins still require" },
   { id = "RUSTSEC-2026-0371", reason = "zbus_names is unmaintained and merged into zbus 6, with no known vulnerability; it comes through zbus 5, which the credential store and Tauri's plugins still require" },
   { id = "RUSTSEC-2026-0372", reason = "zvariant_derive is unmaintained and merged into zbus 6, with no known vulnerability; it comes through zbus 5, which the credential store and Tauri's plugins still require" },
+  { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained, with no known vulnerability or patched version; rmcp 3.9.0, oauth2 5.0.0 and schemars 1.2.3 require it transitively. Recheck when those crates can use jiff or time instead" },
 ]
 
 [licenses]

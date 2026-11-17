@@ -4,9 +4,16 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+## 0.8.4 - 2026-11-17
+
 ### Fixed
 
 - Remove tool-round and tool-call caps so long assignments can continue, including child and worker tasks; remove the obsolete limits from the agent editor.
+- Keep the Rust lint and mention end-to-end checks passing for the tool-limit change.
+
+### Changed
+
+- Track the unmaintained `chrono` dependency in MCP until its upstream libraries can replace it.
 
 ## 0.8.3 - 2026-11-17
 

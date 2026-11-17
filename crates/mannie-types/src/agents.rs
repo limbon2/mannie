@@ -538,11 +538,11 @@ mod tests {
 
         let mut rounds = draft();
         rounds.max_tool_rounds = 0;
-        assert!(rounds.check_fields().is_ok());
+        rounds.check_fields().unwrap();
 
         let mut calls = draft();
         calls.max_tool_calls = MAX_AGENT_TOOL_CALLS + 1;
-        assert!(calls.check_fields().is_ok());
+        calls.check_fields().unwrap();
     }
 
     #[test]
@@ -560,7 +560,7 @@ mod tests {
 
         assert_eq!(restored.max_tool_rounds, 0);
         assert_eq!(restored.max_tool_calls, 0);
-        assert!(restored.check_fields().is_ok());
+        restored.check_fields().unwrap();
     }
 
     #[test]

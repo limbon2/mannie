@@ -183,7 +183,9 @@ describe('mentions', () => {
     await waitForOption('docs/release plan.md');
     await browser.keys(Key.Enter);
 
-    expect(await $(COMPOSER).getValue()).toBe('Plan from @"docs/release plan.md" ');
+    await browser.waitUntil(async () => (await $(COMPOSER).getValue()) === 'Plan from @"docs/release plan.md" ', {
+      timeoutMsg: 'the mention was not inserted after choosing it',
+    });
     expect(await listShows()).toBe(false);
     expect(await chipLabels()).toEqual(['docs/release plan.md']);
     await clear();
