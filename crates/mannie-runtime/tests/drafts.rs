@@ -6,15 +6,16 @@
 
 use std::fs;
 
-use mannie_runtime::testing::{Harness, reply};
+use mannie_provider::testing::{FixtureResponse, FixtureServer};
+use mannie_runtime::testing::{Harness, HarnessOptions, reply, sign_in_chatgpt};
 use mannie_types::chat::{
-    ChatError, OpenDraft, RenameConversation, SendMessage, SetConversationReasoningEffort,
-    StartConversation,
+    ChatError, OpenDraft, RenameConversation, SendMessage, SetConversationProfile,
+    SetConversationReasoningEffort, StartConversation,
 };
 use mannie_types::context::AttachmentRef;
 use mannie_types::ids::{ConversationId, ProjectId};
 use mannie_types::projects::RemoveProject;
-use mannie_types::provider::ReasoningEffort;
+use mannie_types::provider::{ApiInterface, ReasoningEffort};
 use mannie_types::transcript::{ConversationSummary, TitleSource};
 
 async fn summary(harness: &Harness, conversation: &ConversationId) -> Option<ConversationSummary> {
@@ -87,6 +88,69 @@ async fn opening_two_drafts_of_a_place_at_once_creates_one() {
     );
 
     assert_eq!(first.unwrap(), second.unwrap());
+}
+
+#[tokio::test]
+async fn choosing_default_in_a_draft_pins_the_catalog_model_available_at_first_send() {
+    let harness = Harness::with_options(HarnessOptions {
+        interface: ApiInterface::Responses,
+        ..HarnessOptions::default()
+    })
+    .await;
+    let server = FixtureServer::start().await.unwrap();
+    harness
+        .runtime
+        .delete_profile(&harness.profile.id)
+        .await
+        .unwrap();
+    sign_in_chatgpt(
+        &harness.runtime,
+        &server,
+        "user-1",
+        "access",
+        "refresh",
+        false,
+    )
+    .await;
+    let catalog = serde_json::json!({"models": [
+        {"slug": "first", "visibility": "list"},
+        {"slug": "second", "visibility": "list"}
+    ]});
+    server.respond(FixtureResponse::json(200, catalog.to_string()));
+    harness.runtime.refresh_chatgpt_catalog().await.unwrap();
+
+    let draft = harness
+        .runtime
+        .open_draft(OpenDraft::default())
+        .await
+        .unwrap();
+    let first = harness.store.default_profile().await.unwrap().unwrap();
+    assert_eq!(first.model, "first");
+    for profile_id in [Some(first.id), None] {
+        harness
+            .runtime
+            .set_conversation_profile(SetConversationProfile {
+                conversation_id: draft.clone(),
+                profile_id,
+            })
+            .await
+            .unwrap();
+    }
+    assert_eq!(summary(&harness, &draft).await.unwrap().profile_id, None);
+
+    server.respond(FixtureResponse::json(
+        200,
+        r#"{"models":[{"slug":"second","visibility":"list"}]}"#,
+    ));
+    harness.runtime.refresh_chatgpt_catalog().await.unwrap();
+    send(&harness, &draft, "Use the current default").await;
+
+    let current = harness.store.default_profile().await.unwrap().unwrap();
+    assert_eq!(harness.model.reply_requests()[0].model, "second");
+    assert_eq!(
+        summary(&harness, &draft).await.unwrap().profile_id,
+        Some(current.id)
+    );
 }
 
 #[tokio::test]

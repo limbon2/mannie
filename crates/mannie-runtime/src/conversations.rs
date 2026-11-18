@@ -18,7 +18,7 @@ use mannie_types::context::{Attachment, AttachmentRef, ChangeAttachment};
 use mannie_types::ids::{ConversationId, ProfileId, ProjectId};
 use mannie_types::images::check_images;
 use mannie_types::mentions::{MentionRef, check_mentions};
-use mannie_types::provider::{ReasoningEffort, context_budget};
+use mannie_types::provider::context_budget;
 use mannie_types::transcript::{Checkpoint, ConversationSummary};
 
 use crate::actor::RunModel;
@@ -27,7 +27,7 @@ use crate::calls::CallOptions;
 use crate::chatgpt::QueuedAccount;
 use crate::compaction::Trigger;
 use crate::hub::{ConversationSubscription, ListSubscription};
-use crate::profiles::supports_reasoning_effort;
+use crate::profiles::{effort_for_model, supports_reasoning_effort};
 use crate::{Busy, Runtime, lock};
 
 /// A conversation that a command has reserved: for a new run, or for the
@@ -206,11 +206,9 @@ impl Runtime {
             .summary
             .as_ref()
             .and_then(|summary| summary.reasoning_effort);
-        let effort = match requested {
-            Some(effort) if supports_reasoning_effort(profile, effort) => effort,
-            Some(_) => ReasoningEffort::ServerDefault,
-            None => profile.reasoning_effort,
-        };
+        let effort = requested.map_or(profile.reasoning_effort, |effort| {
+            effort_for_model(profile, effort)
+        });
         let _mailbox = self.spawn_run(
             reservation.conversation.clone(),
             turn.clone(),
@@ -746,32 +744,25 @@ impl Runtime {
         self.refuse_when_task_conversation(&input.conversation_id)
             .await?;
 
-        let profile_id = if let Some(id) = input.profile_id {
+        if let Some(id) = &input.profile_id {
             let profile = self
                 .inner
                 .store
-                .profile(&id)
+                .profile(id)
                 .await
                 .map_err(|error| profile_store_failure(&error))?
                 .ok_or(ChatError::ProfileNotFound)?;
             available_profile(profile)?;
-            Some(id)
-        } else {
-            self.inner
-                .store
-                .default_profile()
-                .await
-                .map_err(|error| profile_store_failure(&error))?
-                .filter(|profile| profile.catalog_account.is_some())
-                .map(|profile| profile.id)
-        };
+        }
 
         self.inner
             .hubs
             .apply(
                 &self.inner.store,
                 &input.conversation_id,
-                vec![Change::SetProfile { profile_id }],
+                vec![Change::SetProfile {
+                    profile_id: input.profile_id,
+                }],
                 Durability::Full,
             )
             .await
@@ -927,8 +918,12 @@ impl Runtime {
             .ok_or(ChatError::ConversationNotFound)?;
         refuse_task_conversation(&summary)?;
         let profile = self.profile_for(summary.profile_id.as_ref()).await?;
+        let account = self
+            .account_for_run(&profile)
+            .await
+            .map_err(|failure| ChatError::CompactionFailed { failure })?;
         let setup = self
-            .setup_for(&profile, CONVERSATION_AGENT, false, None)
+            .setup_for(&profile, CONVERSATION_AGENT, false, account.as_ref())
             .await
             .map_err(|failure| ChatError::CompactionFailed { failure })?;
         let prepared = self

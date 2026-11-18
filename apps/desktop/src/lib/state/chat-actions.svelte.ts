@@ -172,7 +172,7 @@ export class ChatActions {
       const outcome = await call(write);
       return outcome.ok ? null : outcome.failure;
     };
-    const pending = previous === null ? save() : previous.then(save);
+    const pending = previous === null ? save() : previous.then((failure) => failure ?? save());
     this.#modelChanges.set(id, pending);
     try {
       return await pending;

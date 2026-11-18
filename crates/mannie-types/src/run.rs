@@ -279,6 +279,10 @@ pub enum RunFailure {
     /// The conversation's provider profile no longer exists.
     #[error("the provider profile no longer exists")]
     ProfileMissing,
+    /// The profile switched between an endpoint and the ChatGPT plan after
+    /// the reply was queued.
+    #[error("the provider profile's access changed during the reply")]
+    ProfileAccessChanged,
     /// The agent of the run no longer exists, because the owner deleted it
     /// while the run waited (ADR-0059, decision 12).
     #[error("the agent no longer exists")]
@@ -359,6 +363,7 @@ impl RunFailure {
             Self::CredentialMissing => "run.credential_missing",
             Self::CredentialStoreUnavailable => "run.credential_store_unavailable",
             Self::ProfileMissing => "run.profile_missing",
+            Self::ProfileAccessChanged => "run.profile_access_changed",
             Self::AgentMissing => "run.agent_missing",
             Self::NoProfile => "run.no_profile",
             Self::ToolsUnsupported => "run.tools_unsupported",

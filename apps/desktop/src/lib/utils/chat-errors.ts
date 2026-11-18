@@ -108,6 +108,9 @@ export function runFailureMessage(failure: RunFailure): string {
     case 'profile_missing': {
       return m.chat_failure_profile_missing();
     }
+    case 'profile_access_changed': {
+      return m.chat_failure_profile_access_changed();
+    }
     case 'quota_exceeded': {
       return m.chat_failure_quota_exceeded();
     }

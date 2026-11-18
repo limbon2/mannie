@@ -124,6 +124,7 @@ async fn each_call_on_the_plan_carries_the_accounts_token() {
     .await;
     plan_profile(&harness.runtime, "gpt-6.1-sol", false).await;
     harness.model.push_reply(reply("Hello."));
+    harness.model.push_reply(reply("Welcome."));
 
     let started = start(&harness, "Hi").await;
     let transcript = harness
@@ -134,7 +135,25 @@ async fn each_call_on_the_plan_carries_the_accounts_token() {
         transcript.run(&started.run_id).unwrap().state,
         RunState::Completed
     );
-    assert_eq!(harness.model.credentials(), [Some("access-1".to_owned())]);
+    let conversation = started.conversation_id;
+    let second = harness
+        .runtime
+        .send_message(SendMessage::new(conversation.clone(), "Hello again"))
+        .await
+        .unwrap();
+
+    harness.wait_for_run(&conversation, &second.run_id).await;
+    harness
+        .runtime
+        .compact_conversation(&conversation)
+        .await
+        .unwrap();
+
+    assert_eq!(harness.model.summary_requests().len(), 1);
+    assert_eq!(
+        harness.model.credentials(),
+        vec![Some("access-1".to_owned()); 3]
+    );
 }
 
 #[tokio::test]
@@ -459,9 +478,8 @@ async fn an_unconfirmed_revocation_still_forgets_the_tokens() {
     );
 }
 
-#[tokio::test]
-async fn queued_runs_cannot_bill_another_account_that_lists_the_same_model() {
-    let harness = Harness::with_options(HarnessOptions {
+async fn single_slot_harness() -> Harness {
+    Harness::with_options(HarnessOptions {
         interface: ApiInterface::Responses,
         config: mannie_runtime::RuntimeConfig {
             max_concurrent_calls: 1,
@@ -469,7 +487,101 @@ async fn queued_runs_cannot_bill_another_account_that_lists_the_same_model() {
         },
         ..HarnessOptions::default()
     })
+    .await
+}
+
+async fn hold_model_slot(harness: &Harness) -> StartedConversation {
+    harness.model.push_reply(vec![
+        Step::Event(ProviderEvent::TextDelta("Holding".to_owned())),
+        Step::Hang,
+    ]);
+
+    let blocker = start(harness, "Hold the slot").await;
+
+    harness
+        .wait_until(&blocker.conversation_id, |transcript| {
+            transcript.reply_text(0) == "Holding"
+        })
+        .await;
+    blocker
+}
+
+async fn wait_for_slot(harness: &Harness, started: &StartedConversation) {
+    harness
+        .wait_until(&started.conversation_id, |transcript| {
+            transcript
+                .run(&started.run_id)
+                .is_some_and(|run| run.activity == Some(RunActivity::WaitingForSlot))
+        })
+        .await;
+}
+
+#[tokio::test]
+async fn queued_runs_cannot_switch_between_an_endpoint_and_the_plan() {
+    let harness = single_slot_harness().await;
+    let server = FixtureServer::start().await.unwrap();
+
+    sign_in_chatgpt(
+        &harness.runtime,
+        &server,
+        "owner",
+        "access",
+        "refresh",
+        false,
+    )
     .await;
+
+    let blocker = hold_model_slot(&harness).await;
+    let plan = plan_profile(&harness.runtime, "gpt-5", false).await;
+    let mut queued = Vec::new();
+
+    for (profile, access) in [
+        (&harness.profile, ProfileAccess::ChatGptPlan),
+        (&plan, ProfileAccess::Endpoint),
+    ] {
+        let mut input = StartConversation::new("For the original provider only");
+        input.profile_id = Some(profile.id.clone());
+
+        let started = harness.runtime.start_conversation(input).await.unwrap();
+
+        wait_for_slot(&harness, &started).await;
+
+        let draft = ProfileDraft {
+            name: profile.name.clone(),
+            access,
+            interface: ApiInterface::Responses,
+            base_url: "http://127.0.0.1:9/v1".to_owned(),
+            model: "gpt-5".to_owned(),
+            context_window: 128_000,
+            output_limit: 16_384,
+            reasoning_effort: ReasoningEffort::ServerDefault,
+            use_tools: false,
+        };
+        harness
+            .runtime
+            .update_profile(&profile.id, draft, CredentialChange::Keep)
+            .await
+            .unwrap();
+        queued.push(started);
+    }
+
+    harness.runtime.stop_reply(&blocker.conversation_id).await;
+
+    for started in queued {
+        let transcript = harness
+            .wait_for_run(&started.conversation_id, &started.run_id)
+            .await;
+        assert_eq!(
+            failure_at(&transcript, 0),
+            Some(RunFailure::ProfileAccessChanged)
+        );
+    }
+    assert_eq!(harness.model.reply_requests().len(), 1);
+}
+
+#[tokio::test]
+async fn queued_runs_cannot_bill_another_account_that_lists_the_same_model() {
+    let harness = single_slot_harness().await;
     let server = FixtureServer::start().await.unwrap();
 
     sign_in_chatgpt(
@@ -494,19 +606,7 @@ async fn queued_runs_cannot_bill_another_account_that_lists_the_same_model() {
         .into_iter()
         .find(|profile| profile.catalog.is_some())
         .unwrap();
-
-    harness.model.push_reply(vec![
-        Step::Event(ProviderEvent::TextDelta("Holding".to_owned())),
-        Step::Hang,
-    ]);
-
-    let blocker = start(&harness, "Hold the slot").await;
-
-    harness
-        .wait_until(&blocker.conversation_id, |transcript| {
-            transcript.reply_text(0) == "Holding"
-        })
-        .await;
+    let blocker = hold_model_slot(&harness).await;
 
     let custom = plan_profile(&harness.runtime, "shared-model", false).await;
     let mut queued = Vec::new();
@@ -517,13 +617,7 @@ async fn queued_runs_cannot_bill_another_account_that_lists_the_same_model() {
 
         let started = harness.runtime.start_conversation(input).await.unwrap();
 
-        harness
-            .wait_until(&started.conversation_id, |transcript| {
-                transcript
-                    .run(&started.run_id)
-                    .is_some_and(|run| run.activity == Some(RunActivity::WaitingForSlot))
-            })
-            .await;
+        wait_for_slot(&harness, &started).await;
         queued.push(started);
     }
 

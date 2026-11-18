@@ -810,6 +810,70 @@ async fn runs_beyond_the_slot_limit_wait_their_turn() {
 }
 
 #[tokio::test]
+async fn a_queued_effort_falls_back_when_the_profile_switches_to_an_incompatible_model() {
+    let harness = Harness::with_options(HarnessOptions {
+        config: RuntimeConfig {
+            max_concurrent_calls: 1,
+            ..fast_config()
+        },
+        ..HarnessOptions::default()
+    })
+    .await;
+    let mut profile = draft(harness.profile.interface);
+    profile.model = "gpt-5".to_owned();
+    profile.reasoning_effort = ReasoningEffort::High;
+    harness
+        .runtime
+        .update_profile(&harness.profile.id, profile.clone(), CredentialChange::Keep)
+        .await
+        .unwrap();
+    harness.model.push_reply(vec![
+        Step::Event(ProviderEvent::TextDelta("Holding".to_owned())),
+        Step::Hang,
+    ]);
+    harness.model.push_reply(reply("Second"));
+
+    let first = start(&harness, "First").await;
+
+    harness
+        .wait_until(&first.conversation_id, |transcript| {
+            transcript.reply_text(0) == "Holding"
+        })
+        .await;
+
+    let second = start(&harness, "Second").await;
+
+    harness
+        .wait_until(&second.conversation_id, |transcript| {
+            transcript
+                .run(&second.run_id)
+                .is_some_and(|run| run.activity == Some(RunActivity::WaitingForSlot))
+        })
+        .await;
+
+    profile.model = "gpt-4o".to_owned();
+    profile.reasoning_effort = ReasoningEffort::ServerDefault;
+    harness
+        .runtime
+        .update_profile(&harness.profile.id, profile, CredentialChange::Keep)
+        .await
+        .unwrap();
+    harness.runtime.stop_reply(&first.conversation_id).await;
+
+    let transcript = harness
+        .wait_for_run(&second.conversation_id, &second.run_id)
+        .await;
+
+    assert_eq!(
+        transcript.run_state(&second.run_id),
+        Some(RunState::Completed)
+    );
+    let [request] = harness.model.requests_for("Second").try_into().unwrap();
+    assert_eq!(request.model, "gpt-4o");
+    assert_eq!(request.reasoning_effort, ReasoningEffort::ServerDefault);
+}
+
+#[tokio::test]
 async fn a_credential_that_cannot_be_read_fails_the_run_with_the_cause() {
     let harness = Harness::start().await;
     let reference = harness.vault.references().remove(0);

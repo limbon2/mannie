@@ -179,6 +179,17 @@ pub(crate) fn supports_reasoning_effort(profile: &StoredProfile, effort: Reasoni
         || supported_efforts(profile).is_none_or(|values| values.contains(&effort))
 }
 
+pub(crate) fn effort_for_model(
+    profile: &StoredProfile,
+    effort: ReasoningEffort,
+) -> ReasoningEffort {
+    if supports_reasoning_effort(profile, effort) {
+        effort
+    } else {
+        ReasoningEffort::ServerDefault
+    }
+}
+
 fn profile_view(profile: &StoredProfile) -> ProviderProfile {
     let mut view = profile.view();
     view.supported_efforts = supported_efforts(profile);

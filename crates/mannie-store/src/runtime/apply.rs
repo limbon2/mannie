@@ -106,8 +106,8 @@ const MARK_DRAFT: &str = "UPDATE runtime_conversations SET draft = 1 WHERE id = 
 // A draft that the owner renamed keeps the owner's title (ADR-0068, decision 4).
 const UNDRAFT: &str = "UPDATE runtime_conversations SET draft = 0,      title = CASE WHEN title_source = 'owner' THEN title ELSE ?2 END      WHERE id = ?1 AND draft = 1";
 const SET_PROFILE: &str = "UPDATE runtime_conversations SET profile_id = ?2 WHERE id = ?1";
-const PIN_DEFAULT_PROFILE: &str =
-    "UPDATE runtime_conversations SET profile_id = ?2 WHERE id = ?1 AND profile_id IS ?3";
+const PIN_DEFAULT_PROFILE: &str = "UPDATE runtime_conversations SET profile_id = ?2 \
+     WHERE id = ?1 AND profile_id IS ?3 AND profile_id IS NOT ?2";
 const SET_REASONING_EFFORT: &str =
     "UPDATE runtime_conversations SET reasoning_effort = ?2 WHERE id = ?1";
 const REMEMBER_REASONING_EFFORT: &str = "INSERT INTO runtime_reasoning_preference (singleton, reasoning_effort) VALUES (1, ?1) \
@@ -558,19 +558,23 @@ impl Batch<'_> {
         self.set_summary_field(SET_PROFILE, &profile)
     }
 
-    /// Committed with the turn that publishes the new summary.
     fn pin_default_profile(
-        &self,
+        &mut self,
         previous: Option<&ProfileId>,
         profile: &ProfileId,
     ) -> Result<(), RuntimeStoreError> {
-        self.transaction
+        let changed = self
+            .transaction
             .prepare_cached(PIN_DEFAULT_PROFILE)?
             .execute(params![
                 self.conversation,
                 profile.as_str(),
                 previous.map(ProfileId::as_str),
             ])?;
+        if changed > 0 {
+            self.append(kinds::CONVERSATION_CHANGED, None, &EventBody::empty())?;
+            self.summary_changed = true;
+        }
         Ok(())
     }
 

@@ -29,7 +29,8 @@ A profile names one model on one server. The core validates every field; the web
 
 - Known models have defaults for the context window and the output limit, kept with their verification dates in `crates/mannie-provider/src/models.rs`. When the server reports a model's limits, the provider test shows them, and the owner can apply them.
 - The first owner-created profile becomes the default. Deleting the default makes the oldest remaining owner-created profile the default. Conversations that used a deleted profile fall back to the default. A running reply holds its profile until it ends.
-- When there is no configured default, a new conversation can use the first listed plan model. Once a conversation sends on that model, it keeps the selection.
+- Choosing Default clears the chat's model selection. When there is no configured default, sending uses the first listed plan model and saves that selection in the chat.
+- A queued reply stops if its profile switches between an API endpoint and the ChatGPT plan. The owner can review the provider and retry. If the model changes within the same profile, it uses the queued effort when supported and the server default otherwise.
 - Each profile has a configuration revision that increases when the access, the API interface, the base URL, the model or the credential changes. Provider-private data, such as encrypted reasoning, is bound to the profile and its revision and replayed only to that binding ([ADR-0011](../../adr/0011-own-the-provider-adapters.md), decision 6). A plan profile's binding also holds the key of its ChatGPT account ([plan profiles](#plan-profiles)).
 
 ### Plan profiles

@@ -500,19 +500,20 @@ impl RunActor {
         .await?;
         self.child_started().await;
 
-        let mut setup = {
+        let setup = {
             let runtime = self.runtime.clone();
             let profile = self.profile.clone();
             let agent = self.agent.clone();
             let task = self.child.is_some();
             let assigned = self.assigned.clone();
             let account = self.account.clone().map_err(Ending::Failed)?;
+            let effort = self.reasoning_effort;
             self.wait(async move {
                 match assigned {
                     Some(assigned) => runtime.assigned_setup(&assigned, &agent).await,
                     None => {
                         runtime
-                            .load_setup(&profile, &agent, task, account.as_ref())
+                            .load_setup(&profile, &agent, task, account.as_ref(), effort)
                             .await
                     }
                 }
@@ -520,7 +521,7 @@ impl RunActor {
             .await?
             .map_err(Ending::Failed)?
         };
-        setup.reasoning_effort = self.reasoning_effort;
+        self.reasoning_effort = setup.reasoning_effort;
         self.binding.clone_from(&setup.binding);
         self.task_tools = setup
             .task_definitions

@@ -43,7 +43,7 @@ use crate::instructions::{
 };
 use crate::plugin_tools::{OfferedPluginTool, offered_tools};
 use crate::plugins::Snapshot;
-use crate::profiles::{VaultError, in_vault};
+use crate::profiles::{VaultError, effort_for_model, in_vault};
 use crate::retry::RetryDecision;
 use crate::{Runtime, lock, plans, questions, tasks, texts};
 
@@ -429,8 +429,9 @@ impl Runtime {
         agent: &str,
         task: bool,
         account: Option<&AccountKey>,
+        effort: ReasoningEffort,
     ) -> Result<Setup, RunFailure> {
-        let profile = match self.inner.store.profile(profile_id).await {
+        let mut profile = match self.inner.store.profile(profile_id).await {
             Ok(Some(profile)) => profile,
             Ok(None) => return Err(RunFailure::ProfileMissing),
             Err(error) => {
@@ -439,6 +440,8 @@ impl Runtime {
             }
         };
 
+        // The profile may name another model by the time a slot is available.
+        profile.reasoning_effort = effort_for_model(&profile, effort);
         self.setup_for(&profile, agent, task, account).await
     }
 
@@ -700,10 +703,13 @@ impl Runtime {
         profile: &StoredProfile,
         expected: Option<&AccountKey>,
     ) -> Result<Route, RunFailure> {
-        if profile.access == ProfileAccess::ChatGptPlan {
+        if (profile.access == ProfileAccess::ChatGptPlan) != expected.is_some() {
+            return Err(RunFailure::ProfileAccessChanged);
+        }
+        if let Some(expected) = expected {
             let key = self.chatgpt_key().await?;
 
-            if expected.is_some_and(|expected| expected != &key) {
+            if expected != &key {
                 return Err(RunFailure::ChatGptAccountChanged);
             }
             if let Some(account) = &profile.catalog_account
@@ -720,10 +726,6 @@ impl Runtime {
                 credential: CallCredential::ChatGptAccount { key },
             });
         }
-        if expected.is_some() {
-            return Err(RunFailure::ChatGptAccountChanged);
-        }
-
         let base_url = check_base_url(&profile.base_url).map_err(|error| {
             tracing::error!(error.code = error.code(), "a stored base URL is not valid");
             RunFailure::Internal

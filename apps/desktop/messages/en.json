@@ -452,6 +452,7 @@
   "chat_failure_credential_missing": "The profile's API key is missing from the credential store. Enter it again in the provider settings.",
   "chat_failure_credential_store_unavailable": "The credential store could not be read. Unlock it, then retry.",
   "chat_failure_profile_missing": "The provider profile of this reply no longer exists. Choose another profile, then retry.",
+  "chat_failure_profile_access_changed": "This profile switched between an API endpoint and the ChatGPT plan. Check the selected provider before retrying.",
   "chat_failure_no_profile": "No model is available. Sign in to ChatGPT or add a provider profile in Settings.",
   "chat_error_unsupported_reasoning_effort": "This model does not support that reasoning effort. Choose another effort.",
   "chat_failure_internal": "Mannie failed while writing this reply. Retry, and report the problem with the log file if it happens again.",
