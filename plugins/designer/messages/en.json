@@ -1,0 +1,22 @@
+{
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "designer_plugin_name": "Designer",
+  "designer_plugin_description": "A design surface beside the conversation.",
+  "designer_navigation_label": "Designer",
+  "designer_view_title": "Designer",
+  "designer_blank_state": "Hello Designer plugin",
+  "designer_greeting": "Hello, {name}",
+  "designer_projects_title": "Projects",
+  "designer_projects_add": "Add a project",
+  "designer_projects_empty": "No projects yet",
+  "designer_projects_loading": "Loading the projects…",
+  "designer_projects_failed": "The projects could not be read.",
+  "designer_try_again": "Try again",
+  "designer_create_title": "New project",
+  "designer_create_description": "Names a project that the design surface belongs to.",
+  "designer_name_label": "Project name",
+  "designer_create_confirm": "Create project",
+  "designer_cancel": "Cancel",
+  "designer_error_name_taken": "Another project has that name. Choose another one.",
+  "designer_error_storage_failed": "The Designer plugin could not save the project. Try again."
+}

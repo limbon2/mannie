@@ -1,0 +1,16 @@
+#:schema ../../crates/mannie-plugin-sdk/plugin.schema.json
+# The Designer plugin (plugins/designer/docs/README.md): a design surface
+# beside the conversation, which the owner opens from the activity bar, with
+# the owner's projects in its sidebar.
+
+id = "designer"
+sdk = 1
+# After Browser, and the Plugins page lists it after Browser too.
+order = 85
+
+[rust]
+entry = "mannie-designer"
+
+[services]
+# The table of the projects.
+store = 1
