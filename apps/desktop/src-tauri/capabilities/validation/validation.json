@@ -7,6 +7,7 @@
     "allow-stream-validation-events",
     "allow-validation-browser-evaluate",
     "allow-validation-browser-surface",
+    "allow-validation-graphics-surfaces",
     "allow-validation-close-main-window",
     "allow-validation-expire-chatgpt-token",
     "allow-validation-opened-links",

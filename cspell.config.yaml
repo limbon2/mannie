@@ -66,6 +66,7 @@ words:
   - fsmonitor
   - getrandom
   - globset
+  - glutin
   - HMAC
   - htpasswd
   - huntabyte
@@ -88,6 +89,7 @@ words:
   - libdbus
   - libexec
   - libgit
+  - libjpeg
   - libqca
   - libsqlite
   - libssh
@@ -183,6 +185,7 @@ words:
   - setext
   - setsid
   - SIGSTOP
+  - Skia
   - Slint
   - smol
   - spatials

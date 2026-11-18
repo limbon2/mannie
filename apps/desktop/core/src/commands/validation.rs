@@ -283,6 +283,19 @@ pub(crate) async fn validation_seed_conversation(
         })
 }
 
+/// Native graphics windows and the pixels in their most recent successful presentation.
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn validation_graphics_surfaces(
+    core: State<'_, Core>,
+) -> Result<Vec<crate::graphics::GraphicsSurfaceReport>, CommandError<ValidationError>> {
+    let graphics = core.graphics().ok_or(ValidationError::CoreUnavailable)?;
+    graphics
+        .surfaces()
+        .await
+        .map_err(|_closed| CommandError::new(ValidationError::Failed))
+}
+
 /// Where each Browser page window of a conversation is: shown, enabled,
 /// focused and placed in the main window's client pixels (V13). The pages are
 /// native windows that WebDriver cannot see.

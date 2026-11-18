@@ -12,5 +12,7 @@ order = 85
 entry = "mannie-designer"
 
 [services]
+# The native viewport of the active project.
+graphics = 1
 # The table of the projects.
 store = 1

@@ -113,11 +113,15 @@ tempfile = { workspace = true }
 # test-util lets the channel tests run on a paused clock.
 tokio = { workspace = true, features = ["macros", "rt", "sync", "test-util", "time"] }
 
+[target."cfg(windows)".dependencies]
+# A child window gives glutin and Skia a native OpenGL surface (ADR-0073).
+glutin = { workspace = true }
+raw-window-handle = { workspace = true }
+skia-safe = { workspace = true }
 # The Browser plugin's pages are WebView2 webviews that the core hosts itself,
 # outside Tauri's webview manager, so they get no IPC bridge, and a session's
 # processes stay in a job of its own (ADR-0064, decision 2). Tauri already
 # brings both crates.
-[target."cfg(windows)".dependencies]
 webview2-com = { workspace = true }
 windows = {
   workspace = true,
@@ -129,6 +133,7 @@ windows = {
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
     "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
   ]
 }

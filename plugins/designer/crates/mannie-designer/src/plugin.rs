@@ -18,6 +18,7 @@ use mannie_plugin_sdk::contracts::{Clock, UtcMillis};
 use mannie_plugin_sdk::error::StartFailure;
 use mannie_plugin_sdk::ipc::{Handlers, Interface, PluginStream};
 use mannie_plugin_sdk::plugin::{Instance, Plugin, Started};
+use mannie_plugin_sdk::services::graphics::Graphics;
 use mannie_plugin_sdk::services::store::{Store, StoreModule};
 use tokio::sync::watch;
 
@@ -61,7 +62,7 @@ fn project_view(project: &ProjectRecord) -> ProjectView {
 
 /// The projects of a start, and what the plugin reaches of the store.
 #[derive(Debug)]
-struct Projects {
+pub(crate) struct Projects {
     clock: Arc<dyn Clock>,
     /// The projects, the newest first.
     list: Mutex<Vec<ProjectView>>,
@@ -71,6 +72,11 @@ struct Projects {
 }
 
 impl Projects {
+    /// Whether an owner-created project can open a viewport in this start.
+    pub(crate) fn contains(&self, id: &str) -> bool {
+        lock(&self.list).iter().any(|project| project.id == id)
+    }
+
     /// Reads the projects that the owner created before this start.
     async fn load(store: DesignerStore, clock: Arc<dyn Clock>) -> Result<Self, WriteFailure> {
         let projects = store
@@ -179,7 +185,11 @@ impl DesignerPlugin {
             })?;
 
         let projects = Arc::new(projects);
-        let handlers = handlers(&projects);
+        let handlers = crate::viewport::handlers(
+            handlers(&projects),
+            Arc::clone(&projects),
+            context.service::<Graphics>()?,
+        );
         tracing::info!("the plugin designer started");
         Ok(Started::new(DesignerInstance { projects }).with_handlers(handlers))
     }

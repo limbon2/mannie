@@ -4,6 +4,7 @@
 pub mod commands;
 pub mod plugin;
 mod store;
+mod viewport;
 
 pub use plugin::{DESIGNER, DesignerPlugin};
 

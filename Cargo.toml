@@ -51,6 +51,8 @@ fastrand = "2.5.0"
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 # Glob patterns of `find_files`, as the `ignore` crate matches them.
 globset = "0.4.20"
+# The native graphics surface's WGL context and swap chain.
+glutin = { version = "0.32.3", default-features = false, features = ["wgl"] }
 # Walking folders the way `.gitignore` files say, for `find_files` and
 # `search_text`.
 ignore = "0.4.33"
@@ -78,6 +80,8 @@ minisign-verify = "0.3.0"
 # The source checker uses the parser's spans to report where conditions need names.
 proc-macro2 = "1.0.107"
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
+# The child window that the desktop supplies to glutin.
+raw-window-handle = "0.6.2"
 regex = "1.13.1"
 # Without the default TLS feature, which brings the aws-lc crypto provider that
 # deny.toml bans: rustls with ring only (ADR-0008, ADR-0011).
@@ -104,6 +108,8 @@ serde_json = "1.0.154"
 sha2 = "0.10.9"
 # Saved line diffs for successful file writes and edits.
 similar = "3.2.1"
+# Skia's OpenGL backend draws directly into the desktop child window.
+skia-safe = { version = "=0.157.0", features = ["gl"] }
 specta = { version = "=2.0.0-rc.25", features = ["derive"] }
 # Applies serde's attributes to the types before the plugins' bindings are
 # written; tauri-specta already depends on it (ADR-0034, decision 9).
@@ -207,9 +213,8 @@ string_lit_chars_any = "warn"
 suspicious_xor_used_as_pow = "warn"
 todo = "warn"
 try_err = "warn"
-# unsafe is limited to the platform modules of the process supervisor and the
-# WebView2 module of the desktop core, and every block there explains why it is
-# sound (engineering standards, ADR-0064).
+# Each unsafe block in the supervisor and the desktop core's native platform
+# modules explains why it is sound (engineering standards, ADR-0064, ADR-0073).
 undocumented_unsafe_blocks = "warn"
 unimplemented = "warn"
 unnecessary_safety_comment = "warn"
@@ -237,8 +242,7 @@ trivial_numeric_casts = "warn"
 unit_bindings = "warn"
 # Items that other crates cannot reach are pub(crate), so each crate's API stays small.
 unreachable_pub = "warn"
-# Platform modules of the process supervisor and the desktop core's WebView2
-# module opt in with #![expect(unsafe_code, reason = "...")].
+# Only the permitted platform modules opt in, with an explicit reason.
 unsafe_code = "deny"
 unsafe_op_in_unsafe_fn = "deny"
 unused_import_braces = "warn"

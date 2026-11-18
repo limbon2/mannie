@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                        |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Draft for review                                                                                                                                                                       |
-| Last updated | 2026-11-12                                                                                                                                                                             |
+| Last updated | 2026-11-18                                                                                                                                                                             |
 | Related      | [Repository](repository.md), [Releasing](releasing.md), [Security](../architecture/security.md), [Extension points](../architecture/extension-points.md), [AGENTS.md](../../AGENTS.md) |
 
 ## 1. Definition of Done
@@ -29,7 +29,7 @@ Nothing reaches `main` as a placeholder: no stubbed security checks, no TODO in 
 ## 2. Rust
 
 - Toolchain: the stable release pinned in `rust-toolchain.toml`, the 2024 edition, rustfmt with default settings, and clippy with warnings denied plus a selected set of pedantic lints configured in the workspace.
-- `unsafe` is forbidden everywhere except in the platform modules of the process supervisor and in the WebView2 platform module of `mannie-desktop-core`, whose COM API is `unsafe` throughout ([ADR-0064](../adr/0064-give-agents-an-isolated-browser-beside-the-conversation.md), decision 11). Each `unsafe` block there carries a `// SAFETY:` comment that explains why it is sound.
+- Only the platform modules of the process supervisor, the WebView2 host and the Windows graphics host may use `unsafe`. Each block carries a `// SAFETY:` comment explaining its preconditions. [ADR-0064](../adr/0064-give-agents-an-isolated-browser-beside-the-conversation.md), [ADR-0073](../adr/0073-host-native-graphics-surfaces-for-desktop-plugins.md).
 - Structure: library crates hold the logic, and the binaries compose it. Modules follow responsibilities, public APIs stay small, and there is no global mutable state. Dependencies are passed in through constructors.
 - Errors: libraries define `thiserror` enums with stable codes. `anyhow` is allowed only in binaries and tests. `unwrap` and `expect` appear only in tests, or for an invariant with a message that explains why it holds. A panic is a bug.
 - Async: tokio. No blocking call runs on an async thread; blocking work goes to `spawn_blocking` or a dedicated thread. Cancellation uses cancellation tokens, timeouts are set at the boundaries, and channels are bounded.

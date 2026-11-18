@@ -56,6 +56,25 @@ describe('parseLock and renderLock', () => {
 });
 
 describe('seedLock', () => {
+  it('keeps each dependency on the version it used before the locks were combined', () => {
+    const core = lock([
+      ['bindings', '1.0.0'],
+      ['printer', '0.3.0', 'aa'],
+    ]);
+    const plugin = lock([
+      ['generator', '1.0.0'],
+      ['printer', '0.2.0', 'bb'],
+    ]);
+    for (const input of [core, plugin]) {
+      input.packages[0].text += '\ndependencies = [\n "printer",\n]';
+    }
+    const seed = seedLock([core, plugin]);
+    const bindings = seed.packages.find((entry) => entry.name === 'bindings');
+    const generator = seed.packages.find((entry) => entry.name === 'generator');
+    assert.ok(bindings?.text.includes(`"printer 0.3.0 (${REGISTRY})"`));
+    assert.ok(generator?.text.includes(`"printer 0.2.0 (${REGISTRY})"`));
+  });
+
   it('unites the packages of the locks, sorted, with the first lock winning', () => {
     const root = lock([
       ['tokio', '1.53.2', 'root'],

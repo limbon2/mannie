@@ -1,0 +1,8 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "bundle": {
+    "resources": {
+      "../../../release/skia-0.157.0-notices.txt": "licenses/windows-graphics.txt"
+    }
+  }
+}

@@ -8,6 +8,7 @@ pub mod browser;
 pub mod credentials;
 pub mod executor_host;
 pub mod file_dialog;
+pub mod graphics;
 pub mod local_servers;
 pub mod models;
 pub mod processes;
@@ -27,6 +28,7 @@ pub const SERVICES: &[ServiceInfo] = &[
     ServiceInfo::of::<credentials::Credentials>(),
     ServiceInfo::of::<executor_host::ExecutorHost>(),
     ServiceInfo::of::<file_dialog::FileDialog>(),
+    ServiceInfo::of::<graphics::Graphics>(),
     ServiceInfo::of::<local_servers::LocalServers>(),
     ServiceInfo::of::<models::Models>(),
     ServiceInfo::of::<processes::Processes>(),
@@ -55,6 +57,7 @@ mod tests {
     use crate::services::credentials::Credentials;
     use crate::services::executor_host::ExecutorHost;
     use crate::services::file_dialog::FileDialog;
+    use crate::services::graphics::Graphics;
     use crate::services::local_servers::LocalServers;
     use crate::services::models::Models;
     use crate::services::processes::Processes;
@@ -79,6 +82,7 @@ mod tests {
                 ("credentials", 1, true),
                 ("executor-host", 1, false),
                 ("file-dialog", 1, false),
+                ("graphics", 1, false),
                 ("local-servers", 1, true),
                 ("models", 1, true),
                 ("processes", 1, true),
@@ -98,6 +102,7 @@ mod tests {
             ServiceInfo::of::<Credentials>(),
             ServiceInfo::of::<ExecutorHost>(),
             ServiceInfo::of::<FileDialog>(),
+            ServiceInfo::of::<Graphics>(),
             ServiceInfo::of::<LocalServers>(),
             ServiceInfo::of::<Models>(),
             ServiceInfo::of::<Processes>(),

@@ -60,6 +60,17 @@ export interface WindowState {
   readonly visible: boolean;
 }
 
+/** A native child and two GPU pixels sampled from its last presented frame. */
+export interface GraphicsSurface {
+  readonly center: readonly number[] | null;
+  readonly corner: readonly number[] | null;
+  readonly height: number;
+  readonly visible: boolean;
+  readonly width: number;
+  readonly x: number;
+  readonly y: number;
+}
+
 /** A Browser page window as the core reports it (V13). */
 export interface BrowserSurface {
   readonly cursor: readonly [number, number] | null;
@@ -106,6 +117,7 @@ interface Harness {
   cspViolations(): readonly CspViolation[];
   deleteProviderProfiles(): Promise<number>;
   expireChatGptToken(): Promise<void>;
+  graphicsSurfaces(): Promise<GraphicsSurface[]>;
   insertHostileHtml(payloads: readonly string[]): Promise<boolean>;
   openedFileLinks(): Promise<{ kind: 'directory' | 'file'; path: string }[]>;
   openedLinks(): Promise<string[]>;
@@ -383,6 +395,17 @@ export async function windowState(): Promise<WindowState> {
       throw new Error('the validation harness is missing: run the validation build');
     }
     return harness.windowState();
+  });
+}
+
+/** Enumerates live native graphics windows independently of their webview leases. */
+export async function graphicsSurfaces(): Promise<GraphicsSurface[]> {
+  return browser.execute(async () => {
+    const harness = window.mannieValidation;
+    if (harness === undefined) {
+      throw new Error('the validation harness is missing: run the validation build');
+    }
+    return harness.graphicsSurfaces();
   });
 }
 

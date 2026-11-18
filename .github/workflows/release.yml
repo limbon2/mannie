@@ -336,6 +336,8 @@ jobs:
           Start-Process -FilePath "dist/mannie-$env:VERSION-windows-x86_64-setup.exe" -ArgumentList '/S' -Wait
           $app = Get-ChildItem -Path $env:LOCALAPPDATA -Recurse -Filter 'mannie-desktop.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($null -eq $app) { throw 'the installer did not install mannie-desktop.exe' }
+          $graphicsNotices = Join-Path $app.DirectoryName 'licenses/windows-graphics.txt'
+          if (!(Test-Path -LiteralPath $graphicsNotices -PathType Leaf)) { throw 'the Windows graphics notices were not installed' }
           $process = Start-Process -FilePath $app.FullName -PassThru
           Start-Sleep -Seconds 15
           if ($process.HasExited) { throw "the desktop app exited with code $($process.ExitCode)" }
@@ -495,6 +497,9 @@ jobs:
       - name: Write the third-party notices
         run: |
           cargo about generate --locked --config about.toml --manifest-path apps/desktop/src-tauri/Cargo.toml -o "dist/THIRD-PARTY-NOTICES-$VERSION-rust.md" about.hbs
+          # Skia's Windows archive also contains native libraries outside Cargo's graph.
+          skia="$(cargo pkgid --locked --manifest-path apps/desktop/src-tauri/Cargo.toml -p skia-bindings)"
+          cp "release/skia-${skia##*@}-notices.txt" "dist/THIRD-PARTY-NOTICES-$VERSION-windows-graphics.txt"
           node scripts/plugins/programs.mjs notices dist "$VERSION"
           pnpm licenses list --json --long --filter mannie-desktop | node scripts/third-party-notices.mjs > "dist/THIRD-PARTY-NOTICES-$VERSION-npm.md"
       # The static Linux programs still prove the embedded update key above.

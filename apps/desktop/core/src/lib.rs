@@ -20,6 +20,7 @@ mod export;
 mod file_dialog;
 mod file_links;
 mod folder_dialog;
+mod graphics;
 mod ipc;
 mod links;
 mod plugin_ipc;
@@ -87,8 +88,13 @@ pub fn run(context: Context<Wry>, plugins: Vec<PluginEntry>) -> anyhow::Result<(
     // Taken before the event loop takes the app: Mannie starts again after an
     // install with the arguments that it was started with.
     let env = app.env();
-    let exit_code = app.run_return(|_app, event| {
+    let exit_code = app.run_return(|app, event| {
         if let tauri::RunEvent::ExitRequested { code, .. } = event {
+            // WGL must release its device context while the parent HWND and
+            // its UI thread still exist. The remaining shutdown runs later.
+            if let Some(core) = app.try_state::<Core>() {
+                core.close_graphics();
+            }
             tracing::info!(?code, "the event loop ends");
         }
     });

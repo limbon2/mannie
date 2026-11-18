@@ -10,4 +10,4 @@ The Designer plugin's own decisions, numbered on their own ([ADR-0035](../../../
 
 | ADR                                                                       | Decision                                                  | Status   | Validation                              |
 | ------------------------------------------------------------------------- | --------------------------------------------------------- | -------- | --------------------------------------- |
-| [0001](0001-keep-the-projects-of-the-designer-plugin-in-its-own-table.md) | Keep the projects of the Designer plugin in its own table | Proposed | M5 SDK baseline and Designer acceptance |
+| [0001](0001-keep-the-projects-of-the-designer-plugin-in-its-own-table.md) | Keep the projects of the Designer plugin in its own table | Accepted | M5 SDK baseline and Designer acceptance |

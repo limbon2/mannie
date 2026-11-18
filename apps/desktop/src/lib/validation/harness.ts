@@ -10,6 +10,7 @@ import type {
   ChannelBatch,
   ChannelLoad,
   ChannelLoadSummary,
+  GraphicsSurfaceReport,
   SurfaceReport,
   UpdateOutcome,
   ValidationDelta,
@@ -83,6 +84,7 @@ export interface ValidationHarness {
   deleteProviderProfiles(): Promise<number>;
   /** Makes the ChatGPT account's access token expire, so the next call refreshes it. */
   expireChatGptToken(): Promise<void>;
+  graphicsSurfaces(): Promise<GraphicsSurfaceReport[]>;
   insertHostileHtml(payloads: readonly string[]): Promise<boolean>;
   /** File-manager actions recorded without launching an external window. */
   openedFileLinks(): Promise<ResolvedFileLink[]>;
@@ -346,6 +348,7 @@ window.mannieValidation = {
   browserEvaluate: async (conversationId, tabId, expression) =>
     unwrap(await commands.validationBrowserEvaluate(conversationId, tabId, expression)),
   browserSurface: async (conversationId) => unwrap(await commands.validationBrowserSurface(conversationId)),
+  graphicsSurfaces: async () => unwrap(await commands.validationGraphicsSurfaces()),
   createProviderProfile,
   cspViolations: () => [...violations],
   deleteProviderProfiles,

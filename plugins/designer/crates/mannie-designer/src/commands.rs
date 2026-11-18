@@ -122,14 +122,15 @@ impl ChannelSpec for FollowProjectsChannel {
 
 /// The plugin's command, its channel and the limits that the UI checks.
 pub fn interface() -> Interface {
-    Interface::new()
+    let projects = Interface::new()
         .command::<CreateProjectCommand>()
         .channel::<FollowProjectsChannel>()
         .constant(
             "MAX_NAME_CHARACTERS",
             "The longest name of a project, in characters.",
             limit(MAX_NAME_CHARACTERS),
-        )
+        );
+    crate::viewport::interface(projects)
 }
 
 #[cfg(test)]

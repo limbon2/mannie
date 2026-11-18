@@ -9,6 +9,8 @@
 
 Later changes: [ADR-0035](0035-find-plugins-at-build-time-in-folders-of-their-own.md) refines decisions 5 and 6: every workspace and the launcher's graph fall under the policy, with notices for each shipped graph.
 
+[ADR-0074](0074-admit-the-two-codec-licenses-in-the-windows-skia-archive.md) grants an exception to decision 2 for two codec licenses in the pinned Windows graphics archive.
+
 ## Context
 
 Verified 2026-10-13:

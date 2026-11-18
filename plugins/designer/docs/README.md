@@ -9,9 +9,9 @@
 
 ## Intent
 
-The owner wants a design surface in Mannie, in the manner of Figma or of Claude's designer, that works differently from both and is built up step by step. The spec and the idea change as the work goes on, so this document describes only what exists now and is rewritten as each step lands.
+The owner wants a design surface in Mannie, in the manner of Figma or of Claude's designer, that works differently from both and is built up step by step. This document describes the current behavior. Proposed additions are linked under Parts.
 
-This step adds the owner's projects: naming one from the sidebar, listing them and switching between them. The main area shows a placeholder greeting for the current selection.
+This step adds the owner's projects: naming one from the sidebar, listing them and switching between them. The main view opens a native graphics viewport for the selected project on Windows.
 
 ## Behavior
 
@@ -21,7 +21,7 @@ This step adds the owner's projects: naming one from the sidebar, listing them a
 - The plus opens a dialog that asks for the project's name, with "Create project" and "Cancel". The plugin trims leading and trailing whitespace, accepts up to 100 Unicode code points in the trimmed name and rejects control characters. "Create project" stays disabled while the name is blank.
 - Names are unique under SQLite's ASCII case-insensitive comparison. If creation fails, the dialog stays open and explains the error so the owner can correct it or retry.
 - A project that the owner creates appears at the top of the group and becomes the active project. Each project has a row with a folder and its name. Selecting another row changes the active project and moves the active mark to that row.
-- The main area displays `Hello, {name}` for the active project or `Hello Designer plugin` when there are no projects. The view's heading in the window is "Designer".
+- The main area opens the active project's viewport or shows the empty state when there are no projects. The view's heading in the window is "Designer".
 - Projects survive a window reload and an application restart. The newest project is active when the owner has made no selection in the current window.
 - Turning Designer off removes its activity, sidebar, view and dialogs. The shell returns to Chat when Designer was active. Turning it on again restores its project list.
 - Designer adds no tool, settings section, side panel or mention, and contributes nothing to conversations or the model. It has no way to rename or remove a project yet.
@@ -30,19 +30,25 @@ This step adds the owner's projects: naming one from the sidebar, listing them a
 
 Designer registers its activity, view, sidebar and dialogs through the SDK's `navigation`, `views`, `sidebarPanels` and `overlays` slots. The plugin's command and channel use generated IPC bindings, and it keeps its projects through the SDK's `store` service. [ADR-0034](../../../docs/adr/0034-build-plugins-on-a-plugin-sdk.md), [ADR-0045](../../../docs/adr/0045-switch-the-sidebar-between-views-with-an-activity-bar.md).
 
-The project list follows the shape of the Notebooks plugin: a command that changes the table and a channel that sends full snapshots of the projects. Designer adds no extension point or trust boundary, and follows the project's channel only while the plugin is on. [ADR-0030](../../../docs/adr/0030-split-mannie-into-a-core-and-plugins.md), [Designer ADR-0001](adr/0001-keep-the-projects-of-the-designer-plugin-in-its-own-table.md).
+The project list follows the shape of the Notebooks plugin: a command that changes the table and a channel that sends full snapshots of the projects. Designer follows the project list while the plugin is on and leases a graphics surface while the selected project's view is mounted. [ADR-0030](../../../docs/adr/0030-split-mannie-into-a-core-and-plugins.md), [Designer ADR-0001](adr/0001-keep-the-projects-of-the-designer-plugin-in-its-own-table.md).
+
+## Parts
+
+- [Native graphics viewport](viewport.md) draws a rectangle whose color the owner changes from the Designer view.
 
 ## Design
 
-The manifest `plugin.toml` names the plugin `designer` on SDK 1, with `order = 85`, after Browser, and its Rust entry `mannie-designer`. It declares the service `store`.
+The manifest `plugin.toml` names the plugin `designer` on SDK 1, with `order = 85`, after Browser, and its Rust entry `mannie-designer`. It declares the services `store` and `graphics`.
 
-The crate `crates/mannie-designer` has three modules:
+The crate `crates/mannie-designer` includes these modules:
 
 - `commands.rs` holds `create_project`, which takes a name and returns the saved project, and `follow_projects`, which delivers a full list on subscription and after changes while Designer is on. It defines the name length limit and the plugin error codes `name_taken` and `storage_failed`.
 - `store.rs` holds the migration and statements for the `designer_projects` table in Mannie's shared SQLite database. The table holds a project's ID, name and creation time.
 - `plugin.rs` reads the projects when Designer starts and fails the start with `storage_failed` when it cannot read them. It updates the snapshots after a project is saved.
 
-The UI registers the navigation entry `designer` with `order = 15`, the view `designer`, the sidebar panel `designer.projects` and the overlay `designer.dialogs`. The sidebar shows loading, empty and error states, with a retry when following projects fails. The UI keeps project selection in memory. The catalog `messages/en.json` supplies the labels, errors and placeholder text.
+- `viewport.rs` defines the viewport channel, validates project and placement inputs and supplies the rectangle scene to the host.
+
+The UI registers the navigation entry `designer` with `order = 15`, the view `designer`, the sidebar panel `designer.projects` and the overlay `designer.dialogs`. The sidebar shows loading, empty and error states, with a retry when following projects fails. The UI keeps project selection in memory. The catalog `messages/en.json` supplies the view's labels, status and errors.
 
 ## Acceptance
 

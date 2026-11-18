@@ -114,10 +114,24 @@ export function seedLock(locks) {
   /** @type {Map<string, LockPackage>} */
   const merged = new Map();
   for (const lock of locks) {
+    // Cargo omits a dependency's version when its name is unique within
+    // this lock. It can become ambiguous in the union (e.g. the two
+    // prettyplease versions required by Skia's bindings and prost-build).
+    const references = new Map();
+    for (const pkg of lock.packages) {
+      const versioned = `${pkg.name} ${pkg.version}`;
+      const full = pkg.source ? `${versioned} (${pkg.source})` : versioned;
+      references.set(pkg.name, full);
+      references.set(versioned, full);
+    }
     for (const entry of lock.packages) {
       const key = packageKey(entry);
       if (!merged.has(key)) {
-        merged.set(key, entry);
+        const text = entry.text.replace(/^ "([^"]+)",$/gmu, (line, dependency) => {
+          const full = references.get(dependency);
+          return full === undefined ? line : ` "${full}",`;
+        });
+        merged.set(key, { ...entry, text });
       }
     }
   }

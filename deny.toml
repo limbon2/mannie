@@ -43,6 +43,11 @@ ignore = [
 ]
 
 [licenses]
+# ADR-0074 (D69): the Windows x86_64 skia-bindings 0.157.0 native archive
+# embeds libpng under libpng-2.0 and libjpeg-turbo's libjpeg API under IJG.
+# The exception is for those two bundled revisions and their release notices.
+# cargo-deny sees the MIT-licensed Rust bindings, so it has no matching Cargo
+# packages on which to set a license exception.
 # The permissive licenses of ADR-0017, and MPL-2.0 for libraries used unmodified.
 allow = [
   "0BSD",

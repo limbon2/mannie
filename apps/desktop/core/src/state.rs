@@ -36,6 +36,7 @@ use tauri::{App, Manager};
 use crate::browser::BrowserProvider;
 use crate::credentials::{KeyringVault, SecretsProvider};
 use crate::file_dialog::FileDialogProvider;
+use crate::graphics::GraphicsProvider;
 use crate::ipc::subscriptions::Subscriptions;
 use crate::updates::{Automatic, Updates};
 use crate::window::requests::WindowRequests;
@@ -55,6 +56,7 @@ struct Services {
     runtime: Runtime,
     plugins: PluginHost,
     browser: Arc<BrowserProvider>,
+    graphics: Arc<GraphicsProvider>,
 }
 
 #[derive(Debug)]
@@ -158,6 +160,15 @@ impl Core {
             .map(|services| services.browser.as_ref())
     }
 
+    #[cfg(feature = "validation")]
+    pub(crate) fn graphics(&self) -> Option<&GraphicsProvider> {
+        self.inner
+            .services
+            .as_ref()
+            .ok()
+            .map(|services| services.graphics.as_ref())
+    }
+
     /// Releases a conversation's browser session when the owner deletes it.
     pub(crate) async fn end_conversation_browser(
         &self,
@@ -236,6 +247,14 @@ impl Core {
         // are gone, so no page may stay (ADR-0064, decision 5).
         if let Ok(services) = &self.inner.services {
             services.browser.page_loaded();
+            services.graphics.page_loaded();
+        }
+    }
+
+    /// Releases the native graphics children before the main event loop ends.
+    pub(crate) fn close_graphics(&self) {
+        if let Ok(services) = &self.inner.services {
+            services.graphics.page_loaded();
         }
     }
 
@@ -527,6 +546,8 @@ fn start_runtime(
         Arc::<KeyringVault>::clone(&vault),
     ));
     services.push(Arc::<BrowserProvider>::clone(&browser));
+    let graphics = Arc::new(GraphicsProvider::new(app.handle().clone()));
+    services.push(Arc::<GraphicsProvider>::clone(&graphics));
     let file_dialog: Arc<dyn ServiceProvider> = file_dialog;
     services.extend(mannie_store::service_providers(&store));
     services.push(Arc::new(SecretsProvider::new(vault)));
@@ -554,6 +575,7 @@ fn start_runtime(
         runtime,
         plugins,
         browser,
+        graphics,
     })
 }
 

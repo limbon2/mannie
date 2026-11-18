@@ -7,3 +7,4 @@ Each change to the plugin adds one line under Unreleased, below its kind of chan
 ### Added
 
 - Adds the optional Designer activity, with a sidebar for creating and selecting projects that persist across restarts.
+- Draws a rectangle in a native Windows OpenGL viewport and changes its color as the owner moves a slider.
