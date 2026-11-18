@@ -24,12 +24,15 @@ use mannie_provider::chatgpt::{
     authorization, exchange_code, new_host_id, refresh_tokens, revoke_refresh_token,
     verify_id_token,
 };
-use mannie_provider::{ProviderError, Url, list_plan_models};
-use mannie_store::{ChatGptSignInRecord, ProfileStoreError, StoredChatGptAccount};
+use mannie_provider::{ListedModel, ProviderError, Url, known_model, list_plan_models};
+use mannie_store::{
+    CatalogModel, ChatGptSignInRecord, ProfileStoreError, StoredChatGptAccount, StoredProfile,
+};
 use mannie_types::clock::UtcMillis;
 use mannie_types::provider::{
     ChatGptAccountState, ChatGptAccountView, ChatGptCallbackPage, ChatGptError, ChatGptModel,
-    ChatGptSignIn, CredentialStoreProblem, SignOutReport, StartChatGptSignIn,
+    ChatGptSignIn, CredentialStoreProblem, MIN_CONTEXT_BUDGET, ModelLimits, ProfileAccess,
+    SignOutReport, StartChatGptSignIn, check_limits, context_budget,
 };
 use mannie_types::run::RunFailure;
 use mannie_types::secret::Secret;
@@ -78,6 +81,10 @@ const REVOKE_DELAY: Duration = Duration::from_secs(1);
 /// changes it, and the same account signing in again keeps it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AccountKey(String);
+
+/// The plan account that may pay for a queued run, or the failure it encountered
+/// before it was queued. Endpoint runs have no ChatGPT account.
+pub(crate) type QueuedAccount = Result<Option<AccountKey>, RunFailure>;
 
 impl AccountKey {
     fn of(client_id: &str, subject: &str) -> Self {
@@ -145,6 +152,8 @@ pub(crate) struct ChatGptState {
     session: RwLock<Option<Session>>,
     /// One load, refresh, sign-in or sign-out at a time.
     gate: Arc<tokio::sync::Mutex<()>>,
+    /// Reconcile responses in request order when several windows refresh.
+    catalog_gate: tokio::sync::Mutex<()>,
     sign_in: Mutex<Option<PendingSignIn>>,
     view: watch::Sender<ChatGptAccountView>,
     endpoints: RwLock<ChatGptEndpoints>,
@@ -156,6 +165,7 @@ impl ChatGptState {
         Self {
             session: RwLock::new(None),
             gate: Arc::new(tokio::sync::Mutex::new(())),
+            catalog_gate: tokio::sync::Mutex::new(()),
             sign_in: Mutex::new(None),
             view: watch::Sender::new(ChatGptAccountView {
                 state: ChatGptAccountState::SignedOut,
@@ -227,6 +237,40 @@ fn expiry(now: UtcMillis, expires_in: Option<u64>) -> UtcMillis {
         .map_or(DEFAULT_LIFETIME, Duration::from_secs)
         .clamp(MIN_LIFETIME, MAX_LIFETIME);
     now.saturating_add(lifetime)
+}
+
+/// The output limit on the plan is Mannie's own budget. Use it when the
+/// catalog only reports a window, provided the two limits fit together.
+fn catalog_limits(model: &ListedModel) -> ModelLimits {
+    let fallback = known_model(&model.id).map_or(
+        ModelLimits {
+            context_window: 32_768,
+            output_limit: 4_096,
+        },
+        |known| known.limits,
+    );
+
+    if let Some(reported) = &model.limits {
+        let output_limit = reported.output_limit.unwrap_or_else(|| {
+            // An account can cap a known model's window below its published
+            // output limit. Keep the reported window and a usable input budget.
+            let maximum =
+                context_budget(reported.context_window, 0).saturating_sub(MIN_CONTEXT_BUDGET);
+            fallback
+                .output_limit
+                .min(reported.context_window / 8)
+                .min(maximum)
+        });
+
+        if check_limits(reported.context_window, output_limit).is_ok() {
+            return ModelLimits {
+                context_window: reported.context_window,
+                output_limit,
+            };
+        }
+    }
+
+    fallback
 }
 
 fn store_error(error: &ProfileStoreError) -> ChatGptError {
@@ -748,10 +792,55 @@ impl Runtime {
     /// The models that the plan offers the signed-in account, in the order
     /// of OpenAI's catalog.
     pub async fn chatgpt_models(&self) -> Result<Vec<ChatGptModel>, ChatGptError> {
-        let key = self.chatgpt_key().await.map_err(|failure| match failure {
+        let (_, models) = self.read_plan_catalog().await?;
+        Ok(models
+            .into_iter()
+            .map(|model| ChatGptModel {
+                display_name: model.display_name.unwrap_or_else(|| model.id.clone()),
+                slug: model.id,
+            })
+            .collect())
+    }
+
+    /// Refreshes the signed-in account's managed choices. The network read
+    /// stays outside the session gate so sign-out can proceed immediately.
+    pub async fn refresh_chatgpt_catalog(&self) -> Result<(), ChatGptError> {
+        let _refresh = self.inner.chatgpt.catalog_gate.lock().await;
+        let (key, models) = self.read_plan_catalog().await?;
+        let models = models
+            .into_iter()
+            .map(|model| CatalogModel {
+                new_id: self.inner.ids.profile(),
+                limits: catalog_limits(&model),
+                display_name: model.display_name.unwrap_or_else(|| model.id.clone()),
+                slug: model.id,
+                efforts: model.supported_efforts,
+            })
+            .collect();
+        let _session = self.inner.chatgpt.gate.lock().await;
+
+        if self.catalog_account_key().await? != key {
+            return Err(ChatGptError::Provider {
+                failure: RunFailure::ChatGptAccountChanged,
+            });
+        }
+
+        self.inner
+            .store
+            .replace_chatgpt_catalog(key.0, self.chatgpt_endpoints().api_base.to_string(), models)
+            .await
+            .map_err(|error| store_error(&error))
+    }
+
+    async fn catalog_account_key(&self) -> Result<AccountKey, ChatGptError> {
+        self.chatgpt_key().await.map_err(|failure| match failure {
             RunFailure::ChatGptSignInNeeded => ChatGptError::SignedOut,
             failure => ChatGptError::Provider { failure },
-        })?;
+        })
+    }
+
+    async fn read_plan_catalog(&self) -> Result<(AccountKey, Vec<ListedModel>), ChatGptError> {
+        let key = self.catalog_account_key().await?;
         let api_base = self.chatgpt_endpoints().api_base;
         let mut refused_once = false;
         loop {
@@ -762,15 +851,7 @@ impl Runtime {
                         failure: error.failure(),
                     })?;
             match list_plan_models(&self.inner.client, &api_base, &issued.token).await {
-                Ok(models) => {
-                    return Ok(models
-                        .into_iter()
-                        .map(|model| ChatGptModel {
-                            display_name: model.display_name.unwrap_or_else(|| model.id.clone()),
-                            slug: model.id,
-                        })
-                        .collect());
-                }
+                Ok(models) => return Ok((key, models)),
                 Err(ProviderError::Permanent(RunFailure::InvalidCredential)) if !refused_once => {
                     refused_once = true;
                     self.reject_chatgpt_token(Some(issued.serial));
@@ -802,6 +883,17 @@ impl Runtime {
     }
 
     // The tokens of model calls.
+
+    pub(crate) async fn account_for_run(&self, profile: &StoredProfile) -> QueuedAccount {
+        if let Some(key) = &profile.catalog_account {
+            return Ok(Some(AccountKey(key.clone())));
+        }
+        if profile.access == ProfileAccess::ChatGptPlan {
+            return self.chatgpt_key().await.map(Some);
+        }
+
+        Ok(None)
+    }
 
     /// The key of the signed-in account, for the setup of a run on the plan.
     pub(crate) async fn chatgpt_key(&self) -> Result<AccountKey, RunFailure> {
@@ -1242,6 +1334,28 @@ mod tests {
     use mannie_types::secret::Secret;
 
     use super::{AccountKey, PART_UNITS, bundle_text, expiry, split_parts};
+
+    #[test]
+    fn reported_windows_without_output_limits_bound_the_local_budget() {
+        for (model, context_window, output_limit) in
+            [("gpt-6.2-sol", 65_536, 8_192), ("unrecognized", 4_096, 512)]
+        {
+            let listed = mannie_provider::ListedModel {
+                id: model.to_owned(),
+                display_name: None,
+                supported_efforts: None,
+                limits: Some(mannie_types::provider::ReportedLimits {
+                    context_window,
+                    output_limit: None,
+                }),
+            };
+            let limits = super::catalog_limits(&listed);
+            assert_eq!(
+                (limits.context_window, limits.output_limit),
+                (context_window, output_limit)
+            );
+        }
+    }
 
     #[test]
     fn a_bundle_splits_between_characters_within_the_windows_limit() {

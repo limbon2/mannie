@@ -26,9 +26,11 @@ use mannie_runtime::testing::{
 use mannie_runtime::{RuntimeConfig, texts};
 use mannie_tools::{ACTIVITY_ARGUMENT, takes_activity, with_activity};
 use mannie_types::chat::{
-    ChatError, LoadEarlierTurns, SendMessage, StartConversation, StopOutcome, SubscribeConversation,
+    ChatError, LoadEarlierTurns, OpenDraft, SendMessage, SetConversationReasoningEffort,
+    StartConversation, StopOutcome, SubscribeConversation,
 };
 use mannie_types::ids::{ConversationId, RunId};
+use mannie_types::provider::ReasoningEffort;
 use mannie_types::run::RunState;
 use mannie_types::tasks::{TaskRefusal, TaskState};
 use mannie_types::tools::{NotRunReason, ToolCallStatus};
@@ -161,6 +163,21 @@ fn tool_names(request: &ModelRequest) -> Vec<String> {
 #[tokio::test]
 async fn a_registered_executors_task_returns_its_report_as_the_result() {
     let setup = Setup::new().await;
+    let conversation = setup
+        .harness
+        .runtime
+        .open_draft(OpenDraft::default())
+        .await
+        .unwrap();
+    setup
+        .harness
+        .runtime
+        .set_conversation_reasoning_effort(SetConversationReasoningEffort {
+            conversation_id: conversation.clone(),
+            reasoning_effort: Some(ReasoningEffort::High),
+        })
+        .await
+        .unwrap();
     setup.parent(tool_calls(&[(
         "call_1",
         FAKE_EXECUTOR_TOOL,
@@ -168,8 +185,26 @@ async fn a_registered_executors_task_returns_its_report_as_the_result() {
     )]));
     setup.parent(reply("The box built it."));
 
-    let (conversation, run) = setup.start("OWNER: build it on the box").await;
+    let started = setup
+        .harness
+        .runtime
+        .send_message(SendMessage::new(
+            conversation.clone(),
+            "OWNER: build it on the box",
+        ))
+        .await
+        .unwrap();
+    let run = started.run_id;
     let [submission] = setup.submissions(1).await.try_into().unwrap();
+    setup
+        .harness
+        .runtime
+        .set_conversation_reasoning_effort(SetConversationReasoningEffort {
+            conversation_id: conversation.clone(),
+            reasoning_effort: Some(ReasoningEffort::Low),
+        })
+        .await
+        .unwrap();
     setup
         .publish(FakeExecutor::state(&submission, 2, TaskState::Running))
         .await;
@@ -180,12 +215,18 @@ async fn a_registered_executors_task_returns_its_report_as_the_result() {
 
     assert_eq!(transcript.run_state(&run), Some(RunState::Completed));
     assert_eq!(submission.number, 1);
+    assert_eq!(submission.profile.reasoning_effort, ReasoningEffort::High);
     assert_eq!(submission.title, "Build it");
     assert_eq!(submission.instruction, "Build the backend.");
     assert!(!submission.follow_up);
     assert_eq!(submission.parent_id, conversation);
     assert_eq!(submission.target, FakeExecutor::target("box-01"));
     let parent = setup.harness.model.requests_for("OWNER:");
+    assert!(
+        parent
+            .iter()
+            .all(|request| request.reasoning_effort == ReasoningEffort::High)
+    );
     let tools = tool_names(&parent[0]);
     assert!(tools.contains(&FAKE_EXECUTOR_TOOL.to_owned()), "{tools:?}");
     assert!(tools.contains(&"start_task".to_owned()), "{tools:?}");

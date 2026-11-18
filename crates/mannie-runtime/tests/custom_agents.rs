@@ -29,7 +29,10 @@ use mannie_runtime::testing::{
 };
 use mannie_runtime::{ORCHESTRATOR_KEY, PLAN_KEY, RuntimeConfig, texts};
 use mannie_types::agents::{AgentDraft, AgentError, AgentField, AgentKind, AgentStep, AgentView};
-use mannie_types::chat::{ChatError, SendMessage, SetConversationAgent, StartConversation};
+use mannie_types::chat::{
+    ChatError, OpenDraft, SendMessage, SetConversationAgent, SetConversationReasoningEffort,
+    StartConversation,
+};
 use mannie_types::ids::{ConversationId, ProfileId, RunId};
 use mannie_types::provider::{CreateProviderProfile, ProfileAccess, ProfileDraft, ReasoningEffort};
 use mannie_types::run::{RunActivity, RunFailure, RunState};
@@ -1015,6 +1018,22 @@ async fn second_profile(setup: &Setup, model: &str, use_tools: bool) -> ProfileI
 #[tokio::test]
 async fn a_custom_child_uses_its_own_profile_and_falls_back_to_the_parents() {
     let setup = Setup::new().await;
+    let draft = setup
+        .harness
+        .runtime
+        .open_draft(OpenDraft::default())
+        .await
+        .unwrap();
+    setup
+        .harness
+        .runtime
+        .set_conversation_reasoning_effort(SetConversationReasoningEffort {
+            conversation_id: draft,
+            reasoning_effort: Some(ReasoningEffort::High),
+        })
+        .await
+        .unwrap();
+
     let own = second_profile(&setup, "own-model", true).await;
     let no_tools = second_profile(&setup, "no-tools-model", false).await;
     let parent_model = setup.harness.profile.model.clone();
@@ -1058,6 +1077,18 @@ async fn a_custom_child_uses_its_own_profile_and_falls_back_to_the_parents() {
     assert_eq!(requests.requests_for("CHILD-A:")[0].model, "own-model");
     assert_eq!(requests.requests_for("CHILD-B:")[0].model, parent_model);
     assert_eq!(requests.requests_for("CHILD-C:")[0].model, parent_model);
+    assert_eq!(
+        requests.requests_for("CHILD-A:")[0].reasoning_effort,
+        ReasoningEffort::ServerDefault
+    );
+    for marker in ["OWNER:", "CHILD-B:", "CHILD-C:"] {
+        assert!(
+            requests
+                .requests_for(marker)
+                .iter()
+                .all(|request| request.reasoning_effort == ReasoningEffort::High)
+        );
+    }
 }
 
 #[tokio::test]

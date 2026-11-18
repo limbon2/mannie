@@ -1,4 +1,5 @@
 use super::*;
+use mannie_types::provider::ReasoningEffort;
 
 /// A new conversation of a place, made a draft in the batch that creates it.
 fn draft_changes(conversation: &ConversationId, project_id: Option<ProjectId>) -> Vec<Change> {
@@ -68,6 +69,75 @@ async fn only_a_new_conversation_becomes_a_draft() {
     assert_eq!(
         fixture.store.draft_conversation(None, None).await.unwrap(),
         None
+    );
+}
+
+#[tokio::test]
+async fn the_chat_and_new_chat_efforts_survive_reopening_the_database() {
+    let fixture = Fixture::new();
+    let first = fixture.conversation_id();
+    let next = fixture.conversation_id();
+    let mut changes = draft_changes(&first, None);
+    changes.push(Change::SetReasoningEffort {
+        effort: Some(ReasoningEffort::Low),
+    });
+    fixture.apply(&first, changes).await;
+
+    let options = StoreOptions::new(
+        fixture.directory.path().join("backups"),
+        Arc::<ManualClock>::clone(&fixture.clock),
+    );
+    drop(fixture.store);
+
+    let reopened = Store::open(&fixture.directory.path().join("mannie.sqlite"), &options).unwrap();
+    let summary = reopened
+        .conversation_summary(&first)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(summary.reasoning_effort, Some(ReasoningEffort::Low));
+
+    // A failed choice must roll back both the conversation and the remembered effort.
+    let refused = reopened
+        .apply(
+            &first,
+            vec![
+                Change::SetReasoningEffort {
+                    effort: Some(ReasoningEffort::High),
+                },
+                Change::MarkDraft,
+            ],
+            Durability::Full,
+        )
+        .await;
+    assert!(
+        matches!(refused, Err(RuntimeStoreError::ConversationExists)),
+        "{refused:?}"
+    );
+    let old = reopened
+        .conversation_summary(&first)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(old.reasoning_effort, Some(ReasoningEffort::Low));
+    reopened
+        .apply(
+            &first,
+            vec![Change::Undraft {
+                title: "Sent".to_owned(),
+            }],
+            Durability::Full,
+        )
+        .await
+        .unwrap();
+
+    let created = reopened
+        .apply(&next, draft_changes(&next, None), Durability::Full)
+        .await
+        .unwrap();
+    assert_eq!(
+        created.summary.unwrap().reasoning_effort,
+        Some(ReasoningEffort::Low)
     );
 }
 

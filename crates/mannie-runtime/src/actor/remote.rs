@@ -487,7 +487,7 @@ impl RunActor {
             model: profile.model.clone(),
             context_window: profile.context_window,
             output_limit: profile.output_limit,
-            reasoning_effort: profile.reasoning_effort,
+            reasoning_effort: self.reasoning_effort,
             server: profile.server,
             use_tools: profile.use_tools,
             has_credential: profile.credential_ref.is_some(),

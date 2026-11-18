@@ -20,12 +20,12 @@ use mannie_runtime::testing::{
     TEST_CHATGPT_CLIENT, add_plugin, chatgpt_endpoints_at, chatgpt_tokens, credentials,
     plan_profile, reply, sign_in_chatgpt, tool_calls,
 };
-use mannie_types::chat::{SendMessage, StartConversation, StartedConversation};
+use mannie_types::chat::{ChatError, SendMessage, StartConversation, StartedConversation};
 use mannie_types::provider::{
     ApiInterface, ChatGptAccountState, CheckKind, CheckOutcome, CredentialChange, ProfileAccess,
     ProfileDraft, ReasoningEffort,
 };
-use mannie_types::run::{FinishReason, RunFailure, RunState};
+use mannie_types::run::{FinishReason, RunActivity, RunFailure, RunState};
 use mannie_types::transcript::PartContent;
 
 async fn plan_harness() -> Harness {
@@ -460,6 +460,99 @@ async fn an_unconfirmed_revocation_still_forgets_the_tokens() {
 }
 
 #[tokio::test]
+async fn queued_runs_cannot_bill_another_account_that_lists_the_same_model() {
+    let harness = Harness::with_options(HarnessOptions {
+        interface: ApiInterface::Responses,
+        config: mannie_runtime::RuntimeConfig {
+            max_concurrent_calls: 1,
+            ..mannie_runtime::testing::fast_config()
+        },
+        ..HarnessOptions::default()
+    })
+    .await;
+    let server = FixtureServer::start().await.unwrap();
+
+    sign_in_chatgpt(
+        &harness.runtime,
+        &server,
+        "first",
+        "access-1",
+        "refresh-1",
+        false,
+    )
+    .await;
+
+    let catalog = r#"{"models":[{"slug":"shared-model","visibility":"list"}]}"#;
+    server.respond(FixtureResponse::json(200, catalog));
+    harness.runtime.refresh_chatgpt_catalog().await.unwrap();
+
+    let managed = harness
+        .runtime
+        .list_profiles()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|profile| profile.catalog.is_some())
+        .unwrap();
+
+    harness.model.push_reply(vec![
+        Step::Event(ProviderEvent::TextDelta("Holding".to_owned())),
+        Step::Hang,
+    ]);
+
+    let blocker = start(&harness, "Hold the slot").await;
+
+    harness
+        .wait_until(&blocker.conversation_id, |transcript| {
+            transcript.reply_text(0) == "Holding"
+        })
+        .await;
+
+    let custom = plan_profile(&harness.runtime, "shared-model", false).await;
+    let mut queued = Vec::new();
+
+    for profile in [managed, custom] {
+        let mut input = StartConversation::new("For the first account only");
+        input.profile_id = Some(profile.id);
+
+        let started = harness.runtime.start_conversation(input).await.unwrap();
+
+        harness
+            .wait_until(&started.conversation_id, |transcript| {
+                transcript
+                    .run(&started.run_id)
+                    .is_some_and(|run| run.activity == Some(RunActivity::WaitingForSlot))
+            })
+            .await;
+        queued.push(started);
+    }
+
+    sign_in_chatgpt(
+        &harness.runtime,
+        &server,
+        "second",
+        "access-2",
+        "refresh-2",
+        true,
+    )
+    .await;
+    server.respond(FixtureResponse::json(200, catalog));
+    harness.runtime.refresh_chatgpt_catalog().await.unwrap();
+    harness.runtime.stop_reply(&blocker.conversation_id).await;
+
+    for started in queued {
+        let transcript = harness
+            .wait_for_run(&started.conversation_id, &started.run_id)
+            .await;
+        assert_eq!(
+            failure_at(&transcript, 0),
+            Some(RunFailure::ChatGptAccountChanged)
+        );
+    }
+    assert_eq!(harness.model.reply_requests().len(), 1);
+}
+
+#[tokio::test]
 async fn another_account_never_receives_the_reasoning_of_the_first() {
     let harness = plan_harness().await;
     let server = FixtureServer::start().await.unwrap();
@@ -593,6 +686,291 @@ async fn the_catalog_lists_the_plans_models_for_the_profile_form() {
         names,
         [("gpt-6.1-sol", "GPT-6.1 Sol"), ("codex-6", "codex-6")]
     );
+}
+
+#[tokio::test]
+async fn the_catalog_reconciles_models_without_changing_configured_profiles() {
+    let harness = plan_harness().await;
+    let server = FixtureServer::start().await.unwrap();
+
+    sign_in_chatgpt(
+        &harness.runtime,
+        &server,
+        "user-1",
+        "access",
+        "refresh",
+        false,
+    )
+    .await;
+
+    let custom = plan_profile(&harness.runtime, "new-model", false).await;
+    let catalog = serde_json::json!({"models": [
+        {"slug": "new-model", "display_name": "Plan", "visibility": "list",
+         "context_window": 180_000, "max_output_tokens": 32_000,
+         "supported_reasoning_levels": [{"effort": "high"}, {"effort": "low"}]},
+        {"slug": "hidden", "visibility": "hide"},
+        {"slug": "gpt-6.2-sol", "visibility": "list"},
+        {"slug": "unknown", "visibility": "list", "context_window": 2, "max_output_tokens": 8},
+        {"slug": "new-model", "visibility": "list"}
+    ]});
+    server.respond(FixtureResponse::json(200, catalog.to_string()));
+    harness.runtime.refresh_chatgpt_catalog().await.unwrap();
+
+    let profiles = harness.runtime.list_profiles().await.unwrap();
+    let choices: Vec<_> = profiles
+        .iter()
+        .filter(|profile| profile.catalog.is_some())
+        .collect();
+
+    assert_eq!(
+        choices
+            .iter()
+            .map(|profile| profile.model.as_str())
+            .collect::<Vec<_>>(),
+        ["new-model", "gpt-6.2-sol", "unknown"]
+    );
+    assert_eq!(
+        (choices[0].context_window, choices[0].output_limit),
+        (180_000, 32_000)
+    );
+    assert_eq!(
+        (choices[1].context_window, choices[1].output_limit),
+        (1_050_000, 128_000)
+    );
+    assert_eq!(
+        (choices[2].context_window, choices[2].output_limit),
+        (32_768, 4_096)
+    );
+    assert_eq!(
+        choices[0].supported_efforts,
+        Some(vec![ReasoningEffort::High, ReasoningEffort::Low])
+    );
+    assert_eq!(choices[0].name, custom.name);
+    assert_ne!(choices[0].id, custom.id);
+    let configured = profiles
+        .iter()
+        .find(|profile| profile.id == custom.id)
+        .unwrap();
+    assert!(configured.is_default);
+    assert_eq!(configured.supported_efforts, choices[0].supported_efforts);
+    assert_eq!(configured.context_window, custom.context_window);
+    assert_eq!(
+        harness.runtime.delete_profile(&choices[0].id).await,
+        Err(mannie_types::provider::ProviderProfileError::NotFound)
+    );
+    assert_eq!(
+        harness.runtime.set_default_profile(&choices[0].id).await,
+        Err(mannie_types::provider::ProviderProfileError::NotFound)
+    );
+
+    server.respond(FixtureResponse::json(200, r#"{"models":[{"slug":"gpt-6.2-sol","visibility":"list"},{"slug":"new-model","display_name":"New Name","visibility":"list"}]}"#));
+    harness.runtime.refresh_chatgpt_catalog().await.unwrap();
+
+    let after = harness.runtime.list_profiles().await.unwrap();
+    let after: Vec<_> = after
+        .iter()
+        .filter(|profile| profile.catalog.is_some())
+        .collect();
+    assert_eq!(after[0].id, choices[1].id);
+    assert_eq!(after[1].id, choices[0].id);
+    assert_eq!(after[1].name, "New Name");
+    assert_eq!(after[2].id, choices[2].id);
+    assert!(!after[2].catalog.unwrap().available);
+
+    for status in [503, 200] {
+        server.respond(FixtureResponse::json(status, "{}"));
+        assert!(matches!(
+            harness.runtime.refresh_chatgpt_catalog().await,
+            Err(mannie_types::provider::ChatGptError::Provider { .. })
+        ));
+    }
+    assert!(
+        harness
+            .runtime
+            .list_profiles()
+            .await
+            .unwrap()
+            .iter()
+            .any(|profile| profile.id == choices[0].id && profile.catalog.unwrap().available)
+    );
+}
+
+#[tokio::test]
+async fn a_late_catalog_cannot_restore_models_after_an_account_switch() {
+    let harness = plan_harness().await;
+    let server = FixtureServer::start().await.unwrap();
+
+    sign_in_chatgpt(
+        &harness.runtime,
+        &server,
+        "user-1",
+        "access",
+        "refresh",
+        false,
+    )
+    .await;
+
+    let catalog = r#"{"models":[{"slug":"only-first-account","visibility":"list"}]}"#;
+    server.respond(FixtureResponse::json(200, catalog));
+    harness.runtime.refresh_chatgpt_catalog().await.unwrap();
+
+    let (arrived, release) = server.hold_response(FixtureResponse::json(200, catalog));
+    let runtime = harness.runtime.clone();
+    let stale = tokio::spawn(async move { runtime.refresh_chatgpt_catalog().await });
+    tokio::time::timeout(Duration::from_secs(5), arrived)
+        .await
+        .unwrap()
+        .unwrap();
+    sign_in_chatgpt(
+        &harness.runtime,
+        &server,
+        "user-2",
+        "other-access",
+        "other-refresh",
+        true,
+    )
+    .await;
+    release.send(()).unwrap();
+    assert_eq!(
+        stale.await.unwrap(),
+        Err(mannie_types::provider::ChatGptError::Provider {
+            failure: RunFailure::ChatGptAccountChanged,
+        })
+    );
+    assert!(
+        harness
+            .runtime
+            .list_profiles()
+            .await
+            .unwrap()
+            .iter()
+            .filter_map(|profile| profile.catalog)
+            .all(|model| !model.available)
+    );
+}
+
+#[tokio::test]
+async fn an_agent_keeps_its_withdrawn_model_but_cannot_choose_it_for_the_first_time() {
+    let harness = plan_harness().await;
+    let server = FixtureServer::start().await.unwrap();
+
+    sign_in_chatgpt(
+        &harness.runtime,
+        &server,
+        "user-1",
+        "access",
+        "refresh",
+        false,
+    )
+    .await;
+
+    let catalog = r#"{"models":[{"slug":"review-model","visibility":"list"}]}"#;
+    server.respond(FixtureResponse::json(200, catalog));
+    harness.runtime.refresh_chatgpt_catalog().await.unwrap();
+
+    let model = harness
+        .runtime
+        .list_profiles()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|profile| profile.catalog.is_some())
+        .unwrap();
+    let mut draft = harness.runtime.agent_options().templates.remove(0).draft;
+    draft.name = "Review".to_owned();
+    draft.profile_id = Some(model.id);
+
+    let agent = harness.runtime.create_agent(&draft).await.unwrap();
+
+    server.respond(FixtureResponse::json(200, r#"{"models":[]}"#));
+    harness.runtime.refresh_chatgpt_catalog().await.unwrap();
+    draft.name = "Changed name".to_owned();
+    harness
+        .runtime
+        .update_agent(&agent.key, &draft)
+        .await
+        .unwrap();
+    draft.name = "Second agent".to_owned();
+    assert_eq!(
+        harness.runtime.create_agent(&draft).await.unwrap_err(),
+        mannie_types::agents::AgentError::FieldNotValid {
+            field: mannie_types::agents::AgentField::Profile
+        }
+    );
+}
+
+#[tokio::test]
+async fn a_chat_started_on_the_plan_stays_pinned_when_its_model_is_withdrawn() {
+    let harness = plan_harness().await;
+    harness
+        .runtime
+        .delete_profile(&harness.profile.id)
+        .await
+        .unwrap();
+
+    let server = FixtureServer::start().await.unwrap();
+
+    sign_in_chatgpt(
+        &harness.runtime,
+        &server,
+        "user-1",
+        "access",
+        "refresh",
+        false,
+    )
+    .await;
+    server.respond(FixtureResponse::json(200, r#"{"models":[{"slug":"first","visibility":"list"},{"slug":"second","visibility":"list"}]}"#));
+    harness.runtime.refresh_chatgpt_catalog().await.unwrap();
+    harness.model.push_reply(reply("Hello"));
+
+    let started = start(&harness, "First turn").await;
+
+    harness
+        .wait_for_run(&started.conversation_id, &started.run_id)
+        .await;
+
+    let first = harness.store.default_profile().await.unwrap().unwrap();
+    assert_eq!(first.model, "first");
+    assert_eq!(
+        harness
+            .store
+            .conversation_summary(&started.conversation_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .profile_id,
+        Some(first.id)
+    );
+
+    server.respond(FixtureResponse::json(
+        200,
+        r#"{"models":[{"slug":"second","visibility":"list"}]}"#,
+    ));
+    harness.runtime.refresh_chatgpt_catalog().await.unwrap();
+    assert_eq!(
+        harness
+            .store
+            .default_profile()
+            .await
+            .unwrap()
+            .unwrap()
+            .model,
+        "second"
+    );
+    let next = harness
+        .runtime
+        .send_message(SendMessage::new(
+            started.conversation_id.clone(),
+            "Follow up",
+        ))
+        .await;
+    assert_eq!(
+        next.unwrap_err(),
+        ChatError::PlanModelUnavailable {
+            name: "first".to_owned()
+        }
+    );
+    assert_eq!(harness.model.reply_requests().len(), 1);
 }
 
 #[tokio::test]

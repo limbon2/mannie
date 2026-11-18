@@ -9,6 +9,7 @@
   import type { ChatFailure } from '#lib/types/chat.js';
   import { chatFailureMessage } from '#lib/utils/chat-errors.js';
   import { PROVIDER_SETTINGS_SECTION } from '#lib/utils/chat-urls.js';
+  import { planCatalogMessage } from '#lib/utils/provider-labels.js';
   import { openSettings } from '#lib/utils/settings-sections.js';
 
   // The provider profile of a conversation's next replies, or of a new
@@ -17,13 +18,12 @@
   // profile, or `null` for the default, and `onChoose` applies a choice. The
   // registry's radio items keep their menu open by default; choosing a
   // profile is a single choice, so the menu closes with it.
-  let {
-    onChoose,
-    profileId,
-  }: {
+  interface Props {
     onChoose: (profileId: string | null) => Promise<ChatFailure | null>;
     profileId: string | null;
-  } = $props();
+  }
+
+  let { onChoose, profileId }: Props = $props();
 
   /** The menu's value for "the default profile". No profile ID can be `*`. */
   const DEFAULT_PROFILE = '*';
@@ -34,6 +34,8 @@
   const effective = $derived(chosen ?? providerProfiles.defaultProfile);
   const effectiveName = $derived(effective?.name ?? m.chat_profile_none());
   const defaultName = $derived(providerProfiles.defaultProfile?.name ?? m.chat_profile_none());
+  const showsPlan = $derived(providerProfiles.planModels.length > 0 || chosen?.catalog);
+  const catalogMessage = $derived(planCatalogMessage(providerProfiles));
 
   async function choose(value: string): Promise<void> {
     failure = await onChoose(value === DEFAULT_PROFILE ? null : value);
@@ -44,7 +46,13 @@
   <DropdownMenu.Root>
     <DropdownMenu.Trigger>
       {#snippet child({ props })}
-        <Button {...props} aria-label={m.chat_profile_trigger({ name: effectiveName })} size="sm" variant="ghost">
+        <Button
+          {...props}
+          aria-label={m.chat_profile_trigger({ name: effectiveName })}
+          data-model-picker=""
+          size="sm"
+          variant="ghost"
+        >
           <BotIcon data-icon="inline-start" />
           <span class="max-w-48 truncate" data-content>{effectiveName}</span>
           <ChevronDownIcon data-icon="inline-end" />
@@ -58,15 +66,45 @@
           <DropdownMenu.RadioItem closeOnSelect value={DEFAULT_PROFILE}>
             {m.chat_profile_default({ name: defaultName })}
           </DropdownMenu.RadioItem>
-          {#each providerProfiles.profiles as profile (profile.id)}
-            <DropdownMenu.RadioItem closeOnSelect value={profile.id}>
-              <span data-content>{profile.name}</span>
-            </DropdownMenu.RadioItem>
-          {/each}
+          {#if showsPlan}
+            <DropdownMenu.Group>
+              <DropdownMenu.Label>{m.chat_chatgpt_plan()}</DropdownMenu.Label>
+              {#each providerProfiles.planModels as profile (profile.id)}
+                <DropdownMenu.RadioItem closeOnSelect data-plan-model={profile.model} value={profile.id}>
+                  <span data-content>{profile.name}</span>
+                </DropdownMenu.RadioItem>
+              {/each}
+
+              {#if chosen?.catalog?.available === false}
+                <DropdownMenu.RadioItem disabled value={chosen.id}>
+                  <span data-content>{chosen.name}</span>
+                </DropdownMenu.RadioItem>
+              {/if}
+            </DropdownMenu.Group>
+          {/if}
+
+          {#if providerProfiles.configured.length > 0}
+            <DropdownMenu.Group>
+              <DropdownMenu.Label>{m.chat_profile_configured()}</DropdownMenu.Label>
+              {#each providerProfiles.configured as profile (profile.id)}
+                <DropdownMenu.RadioItem closeOnSelect value={profile.id}>
+                  <span data-content>{profile.name}</span>
+                </DropdownMenu.RadioItem>
+              {/each}
+            </DropdownMenu.Group>
+          {/if}
         </DropdownMenu.RadioGroup>
       </DropdownMenu.Group>
       <DropdownMenu.Separator />
       <DropdownMenu.Group>
+        {#if catalogMessage !== null}
+          <DropdownMenu.Label>{catalogMessage}</DropdownMenu.Label>
+          {#if providerProfiles.catalogStatus !== 'loading'}
+            <DropdownMenu.Item onSelect={() => void providerProfiles.refreshCatalog()}>
+              {m.chat_try_again()}
+            </DropdownMenu.Item>
+          {/if}
+        {/if}
         <DropdownMenu.Item onSelect={() => void openSettings(PROVIDER_SETTINGS_SECTION)}>
           {m.chat_profile_manage()}
         </DropdownMenu.Item>

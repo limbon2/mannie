@@ -314,7 +314,7 @@ async function createProviderProfile(input: CreateProviderProfile): Promise<stri
 }
 
 async function deleteProviderProfiles(): Promise<number> {
-  const profiles = unwrap(await appCommands.listProviderProfiles());
+  const profiles = unwrap(await appCommands.listProviderProfiles()).filter((profile) => !profile.catalog);
   for (const profile of profiles) {
     unwrap(await appCommands.deleteProviderProfile({ id: profile.id }));
   }

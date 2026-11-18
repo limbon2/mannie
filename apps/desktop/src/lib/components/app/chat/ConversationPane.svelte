@@ -12,7 +12,13 @@
   import * as Empty from '#lib/components/ui/empty/index.js';
   import { Skeleton } from '#lib/components/ui/skeleton/index.js';
   import { Spinner } from '#lib/components/ui/spinner/index.js';
-  import { type Attachment, commands, type ImageRef, type MentionRef } from '#lib/generated/bindings.js';
+  import {
+    type Attachment,
+    commands,
+    type ImageRef,
+    type MentionRef,
+    type ReasoningEffort,
+  } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
   import { chatActions } from '#lib/state/chat-actions.svelte.js';
   import { sameKey } from '#lib/state/conversation-draft.svelte.js';
@@ -33,6 +39,7 @@
   import NoProfileNotice from './NoProfileNotice.svelte';
   import ProfileMenu from './ProfileMenu.svelte';
   import ReadOnlyFooter from './ReadOnlyFooter.svelte';
+  import ReasoningEffortMenu from './ReasoningEffortMenu.svelte';
   import Transcript from './Transcript.svelte';
 
   // One conversation: its toolbar, its transcript and the message box
@@ -68,7 +75,9 @@
   /** The kind of task of the plugin's executor whose conversation this is, or `null` for a child agent's. */
   const executorKind = $derived(summary?.task?.executor?.kind ?? null);
   const replying = $derived(hasActiveRun(transcript));
-  const noProfile = $derived(providerProfiles.status === 'ready' && providerProfiles.profiles.length === 0);
+  const profile = $derived(providerProfiles.find(summary?.profileId ?? null) ?? providerProfiles.defaultProfile);
+  const availableProfile = $derived(profile?.catalog?.available === false ? undefined : profile);
+  const noModel = $derived(availableProfile === undefined);
   const compacting = $derived(chatActions.compacting.includes(id));
   const compactionFailure = $derived(chatActions.compactionFailures[id] ?? null);
 
@@ -97,6 +106,10 @@
   });
 
   async function send(text: string, mentions: MentionRef[], images: ImageRef[]): Promise<ChatFailure | null> {
+    const choiceFailure = await chatActions.pendingModelChange(id);
+    if (choiceFailure !== null) {
+      return choiceFailure;
+    }
     const wasDraft = isDraft;
     const outcome = await call(() => commands.sendMessage({ conversationId: id, images, mentions, text }));
     if (!outcome.ok) {
@@ -108,6 +121,14 @@
       void nameShownDraft(id);
     }
     return null;
+  }
+
+  function chooseProfile(profileId: string | null): Promise<ChatFailure | null> {
+    return chatActions.setProfile(id, profileId);
+  }
+
+  function chooseEffort(effort: ReasoningEffort | null): Promise<ChatFailure | null> {
+    return chatActions.setEffort(id, effort);
   }
 
   async function detach(attachment: Attachment): Promise<void> {
@@ -186,12 +207,16 @@
     {/if}
   {:else}
     {#if summary !== null}
-      <div class="flex items-center gap-2 border-b px-3 py-1.5">
+      <div class="flex flex-wrap items-center gap-2 border-b px-3 py-1.5">
         {#if !isChild}
-          <ProfileMenu
-            profileId={summary.profileId}
-            onChoose={(profileId: string | null) => chatActions.setProfile(id, profileId)}
-          />
+          <ProfileMenu profileId={summary.profileId} onChoose={chooseProfile} />
+          {#if availableProfile !== undefined}
+            <ReasoningEffortMenu
+              effort={summary.reasoningEffort ?? null}
+              profile={availableProfile}
+              onChoose={chooseEffort}
+            />
+          {/if}
           <ChatGptPlanIndicator profileId={summary.profileId} />
         {/if}
         <div class="ms-auto flex items-center gap-1">
@@ -257,13 +282,13 @@
       {replying}
     />
   {:else}
-    {#if noProfile}
+    {#if noModel}
       <div class="mx-auto w-full max-w-3xl px-4 pb-2">
-        <NoProfileNotice />
+        <NoProfileNotice {profile} />
       </div>
     {/if}
     <Composer
-      disabled={noProfile || conversation.status !== 'ready'}
+      disabled={noModel || conversation.status !== 'ready'}
       mentionPlace={{ conversationId: id, kind: 'conversation' }}
       newConversation={isDraft}
       {replying}

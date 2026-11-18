@@ -434,7 +434,11 @@ impl Runtime {
             conversation.clone(),
             turn,
             run.id,
-            run.profile_id,
+            crate::actor::RunModel {
+                profile: run.profile_id,
+                effort: assignment.profile.reasoning_effort,
+                account: Ok(None),
+            },
             run.agent,
             Some(ChildLink {
                 parent: None,

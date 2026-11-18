@@ -4,6 +4,10 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+### Added
+
+- Choose models from your connected ChatGPT plan in chats and agents. Change reasoning effort in the chat header. Each chat remembers its selection, and new chats start with your last choice.
+
 ## 0.8.4 - 2026-11-17
 
 ### Fixed

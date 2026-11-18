@@ -7,10 +7,14 @@
 use std::fs;
 
 use mannie_runtime::testing::{Harness, reply};
-use mannie_types::chat::{ChatError, OpenDraft, RenameConversation, SendMessage};
+use mannie_types::chat::{
+    ChatError, OpenDraft, RenameConversation, SendMessage, SetConversationReasoningEffort,
+    StartConversation,
+};
 use mannie_types::context::AttachmentRef;
 use mannie_types::ids::{ConversationId, ProjectId};
 use mannie_types::projects::RemoveProject;
+use mannie_types::provider::ReasoningEffort;
 use mannie_types::transcript::{ConversationSummary, TitleSource};
 
 async fn summary(harness: &Harness, conversation: &ConversationId) -> Option<ConversationSummary> {
@@ -83,6 +87,104 @@ async fn opening_two_drafts_of_a_place_at_once_creates_one() {
     );
 
     assert_eq!(first.unwrap(), second.unwrap());
+}
+
+#[tokio::test]
+async fn new_chats_copy_the_last_explicit_effort_while_existing_drafts_keep_their_choice() {
+    let harness = Harness::start().await;
+    let folders = tempfile::tempdir().unwrap();
+    let project = project(&harness, &folders, "effort").await;
+    let project_draft = OpenDraft::default().with_project(Some(project));
+    let saved = harness
+        .runtime
+        .open_draft(project_draft.clone())
+        .await
+        .unwrap();
+    let general = harness
+        .runtime
+        .open_draft(OpenDraft::default())
+        .await
+        .unwrap();
+    harness
+        .runtime
+        .set_conversation_reasoning_effort(SetConversationReasoningEffort {
+            conversation_id: general.clone(),
+            reasoning_effort: Some(ReasoningEffort::High),
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        harness.runtime.open_draft(project_draft).await.unwrap(),
+        saved
+    );
+    assert_eq!(
+        summary(&harness, &saved).await.unwrap().reasoning_effort,
+        None
+    );
+    send(&harness, &general, "Work carefully").await;
+
+    let next = harness
+        .runtime
+        .open_draft(OpenDraft::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        summary(&harness, &next).await.unwrap().reasoning_effort,
+        Some(ReasoningEffort::High)
+    );
+
+    harness.model.push_reply(reply("Done."));
+
+    let direct = harness
+        .runtime
+        .start_conversation(StartConversation::new("One more"))
+        .await
+        .unwrap();
+
+    harness
+        .wait_for_run(&direct.conversation_id, &direct.run_id)
+        .await;
+    assert!(
+        harness
+            .model
+            .reply_requests()
+            .iter()
+            .all(|request| request.reasoning_effort == ReasoningEffort::High)
+    );
+
+    harness
+        .runtime
+        .set_conversation_reasoning_effort(SetConversationReasoningEffort {
+            conversation_id: saved,
+            reasoning_effort: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        summary(&harness, &general).await.unwrap().reasoning_effort,
+        Some(ReasoningEffort::High)
+    );
+    harness.model.push_reply(reply("Done."));
+
+    let reset = harness
+        .runtime
+        .start_conversation(StartConversation::new("Use the profile"))
+        .await
+        .unwrap();
+
+    harness
+        .wait_for_run(&reset.conversation_id, &reset.run_id)
+        .await;
+    assert_eq!(
+        harness
+            .model
+            .reply_requests()
+            .last()
+            .unwrap()
+            .reasoning_effort,
+        ReasoningEffort::ServerDefault
+    );
 }
 
 #[tokio::test]

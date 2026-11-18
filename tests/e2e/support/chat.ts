@@ -124,9 +124,9 @@ export async function chooseContextAction(label: string): Promise<void> {
 /** Makes the profile named `name` the open conversation's profile. */
 export async function useProfile(name: string): Promise<void> {
   await waitForPointerInput();
-  await $('main button[aria-label^="Provider profile"]').click();
+  await $('main [data-model-picker]').click();
   await clickWithText('[data-slot="dropdown-menu-radio-item"]', name);
-  await waitForShownText($('main button[aria-label^="Provider profile"]'), name);
+  await waitForShownText($('main [data-model-picker]'), name);
 }
 
 /** Adds a profile for the test provider at `baseUrl`. The first profile becomes the default. */

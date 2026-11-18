@@ -1,10 +1,12 @@
 // The ChatGPT plan (docs/features/chatgpt-plan.md, acceptance; ADR-0062): the
-// owner signs in with ChatGPT through the browser, sees the notice once, makes
-// a profile on the plan from its catalog, gets replies billed to the plan,
+// owner signs in with ChatGPT through the browser, chooses a catalog model
+// and reasoning effort in chat, can still make a custom plan profile,
 // crosses a refresh of the tokens, meets the plan's usage limit with "Manage
 // usage", and signs out. The provider server plays OpenAI's sign-in and the
 // plan; the validation build records the pages that it would open, and the
 // test plays the browser.
+import { Key } from 'webdriverio';
+
 import {
   clickWithText,
   sendMessage,
@@ -13,12 +15,21 @@ import {
   waitForLatestPart,
 } from '../support/chat.ts';
 import { deleteProviderProfiles, expireChatGptToken, openedLinks, setChatGptMock } from '../support/harness.ts';
-import { openSettings, waitForAnimations, waitForApp, waitForShownText } from '../support/page.ts';
+import {
+  axeViolations,
+  leaveSettings,
+  openSettings,
+  waitForAnimations,
+  waitForApp,
+  waitForShownText,
+} from '../support/page.ts';
 import {
   PLAN_EMAIL,
   PLAN_MODEL,
+  PLAN_MODEL_NAME,
   type ProviderServer,
   type RecordedRequest,
+  SECOND_PLAN_MODEL,
   startProviderServer,
   USAGE_LIMIT_MARKER,
 } from '../support/provider-server.ts';
@@ -26,6 +37,26 @@ import {
 const DIALOG = '[data-slot="dialog-content"]';
 const ACCOUNT = '[data-chatgpt-account]';
 const USAGE_URL = 'https://chatgpt.com/settings/usage';
+const MODEL_PICKER = 'main [data-model-picker]';
+const EFFORT_PICKER = 'main [data-effort-picker]';
+
+/** Operates the same menu keys an owner can use from the chat header. */
+async function chooseWithKeyboard(trigger: string, option: string): Promise<void> {
+  await browser.execute((selector: string) => document.querySelector<HTMLElement>(selector)?.focus(), trigger);
+  await browser.keys(Key.Enter);
+  const item = $(option);
+  await item.waitForDisplayed();
+  const items = await $$('[role="menuitemradio"]');
+  for (let count = 0; count <= items.length; count += 1) {
+    if (await item.isFocused()) {
+      await browser.keys(Key.Enter);
+      await item.waitForDisplayed({ reverse: true });
+      return;
+    }
+    await browser.keys(Key.ArrowDown);
+  }
+  throw new Error(`The menu could not reach ${option} with the arrow keys`);
+}
 
 /** The requests of the provider server to `path`. */
 function requestsTo(provider: ProviderServer, path: string): RecordedRequest[] {
@@ -93,7 +124,77 @@ describe('the ChatGPT plan', () => {
     await notice.waitForDisplayed({ reverse: true, timeout: 10_000 });
   });
 
+  it('sends directly on the first listed model and remembers effort separately for each chat', async () => {
+    await startNewConversation();
+    await waitForShownText(MODEL_PICKER, PLAN_MODEL_NAME);
+    await chooseWithKeyboard(EFFORT_PICKER, '[data-effort="high"]');
+    await waitForShownText(EFFORT_PICKER, 'High');
+    await sendMessage('First catalog model');
+    expect(await waitForCompleteReply()).toContain('First catalog model');
+    const first = requestsTo(provider, '/v1/responses').at(-1);
+    expect(first?.authorization).toMatch(/^Bearer plan-access-/u);
+    expect(first?.body).toMatchObject({ model: PLAN_MODEL, reasoning: { effort: 'high' } });
+    expect(first?.body).not.toHaveProperty('max_output_tokens');
+    const firstChat = await browser.getUrl();
+
+    await startNewConversation();
+    await waitForShownText(EFFORT_PICKER, 'High');
+    await chooseWithKeyboard(MODEL_PICKER, `[data-plan-model="${SECOND_PLAN_MODEL}"]`);
+    await waitForShownText(EFFORT_PICKER, "The server's default");
+    await chooseWithKeyboard(EFFORT_PICKER, '[data-effort="low"]');
+    await waitForShownText(EFFORT_PICKER, 'Low');
+    await sendMessage('Second catalog model');
+    expect(await waitForCompleteReply()).toContain('Second catalog model');
+    expect(requestsTo(provider, '/v1/responses').at(-1)?.body).toMatchObject({
+      model: SECOND_PLAN_MODEL,
+      reasoning: { effort: 'low' },
+    });
+
+    await browser.url(firstChat);
+    await waitForApp();
+    await waitForShownText(EFFORT_PICKER, 'High');
+    await startNewConversation();
+    await waitForShownText(EFFORT_PICKER, 'Low');
+  });
+
+  it('offers the listed models in order and keeps both menus accessible in each theme', async () => {
+    for (const theme of ['light', 'dark']) {
+      await openSettings('shell.interface');
+      await $(`#interface-theme-${theme}`).click();
+      await leaveSettings();
+      await $(MODEL_PICKER).click();
+      const models = await $$('[data-plan-model]').map((item) => item.getAttribute('data-plan-model'));
+      expect(models).toEqual([PLAN_MODEL, SECOND_PLAN_MODEL]);
+      expect(await axeViolations()).toEqual([]);
+      await browser.keys(Key.Escape);
+      await expect($(MODEL_PICKER)).toBeFocused();
+      await $(EFFORT_PICKER).click();
+      await $('[data-effort="low"]').waitForDisplayed();
+      expect(await axeViolations()).toEqual([]);
+      await browser.keys(Key.Escape);
+      await expect($(EFFORT_PICKER)).toBeFocused();
+    }
+  });
+
+  it('runs an agent on its chosen plan model without creating a profile', async () => {
+    await $('a[href*="view=agents"]').click();
+    await $('[data-agent-row="conversation"]').click();
+    await $('[data-agent-duplicate]').click();
+    await $('[data-agent-save]').waitForDisplayed();
+    await $('[data-agent-name]').setValue('Catalog agent');
+    await $('[data-agent-model]').click();
+    await clickWithText('[data-slot="select-item"]', 'Second plan model');
+    await $('[data-agent-save]').click();
+    await $('[data-agent-start]').waitForClickable();
+    await $('[data-agent-start]').click();
+    await waitForShownText(MODEL_PICKER, 'Second plan model');
+    await sendMessage('Use the agent model');
+    expect(await waitForCompleteReply()).toContain('Use the agent model');
+    expect(requestsTo(provider, '/v1/responses').at(-1)?.body?.model).toBe(SECOND_PLAN_MODEL);
+  });
+
   it('makes a profile on the plan from its catalog', async () => {
+    await openSettings('chat.providers');
     await clickWithText('main button', 'Add a profile');
     await $(DIALOG).waitForDisplayed();
     await $('#profile-name').setValue('Plan');

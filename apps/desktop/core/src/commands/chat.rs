@@ -7,8 +7,8 @@ use mannie_runtime::Runtime;
 use mannie_types::chat::{
     ChatError, ChatSettings, CheckpointRef, ConversationRef, EarlierTurns, LoadEarlierTurns,
     OpenDraft, RenameConversation, SendMessage, SetConversationAgent, SetConversationProfile,
-    StartConversation, StartedConversation, StartedReply, StopOutcome, SubscribeConversation,
-    Unsubscribe, UpdateChatSettings,
+    SetConversationReasoningEffort, StartConversation, StartedConversation, StartedReply,
+    StopOutcome, SubscribeConversation, Unsubscribe, UpdateChatSettings,
 };
 use mannie_types::context::ChangeAttachment;
 use mannie_types::ids::ConversationId;
@@ -292,6 +292,19 @@ pub(crate) async fn set_conversation_profile(
         .set_conversation_profile(input)
         .await
         .map_err(refused("set_conversation_profile"))
+}
+
+/// Sets the reasoning effort in this chat and remembers it for new chats.
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn set_conversation_reasoning_effort(
+    core: State<'_, Core>,
+    input: SetConversationReasoningEffort,
+) -> Result<(), CommandError<ChatError>> {
+    runtime(&core)?
+        .set_conversation_reasoning_effort(input)
+        .await
+        .map_err(refused("set_conversation_reasoning_effort"))
 }
 
 /// Chooses the agent of a conversation's next replies, or the built-in one.

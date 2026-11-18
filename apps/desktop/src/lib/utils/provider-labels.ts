@@ -4,6 +4,20 @@
 // catalog.
 import type { ApiInterface, ProfileAccess, ReasoningEffort, SearchKind, ServerKind } from '#lib/generated/bindings.js';
 import { m } from '#lib/paraglide/messages.js';
+import type { ProviderProfiles } from '#lib/state/provider-profiles.svelte.js';
+import { chatgptFailureMessage } from '#lib/utils/chat-errors.js';
+
+/** A catalog that has no usable list yet says why in either model picker. */
+export function planCatalogMessage(profiles: ProviderProfiles): string | null {
+  if (profiles.catalogFailure !== null) {
+    return m.chat_chatgpt_models_failed({ reason: chatgptFailureMessage(profiles.catalogFailure) });
+  }
+  if (profiles.catalogStatus === 'loading') {
+    return m.chat_chatgpt_models_loading();
+  }
+  const empty = profiles.catalogStatus === 'ready' && profiles.planModels.length === 0;
+  return empty ? m.chat_chatgpt_models_empty() : null;
+}
 
 /** The ways a profile reaches its model, in the order the profile dialog offers them. */
 export const PROFILE_ACCESSES: readonly ProfileAccess[] = ['endpoint', 'chatgpt_plan'];

@@ -1,6 +1,8 @@
 // What the owner does with conversations from more than one place: the
 // command palette, the conversation list and the conversation view. The
 // dialogs these actions open are mounted once, as the chat feature's overlay.
+import { SvelteMap } from 'svelte/reactivity';
+
 import {
   type ChatError,
   type Checkpoint,
@@ -9,6 +11,7 @@ import {
   type ConversationId,
   type ConversationSummary,
   type ProfileId,
+  type ReasoningEffort,
 } from '#lib/generated/bindings.js';
 import type { Failure } from '#lib/types/calls.js';
 import { call } from '#lib/utils/calls.js';
@@ -72,6 +75,7 @@ export class ChatActions {
   renaming: RenameRequest | null = $state(null);
   /** Counts the checkpoints the owner opened, so that only the latest one is shown. */
   #checkpointRequests = 0;
+  readonly #modelChanges = new SvelteMap<ConversationId, Promise<Failure<ChatError> | null>>();
 
   /** Compacts a conversation now. */
   async compact(id: ConversationId): Promise<void> {
@@ -117,6 +121,10 @@ export class ChatActions {
 
   /** Starts a new run for the latest turn. */
   async retry(id: ConversationId): Promise<Failure<ChatError> | null> {
+    const choiceFailure = await this.pendingModelChange(id);
+    if (choiceFailure !== null) {
+      return choiceFailure;
+    }
     const outcome = await call(() => commands.retryReply({ conversationId: id }));
     return outcome.ok ? null : outcome.failure;
   }
@@ -138,10 +146,41 @@ export class ChatActions {
     }
   }
 
+  /** Sets the chat's effort and the owner's preference for future chats. */
+  async setEffort(id: ConversationId, reasoningEffort: ReasoningEffort | null): Promise<Failure<ChatError> | null> {
+    return this.#changeModel(id, () =>
+      commands.setConversationReasoningEffort({ conversationId: id, reasoningEffort }),
+    );
+  }
+
   /** Chooses the profile of a conversation's next replies, or the default for `null`. */
   async setProfile(id: ConversationId, profileId: ProfileId | null): Promise<Failure<ChatError> | null> {
-    const outcome = await call(() => commands.setConversationProfile({ conversationId: id, profileId }));
-    return outcome.ok ? null : outcome.failure;
+    return this.#changeModel(id, () => commands.setConversationProfile({ conversationId: id, profileId }));
+  }
+
+  /** Send and Retry wait for choices made before them, including rapid successive changes. */
+  pendingModelChange(id: ConversationId): Promise<Failure<ChatError> | null> | null {
+    return this.#modelChanges.get(id) ?? null;
+  }
+
+  async #changeModel(
+    id: ConversationId,
+    write: () => ReturnType<typeof commands.setConversationProfile>,
+  ): Promise<Failure<ChatError> | null> {
+    const previous = this.pendingModelChange(id);
+    const save = async (): Promise<Failure<ChatError> | null> => {
+      const outcome = await call(write);
+      return outcome.ok ? null : outcome.failure;
+    };
+    const pending = previous === null ? save() : previous.then(save);
+    this.#modelChanges.set(id, pending);
+    try {
+      return await pending;
+    } finally {
+      if (this.#modelChanges.get(id) === pending) {
+        this.#modelChanges.delete(id);
+      }
+    }
   }
 
   /** Opens the summary of a checkpoint in its dialog and reads it from the core. */

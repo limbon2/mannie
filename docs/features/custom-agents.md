@@ -4,7 +4,7 @@
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Building                                                                                                                                                                                                                                                                                                        |
 | Milestone    | M17                                                                                                                                                                                                                                                                                                             |
-| Last updated | 2026-11-17                                                                                                                                                                                                                                                                                                      |
+| Last updated | 2026-11-18                                                                                                                                                                                                                                                                                                      |
 | Related      | [ADR-0059](../adr/0059-let-the-owner-define-agents.md), [Plans](plans.md), [Child agents](child-agents/README.md), [Questions to the owner](questions.md), [Extension points](../architecture/extension-points.md#32-agent-definitions), [Security](../architecture/security.md), [Feature protocol](README.md) |
 
 ## Intent
@@ -22,7 +22,7 @@ The owner wants to create and edit agents in the app, "easily created and edited
   - The name, and a description that other agents read when they choose a child.
   - The kind, conversation agent or child agent, fixed when the agent is created.
   - "Only reads": the agent's tools only read, and only child agents that only read work for it.
-  - The model: a provider profile, or the conversation's for a conversation agent and the parent's for a child.
+  - The model: a saved profile, a model from the connected ChatGPT plan, or the conversation's model for a conversation agent and the parent's for a child.
   - The instructions, which the model reads after Mannie's base instructions.
   - The steps: an ordered list, each with a title, what to do, who does it, "Several at the same time" and "Ask me first". "Move up" and "Move down" change the order.
   - The tools, as groups, and a switch for each plugin with tools.

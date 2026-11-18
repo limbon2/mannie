@@ -428,6 +428,7 @@ impl Runtime {
         profile_id: &ProfileId,
         agent: &str,
         task: bool,
+        account: Option<&AccountKey>,
     ) -> Result<Setup, RunFailure> {
         let profile = match self.inner.store.profile(profile_id).await {
             Ok(Some(profile)) => profile,
@@ -437,7 +438,8 @@ impl Runtime {
                 return Err(RunFailure::Internal);
             }
         };
-        self.setup_for(&profile, agent, task).await
+
+        self.setup_for(&profile, agent, task, account).await
     }
 
     /// The setup of calls with a profile. Reads the credential, which may
@@ -451,6 +453,7 @@ impl Runtime {
         profile: &StoredProfile,
         agent: &str,
         task: bool,
+        account: Option<&AccountKey>,
     ) -> Result<Setup, RunFailure> {
         let snapshot = self.contributions();
         let Some(agent) = self.agent_in(&snapshot, agent) else {
@@ -459,7 +462,7 @@ impl Runtime {
             tracing::warn!(agent, "a run names an agent that is not registered");
             return Err(RunFailure::AgentMissing);
         };
-        let route = self.route_of(profile).await?;
+        let route = self.route_of(profile, account).await?;
         let Some(adapter) = self.inner.registry.adapter(route.interface) else {
             tracing::error!(
                 interface = route.interface.as_str(),
@@ -692,9 +695,24 @@ impl Runtime {
     /// plan, OpenAI's Responses API with the tokens of the account that is
     /// signed in now, its provider-private data bound to that account too;
     /// otherwise the profile's interface, server and credential.
-    async fn route_of(&self, profile: &StoredProfile) -> Result<Route, RunFailure> {
+    async fn route_of(
+        &self,
+        profile: &StoredProfile,
+        expected: Option<&AccountKey>,
+    ) -> Result<Route, RunFailure> {
         if profile.access == ProfileAccess::ChatGptPlan {
             let key = self.chatgpt_key().await?;
+
+            if expected.is_some_and(|expected| expected != &key) {
+                return Err(RunFailure::ChatGptAccountChanged);
+            }
+            if let Some(account) = &profile.catalog_account
+                && (!profile.catalog_available || account != key.as_str())
+            {
+                return Err(RunFailure::ModelNotFound {
+                    model: profile.model.clone(),
+                });
+            }
             return Ok(Route {
                 interface: ApiInterface::Responses,
                 base_url: self.chatgpt_endpoints().api_base,
@@ -702,6 +720,10 @@ impl Runtime {
                 credential: CallCredential::ChatGptAccount { key },
             });
         }
+        if expected.is_some() {
+            return Err(RunFailure::ChatGptAccountChanged);
+        }
+
         let base_url = check_base_url(&profile.base_url).map_err(|error| {
             tracing::error!(error.code = error.code(), "a stored base URL is not valid");
             RunFailure::Internal
@@ -786,6 +808,9 @@ impl Runtime {
         };
         let snapshot = &assigned.profile;
         let profile = StoredProfile {
+            catalog_account: None,
+            catalog_available: false,
+            advertised_efforts: None,
             id: snapshot.id.clone(),
             name: String::new(),
             // A task's profile is never on the ChatGPT plan, whose tokens are
@@ -807,7 +832,7 @@ impl Runtime {
             created_at: UtcMillis::EPOCH,
             updated_at: UtcMillis::EPOCH,
         };
-        let mut setup = self.setup_for(&profile, agent, true).await?;
+        let mut setup = self.setup_for(&profile, agent, true, None).await?;
         let narrower = assigned.read_only.then_some(CeilingMode::ReadOnly);
         let mode = ceiling.mode.narrowed_by(narrower);
         if mode == CeilingMode::ReadOnly {

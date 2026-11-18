@@ -7,7 +7,8 @@
 //! the date it was verified against the provider's model page; check the
 //! entries again before relying on them after that.
 
-use mannie_types::provider::ModelLimits;
+use mannie_types::provider::ReasoningEffort::{High, Low, Max, Medium, Minimal, XHigh};
+use mannie_types::provider::{ModelLimits, ReasoningEffort};
 
 /// What Mannie knows about a model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,13 +19,24 @@ pub struct KnownModel {
     pub limits: ModelLimits,
     /// Whether it reasons before it answers.
     pub reasons: bool,
+    /// The explicit efforts accepted by its API. The account catalog takes priority.
+    pub supported_efforts: &'static [ReasoningEffort],
 }
+
+// Explicit API effort levels verified against OpenAI's model pages and the
+// reasoning guide on 2026-11-18. Codex's Ultra delegates to subagents.
+const GPT_6_EFFORTS: &[ReasoningEffort] = &[Low, Medium, High, XHigh, Max];
+const GPT_6_LUNA_EFFORTS: &[ReasoningEffort] =
+    &[ReasoningEffort::None, Low, Medium, High, XHigh, Max];
+const GPT_5_1_EFFORTS: &[ReasoningEffort] = &[ReasoningEffort::None, Low, Medium, High];
+const GPT_5_EFFORTS: &[ReasoningEffort] = &[Minimal, Low, Medium, High];
+const O_SERIES_EFFORTS: &[ReasoningEffort] = &[Low, Medium, High];
 
 const fn model(
     name: &'static str,
     context_window: u32,
     output_limit: u32,
-    reasons: bool,
+    supported_efforts: &'static [ReasoningEffort],
 ) -> KnownModel {
     KnownModel {
         name,
@@ -32,29 +44,33 @@ const fn model(
             context_window,
             output_limit,
         },
-        reasons,
+        reasons: !supported_efforts.is_empty(),
+        supported_efforts,
     }
 }
 
 /// OpenAI's models, verified on <https://developers.openai.com/api/docs/models>
 /// on 2026-10-14. Older models are kept while profiles may still name them.
 const KNOWN_MODELS: &[KnownModel] = &[
-    model("gpt-6-astra", 1_050_000, 128_000, true),
-    model("gpt-6.1-sol", 1_050_000, 128_000, true),
-    model("gpt-6-luna", 1_050_000, 128_000, true),
-    model("gpt-5.1", 400_000, 128_000, true),
-    model("gpt-5", 400_000, 128_000, true),
-    model("gpt-5-mini", 400_000, 128_000, true),
-    model("gpt-5-nano", 400_000, 128_000, true),
-    model("gpt-4.1", 1_047_576, 32_768, false),
-    model("gpt-4.1-mini", 1_047_576, 32_768, false),
-    model("gpt-4.1-nano", 1_047_576, 32_768, false),
-    model("gpt-4o", 128_000, 16_384, false),
-    model("gpt-4o-mini", 128_000, 16_384, false),
-    model("o3", 200_000, 100_000, true),
-    model("o3-mini", 200_000, 100_000, true),
-    model("o4-mini", 200_000, 100_000, true),
-    model("o1", 200_000, 100_000, true),
+    // Limits verified against their model pages on 2026-11-18.
+    model("gpt-6.2-astra", 1_050_000, 128_000, GPT_6_EFFORTS),
+    model("gpt-6.2-sol", 1_050_000, 128_000, GPT_6_EFFORTS),
+    model("gpt-6-astra", 1_050_000, 128_000, GPT_6_EFFORTS),
+    model("gpt-6.1-sol", 1_050_000, 128_000, GPT_6_EFFORTS),
+    model("gpt-6-luna", 1_050_000, 128_000, GPT_6_LUNA_EFFORTS),
+    model("gpt-5.1", 400_000, 128_000, GPT_5_1_EFFORTS),
+    model("gpt-5", 400_000, 128_000, GPT_5_EFFORTS),
+    model("gpt-5-mini", 400_000, 128_000, GPT_5_EFFORTS),
+    model("gpt-5-nano", 400_000, 128_000, GPT_5_EFFORTS),
+    model("gpt-4.1", 1_047_576, 32_768, &[]),
+    model("gpt-4.1-mini", 1_047_576, 32_768, &[]),
+    model("gpt-4.1-nano", 1_047_576, 32_768, &[]),
+    model("gpt-4o", 128_000, 16_384, &[]),
+    model("gpt-4o-mini", 128_000, 16_384, &[]),
+    model("o3", 200_000, 100_000, O_SERIES_EFFORTS),
+    model("o3-mini", 200_000, 100_000, O_SERIES_EFFORTS),
+    model("o4-mini", 200_000, 100_000, O_SERIES_EFFORTS),
+    model("o1", 200_000, 100_000, O_SERIES_EFFORTS),
 ];
 
 /// Every known model.

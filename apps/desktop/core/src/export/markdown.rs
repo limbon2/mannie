@@ -508,6 +508,7 @@ mod record_tests {
         ConversationRecord {
             version: RECORD_VERSION,
             conversation: ConversationSummary {
+                reasoning_effort: None,
                 id: conversation,
                 title: "[A title] é".to_owned(),
                 title_source: TitleSource::Owner,

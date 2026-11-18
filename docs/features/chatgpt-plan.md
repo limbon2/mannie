@@ -4,7 +4,7 @@
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Building                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | Milestone    | M19                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| Last updated | 2026-11-09                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Last updated | 2026-11-18                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | Related      | [ADR-0062](../adr/0062-let-the-owner-pay-for-model-calls-with-a-chatgpt-plan.md), [Providers](chat/providers.md), [Conversation view](chat/conversation-view.md), [ADR-0010](../adr/0010-keep-provider-credentials-on-the-master.md), [ADR-0011](../adr/0011-own-the-provider-adapters.md), [Credential leases](../../plugins/workers/docs/credential-leases.md), [Security](../architecture/security.md), [Feature protocol](README.md) |
 
 ## Intent
@@ -39,6 +39,10 @@ The owner wants Mannie's conversations to run on their ChatGPT subscription inst
 - The journal records no sign-in or sign-out, since they change only Mannie's own credentials, as a change of a profile's key does.
 
 ### Plan profiles
+
+- After sign-in, the conversation and agent model menus list the account's models in catalog order. With no configured default or agent model, a new chat uses the first listed model. Owners can still create named profiles with their own settings.
+- For models used directly from the catalog, Mannie uses reported limits when valid and then the limits of a known model. Otherwise it budgets for 32,768 tokens and reserves 4,096 for output. See [ADR-0073](../adr/0073-use-chatgpt-plan-models-directly.md).
+- The catalog loads for an already connected account and refreshes when the account changes. A chat keeps the identity of a chosen model if it disappears. The owner can sign in or choose a different model. A failed catalog load offers Retry, and configured endpoint profiles stay available.
 
 - The profile dialog asks how the profile reaches its model: "API endpoint", as before, or "ChatGPT plan".
 - A plan profile has no fields for the API interface, the base URL or the API key. It calls OpenAI's Responses API at `https://api.openai.com/v1` with the account's tokens. The owner picks the model from the account's catalog by its name, and the dialog shows the catalog's loading, empty, error and signed-out states. The context window and the output limit come from the defaults of known models, or the owner enters them.
@@ -114,6 +118,8 @@ None blocks the build. The fixtures recorded from the live route settle OpenAI's
 - Signing out waits for a refresh in flight, revokes the refresh token with retries, and clears the tokens also when OpenAI does not confirm, which `SignOutReport.revoked` reports.
 
 ### Contracts
+
+- `refresh_chatgpt_catalog` reads the signed-in account's model list and updates its selectable profiles together. A refresh that finishes after the account changes cannot replace the new account's catalog.
 
 - `ProfileAccess`, the field `access` of `ProviderProfile` and `ProfileDraft`: `endpoint`, the default, which a draft without the field reads as, or `chatgpt_plan`. A plan profile's API interface, Responses, and its base URL come from the core's configuration and never from the webview, and a plan profile refuses a credential.
 - Commands, in `apps/desktop/core/src/commands/chatgpt.rs`:

@@ -267,6 +267,12 @@ const RUNTIME: StoreModule = StoreModule {
             description: "add the draft conversations of the places where conversations start",
             sql: include_str!("runtime/migrations/0044_add_conversation_drafts.sql"),
         },
+        Migration {
+            version: 30,
+            legacy_version: None,
+            description: "remember the reasoning effort chosen in chat",
+            sql: include_str!("runtime/migrations/0046_add_conversation_reasoning_effort.sql"),
+        },
     ]),
     confined: false,
 };
@@ -291,6 +297,12 @@ const PROVIDER: StoreModule = StoreModule {
             legacy_version: None,
             description: "create the table of the ChatGPT account",
             sql: include_str!("provider/migrations/0043_create_chatgpt_account.sql"),
+        },
+        Migration {
+            version: 4,
+            legacy_version: None,
+            description: "keep the model choices of the ChatGPT plan",
+            sql: include_str!("provider/migrations/0045_add_chatgpt_catalog.sql"),
         },
     ]),
     confined: false,
