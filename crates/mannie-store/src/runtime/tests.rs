@@ -1706,7 +1706,7 @@ async fn a_catalog_pin_announces_the_model_only_when_it_changes_the_selection() 
             ],
         )
         .await;
-    assert!(stale.events.is_empty());
+    assert_eq!(stale.events, Vec::new());
     assert!(stale.summary.is_none());
     assert_eq!(stale.last_seq, pinned.last_seq);
 }

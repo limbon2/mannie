@@ -242,7 +242,7 @@ async fn an_executor_task_rechecks_the_edited_profiles_access_and_supported_effo
                         .failure,
                     Some(RunFailure::ProfileAccessChanged)
                 );
-                assert!(setup.executor.submissions().is_empty());
+                assert_eq!(setup.executor.submissions(), Vec::new());
             }
         }
     }
