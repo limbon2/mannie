@@ -6,10 +6,11 @@
 //! is trusted only once a recorded fixture shows it; until then an unknown
 //! answer means an unknown server, which gets the generic behavior.
 
+use std::collections::HashSet;
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use mannie_types::provider::{ReportedLimits, ServerKind};
+use mannie_types::provider::{ModelName, ReasoningEffort, ReportedLimits, ServerKind};
 use mannie_types::run::RunFailure;
 use mannie_types::secret::Secret;
 use reqwest::Url;
@@ -38,6 +39,8 @@ pub struct ListedModel {
     pub display_name: Option<String>,
     /// Its limits, when the list says.
     pub limits: Option<ReportedLimits>,
+    /// Explicit reasoning efforts advertised by a plan model, when provided.
+    pub supported_efforts: Option<Vec<ReasoningEffort>>,
 }
 
 /// What asking for the list of models found.
@@ -192,6 +195,10 @@ pub async fn list_plan_models(
         );
         ProviderError::Permanent(RunFailure::InvalidResponse)
     })?;
+
+    if !catalog.get("models").is_some_and(Value::is_array) {
+        return Err(ProviderError::Permanent(RunFailure::InvalidResponse));
+    }
     Ok(plan_models(&catalog))
 }
 
@@ -204,6 +211,7 @@ fn plan_models(catalog: &Value) -> Vec<ListedModel> {
             .filter(|text| !text.is_empty())
             .map(str::to_owned)
     };
+    let mut seen = HashSet::new();
     catalog
         .get("models")
         .and_then(Value::as_array)
@@ -211,13 +219,38 @@ fn plan_models(catalog: &Value) -> Vec<ListedModel> {
         .flatten()
         .filter(|item| item.get("visibility").and_then(Value::as_str) == Some("list"))
         .filter_map(|item| {
+            let id = text(item, "slug")?;
+
+            if ModelName::parse(&id).is_err() || !seen.insert(id.clone()) {
+                return None;
+            }
             Some(ListedModel {
-                id: text(item, "slug")?,
-                display_name: text(item, "display_name"),
-                limits: None,
+                id,
+                display_name: text(item, "display_name").filter(|name| {
+                    name.chars().count() <= 200 && !name.chars().any(char::is_control)
+                }),
+                limits: reported_limits(item),
+                supported_efforts: advertised_efforts(item),
             })
         })
         .collect()
+}
+
+fn advertised_efforts(item: &Value) -> Option<Vec<ReasoningEffort>> {
+    let entries = item.get("supported_reasoning_levels")?.as_array()?;
+    let mut efforts = Vec::new();
+
+    for entry in entries {
+        let value = entry.get("effort").unwrap_or(entry);
+
+        if let Ok(effort) = serde_json::from_value::<ReasoningEffort>(value.clone())
+            && effort != ReasoningEffort::ServerDefault
+            && !efforts.contains(&effort)
+        {
+            efforts.push(effort);
+        }
+    }
+    Some(efforts)
 }
 
 /// The models in a list, in the shapes that the servers use: `{"data": [...]}`
@@ -236,6 +269,7 @@ fn listed_models(body: &Value) -> Vec<ListedModel> {
                 id,
                 display_name: None,
                 limits: reported_limits(item),
+                supported_efforts: None,
             })
         })
         .collect()

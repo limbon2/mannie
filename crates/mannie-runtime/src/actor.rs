@@ -29,6 +29,7 @@ use mannie_store::{
 use mannie_tools::{BrowserSiteConsent, result_limit, split_activity};
 use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{ConversationId, PartId, ProfileId, RunId, TurnId};
+use mannie_types::provider::ReasoningEffort;
 use mannie_types::run::{FinishReason, RunActivity, RunFailure, RunOutcome, RunState, Usage};
 use mannie_types::tasks::TaskPartDocument;
 use mannie_types::tools::{NotRunReason, ToolCallDocument, ToolCallStatus};
@@ -42,6 +43,7 @@ use self::tasks::TaskLane;
 use crate::assigned::AssignedRun;
 use crate::budget::{Ledger, budget_bytes, estimate_text, usage};
 use crate::calls::{CallCredential, CallError, CallOptions, Prepared, Setup};
+use crate::chatgpt::QueuedAccount;
 use crate::compaction::{self, ContextSize, Trigger};
 use crate::retry::RetryDecision;
 use crate::{Busy, RunHandle, Runtime, lock, texts};
@@ -196,6 +198,13 @@ struct StepState {
     output: u32,
 }
 
+/// The provider profile and effective effort chosen when a run was queued.
+pub(crate) struct RunModel {
+    pub(crate) profile: ProfileId,
+    pub(crate) effort: ReasoningEffort,
+    pub(crate) account: QueuedAccount,
+}
+
 /// The runtime's side of a stored run, while it is active.
 pub(crate) struct RunActor {
     runtime: Runtime,
@@ -207,6 +216,8 @@ pub(crate) struct RunActor {
     turn: TurnId,
     run: RunId,
     profile: ProfileId,
+    reasoning_effort: ReasoningEffort,
+    account: QueuedAccount,
     agent: String,
     commands: mpsc::Receiver<Command>,
     /// The binding that provider-private data of this run is stored with.
@@ -307,7 +318,7 @@ impl Runtime {
         conversation: ConversationId,
         turn: TurnId,
         run: RunId,
-        profile: ProfileId,
+        model: RunModel,
         agent: String,
         link: Option<ChildLink>,
     ) -> mpsc::Sender<Command> {
@@ -315,7 +326,7 @@ impl Runtime {
         let (ended_sender, ended) = watch::channel(false);
         let handle = RunHandle {
             run_id: run.clone(),
-            profile_id: profile.clone(),
+            profile_id: model.profile.clone(),
             parent: link.as_ref().and_then(|link| link.parent.clone()),
             assigned: link.as_ref().is_some_and(|link| link.assigned.is_some()),
             mailbox: mailbox.clone(),
@@ -339,7 +350,9 @@ impl Runtime {
             authority,
             turn: turn.clone(),
             run: run.clone(),
-            profile,
+            profile: model.profile,
+            reasoning_effort: model.effort,
+            account: model.account,
             agent,
             commands,
             binding: String::new(),
@@ -486,21 +499,29 @@ impl RunActor {
         )
         .await?;
         self.child_started().await;
+
         let setup = {
             let runtime = self.runtime.clone();
             let profile = self.profile.clone();
             let agent = self.agent.clone();
             let task = self.child.is_some();
             let assigned = self.assigned.clone();
+            let account = self.account.clone().map_err(Ending::Failed)?;
+            let effort = self.reasoning_effort;
             self.wait(async move {
                 match assigned {
                     Some(assigned) => runtime.assigned_setup(&assigned, &agent).await,
-                    None => runtime.load_setup(&profile, &agent, task).await,
+                    None => {
+                        runtime
+                            .load_setup(&profile, &agent, task, account.as_ref(), effort)
+                            .await
+                    }
                 }
             })
             .await?
             .map_err(Ending::Failed)?
         };
+        self.reasoning_effort = setup.reasoning_effort;
         self.binding.clone_from(&setup.binding);
         self.task_tools = setup
             .task_definitions

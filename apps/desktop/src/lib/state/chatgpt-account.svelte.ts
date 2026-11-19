@@ -16,6 +16,7 @@ import {
 } from '#lib/generated/bindings.js';
 import { m } from '#lib/paraglide/messages.js';
 import { type LinkFailure, openLink } from '#lib/sdk/links.js';
+import { providerProfiles } from '#lib/state/provider-profiles.svelte.js';
 import type { Outcome } from '#lib/types/calls.js';
 import type { ChatGptFailure } from '#lib/types/chat.js';
 import { batchChannel, call } from '#lib/utils/calls.js';
@@ -157,9 +158,18 @@ export class ChatGptAccount {
   #apply(update: ChatGptAccountUpdate): void {
     switch (update.type) {
       case 'account': {
+        const previous = this.account;
         this.account = update.account;
         this.status = 'ready';
         this.failure = null;
+        const stateChanged = previous?.state !== update.account.state;
+        const accountChanged = previous?.email !== update.account.email;
+        // The subscription can skip sign-in progress, and two accounts can share an email.
+        // An idle signed-in update may be a new session even when its visible fields match.
+        const signedIn = update.account.state === 'signed_in' && update.account.signIn.step === 'idle';
+        if (stateChanged || accountChanged || signedIn) {
+          providerProfiles.accountChanged(update.account);
+        }
         return;
       }
       case 'ended': {

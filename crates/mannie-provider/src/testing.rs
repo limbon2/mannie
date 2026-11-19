@@ -14,6 +14,7 @@ use mannie_types::provider::ApiInterface;
 use reqwest::Url;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 use crate::provider::{EventStream, ModelRequest, Provider, ProviderError, ProviderEvent, Target};
@@ -202,8 +203,14 @@ impl RecordedRequest {
 
 #[derive(Debug, Default)]
 struct FixtureState {
-    responses: VecDeque<FixtureResponse>,
+    responses: VecDeque<QueuedResponse>,
     requests: Vec<RecordedRequest>,
+}
+
+#[derive(Debug)]
+struct QueuedResponse {
+    response: FixtureResponse,
+    gate: Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>,
 }
 
 /// An HTTP/1.1 server on the loopback interface that answers each request
@@ -247,7 +254,25 @@ impl FixtureServer {
 
     /// Queues the response to the next request.
     pub fn respond(&self, response: FixtureResponse) {
-        lock(&self.state).responses.push_back(response);
+        lock(&self.state).responses.push_back(QueuedResponse {
+            response,
+            gate: None,
+        });
+    }
+
+    /// Reports when the server has received this request and holds its
+    /// response until the test releases it, for changes during a request.
+    pub fn hold_response(
+        &self,
+        response: FixtureResponse,
+    ) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        let (arrived, arrival) = oneshot::channel();
+        let (release, released) = oneshot::channel();
+        lock(&self.state).responses.push_back(QueuedResponse {
+            response,
+            gate: Some((arrived, released)),
+        });
+        (arrival, release)
     }
 
     /// The requests so far, in order.
@@ -275,9 +300,17 @@ async fn serve(mut connection: TcpStream, state: Arc<Mutex<FixtureState>>) {
         state.requests.push(request);
         state.responses.pop_front()
     };
-    let response = response.unwrap_or_else(|| {
-        FixtureResponse::json(500, r#"{"error":{"message":"no fixture queued"}}"#)
-    });
+    let response = match response {
+        Some(queued) => {
+            if let Some((arrived, released)) = queued.gate {
+                let _delivered = arrived.send(());
+                let _released = released.await;
+            }
+
+            queued.response
+        }
+        None => FixtureResponse::json(500, r#"{"error":{"message":"no fixture queued"}}"#),
+    };
     if write_response(&mut connection, &response).await.is_err() {
         // The client went away, as a stopped call does.
     }

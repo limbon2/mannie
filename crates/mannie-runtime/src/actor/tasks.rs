@@ -19,6 +19,7 @@ use mannie_store::{
 };
 use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{ConversationId, PartId, ProfileId, RunId, TaskId, TurnId};
+use mannie_types::provider::{ProfileAccess, ReasoningEffort};
 use mannie_types::run::{FinishReason, RunActivity, RunFailure, TaskKindCount};
 use mannie_types::tasks::{
     AwaitedTask, INSTRUCTION_PREVIEW_CHARS, MAX_REPORT_VIEW_BYTES, TaskDocument, TaskPartDocument,
@@ -28,8 +29,9 @@ use mannie_types::tools::{ArchiveRef, NotRunReason, ToolCallDocument, ToolCallSt
 use mannie_types::transcript::PartState;
 use tokio::sync::mpsc;
 
-use super::{ChildLink, Command, Ending, MAX_DETAIL_CHARS, RunActor, StepCall, halt};
-use crate::calls::Setup;
+use super::{ChildLink, Command, Ending, MAX_DETAIL_CHARS, RunActor, RunModel, StepCall, halt};
+use crate::calls::{CallCredential, Setup};
+use crate::chatgpt::QueuedAccount;
 use crate::executors::RemoteFollow;
 use crate::ids::IdGenerator;
 use crate::tasks::{
@@ -45,6 +47,8 @@ const MIN_REPORT_BYTES: usize = 2_048;
 struct ChildProfile {
     id: ProfileId,
     binding: String,
+    effort: ReasoningEffort,
+    account: QueuedAccount,
 }
 
 /// A task that the run gave, while its part is open.
@@ -925,7 +929,18 @@ impl RunActor {
                 return Err(Ending::Failed(RunFailure::Internal));
             }
         }
-        self.start_child(call, document, turn, run, child_profile.id);
+
+        self.start_child(
+            call,
+            document,
+            turn,
+            run,
+            RunModel {
+                profile: child_profile.id,
+                effort: child_profile.effort,
+                account: child_profile.account,
+            },
+        );
         self.flush(Durability::Full).await
     }
 
@@ -936,13 +951,27 @@ impl RunActor {
         let parent = ChildProfile {
             id: self.profile.clone(),
             binding: setup.binding.clone(),
+            effort: setup.reasoning_effort,
+            account: self.account.clone(),
         };
         let Some(own) = self.runtime.agent(agent).and_then(|agent| agent.profile) else {
             return parent;
         };
+
+        if own == parent.id {
+            return parent;
+        }
+
         match self.runtime.inner.store.profile(&own).await {
             Ok(Some(profile)) if profile.use_tools => ChildProfile {
                 binding: profile.binding(),
+                effort: profile.reasoning_effort,
+                account: match (&setup.credential, profile.access) {
+                    (CallCredential::ChatGptAccount { key }, ProfileAccess::ChatGptPlan) => {
+                        Ok(Some(key.clone()))
+                    }
+                    _ => self.runtime.account_for_run(&profile).await,
+                },
                 id: profile.id,
             },
             Ok(_) => parent,
@@ -1013,7 +1042,7 @@ impl RunActor {
         document: TaskDocument,
         turn: TurnId,
         run: RunId,
-        profile: ProfileId,
+        model: RunModel,
     ) {
         let guard = ChildGuard::new(
             TaskSink::Board(Arc::clone(&self.tasks.board)),
@@ -1024,7 +1053,7 @@ impl RunActor {
             document.conversation_id.clone(),
             turn,
             run,
-            profile,
+            model,
             document.agent.clone(),
             Some(ChildLink {
                 parent: Some(self.conversation.clone()),

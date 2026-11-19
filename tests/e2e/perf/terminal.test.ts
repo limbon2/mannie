@@ -28,6 +28,9 @@ const ROWS = '[data-terminal-view] .xterm-rows';
 /** The Terminal button in the conversation's toolbar. */
 const CONTROL = '[data-terminal-control]';
 
+/** The tabs of the open terminal side panels. */
+const TAB = '[data-side-panel-tab] [role="tab"]';
+
 /** The conversation's terminals in the button's menu: its items without the submenu New terminal. */
 const LISTED_TERMINALS = '[data-slot="dropdown-menu-content"] [role="menuitem"]:not([aria-haspopup])';
 
@@ -119,17 +122,23 @@ async function openTerminal(): Promise<void> {
 
 /** Opens a terminal of this computer in the shell that the menu names `shell`, or in its first shell. */
 async function openShell(shell?: string): Promise<void> {
-  const open = await $$('[data-side-panel-tab]').length;
+  const open = await $$(TAB).length;
   // The button stays disabled until the terminal that it opened last shows.
-  await $(CONTROL).waitForEnabled();
-  await $(CONTROL).click();
+  const control = await $(CONTROL);
+  await control.waitForEnabled();
+  await control.execute((element) => element.focus());
+  await browser.keys(Key.Enter);
   // The menu lists a terminal once the plugin reports it, which can be after
-  // its tab shows. The row that it adds then moves New terminal down, and the
-  // click lands on that terminal instead, which closes the menu.
+  // its tab shows. Wait for all rows before navigating the menu.
   await browser.waitUntil(async () => (await $$(LISTED_TERMINALS).length) === open, {
     timeoutMsg: `the menu does not list the ${String(open)} open terminals`,
   });
-  await $('[role="menuitem"]=New terminal').click();
+  const newTerminal = await $('[role="menuitem"]=New terminal');
+  await newTerminal.waitForExist();
+  // Use the keyboard to reach New terminal in the scrollable menu.
+  await browser.keys(Key.End);
+  await expect(newTerminal).toBeFocused();
+  await browser.keys(Key.ArrowRight);
   const shown = async (): Promise<WebdriverIO.Element[]> =>
     $$('[data-slot="dropdown-menu-sub-content"] [role="menuitem"]').filter((item) => item.isDisplayed());
   await browser.waitUntil(async () => (await shown()).length > 0, { timeoutMsg: 'the menu shows no shell' });
@@ -147,8 +156,10 @@ async function openShell(shell?: string): Promise<void> {
   if (chosen === undefined) {
     throw new Error(`the menu offers no ${shell ?? 'shell'}`);
   }
-  await chosen.click();
-  await browser.waitUntil(async () => (await $$('[data-side-panel-tab]').length) > open, {
+  await chosen.execute((element) => element.focus());
+  await expect(chosen).toBeFocused();
+  await browser.keys(Key.Enter);
+  await browser.waitUntil(async () => (await $$(TAB).length) === open + 1, {
     timeout: 30_000,
     timeoutMsg: `terminal ${String(open + 1)} did not open`,
   });
@@ -358,6 +369,8 @@ describe('performance of terminals (NFR-PERF-06 to 09)', () => {
   });
 
   it('NFR-PERF-08 and 09: 8 idle terminals add under 0.5% of one core, and each tab at most 10 MB', async () => {
+    expect([...(await $$(TAB))]).toHaveLength(IDLE_TERMINALS);
+
     const idleBefore = cpuMilliseconds(pid);
     await browser.pause(IDLE_MILLIS);
     const idleCpu = cpuMilliseconds(pid) - idleBefore;
@@ -410,12 +423,11 @@ describe('performance of terminals (NFR-PERF-06 to 09)', () => {
         }).observe({ type: 'longtask' });
       }
     });
-    const tabSelector = '[data-side-panel-tab] [role="tab"]';
-    const tabs = [...(await $$(tabSelector))];
+    const tabs = [...(await $$(TAB))];
     expect(tabs).toHaveLength(IDLE_TERMINALS);
     await browser.execute(
       (selector: string) => document.querySelector<HTMLElement>(selector)?.focus(),
-      `${tabSelector}[aria-selected="true"]`,
+      `${TAB}[aria-selected="true"]`,
     );
     let switches = 0;
     for (let round = 0; round < SWITCH_ROUNDS; round += 1) {

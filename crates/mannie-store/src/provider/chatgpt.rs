@@ -194,6 +194,8 @@ impl Store {
             if changed == 0 {
                 return Ok(None);
             }
+
+            transaction.execute(super::catalog::WITHDRAW, [])?;
             read(transaction).map_err(TransactError::Rejected)
         })
         .await
@@ -231,6 +233,10 @@ impl Store {
             let changed = transaction
                 .prepare_cached(END_SESSION)?
                 .execute(params![generation, now])?;
+
+            if changed == 1 {
+                transaction.execute(super::catalog::WITHDRAW, [])?;
+            }
             Ok(changed == 1)
         })
         .await
@@ -247,6 +253,7 @@ impl Store {
         self.transact(Durability::Full, move |transaction| {
             let before = read(transaction).map_err(TransactError::Rejected)?;
             transaction.prepare_cached(SIGN_OUT)?.execute([now])?;
+            transaction.execute(super::catalog::WITHDRAW, [])?;
             Ok(before)
         })
         .await

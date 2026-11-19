@@ -31,8 +31,12 @@ const core = vi.hoisted(() => ({
 
 /** Hands batches of updates to the account, as the core's channel does. */
 const channel = vi.hoisted(() => ({ deliver: (_updates: readonly ChatGptAccountUpdate[]): void => undefined }));
+const catalog = vi.hoisted(() => ({ accountChanged: vi.fn() }));
 
 vi.mock('../../../../../../apps/desktop/src/lib/generated/bindings.js', () => ({ commands: core }));
+vi.mock('../../../../../../apps/desktop/src/lib/state/provider-profiles.svelte.js', () => ({
+  providerProfiles: catalog,
+}));
 vi.mock('../../../../../../apps/desktop/src/lib/utils/calls.js', async (importOriginal) => ({
   ...(await importOriginal<typeof Calls>()),
   batchChannel: (onItems: (updates: readonly ChatGptAccountUpdate[]) => void) => {
@@ -68,6 +72,7 @@ async function started(): Promise<ChatGptAccount> {
 }
 
 beforeEach(() => {
+  catalog.accountChanged.mockClear();
   for (const command of Object.values(core)) {
     command.mockReset();
   }
@@ -84,6 +89,16 @@ beforeEach(() => {
 });
 
 describe('the ChatGPT account', () => {
+  it('updates available models for a reconnected session whose email and state match', async () => {
+    await started();
+    const account = view({ email: 'owner@example.com', known: true, state: 'signed_in' });
+    deliver(account);
+    // A lagging subscription may receive the completed sign-in without its intervening steps.
+    deliver(account);
+    expect(catalog.accountChanged).toHaveBeenCalledTimes(2);
+    expect(catalog.accountChanged).toHaveBeenLastCalledWith(account);
+  });
+
   it('loads until the core sends the account, then follows it', async () => {
     const account = await started();
     const loading = account.status;

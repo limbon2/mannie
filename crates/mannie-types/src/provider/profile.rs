@@ -234,6 +234,13 @@ pub struct ModelDefaults {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderProfile {
+    /// Present when the ChatGPT catalog manages this choice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog: Option<CatalogAvailability>,
+    /// The explicit efforts this model accepts, when known. An empty list
+    /// means it has no effort control. The server default always applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supported_efforts: Option<Vec<ReasoningEffort>>,
     /// The profile.
     pub id: ProfileId,
     /// Its name.
@@ -265,6 +272,13 @@ pub struct ProviderProfile {
     pub created_at: UtcMillis,
     /// When it last changed.
     pub updated_at: UtcMillis,
+}
+
+/// Whether a model retained for conversation history can still be chosen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct CatalogAvailability {
+    /// Whether the signed-in account currently offers it.
+    pub available: bool,
 }
 
 /// What the owner entered for a profile, before the core checks it.

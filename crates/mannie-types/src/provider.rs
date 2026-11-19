@@ -18,12 +18,12 @@ pub use chatgpt::{
     StartChatGptSignIn,
 };
 pub use profile::{
-    ApiInterface, CreateProviderProfile, CredentialChange, CredentialStoreProblem,
-    MAX_CONTEXT_WINDOW, MAX_CREDENTIAL_BYTES, MAX_MODEL_CHARACTERS, MAX_NAME_CHARACTERS,
-    MIN_CONTEXT_BUDGET, MIN_CONTEXT_WINDOW, MIN_OUTPUT_LIMIT, ModelDefaults, ModelDefaultsRef,
-    ModelLimits, ModelName, ProfileAccess, ProfileDraft, ProfileRef, ProviderProfile,
-    ProviderProfileError, ReasoningEffort, ServerKind, UpdateProviderProfile, check_credential,
-    check_limits, context_budget,
+    ApiInterface, CatalogAvailability, CreateProviderProfile, CredentialChange,
+    CredentialStoreProblem, MAX_CONTEXT_WINDOW, MAX_CREDENTIAL_BYTES, MAX_MODEL_CHARACTERS,
+    MAX_NAME_CHARACTERS, MIN_CONTEXT_BUDGET, MIN_CONTEXT_WINDOW, MIN_OUTPUT_LIMIT, ModelDefaults,
+    ModelDefaultsRef, ModelLimits, ModelName, ProfileAccess, ProfileDraft, ProfileRef,
+    ProviderProfile, ProviderProfileError, ReasoningEffort, ServerKind, UpdateProviderProfile,
+    check_credential, check_limits, context_budget,
 };
 pub use search::{
     CheckedSearchFields, CreateSearchProfile, MAX_PREFIX_CHARACTERS, RerankProbe, SearchCheck,

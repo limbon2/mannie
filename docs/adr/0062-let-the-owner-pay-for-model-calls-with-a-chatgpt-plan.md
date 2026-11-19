@@ -7,6 +7,8 @@
 | Deciders | Owner                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | Related  | [ADR-0004](0004-keep-system-access-in-the-rust-core.md), [ADR-0010](0010-keep-provider-credentials-on-the-master.md), [ADR-0011](0011-own-the-provider-adapters.md), [ADR-0013](0013-journal-every-side-effect.md), [ADR-0030](0030-split-mannie-into-a-core-and-plugins.md), [ADR-0047](0047-serve-embeddings-and-reranking-through-provider-profiles.md), [the plugin MCP's sign-in](../../plugins/mcp/docs/adr/0002-sign-in-to-remote-servers-with-oauth.md), [ChatGPT plan](../features/chatgpt-plan.md), [Providers](../features/chat/providers.md), [Security](../architecture/security.md), [M19 validation results](../roadmap/m19-validation.md) |
 
+Later changes: [ADR-0073](0073-use-chatgpt-plan-models-directly.md) supersedes the limit selection in decision 11 for models used directly from the catalog.
+
 ## Context
 
 - The owner wants Mannie's conversations to run on their ChatGPT subscription instead of an API key that bills each call: "i want to introduce support for a chatgpt subscription" ([decision D51](../roadmap/milestones.md#5-decisions)).

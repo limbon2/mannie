@@ -160,6 +160,19 @@ pub(crate) async fn list_chatgpt_models(
         .map_err(refused("list_chatgpt_models"))
 }
 
+/// Refreshes the model choices of the current account from its catalog.
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn refresh_chatgpt_catalog(
+    core: State<'_, Core>,
+) -> Result<(), CommandError<ChatGptError>> {
+    runtime(&core)
+        .map_err(refused("refresh_chatgpt_catalog"))?
+        .refresh_chatgpt_catalog()
+        .await
+        .map_err(refused("refresh_chatgpt_catalog"))
+}
+
 /// Records that the owner saw the notice that Mannie uses their ChatGPT plan.
 #[tauri::command]
 #[specta::specta]

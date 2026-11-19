@@ -262,14 +262,20 @@ impl Runtime {
         }
         let profile = self.profile_for(summary.profile_id.as_ref()).await?;
         let turn_id = self.inner.ids.turn();
-        let run = self.new_run(&profile, summary.agent_key.as_deref());
+        let (run, account) = self.new_run(&profile, summary.agent_key.as_deref()).await;
         // The end waits for the next reply: an agent that cannot read the
         // output would pay for a reply that can do nothing with it.
         if !self.agent_reads_commands(&run.agent) {
             return Ok(Woke::Held);
         }
         let numbers: Vec<u32> = ended.iter().map(|command| command.number).collect();
-        let changes = vec![
+        let mut changes = Vec::new();
+        crate::conversations::pin_catalog_choice(
+            &mut changes,
+            &profile,
+            summary.profile_id.as_ref(),
+        );
+        changes.extend([
             Change::StartCommandTurn {
                 turn_id: turn_id.clone(),
                 part_id: self.inner.ids.part(),
@@ -282,15 +288,17 @@ impl Runtime {
             Change::TellBackgroundEnds {
                 numbers: numbers.clone(),
             },
-        ];
-        self.inner
+        ]);
+
+        let queued = self
+            .inner
             .hubs
             .apply(&self.inner.store, conversation, changes, Durability::Full)
             .await
             .map_err(store_failure)?;
         self.inner.wake_ups.record(conversation, now);
         tracing::info!(conversation = %conversation, commands = ?numbers, "the end of a background command woke the agent");
-        self.start_reserved(reservation, &turn_id, &run);
+        self.start_reserved(reservation, &turn_id, &run, &profile, &queued, account);
         Ok(Woke::Started)
     }
 }

@@ -71,6 +71,9 @@ export const PLAN_MODEL = 'e2e-plan';
 /** The name of the plan's model in its catalog. */
 export const PLAN_MODEL_NAME = 'E2E Plan';
 
+/** A second catalog model, so the chat can switch models on the same plan. */
+export const SECOND_PLAN_MODEL = 'e2e-plan-second';
+
 /** The client that the mock's sign-in issues. */
 export const PLAN_CLIENT = 'oaiapp_e2e';
 
@@ -666,6 +669,12 @@ function planCatalog(): string {
     models: [
       { display_name: PLAN_MODEL_NAME, slug: PLAN_MODEL, visibility: 'list' },
       { display_name: 'Hidden', slug: 'e2e-hidden', visibility: 'hide' },
+      {
+        display_name: 'Second plan model',
+        slug: SECOND_PLAN_MODEL,
+        supported_reasoning_levels: [{ effort: 'low' }],
+        visibility: 'list',
+      },
     ],
   });
 }

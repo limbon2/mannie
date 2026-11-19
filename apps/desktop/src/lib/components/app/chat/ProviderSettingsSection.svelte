@@ -91,11 +91,15 @@
       <Button size="sm" variant="outline" onclick={() => void providerProfiles.reload()}>{m.chat_try_again()}</Button>
     </Alert.Action>
   </Alert.Root>
-{:else if providerProfiles.profiles.length === 0}
+{:else if providerProfiles.configured.length === 0}
   <Empty.Root class="border">
     <Empty.Header>
       <Empty.Title>{m.chat_providers_empty_title()}</Empty.Title>
-      <Empty.Description>{m.chat_providers_empty_description()}</Empty.Description>
+      <Empty.Description>
+        {providerProfiles.planModels.length > 0
+          ? m.chat_providers_plan_models_ready()
+          : m.chat_providers_empty_description()}
+      </Empty.Description>
     </Empty.Header>
     <Empty.Content>
       <Button onclick={add}>
@@ -106,7 +110,7 @@
   </Empty.Root>
 {:else}
   <ul class="flex flex-col divide-y rounded-md border">
-    {#each providerProfiles.profiles as profile (profile.id)}
+    {#each providerProfiles.configured as profile (profile.id)}
       <li class="flex flex-wrap items-center gap-3 p-3">
         <div class="flex min-w-0 flex-1 flex-col">
           <span class="truncate font-medium" data-content>{profile.name}</span>

@@ -1193,6 +1193,13 @@ async fn the_owners_commands_refuse_a_task_conversation_and_deleting_the_parent_
         })
         .await;
     assert_eq!(profiled.unwrap_err(), ChatError::TaskConversation);
+    let effort = runtime
+        .set_conversation_reasoning_effort(mannie_types::chat::SetConversationReasoningEffort {
+            conversation_id: child.clone(),
+            reasoning_effort: None,
+        })
+        .await;
+    assert_eq!(effort.unwrap_err(), ChatError::TaskConversation);
     assert_eq!(
         runtime.delete_conversation(&child).await.unwrap_err(),
         ChatError::TaskConversation

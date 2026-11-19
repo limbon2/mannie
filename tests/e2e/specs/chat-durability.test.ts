@@ -9,6 +9,7 @@ import {
   latestTurnParts,
   retryLatestReply,
   sendMessage,
+  startNewConversation,
   turnCount,
   useProfile,
   waitForCompleteReply,
@@ -151,8 +152,17 @@ describe('durable replies', () => {
 
   it('leaves a reply interrupted when the app is killed, and Retry finishes it after a restart', async () => {
     await useProfile('Paced');
+    const effortPicker = 'main [data-effort-picker]';
+    await $(effortPicker).click();
+    await $('[data-effort="high"]').click();
+    await waitForShownText(effortPicker, 'High');
     await sendMessage('Count until the end');
     await waitForWords(10);
+    await $(effortPicker).click();
+    await $('[data-effort="low"]').click();
+    await waitForShownText(effortPicker, 'Low');
+    const pacedCalls = () => provider.requests().filter((request) => request.body?.model === MODELS.paced);
+    expect(pacedCalls().at(-1)?.body?.reasoning_effort).toBe('high');
     const conversationUrl = await browser.getUrl();
 
     process.kill(await processId(), 'SIGKILL');
@@ -165,9 +175,14 @@ describe('durable replies', () => {
     expect(interrupted.text).not.toBe('');
     expect(pacedText().startsWith(interrupted.text)).toBe(true);
     await waitForShownText($('main'), expect.stringContaining('Mannie quit before this reply finished.'));
+    await waitForShownText(effortPicker, 'Low');
 
     await retryLatestReply();
 
     expect(await waitForCompleteReply()).toBe(pacedText());
+    expect(pacedCalls().at(-1)?.body?.reasoning_effort).toBe('low');
+
+    await startNewConversation();
+    await waitForShownText(effortPicker, 'Low');
   });
 });

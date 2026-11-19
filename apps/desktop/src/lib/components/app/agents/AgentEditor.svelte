@@ -30,6 +30,7 @@
   import { agentDescription, agentFailureMessage, agentName } from '#lib/utils/agents-messages.js';
   import { AGENTS_VIEW, openAgents } from '#lib/utils/agents-urls.js';
   import { CHAT_VIEW } from '#lib/utils/chat-urls.js';
+  import { planCatalogMessage } from '#lib/utils/provider-labels.js';
 
   import AgentChildren from './AgentChildren.svelte';
   import AgentStepsEditor from './AgentStepsEditor.svelte';
@@ -75,6 +76,8 @@
   const inheritedLabel = $derived(isChild ? m.agents_model_parent() : m.agents_model_conversation());
   const profileLabel = $derived(providerProfiles.find(form.profileId)?.name ?? inheritedLabel);
   const chosenProfile = $derived(providerProfiles.find(form.profileId));
+  const showsPlan = $derived(providerProfiles.planModels.length > 0 || chosenProfile?.catalog);
+  const catalogMessage = $derived(planCatalogMessage(providerProfiles));
   const withoutTools = $derived(chosenProfile !== undefined && !chosenProfile.useTools);
 
   function invalid(...fields: AgentField[]): true | undefined {
@@ -292,14 +295,59 @@
             <span class="truncate" data-content={form.profileId === null ? undefined : ''}>{profileLabel}</span>
           </Select.Trigger>
           <Select.Content>
-            <Select.Item label={inheritedLabel} value={INHERITED_PROFILE}>{inheritedLabel}</Select.Item>
-            {#each providerProfiles.profiles as profile (profile.id)}
-              <Select.Item label={profile.name} value={profile.id}>
-                <span data-content="">{profile.name}</span>
-              </Select.Item>
-            {/each}
+            <Select.Group>
+              <Select.Item label={inheritedLabel} value={INHERITED_PROFILE}>{inheritedLabel}</Select.Item>
+            </Select.Group>
+
+            {#if showsPlan}
+              <Select.Group>
+                <Select.GroupHeading>{m.chat_chatgpt_plan()}</Select.GroupHeading>
+                {#each providerProfiles.planModels as profile (profile.id)}
+                  <Select.Item label={profile.name} value={profile.id}>
+                    <span data-content>{profile.name}</span>
+                  </Select.Item>
+                {/each}
+
+                {#if chosenProfile?.catalog?.available === false}
+                  <Select.Item disabled label={chosenProfile.name} value={chosenProfile.id}>
+                    <span data-content>{chosenProfile.name}</span>
+                  </Select.Item>
+                {/if}
+              </Select.Group>
+            {/if}
+
+            {#if providerProfiles.configured.length > 0}
+              <Select.Group>
+                <Select.GroupHeading>{m.chat_profile_configured()}</Select.GroupHeading>
+                {#each providerProfiles.configured as profile (profile.id)}
+                  <Select.Item label={profile.name} value={profile.id}>
+                    <span data-content>{profile.name}</span>
+                  </Select.Item>
+                {/each}
+              </Select.Group>
+            {/if}
           </Select.Content>
         </Select.Root>
+
+        {#if chosenProfile?.catalog?.available === false}
+          <Field.Description>{m.chat_profile_unavailable({ name: chosenProfile.name })}</Field.Description>
+        {/if}
+
+        {#if catalogMessage !== null}
+          <Field.Description role="status">{catalogMessage}</Field.Description>
+          {#if providerProfiles.catalogStatus !== 'loading'}
+            <Button
+              class="w-fit"
+              size="sm"
+              type="button"
+              variant="outline"
+              onclick={() => void providerProfiles.refreshCatalog()}
+            >
+              {m.chat_try_again()}
+            </Button>
+          {/if}
+        {/if}
+
         {#if withoutTools}
           <Field.Description>
             {isChild ? m.agents_model_no_tools_child() : m.agents_model_no_tools_conversation()}

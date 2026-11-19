@@ -108,6 +108,9 @@ export function runFailureMessage(failure: RunFailure): string {
     case 'profile_missing': {
       return m.chat_failure_profile_missing();
     }
+    case 'profile_access_changed': {
+      return m.chat_failure_profile_access_changed();
+    }
     case 'quota_exceeded': {
       return m.chat_failure_quota_exceeded();
     }
@@ -230,6 +233,9 @@ export function chatFailureMessage(
     case 'profile_not_found': {
       return m.chat_error_profile_not_found();
     }
+    case 'plan_model_unavailable': {
+      return m.chat_profile_unavailable({ name: error.name });
+    }
     case 'project_busy': {
       return m.chat_error_project_busy();
     }
@@ -244,6 +250,9 @@ export function chatFailureMessage(
     }
     case 'run_active': {
       return m.chat_error_run_active();
+    }
+    case 'unsupported_reasoning_effort': {
+      return m.chat_error_unsupported_reasoning_effort();
     }
     case 'shutting_down': {
       return m.chat_error_shutting_down();

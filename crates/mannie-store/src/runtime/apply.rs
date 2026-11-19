@@ -4,6 +4,7 @@
 
 use mannie_types::context::{Attachment, AttachmentRef};
 use mannie_types::ids::{ConversationId, PartId, ProfileId, ProjectId, RunId, TurnId};
+use mannie_types::provider::ReasoningEffort;
 use mannie_types::run::{RunActivity, RunOutcome, RunState};
 use mannie_types::tasks::{TaskPartDocument, TaskRefusal, TaskState};
 use mannie_types::tools::{
@@ -28,10 +29,11 @@ const SELECT_CONVERSATION_EXISTS: &str = "SELECT 1 FROM runtime_conversations WH
 const INSERT_CONVERSATION: &str = "INSERT INTO runtime_conversations \
      (id, title, title_source, profile_id, project_id, workspace, parent_conversation_id, \
      task_number, task_agent, task_executor_kind, task_executor_target, task_executor_name, \
-     task_executor_noun, home_provider, home_key, agent_key, created_at, updated_at) \
+     task_executor_noun, home_provider, home_key, agent_key, created_at, updated_at, reasoning_effort) \
      VALUES (?1, ?2, 'first_message', ?3, ?5, \
      (SELECT folder FROM runtime_projects WHERE id = ?5), ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, \
-     ?15, ?4, ?4)";
+     ?15, ?4, ?4, CASE WHEN ?6 IS NULL THEN \
+     (SELECT reasoning_effort FROM runtime_reasoning_preference WHERE singleton = 1) END)";
 const SELECT_PROJECT_EXISTS: &str = "SELECT 1 FROM runtime_projects WHERE id = ?1";
 const SELECT_CONVERSATION_PROJECT: &str =
     "SELECT project_id FROM runtime_conversations WHERE id = ?1";
@@ -104,6 +106,12 @@ const MARK_DRAFT: &str = "UPDATE runtime_conversations SET draft = 1 WHERE id = 
 // A draft that the owner renamed keeps the owner's title (ADR-0068, decision 4).
 const UNDRAFT: &str = "UPDATE runtime_conversations SET draft = 0,      title = CASE WHEN title_source = 'owner' THEN title ELSE ?2 END      WHERE id = ?1 AND draft = 1";
 const SET_PROFILE: &str = "UPDATE runtime_conversations SET profile_id = ?2 WHERE id = ?1";
+const PIN_DEFAULT_PROFILE: &str = "UPDATE runtime_conversations SET profile_id = ?2 \
+     WHERE id = ?1 AND profile_id IS ?3 AND profile_id IS NOT ?2";
+const SET_REASONING_EFFORT: &str =
+    "UPDATE runtime_conversations SET reasoning_effort = ?2 WHERE id = ?1";
+const REMEMBER_REASONING_EFFORT: &str = "INSERT INTO runtime_reasoning_preference (singleton, reasoning_effort) VALUES (1, ?1) \
+     ON CONFLICT(singleton) DO UPDATE SET reasoning_effort = excluded.reasoning_effort";
 const SET_AGENT: &str = "UPDATE runtime_conversations SET agent_key = ?2 WHERE id = ?1";
 const SET_FULL_ACCESS: &str = "UPDATE runtime_conversations SET full_access = ?2 WHERE id = ?1";
 const SET_PROJECT: &str = "UPDATE runtime_conversations \
@@ -150,6 +158,9 @@ pub(crate) const STATEMENTS: &[&str] = &[
     MARK_DRAFT,
     UNDRAFT,
     SET_PROFILE,
+    PIN_DEFAULT_PROFILE,
+    SET_REASONING_EFFORT,
+    REMEMBER_REASONING_EFFORT,
     SET_FULL_ACCESS,
     SET_PROJECT,
 ];
@@ -291,9 +302,9 @@ fn apply_in(
 
 /// What follows the owner's text in a new turn: its mentions, then its
 /// images.
-struct Attached<'a> {
-    mentions: &'a [NewMention],
-    images: &'a [NewImage],
+struct Attached {
+    mentions: Vec<NewMention>,
+    images: Vec<NewImage>,
 }
 
 impl Batch<'_> {
@@ -308,17 +319,10 @@ impl Batch<'_> {
                 task,
                 mentions,
                 images,
-            } => self.start_turn(
-                turn_id,
-                &user_part_id,
-                &text,
-                run,
-                task.as_ref(),
-                &Attached {
-                    mentions: &mentions,
-                    images: &images,
-                },
-            ),
+            } => {
+                let attached = Attached { mentions, images };
+                self.start_turn(turn_id, &user_part_id, &text, run, task.as_ref(), &attached)
+            }
             Change::RetryTurn { turn_id, run } => self.retry_turn(&turn_id, run),
             Change::StartRun { run_id } => self.start_run(run_id),
             Change::SetActivity { run_id, activity } => self.set_activity(run_id, &activity),
@@ -359,6 +363,11 @@ impl Batch<'_> {
             Change::MarkDraft => self.mark_draft(),
             Change::Undraft { title } => self.undraft(&title),
             Change::SetProfile { profile_id } => self.set_profile(profile_id.as_ref()),
+            Change::PinDefaultProfile {
+                previous,
+                profile_id,
+            } => self.pin_default_profile(previous.as_ref(), &profile_id),
+            Change::SetReasoningEffort { effort } => self.set_reasoning_effort(effort),
             Change::SetAgent { agent_key } => self.set_summary_field(SET_AGENT, &agent_key),
             Change::SavePlan { title, body } => self.save_plan(&title, &body),
             Change::PlanEditSeen => self.plan_edit_seen(),
@@ -543,13 +552,45 @@ impl Batch<'_> {
         Ok(())
     }
 
-    /// Sets a field of the conversation that its summary shows, with one of
-    /// the statements that take the conversation and the value.
+    /// Sets the conversation's provider choice and publishes its new summary.
     fn set_profile(&mut self, profile_id: Option<&ProfileId>) -> Result<(), RuntimeStoreError> {
         let profile = profile_id.map(|id| id.as_str().to_owned());
         self.set_summary_field(SET_PROFILE, &profile)
     }
 
+    fn pin_default_profile(
+        &mut self,
+        previous: Option<&ProfileId>,
+        profile: &ProfileId,
+    ) -> Result<(), RuntimeStoreError> {
+        let changed = self
+            .transaction
+            .prepare_cached(PIN_DEFAULT_PROFILE)?
+            .execute(params![
+                self.conversation,
+                profile.as_str(),
+                previous.map(ProfileId::as_str),
+            ])?;
+        if changed > 0 {
+            self.append(kinds::CONVERSATION_CHANGED, None, &EventBody::empty())?;
+            self.summary_changed = true;
+        }
+        Ok(())
+    }
+
+    fn set_reasoning_effort(
+        &mut self,
+        effort: Option<ReasoningEffort>,
+    ) -> Result<(), RuntimeStoreError> {
+        let value = effort.as_ref().map(to_json).transpose()?;
+        self.transaction
+            .prepare_cached(REMEMBER_REASONING_EFFORT)?
+            .execute([&value])?;
+        self.set_summary_field(SET_REASONING_EFFORT, &value)
+    }
+
+    /// Sets a field of the conversation that its summary shows, with one of
+    /// the statements that take the conversation and the value.
     fn set_summary_field(
         &mut self,
         statement: &str,
@@ -717,7 +758,7 @@ impl Batch<'_> {
         text: &str,
         run: NewRun,
         task: Option<&NewTask>,
-        attached: &Attached<'_>,
+        attached: &Attached,
     ) -> Result<(), RuntimeStoreError> {
         self.begin_turn(&turn_id, &run)?;
         self.transaction

@@ -9,6 +9,7 @@ use crate::context::AttachmentRef;
 use crate::ids::{CheckpointId, ConversationId, ProfileId, ProjectId, RunId, TurnId};
 use crate::images::ImageRef;
 use crate::mentions::MentionRef;
+use crate::provider::ReasoningEffort;
 use crate::run::RunFailure;
 use crate::settings::SettingsSection;
 use crate::tools::PathRefusal;
@@ -425,6 +426,16 @@ pub struct SetConversationProfile {
     pub profile_id: Option<ProfileId>,
 }
 
+/// The effort the owner chose in chat, also used when opening new conversations.
+#[derive(Debug, Clone, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SetConversationReasoningEffort {
+    /// The conversation in which the owner made the choice.
+    pub conversation_id: ConversationId,
+    /// The explicit effort, or `None` to follow the model's configured default.
+    pub reasoning_effort: Option<ReasoningEffort>,
+}
+
 /// The argument of `set_conversation_agent`.
 #[derive(Debug, Clone, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -560,6 +571,15 @@ pub enum ChatError {
     /// The chosen provider profile does not exist.
     #[error("the provider profile does not exist")]
     ProfileNotFound,
+    /// The selected catalog model is no longer available to the account.
+    #[error("the selected ChatGPT model is unavailable")]
+    PlanModelUnavailable {
+        /// The name of the model in the picker.
+        name: String,
+    },
+    /// The currently selected model cannot use the explicitly chosen effort.
+    #[error("the model does not support this reasoning effort")]
+    UnsupportedReasoningEffort,
     /// The project does not exist, for example because it was removed.
     #[error("the project does not exist")]
     ProjectNotFound,
@@ -741,6 +761,8 @@ impl ChatError {
             Self::CompactionFailed { .. } => "chat.compaction_failed",
             Self::NoProfile => "chat.no_profile",
             Self::ProfileNotFound => "chat.profile_not_found",
+            Self::PlanModelUnavailable { .. } => "chat.plan_model_unavailable",
+            Self::UnsupportedReasoningEffort => "chat.unsupported_reasoning_effort",
             Self::ProjectNotFound => "chat.project_not_found",
             Self::ProjectNameInvalid { .. } => "chat.project_name_invalid",
             Self::ProjectBusy => "chat.project_busy",

@@ -6,6 +6,7 @@ use specta::Type;
 use crate::clock::UtcMillis;
 use crate::context::{Attachment, AttachmentRef};
 use crate::ids::{CheckpointId, ConversationId, ProfileId, ProjectId, TurnId};
+use crate::provider::ReasoningEffort;
 use crate::run::RunView;
 use crate::tasks::TaskConversation;
 use crate::tools::BackgroundCommandView;
@@ -56,6 +57,9 @@ pub struct ConversationSummary {
     /// The provider profile the owner chose for it, or `None` for the
     /// default profile.
     pub profile_id: Option<ProfileId>,
+    /// The owner's effort choice. Older conversations follow the profile's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
     /// Whether a reply is being written.
     pub has_active_run: bool,
     /// Whether the reply waits for the owner to decide about a tool call.

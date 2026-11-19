@@ -18,7 +18,8 @@ use mannie_runtime::testing::{
 };
 use mannie_runtime::{RuntimeConfig, texts};
 use mannie_types::chat::{
-    ChatError, SendMessage, StartConversation, StartedConversation, StopOutcome, UpdateChatSettings,
+    ChatError, OpenDraft, SendMessage, SetConversationReasoningEffort, StartConversation,
+    StartedConversation, StopOutcome, UpdateChatSettings,
 };
 use mannie_types::clock::UtcMillis;
 use mannie_types::provider::{
@@ -215,6 +216,85 @@ fn draft(interface: ApiInterface) -> ProfileDraft {
         output_limit: 16_384,
         reasoning_effort: ReasoningEffort::ServerDefault,
         use_tools: false,
+    }
+}
+
+#[tokio::test]
+async fn an_incompatible_remembered_effort_falls_back_until_the_owner_selects_another_model() {
+    let harness = Harness::start().await;
+    let draft_id = harness
+        .runtime
+        .open_draft(OpenDraft::default())
+        .await
+        .unwrap();
+    let choose = |effort| SetConversationReasoningEffort {
+        conversation_id: draft_id.clone(),
+        reasoning_effort: effort,
+    };
+    harness
+        .runtime
+        .set_conversation_reasoning_effort(choose(Some(ReasoningEffort::Max)))
+        .await
+        .unwrap();
+
+    let mut profile = draft(harness.profile.interface);
+    profile.model = "o3".to_owned();
+    profile.reasoning_effort = ReasoningEffort::Medium;
+    harness
+        .runtime
+        .update_profile(&harness.profile.id, profile.clone(), CredentialChange::Keep)
+        .await
+        .unwrap();
+
+    let refused = harness
+        .runtime
+        .set_conversation_reasoning_effort(choose(Some(ReasoningEffort::Minimal)))
+        .await;
+    assert_eq!(refused, Err(ChatError::UnsupportedReasoningEffort));
+
+    for (model, choice, expected) in [
+        ("o3", None, ReasoningEffort::ServerDefault),
+        ("test-model", None, ReasoningEffort::Max),
+        (
+            "test-model",
+            Some(Some(ReasoningEffort::ServerDefault)),
+            ReasoningEffort::ServerDefault,
+        ),
+        ("test-model", Some(None), ReasoningEffort::Medium),
+    ] {
+        profile.model = model.to_owned();
+        harness
+            .runtime
+            .update_profile(&harness.profile.id, profile.clone(), CredentialChange::Keep)
+            .await
+            .unwrap();
+
+        if let Some(choice) = choice {
+            harness
+                .runtime
+                .set_conversation_reasoning_effort(choose(choice))
+                .await
+                .unwrap();
+        }
+
+        harness.model.push_reply(reply("Done."));
+
+        let started = harness
+            .runtime
+            .send_message(SendMessage::new(draft_id.clone(), "Continue"))
+            .await
+            .unwrap();
+
+        harness.wait_for_run(&draft_id, &started.run_id).await;
+        assert_eq!(
+            harness
+                .model
+                .reply_requests()
+                .last()
+                .unwrap()
+                .reasoning_effort,
+            expected
+        );
     }
 }
 
@@ -664,6 +744,10 @@ async fn runs_beyond_the_slot_limit_wait_their_turn() {
     })
     .await;
     harness.model.push_reply(vec![Step::Hang]);
+    harness.model.push_reply(failure(server_error()));
+    harness.model.push_reply(failure(ProviderError::Permanent(
+        RunFailure::InvalidCredential,
+    )));
     harness.model.push_reply(reply("Second"));
 
     let first = start(&harness, "First").await;
@@ -682,16 +766,111 @@ async fn runs_beyond_the_slot_limit_wait_their_turn() {
                 .is_some_and(|run| run.activity == Some(RunActivity::WaitingForSlot))
         })
         .await;
+    harness
+        .runtime
+        .set_conversation_reasoning_effort(SetConversationReasoningEffort {
+            conversation_id: second.conversation_id.clone(),
+            reasoning_effort: Some(ReasoningEffort::High),
+        })
+        .await
+        .unwrap();
     harness.runtime.stop_reply(&first.conversation_id).await;
     let transcript = harness
         .wait_for_run(&second.conversation_id, &second.run_id)
         .await;
 
     assert_eq!(waiting.run_state(&second.run_id), Some(RunState::Queued));
+    assert_eq!(transcript.run_state(&second.run_id), Some(RunState::Failed));
+    let retried = harness
+        .runtime
+        .retry_reply(&second.conversation_id)
+        .await
+        .unwrap();
+    let completed = harness
+        .wait_for_run(&second.conversation_id, &retried.run_id)
+        .await;
+    assert_eq!(
+        completed.run_state(&retried.run_id),
+        Some(RunState::Completed)
+    );
+    let efforts: Vec<_> = harness
+        .model
+        .requests_for("Second")
+        .iter()
+        .map(|request| request.reasoning_effort)
+        .collect();
+    assert_eq!(
+        efforts,
+        [
+            ReasoningEffort::ServerDefault,
+            ReasoningEffort::ServerDefault,
+            ReasoningEffort::High
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_queued_effort_falls_back_when_the_profile_switches_to_an_incompatible_model() {
+    let harness = Harness::with_options(HarnessOptions {
+        config: RuntimeConfig {
+            max_concurrent_calls: 1,
+            ..fast_config()
+        },
+        ..HarnessOptions::default()
+    })
+    .await;
+    let mut profile = draft(harness.profile.interface);
+    profile.model = "gpt-5".to_owned();
+    profile.reasoning_effort = ReasoningEffort::High;
+    harness
+        .runtime
+        .update_profile(&harness.profile.id, profile.clone(), CredentialChange::Keep)
+        .await
+        .unwrap();
+    harness.model.push_reply(vec![
+        Step::Event(ProviderEvent::TextDelta("Holding".to_owned())),
+        Step::Hang,
+    ]);
+    harness.model.push_reply(reply("Second"));
+
+    let first = start(&harness, "First").await;
+
+    harness
+        .wait_until(&first.conversation_id, |transcript| {
+            transcript.reply_text(0) == "Holding"
+        })
+        .await;
+
+    let second = start(&harness, "Second").await;
+
+    harness
+        .wait_until(&second.conversation_id, |transcript| {
+            transcript
+                .run(&second.run_id)
+                .is_some_and(|run| run.activity == Some(RunActivity::WaitingForSlot))
+        })
+        .await;
+
+    profile.model = "gpt-4o".to_owned();
+    profile.reasoning_effort = ReasoningEffort::ServerDefault;
+    harness
+        .runtime
+        .update_profile(&harness.profile.id, profile, CredentialChange::Keep)
+        .await
+        .unwrap();
+    harness.runtime.stop_reply(&first.conversation_id).await;
+
+    let transcript = harness
+        .wait_for_run(&second.conversation_id, &second.run_id)
+        .await;
+
     assert_eq!(
         transcript.run_state(&second.run_id),
         Some(RunState::Completed)
     );
+    let [request] = harness.model.requests_for("Second").try_into().unwrap();
+    assert_eq!(request.model, "gpt-4o");
+    assert_eq!(request.reasoning_effort, ReasoningEffort::ServerDefault);
 }
 
 #[tokio::test]

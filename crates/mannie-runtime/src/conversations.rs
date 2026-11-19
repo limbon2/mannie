@@ -4,14 +4,15 @@
 use std::sync::Arc;
 
 use mannie_store::{
-    Change, Durability, NewConversation, NewMention, NewRun, ProfileStoreError, RuntimeStoreError,
-    SettingsStoreError, StoredProfile,
+    Applied, Change, Durability, NewConversation, NewMention, NewRun, ProfileStoreError,
+    RuntimeStoreError, SettingsStoreError, StoredProfile,
 };
 use mannie_types::chat::{
     ChatError, ChatSettings, CheckpointRef, EarlierTurns, LoadEarlierTurns, MAX_EARLIER_TURNS,
     OpenDraft, RenameConversation, SendMessage, SetConversationAgent, SetConversationProfile,
-    StartConversation, StartedConversation, StartedReply, StopOutcome, SubscribeConversation,
-    UpdateChatSettings, check_message, check_title, title_from_message,
+    SetConversationReasoningEffort, StartConversation, StartedConversation, StartedReply,
+    StopOutcome, SubscribeConversation, UpdateChatSettings, check_message, check_title,
+    title_from_message,
 };
 use mannie_types::context::{Attachment, AttachmentRef, ChangeAttachment};
 use mannie_types::ids::{ConversationId, ProfileId, ProjectId};
@@ -20,10 +21,13 @@ use mannie_types::mentions::{MentionRef, check_mentions};
 use mannie_types::provider::context_budget;
 use mannie_types::transcript::{Checkpoint, ConversationSummary};
 
+use crate::actor::RunModel;
 use crate::agents::CONVERSATION_AGENT;
 use crate::calls::CallOptions;
+use crate::chatgpt::QueuedAccount;
 use crate::compaction::Trigger;
 use crate::hub::{ConversationSubscription, ListSubscription};
+use crate::profiles::{effort_for_model, supports_reasoning_effort};
 use crate::{Busy, Runtime, lock};
 
 /// A conversation that a command has reserved: for a new run, or for the
@@ -86,6 +90,29 @@ fn profile_store_failure(error: &ProfileStoreError) -> ChatError {
     ChatError::StorageFailed
 }
 
+fn available_profile(profile: StoredProfile) -> Result<StoredProfile, ChatError> {
+    if profile.catalog_account.is_some() && !profile.catalog_available {
+        return Err(ChatError::PlanModelUnavailable { name: profile.name });
+    }
+
+    Ok(profile)
+}
+
+/// Once a catalog model answers a conversation, keep its choice across
+/// catalog changes and the later addition of an API endpoint.
+pub(crate) fn pin_catalog_choice(
+    changes: &mut Vec<Change>,
+    profile: &StoredProfile,
+    previous: Option<&ProfileId>,
+) {
+    if profile.catalog_account.is_some() && previous != Some(&profile.id) {
+        changes.push(Change::PinDefaultProfile {
+            previous: previous.cloned(),
+            profile_id: profile.id.clone(),
+        });
+    }
+}
+
 fn settings_failure(error: &SettingsStoreError) -> ChatError {
     if let SettingsStoreError::NewerVersion { .. } = error {
         return ChatError::WrittenByNewerVersion;
@@ -135,7 +162,7 @@ impl Runtime {
                 .await
                 .map_err(|error| profile_store_failure(&error))?;
             if let Some(profile) = profile {
-                return Ok(profile);
+                return available_profile(profile);
             }
         }
         self.inner
@@ -148,13 +175,19 @@ impl Runtime {
 
     /// A new run of a conversation's replies, with the agent that it names
     /// (ADR-0059, decision 6).
-    pub(crate) fn new_run(&self, profile: &StoredProfile, agent_key: Option<&str>) -> NewRun {
-        NewRun {
+    pub(crate) async fn new_run(
+        &self,
+        profile: &StoredProfile,
+        agent_key: Option<&str>,
+    ) -> (NewRun, QueuedAccount) {
+        let account = self.account_for_run(profile).await;
+        let run = NewRun {
             id: self.inner.ids.run(),
             agent: self.conversation_agent_name(agent_key),
             profile_id: profile.id.clone(),
             binding: profile.binding(),
-        }
+        };
+        (run, account)
     }
 
     /// Hands a reserved conversation over to a new run.
@@ -163,12 +196,28 @@ impl Runtime {
         reservation: Reservation<'_>,
         turn: &mannie_types::ids::TurnId,
         run: &NewRun,
+        profile: &StoredProfile,
+        queued: &Applied,
+        account: QueuedAccount,
     ) {
+        // Read the owner's choice from the same transaction that queued the
+        // turn. It may have changed while attachments or mentions were read.
+        let requested = queued
+            .summary
+            .as_ref()
+            .and_then(|summary| summary.reasoning_effort);
+        let effort = requested.map_or(profile.reasoning_effort, |effort| {
+            effort_for_model(profile, effort)
+        });
         let _mailbox = self.spawn_run(
             reservation.conversation.clone(),
             turn.clone(),
             run.id.clone(),
-            run.profile_id.clone(),
+            RunModel {
+                profile: run.profile_id.clone(),
+                effort,
+                account,
+            },
             run.agent.clone(),
             None,
         );
@@ -237,12 +286,14 @@ impl Runtime {
                 .await
                 .map_err(|error| profile_store_failure(&error))?
                 .ok_or(ChatError::ProfileNotFound)?;
-            return Ok((profile, Some(id)));
+            return Ok((available_profile(profile)?, Some(id)));
         }
         let profile = self.profile_for(agent_profile.as_ref()).await?;
         // The agent's profile only when it still exists, which `profile_for`
         // found out.
-        let recorded = agent_profile.filter(|id| *id == profile.id);
+        let recorded = agent_profile
+            .filter(|id| *id == profile.id)
+            .or_else(|| profile.catalog_account.as_ref().map(|_| profile.id.clone()));
         Ok((profile, recorded))
     }
 
@@ -305,7 +356,7 @@ impl Runtime {
             title = title_from_message(&first.view.name);
         }
         let turn_id = self.inner.ids.turn();
-        let run = self.new_run(&profile, agent_key.as_deref());
+        let (run, account) = self.new_run(&profile, agent_key.as_deref()).await;
         let mut changes = vec![Change::CreateConversation {
             conversation: NewConversation {
                 id: conversation_id.clone(),
@@ -338,7 +389,9 @@ impl Runtime {
             mentions,
             images,
         });
-        self.inner
+
+        let queued = self
+            .inner
             .hubs
             .apply(
                 &self.inner.store,
@@ -349,7 +402,7 @@ impl Runtime {
             .await
             .map_err(store_failure)?;
         self.release_images(&image_refs);
-        self.start_reserved(reservation, &turn_id, &run);
+        self.start_reserved(reservation, &turn_id, &run, &profile, &queued, account);
         Ok(StartedConversation {
             conversation_id,
             turn_id,
@@ -507,7 +560,7 @@ impl Runtime {
         let mut mentions = mentions;
         mentions.extend(named_mentions);
         let images = self.resolve_images(&image_refs).await?;
-        let run = self.new_run(&profile, summary.agent_key.as_deref());
+        let (run, account) = self.new_run(&profile, summary.agent_key.as_deref()).await;
         let opening = self
             .opening_note(
                 &input.conversation_id,
@@ -517,6 +570,7 @@ impl Runtime {
             .map_err(store_failure)?;
         let turn_id = self.inner.ids.turn();
         let mut changes: Vec<Change> = Vec::new();
+        pin_catalog_choice(&mut changes, &profile, summary.profile_id.as_ref());
         // The first message makes a draft an ordinary conversation, titled
         // as `start_conversation` titles one (ADR-0068, decision 4).
         if summary.draft {
@@ -558,7 +612,9 @@ impl Runtime {
                 });
             }
         }
-        self.inner
+
+        let queued = self
+            .inner
             .hubs
             .apply(
                 &self.inner.store,
@@ -571,7 +627,7 @@ impl Runtime {
         // Only once the message is stored: until then, a failed send keeps
         // its images in the message box for another try.
         self.release_images(&image_refs);
-        self.start_reserved(reservation, &turn_id, &run);
+        self.start_reserved(reservation, &turn_id, &run, &profile, &queued, account);
         Ok(StartedReply {
             turn_id,
             run_id: run.id,
@@ -607,22 +663,21 @@ impl Runtime {
             return Err(ChatError::NothingToRetry);
         }
         let profile = self.profile_for(summary.profile_id.as_ref()).await?;
-        let run = self.new_run(&profile, summary.agent_key.as_deref());
-        let change = Change::RetryTurn {
+        let (run, account) = self.new_run(&profile, summary.agent_key.as_deref()).await;
+        let mut changes = Vec::new();
+        pin_catalog_choice(&mut changes, &profile, summary.profile_id.as_ref());
+        changes.push(Change::RetryTurn {
             turn_id: turn_id.clone(),
             run: run.clone(),
-        };
-        self.inner
+        });
+
+        let queued = self
+            .inner
             .hubs
-            .apply(
-                &self.inner.store,
-                conversation,
-                vec![change],
-                Durability::Full,
-            )
+            .apply(&self.inner.store, conversation, changes, Durability::Full)
             .await
             .map_err(store_failure)?;
-        self.start_reserved(reservation, &turn_id, &run);
+        self.start_reserved(reservation, &turn_id, &run, &profile, &queued, account);
         Ok(StartedReply {
             turn_id,
             run_id: run.id,
@@ -688,14 +743,18 @@ impl Runtime {
     ) -> Result<(), ChatError> {
         self.refuse_when_task_conversation(&input.conversation_id)
             .await?;
+
         if let Some(id) = &input.profile_id {
-            self.inner
+            let profile = self
+                .inner
                 .store
                 .profile(id)
                 .await
                 .map_err(|error| profile_store_failure(&error))?
                 .ok_or(ChatError::ProfileNotFound)?;
+            available_profile(profile)?;
         }
+
         self.inner
             .hubs
             .apply(
@@ -703,6 +762,43 @@ impl Runtime {
                 &input.conversation_id,
                 vec![Change::SetProfile {
                     profile_id: input.profile_id,
+                }],
+                Durability::Full,
+            )
+            .await
+            .map_err(store_failure)?;
+        Ok(())
+    }
+
+    /// Chooses the effort for this conversation and remembers it for new ones.
+    pub async fn set_conversation_reasoning_effort(
+        &self,
+        input: SetConversationReasoningEffort,
+    ) -> Result<(), ChatError> {
+        let summary = self
+            .inner
+            .store
+            .conversation_summary(&input.conversation_id)
+            .await
+            .map_err(store_failure)?
+            .ok_or(ChatError::ConversationNotFound)?;
+        refuse_task_conversation(&summary)?;
+
+        if let Some(effort) = input.reasoning_effort {
+            let profile = self.profile_for(summary.profile_id.as_ref()).await?;
+
+            if !supports_reasoning_effort(&profile, effort) {
+                return Err(ChatError::UnsupportedReasoningEffort);
+            }
+        }
+
+        self.inner
+            .hubs
+            .apply(
+                &self.inner.store,
+                &input.conversation_id,
+                vec![Change::SetReasoningEffort {
+                    effort: input.reasoning_effort,
                 }],
                 Durability::Full,
             )
@@ -822,8 +918,12 @@ impl Runtime {
             .ok_or(ChatError::ConversationNotFound)?;
         refuse_task_conversation(&summary)?;
         let profile = self.profile_for(summary.profile_id.as_ref()).await?;
+        let account = self
+            .account_for_run(&profile)
+            .await
+            .map_err(|failure| ChatError::CompactionFailed { failure })?;
         let setup = self
-            .setup_for(&profile, CONVERSATION_AGENT, false)
+            .setup_for(&profile, CONVERSATION_AGENT, false, account.as_ref())
             .await
             .map_err(|failure| ChatError::CompactionFailed { failure })?;
         let prepared = self

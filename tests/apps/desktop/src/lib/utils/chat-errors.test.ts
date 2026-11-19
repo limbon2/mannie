@@ -50,6 +50,7 @@ const RUN_FAILURES: RunFailure[] = [
   { code: 'credential_missing' },
   { code: 'credential_store_unavailable' },
   { code: 'profile_missing' },
+  { code: 'profile_access_changed' },
   { code: 'no_profile' },
   { code: 'tools_unsupported' },
   { code: 'internal' },

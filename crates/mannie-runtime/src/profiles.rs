@@ -8,13 +8,16 @@ use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
 
-use mannie_provider::{TestInput, Url, check_base_url, credential_transport_allowed, test_profile};
+use mannie_provider::{
+    EffortShape, TestInput, Url, check_base_url, credential_transport_allowed, known_model,
+    quirks_for, test_profile,
+};
 use mannie_store::{ProfileFields, ProfileStoreError, StoredProfile};
 use mannie_types::ids::ProfileId;
 use mannie_types::provider::{
     ApiInterface, CheckOutcome, CreateProviderProfile, CredentialChange, CredentialStoreProblem,
     ProfileAccess, ProfileDraft, ProviderProfile, ProviderProfileError, ProviderTestReport,
-    ServerKind, SkipReason, check_credential,
+    ReasoningEffort, ServerKind, SkipReason, check_credential,
 };
 use mannie_types::run::RunFailure;
 use mannie_types::secret::Secret;
@@ -158,6 +161,41 @@ fn fields(draft: &ProfileDraft, checked: Checked, credential_ref: Option<String>
     }
 }
 
+fn supported_efforts(profile: &StoredProfile) -> Option<Vec<ReasoningEffort>> {
+    if profile.interface == ApiInterface::ChatCompletions
+        && quirks_for(profile.interface, profile.server).effort == EffortShape::Omitted
+    {
+        return Some(Vec::new());
+    }
+
+    profile
+        .advertised_efforts
+        .clone()
+        .or_else(|| known_model(&profile.model).map(|known| known.supported_efforts.to_vec()))
+}
+
+pub(crate) fn supports_reasoning_effort(profile: &StoredProfile, effort: ReasoningEffort) -> bool {
+    effort == ReasoningEffort::ServerDefault
+        || supported_efforts(profile).is_none_or(|values| values.contains(&effort))
+}
+
+pub(crate) fn effort_for_model(
+    profile: &StoredProfile,
+    effort: ReasoningEffort,
+) -> ReasoningEffort {
+    if supports_reasoning_effort(profile, effort) {
+        effort
+    } else {
+        ReasoningEffort::ServerDefault
+    }
+}
+
+fn profile_view(profile: &StoredProfile) -> ProviderProfile {
+    let mut view = profile.view();
+    view.supported_efforts = supported_efforts(profile);
+    view
+}
+
 impl Runtime {
     /// Every profile, the oldest first.
     pub async fn list_profiles(&self) -> Result<Vec<ProviderProfile>, ProviderProfileError> {
@@ -167,7 +205,7 @@ impl Runtime {
             .list_profiles()
             .await
             .map_err(|error| store_failure(&error))?;
-        Ok(profiles.iter().map(StoredProfile::view).collect())
+        Ok(profiles.iter().map(profile_view).collect())
     }
 
     /// Adds a profile and stores its credential. The first profile becomes the
@@ -207,7 +245,7 @@ impl Runtime {
         match stored {
             Ok(profile) => {
                 tracing::info!(profile = %profile.id, interface = profile.interface.as_str(), "added a provider profile");
-                Ok(profile.view())
+                Ok(profile_view(&profile))
             }
             Err(error) => {
                 if let Some(reference) = reference {
@@ -234,6 +272,7 @@ impl Runtime {
             .profile(id)
             .await
             .map_err(|error| store_failure(&error))?
+            .filter(|profile| profile.catalog_account.is_none())
             .ok_or(ProviderProfileError::NotFound)?;
         let checked = check_draft(&draft, &self.chatgpt_endpoints().api_base)?;
         let (reference, new_credential) = match change {
@@ -279,7 +318,7 @@ impl Runtime {
                     self.forget_credential(old).await;
                 }
                 tracing::info!(profile = %after.id, revision = after.config_revision, "changed a provider profile");
-                Ok(after.view())
+                Ok(profile_view(&after))
             }
             Err(error) => {
                 if let (Some(reference), Some(_)) = (reference, new_credential) {
@@ -329,6 +368,7 @@ impl Runtime {
             .profile(id)
             .await
             .map_err(|error| store_failure(&error))?
+            .filter(|profile| profile.catalog_account.is_none())
             .ok_or(ProviderProfileError::NotFound)?;
         if profile.access == ProfileAccess::ChatGptPlan {
             let report = self.test_plan_profile(&profile).await;

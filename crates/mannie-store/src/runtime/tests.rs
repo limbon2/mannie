@@ -1663,6 +1663,55 @@ async fn renaming_and_choosing_a_profile_change_the_summary() {
 }
 
 #[tokio::test]
+async fn a_catalog_pin_announces_the_model_only_when_it_changes_the_selection() {
+    let fixture = Fixture::new();
+    let (conversation, _, _, _) = fixture.start("Question").await;
+    let chosen = Fixture::profile_id();
+    let pinned = fixture
+        .apply(
+            &conversation,
+            vec![Change::PinDefaultProfile {
+                previous: None,
+                profile_id: chosen.clone(),
+            }],
+        )
+        .await;
+
+    let [
+        (
+            _,
+            ConversationEvent::ConversationChanged {
+                conversation: summary,
+            },
+        ),
+    ] = pinned.events.as_slice()
+    else {
+        panic!("unexpected events for the open chat: {:?}", pinned.events);
+    };
+    assert_eq!(summary.profile_id.as_ref(), Some(&chosen));
+    assert_eq!(pinned.summary.as_ref(), Some(summary));
+
+    let stale = fixture
+        .apply(
+            &conversation,
+            vec![
+                Change::PinDefaultProfile {
+                    previous: Some(chosen.clone()),
+                    profile_id: chosen,
+                },
+                Change::PinDefaultProfile {
+                    previous: None,
+                    profile_id: ProfileId::parse(&fixture.uuid()).unwrap(),
+                },
+            ],
+        )
+        .await;
+    assert_eq!(stale.events, Vec::new());
+    assert!(stale.summary.is_none());
+    assert_eq!(stale.last_seq, pinned.last_seq);
+}
+
+#[tokio::test]
 async fn a_deleted_conversation_leaves_no_text_in_the_database_or_its_log() {
     let fixture = Fixture::new();
     let planted = "planted-conversation-text-7f3a91";

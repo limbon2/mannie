@@ -17,7 +17,7 @@ use mannie_plugin_sdk::points::executors::{
 };
 use mannie_plugin_sdk::services::executor_host::OutboxItem;
 use mannie_provider::testing::Step;
-use mannie_provider::{Content, ModelRequest, Role};
+use mannie_provider::{Content, ModelRequest, ProviderEvent, Role};
 use mannie_runtime::testing::{
     FAKE_EXECUTOR_AGENT, FAKE_EXECUTOR_KIND, FAKE_EXECUTOR_NOUN, FAKE_EXECUTOR_SECTION,
     FAKE_EXECUTOR_TOOL, FakeExecutor, Harness, HarnessOptions, add_plugin, executor_host,
@@ -26,10 +26,12 @@ use mannie_runtime::testing::{
 use mannie_runtime::{RuntimeConfig, texts};
 use mannie_tools::{ACTIVITY_ARGUMENT, takes_activity, with_activity};
 use mannie_types::chat::{
-    ChatError, LoadEarlierTurns, SendMessage, StartConversation, StopOutcome, SubscribeConversation,
+    ChatError, LoadEarlierTurns, OpenDraft, SendMessage, SetConversationReasoningEffort,
+    StartConversation, StopOutcome, SubscribeConversation,
 };
 use mannie_types::ids::{ConversationId, RunId};
-use mannie_types::run::RunState;
+use mannie_types::provider::{CredentialChange, ProfileAccess, ProfileDraft, ReasoningEffort};
+use mannie_types::run::{RunFailure, RunState};
 use mannie_types::tasks::{TaskRefusal, TaskState};
 use mannie_types::tools::{NotRunReason, ToolCallStatus};
 use serde_json::json;
@@ -159,8 +161,111 @@ fn tool_names(request: &ModelRequest) -> Vec<String> {
 }
 
 #[tokio::test]
+async fn an_executor_task_rechecks_the_edited_profiles_access_and_supported_effort() {
+    for access in [ProfileAccess::Endpoint, ProfileAccess::ChatGptPlan] {
+        let setup = Setup::new().await;
+        let existing = &setup.harness.profile;
+        let mut profile = ProfileDraft {
+            name: existing.name.clone(),
+            interface: existing.interface,
+            base_url: existing.base_url.clone(),
+            model: "gpt-5".to_owned(),
+            access: ProfileAccess::Endpoint,
+            context_window: existing.context_window,
+            output_limit: existing.output_limit,
+            reasoning_effort: ReasoningEffort::High,
+            use_tools: true,
+        };
+        setup
+            .harness
+            .runtime
+            .update_profile(&existing.id, profile.clone(), CredentialChange::Keep)
+            .await
+            .unwrap();
+
+        let release = Arc::new(tokio::sync::Notify::new());
+        let mut steps = vec![
+            Step::Event(ProviderEvent::TextDelta("Preparing".to_owned())),
+            Step::Wait(Arc::clone(&release)),
+        ];
+        steps.extend(tool_calls(&[(
+            "call_1",
+            FAKE_EXECUTOR_TOOL,
+            &give("box-01", "Build it", "Build the backend.", false),
+        )]));
+        setup.parent(steps);
+        setup.parent(reply("Done."));
+
+        let (conversation, run) = setup.start("OWNER: build it on the box").await;
+
+        setup
+            .harness
+            .wait_until(&conversation, |transcript| {
+                transcript.reply_text(0) == "Preparing"
+            })
+            .await;
+        profile.access = access;
+        profile.model = "gpt-4o".to_owned();
+        profile.reasoning_effort = ReasoningEffort::ServerDefault;
+        setup
+            .harness
+            .runtime
+            .update_profile(&existing.id, profile, CredentialChange::Keep)
+            .await
+            .unwrap();
+        release.notify_one();
+
+        match access {
+            ProfileAccess::Endpoint => {
+                let [submission] = setup.submissions(1).await.try_into().unwrap();
+                assert_eq!(submission.profile.model, "gpt-4o");
+                assert_eq!(
+                    submission.profile.reasoning_effort,
+                    ReasoningEffort::ServerDefault
+                );
+                setup
+                    .publish(FakeExecutor::reported(&submission, 2, "Built."))
+                    .await;
+
+                let transcript = setup.harness.wait_for_run(&conversation, &run).await;
+                assert_eq!(transcript.run_state(&run), Some(RunState::Completed));
+            }
+            ProfileAccess::ChatGptPlan => {
+                let transcript = setup.harness.wait_for_run(&conversation, &run).await;
+                assert_eq!(
+                    transcript
+                        .run(&run)
+                        .unwrap()
+                        .outcome
+                        .as_ref()
+                        .unwrap()
+                        .failure,
+                    Some(RunFailure::ProfileAccessChanged)
+                );
+                assert_eq!(setup.executor.submissions(), Vec::new());
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn a_registered_executors_task_returns_its_report_as_the_result() {
     let setup = Setup::new().await;
+    let conversation = setup
+        .harness
+        .runtime
+        .open_draft(OpenDraft::default())
+        .await
+        .unwrap();
+    setup
+        .harness
+        .runtime
+        .set_conversation_reasoning_effort(SetConversationReasoningEffort {
+            conversation_id: conversation.clone(),
+            reasoning_effort: Some(ReasoningEffort::High),
+        })
+        .await
+        .unwrap();
     setup.parent(tool_calls(&[(
         "call_1",
         FAKE_EXECUTOR_TOOL,
@@ -168,8 +273,26 @@ async fn a_registered_executors_task_returns_its_report_as_the_result() {
     )]));
     setup.parent(reply("The box built it."));
 
-    let (conversation, run) = setup.start("OWNER: build it on the box").await;
+    let started = setup
+        .harness
+        .runtime
+        .send_message(SendMessage::new(
+            conversation.clone(),
+            "OWNER: build it on the box",
+        ))
+        .await
+        .unwrap();
+    let run = started.run_id;
     let [submission] = setup.submissions(1).await.try_into().unwrap();
+    setup
+        .harness
+        .runtime
+        .set_conversation_reasoning_effort(SetConversationReasoningEffort {
+            conversation_id: conversation.clone(),
+            reasoning_effort: Some(ReasoningEffort::Low),
+        })
+        .await
+        .unwrap();
     setup
         .publish(FakeExecutor::state(&submission, 2, TaskState::Running))
         .await;
@@ -180,12 +303,18 @@ async fn a_registered_executors_task_returns_its_report_as_the_result() {
 
     assert_eq!(transcript.run_state(&run), Some(RunState::Completed));
     assert_eq!(submission.number, 1);
+    assert_eq!(submission.profile.reasoning_effort, ReasoningEffort::High);
     assert_eq!(submission.title, "Build it");
     assert_eq!(submission.instruction, "Build the backend.");
     assert!(!submission.follow_up);
     assert_eq!(submission.parent_id, conversation);
     assert_eq!(submission.target, FakeExecutor::target("box-01"));
     let parent = setup.harness.model.requests_for("OWNER:");
+    assert!(
+        parent
+            .iter()
+            .all(|request| request.reasoning_effort == ReasoningEffort::High)
+    );
     let tools = tool_names(&parent[0]);
     assert!(tools.contains(&FAKE_EXECUTOR_TOOL.to_owned()), "{tools:?}");
     assert!(tools.contains(&"start_task".to_owned()), "{tools:?}");

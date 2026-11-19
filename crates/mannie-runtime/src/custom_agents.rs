@@ -15,6 +15,7 @@ use mannie_types::agents::{
     AgentTemplate, AgentToolGroup, AgentToolGroupId, AgentView, AgentsSettings,
     CUSTOM_AGENT_PREFIX, MAX_CUSTOM_AGENTS, custom_agent_key,
 };
+use mannie_types::ids::ProfileId;
 
 use crate::Runtime;
 use crate::agents::{
@@ -541,7 +542,11 @@ impl Runtime {
     /// Checks a draft against what its kind may name and what exists (ADR-0059,
     /// decision 4), and returns it cleaned. Nothing here is offered to a run
     /// without `setup_for` applying it again.
-    async fn checked_draft(&self, draft: &AgentDraft) -> Result<AgentDraft, AgentError> {
+    async fn checked_draft(
+        &self,
+        draft: &AgentDraft,
+        previous_profile: Option<&ProfileId>,
+    ) -> Result<AgentDraft, AgentError> {
         let draft = draft.check_fields()?;
         let invalid = |field| AgentError::FieldNotValid { field };
         let allowed = allowed_tools(draft.kind, draft.read_only);
@@ -558,7 +563,10 @@ impl Runtime {
                 tracing::error!(%error, error.code = error.code(), "a provider profile could not be read");
                 AgentError::StorageFailed
             })?;
-            if found.is_none() {
+            let can_keep_profile = Some(profile) == previous_profile;
+            if !found.is_some_and(|profile| {
+                profile.catalog_account.is_none() || profile.catalog_available || can_keep_profile
+            }) {
                 return Err(invalid(AgentField::Profile));
             }
         }
@@ -608,7 +616,7 @@ impl Runtime {
     /// Adds an agent of the owner's.
     pub async fn create_agent(&self, draft: &AgentDraft) -> Result<AgentView, AgentError> {
         let _one_at_a_time = self.inner.custom_agents.changes.lock().await;
-        let draft = self.checked_draft(draft).await?;
+        let draft = self.checked_draft(draft, None).await?;
         let stored = self.inner.custom_agents.stored();
         if stored.len() >= MAX_CUSTOM_AGENTS {
             return Err(AgentError::TooMany {
@@ -638,7 +646,9 @@ impl Runtime {
     ) -> Result<AgentView, AgentError> {
         let _one_at_a_time = self.inner.custom_agents.changes.lock().await;
         let current = self.stored_agent(key)?;
-        let draft = self.checked_draft(draft).await?;
+        let draft = self
+            .checked_draft(draft, current.draft.profile_id.as_ref())
+            .await?;
         if draft.kind != current.draft.kind {
             return Err(AgentError::KindChanged);
         }

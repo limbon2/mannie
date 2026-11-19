@@ -487,6 +487,19 @@ pub enum Change {
         /// The profile, or `None` for the default.
         profile_id: Option<ProfileId>,
     },
+    /// Binds a catalog fallback used by this turn, unless the owner chose a
+    /// different model while the run was being prepared.
+    PinDefaultProfile {
+        /// The selection read when preparing this reply.
+        previous: Option<ProfileId>,
+        /// The catalog choice that will answer it.
+        profile_id: ProfileId,
+    },
+    /// Records the owner's choice here and for conversations created after it.
+    SetReasoningEffort {
+        /// An explicit effort, or no override to follow the profile.
+        effort: Option<mannie_types::provider::ReasoningEffort>,
+    },
     /// `save_plan` saved the conversation's plan, which replaces the one it
     /// held (ADR-0060). In one batch with the end of the call that records it.
     SavePlan {

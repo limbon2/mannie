@@ -16,6 +16,7 @@ use mannie_store::{
     StoredTask, TaskEnding, TaskOrigin,
 };
 use mannie_types::ids::TaskId;
+use mannie_types::provider::ProfileAccess;
 use mannie_types::run::RunFailure;
 use mannie_types::tasks::{
     INSTRUCTION_PREVIEW_CHARS, ProfileSnapshot, TaskDocument, TaskRefusal, TaskState,
@@ -27,6 +28,7 @@ use super::tasks::{LaneTask, let_go_text};
 use super::{Ending, MAX_DETAIL_CHARS, RunActor, StepCall};
 use crate::calls::Setup;
 use crate::executors::RemoteFollow;
+use crate::profiles::effort_for_model;
 use crate::texts;
 
 /// The start of an instruction, which the parent's part keeps for the owner.
@@ -479,6 +481,11 @@ impl RunActor {
                 Ending::Failed(RunFailure::Internal)
             })?
             .ok_or(Ending::Failed(RunFailure::ProfileMissing))?;
+
+        if profile.access != ProfileAccess::Endpoint {
+            return Err(Ending::Failed(RunFailure::ProfileAccessChanged));
+        }
+
         Ok(ProfileSnapshot {
             id: profile.id.clone(),
             config_revision: profile.config_revision,
@@ -487,7 +494,7 @@ impl RunActor {
             model: profile.model.clone(),
             context_window: profile.context_window,
             output_limit: profile.output_limit,
-            reasoning_effort: profile.reasoning_effort,
+            reasoning_effort: effort_for_model(&profile, self.reasoning_effort),
             server: profile.server,
             use_tools: profile.use_tools,
             has_credential: profile.credential_ref.is_some(),

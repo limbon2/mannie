@@ -5,7 +5,7 @@
 use mannie_types::clock::UtcMillis;
 use mannie_types::ids::ProfileId;
 use mannie_types::provider::{
-    ApiInterface, ProfileAccess, ProviderProfile, ReasoningEffort, ServerKind,
+    ApiInterface, CatalogAvailability, ProfileAccess, ProviderProfile, ReasoningEffort, ServerKind,
 };
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 use serde::{Deserialize, Serialize};
@@ -14,6 +14,7 @@ use crate::error::StoreError;
 use crate::writer::TransactError;
 use crate::{Durability, Store};
 
+pub(crate) mod catalog;
 pub(crate) mod chatgpt;
 pub(crate) mod search;
 
@@ -21,12 +22,16 @@ pub(crate) mod search;
 const DOCUMENT_VERSION: u32 = 1;
 
 const SELECT_ALL: &str = "SELECT id, name, interface, base_url, model, credential_ref, is_default, config_revision, \
-     version, document, created_at, updated_at FROM provider_profiles ORDER BY created_at, id";
+     version, document, created_at, updated_at, catalog_account, catalog_position, supported_efforts \
+     FROM provider_profile_choices ORDER BY catalog_account IS NOT NULL, catalog_position IS NULL, catalog_position, created_at, id";
 const SELECT_ONE: &str = "SELECT id, name, interface, base_url, model, credential_ref, is_default, config_revision, \
-     version, document, created_at, updated_at FROM provider_profiles WHERE id = ?1";
+     version, document, created_at, updated_at, catalog_account, catalog_position, supported_efforts \
+     FROM provider_profile_choices WHERE id = ?1";
 const SELECT_DEFAULT: &str = "SELECT id, name, interface, base_url, model, credential_ref, is_default, config_revision, \
-     version, document, created_at, updated_at FROM provider_profiles WHERE is_default = 1";
-const SELECT_NAMES: &str = "SELECT id, name FROM provider_profiles";
+     version, document, created_at, updated_at, catalog_account, catalog_position, supported_efforts \
+     FROM provider_profile_choices WHERE is_default = 1 OR catalog_position IS NOT NULL \
+     ORDER BY is_default DESC, catalog_position LIMIT 1";
+const SELECT_NAMES: &str = "SELECT id, name FROM provider_profiles WHERE catalog_account IS NULL";
 const SELECT_HAS_DEFAULT: &str = "SELECT 1 FROM provider_profiles WHERE is_default = 1";
 const INSERT: &str = "INSERT INTO provider_profiles \
      (id, name, interface, base_url, model, credential_ref, is_default, config_revision, version, document, \
@@ -36,7 +41,7 @@ const UPDATE: &str = "UPDATE provider_profiles SET name = ?2, interface = ?3, ba
 const DELETE: &str = "DELETE FROM provider_profiles WHERE id = ?1";
 const CLEAR_DEFAULT: &str = "UPDATE provider_profiles SET is_default = 0 WHERE is_default = 1";
 const SET_DEFAULT: &str = "UPDATE provider_profiles SET is_default = 1 WHERE id = ?1";
-const SELECT_OLDEST: &str = "SELECT id FROM provider_profiles ORDER BY created_at, id LIMIT 1";
+const SELECT_OLDEST: &str = "SELECT id FROM provider_profiles WHERE catalog_account IS NULL ORDER BY created_at, id LIMIT 1";
 const UPDATE_DOCUMENT: &str =
     "UPDATE provider_profiles SET version = ?2, document = ?3 WHERE id = ?1";
 
@@ -84,6 +89,12 @@ fn uses_tools_by_default() -> bool {
 /// A provider profile as the store keeps it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredProfile {
+    /// The account that last listed this managed model. Unset on owner profiles.
+    pub catalog_account: Option<String>,
+    /// Whether the signed-in account currently lists this managed model.
+    pub catalog_available: bool,
+    /// Reasoning efforts advertised by the account for this plan model.
+    pub advertised_efforts: Option<Vec<ReasoningEffort>>,
     /// The profile.
     pub id: ProfileId,
     /// Its name.
@@ -123,6 +134,10 @@ impl StoredProfile {
     /// The profile as the UI shows it.
     pub fn view(&self) -> ProviderProfile {
         ProviderProfile {
+            catalog: self.catalog_account.as_ref().map(|_| CatalogAvailability {
+                available: self.catalog_available,
+            }),
+            supported_efforts: self.advertised_efforts.clone(),
             id: self.id.clone(),
             name: self.name.clone(),
             access: self.access,
@@ -223,6 +238,9 @@ impl From<TransactError<Self>> for ProfileStoreError {
 }
 
 struct RawProfile {
+    catalog_account: Option<String>,
+    catalog_position: Option<i64>,
+    supported_efforts: Option<String>,
     id: String,
     name: String,
     interface: String,
@@ -239,6 +257,9 @@ struct RawProfile {
 
 fn raw_from_row(row: &Row<'_>) -> rusqlite::Result<RawProfile> {
     Ok(RawProfile {
+        catalog_account: row.get(12)?,
+        catalog_position: row.get(13)?,
+        supported_efforts: row.get(14)?,
         id: row.get(0)?,
         name: row.get(1)?,
         interface: row.get(2)?,
@@ -268,6 +289,13 @@ impl RawProfile {
         let interface = ApiInterface::parse(&self.interface)
             .ok_or_else(|| invalid(format!("unknown interface {:?}", self.interface)))?;
         Ok(StoredProfile {
+            catalog_account: self.catalog_account,
+            catalog_available: self.catalog_position.is_some(),
+            advertised_efforts: self
+                .supported_efforts
+                .map(|efforts| serde_json::from_str(&efforts))
+                .transpose()
+                .map_err(|error| invalid(error.to_string()))?,
             id: ProfileId::parse(&self.id).map_err(|error| invalid(error.to_string()))?,
             name: self.name,
             access: document.access,
@@ -429,6 +457,7 @@ impl Store {
         self.transact(Durability::Full, move |transaction| {
             let before = read_one(transaction, &id)
                 .map_err(TransactError::Rejected)?
+                .filter(|profile| profile.catalog_account.is_none())
                 .ok_or(TransactError::Rejected(ProfileStoreError::NotFound))?;
             refuse_taken_name(transaction, &fields.name, Some(&id))?;
             let connection_changed = before.access != fields.access
@@ -478,6 +507,7 @@ impl Store {
         self.transact(Durability::Full, move |transaction| {
             let deleted = read_one(transaction, &id)
                 .map_err(TransactError::Rejected)?
+                .filter(|profile| profile.catalog_account.is_none())
                 .ok_or(TransactError::Rejected(ProfileStoreError::NotFound))?;
             transaction.prepare_cached(DELETE)?.execute([&id])?;
             if deleted.is_default {
@@ -501,7 +531,7 @@ impl Store {
         self.transact(Durability::Full, move |transaction| {
             let exists = read_one(transaction, &id)
                 .map_err(TransactError::Rejected)?
-                .is_some();
+                .is_some_and(|profile| profile.catalog_account.is_none());
             if !exists {
                 return Err(TransactError::Rejected(ProfileStoreError::NotFound));
             }
