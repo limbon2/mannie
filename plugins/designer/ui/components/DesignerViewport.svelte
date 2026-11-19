@@ -22,7 +22,7 @@
   const labelId = $props.id();
 
   const formattedHue = $derived(m.designer_hue_degrees({ value: formatCount(viewport.hue) }));
-  const sceneReady = $derived(!viewport.loading && viewport.failure === null);
+  const sceneReady = $derived(viewport.confirmed !== null && viewport.failure === null);
 
   function followBounds(element: HTMLElement): () => void {
     // Initial placement can read the selected hue while sending IPC. A hue edit must keep this observer.
@@ -45,12 +45,28 @@
     viewport.changeHue(hue);
   }
 
+  function commitHue(hue: number): void {
+    viewport.commitHue(hue);
+  }
+
+  function cancelOnEscape(event: KeyboardEvent): void {
+    if (event.key === 'Escape') {
+      viewport.cancelPreview();
+    }
+  }
+
   onMount(() => {
     void viewport.open();
 
-    return () => viewport.close();
+    return () => viewport.dispose();
   });
 </script>
+
+<svelte:window
+  onblur={() => viewport.cancelPreview()}
+  onkeydown={cancelOnEscape}
+  onpointercancel={() => viewport.cancelPreview()}
+/>
 
 <div class="flex min-h-0 flex-1 flex-col gap-4 p-4" data-designer-project={project.id}>
   <h2 class="shrink-0 truncate text-base font-medium" data-content="">{project.name}</h2>
@@ -60,20 +76,32 @@
       <span class="text-sm text-muted-foreground tabular-nums">{formattedHue}</span>
     </div>
 
-    <div {@attach labelThumb} data-designer-hue-track="">
-      <Slider
-        class="min-h-6"
-        data-designer-hue=""
-        disabled={viewport.loading || viewport.failure !== null}
-        max={360}
-        min={0}
-        step={1}
-        type="single"
-        value={viewport.hue}
-        onValueChange={changeHue}
-      />
-    </div>
+    {#key viewport.sliderGeneration}
+      <div {@attach labelThumb} data-designer-hue-track="">
+        <Slider
+          class="min-h-6"
+          data-designer-hue=""
+          disabled={!viewport.canEdit}
+          max={360}
+          min={0}
+          step={1}
+          type="single"
+          value={viewport.hue}
+          onValueChange={changeHue}
+          onValueCommit={commitHue}
+        />
+      </div>
+    {/key}
   </Field.Field>
+
+  {#if viewport.documentError !== null}
+    <Alert.Root class="max-w-md shrink-0" data-designer-document-error="">
+      <Alert.Description>
+        <p>{viewport.documentError}</p>
+        <Button size="sm" variant="outline" onclick={() => viewport.retryDocument()}>{m.designer_try_again()}</Button>
+      </Alert.Description>
+    </Alert.Root>
+  {/if}
 
   <div
     class="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden border bg-muted"
@@ -84,6 +112,7 @@
       {@attach followBounds}
       aria-label={sceneReady ? m.designer_viewport_scene({ hue: formattedHue }) : undefined}
       role={sceneReady ? 'img' : undefined}
+      tabindex="-1"
     ></div>
     {#if viewport.failure !== null}
       <Alert.Root class="relative mx-4 max-w-md" data-designer-viewport-error="">
@@ -94,7 +123,7 @@
           {/if}
         </Alert.Description>
       </Alert.Root>
-    {:else if viewport.loading}
+    {:else if viewport.loading && !sceneReady}
       <p class="relative text-sm text-muted-foreground" role="status">{m.designer_viewport_loading()}</p>
     {/if}
   </div>

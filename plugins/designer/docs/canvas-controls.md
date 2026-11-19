@@ -11,7 +11,7 @@
 
 The owner wants to work with the elements of a project the way Figma works: click an element to select it, drag it to move it, pull a handle to resize it, nudge and delete it from the keyboard, and zoom around the canvas. The canvas keeps drawing natively, and the webview keeps telling it what to draw.
 
-This document is the order in which those capabilities arrive. Each numbered row is one feature the owner can try, and it becomes a feature document of its own before its code starts. It merges the five drafts that were compared on 2026-11-19, which are kept beside it for now as `proposal-1` to `proposal-5`: the owner-facing order of one, the per-row checks of another, the decision gates of a third, and the scene contract, limits and migration of the one that could be built from directly. The task lists of those drafts belong to each row's feature document and are not repeated here.
+This document is the order in which those capabilities arrive. Each numbered row is one feature the owner can try, and it becomes a feature document of its own before its code starts. It merges the five drafts compared on 2026-11-19: the owner-facing order of one, the per-row checks of another, the decision gates of a third, and the scene contract, limits and migration of the one that could be built from directly. The task lists of those drafts belong to each row's feature document and are not repeated here.
 
 ## Behavior
 
@@ -74,14 +74,7 @@ The shape change is not additive to a scene that holds one rectangle, so the ser
 
 ### The project's document
 
-Row 1 needs a decision that [Designer ADR-0001](adr/0001-keep-the-projects-of-the-designer-plugin-in-its-own-table.md) deliberately left open: how a project stores its content. It is the next ADR in the plugin's own index, beside the projects' table, and it covers:
-
-- a `designer_elements` table with the element's ID, project, x, y, width, height, color, stacking position and creation time, and an index on the project and the stacking position;
-- stable element IDs that the plugin owns, document bounds and limits, and how an existing project acquires its first rectangle;
-- the transaction boundary that one gesture writes through, and what a failed write leaves on screen;
-- what deletion erases, following [ADR-0048](../../../docs/adr/0048-erase-what-plugins-delete-from-the-store.md).
-
-Until the ADR exists, no row below starts, because every later row persists through it.
+The owner accepted the storage decision on 2026-11-19. Designer keeps each project's elements in its own indexed table. The decision sets geometry bounds, defines the first-open seed and the revision check for a completed edit, and specifies how future deletion erases content. [Designer ADR-0002](adr/0002-store-each-projects-canvas-elements.md).
 
 ### Coordinates and the camera
 
@@ -93,11 +86,11 @@ Ruled on 2026-11-19, because one draft proposed hiding the surface behind a tran
 
 ## Phase 1: The stored document
 
-| #   | Feature              | Owner-visible outcome                                                                                                                                                                                           | Check                                                                                                                                                                                                                       |
-| --- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | A persisted document | Each project keeps its rectangle's geometry and fill across a reload and a restart. Projects stay independent, and a failed read or write leaves the last confirmed rectangle visible with an actionable error. | A reload and a restart restore the same rectangle in two projects, a project created before this change opens with one seeded rectangle, and a forced store failure reports itself without losing the last confirmed value. |
+| #   | Feature                                       | Owner-visible outcome                                                                                                                                                                                           | Check                                                                                                                                                                                                                       |
+| --- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | [A persisted document](persisted-document.md) | Each project keeps its rectangle's geometry and fill across a reload and a restart. Projects stay independent, and a failed read or write leaves the last confirmed rectangle visible with an actionable error. | A reload and a restart restore the same rectangle in two projects, a project created before this change opens with one seeded rectangle, and a forced store failure reports itself without losing the last confirmed value. |
 
-Before this row: the storage ADR above. The seeded rectangle keeps the current hue slider working, because the slider becomes the fill control of the seeded element until row 21 replaces it. Geometry lives in document units and is bounded, so a window resize changes what is visible and never what is stored.
+The hue slider edits the seeded rectangle's fill until row 21 replaces it. Geometry lives in bounded document units, so resizing the viewport changes which part of the drawing is visible. [Persisted document](persisted-document.md).
 
 ## Phase 2: One rectangle, directly manipulated
 
@@ -212,8 +205,7 @@ Elements other than solid rectangles (text, images, groups and frames), gradient
 
 1. **One canvas or frames?** This plan gives each project one endless canvas whose origin starts at the viewport's top left. Frames would be a later feature that adds a rectangle to draw inside and to clip to.
 2. **How should a drag feel at the boundaries?** The plan clamps an element inside the document's bounds rather than at the visible area, so panning away from an edge is how the owner finds an element dragged far off screen. Fit is the recovery.
-3. **Do the elements belong to a conversation or to the plugin?** This plan keeps them in the plugin's table, beside the projects, with no link to a conversation.
-4. **Does the view survive a reload?** The zoom feature settles it; per project and per window session are both defensible, and the cheaper one is the session.
+3. **Does the view survive a reload?** The zoom feature settles whether to save the camera per project or keep it for the current window session.
 
 ## Decisions
 
@@ -224,4 +216,4 @@ Elements other than solid rectangles (text, images, groups and frames), gradient
 | 2026-11-19 | The scene carries document units and a view transform, and the `graphics` service takes one major bump with an owner-approved ADR rather than two incompatible contracts.                                    |
 | 2026-11-19 | Each project owns one rectangle from the start, seeded when the document is first opened, so no row has to build an empty canvas first.                                                                      |
 | 2026-11-19 | History is per project and lives for the window session. Durable history is a separate decision that waits for a feature that needs it.                                                                      |
-| 2026-11-19 | This document replaces the five drafts `proposal-1` to `proposal-5`, which go when the first row starts.                                                                                                     |
+| 2026-11-19 | This document replaces the five earlier drafts of the canvas controls.                                                                                                                                       |

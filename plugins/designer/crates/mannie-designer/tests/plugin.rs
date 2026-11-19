@@ -2,7 +2,7 @@
 //! project's name, the SDK's rules through the real host, and a project that
 //! the host's dispatch creates and the plugin's channel brings.
 
-use futures_util::StreamExt as _;
+use futures_util::{FutureExt as _, StreamExt as _};
 use mannie_designer::commands::interface;
 use mannie_designer::plugin::DESIGNER;
 use mannie_designer::{PLUGIN_MANIFEST, mannie_plugin};
@@ -36,7 +36,13 @@ fn the_interface_lists_the_commands_and_channels() {
 
     assert_eq!(
         declared.command_names(),
-        ["create_project", "place_viewport", "set_viewport_color"]
+        [
+            "create_project",
+            "place_viewport",
+            "set_viewport_color",
+            "read_viewport_document",
+            "commit_viewport_color"
+        ]
     );
     assert_eq!(
         declared.channel_names(),
@@ -176,10 +182,37 @@ async fn open_viewport(
         })
     );
     let calls = graphics.calls();
-    let [Call::Open(scope, initial)] = calls.as_slice() else {
+    let [Call::Open(scope, _hidden)] = calls.as_slice() else {
         panic!("unexpected calls: {calls:?}")
     };
     assert_eq!(scope, &GraphicsView::new(DESIGNER, id));
+    let target = json!({"projectId": id, "lease": "lease-1"});
+    hosted
+        .invoke("read_viewport_document", target)
+        .await
+        .unwrap();
+
+    let rect = json!({"x": 0, "y": 0, "width": 640, "height": 400});
+    hosted
+        .invoke(
+            "place_viewport",
+            json!({
+                "projectId": id, "lease": "lease-1",
+                "placement": {"bounds": rect, "clip": rect, "visible": true, "scaleFactor": 1}
+            }),
+        )
+        .await
+        .unwrap();
+
+    let started = graphics.calls();
+    let [
+        Call::Draw(_, _, _),
+        Call::Draw(_, _, initial),
+        Call::Place(_, _, _),
+    ] = started.as_slice()
+    else {
+        panic!("unexpected calls: {started:?}")
+    };
     (viewport, scope.clone(), *initial)
 }
 
@@ -244,11 +277,18 @@ async fn placement_targets_the_active_view_and_rejects_an_invalid_crop() {
         .unwrap();
 
     let placements = graphics.calls();
-    let [Call::Place(address, lease, placed)] = placements.as_slice() else {
+    let [Call::Draw(_, _, scene), Call::Place(address, lease, placed)] = placements.as_slice()
+    else {
         panic!("unexpected calls: {placements:?}")
     };
     assert_eq!(address, &scope);
     assert_eq!(lease, "lease-1");
+    assert!(scene.valid());
+    let rect = scene.rectangle;
+    assert!((rect.x - 64.0 / 200.0).abs() < f64::EPSILON);
+    assert!((rect.y - 64.0 / 100.0).abs() < f64::EPSILON);
+    assert!((rect.x + rect.width - 1.0).abs() < f64::EPSILON);
+    assert!((rect.y + rect.height - 1.0).abs() < f64::EPSILON);
     assert_eq!(
         *placed,
         serde_json::from_value::<GraphicsPlacement>(placement).unwrap()
@@ -265,4 +305,227 @@ async fn placement_targets_the_active_view_and_rejects_an_invalid_crop() {
         "invalid_input"
     );
     assert_eq!(graphics.calls(), Vec::new());
+}
+
+#[tokio::test]
+async fn old_revisions_and_closed_or_replaced_leases_cannot_commit() {
+    let graphics = RecordingGraphics::default();
+    let hosted = HostedPlugin::new(mannie_plugin(), graphics.options()).await;
+
+    hosted.turn_on().await;
+
+    let (first, scope, _) = open_viewport(&hosted, &graphics).await;
+    let target = json!({"projectId": scope.project, "lease": "lease-1"});
+    let document = hosted
+        .invoke("read_viewport_document", target.clone())
+        .await
+        .unwrap();
+    let edit = json!({
+        "projectId": scope.project, "lease": "lease-1", "elementId": document["element"]["id"],
+        "revision": document["revision"], "hue": 240
+    });
+
+    let saved = hosted
+        .invoke("commit_viewport_color", edit.clone())
+        .await
+        .unwrap();
+    assert_eq!(saved["revision"], 2);
+    assert_eq!(saved["element"]["hue"], 240);
+    let error = hosted
+        .invoke("commit_viewport_color", edit.clone())
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), "designer.stale_revision");
+    let read = hosted
+        .invoke("read_viewport_document", target)
+        .await
+        .unwrap();
+    assert_eq!(read, saved);
+
+    let mut second = hosted
+        .open_channel("follow_viewport", json!({"projectId": scope.project}))
+        .await
+        .unwrap();
+    assert_eq!(
+        second.next().await,
+        Some(ChannelMessage::Item {
+            item: json!({"kind": "ready", "lease": "lease-2"})
+        })
+    );
+    let error = hosted
+        .invoke("commit_viewport_color", edit.clone())
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), "designer.stale_lease");
+
+    drop(first);
+
+    let current = json!({"projectId": scope.project, "lease": "lease-2"});
+    assert_eq!(
+        hosted
+            .invoke("read_viewport_document", current.clone())
+            .await
+            .unwrap(),
+        saved
+    );
+
+    let other = hosted
+        .invoke("create_project", json!({"name": "Other"}))
+        .await
+        .unwrap();
+    let mut wrong_project = edit.clone();
+    wrong_project["projectId"] = other["id"].clone();
+    wrong_project["lease"] = json!("lease-2");
+    assert_eq!(
+        hosted
+            .invoke("commit_viewport_color", wrong_project)
+            .await
+            .unwrap_err()
+            .code(),
+        "designer.stale_lease"
+    );
+
+    drop(second);
+    assert_eq!(
+        hosted
+            .invoke("read_viewport_document", current)
+            .await
+            .unwrap_err()
+            .code(),
+        "designer.stale_lease"
+    );
+}
+
+#[tokio::test]
+async fn storage_failures_redraw_the_confirmed_fill_and_recover_on_the_same_lease() {
+    let graphics = RecordingGraphics::default();
+    let hosted = HostedPlugin::new(mannie_plugin(), graphics.options()).await;
+
+    hosted.turn_on().await;
+
+    let (_viewport, scope, _) = open_viewport(&hosted, &graphics).await;
+    let target = json!({"projectId": scope.project, "lease": "lease-1"});
+    let document = hosted
+        .invoke("read_viewport_document", target.clone())
+        .await
+        .unwrap();
+    let edit = json!({
+        "projectId": scope.project, "lease": "lease-1", "elementId": document["element"]["id"],
+        "revision": document["revision"], "hue": 120
+    });
+    let preview = json!({"projectId": scope.project, "lease": "lease-1", "hue": 120});
+    hosted.invoke("set_viewport_color", preview).await.unwrap();
+    hosted
+        .core
+        .store
+        .execute_unlisted(
+            "CREATE TRIGGER refuse_fill BEFORE UPDATE OF hue ON designer_elements
+         BEGIN SELECT RAISE(ABORT, 'refuse the test fill'); END",
+        )
+        .await
+        .unwrap();
+
+    let error = hosted
+        .invoke("commit_viewport_color", edit.clone())
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), "designer.storage_failed");
+    let calls = graphics.calls();
+    let Some(Call::Draw(_, _, confirmed)) = calls.last() else {
+        panic!("no rollback frame: {calls:?}");
+    };
+    assert_eq!(confirmed.rectangle.color, GraphicsColor::new(255, 0, 0));
+    assert_eq!(
+        hosted
+            .invoke("read_viewport_document", target.clone())
+            .await
+            .unwrap(),
+        document
+    );
+
+    hosted
+        .core
+        .store
+        .execute_unlisted("DROP TRIGGER refuse_fill")
+        .await
+        .unwrap();
+
+    let saved = hosted.invoke("commit_viewport_color", edit).await.unwrap();
+    assert_eq!(saved["element"]["hue"], 120);
+    hosted
+        .core
+        .store
+        .execute_unlisted("ALTER TABLE designer_elements RENAME TO hidden_test_elements")
+        .await
+        .unwrap();
+
+    let error = hosted
+        .invoke("read_viewport_document", target.clone())
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), "designer.storage_failed");
+    let calls = graphics.calls();
+    let [.., Call::Draw(_, _, fallback), Call::Place(_, _, placement)] = calls.as_slice() else {
+        panic!("no confirmed frame: {calls:?}");
+    };
+    assert!(placement.visible);
+    assert_eq!(fallback.rectangle.color, GraphicsColor::new(0, 255, 0));
+    hosted
+        .core
+        .store
+        .execute_unlisted("ALTER TABLE hidden_test_elements RENAME TO designer_elements")
+        .await
+        .unwrap();
+    assert_eq!(
+        hosted
+            .invoke("read_viewport_document", target)
+            .await
+            .unwrap(),
+        saved
+    );
+}
+
+#[tokio::test]
+async fn concurrent_first_polls_cannot_deliver_an_old_ready_over_the_new_surface() {
+    let graphics = RecordingGraphics::default();
+    let hosted = HostedPlugin::new(mannie_plugin(), graphics.options()).await;
+
+    hosted.turn_on().await;
+
+    let project = hosted
+        .invoke("create_project", json!({"name": "Studio"}))
+        .await
+        .unwrap();
+    let scope = json!({"projectId": project["id"]});
+    let resume = graphics.delay_next_ready();
+    let mut first = hosted
+        .open_channel("follow_viewport", scope.clone())
+        .await
+        .unwrap();
+    let mut second = hosted.open_channel("follow_viewport", scope).await.unwrap();
+
+    assert!(first.next().now_or_never().is_none());
+    assert!(second.next().now_or_never().is_none());
+    resume.send(()).unwrap();
+    assert_eq!(
+        first.next().await,
+        Some(ChannelMessage::Item {
+            item: json!({"kind": "ready", "lease": "lease-1"})
+        })
+    );
+    assert_eq!(
+        second.next().await,
+        Some(ChannelMessage::Item {
+            item: json!({"kind": "ready", "lease": "lease-2"})
+        })
+    );
+
+    drop(first);
+
+    let target = json!({"projectId": project["id"], "lease": "lease-2"});
+    let document = hosted
+        .invoke("read_viewport_document", target)
+        .await
+        .unwrap();
+    assert_eq!(document["revision"], 1);
 }

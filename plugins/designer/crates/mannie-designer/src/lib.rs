@@ -2,6 +2,7 @@
 //! projects and exposes them to the Designer view through the plugin SDK.
 
 pub mod commands;
+mod document;
 pub mod plugin;
 mod store;
 mod viewport;

@@ -72,6 +72,14 @@ pub(crate) struct Projects {
 }
 
 impl Projects {
+    pub(crate) fn store(&self) -> &DesignerStore {
+        &self.store
+    }
+
+    pub(crate) fn now(&self) -> i64 {
+        self.clock.now().as_millis()
+    }
+
     /// Whether an owner-created project can open a viewport in this start.
     pub(crate) fn contains(&self, id: &str) -> bool {
         lock(&self.list).iter().any(|project| project.id == id)

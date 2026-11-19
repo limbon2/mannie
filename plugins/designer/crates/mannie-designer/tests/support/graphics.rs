@@ -1,6 +1,7 @@
 //! Records what Designer sends to the desktop graphics service.
 
 use std::future::ready;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use futures_util::{StreamExt as _, stream};
@@ -12,6 +13,7 @@ use mannie_plugin_sdk::services::graphics::{
     GraphicsView,
 };
 use mannie_plugin_sdk::{BoxFuture, BoxStream};
+use tokio::sync::oneshot;
 
 #[derive(Debug, PartialEq)]
 pub(super) enum Call {
@@ -24,9 +26,20 @@ pub(super) enum Call {
 pub(super) struct RecordingGraphics {
     calls: Arc<Mutex<Vec<Call>>>,
     open_error: Option<GraphicsError>,
+    leases: Arc<AtomicUsize>,
+    opening: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
 }
 
 impl RecordingGraphics {
+    pub(super) fn delay_next_ready(&self) -> oneshot::Sender<()> {
+        let (send, receive) = oneshot::channel();
+        *self
+            .opening
+            .lock()
+            .expect("the graphics recorder is available") = Some(receive);
+        send
+    }
+
     pub(super) fn unavailable(error: GraphicsError) -> Self {
         Self {
             open_error: Some(error),
@@ -75,10 +88,26 @@ impl GraphicsApi for RecordingGraphics {
             return Box::pin(ready(Err(error)));
         }
 
-        let event = GraphicsEvent::Ready {
-            lease: "lease-1".to_owned(),
+        let leases = Arc::clone(&self.leases);
+        let opening = self
+            .opening
+            .lock()
+            .expect("the graphics recorder is available")
+            .take();
+        let acquire = async move {
+            let number = leases.fetch_add(1, Ordering::Relaxed) + 1;
+
+            if let Some(opening) = opening {
+                opening
+                    .await
+                    .expect("the test releases the waiting surface");
+            }
+
+            GraphicsEvent::Ready {
+                lease: format!("lease-{number}"),
+            }
         };
-        let lease = stream::once(ready(event)).chain(stream::pending()).boxed();
+        let lease = stream::once(acquire).chain(stream::pending()).boxed();
         Box::pin(ready(Ok(lease)))
     }
 
@@ -98,7 +127,7 @@ impl GraphicsApi for RecordingGraphics {
         lease: String,
         scene: GraphicsScene,
     ) -> BoxFuture<'static, Result<(), GraphicsError>> {
-        if lease != "lease-1" {
+        if lease != format!("lease-{}", self.leases.load(Ordering::Relaxed)) {
             return Box::pin(ready(Err(GraphicsError::StaleLease)));
         }
 
