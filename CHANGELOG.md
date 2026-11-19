@@ -4,9 +4,17 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+## 0.8.5 - 2026-11-20
+
 ### Added
 
 - Choose models from your connected ChatGPT plan in chats and agents. Change reasoning effort in the chat header. Each chat remembers its selection, and new chats start with your last choice.
+
+### Fixed
+
+#### Terminal
+
+- Make the terminal performance test open all eight tabs reliably in CI.
 
 ## 0.8.4 - 2026-11-17
 
