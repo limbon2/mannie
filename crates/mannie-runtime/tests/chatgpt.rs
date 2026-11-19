@@ -491,16 +491,15 @@ async fn single_slot_harness() -> Harness {
 }
 
 async fn hold_model_slot(harness: &Harness) -> StartedConversation {
-    harness.model.push_reply(vec![
-        Step::Event(ProviderEvent::TextDelta("Holding".to_owned())),
-        Step::Hang,
-    ]);
+    harness.model.push_reply(vec![Step::Hang]);
 
     let blocker = start(harness, "Hold the slot").await;
 
     harness
         .wait_until(&blocker.conversation_id, |transcript| {
-            transcript.reply_text(0) == "Holding"
+            transcript
+                .run(&blocker.run_id)
+                .is_some_and(|run| run.activity == Some(RunActivity::Writing))
         })
         .await;
     blocker

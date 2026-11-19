@@ -12,6 +12,8 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ### Fixed
 
+- Stabilize Windows CI coverage of queued model and provider changes.
+
 #### Terminal
 
 - Make the terminal performance test open all eight tabs reliably in CI.

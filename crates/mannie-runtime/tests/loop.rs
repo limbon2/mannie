@@ -827,17 +827,16 @@ async fn a_queued_effort_falls_back_when_the_profile_switches_to_an_incompatible
         .update_profile(&harness.profile.id, profile.clone(), CredentialChange::Keep)
         .await
         .unwrap();
-    harness.model.push_reply(vec![
-        Step::Event(ProviderEvent::TextDelta("Holding".to_owned())),
-        Step::Hang,
-    ]);
+    harness.model.push_reply(vec![Step::Hang]);
     harness.model.push_reply(reply("Second"));
 
     let first = start(&harness, "First").await;
 
     harness
         .wait_until(&first.conversation_id, |transcript| {
-            transcript.reply_text(0) == "Holding"
+            transcript
+                .run(&first.run_id)
+                .is_some_and(|run| run.activity == Some(RunActivity::Writing))
         })
         .await;
 
