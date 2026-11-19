@@ -64,13 +64,16 @@ function processTree(root: number): number[] {
   for (const [child, parent] of processPairs()) {
     children.set(parent, [...(children.get(parent) ?? []), child]);
   }
-  const tree: number[] = [];
+  // Windows can reuse an exited parent's PID, leaving a cycle in the snapshot.
+  const tree = new Set<number>();
   const waiting = [root];
   for (let next = waiting.pop(); next !== undefined; next = waiting.pop()) {
-    tree.push(next);
-    waiting.push(...(children.get(next) ?? []));
+    if (!tree.has(next)) {
+      tree.add(next);
+      waiting.push(...(children.get(next) ?? []));
+    }
   }
-  return tree;
+  return [...tree];
 }
 
 /** Limits Mannie's process and every process below it to two cores. */

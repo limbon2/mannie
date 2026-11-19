@@ -17,6 +17,7 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 #### Terminal
 
 - Make the terminal performance test open all eight tabs reliably in CI.
+- Make the terminal performance test count each process once when sampling CPU usage.
 
 ## 0.8.4 - 2026-11-17
 
