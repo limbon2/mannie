@@ -4,7 +4,7 @@
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Building                                                                                                                                                                                                                                                                                                                        |
 | Plugin       | `designer`                                                                                                                                                                                                                                                                                                                      |
-| Last updated | 2026-11-18                                                                                                                                                                                                                                                                                                                      |
+| Last updated | 2026-11-19                                                                                                                                                                                                                                                                                                                      |
 | Related      | [Designer ADR-0001](adr/0001-keep-the-projects-of-the-designer-plugin-in-its-own-table.md), [ADR-0035](../../../docs/adr/0035-find-plugins-at-build-time-in-folders-of-their-own.md), [ADR-0045](../../../docs/adr/0045-switch-the-sidebar-between-views-with-an-activity-bar.md), [Plugins](../../../docs/features/plugins.md) |
 
 ## Intent
@@ -35,6 +35,7 @@ The project list follows the shape of the Notebooks plugin: a command that chang
 ## Parts
 
 - [Native graphics viewport](viewport.md) draws a rectangle whose color the owner changes from the Designer view.
+- [Canvas controls](canvas-controls.md) orders the controls for a project's elements in features that each ship on their own.
 
 ## Design
 
