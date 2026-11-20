@@ -10,3 +10,4 @@ Each change to the plugin adds one line under Unreleased, below its kind of chan
 - Draws a rectangle in a native Windows OpenGL viewport and changes its color as the owner moves a slider.
 - Saves each project's rectangle geometry and fill across reloads and restarts and restores the confirmed color when a save fails.
 - Selects a rectangle with a click or the keyboard, draws its outline on the native canvas and announces its position and size.
+- Adds X, Y, Width and Height fields that preview changes to the selected rectangle while typing and save on Enter or leaving the field.

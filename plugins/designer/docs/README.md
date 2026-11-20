@@ -38,6 +38,7 @@ The project list follows the shape of the Notebooks plugin: a command that chang
 - [Persisted document](persisted-document.md) keeps that rectangle's position, size and fill across restarts.
 - [Canvas controls](canvas-controls.md) orders the controls for a project's elements in features that each ship on their own.
 - [Canvas selection](selection.md) describes how the owner selects the rectangle with the pointer or keyboard.
+- [Geometry fields](geometry-fields.md) move and resize the selected rectangle in document units.
 
 ## Design
 
@@ -46,9 +47,9 @@ The manifest `plugin.toml` names the plugin `designer` on SDK 1, with `order = 8
 The crate `crates/mannie-designer` includes these modules:
 
 - `commands.rs` holds `create_project`, which takes a name and returns the saved project, and `follow_projects`, which delivers a full list on subscription and after changes while Designer is on. It defines the name length limit and the plugin error codes `name_taken` and `storage_failed`.
-- `store.rs` owns the migrations and statements for `designer_projects` and `designer_elements`. It seeds a project's first rectangle and commits a fill change with the document's next revision. [Designer ADR-0002](adr/0002-store-each-projects-canvas-elements.md).
+- `store.rs` owns the migrations and statements for `designer_projects` and `designer_elements`. It seeds a project's first rectangle and commits changes to fill or geometry with the document's next revision. [Designer ADR-0002](adr/0002-store-each-projects-canvas-elements.md).
 - `plugin.rs` reads the projects when Designer starts and fails the start with `storage_failed` when it cannot read them. It updates the snapshots after a project is saved.
-- `viewport.rs` defines the viewport channel and commands to place the surface, read its document, preview a hue and commit the edit. The plugin clips the rectangle to the viewport and sends the resulting scene to the host. [Native graphics viewport](viewport.md).
+- `viewport.rs` defines the viewport channel and commands to place the surface, read its document, select a rectangle and edit its hue or geometry. The host clips the plugin's scene to the viewport. [Native graphics viewport](viewport.md).
 
 The UI registers the navigation entry `designer` with `order = 15`, the view `designer`, the sidebar panel `designer.projects` and the overlay `designer.dialogs`. The sidebar shows loading, empty and error states, with a retry when following projects fails. The UI keeps project selection in memory. The catalog `messages/en.json` supplies the view's labels, status and errors.
 

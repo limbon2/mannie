@@ -7,7 +7,7 @@ use mannie_plugin_sdk::services::store::{
     StoreModule, WriteBatch,
 };
 
-use crate::document::{DocumentElement, DocumentFailure, DocumentSnapshot};
+use crate::document::{DocumentEdit, DocumentElement, DocumentFailure, DocumentSnapshot};
 
 /// The prefix of the plugin's tables, which names its module of the store.
 pub(crate) const PREFIX: &str = "designer";
@@ -66,6 +66,8 @@ const INSERT_SEED: &str = "INSERT INTO designer_elements
     (id, project_id, x, y, width, height, hue, stacking_position, created_at)
     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8)";
 const SET_HUE: &str = "UPDATE designer_elements SET hue = ?3 WHERE project_id = ?1 AND id = ?2";
+const SET_GEOMETRY: &str = "UPDATE designer_elements SET x = ?3, y = ?4, width = ?5, height = ?6
+    WHERE project_id = ?1 AND id = ?2";
 
 pub(crate) const MODULE: StoreModule = StoreModule::new(
     PREFIX,
@@ -77,6 +79,7 @@ pub(crate) const MODULE: StoreModule = StoreModule::new(
         ADVANCE_REVISION,
         INSERT_SEED,
         SET_HUE,
+        SET_GEOMETRY,
     ],
 );
 
@@ -234,27 +237,37 @@ impl DesignerStore {
         }
     }
 
-    pub(crate) async fn set_document_hue(
+    pub(crate) async fn edit_document(
         &self,
         project_id: &str,
         confirmed: &DocumentSnapshot,
-        hue: u16,
+        edit: DocumentEdit,
     ) -> Result<DocumentSnapshot, DocumentFailure> {
         let revision = confirmed
             .revision
             .checked_add(1)
             .ok_or(DocumentFailure::StorageFailed)?;
 
-        let update = Statement::new(SET_HUE)
-            .bind(project_id)
-            .bind(confirmed.element.id.as_str())
-            .bind(u32::from(hue));
+        let element_id = confirmed.element.id.as_str();
+        let update = match edit {
+            DocumentEdit::Hue(hue) => Statement::new(SET_HUE)
+                .bind(project_id)
+                .bind(element_id)
+                .bind(u32::from(hue)),
+            DocumentEdit::Geometry(geometry) => Statement::new(SET_GEOMETRY)
+                .bind(project_id)
+                .bind(element_id)
+                .bind(geometry.x)
+                .bind(geometry.y)
+                .bind(geometry.width)
+                .bind(geometry.height),
+        };
         let batch = revision_batch(project_id, confirmed.revision).push(update, Expect::Changes(1));
 
         match self.api.write(batch, Durability::Full).await {
             Ok(_) => {
                 let mut element = confirmed.element.clone();
-                element.hue = hue;
+                edit.apply(&mut element);
                 Ok(DocumentSnapshot { revision, element })
             }
             Err(StoreError::Expectation { .. }) => Err(DocumentFailure::StaleRevision),

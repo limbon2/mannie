@@ -16,6 +16,8 @@ use mannie_plugin_sdk::services::graphics::{
 };
 use serde_json::{Value, json};
 
+#[path = "plugin/geometry.rs"]
+mod geometry;
 #[path = "support/graphics.rs"]
 mod graphics;
 
@@ -43,7 +45,9 @@ fn the_interface_lists_the_commands_and_channels() {
             "set_viewport_color",
             "read_viewport_document",
             "commit_viewport_color",
-            "set_viewport_selection"
+            "set_viewport_selection",
+            "set_viewport_geometry",
+            "commit_viewport_geometry"
         ]
     );
     assert_eq!(

@@ -10,7 +10,7 @@ use super::{
     DesignerStore, INSERT_PROJECT, MODULE, PREFIX, PROJECT_MIGRATION, ProjectRecord,
     SELECT_PROJECTS,
 };
-use crate::document::{DocumentElement, DocumentFailure};
+use crate::document::{DocumentEdit, DocumentElement, DocumentFailure, RectangleGeometry};
 
 const OLD_MODULE: StoreModule = StoreModule::new(
     PREFIX,
@@ -74,19 +74,41 @@ async fn an_upgrade_and_concurrent_first_opens_keep_one_stable_rectangle() {
         let second = designer.document(SECOND, 4000).await.unwrap();
         assert_ne!(first.element.id, second.element.id);
         assert_eq!(
-            designer.set_document_hue(SECOND, &first, 1).await,
+            designer
+                .edit_document(SECOND, &first, DocumentEdit::Hue(1))
+                .await,
             Err(DocumentFailure::StaleRevision)
         );
 
-        let saved = designer.set_document_hue(FIRST, &first, 360).await.unwrap();
+        let saved = designer
+            .edit_document(FIRST, &first, DocumentEdit::Hue(360))
+            .await
+            .unwrap();
         assert_eq!(saved.revision, 2);
         assert_eq!(saved.element.id, first.element.id);
         assert_eq!(
-            designer.set_document_hue(FIRST, &first, 230).await,
+            designer
+                .edit_document(FIRST, &first, DocumentEdit::Hue(230))
+                .await,
             Err(DocumentFailure::StaleRevision)
         );
         assert_eq!(designer.document(SECOND, 5000).await.unwrap(), second);
-        saved
+        let geometry = RectangleGeometry {
+            x: -17.25,
+            y: 32767.0,
+            width: 32.5,
+            height: 1.0,
+        };
+        let edit = DocumentEdit::Geometry(geometry);
+        let moved = designer.edit_document(FIRST, &saved, edit).await.unwrap();
+        assert_eq!(moved.element.geometry(), geometry);
+        assert_eq!(moved.revision, 3);
+        assert_eq!(
+            designer.edit_document(FIRST, &saved, edit).await,
+            Err(DocumentFailure::StaleRevision)
+        );
+        assert_eq!(designer.document(SECOND, 5000).await.unwrap(), second);
+        moved
     };
 
     let (_store, reopened) = open(&path, MODULE);
@@ -132,7 +154,9 @@ async fn failed_writes_roll_back_the_revision_and_reads_never_reseed_initialized
         .unwrap();
 
     assert_eq!(
-        designer.set_document_hue(FIRST, &initial, 240).await,
+        designer
+            .edit_document(FIRST, &initial, DocumentEdit::Hue(240))
+            .await,
         Err(DocumentFailure::StorageFailed)
     );
     assert_eq!(designer.document(FIRST, 2000).await.unwrap(), initial);
@@ -143,7 +167,7 @@ async fn failed_writes_roll_back_the_revision_and_reads_never_reseed_initialized
         .unwrap();
 
     let saved = designer
-        .set_document_hue(FIRST, &initial, 240)
+        .edit_document(FIRST, &initial, DocumentEdit::Hue(240))
         .await
         .unwrap();
     assert_eq!(saved.element.hue, 240);

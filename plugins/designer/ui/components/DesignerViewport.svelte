@@ -9,8 +9,11 @@
   import type { ProjectView } from '../generated/bindings.js';
   import { m } from '../generated/messages.js';
   import { ProjectViewport } from '../state/viewport.svelte.js';
+  import { formatGeometryValue } from '../utils/canvas-geometry.js';
   import { hasGeometry } from '../utils/canvas-selection.js';
   import { watchViewport } from '../utils/viewport-placement.js';
+
+  import GeometryFields from './GeometryFields.svelte';
 
   interface Props {
     project: ProjectView;
@@ -33,10 +36,10 @@
       return m.designer_selection_empty();
     }
     return m.designer_selection_rectangle({
-      height: formatCount(element.height),
-      width: formatCount(element.width),
-      x: formatCount(element.x),
-      y: formatCount(element.y),
+      height: formatGeometryValue(element.height),
+      width: formatGeometryValue(element.width),
+      x: formatGeometryValue(element.x),
+      y: formatGeometryValue(element.y),
     });
   });
 
@@ -172,6 +175,10 @@
       <p class="relative text-sm text-muted-foreground" role="status">{m.designer_viewport_loading()}</p>
     {/if}
   </div>
+
+  {#if sceneReady}
+    <GeometryFields {viewport} />
+  {/if}
 
   <div class="sr-only">
     <p id={`${labelId}-instructions`}>

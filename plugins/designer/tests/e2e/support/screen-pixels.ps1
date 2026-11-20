@@ -1,7 +1,7 @@
 # Inspect the composed desktop and deliver real clicks to the visible validation window.
 param(
     [Parameter(Mandatory)][int] $AppProcessId,
-    [ValidateSet('Show', 'Restore', 'Edge', 'Sample', 'Click', 'Offscreen')][string] $Action,
+    [ValidateSet('Show', 'Restore', 'Ready', 'Edge', 'Sample', 'Click', 'RestorePointer', 'Offscreen', 'Minimized')][string] $Action,
     [int] $Left,
     [int] $Top,
     [int] $Width,
@@ -31,10 +31,12 @@ public static class DesktopPixels {
     [DllImport("user32")] static extern bool ClientToScreen(IntPtr window, ref Point point);
     [DllImport("user32")] static extern IntPtr WindowFromPoint(Point point);
     [DllImport("user32")] static extern bool GetCursorPos(out Point point);
-    [DllImport("user32")] static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32")] static extern uint SendInput(uint count, Input[] input, int size);
     [DllImport("user32")] static extern IntPtr GetAncestor(IntPtr window, uint flags);
     [DllImport("user32")] static extern bool GetWindowRect(IntPtr window, out Rect rectangle);
+    [DllImport("user32")] public static extern bool IsIconic(IntPtr window);
+    [DllImport("user32")] public static extern bool ShowWindow(IntPtr window, int command);
     [DllImport("user32")] public static extern IntPtr MonitorFromWindow(IntPtr window, uint flags);
     [DllImport("user32", CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr window, StringBuilder name, int count);
     [DllImport("user32", EntryPoint="GetWindowLongW")] static extern int GetWindowLong(IntPtr window, int index);
@@ -97,15 +99,17 @@ public static class DesktopPixels {
         }
     }
 
-    public static void Click(IntPtr window, int x, int y) {
+    public static string Click(IntPtr window, int x, int y) {
         Point original;
         if (!GetCursorPos(out original)) throw new InvalidOperationException("Cannot locate the pointer.");
         try {
             Move(window, x, y);
             try { Button(2); }
             finally { Button(4); }
-        } finally {
+            return original.X + "," + original.Y;
+        } catch {
             SetCursorPos(original.X, original.Y);
+            throw;
         }
     }
 }
@@ -130,8 +134,21 @@ if ($Action -eq 'Restore') {
     [DesktopPixels]::Topmost($window, $false)
     return
 }
+if ($Action -eq 'Minimized') {
+    [DesktopPixels]::IsIconic($window)
+    return
+}
+if ($Action -eq 'Ready') {
+    # SW_SHOWNOACTIVATE restores the test fixture without taking keyboard focus.
+    if ([DesktopPixels]::IsIconic($window)) { [void][DesktopPixels]::ShowWindow($window, 4) }
+    return
+}
 if ($Action -eq 'Click') {
     [DesktopPixels]::Click($window, $Left, $Top)
+    return
+}
+if ($Action -eq 'RestorePointer') {
+    if (![DesktopPixels]::SetCursorPos($Left, $Top)) { throw 'Cannot restore the pointer.' }
     return
 }
 [void][DesktopPixels]::DwmFlush()

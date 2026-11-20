@@ -12,7 +12,7 @@ use mannie_plugin_sdk::services::graphics::{
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use crate::document::DocumentSnapshot;
+use crate::document::{DocumentEdit, DocumentSnapshot, RectangleGeometry};
 use crate::plugin::Projects;
 
 mod session;
@@ -138,6 +138,43 @@ impl Validate for CommitViewportColor {
     }
 }
 
+#[derive(Debug, Deserialize, Type)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ViewportGeometry {
+    project_id: String,
+    lease: String,
+    element_id: String,
+    revision: u32,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+impl ViewportGeometry {
+    fn geometry(&self) -> RectangleGeometry {
+        RectangleGeometry {
+            x: self.x,
+            y: self.y,
+            width: self.width,
+            height: self.height,
+        }
+    }
+}
+
+impl Validate for ViewportGeometry {
+    fn validate(&self) -> Result<(), InputRefusal> {
+        validate_target(&self.project_id, &self.lease)?;
+        uuid::Uuid::try_parse(&self.element_id).map_err(|_error| InputRefusal::new("elementId"))?;
+
+        if !self.geometry().valid() {
+            return Err(InputRefusal::new("geometry"));
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Type, thiserror::Error)]
 #[serde(tag = "code", rename_all = "snake_case")]
 enum ViewportError {
@@ -247,6 +284,26 @@ impl CommandSpec for CommitViewportColorCommand {
     type Error = ViewportError;
 }
 
+struct SetViewportGeometryCommand;
+
+impl CommandSpec for SetViewportGeometryCommand {
+    const NAME: &'static str = "set_viewport_geometry";
+    const DOCS: &'static str = "Previews rectangle geometry against its confirmed revision.";
+    type Input = ViewportGeometry;
+    type Output = ();
+    type Error = ViewportError;
+}
+
+struct CommitViewportGeometryCommand;
+
+impl CommandSpec for CommitViewportGeometryCommand {
+    const NAME: &'static str = "commit_viewport_geometry";
+    const DOCS: &'static str = "Saves one completed geometry edit against its confirmed revision.";
+    type Input = ViewportGeometry;
+    type Output = DocumentSnapshot;
+    type Error = ViewportError;
+}
+
 pub(crate) fn interface(base: Interface) -> Interface {
     base.channel::<FollowViewportChannel>()
         .command::<PlaceViewportCommand>()
@@ -254,6 +311,8 @@ pub(crate) fn interface(base: Interface) -> Interface {
         .command::<ReadViewportDocumentCommand>()
         .command::<CommitViewportColorCommand>()
         .command::<SetViewportSelectionCommand>()
+        .command::<SetViewportGeometryCommand>()
+        .command::<CommitViewportGeometryCommand>()
 }
 
 pub(crate) fn handlers(
@@ -267,6 +326,8 @@ pub(crate) fn handlers(
     let placing = Arc::clone(&viewports);
     let drawing = Arc::clone(&viewports);
     let selecting = Arc::clone(&viewports);
+    let previewing_geometry = Arc::clone(&viewports);
+    let saving_color = Arc::clone(&viewports);
     base.channel::<FollowViewportChannel, _, _>(move |input| {
         let viewports = Arc::clone(&opening);
         async move { viewports.open(input.project_id).await }
@@ -288,7 +349,37 @@ pub(crate) fn handlers(
         async move { viewports.select(input).await }
     })
     .command::<CommitViewportColorCommand, _, _>(move |input| {
+        let viewports = Arc::clone(&saving_color);
+        async move {
+            viewports
+                .commit(
+                    input.project_id,
+                    &input.lease,
+                    &input.element_id,
+                    input.revision,
+                    DocumentEdit::Hue(input.hue),
+                )
+                .await
+        }
+    })
+    .command::<SetViewportGeometryCommand, _, _>(move |input| {
+        let viewports = Arc::clone(&previewing_geometry);
+        async move { viewports.preview_geometry(input).await }
+    })
+    .command::<CommitViewportGeometryCommand, _, _>(move |input| {
         let viewports = Arc::clone(&viewports);
-        async move { viewports.commit(input).await }
+        async move {
+            let edit = DocumentEdit::Geometry(input.geometry());
+
+            viewports
+                .commit(
+                    input.project_id,
+                    &input.lease,
+                    &input.element_id,
+                    input.revision,
+                    edit,
+                )
+                .await
+        }
     })
 }

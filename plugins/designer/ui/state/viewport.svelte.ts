@@ -7,6 +7,7 @@ import {
   unsubscribe,
 } from '@mannie/plugin-sdk/ipc';
 import { hostRefusalMessage, ipcFailureMessage } from '@mannie/plugin-sdk/messages';
+import type { LayerRect } from '@mannie/plugin-sdk/surface';
 
 import {
   channels,
@@ -17,7 +18,10 @@ import {
   type ViewportError,
 } from '../generated/bindings.js';
 import { m } from '../generated/messages.js';
+import { type GeometryEdit, type GeometryField, geometryOf, sameGeometry } from '../utils/canvas-geometry.js';
 import { nextSelection, type SelectionInput } from '../utils/canvas-selection.js';
+
+import { GeometryFields } from './geometry-fields.svelte.js';
 
 // The host has one surface per plugin view. An older, slow open must finish (and release a
 // late lease) before another project's open can reach the host and replace its surface.
@@ -41,9 +45,11 @@ interface ViewportTarget {
   projectId: string;
 }
 
+type Edit = GeometryEdit | { field: 'hue'; value: number };
+
 interface FailedEdit {
+  edit: Edit;
   elementId: string;
-  hue: number;
   revision: number;
 }
 
@@ -96,7 +102,9 @@ export class ProjectViewport {
   #wantedSelection: string | null = null;
   #visible = $state(false);
   #readRequested = false;
-  #commits: number[] = [];
+  #commits: Edit[] = [];
+  readonly #fields = new GeometryFields();
+  #presentedGeometry: LayerRect | null = null;
   #draft = false;
   #lastCommit: number | null = null;
   #retryEdit: FailedEdit | null = null;
@@ -114,6 +122,7 @@ export class ProjectViewport {
     if (!this.canEdit) {
       return;
     }
+    this.#fields.cancelDrafts(true);
     this.#draft = true;
     this.hue = hue;
     this.#update();
@@ -126,6 +135,45 @@ export class ProjectViewport {
 
   get canSelect(): boolean {
     return this.canEdit && this.#visible;
+  }
+
+  get canEditGeometry(): boolean {
+    const selected = this.selectedId !== null && this.#wantedSelection === this.selectedId;
+    return this.canSelect && selected;
+  }
+
+  geometryText(field: GeometryField): string {
+    return this.selectedId === null ? '' : this.#fields.text(field);
+  }
+
+  geometryInvalid(field: GeometryField): boolean {
+    const selected = this.selectedId !== null;
+    return selected && this.#fields.invalid(field);
+  }
+
+  changeGeometry(field: GeometryField, text: string): void {
+    if (!this.canEditGeometry) {
+      return;
+    }
+    this.#cancelHue();
+    this.#fields.change(field, text);
+    this.#update();
+  }
+
+  commitGeometry(field: GeometryField): void {
+    if (!this.canEditGeometry) {
+      return;
+    }
+    const edit = this.#fields.commit(field);
+    if (edit) {
+      this.#commits.push(edit);
+    }
+    this.#update();
+  }
+
+  cancelGeometry(field: GeometryField): void {
+    this.#fields.cancel(field);
+    this.#update();
   }
 
   select(input: SelectionInput): void {
@@ -142,7 +190,11 @@ export class ProjectViewport {
         return;
       }
     }
-    this.#wantedSelection = nextSelection(this.#wantedSelection, input, this.confirmed.element, this.#placement.clip);
+    const element = { ...this.confirmed.element, ...this.#presentedGeometry };
+    this.#wantedSelection = nextSelection(this.#wantedSelection, input, element, this.#placement.clip);
+    if (this.#wantedSelection === null) {
+      this.#fields.cancelDrafts();
+    }
     this.#update();
   }
 
@@ -153,11 +205,11 @@ export class ProjectViewport {
     this.#draft = false;
     this.hue = hue;
     this.#lastCommit = hue;
-    this.#commits.push(hue);
+    this.#commits.push({ field: 'hue', value: hue });
     this.#update();
   }
 
-  cancelPreview(): void {
+  #cancelHue(): void {
     const document = this.confirmed;
     if (!this.#draft || !document) {
       return;
@@ -166,6 +218,11 @@ export class ProjectViewport {
     this.hue = this.#lastCommit ?? document.element.hue;
     // Release the slider's document-level drag listeners when its gesture is interrupted.
     this.sliderGeneration += 1;
+  }
+
+  cancelPreview(): void {
+    this.#cancelHue();
+    this.#fields.cancelDrafts();
     this.#update();
   }
 
@@ -179,7 +236,8 @@ export class ProjectViewport {
     const resized =
       previous?.bounds.width !== placement.bounds.width || previous.bounds.height !== placement.bounds.height;
     if (!placement.visible || resized) {
-      this.cancelPreview();
+      this.#cancelHue();
+      this.#fields.cancelDrafts(placement.visible);
     }
     this.#update();
   }
@@ -194,7 +252,7 @@ export class ProjectViewport {
     this.#update();
   }
 
-  /** A project switch cancels a draft, but finishes edits whose slider was already released. */
+  /** A project switch cancels drafts and finishes completed edits before releasing their lease. */
   dispose(): void {
     const editsPending = this.#committing || this.#commits.length > 0;
     if (!editsPending) {
@@ -228,6 +286,8 @@ export class ProjectViewport {
     this.#committing = false;
     this.#appliedPlacement = null;
     this.#sentHue = null;
+    this.#presentedGeometry = null;
+    this.#fields.reset(null);
     this.#wantedSelection = null;
     this.selectedId = null;
     this.#visible = false;
@@ -340,6 +400,8 @@ export class ProjectViewport {
     this.#lastCommit = null;
     this.hue = this.confirmed?.element.hue ?? 0;
     this.#sentHue = this.hue;
+    this.#presentedGeometry = this.confirmed ? geometryOf(this.confirmed.element) : null;
+    this.#fields.reset(this.#presentedGeometry);
     this.loading = false;
   }
 
@@ -362,31 +424,47 @@ export class ProjectViewport {
     }
     this.hue = outcome.data.element.hue;
     this.#sentHue = this.hue;
+    this.#presentedGeometry = geometryOf(outcome.data.element);
+    this.#fields.reset(this.#presentedGeometry);
     const retry = this.#retryEdit;
 
     this.#retryEdit = null;
     const stillCurrent = retry?.revision === outcome.data.revision && retry.elementId === outcome.data.element.id;
     if (stillCurrent) {
-      this.#commits.push(retry.hue);
-      this.hue = retry.hue;
+      this.#commits.push(retry.edit);
+      if (retry.edit.field === 'hue') {
+        this.hue = retry.edit.value;
+      }
     }
   }
 
-  async #commit(target: ViewportTarget, document: DocumentSnapshot, hue: number): Promise<void> {
-    if (hue === document.element.hue) {
+  async #commit(target: ViewportTarget, document: DocumentSnapshot, edit: Edit): Promise<void> {
+    if (edit.value === document.element[edit.field]) {
       return;
     }
-    const edit = { elementId: document.element.id, hue, revision: document.revision };
-    const outcome = await call(() => commands.commitViewportColor({ ...target, ...edit }));
+    const { element, revision } = document;
+    const scope = { ...target, elementId: element.id, revision };
+    const outcome = await call(() => {
+      if (edit.field === 'hue') {
+        return commands.commitViewportColor({ ...scope, hue: edit.value });
+      }
+      // Apply the edited axis to the last successful commit, including edits queued by a fast Tab.
+      const { height, width, x, y } = element;
+      return commands.commitViewportGeometry({ ...scope, height, width, x, y, [edit.field]: edit.value });
+    });
     if (this.#lease !== target.lease) {
       return;
     }
     if (!outcome.ok) {
-      this.#documentFailed(outcome.failure, edit);
+      this.#documentFailed(outcome.failure, { elementId: element.id, revision, edit });
       return;
     }
     this.confirmed = outcome.data;
     this.#sentHue = outcome.data.element.hue;
+    this.#presentedGeometry = geometryOf(outcome.data.element);
+    if (!this.#commits.some((pending) => pending.field !== 'hue')) {
+      this.#fields.accept(this.#presentedGeometry);
+    }
   }
 
   /** Read before showing the surface. Keep completed edits in order, coalescing only previews and placement. */
@@ -422,16 +500,24 @@ export class ProjectViewport {
         continue;
       }
       const hue = this.hue;
-      const needHue = this.confirmed !== null && this.documentError === null && hue !== this.#sentHue;
+      const document = this.confirmed;
+      const writable = document !== null && this.documentError === null;
+      const needHue = writable && hue !== this.#sentHue;
+      const saved = document && geometryOf(document.element);
+      const geometry = this.#fields.preview ?? saved;
+      const needGeometry =
+        writable && geometry && this.#presentedGeometry && !sameGeometry(geometry, this.#presentedGeometry);
       const selection = this.#wantedSelection;
       const needSelection = this.canSelect && selection !== this.selectedId;
-      const place = placement && needPlacement && (!placement.visible || !needHue);
+      const place = placement && needPlacement && (!placement.visible || (!needHue && !needGeometry));
       let update: () => ReturnType<typeof commands.placeViewport>;
       if (place) {
         update = () => commands.placeViewport({ ...target, placement });
       } else if (needHue) {
-        this.#sentHue = hue;
         update = () => commands.setViewportColor({ ...target, hue });
+      } else if (needGeometry) {
+        const scope = { ...target, elementId: document.element.id, revision: document.revision };
+        update = () => commands.setViewportGeometry({ ...scope, ...geometry });
       } else if (needSelection) {
         update = () => commands.setViewportSelection({ ...target, elementId: selection });
       } else {
@@ -444,6 +530,11 @@ export class ProjectViewport {
         return;
       }
       if (!outcome.ok) {
+        const error = outcome.failure.kind === 'core' ? outcome.failure.error : null;
+        if (error?.code === 'stale_revision') {
+          this.#documentFailed(outcome.failure, null);
+          continue;
+        }
         this.#fail(callFailure(outcome.failure));
         return;
       }
@@ -452,7 +543,16 @@ export class ProjectViewport {
         if (placement === this.#placement) {
           this.#visible = placement.visible;
         }
-      } else if (needSelection && !needHue) {
+        if (!placement.visible) {
+          this.#presentedGeometry = saved;
+        }
+      } else if (needHue) {
+        this.#sentHue = hue;
+        this.#presentedGeometry = saved;
+      } else if (needGeometry) {
+        this.#presentedGeometry = geometry;
+        this.#sentHue = document.element.hue;
+      } else {
         this.selectedId = selection;
       }
     }

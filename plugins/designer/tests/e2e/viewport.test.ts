@@ -22,10 +22,14 @@ const NEAR_RED = [255, 4, 0];
 const BACKGROUND = [32, 34, 38];
 const SEED = { height: 160, width: 240, x: 64, y: 64 };
 const SECOND_RECTANGLE = { height: 118, width: 190, x: 47, y: 87 };
+const GEOMETRY_PROJECT = 'Geometry edits';
+const GEOMETRY_REFERENCE = 'Geometry reference';
+const GEOMETRY_FIELDS = ['x', 'y', 'width', 'height'] as const;
 const visibleTestWindow = process.platform === 'win32' && process.env.MANNIE_E2E_SHOW_WINDOW !== undefined;
 const readScreen = fileURLToPath(new URL('./support/screen-pixels.ps1', import.meta.url));
 
-type DesktopAction = 'Click' | 'Edge' | 'Offscreen' | 'Restore' | 'Sample' | 'Show';
+type DesktopAction =
+  'Click' | 'Edge' | 'Minimized' | 'Offscreen' | 'Ready' | 'Restore' | 'RestorePointer' | 'Sample' | 'Show';
 
 async function desktopWindow(action: DesktopAction, bounds: readonly number[] = []): Promise<string> {
   const pid = await processId();
@@ -86,6 +90,15 @@ async function createProject(name: string): Promise<void> {
   await $('#designer-name').setValue(name);
   await $('[data-designer-name-confirm]').click();
   await $('[data-designer-name-dialog]').waitForExist({ reverse: true });
+}
+
+function geometryField(name: keyof typeof SEED): string {
+  return `[data-designer-geometry="${name}"]`;
+}
+
+async function replaceFocusedValue(value: string): Promise<void> {
+  await browser.keys([Key.Ctrl, 'a']);
+  await browser.keys(value);
 }
 
 function sameColor(left: readonly number[] | null | undefined, right: readonly number[]): boolean {
@@ -223,7 +236,31 @@ async function clickCanvas(x: number, y: number): Promise<void> {
     y,
   );
   if (visibleTestWindow) {
-    await desktopWindow('Click', [Math.round(point.x * point.scale), Math.round(point.y * point.scale)]);
+    const canvas = $(CANVAS);
+    await browser.execute((selector) => {
+      const element = document.querySelector<HTMLElement>(selector);
+      if (!element) {
+        throw new Error('the Designer canvas is missing');
+      }
+      delete element.dataset.testCanvasClick;
+      element.addEventListener(
+        'click',
+        () => {
+          element.dataset.testCanvasClick = 'delivered';
+        },
+        { once: true },
+      );
+    }, CANVAS);
+    const previous = await desktopWindow('Click', [
+      Math.round(point.x * point.scale),
+      Math.round(point.y * point.scale),
+    ]);
+    try {
+      // Windows queues SendInput. Moving the pointer back sooner can send its button release to another window.
+      await expect(canvas).toHaveAttribute('data-test-canvas-click', 'delivered');
+    } finally {
+      await desktopWindow('RestorePointer', previous.split(',').map(Number));
+    }
     return;
   }
   await browser.performActions([
@@ -263,7 +300,7 @@ async function checkSelectionAnnouncement(expected: string): Promise<void> {
 }
 
 /** Sample consecutive device pixels across the left edge, away from both corners. */
-async function checkSelectionEdge(selected: boolean): Promise<void> {
+async function checkSelectionEdge(selected: boolean, rectangle = SEED): Promise<void> {
   const expected = selected ? [BACKGROUND, OUTLINE, OUTLINE, RED] : [BACKGROUND, BACKGROUND, RED, RED];
   await browser.waitUntil(
     async () => {
@@ -274,14 +311,18 @@ async function checkSelectionEdge(selected: boolean): Promise<void> {
     { interval: 10, timeoutMsg: 'the native framebuffer did not show the expected selection edge' },
   );
   if (visibleTestWindow) {
-    const bounds = await rectangleScreenBounds();
-    await browser.waitUntil(
-      async () => {
-        const colors = (await desktopWindow('Edge', bounds)).split(/\r?\n/);
-        return colors.join('/') === expected.map(String).join('/');
-      },
-      { timeoutMsg: 'the composed rectangle edge did not show the expected selection' },
-    );
+    const wanted = expected.map(String).join('/');
+    let sampled = '';
+    let bounds: number[] = [];
+    try {
+      await browser.waitUntil(async () => {
+        bounds = await rectangleScreenBounds(rectangle);
+        sampled = (await desktopWindow('Edge', bounds)).split(/\r?\n/).join('/');
+        return sampled === wanted;
+      });
+    } catch (error) {
+      throw new Error(`Expected composed edge ${wanted} at ${bounds.join(', ')}. Saw ${sampled}.`, { cause: error });
+    }
   }
 }
 
@@ -319,20 +360,24 @@ async function checkScreenPixels(color: readonly number[], rectangle = SEED): Pr
 }
 
 async function checkPlacement(): Promise<void> {
-  await browser.waitUntil(
-    async () => {
+  let last = '';
+  try {
+    await browser.waitUntil(async () => {
       const expected = await viewportBounds();
       const [surface] = await graphicsSurfaces();
-      const missing = expected === null;
-      const hidden = surface?.visible !== true;
-      if (missing || hidden) {
+      last = JSON.stringify({ expected, surface });
+      if (!expected || !surface?.visible) {
         return false;
       }
       const actual = [surface.x, surface.y, surface.width, surface.height];
       return actual.every((value, index) => Math.abs(value - (expected[index] ?? Infinity)) <= 1);
-    },
-    { timeoutMsg: 'the native child did not follow the webview placeholder' },
-  );
+    });
+  } catch (error) {
+    const minimized = await desktopWindow('Minimized');
+    throw new Error(`The native child did not follow the placeholder. Minimized: ${minimized}. ${last}`, {
+      cause: error,
+    });
+  }
 }
 
 describe('Designer native viewport', () => {
@@ -362,6 +407,12 @@ describe('Designer native viewport', () => {
     await setPluginEnabled('designer', true);
     await leaveSettings();
     await $(ENTRY).click();
+  });
+
+  beforeEach(async () => {
+    if (visibleTestWindow) {
+      await desktopWindow('Ready');
+    }
   });
 
   after(async () => {
@@ -468,7 +519,8 @@ describe('Designer native viewport', () => {
       this.skip();
     }
     await checkPlacement();
-    await browser.setWindowSize(880, 560);
+    // The framebuffer probe needs a full 368 × 288 canvas above the geometry fields.
+    await browser.setWindowSize(880, 680);
     await checkPlacement();
     await checkHue(0, RED);
 
@@ -597,40 +649,167 @@ describe('Designer native viewport', () => {
     await checkHue(1, NEAR_RED);
   });
 
-  it('restores each saved rectangle after a reload and a process restart', async function () {
+  it('previews geometry while typing and keeps invalid and cancelled edits out of the store', async function () {
     if (process.platform !== 'win32') {
       this.skip();
     }
-    // Geometry editing arrives in a later feature. Give the second saved document a
-    // different rectangle so drawing the seed unconditionally would fail the pixel checks.
+    await createProject(GEOMETRY_REFERENCE);
+    await $(SLIDER).waitForEnabled();
+    await browser.execute((selector) => document.querySelector<HTMLElement>(selector)?.focus(), SLIDER);
+    await browser.keys(Key.ArrowRight);
+    await checkHue(1, NEAR_RED);
+    await createProject(GEOMETRY_PROJECT);
+    await $(SLIDER).waitForEnabled();
+    await browser.execute((selector) => document.querySelector<HTMLElement>(selector)?.focus(), SLIDER);
+    await browser.keys(Key.End);
+    await checkHue(360, RED);
+    const original = storedElement(GEOMETRY_PROJECT);
+    for (const name of GEOMETRY_FIELDS) {
+      await expect($(geometryField(name))).toBeDisabled();
+      await expect($(geometryField(name))).toHaveValue('');
+    }
+    await clickCanvas(SEED.x + 8, SEED.y + 8);
+    await checkSelectionAnnouncement('Rectangle selected. X 64, Y 64, width 240, height 160.');
+    await browser.keys(Key.Tab);
+    const xField = $(geometryField('x'));
+    await expect(xField).toBeFocused();
+
+    const moved = { ...SEED, x: SECOND_RECTANGLE.x };
+
+    async function checkPreview(rectangle: typeof SEED): Promise<void> {
+      await waitForColor(RED, rectangle);
+      await checkSelectionEdge(true, rectangle);
+      await checkScreenPixels(RED, rectangle);
+      expect(storedElement(GEOMETRY_PROJECT)).toEqual(original);
+    }
+
+    async function editX(): Promise<void> {
+      await replaceFocusedValue(String(moved.x));
+      await checkPreview(moved);
+      await replaceFocusedValue('-');
+      await expect(xField).toHaveValue('-');
+      await checkPreview(SEED);
+      await replaceFocusedValue('32768');
+      await expect(xField).toHaveValue('32768');
+      await browser.keys(Key.Enter);
+      await expect(xField).toHaveAttribute('aria-invalid', 'true');
+      await expect(xField).toHaveValue('32768');
+      const errorId = await xField.getAttribute('aria-describedby');
+      const described = await browser.execute((references) => {
+        const ids = references?.split(/\s+/) ?? [];
+        return ids.some((id) => Boolean(document.getElementById(id)?.textContent.trim()));
+      }, errorId);
+      expect(described).toBe(true);
+      await checkPreview(SEED);
+      await replaceFocusedValue(String(moved.x));
+      await checkPreview(moved);
+      await browser.keys(Key.Escape);
+      await expect(xField).toHaveValue(String(SEED.x));
+      await expect(xField).toBeFocused();
+      await checkPreview(SEED);
+    }
+
+    if (visibleTestWindow) {
+      await editX();
+    } else {
+      // This point changes between background and fill as the left edge moves.
+      await withFramebufferCenter(moved.x + 8, SEED.y + 40, editX);
+    }
+    await xField.click();
+    await replaceFocusedValue(String(moved.x));
+    await $(ADD).click();
+    await $('#designer-name').waitForDisplayed();
+    await waitForHidden();
+    await browser.keys(Key.Escape);
+    await expect(xField).toHaveValue(String(SEED.x));
+    expect(storedElement(GEOMETRY_PROJECT)).toEqual(original);
+
+    await xField.click();
+    await replaceFocusedValue(String(moved.x));
+    await clickWithText('[data-designer-projects] button', GEOMETRY_REFERENCE);
+    await checkHue(1, NEAR_RED);
+    expect(storedElement(GEOMETRY_PROJECT)).toEqual(original);
+    await clickWithText('[data-designer-projects] button', GEOMETRY_PROJECT);
+    await checkHue(360, RED);
+    await checkSelectionAnnouncement('Nothing selected.');
+  });
+
+  it('saves each completed geometry field once and restores both projects after reload and restart', async function () {
+    if (process.platform !== 'win32') {
+      this.skip();
+    }
+    await clickWithText('[data-designer-projects] button', GEOMETRY_PROJECT);
+    await clickCanvas(SEED.x + 8, SEED.y + 8);
+    const original = storedElement(GEOMETRY_PROJECT);
+    const initialRevision = Number(original.revision);
+
+    async function enterField(name: keyof typeof SEED): Promise<void> {
+      await expect($(geometryField(name))).toBeFocused();
+      await replaceFocusedValue(String(SECOND_RECTANGLE[name]));
+    }
+
+    async function checkRevision(edits: number): Promise<void> {
+      await browser.waitUntil(() => storedElement(GEOMETRY_PROJECT).revision === initialRevision + edits);
+    }
+
+    const xField = $(geometryField('x'));
+    await xField.click();
+    await enterField('x');
     const database = openValidationStore();
     try {
-      database.exec('BEGIN IMMEDIATE');
-      const update = database.prepare(`
-        UPDATE designer_elements SET x = ?, y = ?, width = ?, height = ?
-        WHERE project_id = (SELECT id FROM designer_projects WHERE name = 'Second rectangle')
-      `);
-      const { x, y, width, height } = SECOND_RECTANGLE;
-      expect(update.run(x, y, width, height).changes).toBe(1);
       database.exec(
-        "UPDATE designer_projects SET document_revision = document_revision + 1 WHERE name = 'Second rectangle'; COMMIT",
+        "CREATE TRIGGER designer_test_refuse_geometry BEFORE UPDATE OF x ON designer_elements BEGIN SELECT RAISE(ABORT, 'test fault'); END",
       );
+      try {
+        await browser.keys(Key.Enter);
+        await $(DOCUMENT_ERROR).waitForDisplayed();
+        await expect(xField).toHaveValue(String(SEED.x));
+        await checkSelectionEdge(true);
+        await checkScreenPixels(RED);
+        expect(storedElement(GEOMETRY_PROJECT)).toEqual(original);
+      } finally {
+        database.exec('DROP TRIGGER designer_test_refuse_geometry');
+      }
     } finally {
       database.close();
     }
-    const first = storedElement('First rectangle');
-    const second = storedElement('Second rectangle');
+    await $(`${DOCUMENT_ERROR} button`).click();
+    await $(DOCUMENT_ERROR).waitForExist({ reverse: true });
+    await checkRevision(1);
+    await xField.click();
+    await browser.keys(Key.Tab);
+    await enterField('y');
+    await browser.keys(Key.Tab);
+    await checkRevision(2);
+    await enterField('width');
+    await browser.keys(Key.Enter);
+    await checkRevision(3);
+    await browser.keys(Key.Tab);
+    await enterField('height');
+    // This click commits on blur and lands inside the old height, beyond the preview's bottom edge.
+    await clickCanvas(SECOND_RECTANGLE.x + 8, SECOND_RECTANGLE.y + SECOND_RECTANGLE.height + 8);
+    await checkRevision(4);
+    await checkSelectionAnnouncement('Nothing selected.');
+    await clickCanvas(SECOND_RECTANGLE.x + 8, SECOND_RECTANGLE.y + 8);
+    await checkSelectionAnnouncement('Rectangle selected. X 47, Y 87, width 190, height 118.');
+    await checkSelectionEdge(true, SECOND_RECTANGLE);
+    const first = storedElement(GEOMETRY_REFERENCE);
+    const second = storedElement(GEOMETRY_PROJECT);
     expect(first).toMatchObject({ ...SEED, hue: 1 });
-    expect(second).toMatchObject({ ...SECOND_RECTANGLE, hue: 360 });
+    expect(second).toMatchObject({ ...original, ...SECOND_RECTANGLE, revision: initialRevision + 4 });
     expect(first.id).not.toBe(second.id);
 
     async function checkBoth(): Promise<void> {
-      await clickWithText('[data-designer-projects] button', 'Second rectangle');
+      await clickWithText('[data-designer-projects] button', GEOMETRY_PROJECT);
       await checkHue(360, RED, SECOND_RECTANGLE);
-      await clickWithText('[data-designer-projects] button', 'First rectangle');
+      await clickCanvas(SECOND_RECTANGLE.x + 8, SECOND_RECTANGLE.y + 8);
+      for (const name of GEOMETRY_FIELDS) {
+        await expect($(geometryField(name))).toHaveValue(String(SECOND_RECTANGLE[name]));
+      }
+      await clickWithText('[data-designer-projects] button', GEOMETRY_REFERENCE);
       await checkHue(1, NEAR_RED);
-      expect(storedElement('First rectangle')).toEqual(first);
-      expect(storedElement('Second rectangle')).toEqual(second);
+      expect(storedElement(GEOMETRY_REFERENCE)).toEqual(first);
+      expect(storedElement(GEOMETRY_PROJECT)).toEqual(second);
     }
 
     await browser.refresh();
@@ -645,6 +824,7 @@ describe('Designer native viewport', () => {
     if (process.platform !== 'win32') {
       this.skip();
     }
+    await clickWithText('[data-designer-projects] button', 'First rectangle');
     const first = storedElement('First rectangle');
     const database = openValidationStore();
     try {
@@ -668,7 +848,7 @@ describe('Designer native viewport', () => {
       await browser.waitUntil(() => storedElement('First rectangle').hue === 2);
 
       await clickWithText('[data-designer-projects] button', 'Second rectangle');
-      await checkHue(360, RED, SECOND_RECTANGLE);
+      await checkHue(360, RED);
       // In WAL mode a writer lock still allows readers. Make this table temporarily
       // unavailable on the validation database so the next real project read fails.
       database.exec('ALTER TABLE designer_elements RENAME TO designer_test_unavailable');

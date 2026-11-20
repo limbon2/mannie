@@ -13,10 +13,10 @@ use mannie_plugin_sdk::services::graphics::{
 use tokio::sync::Mutex as AsyncMutex;
 
 use super::{
-    CommitViewportColor, PlaceViewport, SetViewportColor, SetViewportSelection, ViewportError,
+    PlaceViewport, SetViewportColor, SetViewportSelection, ViewportError, ViewportGeometry,
     ViewportTarget,
 };
-use crate::document::{DocumentFailure, DocumentSnapshot};
+use crate::document::{DocumentEdit, DocumentFailure, DocumentSnapshot};
 use crate::plugin::{DESIGNER, Projects};
 
 const BACKGROUND: GraphicsColor = GraphicsColor::new(32, 34, 38);
@@ -56,25 +56,40 @@ fn validated_scene(scene: GraphicsScene) -> Result<GraphicsScene, ViewportError>
 struct Canvas {
     document: Option<DocumentSnapshot>,
     writable: bool,
-    preview: Option<u16>,
+    preview: Option<DocumentEdit>,
     selected: Option<String>,
     placement: Option<GraphicsPlacement>,
 }
 
 impl Canvas {
-    fn scene(&self, hue: Option<u16>) -> GraphicsScene {
-        self.scene_with_selection(hue, self.selected.as_deref())
+    fn scene(&self, edit: Option<DocumentEdit>) -> GraphicsScene {
+        self.scene_with_selection(edit, self.selected.as_deref())
     }
 
-    fn scene_with_selection(&self, hue: Option<u16>, selected: Option<&str>) -> GraphicsScene {
+    fn scene_with_selection(
+        &self,
+        edit: Option<DocumentEdit>,
+        selected: Option<&str>,
+    ) -> GraphicsScene {
         let mut scene = empty_scene();
 
         if let Some(document) = &self.document {
             let element = &document.element;
-            let rectangle = |color| {
-                GraphicsRectangle::new(element.x, element.y, element.width, element.height, color)
+            let (geometry, hue) = match edit {
+                Some(DocumentEdit::Geometry(geometry)) => (geometry, element.hue),
+                Some(DocumentEdit::Hue(hue)) => (element.geometry(), hue),
+                None => (element.geometry(), element.hue),
             };
-            let fill = color(hue.unwrap_or(element.hue));
+            let rectangle = |color| {
+                GraphicsRectangle::new(
+                    geometry.x,
+                    geometry.y,
+                    geometry.width,
+                    geometry.height,
+                    color,
+                )
+            };
+            let fill = color(hue);
             scene.shapes.push(GraphicsShape::Rectangle(rectangle(fill)));
             if selected == Some(element.id.as_str()) {
                 scene
@@ -94,6 +109,39 @@ struct Surface {
 }
 
 impl Surface {
+    async fn confirmed_edit<'a>(
+        &self,
+        graphics: &dyn GraphicsApi,
+        canvas: &'a mut Canvas,
+        element_id: &str,
+        revision: u32,
+    ) -> Result<&'a DocumentSnapshot, ViewportError> {
+        let document = canvas
+            .document
+            .as_ref()
+            .ok_or(ViewportError::StaleRevision)?;
+
+        if canvas.writable && document.revision == revision && document.element.id == element_id {
+            return Ok(document);
+        }
+
+        canvas.preview = None;
+        canvas.writable = false;
+        self.draw(graphics, canvas.scene(None)).await?;
+        Err(ViewportError::StaleRevision)
+    }
+
+    async fn preview(
+        &self,
+        graphics: &dyn GraphicsApi,
+        canvas: &mut Canvas,
+        edit: DocumentEdit,
+    ) -> Result<(), ViewportError> {
+        self.draw(graphics, canvas.scene(Some(edit))).await?;
+        canvas.preview = Some(edit);
+        Ok(())
+    }
+
     async fn draw(
         &self,
         graphics: &dyn GraphicsApi,
@@ -316,10 +364,34 @@ impl Viewports {
         }
 
         surface
-            .draw(self.graphics.as_ref(), canvas.scene(Some(input.hue)))
+            .preview(
+                self.graphics.as_ref(),
+                &mut canvas,
+                DocumentEdit::Hue(input.hue),
+            )
+            .await
+    }
+
+    pub(super) async fn preview_geometry(
+        &self,
+        input: ViewportGeometry,
+    ) -> Result<(), ViewportError> {
+        let surface = self.target(&input.project_id, &input.lease)?;
+        let mut canvas = surface.canvas.lock().await;
+        self.check(&surface)?;
+
+        let graphics = self.graphics.as_ref();
+
+        surface
+            .confirmed_edit(graphics, &mut canvas, &input.element_id, input.revision)
             .await?;
-        canvas.preview = Some(input.hue);
-        Ok(())
+        surface
+            .preview(
+                graphics,
+                &mut canvas,
+                DocumentEdit::Geometry(input.geometry()),
+            )
+            .await
     }
 
     pub(super) async fn select(&self, input: SetViewportSelection) -> Result<(), ViewportError> {
@@ -344,56 +416,60 @@ impl Viewports {
             return Ok(());
         }
 
-        let scene = canvas.scene_with_selection(canvas.preview, input.element_id.as_deref());
+        let preview = match (canvas.preview, &input.element_id) {
+            (Some(DocumentEdit::Geometry(_)), None) => None,
+            (preview, _) => preview,
+        };
+        let scene = canvas.scene_with_selection(preview, input.element_id.as_deref());
 
         surface.draw(self.graphics.as_ref(), scene).await?;
         self.check(&surface)?;
+        canvas.preview = preview;
         canvas.selected = input.element_id;
         Ok(())
     }
 
     pub(super) async fn commit(
         &self,
-        input: CommitViewportColor,
+        project_id: String,
+        lease: &str,
+        element_id: &str,
+        revision: u32,
+        edit: DocumentEdit,
     ) -> Result<DocumentSnapshot, ViewportError> {
-        let surface = self.target(&input.project_id, &input.lease)?;
+        let surface = self.target(&project_id, lease)?;
         let mut canvas = surface.canvas.lock().await;
         let mut cache = self.confirmed.lock().await;
         self.check(&surface)?;
 
-        let document = canvas
-            .document
-            .as_ref()
-            .ok_or(ViewportError::StaleRevision)?;
-
-        if !canvas.writable
-            || document.revision != input.revision
-            || document.element.id != input.element_id
-        {
-            canvas.preview = None;
-            canvas.writable = false;
-            surface
-                .draw(self.graphics.as_ref(), canvas.scene(None))
-                .await?;
-            return Err(ViewportError::StaleRevision);
-        }
+        let document = surface
+            .confirmed_edit(self.graphics.as_ref(), &mut canvas, element_id, revision)
+            .await?
+            .clone();
 
         // The host checks its lease and that this scene can be presented
         // before the store admits the write.
         surface
-            .draw(self.graphics.as_ref(), canvas.scene(Some(input.hue)))
+            .draw(self.graphics.as_ref(), canvas.scene(Some(edit)))
             .await?;
         self.check(&surface)?;
+
+        canvas.preview = None;
+        if let DocumentEdit::Geometry(geometry) = edit
+            && document.element.geometry() == geometry
+        {
+            return Ok(document);
+        }
 
         let result = self
             .projects
             .store()
-            .set_document_hue(&input.project_id, document, input.hue)
+            .edit_document(&project_id, &document, edit)
             .await;
-        canvas.preview = None;
+
         match result {
             Ok(document) => {
-                cache.insert(input.project_id, document.clone());
+                cache.insert(project_id, document.clone());
                 canvas.document = Some(document.clone());
                 Ok(document)
             }

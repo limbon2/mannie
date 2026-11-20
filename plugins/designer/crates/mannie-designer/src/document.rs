@@ -7,6 +7,42 @@ use uuid::Uuid;
 
 const DOCUMENT_LIMIT: f64 = 32_768.0;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct RectangleGeometry {
+    pub(crate) x: f64,
+    pub(crate) y: f64,
+    pub(crate) width: f64,
+    pub(crate) height: f64,
+}
+
+impl RectangleGeometry {
+    pub(crate) fn valid(self) -> bool {
+        let bounds = -DOCUMENT_LIMIT..=DOCUMENT_LIMIT;
+        let edges = [self.x, self.y, self.x + self.width, self.y + self.height];
+        self.width >= 1.0 && self.height >= 1.0 && edges.iter().all(|edge| bounds.contains(edge))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum DocumentEdit {
+    Hue(u16),
+    Geometry(RectangleGeometry),
+}
+
+impl DocumentEdit {
+    pub(crate) fn apply(self, element: &mut DocumentElement) {
+        match self {
+            Self::Hue(hue) => element.hue = hue,
+            Self::Geometry(geometry) => {
+                element.x = geometry.x;
+                element.y = geometry.y;
+                element.width = geometry.width;
+                element.height = geometry.height;
+            }
+        }
+    }
+}
+
 /// Geometry and hue that the plugin confirmed for one element.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
@@ -31,12 +67,17 @@ impl DocumentElement {
         }
     }
 
+    pub(crate) fn geometry(&self) -> RectangleGeometry {
+        RectangleGeometry {
+            x: self.x,
+            y: self.y,
+            width: self.width,
+            height: self.height,
+        }
+    }
+
     pub(crate) fn valid(&self) -> bool {
-        let bounds = -DOCUMENT_LIMIT..=DOCUMENT_LIMIT;
-        let size_valid = self.width >= 1.0 && self.height >= 1.0;
-        let edges = [self.x, self.y, self.x + self.width, self.y + self.height];
-        let edges_valid = edges.iter().all(|edge| bounds.contains(edge));
-        size_valid && edges_valid && self.hue <= 360 && Uuid::try_parse(&self.id).is_ok()
+        self.geometry().valid() && self.hue <= 360 && Uuid::try_parse(&self.id).is_ok()
     }
 }
 

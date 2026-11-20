@@ -1,17 +1,25 @@
 import type * as Ipc from '@mannie/plugin-sdk/ipc';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { CommitViewportColor, DocumentSnapshot, GraphicsEvent } from '../../../ui/generated/bindings.js';
+import type {
+  CommitViewportColor,
+  DocumentSnapshot,
+  GraphicsEvent,
+  ViewportGeometry,
+} from '../../../ui/generated/bindings.js';
 import { ProjectViewport } from '../../../ui/state/viewport.svelte.js';
+import { formatGeometryValue } from '../../../ui/utils/canvas-geometry.js';
 
 type Deliver = (items: readonly Ipc.ChannelMessage<GraphicsEvent>[]) => void;
 const core = vi.hoisted(() => ({
   deliver: [] as Deliver[],
   commitViewportColor: vi.fn(),
+  commitViewportGeometry: vi.fn(),
   followViewport: vi.fn(),
   placeViewport: vi.fn(),
   readViewportDocument: vi.fn(),
   setViewportColor: vi.fn(),
+  setViewportGeometry: vi.fn(),
   setViewportSelection: vi.fn(),
   unsubscribe: vi.fn(),
 }));
@@ -20,9 +28,11 @@ vi.mock('../../../ui/generated/bindings.js', () => ({
   channels: { followViewport: core.followViewport },
   commands: {
     commitViewportColor: core.commitViewportColor,
+    commitViewportGeometry: core.commitViewportGeometry,
     placeViewport: core.placeViewport,
     readViewportDocument: core.readViewportDocument,
     setViewportColor: core.setViewportColor,
+    setViewportGeometry: core.setViewportGeometry,
     setViewportSelection: core.setViewportSelection,
   },
 }));
@@ -75,17 +85,162 @@ function ready(lease: string, channel = 0): void {
   core.deliver[channel]?.([{ item: { kind: 'ready', lease }, kind: 'item' }]);
 }
 
+async function selectedViewport(): Promise<ProjectViewport> {
+  const session = new ProjectViewport('drawing');
+  session.place(shown);
+  await session.open();
+  ready('current');
+  await vi.waitFor(() => expect(session.canSelect).toBe(true));
+  session.select({ kind: 'select' });
+  await vi.waitFor(() => expect(session.canEditGeometry).toBe(true));
+  return session;
+}
+
 beforeEach(() => {
   core.deliver.length = 0;
   vi.resetAllMocks();
   core.followViewport.mockResolvedValue({ data: 2, status: 'ok' });
   core.setViewportColor.mockResolvedValue(ok);
+  core.setViewportGeometry.mockResolvedValue(ok);
   core.setViewportSelection.mockResolvedValue(ok);
   core.placeViewport.mockResolvedValue(ok);
   core.readViewportDocument.mockResolvedValue(readResult());
-  core.commitViewportColor.mockImplementation((input: CommitViewportColor) =>
-    Promise.resolve(readResult(input.hue, input.revision + 1)),
-  );
+  let saved = snapshot().element;
+  core.commitViewportColor.mockImplementation((input: CommitViewportColor) => {
+    saved = { ...saved, hue: input.hue };
+    return Promise.resolve({ data: { element: saved, revision: input.revision + 1 }, status: 'ok' });
+  });
+  core.commitViewportGeometry.mockImplementation((input: ViewportGeometry) => {
+    const { height, width, x, y } = input;
+    saved = { ...saved, height, width, x, y };
+    return Promise.resolve({ data: { element: saved, revision: input.revision + 1 }, status: 'ok' });
+  });
+});
+
+describe('the selected rectangle geometry fields', () => {
+  it('coalesces valid previews, restores confirmed geometry for invalid text and keeps its error editable', async () => {
+    const session = await selectedViewport();
+    const pending = Promise.withResolvers<typeof ok>();
+    core.setViewportGeometry.mockReturnValueOnce(pending.promise);
+    session.changeGeometry('width', '10');
+    session.changeGeometry('width', '100');
+    session.changeGeometry('width', '100.5');
+    expect(session.geometryText('width')).toBe('100.5');
+    expect(core.setViewportGeometry).toHaveBeenCalledTimes(1);
+    pending.resolve(ok);
+    await vi.waitFor(() => expect(core.setViewportGeometry).toHaveBeenCalledTimes(2));
+    expect(core.setViewportGeometry).toHaveBeenLastCalledWith({
+      projectId: 'drawing',
+      lease: 'current',
+      elementId: 'rectangle',
+      revision: 1,
+      x: 64,
+      y: 64,
+      width: 100.5,
+      height: 160,
+    });
+    session.changeGeometry('width', '-');
+    await vi.waitFor(() =>
+      expect(core.setViewportGeometry).toHaveBeenLastCalledWith(expect.objectContaining({ width: 240 })),
+    );
+    expect(session.geometryInvalid('width')).toBe(false);
+    session.commitGeometry('width');
+    expect(session.geometryInvalid('width')).toBe(true);
+    session.place({ ...shown, bounds: { ...rect, height: 50 } });
+    expect(session.geometryText('width')).toBe('-');
+    expect(session.geometryInvalid('width')).toBe(true);
+    session.changeGeometry('width', '1');
+    expect(session.geometryInvalid('width')).toBe(false);
+    session.cancelGeometry('width');
+    expect(session.geometryText('width')).toBe('240');
+    expect(session.confirmed).toEqual(snapshot());
+    expect(session.selectedId).toBe('rectangle');
+    expect(core.commitViewportGeometry).not.toHaveBeenCalled();
+  });
+
+  it('keeps fast field and color commits ordered against each successive snapshot', async () => {
+    const session = await selectedViewport();
+    const pending = Promise.withResolvers<typeof ok>();
+    core.setViewportGeometry.mockReturnValueOnce(pending.promise);
+    session.changeGeometry('x', '-22.5');
+    session.commitGeometry('x');
+    session.commitGeometry('x');
+    session.commitHue(90);
+    session.changeGeometry('y', '80');
+    session.commitGeometry('y');
+    pending.resolve(ok);
+    await vi.waitFor(() => expect(session.confirmed?.revision).toBe(4));
+    expect(core.commitViewportGeometry).toHaveBeenCalledTimes(2);
+    expect(core.commitViewportGeometry).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ x: -22.5, y: 64, revision: 1 }),
+    );
+    expect(core.commitViewportColor).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ hue: 90, revision: 2 }));
+    expect(core.commitViewportGeometry).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ x: -22.5, y: 80, revision: 3 }),
+    );
+    session.changeGeometry('y', '+80');
+    session.commitGeometry('y');
+    expect(core.commitViewportGeometry).toHaveBeenCalledTimes(2);
+    expect(session.geometryText('x')).toBe(formatGeometryValue(-22.5));
+    expect(session.geometryText('y')).toBe('80');
+    expect(session.confirmed?.element.hue).toBe(90);
+  });
+
+  it('hits the acknowledged preview, and a hide cancels the draft before a late blur can save it', async () => {
+    const session = await selectedViewport();
+    const pending = Promise.withResolvers<typeof ok>();
+    core.setViewportGeometry.mockReturnValueOnce(pending.promise);
+    session.changeGeometry('y', '10');
+    session.changeGeometry('y', '0');
+    pending.resolve(ok);
+    await vi.waitFor(() => expect(core.setViewportGeometry).toHaveBeenCalledTimes(2));
+    session.select({ kind: 'point', bounds: rect, client: { x: 90, y: 30 } });
+    expect(core.setViewportSelection).toHaveBeenCalledTimes(1);
+    session.place({ ...shown, visible: false });
+    session.commitGeometry('y');
+    expect(session.geometryText('y')).toBe('64');
+    expect(core.commitViewportGeometry).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(core.placeViewport).toHaveBeenCalledWith(
+        expect.objectContaining({ placement: { ...shown, visible: false } }),
+      ),
+    );
+    session.place(shown);
+    await vi.waitFor(() => expect(session.canEditGeometry).toBe(true));
+    session.select({ kind: 'point', bounds: rect, client: { x: 90, y: 30 } });
+    await vi.waitFor(() => expect(session.selectedId).toBeNull());
+    expect(session.geometryText('x')).toBe('');
+  });
+
+  it('rolls back a refused geometry commit and retries only the original revision and rectangle', async () => {
+    const session = await selectedViewport();
+    core.commitViewportGeometry.mockResolvedValueOnce(storeFailure(snapshot()));
+    session.changeGeometry('height', '12.5');
+    session.commitGeometry('height');
+    await vi.waitFor(() => expect(session.documentError).not.toBeNull());
+    expect(session.geometryText('height')).toBe('160');
+    expect(session.canEditGeometry).toBe(false);
+    session.retryDocument();
+    await vi.waitFor(() => expect(session.geometryText('height')).toBe(formatGeometryValue(12.5)));
+    expect(session.confirmed?.revision).toBe(2);
+    expect(core.commitViewportGeometry).toHaveBeenCalledTimes(2);
+
+    const expired = Promise.withResolvers<typeof ok>();
+    core.setViewportGeometry.mockReturnValueOnce(expired.promise);
+    session.changeGeometry('x', '4');
+    session.dispose();
+    const next = new ProjectViewport('other');
+    next.place(shown);
+    await next.open();
+    ready('replacement', 1);
+    await vi.waitFor(() => expect(next.canSelect).toBe(true));
+    expired.resolve(ok);
+    expect(next.selectedId).toBeNull();
+    expect(next.confirmed).toEqual(snapshot());
+    expect(core.commitViewportGeometry).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('the Designer viewport', () => {
