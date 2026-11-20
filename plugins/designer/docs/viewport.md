@@ -4,7 +4,7 @@
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Building                                                                                                                                                                                                                                                                                                                                  |
 | Milestone    | Unscheduled                                                                                                                                                                                                                                                                                                                               |
-| Last updated | 2026-11-19                                                                                                                                                                                                                                                                                                                                |
+| Last updated | 2026-11-20                                                                                                                                                                                                                                                                                                                                |
 | Part of      | [Designer](README.md)                                                                                                                                                                                                                                                                                                                     |
 | Related      | [Designer ADR-0001](adr/0001-keep-the-projects-of-the-designer-plugin-in-its-own-table.md), [ADR-0004](../../../docs/adr/0004-keep-system-access-in-the-rust-core.md), [ADR-0034](../../../docs/adr/0034-build-plugins-on-a-plugin-sdk.md), [ADR-0064](../../../docs/adr/0064-give-agents-an-isolated-browser-beside-the-conversation.md) |
 
@@ -27,7 +27,7 @@ The manifest declares the desktop `graphics` service. Designer validates the pro
 
 The webview uses the shell's floating layer information, visible bounds and device pixel ratio to place the child window. The Windows host draws into its OpenGL framebuffer on the window thread. Linux shows the platform availability message and keeps project management available.
 
-When the viewport opens, Designer reads the project's confirmed rectangle. Its document units map to CSS pixels. Designer clips the rectangle to the full viewport, then normalizes the visible geometry for the graphics service. A resize changes this projection. [Persisted document](persisted-document.md).
+When the viewport opens, Designer reads the project's confirmed rectangle. At identity zoom its document units map to CSS pixels. The host draws the complete scene and clips it to the visible viewport. A resize changes which part of the drawing is visible. [Persisted document](persisted-document.md), [graphics scenes](../../../docs/adr/0075-draw-bounded-graphics-scenes-in-document-coordinates.md).
 
 ## Acceptance
 

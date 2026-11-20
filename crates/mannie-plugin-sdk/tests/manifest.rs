@@ -495,7 +495,7 @@ fn an_unknown_service_is_refused() {
 
 #[test]
 fn another_major_of_a_service_is_refused() {
-    for (name, major) in [("executor-host", 2), ("credentials", 0)] {
+    for (name, major) in [("executor-host", 2), ("credentials", 0), ("graphics", 1)] {
         let text = with(&format!("[services]\n{name} = {major}"));
 
         assert_eq!(

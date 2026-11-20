@@ -1,5 +1,5 @@
-//! The status subscription owns the live edit target. Graphics v1 receives
-//! only the visible part of the drawing, normalized to the full viewport.
+//! The status subscription owns the live edit target and its selection.
+//! The host clips document geometry after transforming it (ADR-0075).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -7,16 +7,20 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use futures_util::{StreamExt as _, stream};
 use mannie_plugin_sdk::ipc::PluginStream;
 use mannie_plugin_sdk::services::graphics::{
-    GraphicsApi, GraphicsColor, GraphicsEvent, GraphicsPlacement, GraphicsRectangle, GraphicsScene,
-    GraphicsView,
+    GraphicsApi, GraphicsColor, GraphicsEvent, GraphicsOverlay, GraphicsPlacement,
+    GraphicsRectangle, GraphicsScene, GraphicsShape, GraphicsTransform, GraphicsView,
 };
 use tokio::sync::Mutex as AsyncMutex;
 
-use super::{CommitViewportColor, PlaceViewport, SetViewportColor, ViewportError, ViewportTarget};
-use crate::document::{DocumentElement, DocumentFailure, DocumentSnapshot};
+use super::{
+    CommitViewportColor, PlaceViewport, SetViewportColor, SetViewportSelection, ViewportError,
+    ViewportTarget,
+};
+use crate::document::{DocumentFailure, DocumentSnapshot};
 use crate::plugin::{DESIGNER, Projects};
 
 const BACKGROUND: GraphicsColor = GraphicsColor::new(32, 34, 38);
+const OUTLINE: GraphicsColor = GraphicsColor::new(255, 255, 255);
 
 /// Full saturation and value, including both red endpoints of the slider.
 fn color(hue: u16) -> GraphicsColor {
@@ -37,29 +41,15 @@ fn color(hue: u16) -> GraphicsColor {
 }
 
 fn empty_scene() -> GraphicsScene {
-    GraphicsScene::new(
-        BACKGROUND,
-        GraphicsRectangle::new(0.0, 0.0, 0.0, 0.0, BACKGROUND),
-    )
+    GraphicsScene::new(BACKGROUND, GraphicsTransform::IDENTITY, vec![], vec![])
 }
 
-fn project_axis(position: f64, length: f64, viewport: f64) -> (f64, f64) {
-    if viewport <= 0.0 {
-        return (0.0, 0.0);
+fn validated_scene(scene: GraphicsScene) -> Result<GraphicsScene, ViewportError> {
+    if !scene.valid() {
+        return Err(ViewportError::RenderFailed);
     }
 
-    let start = (position / viewport).clamp(0.0, 1.0);
-    let end = ((position + length) / viewport).clamp(0.0, 1.0);
-    (start, end - start)
-}
-
-fn scene(element: &DocumentElement, hue: u16, placement: GraphicsPlacement) -> GraphicsScene {
-    let (x, width) = project_axis(element.x, element.width, placement.bounds.width);
-    let (y, height) = project_axis(element.y, element.height, placement.bounds.height);
-    GraphicsScene::new(
-        BACKGROUND,
-        GraphicsRectangle::new(x, y, width, height, color(hue)),
-    )
+    Ok(scene)
 }
 
 #[derive(Default)]
@@ -67,18 +57,33 @@ struct Canvas {
     document: Option<DocumentSnapshot>,
     writable: bool,
     preview: Option<u16>,
+    selected: Option<String>,
     placement: Option<GraphicsPlacement>,
 }
 
 impl Canvas {
     fn scene(&self, hue: Option<u16>) -> GraphicsScene {
-        match (&self.document, self.placement) {
-            (Some(document), Some(placement)) => {
-                let hue = hue.unwrap_or(document.element.hue);
-                scene(&document.element, hue, placement)
+        self.scene_with_selection(hue, self.selected.as_deref())
+    }
+
+    fn scene_with_selection(&self, hue: Option<u16>, selected: Option<&str>) -> GraphicsScene {
+        let mut scene = empty_scene();
+
+        if let Some(document) = &self.document {
+            let element = &document.element;
+            let rectangle = |color| {
+                GraphicsRectangle::new(element.x, element.y, element.width, element.height, color)
+            };
+            let fill = color(hue.unwrap_or(element.hue));
+            scene.shapes.push(GraphicsShape::Rectangle(rectangle(fill)));
+            if selected == Some(element.id.as_str()) {
+                scene
+                    .overlays
+                    .push(GraphicsOverlay::RectangleOutline(rectangle(OUTLINE)));
             }
-            _ => empty_scene(),
         }
+
+        scene
     }
 }
 
@@ -95,7 +100,11 @@ impl Surface {
         scene: GraphicsScene,
     ) -> Result<(), ViewportError> {
         Ok(graphics
-            .draw(self.scope.clone(), self.lease.clone(), scene)
+            .draw(
+                self.scope.clone(),
+                self.lease.clone(),
+                validated_scene(scene)?,
+            )
             .await?)
     }
 
@@ -187,7 +196,11 @@ impl Viewports {
         }
 
         let scope = GraphicsView::new(DESIGNER, project);
-        let events = self.graphics.open(scope.clone(), empty_scene()).await?;
+        let events = self
+            .graphics
+            .open(scope.clone(), validated_scene(empty_scene())?)
+            .await?;
+
         let subscription = Subscription {
             active: Arc::clone(&self.active),
             scope,
@@ -254,6 +267,10 @@ impl Viewports {
         canvas.preview = None;
         canvas.writable = result.is_ok();
 
+        if canvas.selected.as_ref() != canvas.document.as_ref().map(|doc| &doc.element.id) {
+            canvas.selected = None;
+        }
+
         if canvas.document.is_some() {
             surface
                 .draw(self.graphics.as_ref(), canvas.scene(None))
@@ -273,24 +290,21 @@ impl Viewports {
         self.check(&surface)?;
 
         let mut placement = input.placement;
-        let refresh = canvas.placement.is_none_or(|old| {
-            !old.visible
-                || (old.bounds.width, old.bounds.height)
-                    != (placement.bounds.width, placement.bounds.height)
-        });
         canvas.placement = Some(placement);
         if canvas.document.is_none() {
             placement.visible = false;
         }
-        if !placement.visible {
-            canvas.preview = None;
-        } else if refresh {
+
+        surface.place(self.graphics.as_ref(), placement).await?;
+
+        if !placement.visible && canvas.preview.take().is_some() {
+            // Replace the hidden surface's draft before its next presentation.
             surface
-                .draw(self.graphics.as_ref(), canvas.scene(canvas.preview))
+                .draw(self.graphics.as_ref(), canvas.scene(None))
                 .await?;
         }
 
-        surface.place(self.graphics.as_ref(), placement).await
+        Ok(())
     }
 
     pub(super) async fn preview(&self, input: SetViewportColor) -> Result<(), ViewportError> {
@@ -305,6 +319,36 @@ impl Viewports {
             .draw(self.graphics.as_ref(), canvas.scene(Some(input.hue)))
             .await?;
         canvas.preview = Some(input.hue);
+        Ok(())
+    }
+
+    pub(super) async fn select(&self, input: SetViewportSelection) -> Result<(), ViewportError> {
+        let surface = self.target(&input.project_id, &input.lease)?;
+        let mut canvas = surface.canvas.lock().await;
+        self.check(&surface)?;
+
+        let current = canvas
+            .document
+            .as_ref()
+            .map(|document| &document.element.id);
+
+        if !canvas.writable
+            || input
+                .element_id
+                .as_ref()
+                .is_some_and(|id| Some(id) != current)
+        {
+            return Err(ViewportError::StaleRevision);
+        }
+        if input.element_id == canvas.selected {
+            return Ok(());
+        }
+
+        let scene = canvas.scene_with_selection(canvas.preview, input.element_id.as_deref());
+
+        surface.draw(self.graphics.as_ref(), scene).await?;
+        self.check(&surface)?;
+        canvas.selected = input.element_id;
         Ok(())
     }
 
@@ -377,32 +421,53 @@ fn document_error(failure: DocumentFailure, canvas: &Canvas) -> ViewportError {
 
 #[cfg(test)]
 mod tests {
-    use mannie_plugin_sdk::services::graphics::{GraphicsPlacement, GraphicsRect};
+    use mannie_plugin_sdk::services::graphics::{
+        GraphicsOverlay, GraphicsShape, GraphicsTransform,
+    };
 
-    use super::{project_axis, scene};
-    use crate::document::DocumentElement;
+    use super::{Canvas, OUTLINE, ViewportError, validated_scene};
+    use crate::document::{DocumentElement, DocumentSnapshot};
 
     #[test]
-    fn projection_clips_to_full_logical_bounds_even_with_a_scaled_and_cropped_surface() {
-        let position = DocumentElement {
+    fn shape_and_outline_keep_the_same_document_edges_outside_the_viewport() {
+        let element = DocumentElement {
             x: -20.0,
             y: 75.0,
             width: 70.0,
             height: 80.0,
             ..DocumentElement::seed()
         };
-        let bounds = GraphicsRect::new(-10.0, 2.0, 200.0, 100.0);
-        let crop = GraphicsRect::new(90.0, 30.0, 30.0, 45.0);
-        let placement = GraphicsPlacement::new(bounds, crop, 2.5, true);
-        let drawing = scene(&position, 360, placement);
-        assert!(drawing.valid());
-        let rect = drawing.rectangle;
-        assert_eq!(
-            [rect.x, rect.y, rect.width, rect.height],
-            [0.0, 0.75, 0.25, 0.25]
-        );
-        assert_eq!(project_axis(-40.0, 10.0, 100.0), (0.0, 0.0));
-        assert_eq!(project_axis(140.0, 10.0, 100.0), (1.0, 0.0));
-        assert_eq!(project_axis(40.0, 10.0, 0.0), (0.0, 0.0));
+        let selected = element.id.clone();
+        let canvas = Canvas {
+            document: Some(DocumentSnapshot {
+                revision: 1,
+                element,
+            }),
+            ..Canvas::default()
+        };
+
+        let scene = validated_scene(canvas.scene_with_selection(None, Some(&selected))).unwrap();
+        assert_eq!(scene.view, GraphicsTransform::IDENTITY);
+        let [GraphicsShape::Rectangle(fill)] = scene.shapes.as_slice() else {
+            panic!("expected one rectangle");
+        };
+        let [GraphicsOverlay::RectangleOutline(outline)] = scene.overlays.as_slice() else {
+            panic!("expected one rectangle outline");
+        };
+
+        for rect in [fill, outline] {
+            assert_eq!(
+                [rect.x, rect.y, rect.width, rect.height],
+                [-20.0, 75.0, 70.0, 80.0]
+            );
+        }
+        assert_eq!(outline.color, OUTLINE);
+        let mut invalid = scene;
+        let GraphicsShape::Rectangle(rect) = &mut invalid.shapes[0];
+        rect.width = f64::INFINITY;
+        assert!(matches!(
+            validated_scene(invalid),
+            Err(ViewportError::RenderFailed)
+        ));
     }
 }

@@ -11,7 +11,8 @@ use mannie_plugin_harness::host::{CallFailure, HostedPlugin};
 use mannie_plugin_sdk::ipc::{ChannelMessage, PluginStream};
 use mannie_plugin_sdk::manifest::Manifest;
 use mannie_plugin_sdk::services::graphics::{
-    GraphicsColor, GraphicsError, GraphicsPlacement, GraphicsScene, GraphicsView,
+    GraphicsColor, GraphicsError, GraphicsOverlay, GraphicsPlacement, GraphicsRectangle,
+    GraphicsScene, GraphicsShape, GraphicsView,
 };
 use serde_json::{Value, json};
 
@@ -41,7 +42,8 @@ fn the_interface_lists_the_commands_and_channels() {
             "place_viewport",
             "set_viewport_color",
             "read_viewport_document",
-            "commit_viewport_color"
+            "commit_viewport_color",
+            "set_viewport_selection"
         ]
     );
     assert_eq!(
@@ -182,10 +184,11 @@ async fn open_viewport(
         })
     );
     let calls = graphics.calls();
-    let [Call::Open(scope, _hidden)] = calls.as_slice() else {
+    let [Call::Open(scope, hidden)] = calls.as_slice() else {
         panic!("unexpected calls: {calls:?}")
     };
     assert_eq!(scope, &GraphicsView::new(DESIGNER, id));
+    assert!(hidden.shapes.is_empty() && hidden.overlays.is_empty());
     let target = json!({"projectId": id, "lease": "lease-1"});
     hosted
         .invoke("read_viewport_document", target)
@@ -205,15 +208,31 @@ async fn open_viewport(
         .unwrap();
 
     let started = graphics.calls();
-    let [
-        Call::Draw(_, _, _),
-        Call::Draw(_, _, initial),
-        Call::Place(_, _, _),
-    ] = started.as_slice()
-    else {
+    let [Call::Draw(_, _, initial), Call::Place(_, _, _)] = started.as_slice() else {
         panic!("unexpected calls: {started:?}")
     };
-    (viewport, scope.clone(), *initial)
+    (viewport, scope.clone(), initial.clone())
+}
+
+fn rectangle(scene: &GraphicsScene) -> &GraphicsRectangle {
+    assert_eq!(scene.shapes.len(), 1, "expected one rectangle: {scene:?}");
+    let GraphicsShape::Rectangle(rect) = &scene.shapes[0];
+    rect
+}
+
+fn drawn_scene(graphics: &RecordingGraphics) -> GraphicsScene {
+    let calls = graphics.calls();
+    assert_eq!(calls.len(), 1, "expected one graphics call: {calls:?}");
+    let scene = calls
+        .into_iter()
+        .find_map(|call| match call {
+            Call::Draw(_, _, scene) => Some(scene),
+            Call::Open(..) | Call::Place(..) => None,
+        })
+        .expect("the call should replace the scene");
+
+    assert!(scene.valid());
+    scene
 }
 
 #[tokio::test]
@@ -225,7 +244,8 @@ async fn a_project_draws_the_initial_red_rectangle_and_the_selected_hue() {
 
     let (_viewport, scope, initial) = open_viewport(&hosted, &graphics).await;
     assert!(initial.valid());
-    assert_eq!(initial.rectangle.color, GraphicsColor::new(255, 0, 0));
+    assert_eq!(rectangle(&initial).color, GraphicsColor::new(255, 0, 0));
+    assert_eq!(initial.overlays, Vec::new());
 
     let color =
         |lease: &str, hue: u16| json!({"projectId": scope.project, "lease": lease, "hue": hue});
@@ -256,7 +276,7 @@ async fn a_project_draws_the_initial_red_rectangle_and_the_selected_hue() {
     };
     assert_eq!(address, &scope);
     assert_eq!(lease, "lease-1");
-    assert_eq!(scene.rectangle.color, GraphicsColor::new(0, 0, 255));
+    assert_eq!(rectangle(scene).color, GraphicsColor::new(0, 0, 255));
     assert_eq!(scene.background, initial.background);
 }
 
@@ -267,7 +287,7 @@ async fn placement_targets_the_active_view_and_rejects_an_invalid_crop() {
 
     hosted.turn_on().await;
 
-    let (_viewport, scope, _scene) = open_viewport(&hosted, &graphics).await;
+    let (_viewport, scope, scene) = open_viewport(&hosted, &graphics).await;
     let rect = json!({"x":0,"y":0,"width":200,"height":100});
     let placement = json!({"bounds":rect,"clip":rect,"scaleFactor":1.25,"visible":true});
     let input = json!({"projectId": scope.project, "lease": "lease-1", "placement": placement});
@@ -277,18 +297,17 @@ async fn placement_targets_the_active_view_and_rejects_an_invalid_crop() {
         .unwrap();
 
     let placements = graphics.calls();
-    let [Call::Draw(_, _, scene), Call::Place(address, lease, placed)] = placements.as_slice()
-    else {
+    let [Call::Place(address, lease, placed)] = placements.as_slice() else {
         panic!("unexpected calls: {placements:?}")
     };
     assert_eq!(address, &scope);
     assert_eq!(lease, "lease-1");
     assert!(scene.valid());
-    let rect = scene.rectangle;
-    assert!((rect.x - 64.0 / 200.0).abs() < f64::EPSILON);
-    assert!((rect.y - 64.0 / 100.0).abs() < f64::EPSILON);
-    assert!((rect.x + rect.width - 1.0).abs() < f64::EPSILON);
-    assert!((rect.y + rect.height - 1.0).abs() < f64::EPSILON);
+    let rect = rectangle(&scene);
+    assert_eq!(
+        [rect.x, rect.y, rect.width, rect.height],
+        [64.0, 64.0, 240.0, 160.0]
+    );
     assert_eq!(
         *placed,
         serde_json::from_value::<GraphicsPlacement>(placement).unwrap()
@@ -305,6 +324,172 @@ async fn placement_targets_the_active_view_and_rejects_an_invalid_crop() {
         "invalid_input"
     );
     assert_eq!(graphics.calls(), Vec::new());
+}
+
+#[tokio::test]
+async fn selection_and_fill_share_the_scene_and_only_a_fill_commit_changes_the_document() {
+    let graphics = RecordingGraphics::default();
+    let hosted = HostedPlugin::new(mannie_plugin(), graphics.options()).await;
+
+    hosted.turn_on().await;
+
+    let (_viewport, scope, _) = open_viewport(&hosted, &graphics).await;
+    let target = json!({"projectId": scope.project, "lease": "lease-1"});
+    let document = hosted
+        .invoke("read_viewport_document", target.clone())
+        .await
+        .unwrap();
+    graphics.calls();
+
+    let mut selection = target.clone();
+    selection["elementId"] = document["element"]["id"].clone();
+
+    let preview = json!({"projectId": scope.project, "lease": "lease-1", "hue": 120});
+    hosted.invoke("set_viewport_color", preview).await.unwrap();
+    assert_eq!(drawn_scene(&graphics).overlays, Vec::new());
+
+    graphics.fail_next_draw();
+
+    let failure = hosted
+        .invoke("set_viewport_selection", selection.clone())
+        .await
+        .unwrap_err();
+    assert_eq!(failure.code(), "designer.render_failed");
+    assert_eq!(graphics.calls(), Vec::new());
+
+    hosted
+        .invoke("set_viewport_selection", selection.clone())
+        .await
+        .unwrap();
+
+    let selected = drawn_scene(&graphics);
+    let fill = rectangle(&selected);
+    assert_eq!(fill.color, GraphicsColor::new(0, 255, 0));
+    let white = GraphicsColor::new(255, 255, 255);
+    let outline = GraphicsRectangle::new(fill.x, fill.y, fill.width, fill.height, white);
+    assert_eq!(
+        selected.overlays,
+        [GraphicsOverlay::RectangleOutline(outline)]
+    );
+    hosted
+        .invoke("set_viewport_selection", selection.clone())
+        .await
+        .unwrap();
+    assert_eq!(graphics.calls(), Vec::new());
+
+    let mut clear = selection.clone();
+    clear["elementId"] = Value::Null;
+    hosted
+        .invoke("set_viewport_selection", clear)
+        .await
+        .unwrap();
+
+    let cleared = drawn_scene(&graphics);
+    assert_eq!(cleared.shapes, selected.shapes);
+    assert_eq!(cleared.overlays, Vec::new());
+    hosted
+        .invoke("set_viewport_selection", selection.clone())
+        .await
+        .unwrap();
+    assert_eq!(drawn_scene(&graphics), selected);
+
+    let read = hosted
+        .invoke("read_viewport_document", target)
+        .await
+        .unwrap();
+    assert_eq!(read, document);
+    let frames = graphics.calls();
+    let [Call::Draw(_, _, confirmed), Call::Place(_, _, _)] = frames.as_slice() else {
+        panic!("unexpected read: {frames:?}");
+    };
+    assert_eq!(rectangle(confirmed).color, GraphicsColor::new(255, 0, 0));
+    assert_eq!(confirmed.overlays, selected.overlays);
+
+    let mut edit = selection;
+    edit["revision"] = document["revision"].clone();
+    edit["hue"] = json!(240);
+
+    let saved = hosted.invoke("commit_viewport_color", edit).await.unwrap();
+    let scene = drawn_scene(&graphics);
+    assert_eq!(scene.overlays, selected.overlays);
+    assert_eq!(rectangle(&scene).color, GraphicsColor::new(0, 0, 255));
+    assert_eq!(saved["revision"], 2);
+}
+
+#[tokio::test]
+async fn selection_requires_the_current_element_project_and_lease() {
+    let graphics = RecordingGraphics::default();
+    let hosted = HostedPlugin::new(mannie_plugin(), graphics.options()).await;
+
+    hosted.turn_on().await;
+
+    let (_first, scope, _) = open_viewport(&hosted, &graphics).await;
+    let target = json!({"projectId": scope.project, "lease": "lease-1"});
+    let document = hosted
+        .invoke("read_viewport_document", target.clone())
+        .await
+        .unwrap();
+    graphics.calls();
+
+    let mut selection = target;
+    selection["elementId"] = document["element"]["id"].clone();
+    for (field, value, code) in [
+        ("elementId", "bad-id", "invalid_input"),
+        (
+            "elementId",
+            "0199e0f2-0000-7000-8000-000000000001",
+            "designer.stale_revision",
+        ),
+        (
+            "projectId",
+            "0199e0f2-0000-7000-8000-000000000001",
+            "designer.stale_lease",
+        ),
+        ("lease", "old-lease", "designer.stale_lease"),
+    ] {
+        let mut wrong = selection.clone();
+        wrong[field] = json!(value);
+
+        let refused = hosted
+            .invoke("set_viewport_selection", wrong)
+            .await
+            .unwrap_err();
+        assert_eq!(refused.code(), code);
+    }
+    assert_eq!(graphics.calls(), Vec::new());
+    hosted
+        .invoke("set_viewport_selection", selection.clone())
+        .await
+        .unwrap();
+    assert_eq!(drawn_scene(&graphics).overlays.len(), 1);
+
+    let mut second = hosted
+        .open_channel("follow_viewport", json!({"projectId": scope.project}))
+        .await
+        .unwrap();
+    assert!(second.next().await.is_some());
+    graphics.calls();
+
+    let expired = hosted
+        .invoke("set_viewport_selection", selection.clone())
+        .await
+        .unwrap_err();
+    assert_eq!(expired.code(), "designer.stale_lease");
+    selection["lease"] = json!("lease-2");
+
+    let unread = hosted
+        .invoke("set_viewport_selection", selection)
+        .await
+        .unwrap_err();
+    assert_eq!(unread.code(), "designer.stale_revision");
+
+    let fresh = json!({"projectId": scope.project, "lease": "lease-2"});
+    let read = hosted
+        .invoke("read_viewport_document", fresh)
+        .await
+        .unwrap();
+    assert_eq!(read, document);
+    assert_eq!(drawn_scene(&graphics).overlays, Vec::new());
 }
 
 #[tokio::test]
@@ -434,7 +619,7 @@ async fn storage_failures_redraw_the_confirmed_fill_and_recover_on_the_same_leas
     let Some(Call::Draw(_, _, confirmed)) = calls.last() else {
         panic!("no rollback frame: {calls:?}");
     };
-    assert_eq!(confirmed.rectangle.color, GraphicsColor::new(255, 0, 0));
+    assert_eq!(rectangle(confirmed).color, GraphicsColor::new(255, 0, 0));
     assert_eq!(
         hosted
             .invoke("read_viewport_document", target.clone())
@@ -469,7 +654,7 @@ async fn storage_failures_redraw_the_confirmed_fill_and_recover_on_the_same_leas
         panic!("no confirmed frame: {calls:?}");
     };
     assert!(placement.visible);
-    assert_eq!(fallback.rectangle.color, GraphicsColor::new(0, 255, 0));
+    assert_eq!(rectangle(fallback).color, GraphicsColor::new(0, 255, 0));
     hosted
         .core
         .store

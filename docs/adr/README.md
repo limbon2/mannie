@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                           |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Living index                                                                                                                                                                              |
-| Last updated | 2026-11-18                                                                                                                                                                                |
+| Last updated | 2026-11-20                                                                                                                                                                                |
 | Related      | [ADR-0001](0001-record-architecture-decisions.md), [Template](0000-template.md), [Decisions](../roadmap/milestones.md#5-decisions), [Validations](../roadmap/milestones.md#4-validations) |
 
 [ADR-0001](0001-record-architecture-decisions.md) describes the process, and new ADRs start from the [template](0000-template.md).
@@ -90,3 +90,4 @@ Each ADR has exactly one of these statuses:
 | [0072](0072-remove-tool-round-and-call-caps.md)                                        | Remove tool-round and tool-call caps                                                          | Accepted (D67)         | Tests      |
 | [0073](0073-host-native-graphics-surfaces-for-desktop-plugins.md)                      | Host native graphics surfaces for desktop plugins                                             | Accepted (D68)         | Tests      |
 | [0074](0074-admit-the-two-codec-licenses-in-the-windows-skia-archive.md)               | Admit the two codec licenses in the Windows Skia archive                                      | Accepted (D69)         | Release    |
+| [0075](0075-draw-bounded-graphics-scenes-in-document-coordinates.md)                   | Draw bounded graphics scenes in document coordinates                                          | Accepted (D70)         | Tests      |

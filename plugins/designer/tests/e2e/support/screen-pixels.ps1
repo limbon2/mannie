@@ -1,7 +1,7 @@
 # Inspect the composed desktop and deliver real clicks to the visible validation window.
 param(
     [Parameter(Mandatory)][int] $AppProcessId,
-    [ValidateSet('Show', 'Restore', 'Sample', 'Click', 'Offscreen')][string] $Action,
+    [ValidateSet('Show', 'Restore', 'Edge', 'Sample', 'Click', 'Offscreen')][string] $Action,
     [int] $Left,
     [int] $Top,
     [int] $Width,
@@ -139,6 +139,12 @@ $right = $Left + $Width
 $bottom = $Top + $Height
 $middleX = $Left + ($Width -shr 1)
 $middleY = $Top + ($Height -shr 1)
+if ($Action -eq 'Edge') {
+    foreach ($offset in -2..1) {
+        [DesktopPixels]::Sample($window, $Left + $offset, $middleY)
+    }
+    return
+}
 [DesktopPixels]::Sample($window, $Left + 2, $Top + 2)
 [DesktopPixels]::Sample($window, $right - 2, $bottom - 2)
 [DesktopPixels]::Sample($window, $Left - 2, $middleY)

@@ -82,7 +82,7 @@ mod tests {
                 ("credentials", 1, true),
                 ("executor-host", 1, false),
                 ("file-dialog", 1, false),
-                ("graphics", 1, false),
+                ("graphics", 2, false),
                 ("local-servers", 1, true),
                 ("models", 1, true),
                 ("processes", 1, true),

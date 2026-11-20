@@ -9,3 +9,4 @@ Each change to the plugin adds one line under Unreleased, below its kind of chan
 - Adds the optional Designer activity, with a sidebar for creating and selecting projects that persist across restarts.
 - Draws a rectangle in a native Windows OpenGL viewport and changes its color as the owner moves a slider.
 - Saves each project's rectangle geometry and fill across reloads and restarts and restores the confirmed color when a save fails.
+- Selects a rectangle with a click or the keyboard, draws its outline on the native canvas and announces its position and size.

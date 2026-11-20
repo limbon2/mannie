@@ -3,7 +3,7 @@
 |              |                                                                                                                                     |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Building                                                                                                                            |
-| Last updated | 2026-11-19                                                                                                                          |
+| Last updated | 2026-11-20                                                                                                                          |
 | Part of      | [Designer](README.md)                                                                                                               |
 | Related      | [Canvas controls](canvas-controls.md), [Storage decision](adr/0002-store-each-projects-canvas-elements.md), [Viewport](viewport.md) |
 
@@ -19,7 +19,7 @@ A failed save restores the confirmed hue and rectangle. The error and retry acti
 
 ## Fit
 
-Designer owns the elements, migrations and plugin commands. The existing graphics service paints one normalized rectangle. Designer clips its document geometry to the full logical viewport before passing the scene to the host. The host applies the display scale and visible crop. [Native graphics service](../../../docs/adr/0073-host-native-graphics-surfaces-for-desktop-plugins.md)
+Designer owns the elements, migrations and plugin commands. Designer sends the saved rectangle in document units. The desktop host applies the view transform, display scale and visible crop. [Graphics scenes](../../../docs/adr/0075-draw-bounded-graphics-scenes-in-document-coordinates.md)
 
 ## Design
 

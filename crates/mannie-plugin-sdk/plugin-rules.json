@@ -88,7 +88,7 @@
     "credentials": 1,
     "executor-host": 1,
     "file-dialog": 1,
-    "graphics": 1,
+    "graphics": 2,
     "local-servers": 1,
     "models": 1,
     "processes": 1,

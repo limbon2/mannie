@@ -98,6 +98,25 @@ impl Validate for SetViewportColor {
 
 #[derive(Debug, Deserialize, Type)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SetViewportSelection {
+    project_id: String,
+    lease: String,
+    element_id: Option<String>,
+}
+
+impl Validate for SetViewportSelection {
+    fn validate(&self) -> Result<(), InputRefusal> {
+        validate_target(&self.project_id, &self.lease)?;
+        if let Some(id) = &self.element_id {
+            uuid::Uuid::try_parse(id).map_err(|_error| InputRefusal::new("elementId"))?;
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize, Type)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CommitViewportColor {
     project_id: String,
     lease: String,
@@ -197,6 +216,16 @@ impl CommandSpec for SetViewportColorCommand {
     type Error = ViewportError;
 }
 
+struct SetViewportSelectionCommand;
+
+impl CommandSpec for SetViewportSelectionCommand {
+    const NAME: &'static str = "set_viewport_selection";
+    const DOCS: &'static str = "Selects an element or clears the selection on this viewport lease.";
+    type Input = SetViewportSelection;
+    type Output = ();
+    type Error = ViewportError;
+}
+
 struct ReadViewportDocumentCommand;
 
 impl CommandSpec for ReadViewportDocumentCommand {
@@ -224,6 +253,7 @@ pub(crate) fn interface(base: Interface) -> Interface {
         .command::<SetViewportColorCommand>()
         .command::<ReadViewportDocumentCommand>()
         .command::<CommitViewportColorCommand>()
+        .command::<SetViewportSelectionCommand>()
 }
 
 pub(crate) fn handlers(
@@ -236,6 +266,7 @@ pub(crate) fn handlers(
     let reading = Arc::clone(&viewports);
     let placing = Arc::clone(&viewports);
     let drawing = Arc::clone(&viewports);
+    let selecting = Arc::clone(&viewports);
     base.channel::<FollowViewportChannel, _, _>(move |input| {
         let viewports = Arc::clone(&opening);
         async move { viewports.open(input.project_id).await }
@@ -251,6 +282,10 @@ pub(crate) fn handlers(
     .command::<SetViewportColorCommand, _, _>(move |input| {
         let viewports = Arc::clone(&drawing);
         async move { viewports.preview(input).await }
+    })
+    .command::<SetViewportSelectionCommand, _, _>(move |input| {
+        let viewports = Arc::clone(&selecting);
+        async move { viewports.select(input).await }
     })
     .command::<CommitViewportColorCommand, _, _>(move |input| {
         let viewports = Arc::clone(&viewports);

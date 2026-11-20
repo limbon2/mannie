@@ -12,6 +12,7 @@ const core = vi.hoisted(() => ({
   placeViewport: vi.fn(),
   readViewportDocument: vi.fn(),
   setViewportColor: vi.fn(),
+  setViewportSelection: vi.fn(),
   unsubscribe: vi.fn(),
 }));
 
@@ -22,6 +23,7 @@ vi.mock('../../../ui/generated/bindings.js', () => ({
     placeViewport: core.placeViewport,
     readViewportDocument: core.readViewportDocument,
     setViewportColor: core.setViewportColor,
+    setViewportSelection: core.setViewportSelection,
   },
 }));
 vi.mock('@mannie/plugin-sdk/ipc', async (original) => ({
@@ -48,7 +50,17 @@ const shown = {
 const ok = { data: null, status: 'ok' };
 
 function snapshot(hue = 0, revision = 1): DocumentSnapshot {
-  return { element: { height: 160, hue, id: 'rectangle', width: 240, x: 64, y: 64 }, revision };
+  return {
+    element: {
+      height: 160,
+      hue,
+      id: 'rectangle',
+      width: 240,
+      x: 64,
+      y: 64,
+    },
+    revision,
+  };
 }
 
 function readResult(hue = 0, revision = 1) {
@@ -68,6 +80,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   core.followViewport.mockResolvedValue({ data: 2, status: 'ok' });
   core.setViewportColor.mockResolvedValue(ok);
+  core.setViewportSelection.mockResolvedValue(ok);
   core.placeViewport.mockResolvedValue(ok);
   core.readViewportDocument.mockResolvedValue(readResult());
   core.commitViewportColor.mockImplementation((input: CommitViewportColor) =>
@@ -76,6 +89,125 @@ beforeEach(() => {
 });
 
 describe('the Designer viewport', () => {
+  it('coalesces pending selection draws and leaves the document revision untouched', async () => {
+    const pending = Promise.withResolvers<typeof ok>();
+    core.setViewportSelection.mockReturnValueOnce(pending.promise);
+    const session = new ProjectViewport('drawing');
+    session.place(shown);
+    await session.open();
+    ready('current');
+    await vi.waitFor(() => expect(session.canSelect).toBe(true));
+
+    session.select({ kind: 'select' });
+    session.select({ kind: 'clear' });
+    session.select({ kind: 'select' });
+    session.select({ kind: 'clear' });
+    expect(core.setViewportSelection).toHaveBeenCalledExactlyOnceWith({
+      projectId: 'drawing',
+      lease: 'current',
+      elementId: 'rectangle',
+    });
+    expect(session.selectedId).toBeNull();
+    pending.resolve(ok);
+    await vi.waitFor(() => expect(core.setViewportSelection).toHaveBeenCalledTimes(2));
+    expect(core.setViewportSelection).toHaveBeenLastCalledWith({
+      projectId: 'drawing',
+      lease: 'current',
+      elementId: null,
+    });
+    expect(session.selectedId).toBeNull();
+    expect(session.confirmed).toEqual(snapshot());
+    expect(core.commitViewportColor).not.toHaveBeenCalled();
+  });
+
+  it('keeps selection across resize, hue changes, and a covered canvas that refuses input', async () => {
+    const session = new ProjectViewport('drawing');
+    session.place(shown);
+    await session.open();
+    ready('current');
+    await vi.waitFor(() => expect(session.canSelect).toBe(true));
+    session.select({ kind: 'select' });
+    await vi.waitFor(() => expect(session.selectedId).toBe('rectangle'));
+
+    session.place({ ...shown, visible: false });
+    expect(session.canSelect).toBe(false);
+    session.select({ kind: 'clear' });
+    session.place({ ...shown, bounds: { ...rect, width: 260 } });
+    await vi.waitFor(() => expect(session.canSelect).toBe(true));
+    session.commitHue(120);
+    await vi.waitFor(() => expect(session.confirmed?.element.hue).toBe(120));
+    expect(core.setViewportSelection).toHaveBeenCalledTimes(1);
+    expect(session.selectedId).toBe('rectangle');
+  });
+
+  it('uses pointer input only at the acknowledged placement while keeping the keyboard available during resize', async () => {
+    const pending = Promise.withResolvers<typeof ok>();
+    const latest = Promise.withResolvers<typeof ok>();
+    const session = new ProjectViewport('drawing');
+    const bounds = { ...rect, height: 160 };
+    const initial = { ...shown, bounds, clip: bounds };
+    session.place(initial);
+    await session.open();
+    ready('current');
+    await vi.waitFor(() => expect(session.canSelect).toBe(true));
+    session.select({ kind: 'select' });
+    await vi.waitFor(() => expect(session.selectedId).toBe('rectangle'));
+
+    const moved = { ...bounds, x: rect.x + 5 };
+    const resized = { ...moved, width: moved.width + 10 };
+    const client = { x: 30, y: 30 };
+    // The DOM moved before its observer has measured the new bounds.
+    session.select({ kind: 'point', client, bounds: moved });
+    expect(core.setViewportSelection).toHaveBeenCalledTimes(1);
+
+    core.placeViewport.mockReturnValueOnce(pending.promise).mockReturnValueOnce(latest.promise);
+    session.place({ ...initial, bounds: moved, clip: moved });
+    session.select({ kind: 'point', client, bounds: moved });
+    session.place({ ...initial, bounds: resized, clip: resized });
+    pending.resolve(ok);
+    await vi.waitFor(() => expect(core.placeViewport).toHaveBeenCalledTimes(3));
+    session.select({ kind: 'point', client, bounds: resized });
+    expect(session.canSelect).toBe(true);
+    session.select({ kind: 'clear' });
+    // This pointer hit would restore the rectangle if the stale acknowledgement enabled pointing.
+    session.select({ kind: 'point', client: { x: 85, y: 90 }, bounds: resized });
+    latest.resolve(ok);
+    await vi.waitFor(() => expect(session.selectedId).toBeNull());
+    expect(core.setViewportSelection).toHaveBeenCalledTimes(2);
+    session.select({ kind: 'select' });
+    await vi.waitFor(() => expect(session.selectedId).toBe('rectangle'));
+    session.select({ kind: 'point', client, bounds: resized });
+    await vi.waitFor(() => expect(session.selectedId).toBeNull());
+  });
+
+  it('disables selection on a drawing failure, reopens clear and ignores a late draw from the closed lease', async () => {
+    const session = new ProjectViewport('drawing');
+    session.place(shown);
+    await session.open();
+    ready('first');
+    await vi.waitFor(() => expect(session.canSelect).toBe(true));
+    core.setViewportSelection.mockResolvedValueOnce({
+      status: 'error',
+      error: { origin: 'plugin', code: 'render_failed' },
+    });
+    session.select({ kind: 'select' });
+    await vi.waitFor(() => expect(session.failure?.retry).toBe(true));
+    expect(session.selectedId).toBeNull();
+    expect(session.canSelect).toBe(false);
+
+    await session.open();
+    ready('second', 1);
+    await vi.waitFor(() => expect(session.canSelect).toBe(true));
+    const pending = Promise.withResolvers<typeof ok>();
+    core.setViewportSelection.mockReturnValueOnce(pending.promise);
+    session.select({ kind: 'select' });
+    session.close();
+    pending.resolve(ok);
+    await pending.promise;
+    expect(session.selectedId).toBeNull();
+    expect(session.canSelect).toBe(false);
+  });
+
   it('restores the project color before showing the native scene and keeps projects separate', async () => {
     core.readViewportDocument.mockResolvedValueOnce(readResult(360));
     const session = new ProjectViewport('color');

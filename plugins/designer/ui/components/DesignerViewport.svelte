@@ -9,11 +9,14 @@
   import type { ProjectView } from '../generated/bindings.js';
   import { m } from '../generated/messages.js';
   import { ProjectViewport } from '../state/viewport.svelte.js';
+  import { hasGeometry } from '../utils/canvas-selection.js';
   import { watchViewport } from '../utils/viewport-placement.js';
 
   interface Props {
     project: ProjectView;
   }
+
+  type CanvasClick = MouseEvent & { currentTarget: HTMLElement };
 
   let { project }: Props = $props();
 
@@ -23,6 +26,19 @@
 
   const formattedHue = $derived(m.designer_hue_degrees({ value: formatCount(viewport.hue) }));
   const sceneReady = $derived(viewport.confirmed !== null && viewport.failure === null);
+  const selectionText = $derived.by(() => {
+    const element = viewport.confirmed?.element;
+    const selected = element?.id === viewport.selectedId;
+    if (!selected || !hasGeometry(element)) {
+      return m.designer_selection_empty();
+    }
+    return m.designer_selection_rectangle({
+      height: formatCount(element.height),
+      width: formatCount(element.width),
+      x: formatCount(element.x),
+      y: formatCount(element.y),
+    });
+  });
 
   function followBounds(element: HTMLElement): () => void {
     // Initial placement can read the selected hue while sending IPC. A hue edit must keep this observer.
@@ -52,6 +68,29 @@
   function cancelOnEscape(event: KeyboardEvent): void {
     if (event.key === 'Escape') {
       viewport.cancelPreview();
+    }
+  }
+
+  function activateCanvas(event: CanvasClick): void {
+    // Enter, Space and assistive technology activate a native button without pointer coordinates.
+    if (event.detail === 0) {
+      viewport.select({ kind: 'select' });
+      return;
+    }
+    const primary = event.button === 0;
+    const placeholder = event.currentTarget.parentElement;
+    if (primary && placeholder) {
+      const bounds = placeholder.getBoundingClientRect();
+      viewport.select({ kind: 'point', client: { x: event.clientX, y: event.clientY }, bounds });
+    }
+  }
+
+  function clearOnEscape(event: KeyboardEvent): void {
+    const escape = event.key === 'Escape';
+    if (escape && viewport.canSelect) {
+      event.preventDefault();
+      event.stopPropagation();
+      viewport.select({ kind: 'clear' });
     }
   }
 
@@ -107,13 +146,19 @@
     class="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden border bg-muted"
     data-designer-viewport=""
   >
-    <div
-      class="absolute inset-0"
-      {@attach followBounds}
-      aria-label={sceneReady ? m.designer_viewport_scene({ hue: formattedHue }) : undefined}
-      role={sceneReady ? 'img' : undefined}
-      tabindex="-1"
-    ></div>
+    <div class="absolute inset-0" {@attach followBounds}>
+      <Button
+        class="size-full rounded-none"
+        aria-describedby={`${labelId}-instructions ${labelId}-selection`}
+        aria-label={m.designer_canvas_name()}
+        data-designer-canvas=""
+        disabled={!viewport.canSelect}
+        variant="ghost"
+        onclick={activateCanvas}
+        onkeydown={clearOnEscape}
+      />
+    </div>
+
     {#if viewport.failure !== null}
       <Alert.Root class="relative mx-4 max-w-md" data-designer-viewport-error="">
         <Alert.Description>
@@ -127,9 +172,24 @@
       <p class="relative text-sm text-muted-foreground" role="status">{m.designer_viewport_loading()}</p>
     {/if}
   </div>
+
+  <div class="sr-only">
+    <p id={`${labelId}-instructions`}>
+      {m.designer_canvas_instructions()}
+      {m.designer_viewport_scene({ hue: formattedHue })}
+    </p>
+
+    <p id={`${labelId}-selection`} data-designer-selection="" role="status">{sceneReady ? selectionText : ''}</p>
+  </div>
 </div>
 
 <style>
+  /* The native child covers the placeholder. Keep keyboard focus visible outside its bounds. */
+  [data-designer-viewport]:has(:global([data-designer-canvas]:focus-visible)) {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
   [data-designer-hue-track] :global([data-slot='slider-track']) {
     background: linear-gradient(to right, red, yellow, lime, cyan, blue, magenta, red);
   }

@@ -60,11 +60,12 @@ export interface WindowState {
   readonly visible: boolean;
 }
 
-/** A native child and two GPU pixels sampled from its last presented frame. */
+/** A native child and GPU pixel samples from its last presented frame. */
 export interface GraphicsSurface {
   readonly center: readonly number[] | null;
   readonly corner: readonly number[] | null;
   readonly height: number;
+  readonly outlineEdge: readonly (readonly number[])[] | null;
   readonly visible: boolean;
   readonly width: number;
   readonly x: number;

@@ -4,7 +4,8 @@
 use std::sync::{Arc, mpsc};
 
 use mannie_plugin_sdk::services::graphics::{
-    GraphicsColor, GraphicsError, GraphicsPlacement, GraphicsRect, GraphicsRectangle, GraphicsScene,
+    GraphicsColor, GraphicsError, GraphicsPlacement, GraphicsRect, GraphicsRectangle,
+    GraphicsScene, GraphicsShape, GraphicsTransform,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Gdi::{InvalidateRect, UpdateWindow};
@@ -52,10 +53,15 @@ fn placement() -> GraphicsPlacement {
     GraphicsPlacement::new(bounds, bounds, 1.5, true)
 }
 
-fn scene() -> GraphicsScene {
+fn scene() -> Arc<GraphicsScene> {
     let background = GraphicsColor::new(241, 231, 245);
-    let rectangle = GraphicsRectangle::new(0.25, 0.25, 0.5, 0.5, GraphicsColor::new(12, 56, 217));
-    GraphicsScene::new(background, rectangle)
+    let rectangle = GraphicsRectangle::new(25.0, 20.0, 50.0, 40.0, GraphicsColor::new(12, 56, 217));
+    Arc::new(GraphicsScene::new(
+        background,
+        GraphicsTransform::IDENTITY,
+        vec![GraphicsShape::Rectangle(rectangle)],
+        vec![],
+    ))
 }
 
 fn child_handle(lease: u64) -> HWND {
@@ -125,7 +131,7 @@ fn real_wgl_tracks_scale_and_restores_after_the_parent_hides_or_minimizes() {
 
     for (scale, width) in [(1.0, 100), (2.25, 225), (1.5, 150)] {
         placement.scale_factor = scale;
-        render(3, &placement, &scene).unwrap();
+        render(3, &placement, Arc::clone(&scene)).unwrap();
 
         let surface = &reports()[0];
         assert_eq!(surface.width, width);
@@ -136,8 +142,12 @@ fn real_wgl_tracks_scale_and_restores_after_the_parent_hides_or_minimizes() {
         // SAFETY: parent is this thread's offscreen test window.
         let _hidden = unsafe { ShowWindow(parent.hwnd, mode) };
         SURFACES.with_borrow_mut(|surfaces| surfaces.get_mut(&3).unwrap().renderer.pixels = None);
-        scene.rectangle.color.green += 5;
-        render(3, &placement, &scene).unwrap();
+
+        let GraphicsShape::Rectangle(rectangle) = &mut Arc::make_mut(&mut scene).shapes[0];
+        rectangle.color.green += 5;
+
+        let green = rectangle.color.green;
+        render(3, &placement, Arc::clone(&scene)).unwrap();
         assert!(SURFACES.with_borrow(|surfaces| surfaces[&3].renderer.pixels.is_none()));
         // SAFETY: restore this thread's window without activating it.
         let _shown = unsafe { ShowWindow(parent.hwnd, SW_SHOWNOACTIVATE) };
@@ -153,7 +163,7 @@ fn real_wgl_tracks_scale_and_restores_after_the_parent_hides_or_minimizes() {
         let _updated = unsafe { UpdateWindow(child) };
         let surface = &reports()[0];
         assert!(surface.visible);
-        assert_eq!(surface.center, Some([12, scene.rectangle.color.green, 217]));
+        assert_eq!(surface.center, Some([12, green, 217]));
     }
 
     close(3);
@@ -176,7 +186,7 @@ fn real_wgl_presents_repaints_and_releases_the_native_child() {
     let child = child_handle(1);
     let mut placement = placement();
     let scene = scene();
-    render(1, &placement, &scene).unwrap();
+    render(1, &placement, Arc::clone(&scene)).unwrap();
 
     let report = &reports()[0];
     assert!(report.visible);
@@ -197,11 +207,11 @@ fn real_wgl_presents_repaints_and_releases_the_native_child() {
     assert_eq!(reports()[0].center, Some([12, 56, 217]));
 
     placement.visible = false;
-    render(1, &placement, &scene).unwrap();
+    render(1, &placement, Arc::clone(&scene)).unwrap();
     assert!(!reports()[0].visible);
     placement.visible = true;
     placement.clip.width = 10.0;
-    render(1, &placement, &scene).unwrap();
+    render(1, &placement, scene).unwrap();
     assert_eq!(reports()[0].width, 15);
     assert_eq!(reports()[0].center, Some([241, 231, 245]));
 

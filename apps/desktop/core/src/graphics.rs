@@ -31,6 +31,7 @@ pub(crate) struct GraphicsSurfaceReport {
     pub(crate) height: i32,
     pub(crate) center: Option<[u8; 3]>,
     pub(crate) corner: Option<[u8; 3]>,
+    pub(crate) outline_edge: Option<[[u8; 3]; 4]>,
 }
 
 #[cfg(not(windows))]
@@ -48,7 +49,7 @@ mod platform {
     pub(super) fn render(
         _id: u64,
         _placement: &GraphicsPlacement,
-        _scene: &GraphicsScene,
+        _scene: Arc<GraphicsScene>,
     ) -> Result<(), GraphicsError> {
         Err(GraphicsError::UnsupportedPlatform)
     }
@@ -163,7 +164,7 @@ struct Surface {
     id: u64,
     token: String,
     scope: GraphicsView,
-    scene: GraphicsScene,
+    scene: Arc<GraphicsScene>,
     placement: Option<GraphicsPlacement>,
     failed: mpsc::Sender<GraphicsError>,
 }
@@ -233,13 +234,13 @@ impl BoundGraphics {
                     (
                         surface.id,
                         surface.placement,
-                        surface.scene,
+                        Arc::clone(&surface.scene),
                         surface.failed.clone(),
                     )
                 };
 
                 if let Some(placement) = placement {
-                    platform::render(id, &placement, &scene).inspect_err(|error| {
+                    platform::render(id, &placement, scene).inspect_err(|error| {
                         let _reported = failed.try_send(*error);
                     })?;
                 }
@@ -275,7 +276,7 @@ impl BoundGraphics {
                 id,
                 token: token.clone(),
                 scope,
-                scene,
+                scene: Arc::new(scene),
                 placement: None,
                 failed: failed.clone(),
             })
@@ -370,12 +371,12 @@ impl GraphicsApi for BoundGraphics {
         lease: String,
         scene: GraphicsScene,
     ) -> BoxFuture<'static, Result<(), GraphicsError>> {
-        self.update(scope, lease, move |surface| {
-            if !scene.valid() {
-                return Err(GraphicsError::InvalidPlacement);
-            }
+        if !scene.valid() {
+            return Box::pin(std::future::ready(Err(GraphicsError::InvalidPlacement)));
+        }
 
-            surface.scene = scene;
+        self.update(scope, lease, move |surface| {
+            surface.scene = Arc::new(scene);
             Ok(())
         })
     }
@@ -384,13 +385,13 @@ impl GraphicsApi for BoundGraphics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mannie_plugin_sdk::services::graphics::{GraphicsColor, GraphicsRectangle};
+    use mannie_plugin_sdk::services::graphics::{GraphicsColor, GraphicsTransform};
 
     #[test]
     fn replaced_project_cannot_draw_move_or_close_its_successor() {
         let red = GraphicsColor::new(255, 0, 0);
         let scope = GraphicsView::new("designer", "second");
-        let scene = GraphicsScene::new(red, GraphicsRectangle::new(0.2, 0.2, 0.6, 0.6, red));
+        let scene = GraphicsScene::new(red, GraphicsTransform::IDENTITY, vec![], vec![]);
         let (failed, _errors) = mpsc::channel(1);
         let mut state = BindingState {
             revoked: false,
@@ -398,7 +399,7 @@ mod tests {
                 id: 2,
                 token: "new".into(),
                 scope: scope.clone(),
-                scene,
+                scene: Arc::new(scene),
                 placement: None,
                 failed,
             }),

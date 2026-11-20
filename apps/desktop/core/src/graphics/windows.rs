@@ -70,7 +70,7 @@ struct Surface {
     child: Child,
     parent: HWND,
     on_failure: Failure,
-    request: Option<(GraphicsPlacement, GraphicsScene)>,
+    request: Option<(GraphicsPlacement, Arc<GraphicsScene>)>,
     area: Option<DrawingArea>,
     layout_pending: bool,
 }
@@ -104,13 +104,9 @@ impl Surface {
     fn place(
         &mut self,
         placement: &GraphicsPlacement,
-        scene: &GraphicsScene,
+        scene: Arc<GraphicsScene>,
     ) -> Result<(), GraphicsError> {
-        if !placement.valid() || !scene.valid() {
-            return Err(GraphicsError::InvalidPlacement);
-        }
-
-        self.request = Some((*placement, *scene));
+        self.request = Some((*placement, scene));
         self.layout()
     }
 
@@ -323,7 +319,7 @@ fn open_child(parent: HWND, lease: u64, on_failure: Failure) -> Result<(), Graph
 pub(super) fn render(
     lease: u64,
     placement: &GraphicsPlacement,
-    scene: &GraphicsScene,
+    scene: Arc<GraphicsScene>,
 ) -> Result<(), GraphicsError> {
     SURFACES.with_borrow_mut(|surfaces| {
         let surface = surfaces.get_mut(&lease).ok_or(GraphicsError::StaleLease)?;

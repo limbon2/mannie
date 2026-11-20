@@ -7,6 +7,8 @@
 | Deciders | Owner                                                                                                             |
 | Related  | [Plugin SDK](0034-build-plugins-on-a-plugin-sdk.md), [Designer viewport](../../plugins/designer/docs/viewport.md) |
 
+Later changes: [ADR-0075](0075-draw-bounded-graphics-scenes-in-document-coordinates.md) replaces the service major in decision 1 and the drawing contract in decision 5.
+
 ## Context
 
 Designer needs to present live 2D graphics inside its main view. Its controls and the shell share the desktop webview. A native child window has its own stacking and focus rules, and can outlive the page that requested it.

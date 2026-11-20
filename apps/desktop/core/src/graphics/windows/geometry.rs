@@ -1,6 +1,8 @@
 //! Device-pixel placement and the offset of the native crop within a frame.
 
-use mannie_plugin_sdk::services::graphics::{GraphicsPlacement, GraphicsRect, GraphicsRectangle};
+use mannie_plugin_sdk::services::graphics::{
+    GraphicsPlacement, GraphicsRect, GraphicsRectangle, GraphicsTransform,
+};
 use skia_safe::Rect;
 use windows::Win32::Foundation::RECT;
 
@@ -10,7 +12,9 @@ pub(super) struct DrawingArea {
     pub(super) top: i32,
     pub(super) width: i32,
     pub(super) height: i32,
-    full: RECT,
+    origin_x: f64,
+    origin_y: f64,
+    scale: f64,
 }
 
 impl DrawingArea {
@@ -35,7 +39,9 @@ impl DrawingArea {
             top,
             width: right - left,
             height: bottom - top,
-            full,
+            origin_x: placement.bounds.x * placement.scale_factor - f64::from(left),
+            origin_y: placement.bounds.y * placement.scale_factor - f64::from(top),
+            scale: placement.scale_factor,
         })
     }
 
@@ -43,16 +49,15 @@ impl DrawingArea {
         clippy::cast_possible_truncation,
         reason = "bounded physical coordinates fit Skia's f32 canvas"
     )]
-    pub(super) fn rectangle(&self, rectangle: GraphicsRectangle) -> Rect {
-        let full_width = f64::from(self.full.right - self.full.left);
-        let full_height = f64::from(self.full.bottom - self.full.top);
-        let x = f64::from(self.full.left - self.left) + rectangle.x * full_width;
-        let y = f64::from(self.full.top - self.top) + rectangle.y * full_height;
-        Rect::from_xywh(
-            x as f32,
-            y as f32,
-            (rectangle.width * full_width) as f32,
-            (rectangle.height * full_height) as f32,
+    pub(super) fn rectangle(&self, rectangle: GraphicsRectangle, view: GraphicsTransform) -> Rect {
+        let scale = view.zoom * self.scale;
+        let project_x = |x| (self.origin_x + (x - view.origin_x) * scale) as f32;
+        let project_y = |y| (self.origin_y + (y - view.origin_y) * scale) as f32;
+        Rect::new(
+            project_x(rectangle.x),
+            project_y(rectangle.y),
+            project_x(rectangle.x + rectangle.width),
+            project_y(rectangle.y + rectangle.height),
         )
     }
 }
@@ -91,9 +96,9 @@ mod tests {
             (area.left, area.top, area.width, area.height),
             (0, 24, 160, 80)
         );
-        let rect = GraphicsRectangle::new(0.25, 0.25, 0.5, 0.5, GraphicsColor::new(0, 0, 0));
+        let rect = GraphicsRectangle::new(25.0, 20.0, 50.0, 40.0, GraphicsColor::new(0, 0, 0));
         assert_eq!(
-            area.rectangle(rect),
+            area.rectangle(rect, GraphicsTransform::IDENTITY),
             Rect::from_xywh(30.0, 20.0, 100.0, 80.0)
         );
     }

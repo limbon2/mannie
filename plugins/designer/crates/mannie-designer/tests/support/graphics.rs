@@ -1,7 +1,7 @@
 //! Records what Designer sends to the desktop graphics service.
 
 use std::future::ready;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use futures_util::{StreamExt as _, stream};
@@ -28,9 +28,14 @@ pub(super) struct RecordingGraphics {
     open_error: Option<GraphicsError>,
     leases: Arc<AtomicUsize>,
     opening: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
+    fail_draw: Arc<AtomicBool>,
 }
 
 impl RecordingGraphics {
+    pub(super) fn fail_next_draw(&self) {
+        self.fail_draw.store(true, Ordering::Relaxed);
+    }
+
     pub(super) fn delay_next_ready(&self) -> oneshot::Sender<()> {
         let (send, receive) = oneshot::channel();
         *self
@@ -129,6 +134,9 @@ impl GraphicsApi for RecordingGraphics {
     ) -> BoxFuture<'static, Result<(), GraphicsError>> {
         if lease != format!("lease-{}", self.leases.load(Ordering::Relaxed)) {
             return Box::pin(ready(Err(GraphicsError::StaleLease)));
+        }
+        if self.fail_draw.swap(false, Ordering::Relaxed) {
+            return Box::pin(ready(Err(GraphicsError::RenderFailed)));
         }
 
         self.recording().push(Call::Draw(scope, lease, scene));

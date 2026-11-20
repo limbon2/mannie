@@ -17,6 +17,7 @@ import {
   type ViewportError,
 } from '../generated/bindings.js';
 import { m } from '../generated/messages.js';
+import { nextSelection, type SelectionInput } from '../utils/canvas-selection.js';
 
 // The host has one surface per plugin view. An older, slow open must finish (and release a
 // late lease) before another project's open can reach the host and replace its surface.
@@ -84,13 +85,16 @@ export class ProjectViewport {
   failure = $state.raw<ViewportFailure | null>(null);
   documentError = $state<string | null>(null);
   confirmed = $state.raw<DocumentSnapshot | null>(null);
+  selectedId = $state<string | null>(null);
   sliderGeneration = $state(0);
   #generation = 0;
   #subscription: SubscriptionId | null = null;
   #lease: string | null = null;
   #placement: GraphicsPlacement | null = null;
-  #sentPlacement: GraphicsPlacement | null = null;
+  #appliedPlacement: GraphicsPlacement | null = null;
   #sentHue: number | null = null;
+  #wantedSelection: string | null = null;
+  #visible = $state(false);
   #readRequested = false;
   #commits: number[] = [];
   #draft = false;
@@ -120,6 +124,28 @@ export class ProjectViewport {
     return ready && !this.loading;
   }
 
+  get canSelect(): boolean {
+    return this.canEdit && this.#visible;
+  }
+
+  select(input: SelectionInput): void {
+    if (!this.canSelect || !this.confirmed || !this.#placement) {
+      return;
+    }
+    if (input.kind === 'point') {
+      // A resize or scroll can move the DOM before the observer runs or before the host presents its crop.
+      const { bounds } = this.#placement;
+      const sameOrigin = input.bounds.x === bounds.x && input.bounds.y === bounds.y;
+      const sameSize = input.bounds.width === bounds.width && input.bounds.height === bounds.height;
+      const current = this.#appliedPlacement === this.#placement;
+      if (!current || !sameOrigin || !sameSize) {
+        return;
+      }
+    }
+    this.#wantedSelection = nextSelection(this.#wantedSelection, input, this.confirmed.element, this.#placement.clip);
+    this.#update();
+  }
+
   commitHue(hue: number): void {
     if (!this.canEdit) {
       return;
@@ -145,7 +171,11 @@ export class ProjectViewport {
 
   place(placement: GraphicsPlacement): void {
     const previous = this.#placement;
+
     this.#placement = placement;
+    if (!placement.visible) {
+      this.#visible = false;
+    }
     const resized =
       previous?.bounds.width !== placement.bounds.width || previous.bounds.height !== placement.bounds.height;
     if (!placement.visible || resized) {
@@ -180,12 +210,14 @@ export class ProjectViewport {
         return this.#release();
       }
     });
+
     pendingOpen = Promise.all([pendingOpen, finished]).then(() => undefined);
   }
 
   /** Ends a pending open too. Its late subscription is released as soon as it arrives. */
   close(): void {
     const released = this.#release();
+
     pendingOpen = Promise.all([pendingOpen, released]).then(() => undefined);
   }
 
@@ -194,8 +226,11 @@ export class ProjectViewport {
     this.#lease = null;
     this.#updating = false;
     this.#committing = false;
-    this.#sentPlacement = null;
+    this.#appliedPlacement = null;
     this.#sentHue = null;
+    this.#wantedSelection = null;
+    this.selectedId = null;
+    this.#visible = false;
     this.#readRequested = false;
     this.#commits = [];
     this.#lastCommit = null;
@@ -319,9 +354,16 @@ export class ProjectViewport {
       return;
     }
     this.confirmed = outcome.data;
+    if (this.selectedId !== outcome.data.element.id) {
+      this.selectedId = null;
+    }
+    if (this.#wantedSelection !== outcome.data.element.id) {
+      this.#wantedSelection = null;
+    }
     this.hue = outcome.data.element.hue;
     this.#sentHue = this.hue;
     const retry = this.#retryEdit;
+
     this.#retryEdit = null;
     const stillCurrent = retry?.revision === outcome.data.revision && retry.elementId === outcome.data.element.id;
     if (stillCurrent) {
@@ -362,7 +404,7 @@ export class ProjectViewport {
     const { lease } = target;
     while (this.#lease === lease) {
       const placement = this.#placement;
-      const needPlacement = placement !== this.#sentPlacement;
+      const needPlacement = placement !== this.#appliedPlacement;
       const hideFirst = needPlacement && placement?.visible === false;
       if (this.#readRequested && !hideFirst) {
         await this.#read(target);
@@ -372,6 +414,7 @@ export class ProjectViewport {
       const hasCommit = nextCommit !== undefined;
       if (hasCommit && this.confirmed) {
         this.#committing = true;
+
         await this.#commit(target, this.confirmed, nextCommit);
         if (this.#lease === lease) {
           this.#committing = false;
@@ -380,13 +423,17 @@ export class ProjectViewport {
       }
       const hue = this.hue;
       const needHue = this.confirmed !== null && this.documentError === null && hue !== this.#sentHue;
+      const selection = this.#wantedSelection;
+      const needSelection = this.canSelect && selection !== this.selectedId;
+      const place = placement && needPlacement && (!placement.visible || !needHue);
       let update: () => ReturnType<typeof commands.placeViewport>;
-      if (placement && needPlacement && (!placement.visible || !needHue)) {
-        this.#sentPlacement = placement;
+      if (place) {
         update = () => commands.placeViewport({ ...target, placement });
       } else if (needHue) {
         this.#sentHue = hue;
         update = () => commands.setViewportColor({ ...target, hue });
+      } else if (needSelection) {
+        update = () => commands.setViewportSelection({ ...target, elementId: selection });
       } else {
         this.loading = false;
         this.#updating = false;
@@ -399,6 +446,14 @@ export class ProjectViewport {
       if (!outcome.ok) {
         this.#fail(callFailure(outcome.failure));
         return;
+      }
+      if (place) {
+        this.#appliedPlacement = placement;
+        if (placement === this.#placement) {
+          this.#visible = placement.visible;
+        }
+      } else if (needSelection && !needHue) {
+        this.selectedId = selection;
       }
     }
   }

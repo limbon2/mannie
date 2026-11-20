@@ -14,6 +14,8 @@ const ENTRY = '[data-shell-sidebar="bar"] nav a[href*="view=designer"]';
 const ADD = '[data-designer-projects-add]';
 const SLIDER = '[data-designer-hue] [role="slider"]';
 const PLACEHOLDER = '[data-designer-viewport] > div.absolute';
+const CANVAS = '[data-designer-canvas]';
+const OUTLINE = [255, 255, 255];
 const DOCUMENT_ERROR = '[data-designer-document-error]';
 const RED = [255, 0, 0];
 const NEAR_RED = [255, 4, 0];
@@ -23,7 +25,7 @@ const SECOND_RECTANGLE = { height: 118, width: 190, x: 47, y: 87 };
 const visibleTestWindow = process.platform === 'win32' && process.env.MANNIE_E2E_SHOW_WINDOW !== undefined;
 const readScreen = fileURLToPath(new URL('./support/screen-pixels.ps1', import.meta.url));
 
-type DesktopAction = 'Click' | 'Offscreen' | 'Restore' | 'Sample' | 'Show';
+type DesktopAction = 'Click' | 'Edge' | 'Offscreen' | 'Restore' | 'Sample' | 'Show';
 
 async function desktopWindow(action: DesktopAction, bounds: readonly number[] = []): Promise<string> {
   const pid = await processId();
@@ -190,6 +192,99 @@ async function rectangleScreenBounds(rectangle = SEED): Promise<number[]> {
   );
 }
 
+async function clickCanvas(x: number, y: number): Promise<void> {
+  await browser.waitUntil(
+    () =>
+      browser.execute(
+        (selector, localX, localY) => {
+          const canvas = document.querySelector<HTMLButtonElement>(selector);
+          if (!canvas || canvas.disabled) {
+            return false;
+          }
+          const bounds = canvas.getBoundingClientRect();
+          return canvas === document.elementFromPoint(bounds.x + localX, bounds.y + localY);
+        },
+        CANVAS,
+        x,
+        y,
+      ),
+    { timeoutMsg: 'the canvas did not become the pointer target after the shell overlay closed' },
+  );
+  const point = await browser.execute(
+    (selector, localX, localY) => {
+      const canvas = document.querySelector(selector)?.getBoundingClientRect();
+      if (!canvas) {
+        throw new Error('the Designer viewport is missing');
+      }
+      return { x: canvas.x + localX, y: canvas.y + localY, scale: devicePixelRatio };
+    },
+    PLACEHOLDER,
+    x,
+    y,
+  );
+  if (visibleTestWindow) {
+    await desktopWindow('Click', [Math.round(point.x * point.scale), Math.round(point.y * point.scale)]);
+    return;
+  }
+  await browser.performActions([
+    {
+      type: 'pointer',
+      id: 'designer-canvas',
+      parameters: { pointerType: 'mouse' },
+      actions: [
+        { type: 'pointerMove', duration: 0, x: Math.round(point.x), y: Math.round(point.y) },
+        { type: 'pointerDown', button: 0 },
+        { type: 'pointerUp', button: 0 },
+      ],
+    },
+  ]);
+  await browser.releaseActions();
+}
+
+async function checkSelectionAnnouncement(expected: string): Promise<void> {
+  await browser.waitUntil(
+    () =>
+      browser.execute(
+        (selector, message) => {
+          const canvas = document.querySelector(selector);
+          const status = document.querySelector('[data-designer-selection][role="status"]');
+          if (!canvas || !status) {
+            return false;
+          }
+          const describedBy = canvas.getAttribute('aria-describedby')?.split(/\s+/);
+          const announced = status.textContent.trim() === message;
+          return describedBy?.includes(status.id) && announced;
+        },
+        CANVAS,
+        expected,
+      ),
+    { timeoutMsg: `the canvas did not announce "${expected}"` },
+  );
+}
+
+/** Sample consecutive device pixels across the left edge, away from both corners. */
+async function checkSelectionEdge(selected: boolean): Promise<void> {
+  const expected = selected ? [BACKGROUND, OUTLINE, OUTLINE, RED] : [BACKGROUND, BACKGROUND, RED, RED];
+  await browser.waitUntil(
+    async () => {
+      const [surface] = await graphicsSurfaces();
+      const matches = JSON.stringify(surface?.outlineEdge) === JSON.stringify(expected);
+      return surface?.visible && matches;
+    },
+    { interval: 10, timeoutMsg: 'the native framebuffer did not show the expected selection edge' },
+  );
+  if (visibleTestWindow) {
+    const bounds = await rectangleScreenBounds();
+    await browser.waitUntil(
+      async () => {
+        const colors = (await desktopWindow('Edge', bounds)).split(/\r?\n/);
+        return colors.join('/') === expected.map(String).join('/');
+      },
+      { timeoutMsg: 'the composed rectangle edge did not show the expected selection' },
+    );
+  }
+}
+
 async function waitForHidden(): Promise<void> {
   await browser.waitUntil(async () => (await graphicsSurfaces()).every((surface) => !surface.visible));
 }
@@ -323,45 +418,49 @@ describe('Designer native viewport', () => {
     }
   });
 
-  it('focuses the webview placeholder at the middle of the native rectangle', async function () {
+  it('selects and clears the native rectangle with the pointer and keyboard', async function () {
     if (process.platform !== 'win32') {
       this.skip();
     }
-    if (visibleTestWindow) {
-      const [left = 0, top = 0, width = 0, height = 0] = await rectangleScreenBounds();
-      await desktopWindow('Click', [Math.round(left + width / 2), Math.round(top + height / 2)]);
-    } else {
-      const center = await browser.execute(
-        (selector, rectangle) => {
-          const viewport = document.querySelector(selector)?.getBoundingClientRect();
-          if (!viewport) {
-            throw new Error('the Designer viewport is missing');
-          }
-          return {
-            x: Math.round(viewport.x + rectangle.x + rectangle.width / 2),
-            y: Math.round(viewport.y + rectangle.y + rectangle.height / 2),
-          };
-        },
-        PLACEHOLDER,
-        SEED,
-      );
-      await browser.performActions([
-        {
-          type: 'pointer',
-          id: 'designer-canvas',
-          parameters: { pointerType: 'mouse' },
-          actions: [
-            { type: 'pointerMove', duration: 0, ...center },
-            { type: 'pointerDown', button: 0 },
-            { type: 'pointerUp', button: 0 },
-          ],
-        },
-      ]);
-      await browser.releaseActions();
-    }
-    await browser.waitUntil(() =>
-      browser.execute((selector) => document.activeElement === document.querySelector(selector), PLACEHOLDER),
+    const original = storedElement('First rectangle');
+    const selected = 'Rectangle selected. X 64, Y 64, width 240, height 160.';
+    const cleared = 'Nothing selected.';
+    const canvas = $(CANVAS);
+    await expect(canvas).toHaveAttribute('aria-label', 'Project canvas');
+    await browser.execute((selector) => document.querySelector<HTMLElement>(selector)?.focus(), SLIDER);
+    await browser.keys(Key.Tab);
+    await expect(canvas).toBeFocused();
+    const focusOutline = await browser.execute((selector) => {
+      const element = document.querySelector(selector);
+      return element && getComputedStyle(element).outlineStyle;
+    }, '[data-designer-viewport]');
+    expect(focusOutline).toBe('solid');
+    await browser.keys(Key.Enter);
+    await checkSelectionAnnouncement(selected);
+    await checkSelectionEdge(true);
+    await browser.keys(Key.Escape);
+    await expect(canvas).toBeFocused();
+    await checkSelectionAnnouncement(cleared);
+    await checkSelectionEdge(false);
+    await browser.keys(Key.Space);
+    await checkSelectionAnnouncement(selected);
+    await clickCanvas(8, 8);
+    await checkSelectionAnnouncement(cleared);
+    await checkSelectionEdge(false);
+
+    const started = performance.now();
+    await clickCanvas(SEED.x + SEED.width / 2, SEED.y + SEED.height / 2);
+    await checkSelectionEdge(true);
+    console.info(
+      `Designer click to observed native outline, including driver round trips: ${(performance.now() - started).toFixed(1)} ms`,
     );
+    await expect(canvas).toBeFocused();
+    await checkSelectionAnnouncement(selected);
+    expect(await axeViolations()).toEqual([]);
+    await clickCanvas(8, 8);
+    await checkSelectionAnnouncement(cleared);
+    await checkSelectionEdge(false);
+    expect(storedElement('First rectangle')).toEqual(original);
   });
 
   it('presents live slider changes, yields to overlays and releases replaced surfaces', async function () {
@@ -458,13 +557,17 @@ describe('Designer native viewport', () => {
     await waitForHidden();
     await browser.keys(Key.Escape);
     await checkHue(1, NEAR_RED);
+    await clickCanvas(SEED.x + 8, SEED.y + 8);
+    await checkSelectionAnnouncement('Rectangle selected. X 64, Y 64, width 240, height 160.');
     await createProject('Second rectangle');
     await checkHue(0, RED);
+    await checkSelectionAnnouncement('Nothing selected.');
     await $(SLIDER).click();
     await browser.keys(Key.End);
     await checkHue(360, RED);
     await clickWithText('[data-designer-projects] button', 'First rectangle');
     await checkHue(1, NEAR_RED);
+    await checkSelectionAnnouncement('Nothing selected.');
     expect(await graphicsSurfaces()).toHaveLength(1);
     await openSettings('plugins.settings');
     await browser.waitUntil(async () => (await graphicsSurfaces()).length === 0);
