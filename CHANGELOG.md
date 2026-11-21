@@ -4,6 +4,8 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+## 0.8.6 - 2026-11-21
+
 ### Added
 
 - Send desktop notifications when an unfocused Mannie asks a question, needs tool approval, finishes a reply or hits a failure, mark unread finished conversations in the sidebar, show the attention count on the taskbar icon, badge the system tray icon until handled and configure them under Settings -> Notifications.
