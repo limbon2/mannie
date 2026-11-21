@@ -11,6 +11,7 @@ pub(crate) mod child_agents;
 pub(crate) mod export;
 pub(crate) mod interface;
 pub(crate) mod links;
+pub(crate) mod notifications;
 pub(crate) mod plans;
 pub(crate) mod plugins;
 pub(crate) mod projects;

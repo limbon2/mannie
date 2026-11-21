@@ -4,6 +4,14 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+### Added
+
+- Send desktop notifications when an unfocused Mannie asks a question, needs tool approval, finishes a reply or hits a failure, mark unread finished conversations in the sidebar, show the attention count on the taskbar icon, badge the system tray icon until handled and configure them under Settings -> Notifications.
+
+### Fixed
+
+- Check the Notifications entry in the settings navigation test and stabilize terminal benchmark setup on Linux.
+
 ## 0.8.5 - 2026-11-20
 
 ### Added

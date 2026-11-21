@@ -135,8 +135,9 @@ async function openShell(shell?: string): Promise<void> {
   });
   const newTerminal = await $('[role="menuitem"]=New terminal');
   await newTerminal.waitForExist();
-  // Use the keyboard to reach New terminal in the scrollable menu.
-  await browser.keys(Key.End);
+  // Focus the submenu trigger directly so the benchmark setup does not depend
+  // on how the webview handles End in a scrollable menu.
+  await newTerminal.execute((element) => element.focus());
   await expect(newTerminal).toBeFocused();
   await browser.keys(Key.ArrowRight);
   const shown = async (): Promise<WebdriverIO.Element[]> =>

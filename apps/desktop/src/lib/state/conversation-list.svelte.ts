@@ -12,6 +12,7 @@ import {
   type ProjectView,
   type SubscriptionId,
 } from '#lib/generated/bindings.js';
+import { notifications } from '#lib/state/notifications.svelte.js';
 import type { Failure } from '#lib/types/calls.js';
 import { batchChannel, call } from '#lib/utils/calls.js';
 import { groupConversations, type GroupedConversations } from '#lib/utils/project-groups.js';
@@ -77,7 +78,9 @@ export class ConversationList {
   /** The Chat's conversations, without those that a plugin lists under its items, such as notebooks' chats. */
   readonly chats: ConversationSummary[] = $derived(this.conversations.filter(isChat));
   /** The Chat's conversations by project, as the sidebar shows them. */
-  readonly grouped: GroupedConversations = $derived(groupConversations(this.chats, this.projects));
+  readonly grouped: GroupedConversations = $derived(
+    groupConversations(this.chats, this.projects, notifications.unreadIds),
+  );
   /** Counts subscriptions, so that the updates of an ended one change nothing. */
   #generation = 0;
   /** The functions that hear of moves; no state, since nothing renders them. */

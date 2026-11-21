@@ -28,6 +28,7 @@ use mannie_runtime::{
 use mannie_store::{Store, StoreError, StoreOptions};
 use mannie_tools::{MutationLock, SystemFacts, ToolRegistry};
 use mannie_types::clock::{Clock, SystemClock};
+use mannie_types::notifications::NotificationSettings;
 use mannie_types::startup::StartupProblem;
 use mannie_types::updates::UpdatesSettings;
 use mannie_types::window::WindowSettings;
@@ -37,6 +38,7 @@ use crate::browser::BrowserProvider;
 use crate::credentials::{KeyringVault, SecretsProvider};
 use crate::file_dialog::FileDialogProvider;
 use crate::ipc::subscriptions::Subscriptions;
+use crate::notifications::Notifications;
 use crate::updates::{Automatic, Updates};
 use crate::window::requests::WindowRequests;
 
@@ -65,6 +67,9 @@ struct Inner {
     window_settings: RwLock<WindowSettings>,
     window_requests: WindowRequests,
     subscriptions: Subscriptions,
+    /// Desktop notifications, unread finished conversations and tray badge
+    /// state (ADR-0074).
+    notifications: Notifications,
     /// Updates of the app. They exist without the store, and check and
     /// install only with it.
     updates: Updates,
@@ -227,11 +232,18 @@ impl Core {
         &self.inner.updates
     }
 
+    /// Desktop notifications, unread finished conversations and tray badge
+    /// state (ADR-0074).
+    pub(crate) fn notifications(&self) -> &Notifications {
+        &self.inner.notifications
+    }
+
     /// The window's page loads, for the first time or again: the old page's
     /// subscriptions end, and the new page subscribes again.
     pub(crate) fn page_loaded(&self) {
         self.inner.subscriptions.cancel_all();
         self.inner.window_requests.unsubscribe();
+        self.inner.notifications.page_loaded();
         // The Browser pane's pages float over the app; the old page's panes
         // are gone, so no page may stay (ADR-0064, decision 5).
         if let Ok(services) = &self.inner.services {
@@ -277,6 +289,7 @@ impl Core {
     /// it afterwards.
     pub(crate) async fn shutdown(&self) {
         self.inner.subscriptions.cancel_all();
+        self.inner.notifications.stop();
         self.inner.updates.stop();
         // Browser sessions end first, their processes before their folders,
         // so that no request of theirs outlives Mannie (ADR-0064, decision 4).
@@ -314,13 +327,17 @@ pub(crate) fn start(app: &App, plugins: Vec<PluginEntry>) -> Core {
         "Mannie is starting"
     );
     let updates = build_updates(app, &clock, &logging);
+    let notifications = Notifications::default();
     let file_dialog = Arc::new(FileDialogProvider::new(app.handle().clone()));
     let services = open_store(app, Arc::clone(&clock), plugins).and_then(|(store, plugins)| {
         let dialog = Arc::clone(&file_dialog);
         start_runtime(app, store, plugins, &redactor, dialog, clock)
     });
     match &services {
-        Ok(services) => start_updates(&updates, &services.store),
+        Ok(services) => {
+            start_updates(&updates, &services.store);
+            start_notifications(app, &notifications, &services.store, &services.runtime);
+        }
         Err(problem) => tracing::error!(?problem, "Mannie started without its database"),
     }
     let window_settings = services
@@ -333,6 +350,7 @@ pub(crate) fn start(app: &App, plugins: Vec<PluginEntry>) -> Core {
             window_settings: RwLock::new(window_settings),
             window_requests: WindowRequests::default(),
             subscriptions: Subscriptions::default(),
+            notifications,
             updates,
             logging,
             #[cfg(feature = "validation")]
@@ -633,6 +651,36 @@ fn protected_folder(folder: &Path) -> PathBuf {
             folder.to_path_buf()
         }
     }
+}
+
+/// Loads persisted notification settings and unread finished conversations,
+/// then begins following the runtime's owner signal stream (ADR-0074).
+fn start_notifications(app: &App, notifications: &Notifications, store: &Store, runtime: &Runtime) {
+    let settings = tauri::async_runtime::block_on(store.load_settings::<NotificationSettings>())
+        .unwrap_or_else(|error| {
+            tracing::warn!(
+                error = %ErrorChain(&error),
+                error.code = error.code(),
+                "could not read the notification settings; using defaults"
+            );
+            NotificationSettings::default()
+        });
+    let unread =
+        tauri::async_runtime::block_on(store.load_unread_conversations()).unwrap_or_else(|error| {
+            tracing::warn!(
+                error = %ErrorChain(&error),
+                error.code = error.code(),
+                "could not read unread conversations; starting empty"
+            );
+            Vec::new()
+        });
+    notifications.start(
+        app.handle().clone(),
+        store.clone(),
+        runtime,
+        settings,
+        unread,
+    );
 }
 
 /// The stored window settings, or the defaults when they cannot be read.

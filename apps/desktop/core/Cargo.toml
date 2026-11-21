@@ -70,6 +70,9 @@ tauri = {
     "x11",
   ]
 }
+# Sends native desktop notifications and handles clicks in Rust (ADR-0074). No
+# capability grants its commands, so the webview cannot trigger notifications.
+tauri-plugin-notification = { workspace = true }
 # Opens links in the system browser after the owner confirmed them (ADR-0003,
 # decision 3). Only its Rust function is used: the plugin is not registered,
 # so the webview has no opener command.
@@ -84,6 +87,8 @@ thiserror = { workspace = true }
 # UTC timestamps in exported Markdown. The workspace already uses time.
 time = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+# Cancellation token for the notifications signal observer (ADR-0074).
+tokio-util = { workspace = true }
 tracing = { workspace = true }
 # Browser permission scopes use canonical web origins.
 url = { workspace = true }

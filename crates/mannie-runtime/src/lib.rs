@@ -86,7 +86,9 @@ pub use assigned::{AssignError, AssignedTaskWatch, LeaseError};
 pub use background::CommandOutput;
 use custom_agents::CustomAgents;
 pub use custom_agents::{ORCHESTRATOR_KEY, PLAN_KEY};
-pub use hub::{ConversationSubscription, ListSubscription, SubscriptionLimits};
+pub use hub::{
+    ConversationSubscription, ListSubscription, OwnerSignal, SignalSubscription, SubscriptionLimits,
+};
 pub use instructions::{
     DuplicateSection, InstructionContext, InstructionRegistry, InstructionSection, MachineContext,
     SectionText, ToolEnvironment, builtin_sections, checkpoint_section,

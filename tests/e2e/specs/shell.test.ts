@@ -221,6 +221,7 @@ describe('the shell', () => {
       'Tools',
       'Child agents',
       'Window',
+      'Notifications',
       'Plugins',
       'Updates',
     ]);

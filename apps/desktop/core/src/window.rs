@@ -75,13 +75,31 @@ pub(crate) fn create_main(app: &App) -> Result<(), WindowError> {
     // The app webview has read WebView2's variables; browser sessions must
     // not (ADR-0064, decision 3).
     crate::browser::clear_engine_variables();
+
+    let initial_focused = brings_to_front()
+        && window.is_visible().unwrap_or(false)
+        && window.is_focused().unwrap_or(false);
+
+    if let Some(core) = app.try_state::<Core>() {
+        core.notifications()
+            .set_window_focused(app.handle(), core.store(), initial_focused);
+        core.notifications().refresh_taskbar(app.handle());
+    }
+
     let app = app.handle().clone();
-    window.on_window_event(move |event| {
-        if let WindowEvent::CloseRequested { api, .. } = event {
+    window.on_window_event(move |event| match event {
+        WindowEvent::CloseRequested { api, .. } => {
             // The core decides what closing does: hide, ask or quit.
             api.prevent_close();
             close::on_close_requested(&app);
         }
+        WindowEvent::Focused(focused) => {
+            if let Some(core) = app.try_state::<Core>() {
+                core.notifications()
+                    .set_window_focused(&app, core.store(), *focused);
+            }
+        }
+        _ => {}
     });
     Ok(())
 }
@@ -101,6 +119,10 @@ pub(crate) fn show_main(app: &AppHandle) {
     };
     if let Err(error) = shown {
         tracing::warn!(%error, "could not bring the main window to the front");
+    }
+
+    if let Some(core) = app.try_state::<Core>() {
+        core.notifications().refresh_taskbar(app);
     }
 }
 

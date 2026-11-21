@@ -84,6 +84,7 @@ deny = [
   { crate = "tauri", wrappers = [
     "mannie-desktop",
     "mannie-desktop-core",
+    "tauri-plugin-notification",
     "tauri-plugin-opener",
     "tauri-plugin-single-instance",
     "tauri-plugin-updater",

@@ -14,7 +14,7 @@ use tauri::{AppHandle, State};
 
 use crate::ipc::channel;
 use crate::state::Core;
-use crate::window::{close, tray};
+use crate::window::close;
 
 fn refused(command: &'static str) -> impl FnOnce(WindowError) -> CommandError<WindowError> {
     move |error| {
@@ -183,10 +183,11 @@ pub(crate) async fn update_window_settings(
 )]
 pub(crate) fn set_tray_labels(
     app: AppHandle,
+    core: State<'_, Core>,
     labels: TrayLabels,
 ) -> Result<(), CommandError<WindowError>> {
     labels.check().map_err(refused("set_tray_labels"))?;
-    if let Err(error) = tray::apply_labels(&app, &labels) {
+    if let Err(error) = core.notifications().apply_tray_labels(&app, &labels) {
         tracing::warn!(error = %ErrorChain(&error), "the tray could not be set up; Mannie runs without it");
     }
     Ok(())

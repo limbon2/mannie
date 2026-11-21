@@ -13,6 +13,7 @@
   import type { ConversationSummary } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
   import { chatActions } from '#lib/state/chat-actions.svelte.js';
+  import { notifications } from '#lib/state/notifications.svelte.js';
   import { conversationQuery, openConversationId } from '#lib/utils/chat-urls.js';
 
   // One conversation in the sidebar (docs/features/chat/conversation-view.md,
@@ -34,6 +35,7 @@
   const isOpen = $derived(conversation.id === openConversationId());
   const hasFullAccess = $derived(conversation.fullAccess ?? false);
   const awaitingAnswer = $derived(conversation.awaitingAnswer ?? false);
+  const isUnread = $derived(notifications.isUnread(conversation.id));
   // A project's conversations form a sub-list below the project's row.
   const Item = $derived(nested ? Sidebar.MenuSubItem : Sidebar.MenuItem);
   const RowButton = $derived(nested ? Sidebar.MenuSubButton : Sidebar.MenuButton);
@@ -69,6 +71,13 @@
           />
         {:else if conversation.hasActiveRun}
           <Spinner class="ms-auto" aria-label={m.chat_conversation_replying()} />
+        {:else if isUnread}
+          <span
+            class="ms-auto size-2 shrink-0 rounded-full bg-primary"
+            aria-label={m.chat_conversation_finished_unread()}
+            data-unread-mark=""
+            role="img"
+          ></span>
         {/if}
       </a>
     {/snippet}

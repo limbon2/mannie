@@ -9,6 +9,7 @@ import { registerAgents } from './agents.js';
 import { registerChat } from './chat.js';
 import { registerChildAgents } from './child-agents.js';
 import { registerExport } from './export.js';
+import { registerNotifications } from './notifications.js';
 import { registerPlans } from './plans.js';
 import { registerPlugins } from './plugins.js';
 import { registerSkills } from './skills.js';
@@ -23,6 +24,7 @@ export type FeatureRegistration = (slots: ShellSlots) => void;
 export const features: readonly FeatureRegistration[] = [
   registerChat,
   registerWindowAndTray,
+  registerNotifications,
   registerTools,
   registerChildAgents,
   registerAgents,

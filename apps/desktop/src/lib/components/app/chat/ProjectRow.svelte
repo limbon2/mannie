@@ -69,6 +69,13 @@
                 />
               {:else if !open && group.replying}
                 <Spinner class="ms-auto" aria-label={m.chat_project_replying()} />
+              {:else if !open && group.unread}
+                <span
+                  class="ms-auto size-2 shrink-0 rounded-full bg-primary"
+                  aria-label={m.chat_project_finished_unread()}
+                  data-unread-mark=""
+                  role="img"
+                ></span>
               {/if}
             </Sidebar.MenuButton>
           {/snippet}
