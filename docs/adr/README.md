@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                           |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Living index                                                                                                                                                                              |
-| Last updated | 2026-11-18                                                                                                                                                                                |
+| Last updated | 2026-11-21                                                                                                                                                                                |
 | Related      | [ADR-0001](0001-record-architecture-decisions.md), [Template](0000-template.md), [Decisions](../roadmap/milestones.md#5-decisions), [Validations](../roadmap/milestones.md#4-validations) |
 
 [ADR-0001](0001-record-architecture-decisions.md) describes the process, and new ADRs start from the [template](0000-template.md).
@@ -89,3 +89,4 @@ Each ADR has exactly one of these statuses:
 | [0069](0069-open-local-paths-from-agent-responses.md)                                  | Open local paths from agent responses                                                         | Accepted (D64)         | Tests      |
 | [0072](0072-remove-tool-round-and-call-caps.md)                                        | Remove tool-round and tool-call caps                                                          | Accepted (D67)         | Tests      |
 | [0073](0073-use-chatgpt-plan-models-directly.md)                                       | Use ChatGPT plan models directly                                                              | Accepted (D68)         | Tests      |
+| [0074](0074-send-desktop-notifications-and-badge-the-tray.md)                          | Send desktop notifications and badge the tray for conversation events                         | Accepted (D69)         | V14        |

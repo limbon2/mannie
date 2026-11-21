@@ -85,6 +85,25 @@ describe('groupConversations', () => {
     expect(byId.get('app')?.awaitingApproval).toBe(false);
     expect(byId.get('other')?.awaitingAnswer).toBe(false);
   });
+
+  it('marks a project unread when any of its conversations is unread, and false by default', () => {
+    const finished = conversation('finished', 'app', 10);
+    const quiet = conversation('quiet', 'other', 5);
+
+    const withoutUnread = groupConversations([finished, quiet], [project('app', 1), project('other', 2)]);
+    const byIdDefault = new Map(withoutUnread.projects.map((group) => [group.project.id, group]));
+    expect(byIdDefault.get('app')?.unread).toBe(false);
+    expect(byIdDefault.get('other')?.unread).toBe(false);
+
+    const withUnread = groupConversations(
+      [finished, quiet],
+      [project('app', 1), project('other', 2)],
+      new Set(['finished']),
+    );
+    const byId = new Map(withUnread.projects.map((group) => [group.project.id, group]));
+    expect(byId.get('app')?.unread).toBe(true);
+    expect(byId.get('other')?.unread).toBe(false);
+  });
 });
 
 describe('shownConversations', () => {

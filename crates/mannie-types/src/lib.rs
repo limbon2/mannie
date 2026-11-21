@@ -21,6 +21,7 @@ pub mod ipc;
 pub mod labels;
 pub mod links;
 pub mod mentions;
+pub mod notifications;
 pub mod plans;
 pub mod plugins;
 pub mod projects;

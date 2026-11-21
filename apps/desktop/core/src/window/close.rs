@@ -169,6 +169,10 @@ pub(crate) fn hide_main(app: &AppHandle) {
     if let Err(error) = window.hide() {
         tracing::warn!(%error, "could not hide the main window");
     }
+    if let Some(core) = app.try_state::<Core>() {
+        core.notifications()
+            .set_window_focused(app, core.store(), false);
+    }
 }
 
 /// Ends the event loop. `run` then shuts the core down: the runtime marks

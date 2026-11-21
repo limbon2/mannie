@@ -22,8 +22,8 @@ use tauri::Wry;
 use tauri_specta::{Builder, ErrorHandlingMode, collect_commands};
 
 use crate::commands::{
-    agents, chat, chatgpt, child_agents, export, interface, links, plans, plugins, projects,
-    providers, skills, startup, tools, updates, window,
+    agents, chat, chatgpt, child_agents, export, interface, links, notifications, plans, plugins,
+    projects, providers, skills, startup, tools, updates, window,
 };
 
 /// The first line of every generated file.
@@ -129,6 +129,11 @@ macro_rules! app_commands {
             window::get_window_settings,
             window::update_window_settings,
             window::set_tray_labels,
+            notifications::get_notification_settings,
+            notifications::update_notification_settings,
+            notifications::set_notification_labels,
+            notifications::set_viewed_conversation,
+            notifications::subscribe_notifications,
             tools::decide_approval,
             tools::answer_question,
             tools::set_full_access,
@@ -220,6 +225,9 @@ fn validation_builder() -> Builder<Wry> {
             crate::commands::validation::validation_set_update_offer,
             crate::commands::validation::validation_set_update_outcome,
             crate::commands::validation::validation_update_installs,
+            crate::commands::validation::validation_set_window_focused,
+            crate::commands::validation::validation_notifications_state,
+            crate::commands::validation::validation_click_notification,
         ])
 }
 
@@ -261,6 +269,9 @@ pub(crate) fn runtime_builder() -> Builder<Wry> {
                 crate::commands::validation::validation_set_update_offer,
                 crate::commands::validation::validation_set_update_outcome,
                 crate::commands::validation::validation_update_installs,
+                crate::commands::validation::validation_set_window_focused,
+                crate::commands::validation::validation_notifications_state,
+                crate::commands::validation::validation_click_notification,
             ])
     }
 }

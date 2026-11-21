@@ -4,6 +4,8 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+use crate::ids::ConversationId;
+use crate::notifications::NotificationKind;
 use crate::updates::UpdateFailureCode;
 
 /// The most simulated runs a channel load may have.
@@ -170,6 +172,40 @@ pub enum ValidationUpdateOffer {
         /// The code that the download fails with.
         code: UpdateFailureCode,
     },
+}
+
+/// One notification recorded by a validation build instead of posting a toast
+/// to the operating system (ADR-0074, decision 9).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordedNotification {
+    /// The notification identifier, which `validation_click_notification`
+    /// names to simulate a click.
+    pub id: i32,
+    /// What triggered the notification.
+    pub kind: NotificationKind,
+    /// The localized status title.
+    pub title: String,
+    /// The cleaned conversation title.
+    pub body: String,
+    /// The conversation the notification points to.
+    pub conversation_id: ConversationId,
+}
+
+/// The notifications, taskbar count and tray badge state of a validation build (V14).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidationNotificationsState {
+    /// Whether the core considers the main window focused.
+    pub window_focused: bool,
+    /// Whether the tray icon currently carries the badge.
+    pub tray_badged: bool,
+    /// The count currently shown on the taskbar or dock badge (`0` when hidden).
+    pub taskbar_badge_count: u32,
+    /// The conversations currently marked unread, sorted by ID.
+    pub unread_conversation_ids: Vec<ConversationId>,
+    /// Every notification recorded since startup, in order.
+    pub notifications: Vec<RecordedNotification>,
 }
 
 #[cfg(test)]

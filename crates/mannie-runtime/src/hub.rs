@@ -19,13 +19,73 @@ use std::sync::{Arc, Mutex, PoisonError};
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
 use mannie_store::{Applied, Change, Durability, EventsAfter, RuntimeStoreError, Store};
-use mannie_types::ids::{ConversationId, ProjectId};
+use mannie_types::ids::{ConversationId, PartId, ProjectId, RunId};
 use mannie_types::projects::ProjectView;
+use mannie_types::run::{RunActivity, RunState};
 use mannie_types::transcript::{
     ConversationEvent, ConversationListUpdate, ConversationSummary, ConversationUpdate,
     SubscriptionEnd,
 };
 use tokio::sync::mpsc;
+
+/// An owner-conversation lifecycle transition published by the runtime's event
+/// hub (ADR-0074, decision 3). Task conversations never emit signals.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OwnerSignal {
+    /// A run started or resumed active work (not waiting for the owner).
+    Active {
+        /// The conversation.
+        conversation_id: ConversationId,
+    },
+    /// A run completed its reply.
+    Completed {
+        /// The conversation.
+        conversation_id: ConversationId,
+        /// The conversation's current title.
+        title: String,
+        /// The completed run.
+        run_id: RunId,
+    },
+    /// A run ended with a failure.
+    Failed {
+        /// The conversation.
+        conversation_id: ConversationId,
+        /// The conversation's current title.
+        title: String,
+        /// The failed run.
+        run_id: RunId,
+    },
+    /// A run paused to wait for the owner's answer to `ask_owner`.
+    AwaitingAnswer {
+        /// The conversation.
+        conversation_id: ConversationId,
+        /// The conversation's current title.
+        title: String,
+        /// The call part waiting for an answer.
+        part_id: PartId,
+    },
+    /// A run paused to wait for the owner's approval of a tool call.
+    AwaitingApproval {
+        /// The conversation.
+        conversation_id: ConversationId,
+        /// The conversation's current title.
+        title: String,
+        /// The call part waiting for approval.
+        part_id: PartId,
+    },
+    /// A run ended because the owner stopped it or the process interrupted it.
+    EndedWithoutAlert {
+        /// The conversation.
+        conversation_id: ConversationId,
+    },
+    /// The conversation was deleted.
+    Deleted {
+        /// The deleted conversation.
+        conversation_id: ConversationId,
+    },
+    /// The runtime is shutting down; no further signals will follow.
+    Shutdown,
+}
 
 /// What a conversation's hub sends its subscribers. Every subscriber shares
 /// one copy of an event until it takes the event out.
@@ -55,6 +115,64 @@ struct ConversationHub {
 pub(crate) struct Hubs {
     conversations: Mutex<HashMap<ConversationId, Arc<ConversationHub>>>,
     list: tokio::sync::Mutex<Vec<mpsc::Sender<ListMessage>>>,
+    signals: Mutex<Vec<mpsc::Sender<OwnerSignal>>>,
+}
+
+/// Derives owner-conversation lifecycle signals from a stored batch whose
+/// summary changed (ADR-0074, decision 3).
+fn owner_signals(
+    summary: &ConversationSummary,
+    events: &[(u32, ConversationEvent)],
+) -> Vec<OwnerSignal> {
+    let mut signals = Vec::new();
+    for (_seq, event) in events {
+        let signal = match event {
+            ConversationEvent::TurnStarted { .. } | ConversationEvent::RunStarted { .. } => {
+                Some(OwnerSignal::Active {
+                    conversation_id: summary.id.clone(),
+                })
+            }
+            ConversationEvent::RunUpdated { run } => match run.state {
+                RunState::Completed => Some(OwnerSignal::Completed {
+                    conversation_id: summary.id.clone(),
+                    title: summary.title.clone(),
+                    run_id: run.id.clone(),
+                }),
+                RunState::Failed => Some(OwnerSignal::Failed {
+                    conversation_id: summary.id.clone(),
+                    title: summary.title.clone(),
+                    run_id: run.id.clone(),
+                }),
+                RunState::Stopped | RunState::Interrupted => Some(OwnerSignal::EndedWithoutAlert {
+                    conversation_id: summary.id.clone(),
+                }),
+                RunState::Queued | RunState::Running => match &run.activity {
+                    Some(RunActivity::AwaitingAnswer { part_id }) => {
+                        Some(OwnerSignal::AwaitingAnswer {
+                            conversation_id: summary.id.clone(),
+                            title: summary.title.clone(),
+                            part_id: part_id.clone(),
+                        })
+                    }
+                    Some(RunActivity::AwaitingApproval { part_id }) => {
+                        Some(OwnerSignal::AwaitingApproval {
+                            conversation_id: summary.id.clone(),
+                            title: summary.title.clone(),
+                            part_id: part_id.clone(),
+                        })
+                    }
+                    _ => Some(OwnerSignal::Active {
+                        conversation_id: summary.id.clone(),
+                    }),
+                },
+            },
+            _ => None,
+        };
+        if let Some(signal) = signal {
+            signals.push(signal);
+        }
+    }
+    signals
 }
 
 /// Sends a message to every subscriber, and drops the subscribers whose queue
@@ -95,11 +213,32 @@ impl Hubs {
         if let Some(summary) = &applied.summary {
             // The list's lock is taken inside the conversation's, so the list
             // receives one conversation's changes in their order too.
-            let mut list = self.list.lock().await;
-            publish(&mut list, &ListMessage::Upserted(Box::new(summary.clone())));
+            {
+                let mut list = self.list.lock().await;
+                publish(&mut list, &ListMessage::Upserted(Box::new(summary.clone())));
+            }
+            self.publish_owner_signals(summary, &applied.events);
         }
         drop(subscribers);
         Ok(applied)
+    }
+
+    fn publish_owner_signals(
+        &self,
+        summary: &ConversationSummary,
+        events: &[(u32, ConversationEvent)],
+    ) {
+        let derived = owner_signals(summary, events);
+
+        if derived.is_empty() {
+            return;
+        }
+
+        let mut signals = self.signals.lock().unwrap_or_else(PoisonError::into_inner);
+
+        for signal in &derived {
+            publish(&mut signals, signal);
+        }
     }
 
     /// Subscribes to a conversation: a snapshot, or the events after
@@ -195,12 +334,34 @@ impl Hubs {
         }
     }
 
+    /// Subscribes to owner-conversation lifecycle signals (ADR-0074).
+    pub(crate) fn subscribe_signals(&self, queue: usize) -> SignalSubscription {
+        let (sender, receiver) = mpsc::channel(queue);
+        self.signals
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(sender);
+        SignalSubscription {
+            receiver,
+            ended: false,
+        }
+    }
+
     /// Ends the subscriptions of a deleted conversation and removes it from
     /// the list.
     pub(crate) async fn deleted(&self, conversation: &ConversationId) {
         self.end_subscriptions(conversation).await;
-        let mut list = self.list.lock().await;
-        publish(&mut list, &ListMessage::Removed(conversation.clone()));
+        {
+            let mut list = self.list.lock().await;
+            publish(&mut list, &ListMessage::Removed(conversation.clone()));
+        }
+        let mut signals = self.signals.lock().unwrap_or_else(PoisonError::into_inner);
+        publish(
+            &mut signals,
+            &OwnerSignal::Deleted {
+                conversation_id: conversation.clone(),
+            },
+        );
     }
 
     /// Ends the subscriptions of a deleted task conversation, which the list
@@ -241,6 +402,10 @@ impl Hubs {
         let mut list = self.list.lock().await;
         publish(&mut list, &ListMessage::End(SubscriptionEnd::Shutdown));
         list.clear();
+        drop(list);
+        let mut signals = self.signals.lock().unwrap_or_else(PoisonError::into_inner);
+        publish(&mut signals, &OwnerSignal::Shutdown);
+        signals.clear();
     }
 }
 
@@ -522,5 +687,26 @@ impl ListSubscription {
             }
         };
         Some(update)
+    }
+}
+
+/// One subscriber's stream of owner-conversation lifecycle signals (ADR-0074).
+#[derive(Debug)]
+pub struct SignalSubscription {
+    receiver: mpsc::Receiver<OwnerSignal>,
+    ended: bool,
+}
+
+impl SignalSubscription {
+    /// The next signal. After `OwnerSignal::Shutdown`, returns `None`.
+    pub async fn next(&mut self) -> Option<OwnerSignal> {
+        if self.ended {
+            return None;
+        }
+        let signal = self.receiver.recv().await?;
+        if matches!(signal, OwnerSignal::Shutdown) {
+            self.ended = true;
+        }
+        Some(signal)
     }
 }

@@ -348,6 +348,7 @@ describe('the chat and window views in the pseudo-locale', () => {
       'chat.providers',
       'chat.instructions',
       'window.behavior',
+      'notifications.settings',
       'tools.settings',
       'child-agents.settings',
       'skills.settings',

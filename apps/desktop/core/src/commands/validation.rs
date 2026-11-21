@@ -17,7 +17,8 @@ use mannie_types::ipc::{ChannelBatch, CommandError};
 use mannie_types::updates::UpdateOutcome;
 use mannie_types::validation::{
     ChannelLoad, ChannelLoadSummary, ChatGptMock, SeedConversation, ValidationDelta,
-    ValidationError, ValidationTrayItem, ValidationUpdateOffer, ValidationWindowState,
+    ValidationError, ValidationNotificationsState, ValidationTrayItem, ValidationUpdateOffer,
+    ValidationWindowState,
 };
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
@@ -370,4 +371,46 @@ pub(crate) fn validation_opened_file_links(
     core: State<'_, Core>,
 ) -> Vec<mannie_types::file_links::ResolvedFileLink> {
     core.opened_file_links()
+}
+
+/// Sets whether the notifications coordinator treats the main window as
+/// focused, because off-screen validation windows stay unfocused (V14).
+#[tauri::command]
+#[specta::specta]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri hands command arguments over by value"
+)]
+pub(crate) fn validation_set_window_focused(app: AppHandle, core: State<'_, Core>, focused: bool) {
+    core.notifications()
+        .set_window_focused(&app, core.store(), focused);
+}
+
+/// Returns the notifications recorded in a validation build, along with the
+/// unread conversation set, tray badge flag and focus state (V14).
+#[tauri::command]
+#[specta::specta]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri hands command arguments over by value"
+)]
+pub(crate) fn validation_notifications_state(
+    core: State<'_, Core>,
+) -> ValidationNotificationsState {
+    core.notifications().validation_state()
+}
+
+/// Simulates a user clicking a recorded desktop notification by ID, exercising
+/// the same handler as `Notification::on_action` (V14).
+#[tauri::command]
+#[specta::specta]
+pub(crate) async fn validation_click_notification(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: i32,
+) -> Result<bool, CommandError<ValidationError>> {
+    Ok(core
+        .notifications()
+        .handle_click(&app, core.store(), Some(id))
+        .await)
 }

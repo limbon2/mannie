@@ -26,7 +26,7 @@ use crate::agents::CONVERSATION_AGENT;
 use crate::calls::CallOptions;
 use crate::chatgpt::QueuedAccount;
 use crate::compaction::Trigger;
-use crate::hub::{ConversationSubscription, ListSubscription};
+use crate::hub::{ConversationSubscription, ListSubscription, SignalSubscription};
 use crate::profiles::{effort_for_model, supports_reasoning_effort};
 use crate::{Busy, Runtime, lock};
 
@@ -1081,6 +1081,14 @@ impl Runtime {
             .subscribe_list(&self.inner.store, self.inner.config.subscriptions)
             .await
             .map_err(store_failure)
+    }
+
+    /// Follows owner-conversation lifecycle signals for desktop notifications
+    /// and the tray badge (ADR-0074).
+    pub fn subscribe_signals(&self) -> SignalSubscription {
+        self.inner
+            .hubs
+            .subscribe_signals(self.inner.config.subscriptions.queue)
     }
 }
 

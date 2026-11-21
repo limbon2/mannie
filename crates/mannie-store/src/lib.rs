@@ -22,6 +22,7 @@ pub mod dbfiles;
 mod error;
 mod exports;
 mod legacy;
+mod notifications;
 mod plugin_store;
 mod provider;
 mod readers;
@@ -84,6 +85,7 @@ pub(crate) fn all_statements() -> impl Iterator<Item = &'static str> {
         .chain(provider::search::STATEMENTS)
         .chain(tools::STATEMENTS)
         .chain(updates::STATEMENTS)
+        .chain(notifications::STATEMENTS)
         .copied()
         .chain(runtime::statements())
         .chain(dbfiles::statements())

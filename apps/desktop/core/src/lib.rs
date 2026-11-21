@@ -22,6 +22,7 @@ mod file_links;
 mod folder_dialog;
 mod ipc;
 mod links;
+mod notifications;
 mod plugin_ipc;
 mod state;
 mod updates;
@@ -68,7 +69,10 @@ pub fn run(context: Context<Wry>, plugins: Vec<PluginEntry>) -> anyhow::Result<(
         // Registered for its configuration and its state only. No capability
         // grants its commands, so the webview reaches updates through the
         // core's own commands (ADR-0063, decision 2).
-        .plugin(tauri_plugin_updater::Builder::new().build());
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        // Registered without a capability so the webview cannot post desktop
+        // notifications directly (ADR-0004; ADR-0074, decision 2).
+        .plugin(tauri_plugin_notification::init());
     for plugin in plugin_ipc::tauri_plugins(&plugins) {
         builder = builder.plugin(plugin);
     }
@@ -80,6 +84,7 @@ pub fn run(context: Context<Wry>, plugins: Vec<PluginEntry>) -> anyhow::Result<(
                 tracing::error!("the core started twice");
             }
             app.manage(core);
+            notifications::register_action_handler(app);
             window::create_main(app)?;
             Ok(())
         })

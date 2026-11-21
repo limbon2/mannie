@@ -21,6 +21,8 @@ export interface ProjectGroup {
   readonly project: ProjectView;
   /** Whether one of its conversations writes a reply. */
   readonly replying: boolean;
+  /** Whether one of its conversations has an unread finished run. */
+  readonly unread: boolean;
 }
 
 /** The sidebar's conversations, by project. */
@@ -46,6 +48,7 @@ function byActivity(left: ProjectGroup, right: ProjectGroup): number {
 export function groupConversations(
   conversations: readonly ConversationSummary[],
   projects: readonly ProjectView[],
+  unreadIds: ReadonlySet<string> = new Set(),
 ): GroupedConversations {
   const byProject = new Map<string, ConversationSummary[]>(projects.map((project) => [project.id, []]));
   const general: ConversationSummary[] = [];
@@ -67,6 +70,7 @@ export function groupConversations(
       conversations: members,
       project,
       replying: members.some((conversation) => conversation.hasActiveRun),
+      unread: members.some((conversation) => unreadIds.has(conversation.id)),
     };
   });
   return { general, projects: groups.sort(byActivity) };

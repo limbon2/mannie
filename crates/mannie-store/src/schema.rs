@@ -424,8 +424,29 @@ const BROWSER: StoreModule = StoreModule {
     confined: false,
 };
 
-pub(crate) const CORE_MODULES: [StoreModule; 8] = [
-    SETTINGS, RUNTIME, PROVIDER, TOOLS, EXPORTS, DBFILES, UPDATES, BROWSER,
+/// Unread finished conversations for desktop notifications and the tray badge
+/// (ADR-0074).
+const NOTIFICATIONS: StoreModule = StoreModule {
+    name: "notifications",
+    migrations: Cow::Borrowed(&[Migration {
+        version: 1,
+        legacy_version: None,
+        description: "create the unread finished conversations table",
+        sql: include_str!("notifications/0001_create_unread.sql"),
+    }]),
+    confined: false,
+};
+
+pub(crate) const CORE_MODULES: [StoreModule; 9] = [
+    SETTINGS,
+    RUNTIME,
+    PROVIDER,
+    TOOLS,
+    EXPORTS,
+    DBFILES,
+    UPDATES,
+    BROWSER,
+    NOTIFICATIONS,
 ];
 
 /// The records of a database: each module's name and how many of its

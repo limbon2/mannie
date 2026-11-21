@@ -96,17 +96,40 @@ export interface UpdateOutcome {
   readonly toVersion: string;
 }
 
+/** Which kind of conversation event triggered a recorded desktop notification (V14). */
+export type NotificationKind = 'approval' | 'completed' | 'failed' | 'question';
+
+/** One notification recorded by a validation build (ADR-0074, decision 9). */
+export interface RecordedNotification {
+  readonly body: string;
+  readonly conversationId: string;
+  readonly id: number;
+  readonly kind: NotificationKind;
+  readonly title: string;
+}
+
+/** The notifications, taskbar count and tray badge state of a validation build (V14). */
+export interface ValidationNotificationsState {
+  readonly notifications: readonly RecordedNotification[];
+  readonly taskbarBadgeCount: number;
+  readonly trayBadged: boolean;
+  readonly unreadConversationIds: readonly string[];
+  readonly windowFocused: boolean;
+}
+
 interface Harness {
   browserEvaluate(conversationId: string, tabId: string, expression: string): Promise<string | null>;
   browserSurface(conversationId: string): Promise<BrowserSurface[]>;
   callUndeclaredPluginCommand(): Promise<string>;
   callUngrantedCommand(): Promise<string>;
+  clickNotification(id: number): Promise<boolean>;
   closeMainWindow(): Promise<void>;
   createProviderProfile(input: ProfileInput): Promise<string>;
   cspViolations(): readonly CspViolation[];
   deleteProviderProfiles(): Promise<number>;
   expireChatGptToken(): Promise<void>;
   insertHostileHtml(payloads: readonly string[]): Promise<boolean>;
+  notificationsState(): Promise<ValidationNotificationsState>;
   openedFileLinks(): Promise<{ kind: 'directory' | 'file'; path: string }[]>;
   openedLinks(): Promise<string[]>;
   probeScripts(): Promise<ScriptProbe>;
@@ -119,6 +142,7 @@ interface Harness {
   setSkillsFolder(folder: string | null): Promise<void>;
   setUpdateOffer(offer: UpdateOffer): Promise<void>;
   setUpdateOutcome(outcome: UpdateOutcome | null): Promise<void>;
+  setWindowFocused(focused: boolean): Promise<void>;
   trayMenu(item: 'open' | 'quit'): Promise<void>;
   updateInstalls(): Promise<string[]>;
   windowState(): Promise<WindowState>;
@@ -465,4 +489,37 @@ export async function openedFileLinks(): Promise<{ kind: 'directory' | 'file'; p
     }
     return harness.openedFileLinks();
   });
+}
+
+/** Sets whether the notifications coordinator treats the main window as focused (V14). */
+export async function setWindowFocused(focused: boolean): Promise<void> {
+  await browser.execute(async (value) => {
+    const harness = window.mannieValidation;
+    if (harness === undefined) {
+      throw new Error('the validation harness is missing: run the validation build');
+    }
+    await harness.setWindowFocused(value);
+  }, focused);
+}
+
+/** The notifications, unread set, tray badge flag and focus state recorded by the validation build (V14). */
+export async function notificationsState(): Promise<ValidationNotificationsState> {
+  return browser.execute(async () => {
+    const harness = window.mannieValidation;
+    if (harness === undefined) {
+      throw new Error('the validation harness is missing: run the validation build');
+    }
+    return harness.notificationsState();
+  });
+}
+
+/** Simulates clicking a recorded desktop notification by ID (V14). */
+export async function clickNotification(id: number): Promise<boolean> {
+  return browser.execute(async (notificationId) => {
+    const harness = window.mannieValidation;
+    if (harness === undefined) {
+      throw new Error('the validation harness is missing: run the validation build');
+    }
+    return harness.clickNotification(notificationId);
+  }, id);
 }

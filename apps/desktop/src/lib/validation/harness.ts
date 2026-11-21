@@ -13,6 +13,7 @@ import type {
   SurfaceReport,
   UpdateOutcome,
   ValidationDelta,
+  ValidationNotificationsState,
   ValidationTrayItem,
   ValidationUpdateOffer,
   ValidationWindowState,
@@ -74,6 +75,8 @@ export interface ValidationHarness {
    */
   callUndeclaredPluginCommand(): Promise<string>;
   callUngrantedCommand(): Promise<string>;
+  /** Simulates clicking a recorded desktop notification by ID (V14). */
+  clickNotification(id: number): Promise<boolean>;
   /** Closes the main window as its close button does. */
   closeMainWindow(): Promise<void>;
   /** Adds a provider profile without the settings view, and returns its ID. */
@@ -84,6 +87,8 @@ export interface ValidationHarness {
   /** Makes the ChatGPT account's access token expire, so the next call refreshes it. */
   expireChatGptToken(): Promise<void>;
   insertHostileHtml(payloads: readonly string[]): Promise<boolean>;
+  /** The notifications recorded in a validation build, along with badge and focus state (V14). */
+  notificationsState(): Promise<ValidationNotificationsState>;
   /** File-manager actions recorded without launching an external window. */
   openedFileLinks(): Promise<ResolvedFileLink[]>;
   /** The links that the app would have opened in the browser. */
@@ -124,6 +129,8 @@ export interface ValidationHarness {
    * drops it with `null`. The end-to-end tests cannot install a version.
    */
   setUpdateOutcome(outcome: UpdateOutcome | null): Promise<void>;
+  /** Sets whether the core treats the main window as focused (V14). */
+  setWindowFocused(focused: boolean): Promise<void>;
   /** Chooses an item of the tray's menu. */
   trayMenu(item: ValidationTrayItem): Promise<void>;
   /**
@@ -338,35 +345,37 @@ async function callUndeclaredPluginCommand(): Promise<string> {
 }
 
 window.mannieValidation = {
-  callUndeclaredPluginCommand,
-  callUngrantedCommand,
-  closeMainWindow: async () => {
-    unwrap(await commands.validationCloseMainWindow());
-  },
   browserEvaluate: async (conversationId, tabId, expression) =>
     unwrap(await commands.validationBrowserEvaluate(conversationId, tabId, expression)),
   browserSurface: async (conversationId) => unwrap(await commands.validationBrowserSurface(conversationId)),
+  callUndeclaredPluginCommand,
+  callUngrantedCommand,
+  clickNotification: async (id) => unwrap(await commands.validationClickNotification(id)),
+  closeMainWindow: async () => {
+    unwrap(await commands.validationCloseMainWindow());
+  },
   createProviderProfile,
   cspViolations: () => [...violations],
   deleteProviderProfiles,
+  expireChatGptToken: async () => {
+    await commands.validationExpireChatgptToken();
+  },
   insertHostileHtml,
-  openedLinks: async () => commands.validationOpenedLinks(),
+  notificationsState: async () => commands.validationNotificationsState(),
   openedFileLinks: async () => commands.validationOpenedFileLinks(),
+  openedLinks: async () => commands.validationOpenedLinks(),
   probeScripts,
   processId: async () => commands.validationProcessId(),
   runChannelLoad,
   seedConversation: async (turns) => unwrap(await commands.validationSeedConversation({ turns })),
+  setChatGptMock: async (issuer, apiBase) => {
+    unwrap(await commands.validationSetChatgptMock({ apiBase, issuer }));
+  },
   setFileChoice: async (files) => {
     await commands.validationSetFileChoice(files);
   },
   setFolderChoice: async (folder) => {
     await commands.validationSetFolderChoice(folder);
-  },
-  setChatGptMock: async (issuer, apiBase) => {
-    unwrap(await commands.validationSetChatgptMock({ apiBase, issuer }));
-  },
-  expireChatGptToken: async () => {
-    await commands.validationExpireChatgptToken();
   },
   setSkillsFolder: async (folder) => {
     await commands.validationSetSkillsFolder(folder);
@@ -376,6 +385,9 @@ window.mannieValidation = {
   },
   setUpdateOutcome: async (outcome) => {
     await commands.validationSetUpdateOutcome(outcome);
+  },
+  setWindowFocused: async (focused) => {
+    await commands.validationSetWindowFocused(focused);
   },
   trayMenu: async (item) => {
     await commands.validationTrayMenu(item);

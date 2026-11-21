@@ -7,8 +7,10 @@
     "allow-stream-validation-events",
     "allow-validation-browser-evaluate",
     "allow-validation-browser-surface",
+    "allow-validation-click-notification",
     "allow-validation-close-main-window",
     "allow-validation-expire-chatgpt-token",
+    "allow-validation-notifications-state",
     "allow-validation-opened-links",
     "allow-validation-opened-file-links",
     "allow-validation-process-id",
@@ -19,6 +21,7 @@
     "allow-validation-set-skills-folder",
     "allow-validation-set-update-offer",
     "allow-validation-set-update-outcome",
+    "allow-validation-set-window-focused",
     "allow-validation-tray-menu",
     "allow-validation-update-installs",
     "allow-validation-window-state"
