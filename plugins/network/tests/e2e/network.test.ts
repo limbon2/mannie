@@ -263,15 +263,34 @@ describe('Network Client', () => {
     // Verify separate Query and Path tabs, URL token highlighting and URL <-> Query sync.
     await expect($('[data-network-tab="query"]')).toBeDisplayed();
     await expect($('[data-network-tab="path"]')).toBeDisplayed();
-    await $('#network-request-url').click();
+    const urlEditor = $('#network-request-url');
+    const urlTemplate = '/items/{itemId}?expand={{expandMode}}&mode=live';
+    await urlEditor.click();
     await browser.keys([Key.Ctrl, 'a']);
-    await browser.keys(Key.Backspace);
-    await browser.keys('/items/{itemId}?expand={{expandMode}}&mode=live');
+    await urlEditor.execute((editor, text) => {
+      const clipboardData = new DataTransfer();
+      clipboardData.setData('text/plain', text);
+      editor.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData }));
+    }, urlTemplate);
+    await expect(urlEditor).toHaveText(urlTemplate);
 
-    await expect($('[data-testid="network-request-url"] .cm-tok-path')).toHaveText('{itemId}');
-    await expect($$('[data-testid="network-request-url"] .cm-tok-query-key')).toBeElementsArrayOfSize(2);
-    await expect($('[data-testid="network-request-url"] .cm-tok-query-val')).toHaveText('live');
-    await expect($('[data-testid="network-request-url"] .cm-tok-var')).toHaveText('{{expandMode}}');
+    // CodeMirror can split a highlighted range across several DOM nodes.
+    const highlighted = await urlEditor.execute((editor) => {
+      const markedText = (selector: string): string =>
+        Array.from(editor.querySelectorAll(selector), (mark) => mark.textContent).join('');
+      return {
+        path: markedText('.cm-tok-path'),
+        queryKeys: markedText('.cm-tok-query-key'),
+        queryValue: markedText('.cm-tok-query-val'),
+        variable: markedText('.cm-tok-var'),
+      };
+    });
+    expect(highlighted).toEqual({
+      path: '{itemId}',
+      queryKeys: 'expandmode',
+      queryValue: 'live',
+      variable: '{{expandMode}}',
+    });
     await expect($('[data-network-tab="query"]')).toHaveText(expect.stringContaining('(2)'));
     await expect($('[data-network-tab="path"]')).toHaveText(expect.stringContaining('(1)'));
     await expect($$('[data-network-token-kind="query"]')).toBeElementsArrayOfSize(2);

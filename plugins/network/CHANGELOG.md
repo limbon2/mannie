@@ -15,5 +15,5 @@ Each change to the plugin adds one line under Unreleased, below its kind of chan
 
 ### Fixed
 
-- Wait for the collection editor to finish opening before comparing tab heights in the end-to-end test.
+- Check collection tab heights after the dialog opens and verify URL highlighting across both webviews in the end-to-end test.
 - Lock agent request execution to the owner-configured origin, extract secret query parameters from saved URLs, include a full-body SHA-256 digest in approval summaries, honor RFC 6265 host-only cookies, honor OpenAPI v2 and v3 document and per-operation `security` rules, stage secret updates by slot before SQLite commits, distinguish post-dispatch `response_lost` failures, cap expanded YAML bytes before cloning aliases, allow large OpenAPI and body IPC payloads, refuse ambiguous request names, support nested server-variable interpolation, bound tool archive size, track concurrent workbench runs per request, surface environment switch failures, preserve cookie expiry on edit and add an end-to-end test.
