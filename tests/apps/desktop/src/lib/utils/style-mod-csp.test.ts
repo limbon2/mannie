@@ -48,6 +48,19 @@ describe('StyleModule (CSP-safe constructible stylesheets)', () => {
     expect(rules).toContain('@media (prefers-reduced-motion: reduce) {.cm-cursor {animation-duration: 0s;}}');
   });
 
+  it('expands every parent reference in a selector list and preserves literal ampersands', () => {
+    const mod = new StyleModule({
+      '.cm-editor, [data-label="$&"]': {
+        '& + &, &:is(.a, .b)[title="A&B"] .a\\&b': { color: 'blue' },
+      },
+    });
+
+    expect(mod.getRules()).toBe(
+      '.cm-editor + .cm-editor, [data-label="$&"] + [data-label="$&"], ' +
+        '.cm-editor:is(.a, .b)[title="A&B"] .a\\&b, [data-label="$&"]:is(.a, .b)[title="A&B"] .a\\&b {color: blue;}',
+    );
+  });
+
   it('mounts modules onto adoptedStyleSheets without creating <style> tags and preserves ordering', () => {
     const doc = fakeDocument();
     const base = new StyleModule({ '.a': { color: 'red' } });

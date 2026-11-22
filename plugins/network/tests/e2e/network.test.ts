@@ -238,6 +238,7 @@ describe('Network Client', () => {
     // Edit the collection: dialog height stays stable across tabs, add a variable and store a Bearer secret.
     await $('[data-network-collection-edit]').click();
     await $('[data-network-collection-dialog]').waitForDisplayed();
+    await waitForAnimations();
     const generalHeight = (await $('[data-network-collection-dialog]').getSize()).height;
     await $('[data-network-collection-dialog] [role="tab"][data-value="variables"]').click();
     const activePanelSelector = '[data-network-collection-dialog] [role="tabpanel"][data-state="active"]';

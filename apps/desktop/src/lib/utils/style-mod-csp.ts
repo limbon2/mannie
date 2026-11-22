@@ -36,16 +36,25 @@ const COUNTER_KEY = Symbol.for(PREFIX);
 const ROOT_SETS = new WeakMap<StyleRoot, StyleSet>();
 const ADOPTED_SETS = new WeakMap<Document, StyleSet>();
 
-function splitSelector(selector: string): string[] {
+function expandSelectorList(selector: string, parents: readonly string[] = ['&']): string[] {
   if (selector.startsWith('@')) {
     return [selector];
   }
 
   const result: string[] = [];
+  const fragments: string[] = [];
   let depth = 0;
   let quote: string | null = null;
   let lastNonSpace = 0;
   let cut = 0;
+
+  function finishSelector(): void {
+    fragments.push(selector.slice(cut, lastNonSpace));
+    for (const parent of parents) {
+      result.push(fragments.join(parent));
+    }
+    fragments.length = 0;
+  }
 
   for (let index = 0; index < selector.length; index += 1) {
     const ch = selector[index] ?? '';
@@ -61,6 +70,8 @@ function splitSelector(selector: string): string[] {
     const isOpener = ch === '[' || ch === '(';
     const isCloser = ch === ']' || ch === ')';
     const isTopLevelComma = isUnquoted && depth === 0 && ch === ',';
+    const isParentReference = isUnquoted && ch === '&';
+    const isAtSelectorStart = index === cut && fragments.length === 0;
 
     if (isQuote) {
       if (ch === quote) {
@@ -73,31 +84,22 @@ function splitSelector(selector: string): string[] {
     } else if (isUnquoted && isCloser) {
       depth -= 1;
     } else if (isTopLevelComma) {
-      result.push(selector.slice(cut, lastNonSpace));
+      finishSelector();
+      cut = index + 1;
+    } else if (isParentReference) {
+      fragments.push(selector.slice(cut, index));
       cut = index + 1;
     }
 
     if (/\S/u.test(ch)) {
       lastNonSpace = index + 1;
-    } else if (index === cut) {
+    } else if (isAtSelectorStart) {
       cut += 1;
     }
   }
 
-  result.push(selector.slice(cut, lastNonSpace));
+  finishSelector();
   return result;
-}
-
-function expandNestedSelectors(parentSelectors: readonly string[], nested: string): string[] {
-  const expanded: string[] = [];
-
-  for (const part of nested.split(/,\s*/u)) {
-    for (const selector of parentSelectors) {
-      expanded.push(part.replace('&', selector));
-    }
-  }
-
-  return expanded;
 }
 
 function renderSpec(
@@ -129,13 +131,13 @@ function renderSpec(
 
     if (rawProp.includes('&')) {
       if (isObjectValue) {
-        renderSpec(expandNestedSelectors(selectors, rawProp), value, target, finish, false);
+        renderSpec(expandSelectorList(rawProp, selectors), value, target, finish, false);
       }
     } else if (isObjectValue) {
       if (!isAt) {
         throw new RangeError(`The value of a property (${rawProp}) should be a primitive value.`);
       }
-      renderSpec(splitSelector(rawProp), value, local, finish, keyframes);
+      renderSpec(expandSelectorList(rawProp), value, local, finish, keyframes);
     } else if (isDefined) {
       const cssProp = rawProp.startsWith('--')
         ? rawProp
@@ -222,7 +224,7 @@ export class StyleModule {
       const isRuleBlock = nested === null || nested === undefined || typeof nested === 'object';
 
       if (isRuleBlock) {
-        renderSpec(splitSelector(selector), nested, this.rules, finish, false);
+        renderSpec(expandSelectorList(selector), nested, this.rules, finish, false);
       }
     }
   }
