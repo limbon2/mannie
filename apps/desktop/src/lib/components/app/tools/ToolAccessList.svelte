@@ -40,6 +40,13 @@
   let { accesses }: Props = $props();
 
   const credentialContent = { 'data-browser-credential-access': '', 'data-content': '' };
+
+  function hasNetworkSummary(summary: string): boolean {
+    if (summary === '') {
+      return false;
+    }
+    return summary !== '{}';
+  }
 </script>
 
 <ul class="flex flex-col gap-2">
@@ -189,6 +196,26 @@
 
         {#if access.hints.length > 0}
           <p class="text-xs text-muted-foreground" data-content data-tool-hints="">{toolHintsMessage(access.hints)}</p>
+        {/if}
+      {:else if access.kind === 'network_request'}
+        <div class="flex min-w-0 flex-wrap items-center gap-2">
+          <Badge variant="outline">{access.protocol.toUpperCase()}</Badge>
+          <Badge variant="secondary">{access.method}</Badge>
+          <span class="min-w-0 text-sm wrap-anywhere" data-content dir="auto">{access.requestLabel}</span>
+        </div>
+
+        <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs" data-network-request="">
+          <dt class="text-muted-foreground">{m.tools_access_network_collection()}</dt>
+          <dd class="break-all" data-content dir="auto">{access.collectionLabel}</dd>
+          <dt class="text-muted-foreground">{m.tools_access_network_url()}</dt>
+          <dd class="font-mono break-all" data-content>{access.targetUrl}</dd>
+        </dl>
+
+        {#if hasNetworkSummary(access.summary)}
+          <AccessText label={m.tools_access_network_details()} text={access.summary} />
+          {#if access.summaryCut ?? false}
+            <p class="text-xs text-muted-foreground">{m.tools_access_network_summary_cut()}</p>
+          {/if}
         {/if}
       {:else}
         <AccessText label={m.tools_access_command()} text={access.command} />

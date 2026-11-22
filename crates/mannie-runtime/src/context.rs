@@ -538,6 +538,7 @@ fn not_run(reason: &NotRunReason, tool: &str) -> String {
             Refusal::NoDatabases => texts::NO_DATABASES.to_owned(),
             Refusal::NoBrowser => texts::NO_BROWSER.to_owned(),
             Refusal::BrowserSiteDenied => texts::BROWSER_SITE_DENIED.to_owned(),
+            Refusal::NoNetworkRequests => texts::NO_NETWORK_REQUESTS.to_owned(),
         },
         NotRunReason::PluginOff {
             plugin,

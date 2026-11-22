@@ -330,6 +330,28 @@ describe('callSummary', () => {
     expect(callSummary(written)).toContain('mcp_issues_create_issue');
     expect(callSummary(prepared)).toBe('Call create_issue on Issues');
   });
+
+  it("names a plugin's network request by its method, request and collection, once prepared", () => {
+    const access = {
+      collectionId: '0199e0f2-0000-7000-8000-0000000000aa',
+      collectionLabel: 'Billing API',
+      kind: 'network_request' as const,
+      method: 'POST',
+      origin: 'https://api.example.com',
+      plugin: 'network',
+      protocol: 'http',
+      requestId: '0199e0f2-0000-7000-8000-0000000000bb',
+      requestLabel: 'Create invoice',
+      summary: '{}',
+      summaryCut: false,
+      targetUrl: 'https://api.example.com/v1/invoices',
+    };
+    const written = call('network_send_request', {});
+    const prepared = call('network_send_request', {}, { accesses: [access] });
+
+    expect(callSummary(written)).toContain('network_send_request');
+    expect(callSummary(prepared)).toBe('POST Create invoice in Billing API');
+  });
 });
 
 describe('a call of ask_owner', () => {

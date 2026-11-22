@@ -54,6 +54,7 @@ export type {
   ShellCommand,
   ShellView,
   SidebarPanel,
+  SidebarResizeOptions,
   SidePanelKind,
   SidePanelProps,
   TaskKind,

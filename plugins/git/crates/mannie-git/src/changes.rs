@@ -522,7 +522,8 @@ fn normalized(access: &ToolAccess) -> ToolAccess {
         | ToolAccess::TerminalCommand(_)
         | ToolAccess::BrowserControl(_)
         | ToolAccess::BrowserAction(_)
-        | ToolAccess::Database(_) => access.clone(),
+        | ToolAccess::Database(_)
+        | ToolAccess::NetworkRequest(_) => access.clone(),
     }
 }
 
@@ -584,7 +585,8 @@ pub(crate) mod testing {
                     | ToolAccess::TerminalCommand(_)
                     | ToolAccess::BrowserControl(_)
                     | ToolAccess::BrowserAction(_)
-                    | ToolAccess::Database(_) => None,
+                    | ToolAccess::Database(_)
+                    | ToolAccess::NetworkRequest(_) => None,
                 })
                 .flatten()
                 .collect()

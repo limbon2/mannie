@@ -47,9 +47,9 @@ use mannie_plugin_sdk::points::tool_sources::{MAX_SOURCE_TOOLS, check_published}
 use mannie_plugin_sdk::points::tools::{
     AgentSelector, BrowserAccess, BrowserAction, BrowserAuthorization, BrowserControlAccess,
     DatabaseAccess, ExternalToolAccess, MAX_FAILURE_CODE_CHARS, MAX_TOOL_ARCHIVE_BYTES,
-    MAX_TOOL_ARCHIVES, MAX_TOOL_DATA_BYTES, PathAccess, PluginTool, ProgramAccess,
-    RemoteCommandAccess, TerminalCommandAccess, Tool as SdkTool, ToolAccess, ToolArchive, ToolCall,
-    ToolEffect, ToolExecution, ToolOffering, ToolSpec, Tools, is_tool_name,
+    MAX_TOOL_ARCHIVES, MAX_TOOL_DATA_BYTES, NetworkRequestAccess, PathAccess, PluginTool,
+    ProgramAccess, RemoteCommandAccess, TerminalCommandAccess, Tool as SdkTool, ToolAccess,
+    ToolArchive, ToolCall, ToolEffect, ToolExecution, ToolOffering, ToolSpec, Tools, is_tool_name,
 };
 use mannie_plugin_sdk::services::sqlite_files::{SqliteFilesError, Statement, WorkerDatabase};
 use mannie_plugin_sdk::services::terminals::{ExpectedHost, TerminalHostRef};
@@ -117,6 +117,12 @@ const MAX_EXTERNAL_TOOL_CHARS: usize = 128;
 const MAX_EXTERNAL_TITLE_CHARS: usize = 256;
 const MAX_SERVER_PROGRAM_CHARS: usize = 1024;
 const MAX_SERVER_URL_BYTES: usize = 8 * 1024;
+
+/// The limits of a network request access's protocol, method and canonical
+/// origin (ADR-0075, decision 2).
+const MAX_PROTOCOL_CHARS: usize = 32;
+const MAX_METHOD_CHARS: usize = 32;
+const MAX_ORIGIN_BYTES: usize = 512;
 
 /// The most characters of the entry whose presence offers a tool.
 const MAX_MARKER_CHARS: usize = 64;
@@ -982,6 +988,9 @@ fn core_accesses(
 
                 Ok(Access::from_browser_control(plugin.to_owned(), access))
             }
+            ToolAccess::NetworkRequest(request) => {
+                network_request_access(plugin, request).ok_or_else(|| broken(plugin))
+            }
         })
         .collect()
 }
@@ -1497,6 +1506,125 @@ fn external_access(plugin: &str, external: ExternalToolAccess) -> Option<Access>
     })
 }
 
+/// The core's access of a network request from an owner-configured collection,
+/// with the plugin's ID, or `None` when any identifier, label, protocol,
+/// method, origin, target URL or summary breaks the SDK's rules (ADR-0075,
+/// decision 2).
+fn network_request_access(plugin: &str, request: NetworkRequestAccess) -> Option<Access> {
+    let fits = bounded_plain_text;
+    let names_fit = fits(&request.collection_id, MAX_TARGET_CHARS)
+        && fits(&request.collection_label, MAX_LABEL_CHARS)
+        && fits(&request.request_id, MAX_TARGET_CHARS)
+        && fits(&request.request_label, MAX_LABEL_CHARS);
+    let protocol_and_method_fit =
+        is_protocol_name(&request.protocol) && is_method_name(&request.method);
+    let endpoint_fits = is_canonical_origin(&request.origin)
+        && is_network_target_url(&request.target_url, &request.origin);
+    let summary_fits =
+        request.summary.len() <= MAX_ARGUMENTS_BYTES && !request.summary.contains('\0');
+
+    if !(names_fit && protocol_and_method_fit && endpoint_fits && summary_fits) {
+        return None;
+    }
+
+    Some(Access::NetworkRequest {
+        plugin: plugin.to_owned(),
+        collection_id: request.collection_id,
+        collection_label: request.collection_label,
+        request_id: request.request_id,
+        request_label: request.request_label,
+        protocol: request.protocol,
+        method: request.method,
+        origin: request.origin,
+        target_url: request.target_url,
+        summary: request.summary,
+        summary_cut: false,
+    })
+}
+
+/// Whether a protocol identifier is 1 to 32 lower-case ASCII letters, digits,
+/// hyphens or underscores, starting with a lower-case letter.
+fn is_protocol_name(protocol: &str) -> bool {
+    let mut bytes = protocol.bytes();
+    let starts_lower = bytes.next().is_some_and(|byte| byte.is_ascii_lowercase());
+    let fits = starts_lower && protocol.len() <= MAX_PROTOCOL_CHARS;
+
+    if !fits {
+        return false;
+    }
+
+    bytes.all(|byte| {
+        let separator = matches!(byte, b'-' | b'_');
+        byte.is_ascii_lowercase() || byte.is_ascii_digit() || separator
+    })
+}
+
+/// Whether an operation method is 1 to 32 upper-case ASCII letters, digits,
+/// hyphens or underscores, starting with an upper-case letter.
+fn is_method_name(method: &str) -> bool {
+    let mut bytes = method.bytes();
+    let starts_upper = bytes.next().is_some_and(|byte| byte.is_ascii_uppercase());
+    let fits = starts_upper && method.len() <= MAX_METHOD_CHARS;
+
+    if !fits {
+        return false;
+    }
+
+    bytes.all(|byte| {
+        let separator = matches!(byte, b'-' | b'_');
+        byte.is_ascii_uppercase() || byte.is_ascii_digit() || separator
+    })
+}
+
+/// Whether an origin is a canonical `http` or `https` origin within its byte
+/// limit, without user information, path, query, fragment or control chars.
+fn is_canonical_origin(origin: &str) -> bool {
+    let clean = !origin.is_empty()
+        && origin.len() <= MAX_ORIGIN_BYTES
+        && !origin
+            .chars()
+            .any(|character| character.is_control() || character.is_whitespace());
+
+    if !clean {
+        return false;
+    }
+
+    Url::parse(origin).is_ok_and(|parsed| {
+        let http_scheme = matches!(parsed.scheme(), "http" | "https");
+        let exact_origin = parsed.origin().ascii_serialization() == origin;
+        http_scheme && exact_origin
+    })
+}
+
+/// Whether a resolved target URL matches the canonical `origin`, carries no
+/// user information, fragment, whitespace or control characters, and replaces
+/// any query parameter whose name looks like a secret with `[redacted]` or an
+/// empty value so no real secret reaches an approval, journal or grant.
+fn is_network_target_url(url: &str, origin: &str) -> bool {
+    let clean = url.len() <= MAX_SERVER_URL_BYTES
+        && !url
+            .chars()
+            .any(|character| character.is_control() || character.is_whitespace());
+    let Ok(parsed) = Url::parse(url) else {
+        return false;
+    };
+    let valid_authority = parsed.host().is_some()
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+        && parsed.fragment().is_none();
+    let same_origin = parsed.origin().ascii_serialization() == origin;
+    let secret_unredacted = parsed.query_pairs().any(|(name, value)| {
+        let secret_name = looks_like_secret(&camel_case_apart(&name));
+        let redacted = value.is_empty() || value == "[redacted]";
+        secret_name && !redacted
+    });
+    clean
+        && matches!(parsed.scheme(), "http" | "https")
+        && valid_authority
+        && same_origin
+        && !secret_unredacted
+}
+
 /// Whether a tool server's URL is one that an access may name: http or https
 /// within its limit, without white space or control characters, with a host,
 /// without user information, without a fragment, which no request sends, and
@@ -1818,29 +1946,7 @@ fn sdk_access(access: &Access) -> Option<ToolAccess> {
                 None => access,
             }))
         }
-        Access::ExternalTool {
-            target,
-            label,
-            endpoint,
-            tool,
-            title,
-            arguments,
-            hints,
-            ..
-        } => {
-            let access = ExternalToolAccess::new(
-                target.clone(),
-                label.clone(),
-                endpoint.clone(),
-                tool.clone(),
-                arguments.clone(),
-            )
-            .with_hints(hints.clone());
-            Some(ToolAccess::ExternalTool(match title {
-                Some(title) => access.with_title(title.clone()),
-                None => access,
-            }))
-        }
+        Access::ExternalTool { .. } => sdk_external_tool(access).map(ToolAccess::ExternalTool),
         Access::TerminalCommand { .. } => {
             sdk_terminal_command(access).map(ToolAccess::TerminalCommand)
         }
@@ -1863,8 +1969,68 @@ fn sdk_access(access: &Access) -> Option<ToolAccess> {
             session.clone(),
             revision.clone(),
         ))),
+        Access::NetworkRequest { .. } => {
+            sdk_network_request(access).map(ToolAccess::NetworkRequest)
+        }
         Access::Command { .. } | Access::Project { .. } | Access::Database { .. } => None,
     }
+}
+
+fn sdk_external_tool(access: &Access) -> Option<ExternalToolAccess> {
+    let Access::ExternalTool {
+        target,
+        label,
+        endpoint,
+        tool,
+        title,
+        arguments,
+        hints,
+        ..
+    } = access
+    else {
+        return None;
+    };
+    let access = ExternalToolAccess::new(
+        target.clone(),
+        label.clone(),
+        endpoint.clone(),
+        tool.clone(),
+        arguments.clone(),
+    )
+    .with_hints(hints.clone());
+    Some(match title {
+        Some(title) => access.with_title(title.clone()),
+        None => access,
+    })
+}
+
+fn sdk_network_request(access: &Access) -> Option<NetworkRequestAccess> {
+    let Access::NetworkRequest {
+        collection_id,
+        collection_label,
+        request_id,
+        request_label,
+        protocol,
+        method,
+        origin,
+        target_url,
+        summary,
+        ..
+    } = access
+    else {
+        return None;
+    };
+    Some(NetworkRequestAccess::new(
+        collection_id.clone(),
+        collection_label.clone(),
+        request_id.clone(),
+        request_label.clone(),
+        protocol.clone(),
+        method.clone(),
+        origin.clone(),
+        target_url.clone(),
+        summary.clone(),
+    ))
 }
 
 /// A command in a terminal as its plugin's tool knows it: the host as the
@@ -1968,9 +2134,10 @@ mod tests {
     use futures_util::FutureExt;
     use mannie_plugin_sdk::BoxFuture;
     use mannie_plugin_sdk::points::tools::{
-        AgentSelector, ExternalToolAccess, MAX_TOOL_ARCHIVE_BYTES, MAX_TOOL_DATA_BYTES, PathAccess,
-        PluginTool, ProgramAccess, RemoteCommandAccess, Tool, ToolAccess, ToolArchive, ToolCall,
-        ToolEffect, ToolExecution, ToolOffering, ToolRefusal, ToolResult, ToolSpec,
+        AgentSelector, ExternalToolAccess, MAX_TOOL_ARCHIVE_BYTES, MAX_TOOL_DATA_BYTES,
+        NetworkRequestAccess, PathAccess, PluginTool, ProgramAccess, RemoteCommandAccess, Tool,
+        ToolAccess, ToolArchive, ToolCall, ToolEffect, ToolExecution, ToolOffering, ToolRefusal,
+        ToolResult, ToolSpec,
     };
     use mannie_tools::{Availability, Done, PrepareError, ToolRegistry};
     use mannie_types::clock::UtcMillis;
@@ -3049,5 +3216,88 @@ mod tests {
             head.len()
         );
         assert!(cut.len() <= limit, "{}", cut.len());
+    }
+
+    fn sample_network_request() -> NetworkRequestAccess {
+        NetworkRequestAccess::new(
+            "0199e0f2-0000-7000-8000-0000000000c1".to_owned(),
+            "Billing API".to_owned(),
+            "0199e0f2-0000-7000-8000-0000000000d1".to_owned(),
+            "Create invoice".to_owned(),
+            "http".to_owned(),
+            "POST".to_owned(),
+            "https://api.example.com".to_owned(),
+            "https://api.example.com/v1/invoices?api_key=%5Bredacted%5D&limit=10".to_owned(),
+            r#"{"headers":{"Authorization":"[redacted]"}}"#.to_owned(),
+        )
+    }
+
+    #[test]
+    fn a_valid_network_request_maps_to_core_access_and_back_and_rejects_broken_fields() {
+        let prepared = sample_network_request();
+        let core = super::core_accesses(
+            "network",
+            ToolEffect::SideEffects,
+            vec![ToolAccess::NetworkRequest(prepared.clone())],
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap();
+
+        assert_eq!(core.len(), 1);
+        assert_eq!(
+            sdk_accesses(&core),
+            vec![ToolAccess::NetworkRequest(prepared.clone())]
+        );
+
+        let mut bad_protocol = prepared.clone();
+        "HTTP".clone_into(&mut bad_protocol.protocol);
+
+        let mut bad_method = prepared.clone();
+        "post".clone_into(&mut bad_method.method);
+
+        let mut bad_origin = prepared.clone();
+        "https://api.example.com/v1".clone_into(&mut bad_origin.origin);
+
+        let mut mismatched_origin = prepared.clone();
+        "https://other.example.com/v1/invoices".clone_into(&mut mismatched_origin.target_url);
+
+        let mut url_with_userinfo = prepared.clone();
+        "https://user:pass@api.example.com/v1/invoices"
+            .clone_into(&mut url_with_userinfo.target_url);
+
+        let mut unredacted_secret_query = prepared.clone();
+        "https://api.example.com/v1/invoices?api_key=sk_live_secret"
+            .clone_into(&mut unredacted_secret_query.target_url);
+
+        let mut bad_summary = prepared;
+        bad_summary.summary.push('\0');
+
+        for broken in [
+            bad_protocol,
+            bad_method,
+            bad_origin,
+            mismatched_origin,
+            url_with_userinfo,
+            unredacted_secret_query,
+            bad_summary,
+        ] {
+            let result = super::core_accesses(
+                "network",
+                ToolEffect::SideEffects,
+                vec![ToolAccess::NetworkRequest(broken.clone())],
+                &HashMap::new(),
+                &HashMap::new(),
+                &HashMap::new(),
+            );
+            assert!(
+                matches!(
+                    result,
+                    Err(PrepareError::Failed(ToolFailure::PluginInvalid { .. }))
+                ),
+                "{broken:?} -> {result:?}"
+            );
+        }
     }
 }

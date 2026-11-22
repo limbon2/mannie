@@ -1,0 +1,42 @@
+#:schema ../../crates/mannie-plugin-sdk/plugin.schema.json
+# The Network Client plugin (ADR-0075; plugins/network/docs/README.md):
+# Postman-style API collections with OpenAPI v2 and v3 import, custom
+# variables, headers, query and path parameters, cookies and a workbench.
+# Agents run saved requests under the master's policy and journal with all
+# secrets and cookies redacted as `[redacted]`, while the owner views and
+# tests them as-is.
+
+id = "network"
+sdk = 1
+# After Workers, Images, SSH, Git, MCP, Notebooks, Terminal and Browser.
+order = 90
+
+[rust]
+entry = "mannie-network"
+
+[services]
+# The system's file dialog, through which the owner picks OpenAPI JSON or YAML
+# specifications to import.
+file-dialog = 1
+# The owner's collection secrets, environment secrets, request auth and secret
+# headers/params, global secret variables and cookie jar values in the master's
+# OS credential store.
+secrets = 1
+# The tables of collections, folders, requests, environments, global variables
+# and cookie metadata.
+store = 1
+
+[secrets]
+# Chunked entries `<family>/<owner-id>-<part>` (each at most 1,000 UTF-16 code
+# units, below the Windows Credential Manager limit).
+keyed = ["collection", "environment", "cookie", "request", "global"]
+
+[crates]
+# Only the Network Client plugin parses OpenAPI YAML specifications (ADR-0075,
+# decision 7): no crate outside this folder may depend on saphyr-parser.
+exclusive = ["saphyr-parser"]
+
+# The direct native calls of the plugin's library crates (ADR-0035, decision 6;
+# ADR-0075, decision 6). The SDK has no network service.
+[native]
+sockets = "The HTTP client sends requests to endpoints defined in the owner's collections when the owner clicks Send in the Network Client workbench or when an authorized agent tool call runs, over HTTPS (or plain HTTP to loopback and private addresses when carrying credentials) with automatic redirects disabled."

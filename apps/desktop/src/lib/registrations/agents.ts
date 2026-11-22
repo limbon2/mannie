@@ -18,6 +18,7 @@ export function registerAgents(slots: ShellSlots): void {
     id: AGENTS_VIEW,
     label: m.agents_navigation_label,
     order: 5,
+    sidebarResizable: true,
     view: AGENTS_VIEW,
   });
   slots.views.register({

@@ -85,6 +85,14 @@ export default defineConfig(({ mode }) => {
           find: 'decode-named-character-reference',
           replacement: fromApp('node_modules/decode-named-character-reference/index.js'),
         },
+        // CodeMirror 6 mounts CSS rules through `style-mod`, which injects
+        // `<style>` tags on `document` and would be blocked by `style-src 'self'`
+        // (ADR-0004). This adapter mounts rules through constructible stylesheets
+        // in `adoptedStyleSheets` (ADR-0076).
+        {
+          find: 'style-mod',
+          replacement: fromApp('src/lib/utils/style-mod-csp.ts'),
+        },
       ],
       // Validation builds resolve `#plugin-list` to the list with the
       // fixture plugins (package.json; ADR-0035, decision 7).

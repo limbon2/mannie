@@ -302,7 +302,8 @@ fn program_of(execution: &ToolExecution) -> ProgramAccess {
             | ToolAccess::TerminalCommand(_)
             | ToolAccess::BrowserControl(_)
             | ToolAccess::BrowserAction(_)
-            | ToolAccess::Database(_) => None,
+            | ToolAccess::Database(_)
+            | ToolAccess::NetworkRequest(_) => None,
         })
         .expect("the execution names its program's run")
 }

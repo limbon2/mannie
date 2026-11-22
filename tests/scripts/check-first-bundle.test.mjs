@@ -2,7 +2,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { firstBundle, XTERM_MARKER, xtermInFirstBundle } from '../../scripts/check-first-bundle.mjs';
+import {
+  CODEMIRROR_MARKER,
+  codeMirrorInFirstBundle,
+  firstBundle,
+  XTERM_MARKER,
+  xtermInFirstBundle,
+} from '../../scripts/check-first-bundle.mjs';
 
 /** A manifest with an entry, a route, a chunk that both share and a chunk that only a dynamic import reaches. */
 const MANIFEST = {
@@ -48,5 +54,20 @@ describe('xtermInFirstBundle', () => {
     const read = (/** @type {string} */ file) => (file.endsWith('shared.js') ? `class ${XTERM_MARKER}` : 'app code');
 
     assert.deepEqual(xtermInFirstBundle(MANIFEST, read), ['_app/immutable/chunks/shared.js']);
+  });
+});
+
+describe('codeMirrorInFirstBundle', () => {
+  it('finds nothing while CodeMirror loads only through a dynamic import', () => {
+    const read = (/** @type {string} */ file) => (file.endsWith('xterm.js') ? CODEMIRROR_MARKER : 'app code');
+
+    assert.deepEqual(codeMirrorInFirstBundle(MANIFEST, read), []);
+  });
+
+  it('names a chunk of the first bundle that holds CodeMirror', () => {
+    const read = (/** @type {string} */ file) =>
+      file.endsWith('shared.js') ? `class ${CODEMIRROR_MARKER}` : 'app code';
+
+    assert.deepEqual(codeMirrorInFirstBundle(MANIFEST, read), ['_app/immutable/chunks/shared.js']);
   });
 });

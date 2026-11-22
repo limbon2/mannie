@@ -249,6 +249,83 @@ describe('the shell', () => {
     await expect(sidebar).toHaveAttribute('data-state', 'expanded');
   });
 
+  it('resizes the sidebar per activity from the keyboard, persists the width, and hides the handle on Settings', async () => {
+    const resizer = $('[data-shell-sidebar-resizer]');
+    await expect(resizer).toBeDisplayed();
+    const initialValue = Number(await resizer.getAttribute('aria-valuenow'));
+    const initialWidth = (await $('[data-shell-sidebar="content"]').getSize()).width;
+
+    await browser.execute(() => {
+      document.querySelector<HTMLElement>('main#main header button')?.focus();
+    });
+    await browser.keys([Key.Shift, Key.Tab]);
+    await expect(resizer).toBeFocused();
+    expect(await focusIsVisible()).toBe(true);
+    await browser.keys(Key.ArrowRight);
+    await browser.keys(Key.ArrowRight);
+
+    const grownValue = Number(await resizer.getAttribute('aria-valuenow'));
+    const grownWidth = (await $('[data-shell-sidebar="content"]').getSize()).width;
+    expect(grownValue).toBeGreaterThan(initialValue);
+    expect(grownWidth).toBeGreaterThan(initialWidth);
+    expect(await axeViolations()).toEqual([]);
+
+    // Dragging the handle with the pointer disables the 200ms collapse transition for the entire drag so width tracks 1:1.
+    await waitForAnimations();
+    const handleLocation = await resizer.getLocation();
+    const handleSize = await resizer.getSize();
+    const startX = Math.round(handleLocation.x + handleSize.width / 2);
+    const startY = Math.round(handleLocation.y + handleSize.height / 2);
+    const targetX = startX + 36;
+    await browser
+      .action('pointer', { parameters: { pointerType: 'mouse' } })
+      .move({ x: startX, y: startY })
+      .down()
+      .move({ duration: 50, x: targetX, y: startY })
+      .perform(true);
+
+    const duringDrag = await browser.execute(() => {
+      const container = document.querySelector('[data-slot="sidebar-container"]');
+      const gap = document.querySelector('[data-slot="sidebar-gap"]');
+      return {
+        containerTransition: container === null ? null : getComputedStyle(container).transitionProperty,
+        gapTransition: gap === null ? null : getComputedStyle(gap).transitionProperty,
+        resizingAttr: document.documentElement.hasAttribute('data-shell-sidebar-resizing'),
+      };
+    });
+    expect(duringDrag).toEqual({
+      containerTransition: 'none',
+      gapTransition: 'none',
+      resizingAttr: true,
+    });
+
+    await browser
+      .action('pointer', { parameters: { pointerType: 'mouse' } })
+      .move({ x: targetX, y: startY })
+      .up()
+      .perform();
+    const afterDragValue = Number(await resizer.getAttribute('aria-valuenow'));
+    expect(afterDragValue).toBeGreaterThan(grownValue);
+    expect(await browser.execute(() => document.documentElement.hasAttribute('data-shell-sidebar-resizing'))).toBe(
+      false,
+    );
+
+    await browser.refresh();
+    await waitForApp();
+    await expect(resizer).toBeDisplayed();
+    expect(Number(await resizer.getAttribute('aria-valuenow'))).toBe(afterDragValue);
+
+    await openSettings('shell.interface');
+    await expect($('[data-shell-sidebar-resizer]')).not.toBeExisting();
+    await leaveSettings();
+
+    await browser.execute(() => {
+      document.querySelector<HTMLElement>('[data-shell-sidebar-resizer]')?.focus();
+    });
+    await browser.keys(Key.Enter);
+    expect(Number(await resizer.getAttribute('aria-valuenow'))).toBe(initialValue);
+  });
+
   it('shows each entry of the activity bar from the command palette', async () => {
     await runCommand('Show Chat');
     // The bar shows only icons, so the entry's label is its accessible name

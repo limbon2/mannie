@@ -401,6 +401,40 @@ pub enum Access {
         /// What the statement does, as SQLite reports it.
         class: StatementClass,
     },
+    /// A network request sent from an owner-configured collection by a plugin
+    /// tool (ADR-0075, decision 2). The plugin names the saved collection and
+    /// request, the protocol, the operation method, the canonical origin, the
+    /// sanitized target URL and a sanitized summary of the request inputs; the
+    /// core adds the plugin, so no plugin speaks for another.
+    NetworkRequest {
+        /// The plugin whose tool sends the request.
+        plugin: String,
+        /// The plugin's immutable key for the collection.
+        collection_id: String,
+        /// The collection's name, as the owner gave it, for display only.
+        collection_label: String,
+        /// The plugin's immutable key for the saved request.
+        request_id: String,
+        /// The saved request's name, as the owner gave it, for display only.
+        request_label: String,
+        /// The lower-case protocol identifier, such as `http`.
+        protocol: String,
+        /// The upper-case operation method, such as `GET` or `POST`.
+        method: String,
+        /// The canonical HTTP or HTTPS origin, without user information, path,
+        /// query or fragment.
+        origin: String,
+        /// The resolved target URL without user information and with every
+        /// secret parameter or variable value replaced by `[redacted]`.
+        target_url: String,
+        /// Sanitized JSON of non-secret request parameters, headers and body
+        /// metadata, with every secret and cookie replaced by `[redacted]`.
+        summary: String,
+        /// Whether a call's view cut the summary to its limit. An access that
+        /// the policy decides on is never cut.
+        #[serde(default)]
+        summary_cut: bool,
+    },
 }
 
 impl Access {
@@ -440,7 +474,8 @@ impl Access {
             | Self::Program { .. }
             | Self::ExternalTool { .. }
             | Self::TerminalCommand { .. }
-            | Self::BrowserControl { .. } => true,
+            | Self::BrowserControl { .. }
+            | Self::NetworkRequest { .. } => true,
         }
     }
 }
@@ -661,5 +696,43 @@ mod tests {
         );
         let read: Access = serde_json::from_value(older).unwrap();
         assert!(matches!(read, Access::Path { state: None, .. }), "{read:?}");
+    }
+
+    #[test]
+    fn a_network_request_changes_something_and_serializes_with_every_field() {
+        let request = Access::NetworkRequest {
+            plugin: "network".to_owned(),
+            collection_id: "0199e0f2-0000-7000-8000-0000000000aa".to_owned(),
+            collection_label: "Billing API".to_owned(),
+            request_id: "0199e0f2-0000-7000-8000-0000000000bb".to_owned(),
+            request_label: "Create invoice".to_owned(),
+            protocol: "http".to_owned(),
+            method: "POST".to_owned(),
+            origin: "https://api.example.com".to_owned(),
+            target_url: "https://api.example.com/v1/invoices".to_owned(),
+            summary: r#"{"headers":{"Authorization":"[redacted]"}}"#.to_owned(),
+            summary_cut: false,
+        };
+
+        assert!(request.changes());
+        let json = serde_json::to_value(&request).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "kind": "network_request",
+                "plugin": "network",
+                "collectionId": "0199e0f2-0000-7000-8000-0000000000aa",
+                "collectionLabel": "Billing API",
+                "requestId": "0199e0f2-0000-7000-8000-0000000000bb",
+                "requestLabel": "Create invoice",
+                "protocol": "http",
+                "method": "POST",
+                "origin": "https://api.example.com",
+                "targetUrl": "https://api.example.com/v1/invoices",
+                "summary": r#"{"headers":{"Authorization":"[redacted]"}}"#,
+                "summaryCut": false,
+            })
+        );
+        assert_eq!(serde_json::from_value::<Access>(json).unwrap(), request);
     }
 }

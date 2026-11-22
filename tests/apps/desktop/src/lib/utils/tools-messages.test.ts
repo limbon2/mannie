@@ -170,6 +170,17 @@ const GRANTS: GrantScope[] = [
     target: '0199e0f2-0000-7000-8000-0000000000cc',
     tool: 'create_issue',
   },
+  {
+    collectionId: '0199e0f2-0000-7000-8000-0000000000aa',
+    collectionLabel: 'Billing API',
+    kind: 'network_request',
+    method: 'POST',
+    origin: 'https://api.example.com',
+    plugin: 'network',
+    protocol: 'http',
+    requestId: '0199e0f2-0000-7000-8000-0000000000bb',
+    requestLabel: 'Create invoice',
+  },
 ];
 
 const REFUSALS: Refusal[] = [
@@ -178,6 +189,7 @@ const REFUSALS: Refusal[] = [
   'no_programs_on_host',
   'no_external_tools',
   'no_databases',
+  'no_network_requests',
   'read_only_host',
 ];
 
@@ -285,6 +297,7 @@ describe('tools messages', () => {
       'external_tool',
       'database_write',
       'database_schema',
+      'network_request',
     ];
     const decisions: Decision[] = [
       'workspace',

@@ -260,7 +260,8 @@ fn takes_full_access(access: &Access) -> bool {
         | Access::RemoteCommand { .. }
         | Access::Program { .. }
         | Access::ExternalTool { .. }
-        | Access::TerminalCommand { .. } => true,
+        | Access::TerminalCommand { .. }
+        | Access::NetworkRequest { .. } => true,
     }
 }
 
@@ -409,6 +410,7 @@ fn decide_under_ceiling(
         Access::BrowserAction { .. } | Access::BrowserControl { .. } => {
             Err(Hold::Refuse(Refusal::NoBrowser))
         }
+        Access::NetworkRequest { .. } => Err(Hold::Refuse(Refusal::NoNetworkRequests)),
     }
 }
 
@@ -553,6 +555,7 @@ fn decide_access(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decision,
             inputs.grants.conversation,
         ),
         Access::BrowserControl { .. } => Err(ApprovalReason::BrowserControl),
+        Access::NetworkRequest { .. } => decide_network_request(access, inputs),
     }
 }
 
@@ -668,7 +671,8 @@ fn covers_database(grant: &GrantScope, plugin: &str, key: &DatabaseKey, statemen
         | GrantScope::ExternalTool { .. }
         | GrantScope::TerminalCommand { .. }
         | GrantScope::BrowserSite { .. }
-        | GrantScope::BrowserCredential { .. } => false,
+        | GrantScope::BrowserCredential { .. }
+        | GrantScope::NetworkRequest { .. } => false,
     }
 }
 
@@ -734,6 +738,61 @@ fn decide_external_tool(
         covers_external_tool(grant, plugin, target, endpoint, tool)
     })
     .ok_or(ApprovalReason::ExternalTool)
+}
+
+/// What allows a network request from an owner-configured collection, or why
+/// it asks: a grant that covers the same saved request with the same protocol,
+/// method and canonical origin, with any runtime parameters or body. Neither
+/// the workspace nor saved rules apply (ADR-0075, decision 3).
+fn decide_network_request(
+    access: &Access,
+    inputs: &PolicyInputs<'_>,
+) -> Result<Decision, ApprovalReason> {
+    let Some(endpoint) = NetworkEndpointKey::of(access) else {
+        return Err(ApprovalReason::NetworkRequest);
+    };
+    granted(&inputs.grants, |grant| {
+        covers_network_request(grant, &endpoint)
+    })
+    .ok_or(ApprovalReason::NetworkRequest)
+}
+
+/// The parts of a saved network request that a grant binds to: its plugin,
+/// collection key, request key, protocol, operation method and canonical
+/// origin, never display labels or runtime inputs (ADR-0075, decision 3).
+struct NetworkEndpointKey<'a> {
+    plugin: &'a str,
+    collection_id: &'a str,
+    request_id: &'a str,
+    protocol: &'a str,
+    method: &'a str,
+    origin: &'a str,
+}
+
+impl<'a> NetworkEndpointKey<'a> {
+    /// The key of a network request access, or `None` for another access.
+    fn of(access: &'a Access) -> Option<Self> {
+        let Access::NetworkRequest {
+            plugin,
+            collection_id,
+            request_id,
+            protocol,
+            method,
+            origin,
+            ..
+        } = access
+        else {
+            return None;
+        };
+        Some(Self {
+            plugin,
+            collection_id,
+            request_id,
+            protocol,
+            method,
+            origin,
+        })
+    }
 }
 
 /// What allows a run of an installed program, or why it asks: a grant or a
@@ -913,7 +972,8 @@ fn covers_path(grant: &GrantScope, path: &Path, mode: AccessMode) -> bool {
         | GrantScope::TerminalCommand { .. }
         | GrantScope::Database { .. }
         | GrantScope::BrowserSite { .. }
-        | GrantScope::BrowserCredential { .. } => false,
+        | GrantScope::BrowserCredential { .. }
+        | GrantScope::NetworkRequest { .. } => false,
     }
 }
 
@@ -945,7 +1005,8 @@ fn covers_command(grant: &GrantScope, command: &str, directory: &Path, backgroun
         | GrantScope::TerminalCommand { .. }
         | GrantScope::Database { .. }
         | GrantScope::BrowserSite { .. }
-        | GrantScope::BrowserCredential { .. } => false,
+        | GrantScope::BrowserCredential { .. }
+        | GrantScope::NetworkRequest { .. } => false,
     }
 }
 
@@ -978,7 +1039,8 @@ fn covers_remote_command(
         | GrantScope::TerminalCommand { .. }
         | GrantScope::Database { .. }
         | GrantScope::BrowserSite { .. }
-        | GrantScope::BrowserCredential { .. } => false,
+        | GrantScope::BrowserCredential { .. }
+        | GrantScope::NetworkRequest { .. } => false,
     }
 }
 
@@ -1008,7 +1070,8 @@ fn covers_terminal_command(
         | GrantScope::ExternalTool { .. }
         | GrantScope::Database { .. }
         | GrantScope::BrowserSite { .. }
-        | GrantScope::BrowserCredential { .. } => false,
+        | GrantScope::BrowserCredential { .. }
+        | GrantScope::NetworkRequest { .. } => false,
     }
 }
 
@@ -1040,6 +1103,41 @@ fn covers_external_tool(
         | GrantScope::Command { .. }
         | GrantScope::RemoteCommand { .. }
         | GrantScope::Program { .. }
+        | GrantScope::TerminalCommand { .. }
+        | GrantScope::Database { .. }
+        | GrantScope::BrowserSite { .. }
+        | GrantScope::BrowserCredential { .. }
+        | GrantScope::NetworkRequest { .. } => false,
+    }
+}
+
+/// Whether a grant covers a saved network request: the same plugin,
+/// collection, request, protocol, method and canonical origin, whatever the
+/// runtime parameters or body (ADR-0075, decision 3).
+fn covers_network_request(grant: &GrantScope, endpoint: &NetworkEndpointKey<'_>) -> bool {
+    match grant {
+        GrantScope::NetworkRequest {
+            plugin,
+            collection_id,
+            request_id,
+            protocol,
+            method,
+            origin,
+            ..
+        } => {
+            let same_request = plugin == endpoint.plugin
+                && collection_id == endpoint.collection_id
+                && request_id == endpoint.request_id;
+            let same_target = protocol == endpoint.protocol
+                && method == endpoint.method
+                && origin == endpoint.origin;
+            same_request && same_target
+        }
+        GrantScope::Path { .. }
+        | GrantScope::Command { .. }
+        | GrantScope::RemoteCommand { .. }
+        | GrantScope::Program { .. }
+        | GrantScope::ExternalTool { .. }
         | GrantScope::TerminalCommand { .. }
         | GrantScope::Database { .. }
         | GrantScope::BrowserSite { .. }
@@ -1078,7 +1176,8 @@ fn covers_program(grant: &GrantScope, run: &RunKey<'_>) -> bool {
         | GrantScope::TerminalCommand { .. }
         | GrantScope::Database { .. }
         | GrantScope::BrowserSite { .. }
-        | GrantScope::BrowserCredential { .. } => false,
+        | GrantScope::BrowserCredential { .. }
+        | GrantScope::NetworkRequest { .. } => false,
     }
 }
 
@@ -1212,7 +1311,35 @@ fn grant_scope(access: &Access) -> Option<GrantScope> {
             })
         }
         Access::Database { .. } => database_grant(access),
+        Access::NetworkRequest { .. } => network_request_grant(access),
     }
+}
+
+fn network_request_grant(access: &Access) -> Option<GrantScope> {
+    let Access::NetworkRequest {
+        plugin,
+        collection_id,
+        collection_label,
+        request_id,
+        request_label,
+        protocol,
+        method,
+        origin,
+        ..
+    } = access
+    else {
+        return None;
+    };
+    Some(GrantScope::NetworkRequest {
+        plugin: plugin.clone(),
+        collection_id: collection_id.clone(),
+        collection_label: collection_label.clone(),
+        request_id: request_id.clone(),
+        request_label: request_label.clone(),
+        protocol: protocol.clone(),
+        method: method.clone(),
+        origin: origin.clone(),
+    })
 }
 
 fn browser_grant_scope(
@@ -1387,8 +1514,37 @@ fn plugin_scope_covers(wider: &GrantScope, narrower: &GrantScope) -> bool {
                 ..
             },
         ) => covers_database(wider, plugin, key, statement),
+        (GrantScope::NetworkRequest { .. }, GrantScope::NetworkRequest { .. }) => {
+            covers_network_scope(wider, narrower)
+        }
         _ => false,
     }
+}
+
+fn covers_network_scope(wider: &GrantScope, narrower: &GrantScope) -> bool {
+    let GrantScope::NetworkRequest {
+        plugin,
+        collection_id,
+        request_id,
+        protocol,
+        method,
+        origin,
+        ..
+    } = narrower
+    else {
+        return false;
+    };
+    covers_network_request(
+        wider,
+        &NetworkEndpointKey {
+            plugin,
+            collection_id,
+            request_id,
+            protocol,
+            method,
+            origin,
+        },
+    )
 }
 
 /// The rule that "Save rule" can make: for an operation that is one command

@@ -175,4 +175,32 @@ describe('ToolAccessList', () => {
     expect(body).not.toContain('data-tool-hints');
     expect(body).not.toContain('Create an issue');
   });
+
+  it('shows a network request with its protocol, method, collection, URL and sanitized details', () => {
+    const request: Access = {
+      collectionId: '0199e0f2-0000-7000-8000-0000000000aa',
+      collectionLabel: 'Billing API',
+      kind: 'network_request',
+      method: 'POST',
+      origin: 'https://api.example.com',
+      plugin: 'network',
+      protocol: 'http',
+      requestId: '0199e0f2-0000-7000-8000-0000000000bb',
+      requestLabel: 'Create invoice',
+      summary: '{"headers":{"Authorization":"[redacted]"}}',
+      summaryCut: false,
+      targetUrl: 'https://api.example.com/v1/invoices',
+    };
+    const body = shown([request]);
+
+    expect(body).toContain('data-network-request');
+    expect(body).toContain('HTTP');
+    expect(body).toContain('POST');
+    expect(body).toContain('Create invoice');
+    expect(body).toContain('Billing API');
+    expect(body).toContain('https://api.example.com/v1/invoices');
+    expect(body).toContain('[redacted]');
+    expect(body).not.toContain('0199e0f2');
+    expect(shown([{ ...request, summaryCut: true }])).toMatch(/longer than shown/u);
+  });
 });

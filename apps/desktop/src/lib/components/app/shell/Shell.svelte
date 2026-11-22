@@ -12,6 +12,12 @@
   import { pluginStates } from '#lib/state/plugin-states.svelte.js';
   import { getShellSlots } from '#lib/state/shell-slots.svelte.js';
   import { MAIN_AREA_ID, sidePanels } from '#lib/state/side-panels.svelte.js';
+  import {
+    effectiveSidebarMaxWidth,
+    resolveSidebarResizeBounds,
+    type SidebarResizeControls,
+    sidebarWidths,
+  } from '#lib/state/sidebar-widths.svelte.js';
   import { commandOfKey } from '#lib/utils/commands.js';
   import { openSettings } from '#lib/utils/settings-sections.js';
   import { carriesFiles } from '#lib/utils/transfer-files.js';
@@ -27,10 +33,10 @@
   let { children }: { children: Snippet } = $props();
 
   // The sidebar holds the activity bar beside its content, so it is wider by
-  // the bar (ADR-0045, decision 1). The provider puts this `style` after its
-  // own widths, and Svelte sets it through the CSS object model, which the
-  // Content Security Policy allows.
-  const SIDEBAR_STYLE = `--sidebar-width: calc(${SIDEBAR_WIDTH} + ${SIDEBAR_WIDTH_ICON});`;
+  // the bar (ADR-0045, decision 1). Resizable activities override the content
+  // width in CSS pixels (ADR-0077), and Svelte sets `style` through the CSS
+  // object model, which the Content Security Policy allows.
+  const FIXED_SIDEBAR_STYLE = `--sidebar-width: calc(${SIDEBAR_WIDTH} + ${SIDEBAR_WIDTH_ICON});`;
 
   /** Below this width of the main area in pixels, an open side panel covers the view (ADR-0025, decision 2). */
   const NARROW_MAIN_AREA = 720;
@@ -43,15 +49,18 @@
   // stay the same from one start to the next.
   const MAIN_PANE_ID = 'shell-main-pane';
   const SIDE_PANE_ID = 'shell-side-pane';
-  // The root's mark while the side panel's handle is dragged with the
-  // pointer, which shows the resize cursor on the whole page (src/app.css).
+  // The root's marks while a resize handle is dragged with the pointer, which
+  // show the resize cursor on the whole page (src/app.css).
   const RESIZING_MARK = 'data-side-panel-resizing';
+  const SIDEBAR_RESIZING_MARK = 'data-shell-sidebar-resizing';
 
   let paletteOpen = $state(false);
   /** The main view's search parameters as the owner last saw them, where the settings lead back to. */
   let mainViewSearch = $state('');
   /** The width of the main area below the header, in pixels; 0 until it is measured. */
   let areaWidth = $state(0);
+  /** The window width in CSS pixels, used to clamp resizable sidebars cleanly. */
+  let windowWidth = $state(0);
 
   const slots = getShellSlots();
   activities.attach(slots.navigation);
@@ -68,6 +77,43 @@
   const titleIsContent = $derived(viewTitleIsContent());
   const currentEntry = $derived(activities.current(shownViewId()));
   const selectionIsGone = $derived(selectedEntryIsGone());
+
+  const sidebarResizeBounds = $derived(onSettings ? null : resolveSidebarResizeBounds(currentEntry));
+  const sidebarCanResize = $derived(sidebarResizeBounds !== null);
+  const sidebarResize = $derived.by((): SidebarResizeControls | undefined => {
+    if (sidebarResizeBounds === null) {
+      return undefined;
+    }
+    if (currentEntry === undefined) {
+      return undefined;
+    }
+
+    const entryId = currentEntry.id;
+    const bounds = sidebarResizeBounds;
+    const maxWidth = effectiveSidebarMaxWidth(bounds, windowWidth);
+    const width = sidebarWidths.widthFor(entryId, bounds, windowWidth);
+
+    return {
+      maxWidth,
+      minWidth: bounds.minWidth,
+      onCommit: (nextWidth) => {
+        sidebarWidths.commit(entryId, nextWidth, bounds, windowWidth);
+      },
+      onDraggingChange: markSidebarResizing,
+      onPreview: (nextWidth) => {
+        sidebarWidths.preview(entryId, nextWidth, bounds, windowWidth);
+      },
+      onReset: () => {
+        sidebarWidths.reset(entryId);
+      },
+      width,
+    };
+  });
+  const sidebarStyle = $derived(
+    sidebarResize === undefined
+      ? FIXED_SIDEBAR_STYLE
+      : `--sidebar-width: calc(${sidebarResize.width}px + ${SIDEBAR_WIDTH_ICON});`,
+  );
 
   function viewTitle(): string {
     if (onSettings) {
@@ -164,6 +210,10 @@
     document.documentElement.toggleAttribute(RESIZING_MARK, dragging);
   }
 
+  function markSidebarResizing(dragging: boolean): void {
+    document.documentElement.toggleAttribute(SIDEBAR_RESIZING_MARK, dragging);
+  }
+
   // The slots show a plugin's entries while the core reports the plugin as
   // on, so the window follows the plugins' states from its start (ADR-0030,
   // decision 11).
@@ -216,9 +266,23 @@
       document.documentElement.removeAttribute(RESIZING_MARK);
     };
   });
+
+  $effect(() => {
+    if (!sidebarCanResize) {
+      return;
+    }
+    return () => {
+      document.documentElement.removeAttribute(SIDEBAR_RESIZING_MARK);
+    };
+  });
 </script>
 
-<svelte:window ondragover={refuseStrayFiles} ondrop={refuseStrayFiles} onkeydown={handleShortcut} />
+<svelte:window
+  bind:innerWidth={windowWidth}
+  ondragover={refuseStrayFiles}
+  ondrop={refuseStrayFiles}
+  onkeydown={handleShortcut}
+/>
 
 <svelte:head>
   <title>{title}</title>
@@ -232,8 +296,8 @@
 </a>
 <!-- The window's height is fixed, so that a view can keep parts of itself in
      place, such as a message box below a transcript (ADR-0020, decision 3). -->
-<Sidebar.Provider class="h-svh" style={SIDEBAR_STYLE}>
-  <ShellSidebar current={currentEntry} onFindCommand={() => (paletteOpen = true)} {onSettings}>
+<Sidebar.Provider class="h-svh" style={sidebarStyle}>
+  <ShellSidebar current={currentEntry} resize={sidebarResize} onFindCommand={() => (paletteOpen = true)} {onSettings}>
     {#if onSettings}
       <SettingsSidebar {mainViewSearch} />
     {:else}

@@ -613,3 +613,49 @@ async fn shared_grants_belong_to_a_project_or_to_everyone_and_go_with_their_proj
     );
     assert_eq!(fixture.store.shared_grants().await.unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn a_grant_for_a_network_request_is_kept_with_its_endpoint() {
+    let fixture = Fixture::new();
+    let conversation = fixture.conversation(1).await;
+    let scope = GrantScope::NetworkRequest {
+        plugin: "network".to_owned(),
+        collection_id: "0199e0f2-0000-7000-8000-0000000000aa".to_owned(),
+        collection_label: "Billing API".to_owned(),
+        request_id: "0199e0f2-0000-7000-8000-0000000000bb".to_owned(),
+        request_label: "List invoices".to_owned(),
+        protocol: "http".to_owned(),
+        method: "GET".to_owned(),
+        origin: "https://api.example.com".to_owned(),
+    };
+
+    fixture
+        .store
+        .add_grants(&conversation, vec![(grant_id(1), scope.clone())])
+        .await
+        .unwrap();
+    let shared = fixture
+        .store
+        .add_shared_grants(None, vec![(grant_id(2), scope.clone())])
+        .await
+        .unwrap();
+
+    assert_eq!(
+        fixture
+            .store
+            .grants(&conversation)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|grant| grant.scope)
+            .collect::<Vec<_>>(),
+        vec![scope.clone()]
+    );
+    assert_eq!(
+        shared
+            .into_iter()
+            .map(|grant| grant.scope)
+            .collect::<Vec<_>>(),
+        vec![scope]
+    );
+}

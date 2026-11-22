@@ -177,6 +177,20 @@ function accessExternalTool(accesses: readonly Access[]): { server: string; tool
   return access?.kind === 'external_tool' ? { server: access.label, tool: access.tool } : null;
 }
 
+/** The saved network request that a plugin's call sends, with its method and collection (ADR-0075). */
+interface NetworkRequestSummary {
+  readonly collection: string;
+  readonly method: string;
+  readonly request: string;
+}
+
+function accessNetworkRequest(accesses: readonly Access[]): NetworkRequestSummary | null {
+  const access = accesses.find((candidate) => candidate.kind === 'network_request');
+  return access?.kind === 'network_request'
+    ? { collection: access.collectionLabel, method: access.method, request: access.requestLabel }
+    : null;
+}
+
 /**
  * How a call on a registered database is named, by the strongest of its
  * statements, with the database's name (ADR-0056, decision 7).
@@ -381,7 +395,11 @@ function intentSummary(call: ToolCallView): string {
         return remote.background ? m.tools_call_remote_command_background(words) : m.tools_call_remote_command(words);
       }
       const external = accessExternalTool(call.accesses);
-      return external === null ? toolLabel(call.tool) : m.tools_call_external_tool(external);
+      if (external !== null) {
+        return m.tools_call_external_tool(external);
+      }
+      const network = accessNetworkRequest(call.accesses);
+      return network === null ? toolLabel(call.tool) : m.tools_call_network_request(network);
     }
   }
 }

@@ -133,6 +133,7 @@ fn volume(access: &Access) -> Option<&str> {
         | Access::TerminalCommand { .. }
         | Access::BrowserControl { .. }
         | Access::BrowserAction { .. }
-        | Access::Database { .. } => None,
+        | Access::Database { .. }
+        | Access::NetworkRequest { .. } => None,
     }
 }

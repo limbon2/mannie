@@ -338,6 +338,9 @@ export function refusalMessage(refusal: Refusal): string {
     case 'no_external_tools': {
       return m.tools_refusal_no_external_tools();
     }
+    case 'no_network_requests': {
+      return m.tools_refusal_no_network_requests();
+    }
     case 'no_projects_on_host': {
       return m.tools_refusal_no_projects_on_host();
     }
@@ -388,6 +391,9 @@ export function approvalReasonMessage(reason: ApprovalReason): string {
     }
     case 'move_to_project': {
       return m.tools_reason_move_to_project();
+    }
+    case 'network_request': {
+      return m.tools_reason_network_request();
     }
     case 'no_workspace': {
       return m.tools_reason_no_workspace();
@@ -748,6 +754,14 @@ export function grantScopeMessage(scope: GrantScope): string {
       endpoint: toolServerEndpointText(scope.endpoint),
       server: scope.label,
       tool: scope.tool,
+    });
+  }
+  if (scope.kind === 'network_request') {
+    return m.tools_grant_network_request({
+      collection: scope.collectionLabel,
+      method: scope.method,
+      origin: scope.origin,
+      request: scope.requestLabel,
     });
   }
   if (scope.kind === 'remote_command') {
