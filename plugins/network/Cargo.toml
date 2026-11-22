@@ -38,7 +38,7 @@ specta = { version = "=2.0.0-rc.25", features = ["derive"] }
 thiserror = "2.0.21"
 tokio = "1.53.2"
 tracing = "0.1.44"
-url = "2.5.8"
+url = "2.5.9"
 uuid = { version = "1.28.0", features = ["v7"] }
 
 # The root's lint policy, which scripts/check-workspace-lints.mjs keeps equal.

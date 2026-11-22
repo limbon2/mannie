@@ -14,6 +14,10 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 - Expand repeated parent selectors in nested CodeMirror theme rules.
 
+### Security
+
+- Update the Rust `url` crate to 2.5.9 across all workspaces to address [RUSTSEC-2026-0592](https://rustsec.org/advisories/RUSTSEC-2026-0592.html).
+
 ## 0.8.6 - 2026-11-21
 
 ### Added
