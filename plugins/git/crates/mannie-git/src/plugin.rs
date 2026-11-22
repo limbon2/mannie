@@ -120,7 +120,7 @@ impl GitPlugin {
             .add::<Tools>(changing.tool::<GitPush>())
             .add::<Sections>(section)
             .add::<Mentions>(mentions);
-        let handlers = handlers(&git, &changes);
+        let handlers = handlers(&git, &locks, &changes);
         tracing::info!("the git plugin started");
         Ok(Started::new(GitInstance)
             .with_contributions(contributions)

@@ -1,9 +1,9 @@
-// The git plugin's UI (plugins/git/docs/README.md; ADR-0038, ADR-0039): the
-// cards of its tools' calls, the Git side panel with its button in a
-// conversation's toolbar, and the kind of mentions that names the
-// uncommitted changes, a commit or a branch after "@". Its entries show
-// only while the plugin is on (ADR-0030, decision 11).
+// The git plugin's UI (plugins/git/docs/README.md; ADR-0038, ADR-0039,
+// ADR-0078): the cards of its tools' calls, the interactive Git side panel
+// with its toolbar control and command palette entry, and the kind of
+// mentions that names uncommitted changes, commits or branches after "@".
 import { definePlugin } from '@mannie/plugin-sdk';
+import { listConversations } from '@mannie/plugin-sdk/conversations';
 import ArchiveIcon from '@mannie/plugin-sdk/icons/archive';
 import CombineIcon from '@mannie/plugin-sdk/icons/combine';
 import DownloadIcon from '@mannie/plugin-sdk/icons/download';
@@ -24,9 +24,11 @@ import SearchIcon from '@mannie/plugin-sdk/icons/search';
 import TriangleAlertIcon from '@mannie/plugin-sdk/icons/triangle-alert';
 import Undo2Icon from '@mannie/plugin-sdk/icons/undo-2';
 import UploadIcon from '@mannie/plugin-sdk/icons/upload';
+import { openConversationId, openSidePanel } from '@mannie/plugin-sdk/navigation';
 import type { ToolKindDetailsProps } from '@mannie/plugin-sdk/slots';
 import type { Component } from 'svelte';
 
+import BlameCard from './components/cards/BlameCard.svelte';
 import ConflictsCard from './components/cards/ConflictsCard.svelte';
 import DiffCard from './components/cards/DiffCard.svelte';
 import GrepCard from './components/cards/GrepCard.svelte';
@@ -50,7 +52,7 @@ interface ToolCard {
 
 /** The card of each of the plugin's tools, by the tool's name. */
 const CARDS: Readonly<Record<string, ToolCard>> = {
-  git_blame: { icon: ScanSearchIcon },
+  git_blame: { details: BlameCard, icon: ScanSearchIcon },
   git_branch: { icon: GitBranchIcon },
   git_cherry_pick: { details: OutcomeCard, icon: CombineIcon },
   git_commit: { details: DiffCard, icon: GitCommitHorizontalIcon },
@@ -91,6 +93,16 @@ function mentionIcon(variant: string): Component {
   }
 }
 
+/** The project ID of the currently open conversation, or `null`. */
+function openProjectId(): string | null {
+  const conversationId = openConversationId();
+  if (conversationId === null) {
+    return null;
+  }
+  const found = listConversations().find((item) => item.id === conversationId);
+  return found?.projectId ?? null;
+}
+
 export default definePlugin({
   register(context) {
     const { slots } = context;
@@ -106,10 +118,24 @@ export default definePlugin({
     slots.sidePanels.register({
       component: GitPanel,
       defaultLabel: m.git_panel_title,
+      hideHeading: true,
       icon: GitBranchIcon,
       id: GIT_PANEL,
     });
     slots.conversationControls.register({ component: GitControl, id: 'git.control', order: 30 });
+    slots.commands.register({
+      available: () => openProjectId() !== null,
+      group: m.git_plugin_name,
+      id: 'git.open_panel',
+      label: m.git_panel_open_command,
+      order: 30,
+      run: () => {
+        const projectId = openProjectId();
+        if (projectId !== null) {
+          void openSidePanel(GIT_PANEL, projectId);
+        }
+      },
+    });
     // The provider's ID is the plugin's.
     slots.mentionKinds.register({
       group: m.git_mention_group,

@@ -30,15 +30,15 @@ const MAX_COMMITS: usize = 100;
 #[serde(deny_unknown_fields)]
 pub(crate) struct ApplyArguments {
     #[schemars(description = texts::REPOSITORY_ARGUMENT)]
-    repository: Option<String>,
+    pub(crate) repository: Option<String>,
     /// The commits, in the order to apply them, such as 1a2b3c4 and
     /// feature~2. At most 100.
-    commits: Vec<String>,
+    pub(crate) commits: Vec<String>,
     /// For a merge commit: the number of its parent, from 1, whose side the
     /// changes are taken against.
-    mainline: Option<u32>,
+    pub(crate) mainline: Option<u32>,
     /// Whether to stage the changes without committing.
-    no_commit: Option<bool>,
+    pub(crate) no_commit: Option<bool>,
 }
 
 /// Which of the two tools a call is.

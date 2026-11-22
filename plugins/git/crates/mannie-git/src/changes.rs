@@ -26,6 +26,7 @@ use mannie_plugin_sdk::points::tools::{
     PathAccess, ProgramAccess, Tool, ToolAccess, ToolCall, ToolExecution, ToolRefusal, ToolResult,
     ToolSpec,
 };
+use mannie_plugin_sdk::services::processes::OwnerOperationTicket;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use tokio::sync::OwnedMutexGuard;
@@ -133,6 +134,8 @@ pub(crate) trait ChangeTool: fmt::Debug + Send + Sync + 'static {
 #[derive(Debug)]
 pub(crate) struct Acting {
     pub(crate) reading: Reading,
+    pub(crate) owner_operation: Option<OwnerOperationTicket>,
+    pub(crate) last_exit_code: Option<Arc<Mutex<Option<i32>>>>,
 }
 
 impl Acting {
@@ -140,7 +143,9 @@ impl Acting {
     /// the repository's programs as in the owner's terminal, which the plan
     /// listed and the owner allowed.
     pub(crate) fn run<S: Into<String>>(&self, arguments: impl IntoIterator<Item = S>) -> GitRun {
-        GitRun::new(&self.reading.layout.top, arguments).with_timeout(CHANGE_TIMEOUT_SECONDS)
+        GitRun::new(&self.reading.layout.top, arguments)
+            .with_timeout(CHANGE_TIMEOUT_SECONDS)
+            .for_owner_operation(self.owner_operation.clone(), self.last_exit_code.clone())
     }
 
     /// Keeps the uncommitted changes of tracked files as a stash entry named
@@ -390,7 +395,16 @@ async fn execute<T: ChangeTool>(
         return Err(GitFailure::RepositoryChanged);
     }
 
-    T::act(&Acting { reading }, &arguments, plan).await
+    T::act(
+        &Acting {
+            reading,
+            owner_operation: None,
+            last_exit_code: None,
+        },
+        &arguments,
+        plan,
+    )
+    .await
 }
 
 /// The accesses of a plan.
@@ -439,7 +453,10 @@ pub(crate) async fn accesses<P>(
 /// progress and the commits of the other refs that the change works with.
 /// The index counts by its entries and not by its file's time, which the
 /// owner's editor refreshes on its own.
-async fn repository_state(reading: &Reading, tips: &[String]) -> Result<String, GitFailure> {
+pub(crate) async fn repository_state(
+    reading: &Reading,
+    tips: &[String],
+) -> Result<String, GitFailure> {
     let head = reading
         .git
         .run(reading.run(["rev-parse", "--verify", "--quiet", "HEAD"]))
@@ -480,7 +497,7 @@ async fn repository_state(reading: &Reading, tips: &[String]) -> Result<String, 
 
 /// The 64-bit FNV-1a hash of `bytes`, which names the index's entries in the
 /// state without keeping them.
-fn fnv1a(bytes: &[u8]) -> u64 {
+pub(crate) fn fnv1a(bytes: &[u8]) -> u64 {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0000_0100_0000_01b3;
     bytes.iter().fold(OFFSET, |hash, byte| {

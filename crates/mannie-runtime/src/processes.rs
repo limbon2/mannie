@@ -25,18 +25,36 @@ use mannie_plugin_sdk::host::{BindRefusal, PluginBinding, ServiceProvider};
 use mannie_plugin_sdk::manifest::ProcessSection;
 use mannie_plugin_sdk::service::{BoundService, Service};
 use mannie_plugin_sdk::services::processes::{
-    MAX_PROGRAM_INPUT_BYTES, MAX_PROGRAM_OUTPUT_BYTES, MAX_PROGRAM_TIMEOUT_SECONDS, ProcessError,
-    Processes, ProcessesApi, ProgramEnding, ProgramOutput, ProgramRun, ReadPlace,
+    MAX_PROGRAM_INPUT_BYTES, MAX_PROGRAM_OUTPUT_BYTES, MAX_PROGRAM_TIMEOUT_SECONDS,
+    OwnerOperationOutcome, OwnerOperationRequest, OwnerOperationTicket, ProcessError, Processes,
+    ProcessesApi, ProgramEnding, ProgramOutput, ProgramRun, ReadPlace,
 };
+use mannie_store::{NewProgramOperation, ProgramOperationError};
 use mannie_tools::{
     CommandEnvironment, ProgramEnvironmentError, Verdict, canonical_folder, find_program,
     path_is_inside, plugin_path_access, run_program,
 };
-use mannie_types::ids::ProjectId;
+use mannie_types::ids::{ProgramOperationId, ProjectId};
 use mannie_types::mentions::MentionPlace;
 use mannie_types::tools::{AccessMode, ToolsSettings};
+use sha2::{Digest, Sha256};
 
 use crate::{Runtime, lock};
+
+/// The most target folders that one owner program operation may name.
+const MAX_OWNER_FOLDERS: usize = 16;
+
+/// The longest action code that an owner program operation may carry.
+const MAX_ACTION_BYTES: usize = 64;
+
+/// An active owner program operation authorized by a ticket (ADR-0078).
+#[derive(Debug, Clone)]
+struct ActiveOwnerOperation {
+    id: ProgramOperationId,
+    plugin: String,
+    program: String,
+    folders: Vec<PathBuf>,
+}
 
 /// The installed programs of the plugins: the tables of each plugin's
 /// manifest under `[processes]`, which the provider records when it binds
@@ -48,6 +66,8 @@ pub(crate) struct Programs {
     /// Where each program was found, by name. Mannie's `PATH` does not
     /// change while it runs.
     located: Mutex<HashMap<String, PathBuf>>,
+    /// Active journaled owner operations, keyed by their opaque ticket text.
+    owner_operations: Mutex<HashMap<String, ActiveOwnerOperation>>,
 }
 
 impl Programs {
@@ -176,9 +196,22 @@ impl ProcessesApi for BoundProcesses {
             check_limits(&run)?;
             let program = runtime.locate_program(&run.program).await?;
             let working_directory = working_directory(&runtime, &run.working_directory)?;
+
+            if run.reads.is_some() && run.owner_operation.is_some() {
+                return Err(ProcessError::InvalidRun {
+                    detail: "a run cannot combine read checks and an owner operation ticket"
+                        .to_owned(),
+                });
+            }
+
             if let Some(place) = &run.reads {
                 check_reads(&runtime, place).await?;
             }
+
+            if let Some(ticket) = &run.owner_operation {
+                check_owner_ticket(&runtime, &plugin, &run.program, &working_directory, ticket)?;
+            }
+
             let environment = environment(&runtime, &section, &run).await?;
             let mut arguments = section.fixed.clone();
             arguments.extend(run.arguments);
@@ -231,6 +264,262 @@ impl ProcessesApi for BoundProcesses {
         }
         .boxed()
     }
+
+    fn begin_owner_operation(
+        &self,
+        request: OwnerOperationRequest,
+    ) -> BoxFuture<'static, Result<OwnerOperationTicket, ProcessError>> {
+        let runtime = self.runtime.clone();
+        let plugin = self.plugin.clone();
+        let declared = self.programs.contains_key(&request.program);
+        async move {
+            if !declared {
+                return Err(ProcessError::NotDeclared {
+                    program: request.program,
+                });
+            }
+
+            check_owner_action(&request.action)?;
+
+            let project_folder = runtime
+                .mention_project_folder(&request.project)
+                .await
+                .map_err(|_error| ProcessError::ProjectNotFound)?;
+            let folders = check_owner_folders(
+                &runtime,
+                &request.project,
+                &project_folder,
+                &request.folders,
+            )
+            .await?;
+
+            let digest = arguments_digest(
+                &request.program,
+                &project_folder,
+                &request.action,
+                &request.arguments,
+            );
+            let effects = serde_json::to_string(&request.effects).unwrap_or_else(|_| "[]".into());
+            let record = NewProgramOperation {
+                id: request.id.clone(),
+                plugin: plugin.clone(),
+                project_id: request.project.clone(),
+                program: request.program.clone(),
+                action: request.action.clone(),
+                arguments_digest: digest,
+                effects,
+            };
+
+            runtime
+                .inner
+                .store
+                .begin_program_operation(&record)
+                .await
+                .map_err(|error| match error {
+                    ProgramOperationError::AlreadyJournaled => ProcessError::AlreadyRun,
+                    ProgramOperationError::Store(error) => {
+                        tracing::error!(
+                            error.code = error.code(),
+                            "the journal of owner program operations failed"
+                        );
+                        ProcessError::StartFailed {
+                            detail: "the operation journal could not be written".to_owned(),
+                        }
+                    }
+                })?;
+
+            let token = uuid::Uuid::now_v7().to_string();
+            lock(&runtime.inner.programs.owner_operations).insert(
+                token.clone(),
+                ActiveOwnerOperation {
+                    id: request.id,
+                    plugin,
+                    program: request.program,
+                    folders,
+                },
+            );
+
+            Ok(OwnerOperationTicket::new(token))
+        }
+        .boxed()
+    }
+
+    fn finish_owner_operation(
+        &self,
+        ticket: OwnerOperationTicket,
+        outcome: OwnerOperationOutcome,
+    ) -> BoxFuture<'static, Result<(), ProcessError>> {
+        let runtime = self.runtime.clone();
+        let plugin = self.plugin.clone();
+        async move {
+            let active = {
+                let mut map = lock(&runtime.inner.programs.owner_operations);
+                let matches = map
+                    .get(ticket.as_str())
+                    .is_some_and(|entry| entry.plugin == plugin);
+                if !matches {
+                    return Err(ProcessError::InvalidOperationTicket);
+                }
+                map.remove(ticket.as_str())
+            };
+
+            let Some(active) = active else {
+                return Err(ProcessError::InvalidOperationTicket);
+            };
+
+            let store = &runtime.inner.store;
+            let recorded = match outcome {
+                OwnerOperationOutcome::Completed { exit_code } => {
+                    store
+                        .complete_program_operation(&active.id, exit_code)
+                        .await
+                }
+                OwnerOperationOutcome::Failed { code } => {
+                    store.fail_program_operation(&active.id, &code).await
+                }
+                OwnerOperationOutcome::Uncertain => {
+                    store.mark_program_operation_uncertain(&active.id).await
+                }
+            };
+
+            if let Err(error) = recorded {
+                tracing::error!(
+                    error.code = error.code(),
+                    plugin,
+                    program = active.program,
+                    "an owner program operation finished and its journal record did not update"
+                );
+            }
+
+            Ok(())
+        }
+        .boxed()
+    }
+}
+
+/// Validates an owner operation's action code.
+fn check_owner_action(action: &str) -> Result<(), ProcessError> {
+    let valid_chars = action.bytes().all(|byte| {
+        byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
+    });
+
+    if action.is_empty() || action.len() > MAX_ACTION_BYTES || !valid_chars {
+        return Err(ProcessError::InvalidRun {
+            detail: "the owner operation action code is invalid".to_owned(),
+        });
+    }
+
+    Ok(())
+}
+
+/// Canonicalizes and authorizes the folders that an owner program operation
+/// writes to (ADR-0078, decision 2): folders inside the project are allowed
+/// directly, Mannie's protected folders are always refused (T-18), and folders
+/// outside the project require an existing project or shared write grant.
+async fn check_owner_folders(
+    runtime: &Runtime,
+    project: &ProjectId,
+    project_folder: &str,
+    folders: &[PathBuf],
+) -> Result<Vec<PathBuf>, ProcessError> {
+    if folders.is_empty() || folders.len() > MAX_OWNER_FOLDERS {
+        return Err(ProcessError::InvalidRun {
+            detail: "the owner operation must name between 1 and 16 folders".to_owned(),
+        });
+    }
+
+    let project_canonical = working_directory(runtime, Path::new(project_folder))?;
+    let mut canonicals = Vec::with_capacity(folders.len());
+    let mut external = Vec::new();
+
+    for folder in folders {
+        let canonical = working_directory(runtime, folder)?;
+
+        if !path_is_inside(&canonical, &project_canonical) {
+            external.push(canonical.clone());
+        }
+
+        canonicals.push(canonical);
+    }
+
+    if !external.is_empty() {
+        let context = runtime
+            .mention_context_for(None, Some(project), Some(project_folder), false)
+            .await
+            .map_err(|_error| ProcessError::InvalidRun {
+                detail: "the project's policy context could not be read".to_owned(),
+            })?;
+
+        for folder in &external {
+            let refused = || ProcessError::WriteNotAllowed {
+                path: folder.display().to_string(),
+            };
+            let text = folder.to_str().ok_or_else(refused)?;
+            let access =
+                plugin_path_access(text, AccessMode::Write, None).map_err(|_failure| refused())?;
+
+            match context.decide(&[access]) {
+                Verdict::Unrestricted | Verdict::Allowed(_) => {}
+                Verdict::Ask(_) | Verdict::Refused(_) => return Err(refused()),
+            }
+        }
+    }
+
+    Ok(canonicals)
+}
+
+/// Verifies that an owner operation ticket belongs to `plugin` and `program`
+/// and authorizes `working_directory`.
+fn check_owner_ticket(
+    runtime: &Runtime,
+    plugin: &str,
+    program: &str,
+    working_directory: &Path,
+    ticket: &OwnerOperationTicket,
+) -> Result<(), ProcessError> {
+    let operations = lock(&runtime.inner.programs.owner_operations);
+    let Some(active) = operations.get(ticket.as_str()) else {
+        return Err(ProcessError::InvalidOperationTicket);
+    };
+
+    if active.plugin != plugin || active.program != program {
+        return Err(ProcessError::InvalidOperationTicket);
+    }
+
+    let allowed = active
+        .folders
+        .iter()
+        .any(|folder| path_is_inside(working_directory, folder));
+
+    if !allowed {
+        return Err(ProcessError::WriteNotAllowed {
+            path: working_directory.display().to_string(),
+        });
+    }
+
+    Ok(())
+}
+
+/// Computes the SHA-256 hex digest of an owner program operation's arguments so
+/// raw arguments never reach the journal or logs.
+fn arguments_digest(
+    program: &str,
+    project_folder: &str,
+    action: &str,
+    arguments: &[String],
+) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let payload =
+        serde_json::to_string(&(program, project_folder, action, arguments)).unwrap_or_default();
+    let digest = Sha256::digest(payload.as_bytes());
+    let mut hex = String::with_capacity(digest.len() * 2);
+
+    for byte in digest {
+        hex.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        hex.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+    }
+
+    hex
 }
 
 /// Refuses a run past the limits of programs before anything starts.

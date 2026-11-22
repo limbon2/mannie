@@ -4,6 +4,7 @@
 // have the fields that a card needs, so data that another version of the
 // plugin wrote shows less rather than breaking the card.
 import type {
+  BlameRunView,
   Branch,
   Commit,
   CommitLabel,
@@ -162,7 +163,28 @@ export function movedOf(data: Fields | null): MovedRef[] {
   return itemsOf<MovedRef>(data, 'moved', ['name']);
 }
 
+/** Blame data carried by a `git_blame` tool result. */
+export interface BlameCardData {
+  readonly path: string;
+  readonly revision: string | null;
+  readonly runs: readonly BlameRunView[];
+}
+
 /** The refs that a push updated. */
 export function pushedOf(data: Fields | null): PushedRef[] {
   return itemsOf<PushedRef>(data, 'pushed', ['destination', 'flag', 'summary']);
+}
+
+/** Blame annotations of a `git_blame` tool call, or `null` when missing. */
+export function blameOf(data: Fields | null): BlameCardData | null {
+  const path = textOf(data, 'path');
+  if (path === null) {
+    return null;
+  }
+  const runs = itemsOf<BlameRunView>(data, 'runs', ['short', 'commit', 'lines']);
+  return {
+    path,
+    revision: textOf(data, 'revision'),
+    runs,
+  };
 }

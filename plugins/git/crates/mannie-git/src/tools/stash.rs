@@ -36,16 +36,16 @@ pub(crate) enum StashAction {
 #[serde(deny_unknown_fields)]
 pub(crate) struct StashArguments {
     #[schemars(description = texts::REPOSITORY_ARGUMENT)]
-    repository: Option<String>,
+    pub(crate) repository: Option<String>,
     /// What to do.
-    action: StashAction,
+    pub(crate) action: StashAction,
     /// For push: the entry's message.
-    message: Option<String>,
+    pub(crate) message: Option<String>,
     /// For push: whether to save untracked files too. False when null.
-    include_untracked: Option<bool>,
+    pub(crate) include_untracked: Option<bool>,
     /// For apply, pop and drop: the entry's number, 0 for the newest. 0 when
     /// null.
-    entry: Option<u32>,
+    pub(crate) entry: Option<u32>,
 }
 
 /// `git_stash`.

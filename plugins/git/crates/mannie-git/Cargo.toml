@@ -19,9 +19,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 specta = { workspace = true }
 thiserror = { workspace = true }
-# The version of git, found once, and the lock that runs one change at a
-# time in a repository.
-tokio = { workspace = true, features = ["sync"] }
+# The version of git, found once, the per-repository lock, and cleanup tasks
+# when an owner operation session drops before finishing (ADR-0078).
+tokio = { workspace = true, features = ["rt", "sync"] }
 tracing = { workspace = true }
 
 [dev-dependencies]

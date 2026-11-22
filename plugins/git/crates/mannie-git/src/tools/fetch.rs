@@ -25,7 +25,7 @@ use crate::tools::{Answer, Reading, fitting_data};
 pub(crate) const GIT_FETCH: &str = "git_fetch";
 
 /// How a fetch joins what it fetched with the current branch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Integrate {
     Merge,
@@ -37,19 +37,19 @@ pub(crate) enum Integrate {
 #[serde(deny_unknown_fields)]
 pub(crate) struct FetchArguments {
     #[schemars(description = texts::REPOSITORY_ARGUMENT)]
-    repository: Option<String>,
+    pub(crate) repository: Option<String>,
     /// The remote, such as `origin`. The current branch's remote, or
     /// `origin`, when null.
-    remote: Option<String>,
+    pub(crate) remote: Option<String>,
     /// The remote's branch to fetch, such as `main`. Every branch when null,
     /// or with integrate, the current branch's upstream.
-    branch: Option<String>,
+    pub(crate) branch: Option<String>,
     /// Whether to remove the remote-tracking branches whose branches the
     /// remote deleted.
-    prune: Option<bool>,
+    pub(crate) prune: Option<bool>,
     /// After fetching, merge or rebase the current branch onto the fetched
     /// branch, as git pull does.
-    integrate: Option<Integrate>,
+    pub(crate) integrate: Option<Integrate>,
 }
 
 /// What a fetch keeps for its run.

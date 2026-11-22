@@ -33,6 +33,10 @@ pub(crate) enum GitFailure {
     TimedOut,
     /// A read that the place's policy would ask the owner about.
     ReadNotAllowed { folder: String },
+    /// A write outside the project that lacks a write grant.
+    WriteNotAllowed { folder: String },
+    /// An owner operation whose ID was already journaled.
+    AlreadyRun,
     /// The repository changed after the owner allowed the call.
     RepositoryChanged,
     /// Another git process holds a lock file of the repository.
@@ -74,6 +78,8 @@ impl GitFailure {
             Self::InvalidArgument { .. } => "invalid_argument",
             Self::TimedOut => "timed_out",
             Self::ReadNotAllowed { .. } => "read_not_allowed",
+            Self::WriteNotAllowed { .. } => "write_not_allowed",
+            Self::AlreadyRun => "already_run",
             Self::RepositoryChanged => "repository_changed",
             Self::Locked { .. } => "locked",
             Self::IdentityMissing => "identity_missing",
@@ -106,6 +112,10 @@ impl GitFailure {
             Self::ReadNotAllowed { folder } => format!(
                 "Reading {folder} needs the owner's permission, which this view cannot ask for."
             ),
+            Self::WriteNotAllowed { folder } => format!(
+                "Changing {folder} needs a write grant for that folder."
+            ),
+            Self::AlreadyRun => "This operation has already been run.".to_owned(),
             Self::RepositoryChanged => "The repository changed after this call was allowed: HEAD, a branch or the index moved. Nothing was done. Read the repository again and call the tool again.".to_owned(),
             Self::Locked { path } => format!(
                 "Another git process holds {path}, so nothing was done. Try again when it ends. If no git process runs, tell the owner, who can delete the lock file; the git tools never delete one."
@@ -169,6 +179,10 @@ mod tests {
             GitFailure::ReadNotAllowed {
                 folder: "D:/work".to_owned(),
             },
+            GitFailure::WriteNotAllowed {
+                folder: "D:/outside".to_owned(),
+            },
+            GitFailure::AlreadyRun,
             GitFailure::RepositoryChanged,
             GitFailure::Locked {
                 path: "D:/work/.git/index.lock".to_owned(),

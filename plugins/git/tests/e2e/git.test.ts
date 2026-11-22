@@ -33,6 +33,7 @@ import {
   openPluginUses,
   openSettings,
   setPluginEnabled,
+  shownText,
   waitForAnimations,
   waitForApp,
   waitForHidden,
@@ -247,7 +248,7 @@ describe('Git', () => {
     await axeInBothThemes();
   });
 
-  it('opens the Git panel from the toolbar, with the branch, the changes and the history', async () => {
+  it('opens the Git panel from the toolbar, previews untracked files, runs panel actions with hook confirmation, and explores graph, branches, compare and inspect', async () => {
     const control = $('[data-git-control]');
     await waitForShownText(control, expect.stringContaining('main'));
     await control.click();
@@ -256,9 +257,68 @@ describe('Git', () => {
     await waitForShownText(panel.$('[data-git-branch]'), 'On main');
     await waitForShownText(panel.$('[data-git-entries]'), expect.stringContaining('todo.txt'));
     await axeInBothThemes();
-    await clickWithText('[data-git-panel] [role="tab"]', 'History');
 
+    // Selecting an untracked file renders its added lines instead of an empty diff.
+    const untrackedRow = panel.$('[data-git-entries] button[data-git-entry-path="todo.txt"]');
+    await untrackedRow.waitForDisplayed();
+    await untrackedRow.click();
+    await waitForShownText(panel.$('[data-git-hunk]'), expect.stringContaining('write the tests'));
+    await axeInBothThemes();
+
+    // Re-install the pre-commit hook, stage todo.txt, and commit from the panel:
+    // the server requires explicit confirmation before running repository code.
+    const marker = hookMarker.replaceAll('\\', '/');
+    writeFileSync(join(workspace, '.git', 'hooks', 'pre-commit'), `#!/bin/sh\necho panel-ran >> '${marker}'\n`, {
+      mode: 0o755,
+    });
+    await clickWithText('[data-git-diff] button', 'Stage file');
+    const backButtons = await $$('[data-git-diff] button');
+    for (const button of backButtons) {
+      const isShown = await button.isDisplayed();
+      const isBack = (await shownText(button)) === 'Back';
+      if (isShown && isBack) {
+        await button.click();
+        break;
+      }
+    }
+    await waitForShownText(panel.$('[data-git-entries]'), expect.stringContaining('Staged'));
+
+    const messageBox = panel.$('[data-git-commit-box] textarea');
+    await messageBox.setValue('Add todo from panel');
+    await clickWithText('[data-git-commit-box] button', 'Commit');
+
+    const confirmDialog = $('[data-git-confirm-dialog]');
+    await confirmDialog.waitForDisplayed();
+    await waitForShownText(confirmDialog, expect.stringContaining('pre-commit'));
+    await axeInBothThemes();
+    await clickWithText('[data-git-confirm-dialog] button', 'Run action');
+    await waitForHidden('[data-git-confirm-dialog]');
+
+    await browser.waitUntil(() => git(workspace, 'log', '-1', '--format=%s').trim() === 'Add todo from panel', {
+      timeout: 15_000,
+    });
+    expect(readFileSync(hookMarker, 'utf8')).toContain('panel-ran');
+
+    // Graph tab shows the topological commit list and opens the commit inspector.
+    const panelCommitOid = git(workspace, 'rev-parse', 'HEAD').trim();
+    await clickWithText('[data-git-panel] [role="tab"]', 'Graph');
+    await waitForShownText(panel.$('[data-git-commits]'), expect.stringContaining('Add todo from panel'));
     await waitForShownText(panel.$('[data-git-commits]'), expect.stringContaining('Push me without asking'));
+    const commitRow = panel.$(`[data-git-commits] button[data-git-commit-oid="${panelCommitOid}"]`);
+    await commitRow.waitForDisplayed();
+    await commitRow.click();
+    await waitForShownText(panel.$('[data-git-commit-inspector]'), expect.stringContaining('todo.txt'));
+    await axeInBothThemes();
+
+    // Branches, Compare and Inspect tabs load cleanly and pass axe in both themes.
+    await clickWithText('[data-git-panel] [role="tab"]', 'Branches');
+    await waitForShownText(panel, expect.stringContaining('origin/main'));
+    await axeInBothThemes();
+
+    await clickWithText('[data-git-panel] [role="tab"]', 'Compare');
+    await axeInBothThemes();
+
+    await clickWithText('[data-git-panel] [role="tab"]', 'Inspect');
     await axeInBothThemes();
   });
 

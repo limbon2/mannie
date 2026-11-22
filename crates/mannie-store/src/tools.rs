@@ -959,5 +959,9 @@ impl Store {
     }
 }
 
+pub(crate) mod program_operations;
+
+pub use program_operations::{NewProgramOperation, ProgramOperationError, ProgramOperationState};
+
 #[cfg(test)]
 mod tests;

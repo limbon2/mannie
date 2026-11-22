@@ -71,6 +71,16 @@ struct StatusData<'a> {
 
 /// Reads the repository's status.
 pub(crate) async fn read_status(reading: &Reading) -> Result<Status, GitFailure> {
+    read_status_with(reading, "--untracked-files=normal").await
+}
+
+/// Reads the repository's status listing individual untracked files inside
+/// untracked folders, for the side panel.
+pub(crate) async fn read_status_all(reading: &Reading) -> Result<Status, GitFailure> {
+    read_status_with(reading, "--untracked-files=all").await
+}
+
+async fn read_status_with(reading: &Reading, untracked: &str) -> Result<Status, GitFailure> {
     let ran = reading
         .git
         .output(reading.run([
@@ -79,7 +89,7 @@ pub(crate) async fn read_status(reading: &Reading) -> Result<Status, GitFailure>
             "-z",
             "--branch",
             "--show-stash",
-            "--untracked-files=normal",
+            untracked,
             "--ignore-submodules=dirty",
         ]))
         .await?;

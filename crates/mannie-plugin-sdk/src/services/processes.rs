@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::BoxFuture;
-use crate::contracts::{ConversationId, ProjectId};
+use crate::contracts::{ConversationId, ProgramEffect, ProgramOperationId, ProjectId};
 use crate::service::Service;
 
 /// The most bytes of input that a run gives its program.
@@ -71,6 +71,122 @@ pub trait ProcessesApi: Send + Sync + fmt::Debug {
         &self,
         project: ProjectId,
     ) -> BoxFuture<'static, Result<PathBuf, ProcessError>>;
+
+    /// Journals an owner-initiated program action for `request.project`,
+    /// verifies that its target folders are writable for that project, and
+    /// issues an active ticket that authorizes subsequent [`ProgramRun`] calls
+    /// of that action (ADR-0078, decision 2).
+    fn begin_owner_operation(
+        &self,
+        request: OwnerOperationRequest,
+    ) -> BoxFuture<'static, Result<OwnerOperationTicket, ProcessError>>;
+
+    /// Revokes `ticket` and records the outcome of the journaled owner
+    /// operation (ADR-0078, decision 2).
+    fn finish_owner_operation(
+        &self,
+        ticket: OwnerOperationTicket,
+        outcome: OwnerOperationOutcome,
+    ) -> BoxFuture<'static, Result<(), ProcessError>>;
+}
+
+/// An active ticket authorizing program runs that belong to one journaled
+/// owner operation (ADR-0078, decision 2). Only the host or test doubles
+/// construct tickets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OwnerOperationTicket(String);
+
+impl OwnerOperationTicket {
+    /// Creates a ticket with this text. Only the core or test harnesses build
+    /// one.
+    #[cfg(any(feature = "host", feature = "testing"))]
+    pub fn new(text: String) -> Self {
+        Self(text)
+    }
+
+    /// The ticket's text.
+    #[cfg(any(feature = "host", feature = "testing"))]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// What a plugin describes before running an owner-initiated action on a
+/// project (ADR-0078, decision 2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct OwnerOperationRequest {
+    /// Unique operation ID generated per owner click so repeated submissions
+    /// never execute twice.
+    pub id: ProgramOperationId,
+    /// The project whose repository or workspace the action targets.
+    pub project: ProjectId,
+    /// The declared program name from the plugin's manifest, such as `git`.
+    pub program: String,
+    /// Short stable ASCII `snake_case` action code, such as `stage` or `commit`.
+    pub action: String,
+    /// Canonical folders that the action writes to or runs within.
+    pub folders: Vec<PathBuf>,
+    /// Representative arguments of the action; the core stores only their
+    /// SHA-256 digest in the journal and never logs or persists their text.
+    pub arguments: Vec<String>,
+    /// Redacted effects (hooks, repository programs, discarded work, published
+    /// rewrites, remote endpoints) recorded in the journal.
+    pub effects: Vec<ProgramEffect>,
+}
+
+impl OwnerOperationRequest {
+    /// Builds a new owner operation request.
+    pub fn new(
+        id: ProgramOperationId,
+        project: ProjectId,
+        program: impl Into<String>,
+        action: impl Into<String>,
+        folders: Vec<PathBuf>,
+    ) -> Self {
+        Self {
+            id,
+            project,
+            program: program.into(),
+            action: action.into(),
+            folders,
+            arguments: Vec::new(),
+            effects: Vec::new(),
+        }
+    }
+
+    /// Attaches the action's arguments, which the core hashes for the journal.
+    #[must_use]
+    pub fn with_arguments(mut self, arguments: Vec<String>) -> Self {
+        self.arguments = arguments;
+        self
+    }
+
+    /// Attaches the action's redacted effects for the journal.
+    #[must_use]
+    pub fn with_effects(mut self, effects: Vec<ProgramEffect>) -> Self {
+        self.effects = effects;
+        self
+    }
+}
+
+/// How an owner-initiated program operation ended (ADR-0078, decision 2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum OwnerOperationOutcome {
+    /// The action completed.
+    Completed {
+        /// Exit code of the final program run, when available.
+        exit_code: Option<i32>,
+    },
+    /// The action failed with a stable error code.
+    Failed {
+        /// Stable failure code.
+        code: String,
+    },
+    /// The action was interrupted or canceled while running.
+    Uncertain,
 }
 
 /// A run of an installed program.
@@ -105,6 +221,11 @@ pub struct ProgramRun {
     /// gives none: the policy decided on its call already.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reads: Option<ReadPlace>,
+    /// For a run belonging to a journaled owner action from a plugin view, the
+    /// active ticket issued by [`ProcessesApi::begin_owner_operation`]
+    /// (ADR-0078, decision 2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_operation: Option<OwnerOperationTicket>,
 }
 
 impl ProgramRun {
@@ -125,6 +246,7 @@ impl ProgramRun {
             timeout_seconds: DEFAULT_TIMEOUT_SECONDS,
             output_limit: DEFAULT_OUTPUT_LIMIT,
             reads: None,
+            owner_operation: None,
         }
     }
 
@@ -163,6 +285,14 @@ impl ProgramRun {
     #[must_use]
     pub fn checked_as(mut self, reads: ReadPlace) -> Self {
         self.reads = Some(reads);
+        self
+    }
+
+    /// The same run, bound to an active journaled owner operation ticket
+    /// (ADR-0078, decision 2).
+    #[must_use]
+    pub fn for_owner_operation(mut self, ticket: OwnerOperationTicket) -> Self {
+        self.owner_operation = Some(ticket);
         self
     }
 }
@@ -327,6 +457,21 @@ pub enum ProcessError {
         /// The folder.
         path: String,
     },
+    /// An owner action writes to a folder outside the project that lacks a
+    /// write grant.
+    #[error("writing {path} is not allowed there")]
+    WriteNotAllowed {
+        /// The folder.
+        path: String,
+    },
+    /// An owner operation with this ID is already recorded in the journal and
+    /// will not run again.
+    #[error("the owner operation has run already")]
+    AlreadyRun,
+    /// The owner operation ticket is unknown, expired, or does not cover this
+    /// plugin, program or working directory.
+    #[error("the owner operation ticket is not valid")]
+    InvalidOperationTicket,
     /// The project does not exist.
     #[error("the project does not exist")]
     ProjectNotFound,

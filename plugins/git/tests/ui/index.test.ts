@@ -53,8 +53,11 @@ describe('the git plugin', () => {
     expect(whileOff).toEqual([[], [], [], []]);
     expect(shell.toolKinds.entries.map((kind) => kind.id).sort()).toEqual(TOOLS);
     expect(shell.sidePanels.entries.map((kind) => kind.id)).toEqual(['git.repository']);
+    expect(shell.sidePanels.entries[0]?.hideHeading).toBe(true);
     expect(shell.conversationControls.entries.map((control) => control.id)).toEqual(['git.control']);
     expect(shell.mentionKinds.entries.map((kind) => kind.id)).toEqual(['git']);
+    expect(shell.commands.entries.map((command) => command.id)).toEqual(['git.open_panel']);
+    expect(shell.toolKinds.findOf('git_blame', 'git')?.details).toBeDefined();
   });
 
   it('describes the calls of its own tools only', () => {

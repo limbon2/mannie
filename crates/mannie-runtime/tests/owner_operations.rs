@@ -4,7 +4,8 @@
 
 use mannie_runtime::testing::Harness;
 use mannie_store::dbfiles::{NewOperation, OperationError, OperationState};
-use mannie_types::ids::{DatabaseKey, DatabaseOperationId};
+use mannie_store::{NewProgramOperation, ProgramOperationError, ProgramOperationState};
+use mannie_types::ids::{DatabaseKey, DatabaseOperationId, ProgramOperationId, ProjectId};
 use mannie_types::tools::StatementClass;
 
 #[tokio::test]
@@ -33,5 +34,39 @@ async fn an_owner_operation_that_ran_when_mannie_ended_is_uncertain_after_the_st
     assert!(matches!(
         harness.store.begin_db_operation(&operation).await,
         Err(OperationError::AlreadyJournaled)
+    ));
+}
+
+#[tokio::test]
+async fn an_owner_program_operation_that_ran_when_mannie_ended_is_uncertain_after_the_start() {
+    let harness = Harness::start().await;
+    let operation = NewProgramOperation {
+        id: ProgramOperationId::parse("0199e0f2-0000-7000-8000-000000000211").unwrap(),
+        plugin: "git".to_owned(),
+        project_id: ProjectId::parse("0199e0f2-0000-7000-8000-000000000212").unwrap(),
+        program: "git".to_owned(),
+        action: "commit".to_owned(),
+        arguments_digest: "deadbeef".to_owned(),
+        effects: "[]".to_owned(),
+    };
+    harness
+        .store
+        .begin_program_operation(&operation)
+        .await
+        .unwrap();
+
+    let harness = harness.restart().await;
+
+    assert_eq!(
+        harness
+            .store
+            .program_operation_state(&operation.id)
+            .await
+            .unwrap(),
+        Some(ProgramOperationState::Uncertain)
+    );
+    assert!(matches!(
+        harness.store.begin_program_operation(&operation).await,
+        Err(ProgramOperationError::AlreadyJournaled)
     ));
 }

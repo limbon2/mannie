@@ -13,11 +13,12 @@
 //! plugin needs git 2.40 or later.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use mannie_plugin_sdk::contracts::ProjectId;
 use mannie_plugin_sdk::services::processes::{
-    ProcessError, ProcessesApi, ProgramEnding, ProgramRun, ReadPlace,
+    OwnerOperationOutcome, OwnerOperationRequest, OwnerOperationTicket, ProcessError, ProcessesApi,
+    ProgramEnding, ProgramRun, ReadPlace,
 };
 use tokio::sync::OnceCell;
 
@@ -66,6 +67,10 @@ pub(crate) struct GitRun {
     timeout_seconds: u32,
     output_limit: u32,
     reads: Option<ReadPlace>,
+    owner_operation: Option<OwnerOperationTicket>,
+    /// Shared slot recording the exit code of the latest mutating run in an
+    /// owner operation, so the journal stores git's actual exit status.
+    last_exit_code: Option<Arc<Mutex<Option<i32>>>>,
     /// Whether the run may reach a remote, which only fetches, pulls and
     /// pushes do.
     remote: bool,
@@ -85,6 +90,8 @@ impl GitRun {
             timeout_seconds: DEFAULT_TIMEOUT_SECONDS,
             output_limit: DEFAULT_OUTPUT_LIMIT,
             reads: None,
+            owner_operation: None,
+            last_exit_code: None,
             remote: false,
         }
     }
@@ -130,6 +137,18 @@ impl GitRun {
     #[must_use]
     pub(crate) fn checked_as(mut self, place: Option<ReadPlace>) -> Self {
         self.reads = place;
+        self
+    }
+
+    /// The same run, bound to a journaled owner operation (ADR-0078).
+    #[must_use]
+    pub(crate) fn for_owner_operation(
+        mut self,
+        ticket: Option<OwnerOperationTicket>,
+        last_exit_code: Option<Arc<Mutex<Option<i32>>>>,
+    ) -> Self {
+        self.owner_operation = ticket;
+        self.last_exit_code = last_exit_code;
         self
     }
 }
@@ -241,6 +260,24 @@ impl Git {
         self.processes.project_folder(project).await
     }
 
+    /// Starts a journaled owner operation in the core (ADR-0078).
+    pub(crate) async fn begin_owner_operation(
+        &self,
+        folder: &Path,
+        request: OwnerOperationRequest,
+    ) -> Result<OwnerSession, GitFailure> {
+        let ticket = self
+            .processes
+            .begin_owner_operation(request)
+            .await
+            .map_err(|error| refused(folder, error))?;
+        Ok(OwnerSession {
+            processes: Arc::clone(&self.processes),
+            ticket: Some(ticket),
+            last_exit_code: Arc::new(Mutex::new(None)),
+        })
+    }
+
     /// Runs git and returns what it produced, whatever its exit code.
     pub(crate) async fn run(&self, run: GitRun) -> Result<Ran, GitFailure> {
         self.version(&run.folder).await?;
@@ -279,6 +316,9 @@ impl Git {
         if let Some(place) = run.reads {
             program = program.checked_as(place);
         }
+        if let Some(ticket) = run.owner_operation {
+            program = program.for_owner_operation(ticket);
+        }
         let output = self
             .processes
             .run(program)
@@ -287,6 +327,9 @@ impl Git {
         match output.ending {
             ProgramEnding::TimedOut => return Err(GitFailure::TimedOut),
             ProgramEnding::Exited | ProgramEnding::OutputFull => {}
+        }
+        if let Some(slot) = &run.last_exit_code {
+            *slot.lock().unwrap_or_else(PoisonError::into_inner) = output.exit_code;
         }
         let cut = output.output_cut();
         Ok(Ran {
@@ -298,11 +341,80 @@ impl Git {
     }
 }
 
+/// An active owner operation ticket that must be finished with its outcome
+/// (ADR-0078).
+#[derive(Debug)]
+pub(crate) struct OwnerSession {
+    processes: Arc<dyn ProcessesApi>,
+    ticket: Option<OwnerOperationTicket>,
+    last_exit_code: Arc<Mutex<Option<i32>>>,
+}
+
+impl OwnerSession {
+    /// A clone of the ticket to pass to git runs that belong to this operation.
+    pub(crate) fn ticket(&self) -> Option<OwnerOperationTicket> {
+        self.ticket.clone()
+    }
+
+    /// Shared handle tracking the last exit code of a mutating git run under
+    /// this operation.
+    pub(crate) fn exit_code_tracker(&self) -> Arc<Mutex<Option<i32>>> {
+        Arc::clone(&self.last_exit_code)
+    }
+
+    /// The exit code of the latest mutating git run in this operation, if any.
+    pub(crate) fn last_exit_code(&self) -> Option<i32> {
+        *self
+            .last_exit_code
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Records the final outcome in the core's journal and releases the ticket.
+    pub(crate) async fn finish(mut self, outcome: OwnerOperationOutcome) {
+        let Some(ticket) = self.ticket.take() else {
+            return;
+        };
+        if let Err(error) = self.processes.finish_owner_operation(ticket, outcome).await {
+            tracing::warn!(%error, "could not finish the journaled owner git operation");
+        }
+    }
+}
+
+impl Drop for OwnerSession {
+    fn drop(&mut self) {
+        let Some(ticket) = self.ticket.take() else {
+            return;
+        };
+        tracing::warn!("an owner git operation session was dropped before finishing");
+        let processes = Arc::clone(&self.processes);
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                if let Err(error) = processes
+                    .finish_owner_operation(ticket, OwnerOperationOutcome::Uncertain)
+                    .await
+                {
+                    tracing::warn!(
+                        %error,
+                        "could not mark an interrupted owner git operation uncertain"
+                    );
+                }
+            });
+        }
+    }
+}
+
 /// The failure of a run that the core refused or could not start.
 fn refused(folder: &Path, error: ProcessError) -> GitFailure {
     match error {
         ProcessError::NotFound { .. } => GitFailure::Missing,
         ProcessError::ReadNotAllowed { path } => GitFailure::ReadNotAllowed { folder: path },
+        ProcessError::WriteNotAllowed { path } => GitFailure::WriteNotAllowed { folder: path },
+        ProcessError::AlreadyRun => GitFailure::AlreadyRun,
+        ProcessError::InvalidOperationTicket => {
+            tracing::warn!("the core refused an invalid owner operation ticket");
+            GitFailure::failed("Mannie refused the owner operation ticket")
+        }
         ProcessError::InvalidRun { detail } => {
             tracing::warn!(%detail, "the core refused a run of git");
             GitFailure::failed(&format!(

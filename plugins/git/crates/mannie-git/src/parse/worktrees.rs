@@ -6,7 +6,7 @@
 use serde::Serialize;
 
 /// A worktree of the repository.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Worktree {
     /// Its folder, as git writes it.

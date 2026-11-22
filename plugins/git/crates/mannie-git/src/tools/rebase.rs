@@ -26,17 +26,17 @@ pub(crate) const GIT_REBASE: &str = "git_rebase";
 #[serde(deny_unknown_fields)]
 pub(crate) struct RebaseArguments {
     #[schemars(description = texts::REPOSITORY_ARGUMENT)]
-    repository: Option<String>,
+    pub(crate) repository: Option<String>,
     /// The commit to replay the branch onto, such as main or origin/main.
-    onto: String,
+    pub(crate) onto: String,
     /// The commit after which the branch's commits are replayed. When null,
     /// the commits that onto lacks.
-    upstream: Option<String>,
+    pub(crate) upstream: Option<String>,
     /// Whether to also move the branches that point at the replayed commits.
-    update_refs: Option<bool>,
+    pub(crate) update_refs: Option<bool>,
     /// Whether to fold the commits that `git_commit` made with fixup into the
     /// commits that they fix.
-    autosquash: Option<bool>,
+    pub(crate) autosquash: Option<bool>,
 }
 
 /// `git_rebase`.

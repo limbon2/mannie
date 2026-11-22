@@ -32,9 +32,26 @@ describe('DiffView', () => {
     expect(body).toMatch(/text-diff-added-foreground[^>]*>\+1</u);
     expect(body).toMatch(/text-diff-removed-foreground[^>]*>\s*−1\s*</u);
     expect(body).toContain('@@ -1,2 +1,2 @@ fn main()');
-    expect(body).toMatch(/data-git-line="removed"[^]*?-<\/span>[^]*?removed<\/span>[^]*?old_call\(\);/u);
-    expect(body).toMatch(/data-git-line="added"[^]*?\+<\/span>[^]*?added<\/span>[^]*?new_call\(\);/u);
+    expect(body).toMatch(/data-git-line="removed"[^]*?-<\/span>[^]*?removed<\/span>[^]*?old_call[^]*?\(\);/u);
+    expect(body).toMatch(/data-git-line="added"[^]*?\+<\/span>[^]*?added<\/span>[^]*?new_call[^]*?\(\);/u);
+    expect(body).toContain('bg-diff-removed-emphasis');
+    expect(body).toContain('bg-diff-added-emphasis');
     expect(body).toContain('no line break at the end');
+  });
+
+  it('renders side-by-side split rows when mode is split', () => {
+    const body = render(DiffView, {
+      props: {
+        files: [PARSER],
+        mode: 'split',
+        open: true,
+        patches: [{ hunks: [HUNK], path: 'src/parser.rs' }],
+      },
+    }).body;
+
+    expect(body).toContain('grid-cols-2');
+    expect(body).toContain('old_call');
+    expect(body).toContain('new_call');
   });
 
   it('says that a file is binary, and names a renamed file’s old path', () => {

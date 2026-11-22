@@ -7,7 +7,7 @@
 
 use mannie_plugin_sdk::BoxFuture;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::changes::{Acting, ChangeTool, Changed, Plan, changed_paths};
 use crate::describe::{CommitLabel, operation_view};
@@ -24,7 +24,7 @@ use crate::tools::{Answer, Reading};
 pub(crate) const GIT_OPERATION: &str = "git_operation";
 
 /// What to do with the operation in progress.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum OperationAction {
     Continue,
@@ -37,9 +37,9 @@ pub(crate) enum OperationAction {
 #[serde(deny_unknown_fields)]
 pub(crate) struct OperationArguments {
     #[schemars(description = texts::REPOSITORY_ARGUMENT)]
-    repository: Option<String>,
+    pub(crate) repository: Option<String>,
     /// continue, skip or abort.
-    action: OperationAction,
+    pub(crate) action: OperationAction,
 }
 
 /// What the run keeps: the operation, and the commit after which its new

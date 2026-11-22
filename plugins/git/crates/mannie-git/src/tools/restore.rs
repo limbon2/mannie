@@ -23,17 +23,17 @@ pub(crate) const GIT_RESTORE: &str = "git_restore";
 #[serde(deny_unknown_fields)]
 pub(crate) struct RestoreArguments {
     #[schemars(description = texts::REPOSITORY_ARGUMENT)]
-    repository: Option<String>,
+    pub(crate) repository: Option<String>,
     /// The files or folders to restore, relative to the repository's top.
-    paths: Vec<String>,
+    pub(crate) paths: Vec<String>,
     /// The revision to restore them from, such as HEAD~1. The index for the
     /// work tree, and HEAD for the index, when null.
-    source: Option<String>,
+    pub(crate) source: Option<String>,
     /// Whether to restore the index. False when null.
-    staged: Option<bool>,
+    pub(crate) staged: Option<bool>,
     /// Whether to restore the work tree. True when null, unless staged is
     /// true.
-    worktree: Option<bool>,
+    pub(crate) worktree: Option<bool>,
 }
 
 /// What a restore keeps for its run: whether it keeps a snapshot first.

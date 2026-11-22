@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                           |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Living index                                                                                                                                                                              |
-| Last updated | 2026-11-21                                                                                                                                                                                |
+| Last updated | 2026-11-22                                                                                                                                                                                |
 | Related      | [ADR-0001](0001-record-architecture-decisions.md), [Template](0000-template.md), [Decisions](../roadmap/milestones.md#5-decisions), [Validations](../roadmap/milestones.md#4-validations) |
 
 [ADR-0001](0001-record-architecture-decisions.md) describes the process, and new ADRs start from the [template](0000-template.md).
@@ -93,3 +93,4 @@ Each ADR has exactly one of these statuses:
 | [0075](0075-let-plugins-send-network-requests-from-collections.md)                     | Let plugins send network requests from collections                                            | Accepted (D70)         | V15        |
 | [0076](0076-provide-a-code-editor-through-the-plugin-sdk.md)                           | Provide a code editor through the plugin SDK                                                  | Accepted               | V15        |
 | [0077](0077-let-the-shell-sidebar-resize-per-activity.md)                              | Let the shell sidebar resize per activity                                                     | Accepted (D71)         | V15        |
+| [0078](0078-let-plugins-run-installed-programs-for-owner-actions.md)                   | Let plugins run installed programs for owner actions in projects                              | Accepted (D72)         | Tests      |

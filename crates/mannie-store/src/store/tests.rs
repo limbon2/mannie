@@ -199,7 +199,7 @@ async fn a_new_database_gets_the_whole_schema_in_wal_mode_without_a_backup() {
             ("provider".to_owned(), 4),
             ("runtime".to_owned(), 30),
             ("settings".to_owned(), 1),
-            ("tools".to_owned(), 7),
+            ("tools".to_owned(), 8),
             ("updates".to_owned(), 1),
         ]
     );
@@ -378,7 +378,7 @@ async fn a_database_of_0_2_0_gets_the_version_of_each_module() {
             ("provider".to_owned(), 4),
             ("runtime".to_owned(), 30),
             ("settings".to_owned(), 1),
-            ("tools".to_owned(), 7),
+            ("tools".to_owned(), 8),
             ("updates".to_owned(), 1),
         ]
     );
@@ -1629,7 +1629,7 @@ async fn rules_of_0_4_0_cover_only_the_foreground_after_the_upgrade() {
             ("provider".to_owned(), 4),
             ("runtime".to_owned(), 30),
             ("settings".to_owned(), 1),
-            ("tools".to_owned(), 7),
+            ("tools".to_owned(), 8),
             ("updates".to_owned(), 1),
         ]
     );

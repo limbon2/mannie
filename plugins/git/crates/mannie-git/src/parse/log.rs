@@ -142,7 +142,7 @@ pub(crate) fn parse_details(output: &str) -> Option<CommitDetails> {
 pub(crate) const REFLOG_FORMAT: &str = "--format=%H%x1f%h%x1f%gd%x1f%gs%x1f%cI%x1f%s";
 
 /// An entry of a reflog: where a ref pointed, and what moved it there.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ReflogEntry {
     pub(crate) oid: String,

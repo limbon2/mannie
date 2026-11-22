@@ -24,16 +24,16 @@ pub(crate) const GIT_SWITCH: &str = "git_switch";
 #[serde(deny_unknown_fields)]
 pub(crate) struct SwitchArguments {
     #[schemars(description = texts::REPOSITORY_ARGUMENT)]
-    repository: Option<String>,
+    pub(crate) repository: Option<String>,
     /// The branch to switch to; with create, the new branch's name; with
     /// detach, the commit.
-    target: String,
+    pub(crate) target: String,
     /// Whether to create the branch target and switch to it.
-    create: Option<bool>,
+    pub(crate) create: Option<bool>,
     /// For create: the commit to start the new branch at. HEAD when null.
-    start: Option<String>,
+    pub(crate) start: Option<String>,
     /// Whether to switch to the commit target without a branch.
-    detach: Option<bool>,
+    pub(crate) detach: Option<bool>,
 }
 
 /// `git_switch`.

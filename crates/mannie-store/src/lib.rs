@@ -54,7 +54,9 @@ pub use runtime::{
 };
 pub use settings::SettingsStoreError;
 pub use store::{Store, StoreOptions};
-pub use tools::ToolsStoreError;
+pub use tools::{
+    NewProgramOperation, ProgramOperationError, ProgramOperationState, ToolsStoreError,
+};
 pub use updates::SettledUpdate;
 
 /// How durable a write is once its future resolves.
@@ -84,6 +86,7 @@ pub(crate) fn all_statements() -> impl Iterator<Item = &'static str> {
         .chain(provider::chatgpt::STATEMENTS)
         .chain(provider::search::STATEMENTS)
         .chain(tools::STATEMENTS)
+        .chain(tools::program_operations::STATEMENTS)
         .chain(updates::STATEMENTS)
         .chain(notifications::STATEMENTS)
         .copied()

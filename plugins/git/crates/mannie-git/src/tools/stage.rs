@@ -23,15 +23,15 @@ pub(crate) const GIT_STAGE: &str = "git_stage";
 #[serde(deny_unknown_fields)]
 pub(crate) struct StageArguments {
     #[schemars(description = texts::REPOSITORY_ARGUMENT)]
-    repository: Option<String>,
+    pub(crate) repository: Option<String>,
     /// The files or folders to stage or unstage, relative to the
     /// repository's top.
-    paths: Option<Vec<String>>,
+    pub(crate) paths: Option<Vec<String>>,
     /// Whether to stage or unstage every change instead of paths.
-    all: Option<bool>,
+    pub(crate) all: Option<bool>,
     /// Whether to take the paths out of the index, keeping the work tree's
     /// files. False when null.
-    unstage: Option<bool>,
+    pub(crate) unstage: Option<bool>,
 }
 
 /// `git_stage`.
