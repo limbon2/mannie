@@ -652,33 +652,51 @@ describe('the shell', () => {
       url.pathname = '/';
       url.search = new URLSearchParams({ conversation, view: 'chat' }).toString();
 
+      await browser.url(url.toString());
+      await waitForApp();
+      await chooseConversationAction('Delete');
+      await waitForShownText(deleteButton, 'Delete');
+      await $(deleteButton).moveTo();
+
+      const originalClass = await browser.execute(() => document.documentElement.className);
+      const surfaceClasses = SURFACE_COLORS.map((surface) => `palette-surface-${surface}`);
+      const hovered = `${deleteButton}:hover`;
       const samples: ContrastSample[] = [];
-      for (const mode of ['light', 'dark']) {
-        for (const surface of SURFACE_COLORS) {
-          await openSettings('shell.interface');
-          await $(`#interface-theme-${mode}`).click();
-          await $(`#interface-surface-${surface}`).click();
-          await browser.url(url.toString());
-          await waitForApp();
-          await chooseConversationAction('Delete');
-          await waitForShownText(deleteButton, 'Delete');
-          await $(deleteButton).moveTo();
-          await waitForAnimations();
+      try {
+        for (const mode of ['light', 'dark']) {
+          for (const surface of SURFACE_COLORS) {
+            await browser.execute(
+              (dark, selected, classes) => {
+                const root = document.documentElement;
+                root.classList.toggle('dark', dark);
+                root.classList.remove(...classes);
+                if (selected !== 'neutral') {
+                  root.classList.add(`palette-surface-${selected}`);
+                }
+              },
+              mode === 'dark',
+              surface,
+              surfaceClasses,
+            );
+            await waitForAnimations();
 
-          const hovered = `${deleteButton}:hover`;
-          const { background, foreground } = await controlColors(hovered);
-          const dialogFill = await controlColors(dialog);
-          const footerFill = await controlColors(footer);
-          samples.push({
-            background: [dialogFill.background, footerFill.background, background],
-            foreground,
-            minimum: 4.5,
-            name: `${mode}/${surface} hovered Delete`,
-          });
-
-          await browser.keys(Key.Escape);
-          await waitForHidden(dialog);
+            const { background, foreground } = await controlColors(hovered);
+            const dialogFill = await controlColors(dialog);
+            const footerFill = await controlColors(footer);
+            samples.push({
+              background: [dialogFill.background, footerFill.background, background],
+              foreground,
+              minimum: 4.5,
+              name: `${mode}/${surface} hovered Delete`,
+            });
+          }
         }
+      } finally {
+        await browser.execute((className) => {
+          document.documentElement.className = className;
+        }, originalClass);
+        await browser.keys(Key.Escape);
+        await waitForHidden(dialog);
       }
       expect(await lowContrast(samples)).toEqual([]);
     });
