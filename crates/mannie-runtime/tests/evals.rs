@@ -407,6 +407,16 @@ pub(crate) fn mentions(call: &ToolCallView, needle: &str) -> bool {
         Access::ExternalTool {
             tool, arguments, ..
         } => tool.contains(needle) || arguments.contains(needle),
+        Access::NetworkRequest {
+            request_label,
+            target_url,
+            summary,
+            ..
+        } => {
+            request_label.contains(needle)
+                || target_url.contains(needle)
+                || summary.contains(needle)
+        }
     });
     in_arguments || in_accesses
 }
@@ -694,7 +704,8 @@ fn owner_choice(task: &Task, call: &ToolCallView) -> ApprovalChoice {
             | Access::ExternalTool { .. }
             | Access::TerminalCommand { .. }
             | Access::BrowserControl { .. }
-            | Access::BrowserAction { .. } => false,
+            | Access::BrowserAction { .. }
+            | Access::NetworkRequest { .. } => false,
         });
 
     if allowed {

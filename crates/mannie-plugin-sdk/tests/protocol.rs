@@ -26,9 +26,9 @@ use mannie_plugin_sdk::points::mentions::{ProviderSuggestions, ReadVerdict, Rend
 use mannie_plugin_sdk::points::sections::SectionContext;
 use mannie_plugin_sdk::points::terminal_hosts::{TerminalHostEntry, TerminalOpenFailure};
 use mannie_plugin_sdk::points::tools::{
-    AgentSelector, CitedItem, DatabaseAccess, ExternalToolAccess, PathAccess, RemoteCommandAccess,
-    TerminalCommandAccess, ToolAccess, ToolArchive, ToolCall, ToolExecution, ToolImage,
-    ToolOffering, ToolRefusal, ToolResult, ToolSpec,
+    AgentSelector, CitedItem, DatabaseAccess, ExternalToolAccess, NetworkRequestAccess, PathAccess,
+    RemoteCommandAccess, TerminalCommandAccess, ToolAccess, ToolArchive, ToolCall, ToolExecution,
+    ToolImage, ToolOffering, ToolRefusal, ToolResult, ToolSpec,
 };
 use mannie_plugin_sdk::services::background_commands::{
     BackgroundError, BackgroundScope, BackgroundTicket, RemoteEnding, RemoteOutput, StartedCommand,
@@ -645,6 +645,43 @@ fn a_tool_servers_call_crosses_json_with_its_endpoint_and_leaves_out_what_it_lac
         let error = serde_json::from_value::<ToolAccess>(json.clone()).unwrap_err();
         assert!(error.is_data(), "{json}: {error}");
     }
+}
+
+#[test]
+fn a_network_request_crosses_json_with_every_field() {
+    let access = ToolAccess::NetworkRequest(NetworkRequestAccess::new(
+        "0199e0f2-0000-7000-8000-0000000000aa".to_owned(),
+        "Billing API".to_owned(),
+        "0199e0f2-0000-7000-8000-0000000000bb".to_owned(),
+        "Create invoice".to_owned(),
+        "http".to_owned(),
+        "POST".to_owned(),
+        "https://api.example.com".to_owned(),
+        "https://api.example.com/v1/invoices".to_owned(),
+        r#"{"headers":{"Authorization":"[redacted]"}}"#.to_owned(),
+    ));
+    let json = json!({
+        "kind": "network_request",
+        "collectionId": "0199e0f2-0000-7000-8000-0000000000aa",
+        "collectionLabel": "Billing API",
+        "requestId": "0199e0f2-0000-7000-8000-0000000000bb",
+        "requestLabel": "Create invoice",
+        "protocol": "http",
+        "method": "POST",
+        "origin": "https://api.example.com",
+        "targetUrl": "https://api.example.com/v1/invoices",
+        "summary": r#"{"headers":{"Authorization":"[redacted]"}}"#
+    });
+
+    assert_eq!(serde_json::to_value(&access).unwrap(), json);
+    assert_eq!(serde_json::from_value::<ToolAccess>(json).unwrap(), access);
+    let incomplete = json!({
+        "kind": "network_request",
+        "collectionId": "a",
+        "protocol": "http"
+    });
+    let error = serde_json::from_value::<ToolAccess>(incomplete).unwrap_err();
+    assert!(error.is_data(), "{error}");
 }
 
 #[test]

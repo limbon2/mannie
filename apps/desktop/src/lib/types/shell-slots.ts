@@ -75,6 +75,20 @@ export interface CommandKey {
 }
 
 /**
+ * Width bounds in CSS pixels for a resizable content sidebar beside the
+ * activity bar (ADR-0077). The shell clamps every value to its own safe limits
+ * and to the current window width so the main area never collapses.
+ */
+export interface SidebarResizeOptions {
+  /** Initial content sidebar width in pixels before the owner resizes it. Defaults to 256 (`16rem`). */
+  readonly defaultWidth?: number;
+  /** Maximum content sidebar width in pixels. Clamped to the shell's ceiling (560 px) and window share. */
+  readonly maxWidth?: number;
+  /** Minimum content sidebar width in pixels. Clamped to the shell's floor (180 px). */
+  readonly minWidth?: number;
+}
+
+/**
  * An entry of the activity bar (ADR-0045): selecting it shows its sidebar
  * panels and its view at the address that the view last had under it.
  */
@@ -87,6 +101,12 @@ export interface NavigationEntry {
   readonly label: Message;
   /** Entries are sorted by this number, lowest first, and the first one's panels take those that name none. */
   readonly order: number;
+  /**
+   * Whether the owner can resize the content sidebar while this entry is
+   * selected (ADR-0077). Omit or pass `false` to keep the fixed default width
+   * (`16rem`); pass `true` for the shell's default bounds, or custom pixel bounds.
+   */
+  readonly sidebarResizable?: boolean | SidebarResizeOptions;
   /** The view the entry opens. */
   readonly view: string;
 }

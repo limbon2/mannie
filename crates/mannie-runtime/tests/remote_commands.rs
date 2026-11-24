@@ -147,7 +147,8 @@ impl Tool for RemoteShell {
                 | ToolAccess::TerminalCommand(_)
                 | ToolAccess::BrowserControl(_)
                 | ToolAccess::BrowserAction(_)
-                | ToolAccess::Database(_) => None,
+                | ToolAccess::Database(_)
+                | ToolAccess::NetworkRequest(_) => None,
             })
             .collect::<Vec<_>>()
             .join(" ");

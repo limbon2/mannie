@@ -292,6 +292,10 @@ pub const NO_BROWSER: &str = "Not run: browser sessions belong to the desktop.";
 /// The result of a browser action on a site the owner already declined.
 pub const BROWSER_SITE_DENIED: &str = "The owner denied this browser site for the current run.";
 
+/// The result of a network request that a worker refused: a worker runs no
+/// plugin (ADR-0075, decision 3).
+pub const NO_NETWORK_REQUESTS: &str = "Not run: this host sends no collection network requests.";
+
 /// The result of a call that names a database that the plugin has not
 /// registered (ADR-0056).
 pub fn database_not_registered(key: &str) -> String {

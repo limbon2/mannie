@@ -165,6 +165,9 @@ pub enum Refusal {
     NoBrowser,
     /// The owner denied this browser site for the current run (ADR-0064).
     BrowserSiteDenied,
+    /// A worker sends no plugin's network requests, for the same reason
+    /// (ADR-0075, decision 3).
+    NoNetworkRequests,
 }
 
 /// Why an operation that was executing ended without its result while the
@@ -412,6 +415,11 @@ fn view_access(access: &Access) -> Access {
             statement_cut,
             ..
         } => cut_text_for_view(statement, statement_cut),
+        Access::NetworkRequest {
+            summary,
+            summary_cut,
+            ..
+        } => cut_text_for_view(summary, summary_cut),
         _uncut => {}
     }
 
@@ -647,6 +655,49 @@ mod tests {
         assert!(long.starts_with(shown.as_str()));
         assert_eq!(view.accesses[1], statement("DELETE FROM notes".to_owned()));
         assert_eq!(document.accesses[0], statement(long));
+    }
+
+    fn network_request(summary: String) -> Access {
+        Access::NetworkRequest {
+            plugin: "network".to_owned(),
+            collection_id: "0199e0f2-0000-7000-8000-0000000000aa".to_owned(),
+            collection_label: "Billing API".to_owned(),
+            request_id: "0199e0f2-0000-7000-8000-0000000000bb".to_owned(),
+            request_label: "Create invoice".to_owned(),
+            protocol: "http".to_owned(),
+            method: "POST".to_owned(),
+            origin: "https://api.example.com".to_owned(),
+            target_url: "https://api.example.com/v1/invoices".to_owned(),
+            summary,
+            summary_cut: false,
+        }
+    }
+
+    #[test]
+    fn the_view_cuts_a_long_network_request_summary_and_keeps_the_document_whole() {
+        let long = format!("{{\"body\":\"{}\"}}", "é".repeat(MAX_VIEW_ARGUMENTS_BYTES));
+        let mut document =
+            ToolCallDocument::receiving("call_1".to_owned(), "network_send_request".to_owned());
+        document.accesses = vec![
+            network_request(long.clone()),
+            network_request("{}".to_owned()),
+        ];
+
+        let view = document.view("{}");
+
+        let Access::NetworkRequest {
+            summary: shown,
+            summary_cut,
+            ..
+        } = &view.accesses[0]
+        else {
+            panic!("not a network request: {:?}", view.accesses[0]);
+        };
+        assert!(*summary_cut);
+        assert!(shown.len() <= MAX_VIEW_ARGUMENTS_BYTES);
+        assert!(long.starts_with(shown.as_str()));
+        assert_eq!(view.accesses[1], network_request("{}".to_owned()));
+        assert_eq!(document.accesses[0], network_request(long));
     }
 
     #[test]

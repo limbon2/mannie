@@ -62,6 +62,7 @@ export function registerChat(slots: ShellSlots): void {
     id: CHAT_VIEW,
     label: m.chat_navigation_label,
     order: 0,
+    sidebarResizable: true,
     view: CHAT_VIEW,
   });
   slots.views.register({

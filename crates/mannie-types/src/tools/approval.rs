@@ -58,6 +58,9 @@ pub enum ApprovalReason {
     BrowserCredential,
     /// The agent requests the handoff of a browser the owner controls.
     BrowserControl,
+    /// A network request from a collection, which no grant allows (ADR-0075,
+    /// decision 3).
+    NetworkRequest,
 }
 
 /// What a grant covers.
@@ -180,6 +183,27 @@ pub enum GrantScope {
         name: String,
         /// The statement's text.
         statement: String,
+    },
+    /// Calls of the same saved network request with the same protocol, method
+    /// and canonical origin, with any runtime parameters or body (ADR-0075,
+    /// decision 3).
+    NetworkRequest {
+        /// The plugin that sends the request.
+        plugin: String,
+        /// The plugin's immutable key for the collection.
+        collection_id: String,
+        /// The collection's name when the owner allowed it, for display only.
+        collection_label: String,
+        /// The plugin's immutable key for the saved request.
+        request_id: String,
+        /// The request's name when the owner allowed it, for display only.
+        request_label: String,
+        /// The lower-case protocol identifier, such as `http`.
+        protocol: String,
+        /// The upper-case operation method, such as `GET` or `POST`.
+        method: String,
+        /// The canonical HTTP or HTTPS origin.
+        origin: String,
     },
 }
 

@@ -2829,3 +2829,185 @@ fn saved_credentials_require_the_exact_conversations_explicit_grant() {
     inputs.grants.push(credential);
     assert!(matches!(inputs.decide(&accesses), Verdict::Allowed(_)));
 }
+
+const COLLECTION_ID: &str = "0199e0f2-0000-7000-8000-0000000000c1";
+const OTHER_COLLECTION_ID: &str = "0199e0f2-0000-7000-8000-0000000000c2";
+const REQUEST_ID: &str = "0199e0f2-0000-7000-8000-0000000000d1";
+const OTHER_REQUEST_ID: &str = "0199e0f2-0000-7000-8000-0000000000d2";
+const API_ORIGIN: &str = "https://api.example.com";
+
+fn network_request_on(
+    collection_id: &str,
+    request_id: &str,
+    method: &str,
+    origin: &str,
+    summary: &str,
+) -> Access {
+    Access::NetworkRequest {
+        plugin: "network".to_owned(),
+        collection_id: collection_id.to_owned(),
+        collection_label: "Billing API".to_owned(),
+        request_id: request_id.to_owned(),
+        request_label: "List invoices".to_owned(),
+        protocol: "http".to_owned(),
+        method: method.to_owned(),
+        origin: origin.to_owned(),
+        target_url: format!("{origin}/v1/invoices"),
+        summary: summary.to_owned(),
+        summary_cut: false,
+    }
+}
+
+fn network_request(method: &str, summary: &str) -> Access {
+    network_request_on(COLLECTION_ID, REQUEST_ID, method, API_ORIGIN, summary)
+}
+
+fn network_grant(method: &str, origin: &str) -> GrantScope {
+    GrantScope::NetworkRequest {
+        plugin: "network".to_owned(),
+        collection_id: COLLECTION_ID.to_owned(),
+        collection_label: "Billing API".to_owned(),
+        request_id: REQUEST_ID.to_owned(),
+        request_label: "List invoices".to_owned(),
+        protocol: "http".to_owned(),
+        method: method.to_owned(),
+        origin: origin.to_owned(),
+    }
+}
+
+#[test]
+fn a_network_request_asks_and_offers_an_endpoint_grant_and_no_rule() {
+    let mut inputs = Inputs::new();
+    inputs.allow_changes_in_workspace = true;
+    let accesses = [network_request("GET", r#"{"query":{"limit":"10"}}"#)];
+
+    assert_eq!(
+        inputs.decide(&accesses),
+        ask(
+            &accesses,
+            &[ApprovalReason::NetworkRequest],
+            vec![network_grant("GET", API_ORIGIN)],
+            None
+        )
+    );
+}
+
+#[test]
+fn a_network_grant_covers_the_same_endpoint_method_and_origin_with_any_inputs() {
+    let mut inputs = Inputs::new();
+    inputs.grants = vec![network_grant("GET", API_ORIGIN)];
+
+    assert_eq!(
+        inputs.decide(&[network_request("GET", r#"{"query":{"limit":"50"}}"#)]),
+        Verdict::Allowed(Decision::Grant)
+    );
+
+    let mut other_plugin = network_request("GET", "{}");
+
+    if let Access::NetworkRequest { plugin, .. } = &mut other_plugin {
+        "other".clone_into(plugin);
+    }
+
+    let mut other_protocol = network_request("GET", "{}");
+
+    if let Access::NetworkRequest { protocol, .. } = &mut other_protocol {
+        "graphql".clone_into(protocol);
+    }
+
+    for access in [
+        network_request("POST", "{}"),
+        network_request_on(
+            COLLECTION_ID,
+            REQUEST_ID,
+            "GET",
+            "https://prod.example.com",
+            "{}",
+        ),
+        network_request_on(COLLECTION_ID, OTHER_REQUEST_ID, "GET", API_ORIGIN, "{}"),
+        network_request_on(OTHER_COLLECTION_ID, REQUEST_ID, "GET", API_ORIGIN, "{}"),
+        other_plugin,
+        other_protocol,
+    ] {
+        assert!(
+            matches!(
+                inputs.decide(std::slice::from_ref(&access)),
+                Verdict::Ask(_)
+            ),
+            "{access:?}"
+        );
+    }
+
+    // Display labels change nothing that a grant covers.
+    let mut renamed = network_request("GET", "{}");
+
+    if let Access::NetworkRequest {
+        collection_label,
+        request_label,
+        ..
+    } = &mut renamed
+    {
+        "Payments".clone_into(collection_label);
+        "Fetch invoices".clone_into(request_label);
+    }
+
+    assert_eq!(inputs.decide(&[renamed]), Verdict::Allowed(Decision::Grant));
+
+    let mut shared = Inputs::new();
+    shared.project_grants = vec![network_grant("GET", API_ORIGIN)];
+    assert_eq!(
+        shared.decide(&[network_request("GET", "{}")]),
+        Verdict::Allowed(Decision::ProjectGrant)
+    );
+    shared.project_grants = Vec::new();
+    shared.always_grants = vec![network_grant("GET", API_ORIGIN)];
+    assert_eq!(
+        shared.decide(&[network_request("GET", "{}")]),
+        Verdict::Allowed(Decision::AlwaysGrant)
+    );
+}
+
+#[test]
+fn full_access_allows_a_network_request_and_workers_refuse_it_in_every_mode() {
+    let mut inputs = Inputs::new();
+    inputs.full_access = true;
+    assert_eq!(
+        inputs.decide(&[network_request("DELETE", "{}")]),
+        Verdict::Allowed(Decision::FullAccess)
+    );
+
+    for mode in MODES.into_iter().chain([CeilingMode::FullAccess]) {
+        assert_eq!(
+            Inputs::worker(mode).decide(&[network_request("GET", "{}")]),
+            Verdict::Refused(Refusal::NoNetworkRequests),
+            "{mode:?}"
+        );
+    }
+}
+
+#[test]
+fn a_network_grant_covers_another_only_for_the_same_endpoint() {
+    let mut renamed = network_grant("GET", API_ORIGIN);
+
+    if let GrantScope::NetworkRequest {
+        collection_label,
+        request_label,
+        ..
+    } = &mut renamed
+    {
+        "Payments".clone_into(collection_label);
+        "Fetch invoices".clone_into(request_label);
+    }
+
+    assert!(super::scope_covers(
+        &network_grant("GET", API_ORIGIN),
+        &renamed
+    ));
+    assert!(!super::scope_covers(
+        &network_grant("GET", API_ORIGIN),
+        &network_grant("POST", API_ORIGIN)
+    ));
+    assert!(!super::scope_covers(
+        &network_grant("GET", API_ORIGIN),
+        &network_grant("GET", "https://prod.example.com")
+    ));
+}

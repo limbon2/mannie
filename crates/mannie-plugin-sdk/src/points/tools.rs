@@ -204,6 +204,73 @@ pub enum ToolAccess {
     BrowserAction(BrowserAccess),
     /// A request to return control of the browser to the agent.
     BrowserControl(BrowserControlAccess),
+    /// A network request sent from an owner-configured collection (ADR-0075,
+    /// decision 2).
+    NetworkRequest(NetworkRequestAccess),
+}
+
+/// A network request from an owner-configured collection, as a plugin's tool
+/// prepares it (ADR-0075, decision 2). The core adds the plugin, checks every
+/// field, and decides on every field: an approval covers this exact resolved
+/// request, a grant covers the same saved request with the same protocol,
+/// method and canonical origin with any runtime parameters or body, and a
+/// changed origin or method sends the call back to the policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct NetworkRequestAccess {
+    /// The plugin's immutable key for the collection.
+    pub collection_id: String,
+    /// The collection's name, as the owner gave it, for display only.
+    pub collection_label: String,
+    /// The plugin's immutable key for the saved request.
+    pub request_id: String,
+    /// The saved request's name, as the owner gave it, for display only.
+    pub request_label: String,
+    /// The lower-case protocol identifier, such as `http`.
+    pub protocol: String,
+    /// The upper-case operation method, such as `GET` or `POST`.
+    pub method: String,
+    /// The canonical HTTP or HTTPS origin, without user information, path,
+    /// query or fragment.
+    pub origin: String,
+    /// The resolved target URL without user information and with every secret
+    /// value replaced by `[redacted]`.
+    pub target_url: String,
+    /// Sanitized JSON of non-secret request parameters, headers and body
+    /// metadata, with all secrets and cookies replaced by `[redacted]`.
+    pub summary: String,
+}
+
+impl NetworkRequestAccess {
+    /// A prepared network request for a saved endpoint.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "each field of a prepared network request is required and checked by the core"
+    )]
+    pub fn new(
+        collection_id: String,
+        collection_label: String,
+        request_id: String,
+        request_label: String,
+        protocol: String,
+        method: String,
+        origin: String,
+        target_url: String,
+        summary: String,
+    ) -> Self {
+        Self {
+            collection_id,
+            collection_label,
+            request_id,
+            request_label,
+            protocol,
+            method,
+            origin,
+            target_url,
+            summary,
+        }
+    }
 }
 
 /// A statement on a database that the owner registered for the plugin, as a

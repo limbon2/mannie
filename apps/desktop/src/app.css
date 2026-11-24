@@ -72,6 +72,21 @@
   --diff-added-foreground: oklch(0.38 0.12 145);
   --diff-removed: oklch(0.95 0.04 25);
   --diff-removed-foreground: oklch(0.45 0.17 25);
+  /*
+   * Template token kinds for URLs, parameters and variables (ADR-0076):
+   * distinct tints, borders and foreground inks meeting WCAG 2.1 AA in both
+   * themes, paired with explicit syntax markers (`{{}}`, `{}`, `?`) so color
+   * is never the only sign.
+   */
+  --token-variable: oklch(0.95 0.04 295);
+  --token-variable-border: oklch(0.68 0.14 295);
+  --token-variable-foreground: oklch(0.36 0.18 295);
+  --token-path: oklch(0.95 0.05 80);
+  --token-path-border: oklch(0.72 0.14 75);
+  --token-path-foreground: oklch(0.4 0.13 65);
+  --token-query: oklch(0.95 0.04 230);
+  --token-query-border: oklch(0.7 0.12 230);
+  --token-query-foreground: oklch(0.38 0.12 235);
 }
 
 .dark {
@@ -110,6 +125,15 @@
   --diff-added-foreground: oklch(0.85 0.12 145);
   --diff-removed: oklch(0.3 0.07 25);
   --diff-removed-foreground: oklch(0.85 0.1 25);
+  --token-variable: oklch(0.3 0.08 295);
+  --token-variable-border: oklch(0.58 0.16 295);
+  --token-variable-foreground: oklch(0.88 0.1 295);
+  --token-path: oklch(0.31 0.07 70);
+  --token-path-border: oklch(0.66 0.14 75);
+  --token-path-foreground: oklch(0.9 0.11 85);
+  --token-query: oklch(0.29 0.06 230);
+  --token-query-border: oklch(0.62 0.13 230);
+  --token-query-foreground: oklch(0.88 0.09 225);
 }
 
 :root.palette-primary-blue {
@@ -215,6 +239,15 @@
 }
 
 @theme inline {
+  --color-token-variable: var(--token-variable);
+  --color-token-variable-border: var(--token-variable-border);
+  --color-token-variable-foreground: var(--token-variable-foreground);
+  --color-token-path: var(--token-path);
+  --color-token-path-border: var(--token-path-border);
+  --color-token-path-foreground: var(--token-path-foreground);
+  --color-token-query: var(--token-query);
+  --color-token-query-border: var(--token-query-border);
+  --color-token-query-foreground: var(--token-query-foreground);
   --color-diff-added: var(--diff-added);
   --color-diff-added-foreground: var(--diff-added-foreground);
   --color-diff-removed: var(--diff-removed);
@@ -310,6 +343,20 @@
   :root[data-side-panel-resizing] * {
     cursor: ew-resize !important;
   }
+
+  :root[data-shell-sidebar-resizing] * {
+    cursor: ew-resize !important;
+  }
+
+  :root[data-pane-resizing="vertical"] * {
+    cursor: ns-resize !important;
+  }
+}
+
+/* Disable the sidebar's 200ms collapse transition while dragging its handle so width tracks the pointer 1:1 (ADR-0077). */
+:root[data-shell-sidebar-resizing] [data-slot="sidebar-gap"],
+:root[data-shell-sidebar-resizing] [data-slot="sidebar-container"] {
+  transition: none !important;
 }
 
 /*

@@ -4,6 +4,20 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+### Added
+
+- Add `NetworkRequest` tool access, per-endpoint approval grants and worker-ceiling refusal (`NoNetworkRequests`) to the core, plugin SDK and desktop approval UI ([ADR-0075](docs/adr/0075-let-plugins-send-network-requests-from-collections.md)).
+- Add a lazy-loaded, CSP-safe CodeMirror 6 `CodeEditor` component and `@mannie/plugin-sdk/code-editor` module to the desktop app and TypeScript plugin SDK, including single-line and URL/variable token highlighting modes ([ADR-0076](docs/adr/0076-provide-a-code-editor-through-the-plugin-sdk.md)).
+- Make the desktop shell sidebar resizable per activity with persisted widths, keyboard controls and opt-in `sidebarResizable` on `NavigationEntry` for plugins ([ADR-0077](docs/adr/0077-let-the-shell-sidebar-resize-per-activity.md)).
+
+### Fixed
+
+- Expand repeated parent selectors in nested CodeMirror theme rules.
+
+### Security
+
+- Update the Rust `url` crate to 2.5.9 across all workspaces to address [RUSTSEC-2026-0592](https://rustsec.org/advisories/RUSTSEC-2026-0592.html).
+
 ## 0.8.6 - 2026-11-21
 
 ### Added
