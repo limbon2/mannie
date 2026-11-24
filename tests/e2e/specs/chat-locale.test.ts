@@ -178,9 +178,10 @@ describe('the chat and window views in the pseudo-locale', () => {
           content: 'long content '.repeat(200),
         }),
       );
-      const approval = $(`${LATEST_MAIN_TURN} [data-tool-approval]`);
-      await approval.waitForDisplayed({ timeout: 30_000 });
-      await approval.$('button').click();
+      // The first action in the approval footer is Allow once.
+      const allowOnce = $(`${LATEST_MAIN_TURN} [data-tool-approval] > div:last-child > button:first-of-type`);
+      await allowOnce.waitForDisplayed({ timeout: 30_000 });
+      await allowOnce.click();
       await waitForCompleteReply();
       await $('main article:last-of-type [data-tool-toggle]').click();
       await $('main article:last-of-type [data-file-change]').waitForDisplayed();
