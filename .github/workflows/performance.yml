@@ -59,7 +59,7 @@ jobs:
         run: node scripts/plugins/programs.mjs stage-e2e target/e2e-bundle
       - name: Cache staged end-to-end binaries
         if: steps.e2e-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: ./.github/actions/save-cache-verified
         with:
           path: |
             target/e2e-bundle
