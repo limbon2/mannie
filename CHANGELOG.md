@@ -18,6 +18,7 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 - Expand repeated parent selectors in nested CodeMirror theme rules.
 - Eliminate end-to-end and CI flakes from WebKitGTK stale-element reverse waits, truncated text queries, `tauri-driver` port collisions and lingering driver trees, validation-build runtime binding writes, Linux `/proc` CPU sampling races, terminal benchmark input and timeouts, worker restart health races, D-Bus keyring startup races, Edge WebDriver download hiccups, and FreeBSD VM timing contention.
+- Remove the extra outlines on highlighted menus, selects, command items, mentions, and focused invalid inputs, and restore the neutral focus ring tokens when the default primary color is active.
 
 ### Security
 
