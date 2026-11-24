@@ -20,6 +20,7 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - Eliminate end-to-end and CI flakes from WebKitGTK stale-element reverse waits, truncated text queries, `tauri-driver` port collisions and lingering driver trees, validation-build runtime binding writes, Linux `/proc` CPU sampling races, terminal benchmark input and timeouts, worker restart health races, D-Bus keyring startup races, Edge WebDriver download hiccups, and FreeBSD VM timing contention.
 - Remove the extra outlines on highlighted menus, selects, command items, mentions, and focused invalid inputs, and restore the neutral focus ring tokens when the default primary color is active.
 - Stop Linux command wrappers before walking their descendants so a server stopped during startup cannot keep running.
+- Store `task dev` SQLite databases per schema fingerprint under `io.github.limbon2.mannie.dev/dev/`, seeding new schemas from the closest compatible development database or backup so switching branches or editing migrations never hits a newer-schema startup refusal.
 
 ### Security
 

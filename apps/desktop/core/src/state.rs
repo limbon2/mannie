@@ -45,6 +45,9 @@ use crate::window::requests::WindowRequests;
 /// The file name of the master's database in its data folder.
 const DATABASE_FILE: &str = "mannie.sqlite";
 
+/// The bundle identifier that `task dev` sets (`tauri.dev.conf.json`).
+const DEV_IDENTIFIER: &str = "io.github.limbon2.mannie.dev";
+
 /// The guard that keeps the log files written. The core closes the log
 /// through it, and so does an install of an update that ends the process
 /// (ADR-0063, decision 11).
@@ -329,10 +332,20 @@ pub(crate) fn start(app: &App, plugins: Vec<PluginEntry>) -> Core {
     let updates = build_updates(app, &clock, &logging);
     let notifications = Notifications::default();
     let file_dialog = Arc::new(FileDialogProvider::new(app.handle().clone()));
-    let services = open_store(app, Arc::clone(&clock), plugins).and_then(|(store, plugins)| {
-        let dialog = Arc::clone(&file_dialog);
-        start_runtime(app, store, plugins, &redactor, dialog, clock)
-    });
+    let services = open_store(app, Arc::clone(&clock), plugins).and_then(
+        |(store, plugins, data_directory)| {
+            let dialog = Arc::clone(&file_dialog);
+            start_runtime(
+                app,
+                store,
+                plugins,
+                &data_directory,
+                &redactor,
+                dialog,
+                clock,
+            )
+        },
+    );
     match &services {
         Ok(services) => {
             start_updates(&updates, &services.store);
@@ -442,6 +455,16 @@ fn host_profile() -> HostProfile {
     }
 }
 
+/// Whether this build uses schema-scoped development databases instead of the
+/// single `mannie.sqlite` file. Only `task dev` (development profile with the
+/// `.dev` bundle identifier) opts in; release, validation and production bundle
+/// runs enforce ADR-0009 strictly.
+fn uses_development_store(profile: HostProfile, identifier: &str) -> bool {
+    let is_dev_profile = profile == HostProfile::Development;
+    let is_dev_identifier = identifier == DEV_IDENTIFIER;
+    is_dev_profile && is_dev_identifier
+}
+
 /// Opens the master's database in the platform's local data folder, with
 /// the modules of the plugins, whose migrations run whether or not the
 /// plugins are on (ADR-0030, decision 5).
@@ -449,7 +472,7 @@ fn open_store(
     app: &App,
     clock: Arc<dyn Clock>,
     plugins: Vec<PluginEntry>,
-) -> Result<(Store, PluginList), StartupProblem> {
+) -> Result<(Store, PluginList, PathBuf), StartupProblem> {
     let data_directory = app.path().app_local_data_dir().map_err(|error| {
         tracing::error!(%error, "could not determine the data folder");
         StartupProblem::DataDirectoryUnavailable
@@ -471,11 +494,16 @@ fn open_store(
     })?;
     let options =
         StoreOptions::new(backups.clone(), clock).with_plugin_modules(plugins.store_modules());
-    let store = Store::open(&database, &options).map_err(|error| {
+    let opened = if uses_development_store(host_profile(), &app.config().identifier) {
+        Store::open_development(&data_directory, &options)
+    } else {
+        Store::open(&database, &options)
+    };
+    let store = opened.map_err(|error| {
         tracing::error!(error = %ErrorChain(&error), error.code = error.code(), "could not open the database");
         startup_problem(&error, &database, &backups)
     })?;
-    Ok((store, plugins))
+    Ok((store, plugins, data_directory))
 }
 
 /// Starts the runtime, which first marks the replies of a previous process
@@ -485,6 +513,7 @@ fn start_runtime(
     app: &App,
     store: Store,
     plugins: PluginList,
+    data_directory: &Path,
     redactor: &Redactor,
     file_dialog: Arc<FileDialogProvider>,
     clock: Arc<dyn Clock>,
@@ -541,7 +570,7 @@ fn start_runtime(
     let browser = Arc::new(BrowserProvider::new(
         store.clone(),
         app.handle().clone(),
-        store.path().with_file_name("browser"),
+        data_directory.join("browser"),
         Arc::<KeyringVault>::clone(&vault),
     ));
     services.push(Arc::<BrowserProvider>::clone(&browser));
@@ -704,7 +733,11 @@ fn create_private_directory(directory: &Path) -> std::io::Result<()> {
 }
 
 fn startup_problem(error: &StoreError, database: &Path, backups: &Path) -> StartupProblem {
-    let path = database.display().to_string();
+    let path = error_database_path(error)
+        .unwrap_or(database)
+        .display()
+        .to_string();
+
     match error {
         StoreError::SchemaTooNew {
             database: database_version,
@@ -726,5 +759,51 @@ fn startup_problem(error: &StoreError, database: &Path, backups: &Path) -> Start
             backup_directory: backups.display().to_string(),
         },
         _ => StartupProblem::DatabaseUnavailable { path },
+    }
+}
+
+fn error_database_path(error: &StoreError) -> Option<&Path> {
+    match error {
+        StoreError::SchemaTooNew { path, .. }
+        | StoreError::ModuleTooNew { path, .. }
+        | StoreError::Open { path, .. }
+        | StoreError::Io { path, .. }
+        | StoreError::WalUnavailable { path, .. } => Some(path.as_path()),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use mannie_plugin_sdk::context::HostProfile;
+
+    use super::{DEV_IDENTIFIER, uses_development_store};
+
+    #[test]
+    fn only_development_profile_with_dev_identifier_uses_schema_scoped_store() {
+        assert!(uses_development_store(
+            HostProfile::Development,
+            DEV_IDENTIFIER
+        ));
+        assert!(!uses_development_store(
+            HostProfile::Development,
+            "io.github.limbon2.mannie"
+        ));
+        assert!(!uses_development_store(
+            HostProfile::Release,
+            DEV_IDENTIFIER
+        ));
+        assert!(!uses_development_store(
+            HostProfile::Release,
+            "io.github.limbon2.mannie"
+        ));
+        assert!(!uses_development_store(
+            HostProfile::Validation,
+            "io.github.limbon2.mannie.validation"
+        ));
+        assert!(!uses_development_store(
+            HostProfile::Validation,
+            DEV_IDENTIFIER
+        ));
     }
 }
