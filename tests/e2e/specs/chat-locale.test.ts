@@ -178,10 +178,9 @@ describe('the chat and window views in the pseudo-locale', () => {
           content: 'long content '.repeat(200),
         }),
       );
-      const waiting = $('main [data-tool-status="awaiting_approval"]');
-      await waiting.waitForDisplayed({ timeout: 30_000 });
-      const decisions = await waiting.$$('button:not([data-tool-toggle]):not([data-allow-for])');
-      await decisions[0]?.click();
+      const approval = $(`${LATEST_MAIN_TURN} [data-tool-approval]`);
+      await approval.waitForDisplayed({ timeout: 30_000 });
+      await approval.$('button').click();
       await waitForCompleteReply();
       await $('main article:last-of-type [data-tool-toggle]').click();
       await $('main article:last-of-type [data-file-change]').waitForDisplayed();
