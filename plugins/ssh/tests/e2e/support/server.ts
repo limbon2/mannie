@@ -4,6 +4,7 @@
 // releases. The server listens on a loopback port and prints one line of
 // JSON with its port, its account and the fingerprint of its host key.
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 
@@ -33,8 +34,14 @@ function serverPath(): string {
   return join(targetDirectory, 'debug', 'examples', binary);
 }
 
-/** Builds the example program; cargo builds nothing when it is current. */
+/** Builds the example program; skipped when CI prebuilt it during `task e2e:build`. */
 function build(): void {
+  if (process.env.MANNIE_E2E_PREBUILT === '1') {
+    if (!existsSync(serverPath())) {
+      throw new Error(`prebuilt SSH test server is missing at ${serverPath()}; run task e2e:build first`);
+    }
+    return;
+  }
   execFileSync(
     'cargo',
     [

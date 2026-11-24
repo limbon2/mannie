@@ -10,13 +10,19 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - Add a lazy-loaded, CSP-safe CodeMirror 6 `CodeEditor` component and `@mannie/plugin-sdk/code-editor` module to the desktop app and TypeScript plugin SDK, including single-line and URL/variable token highlighting modes ([ADR-0076](docs/adr/0076-provide-a-code-editor-through-the-plugin-sdk.md)).
 - Make the desktop shell sidebar resizable per activity with persisted widths, keyboard controls and opt-in `sidebarResizable` on `NavigationEntry` for plugins ([ADR-0077](docs/adr/0077-let-the-shell-sidebar-resize-per-activity.md)).
 
+### Changed
+
+- Build the validation app and end-to-end helper binaries once per platform in CI, run balanced Rust-free end-to-end shards with failure diagnostics, consolidate Linux credential store tests into one job, move report-only performance measurements and daily full dependency audits into dedicated workflows, allow upstream `unmaintained` and `yanked` churn on unrelated pull requests while keeping vulnerabilities, licenses, bans and sources enforced, and reuse worker and compiler caches cleanly during releases.
+
 ### Fixed
 
 - Expand repeated parent selectors in nested CodeMirror theme rules.
+- Eliminate end-to-end and CI flakes from WebKitGTK stale-element reverse waits, truncated text queries, `tauri-driver` port collisions and lingering driver trees, validation-build runtime binding writes, Linux `/proc` CPU sampling races, terminal benchmark input and timeouts, worker restart health races, D-Bus keyring startup races, Edge WebDriver download hiccups, and FreeBSD VM timing contention.
 
 ### Security
 
 - Update the Rust `url` crate to 2.5.9 across all workspaces to address [RUSTSEC-2026-0592](https://rustsec.org/advisories/RUSTSEC-2026-0592.html).
+- Update the Rust `cookie` crate to 0.18.3 across all workspaces to address [RUSTSEC-2026-0594](https://rustsec.org/advisories/RUSTSEC-2026-0594.html).
 
 ## 0.8.6 - 2026-11-21
 

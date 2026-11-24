@@ -16,7 +16,7 @@ import {
   waitForComposer,
 } from '../support/chat.ts';
 import { deleteProviderProfiles } from '../support/harness.ts';
-import { axeViolations, waitForApp, waitForShownText } from '../support/page.ts';
+import { axeViolations, waitForApp, waitForGone, waitForShownText } from '../support/page.ts';
 import { MODELS, type ProviderServer, startProviderServer } from '../support/provider-server.ts';
 
 const PICKER = 'main [data-agent-picker]';
@@ -147,6 +147,6 @@ describe('plans', () => {
     await $(`${PANEL} [data-plan-delete]`).click();
     await $('[data-plan-delete-confirm]').click();
 
-    await $('[data-plans-panel]').waitForExist({ reverse: true });
+    await waitForGone('[data-plans-panel]');
   });
 });

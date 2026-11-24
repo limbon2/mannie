@@ -21,6 +21,7 @@ import {
   uncataloguedText,
   waitForApp,
   waitForGone,
+  waitForHidden,
   waitForShownText,
 } from '../support/page.ts';
 import { MODELS, type ProviderServer, startProviderServer } from '../support/provider-server.ts';
@@ -172,7 +173,7 @@ describe('desktop updates', () => {
     expect(await focusIsVisible()).toBe(true);
     await browser.keys(Key.Enter);
 
-    await $(QUESTION).waitForDisplayed({ reverse: true });
+    await waitForHidden(QUESTION);
     expect(await updateInstalls()).toEqual([NEWER]);
   });
 
@@ -227,7 +228,7 @@ describe('desktop updates', () => {
     expect(await axeViolations()).toEqual([]);
 
     await browser.keys(Key.Escape);
-    await $(QUESTION).waitForDisplayed({ reverse: true });
+    await waitForHidden(QUESTION);
     expect(await updateInstalls()).toEqual([]);
 
     await openSettings(SETTINGS_SECTION);

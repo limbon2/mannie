@@ -41,6 +41,7 @@ import {
   runCommand,
   shownText,
   waitForApp,
+  waitForGone,
   waitForShownText,
 } from '../support/page.ts';
 import { MODELS, type ProviderServer, startProviderServer, TOOLS_DONE } from '../support/provider-server.ts';
@@ -281,7 +282,7 @@ describe('child agents', () => {
 
     await $('[data-side-panel-close]').click();
 
-    await $(PANELS).waitForExist({ reverse: true });
+    await waitForGone(PANELS);
     expect(await focusedElement()).toEqual({ label: 'Open conversation', tag: 'button' });
     expect(await focusedTaskNumber()).toBe('1');
     expect((await panelAddress()).panels).toEqual([]);
@@ -316,7 +317,7 @@ describe('child agents', () => {
     // The panel that opened with the window has no control to go back to.
     await $('[data-side-panel-close]').click();
 
-    await $(PANELS).waitForExist({ reverse: true });
+    await waitForGone(PANELS);
     expect(await focusedElement()).toEqual(expect.objectContaining({ tag: 'main' }));
   });
 
@@ -344,7 +345,7 @@ describe('child agents', () => {
     await browser.waitUntil(async () => !(await isMarked()), { timeoutMsg: 'the handle stayed in the dragging state' });
     expect(await mainCursor()).not.toBe('ew-resize');
     await $('[data-side-panel-close]').click();
-    await $(PANELS).waitForExist({ reverse: true });
+    await waitForGone(PANELS);
   });
 
   it('covers the main view with the side panel in a narrow window, until the panel closes', async () => {
@@ -360,7 +361,7 @@ describe('child agents', () => {
 
       await $('[data-side-panel-close]').click();
 
-      await $(PANELS).waitForExist({ reverse: true });
+      await waitForGone(PANELS);
       expect(await mainViewIsInert()).toBe(false);
       expect(await focusedTaskNumber()).toBe('1');
     } finally {
@@ -433,7 +434,7 @@ describe('child agents', () => {
     expect(await tabLabels()).toEqual(['Task 1: Watch the first']);
     expect(await focusedElement()).toEqual({ label: 'Task 1: Watch the first', tag: 'button' });
     await runCommand('Close the side panel');
-    await $(PANELS).waitForExist({ reverse: true });
+    await waitForGone(PANELS);
   });
 
   it('lists the conversation’s child agents in its menu, and opens one from there', async () => {
@@ -459,7 +460,7 @@ describe('child agents', () => {
     // Closing the panel gives the focus back to the button of the conversation's menu.
     await $('[data-side-panel-close]').click();
 
-    await $(PANELS).waitForExist({ reverse: true });
+    await waitForGone(PANELS);
     expect(await focusedElement()).toEqual({ label: 'Conversation actions', tag: 'button' });
   });
 

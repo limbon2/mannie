@@ -20,7 +20,7 @@ import {
   waitForCompleteReply,
 } from '../support/chat.ts';
 import { deleteProviderProfiles, openedFileLinks } from '../support/harness.ts';
-import { axeViolations, waitForAnimations, waitForApp } from '../support/page.ts';
+import { axeViolations, shownText, waitForAnimations, waitForApp, waitForShownText } from '../support/page.ts';
 import { MODELS, type ProviderServer, startProviderServer } from '../support/provider-server.ts';
 
 const LINK = 'main [data-file-link]';
@@ -111,7 +111,7 @@ describe('file links', () => {
     await submenu.moveTo();
     const item = await $('[data-slot="context-menu-sub-content"] [data-slot="context-menu-item"]');
     await item.waitForDisplayed();
-    expect(await item.getText()).toBe(process.platform === 'win32' ? 'File Explorer' : 'File manager');
+    expect(await shownText(item)).toBe(process.platform === 'win32' ? 'File Explorer' : 'File manager');
     expect(await openedFileLinks()).toHaveLength(3);
     await item.click();
     await actions(4);
@@ -144,7 +144,7 @@ describe('file links', () => {
 
   it('reports missing and deleted paths without recording another action', async () => {
     await clickWithText(LINK, 'Missing');
-    await browser.waitUntil(async () => (await $('main [role="alert"]').getText()).includes('does not exist'));
+    await waitForShownText('main [role="alert"]', expect.stringContaining('does not exist'));
     unlinkSync(file);
     await clickWithText(LINK, 'File');
     await browser.waitUntil(async () => (await $$('main [role="alert"]')).length === 2);
@@ -157,7 +157,7 @@ describe('file links', () => {
     await sendMessage('Show a relative reference without a project');
     await waitForCompleteReply();
     await clickWithText(LINK, 'Relative');
-    await browser.waitUntil(async () => (await $('main [role="alert"]').getText()).includes('has no project'));
+    await waitForShownText('main [role="alert"]', expect.stringContaining('has no project'));
     expect(await openedFileLinks()).toHaveLength(5);
   });
 

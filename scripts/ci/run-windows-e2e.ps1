@@ -14,8 +14,9 @@ $log = Join-Path $folder 'run.log'
 $result = Join-Path $folder 'exit.txt'
 
 # Checkout files can grant write access through Administrators alone. The
-# debug app exports IPC bindings at startup, so the same account needs its
-# own inherited grant after its administrator group becomes deny-only.
+# end-to-end runner writes diagnostics and performance reports under target/,
+# so the same account needs its own inherited grant after its administrator
+# group becomes deny-only.
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 foreach ($path in @($root, $folder)) {
     & icacls $path /grant ('*' + $identity.User.Value + ':(OI)(CI)M') /Q

@@ -16,12 +16,18 @@ afterEach(() => {
   }
 });
 
-function run(contents, inActions = true) {
+function run(contents, inActions = true, terminalContents = undefined) {
   const folder = mkdtempSync(join(tmpdir(), 'mannie-performance-summary-'));
   folders.push(folder);
-  if (contents !== undefined) {
+  const hasReport = contents !== undefined || terminalContents !== undefined;
+  if (hasReport) {
     mkdirSync(join(folder, 'target', 'perf'), { recursive: true });
+  }
+  if (contents !== undefined) {
     writeFileSync(join(folder, 'target', 'perf', 'results.json'), contents);
+  }
+  if (terminalContents !== undefined) {
+    writeFileSync(join(folder, 'target', 'perf', 'terminal.json'), terminalContents);
   }
   const summary = join(folder, 'summary.md');
   writeFileSync(summary, 'Earlier step\n\n');
@@ -67,4 +73,12 @@ test('a local run prints the measurements without requiring an Actions summary f
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /"figures": \{\}/u);
   assert.equal(result.summary, 'Earlier step\n\n');
+});
+
+test('terminal measurements appear beside core measurements when both reports exist', () => {
+  const result = run('{"figures":{"core":1}}', true, '{"figures":{"echo":2}}');
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.summary, /## Performance measurements/u);
+  assert.match(result.summary, /## Terminal performance measurements/u);
+  assert.match(result.summary, /"echo": 2/u);
 });

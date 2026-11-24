@@ -6,6 +6,8 @@ import {
   archiveName,
   buildCommands,
   dependencyClosure,
+  e2eBinaryPaths,
+  e2eHelperCommands,
   FORBIDDEN_CRATE,
   freebsdReleaseScript,
   freebsdScript,
@@ -118,6 +120,55 @@ describe('buildCommands', () => {
     ]);
     assert.deepEqual(buildCommands(PROGRAMS, { e2e: true, release: false }), [
       ['build', '--locked', '--manifest-path', 'plugins/workers/Cargo.toml', '-p', 'mannie-worker'],
+    ]);
+  });
+});
+
+describe('e2eHelperCommands and e2eBinaryPaths', () => {
+  const workspaces = [
+    {
+      folder: 'plugins/ssh',
+      metadata: {
+        packages: [
+          {
+            id: 'ssh-testing-id',
+            name: 'mannie-ssh-testing',
+            targets: [
+              { kind: ['lib'], name: 'mannie_ssh_testing' },
+              { kind: ['example'], name: 'ssh-test-server' },
+              { kind: ['example'], name: 'other-demo' },
+            ],
+          },
+        ],
+      },
+    },
+  ];
+
+  it('discovers plugin *-test-server examples without naming plugins', () => {
+    assert.deepEqual(e2eHelperCommands(workspaces), [
+      [
+        'build',
+        '--locked',
+        '--manifest-path',
+        'plugins/ssh/Cargo.toml',
+        '-p',
+        'mannie-ssh-testing',
+        '--example',
+        'ssh-test-server',
+      ],
+    ]);
+  });
+
+  it('lists staged desktop, e2e program and test-server binaries per platform', () => {
+    assert.deepEqual(e2eBinaryPaths(PROGRAMS, workspaces, 'linux'), [
+      'debug/mannie-desktop',
+      'debug/mannie-worker',
+      'debug/examples/ssh-test-server',
+    ]);
+    assert.deepEqual(e2eBinaryPaths(PROGRAMS, workspaces, 'win32'), [
+      'debug/mannie-desktop.exe',
+      'debug/mannie-worker.exe',
+      'debug/examples/ssh-test-server.exe',
     ]);
   });
 });

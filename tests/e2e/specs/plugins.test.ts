@@ -11,7 +11,15 @@
 // (ADR-0055). Every page passes axe in both themes.
 import { Key } from 'webdriverio';
 
-import { axeViolations, leaveSettings, openPluginUses, openSettings, runCommand, waitForApp } from '../support/page.ts';
+import {
+  axeViolations,
+  leaveSettings,
+  openPluginUses,
+  openSettings,
+  runCommand,
+  waitForApp,
+  waitForHidden,
+} from '../support/page.ts';
 
 /** The fixture plugin's row on the Plugins page. */
 const EXAMPLE = '[data-plugin="example"]';
@@ -86,7 +94,7 @@ async function commandLabels(): Promise<string[]> {
     [...document.querySelectorAll('[data-slot="command-item"]')].map((item) => item.textContent.trim()),
   );
   await browser.keys(Key.Escape);
-  await $('[data-slot="command-input"]').waitForDisplayed({ reverse: true });
+  await waitForHidden('[data-slot="command-input"]');
   return labels;
 }
 

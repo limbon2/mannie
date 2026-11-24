@@ -304,7 +304,7 @@ fn export(builder: &Builder<Wry>, path: &Path) -> Result<(), BindingsError> {
 }
 
 /// The bindings folder in the source tree, which debug builds keep current.
-#[cfg(debug_assertions)]
+#[cfg(all(debug_assertions, not(feature = "validation")))]
 pub(crate) fn source_bindings_directory() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/lib/generated")
 }

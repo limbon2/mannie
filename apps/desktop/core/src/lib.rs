@@ -49,8 +49,10 @@ pub fn run(context: Context<Wry>, plugins: Vec<PluginEntry>) -> anyhow::Result<(
     check_validation_identifier(&context.config().identifier)?;
     let commands = ipc::runtime_builder();
     // Debug builds keep the core's bindings in the source tree current
-    // (ADR-0007); `task gen` writes the plugins' bindings.
-    #[cfg(debug_assertions)]
+    // (ADR-0007); `task gen` writes the plugins' bindings and already writes
+    // the validation bindings before `task e2e:build`, so validation builds do
+    // not rewrite the source tree on every test launch.
+    #[cfg(all(debug_assertions, not(feature = "validation")))]
     export_bindings(&ipc::source_bindings_directory())?;
 
     // The core outlives the event loop, so that quitting can shut it down

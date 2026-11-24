@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 
-import { waitForGone } from '../e2e/support/page.ts';
+import { waitForGone, waitForHidden, waitForTextAbsent } from '../e2e/support/page.ts';
 
-const NAMES = ['$', 'browser', 'document'];
+const NAMES = ['$', 'browser', 'document', 'getComputedStyle'];
 const originals = NAMES.map((name) => Object.getOwnPropertyDescriptor(globalThis, name));
 
 afterEach(() => {
@@ -64,4 +64,72 @@ test('an element that was never there is gone at the first look', async () => {
 test('an element that stays fails with its selector', async () => {
   pageThatMatches(Number.POSITIVE_INFINITY);
   await assert.rejects(waitForGone('[data-row="one"]'), /\[data-row="one"\] stayed on the page/u);
+});
+
+test('waitForHidden waits for elements to become hidden without querying WebDriver handles', async () => {
+  let looks = 0;
+  const define = (name, value) => {
+    Object.defineProperty(globalThis, name, { configurable: true, value });
+  };
+  define('$', () => {
+    throw new Error('waitForHidden must not request WebDriver element handles');
+  });
+  define('getComputedStyle', (element) => ({ display: element.display, visibility: 'visible' }));
+  define('document', {
+    querySelectorAll: () => {
+      looks += 1;
+      const hidden = looks >= 3;
+      return [
+        {
+          closest: () => null,
+          display: hidden ? 'none' : 'block',
+          getBoundingClientRect: () => ({ height: hidden ? 0 : 40, width: hidden ? 0 : 120 }),
+        },
+      ];
+    },
+  });
+  define('browser', {
+    execute: async (script, ...parameters) => script(...parameters),
+    waitUntil: async (condition, options) => {
+      for (let look = 0; look < 5; look += 1) {
+        if (await condition()) {
+          return;
+        }
+      }
+      throw new Error(options.timeoutMsg);
+    },
+  });
+
+  await waitForHidden('[role="dialog"]');
+  assert.equal(looks, 3);
+});
+
+test('waitForTextAbsent waits until forbidden text leaves the element', async () => {
+  let looks = 0;
+  const define = (name, value) => {
+    Object.defineProperty(globalThis, name, { configurable: true, value });
+  };
+  define('$', () => {
+    throw new Error('waitForTextAbsent must not request WebDriver element handles');
+  });
+  define('document', {
+    querySelector: () => {
+      looks += 1;
+      return { innerText: looks >= 3 ? 'Ready' : 'Waiting for your approval.' };
+    },
+  });
+  define('browser', {
+    execute: async (script, ...parameters) => script(...parameters),
+    waitUntil: async (condition, options) => {
+      for (let look = 0; look < 5; look += 1) {
+        if (await condition()) {
+          return;
+        }
+      }
+      throw new Error(options.timeoutMsg);
+    },
+  });
+
+  await waitForTextAbsent('main', 'Waiting for your approval.');
+  assert.equal(looks, 3);
 });

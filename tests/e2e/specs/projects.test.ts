@@ -36,6 +36,7 @@ import {
   openSettings,
   waitForAnimations,
   waitForApp,
+  waitForHidden,
   waitForShownText,
 } from '../support/page.ts';
 import { MODELS, type ProviderServer, startProviderServer, TOOLS_DONE } from '../support/provider-server.ts';
@@ -392,7 +393,7 @@ describe('projects', () => {
     await field.clearValue();
     await field.setValue('Atlas app');
     await clickWithText(`${DIALOG} button`, 'Save');
-    await dialog.waitForDisplayed({ reverse: true });
+    await waitForHidden(DIALOG);
 
     await waitForShownText(projectRow(project), expect.stringContaining('Atlas app'));
   });
@@ -409,7 +410,7 @@ describe('projects', () => {
     await waitForShownText(dialog, expect.stringContaining(`its ${String(conversations.length)} conversations`));
     expect(await axeViolations()).toEqual([]);
     await clickWithText(`${ALERT_DIALOG} button`, `Remove and delete ${String(conversations.length)} conversations`);
-    await dialog.waitForDisplayed({ reverse: true });
+    await waitForHidden(ALERT_DIALOG);
 
     await expect(projectRow(project)).not.toBeExisting();
     const listed = await browser.execute(() =>

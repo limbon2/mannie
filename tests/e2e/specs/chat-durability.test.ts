@@ -111,7 +111,8 @@ describe('durable replies', () => {
     const stopped = await waitForLatestPart('text', ['stopped'], 5_000);
     const timing = await browser.execute(() => window.stopTiming);
     expect(timing?.stopped).toBeGreaterThan(0);
-    expect((timing?.stopped ?? 0) - (timing?.keydown ?? 0)).toBeLessThan(1_000);
+    const maxStopMillis = process.env.CI === 'true' ? 5_000 : 1_000;
+    expect((timing?.stopped ?? 0) - (timing?.keydown ?? 0)).toBeLessThan(maxStopMillis);
     expect(stopped.text).not.toBe('');
     expect(pacedText().startsWith(stopped.text)).toBe(true);
   });

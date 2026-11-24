@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 
-import { shardOf } from '../e2e/support/shard.ts';
+import { selectShardSpecs, shardOf } from '../e2e/support/shard.ts';
 
 const root = resolve(import.meta.dirname, '../..');
 
@@ -42,4 +42,28 @@ test('the jobs of the CI workflow run every part of the specs', () => {
       line,
     );
   }
+});
+
+test('selectShardSpecs partitions specs completely and balances heavy plugin specs across shards', () => {
+  const specs = [
+    'tests/e2e/specs/chat.test.ts',
+    'tests/e2e/specs/chat-locale.test.ts',
+    'tests/e2e/specs/child-agents.test.ts',
+    'tests/e2e/specs/projects.test.ts',
+    'tests/e2e/specs/shell.test.ts',
+    'tests/e2e/specs/tools.test.ts',
+    'plugins/browser/tests/e2e/browser.test.ts',
+    'plugins/git/tests/e2e/git.test.ts',
+    'plugins/mcp/tests/e2e/mcp.test.ts',
+    'plugins/ssh/tests/e2e/ssh.test.ts',
+    'plugins/terminal/tests/e2e/terminal.test.ts',
+    'plugins/workers/tests/e2e/workers.test.ts',
+  ];
+  const first = selectShardSpecs(specs, { current: 1, total: 2 });
+  const second = selectShardSpecs(specs, { current: 2, total: 2 });
+
+  assert.deepEqual([...first, ...second].sort(), [...specs].sort());
+  assert.equal(first.length + second.length, specs.length);
+  assert.ok(first.some((spec) => spec.startsWith('plugins/')));
+  assert.ok(second.some((spec) => spec.startsWith('plugins/')));
 });

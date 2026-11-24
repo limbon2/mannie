@@ -64,8 +64,16 @@ Assert-Success 'granting the allowed folder'
 $configFile = Join-Path $config 'worker.toml'
 $configured = (Get-Content -Raw -Path $configFile).Replace('allowed_folders = []', "allowed_folders = ['$work']")
 Set-Content -Path $configFile -Value $configured -NoNewline -Encoding utf8
+$startsBefore = (Select-String -Path $logs -Pattern 'the worker started' -ErrorAction SilentlyContinue | Measure-Object).Count
+$healthFile = Join-Path $data 'health'
+if (Test-Path $healthFile) {
+    Remove-Item -Force -Path $healthFile
+}
 Restart-Service -Name 'mannie-worker'
-Wait-Until { Test-Path (Join-Path $data 'health') } 'the worker did not start again with the allowed folder'
+Wait-Until {
+    (Test-Path $healthFile) -and
+    ((Select-String -Path $logs -Pattern 'the worker started' -ErrorAction SilentlyContinue | Measure-Object).Count -gt $startsBefore)
+} 'the worker did not start again with the allowed folder'
 if (-not $service.PathName.StartsWith("`"$program`"")) {
     throw "worker-service: the service runs $($service.PathName)"
 }

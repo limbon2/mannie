@@ -35,6 +35,7 @@ import {
   setPluginEnabled,
   waitForAnimations,
   waitForApp,
+  waitForHidden,
   waitForShownText,
 } from '#e2e/page.ts';
 import { MODELS, type ProviderServer, startProviderServer, TOOLS_DONE } from '#e2e/provider-server.ts';
@@ -222,7 +223,7 @@ describe('Git', () => {
     // The rule keeps the program's name and its subcommand: `git push`.
     await $('#tools-rule-words-2').click();
     await clickWithText(`${DIALOG} button`, 'Save rule and allow');
-    await dialog.waitForDisplayed({ reverse: true });
+    await waitForHidden(DIALOG);
     expect(await waitForCompleteReply()).toContain(TOOLS_DONE);
     expect(git(remote, 'log', '-1', '--format=%s', 'main').trim()).toBe('Commit without asking');
 

@@ -31,6 +31,7 @@ import {
   leaveSettings,
   waitForAnimations,
   waitForApp,
+  waitForHidden,
   waitForShownText,
 } from '../support/page.ts';
 import { MODELS, type ProviderServer, type RecordedRequest, startProviderServer } from '../support/provider-server.ts';
@@ -140,7 +141,7 @@ describe('chat', () => {
     await expect($('[data-slot="field-error"]')).toBeDisplayed();
     expect(await axeViolations()).toEqual([]);
     await browser.keys(Key.Escape);
-    await title.waitForDisplayed({ reverse: true });
+    await waitForHidden('#rename-conversation-title');
   });
 
   it('keeps conversations apart, the most recent first', async () => {
@@ -243,7 +244,7 @@ describe('chat', () => {
     await expect(title).toHaveValue('Renamed from the keyboard');
     await browser.keys(Key.Enter);
 
-    await title.waitForDisplayed({ reverse: true });
+    await waitForHidden('#rename-conversation-title');
     await browser.waitUntil(async () => (await listedConversations()).includes('Renamed from the keyboard'), {
       timeoutMsg: 'the list did not show the title typed from the keyboard',
     });

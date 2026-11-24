@@ -35,7 +35,9 @@ import {
   setPluginEnabled,
   waitForAnimations,
   waitForApp,
+  waitForHidden,
   waitForShownText,
+  waitForTextAbsent,
 } from '#e2e/page.ts';
 import { MODELS, type ProviderServer, startProviderServer } from '#e2e/provider-server.ts';
 import { Key } from 'webdriverio';
@@ -222,13 +224,11 @@ describe('Network Client', () => {
 
     // Spec declared no servers: Import notes opens, then closes once a valid Base URL is entered.
     await expect($('[data-network-import-notes]')).toBeDisplayed();
-    await expect($('[data-network-import-notes]')).toHaveText(
-      expect.stringContaining('Specification declared no servers'),
-    );
+    await waitForShownText('[data-network-import-notes]', expect.stringContaining('Specification declared no servers'));
     await axeInBothThemes();
 
     await fill('#network-import-base-url', apiServer.baseUrl);
-    await $('[data-network-import-notes]').waitForDisplayed({ reverse: true });
+    await waitForHidden('[data-network-import-notes]');
 
     await $('[data-network-import-confirm]').click();
 
@@ -252,7 +252,7 @@ describe('Network Client', () => {
     expect(Math.abs(authHeight - generalHeight)).toBeLessThanOrEqual(2);
     await fill('#network-auth-bearer-token', PLANTED_BEARER);
     await $('[data-network-collection-submit]').click();
-    await $('[data-network-collection-dialog]').waitForDisplayed({ reverse: true });
+    await waitForHidden('[data-network-collection-dialog]');
 
     // Open the imported request in the workbench.
     await $('[data-network-panel-request]').click();
@@ -272,7 +272,7 @@ describe('Network Client', () => {
       clipboardData.setData('text/plain', text);
       editor.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData }));
     }, urlTemplate);
-    await expect(urlEditor).toHaveText(urlTemplate);
+    await waitForShownText(urlEditor, urlTemplate);
 
     // CodeMirror can split a highlighted range across several DOM nodes.
     const highlighted = await urlEditor.execute((editor) => {
@@ -291,12 +291,12 @@ describe('Network Client', () => {
       queryValue: 'live',
       variable: '{{expandMode}}',
     });
-    await expect($('[data-network-tab="query"]')).toHaveText(expect.stringContaining('(2)'));
-    await expect($('[data-network-tab="path"]')).toHaveText(expect.stringContaining('(1)'));
+    await waitForShownText('[data-network-tab="query"]', expect.stringContaining('(2)'));
+    await waitForShownText('[data-network-tab="path"]', expect.stringContaining('(1)'));
     await expect($$('[data-network-token-kind="query"]')).toBeElementsArrayOfSize(2);
 
     await $('[data-network-tab="path"]').click();
-    await expect($('[data-network-token-kind="path"]')).toHaveText('{itemId}');
+    await waitForShownText('[data-network-token-kind="path"]', '{itemId}');
     await $('[data-network-tab="query"]').click();
 
     // Resize vertically from the keyboard splitter.
@@ -348,8 +348,8 @@ describe('Network Client', () => {
 
     await waitForToolStatus('completed');
     await waitForAnimations();
-    await expect($('main')).not.toHaveText(expect.stringContaining(PLANTED_BEARER));
-    await expect($('main')).not.toHaveText(expect.stringContaining(PLANTED_COOKIE));
+    await waitForTextAbsent('main', PLANTED_BEARER);
+    await waitForTextAbsent('main', PLANTED_COOKIE);
 
     for (const request of provider.requests()) {
       const serialized = JSON.stringify(request.body);

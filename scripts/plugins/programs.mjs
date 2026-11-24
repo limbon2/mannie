@@ -5,6 +5,9 @@
 //
 //   node scripts/plugins/programs.mjs build [--release] [--e2e]
 //       builds every program, or those that the end-to-end tests use
+//   node scripts/plugins/programs.mjs stage-e2e <folder>
+//       copies the validation desktop app, e2e programs and test servers into
+//       a clean target folder for lightweight CI end-to-end shards
 //   node scripts/plugins/programs.mjs check
 //       checks that no crate of Tauri, GTK or WebKitGTK reaches a headless
 //       program on any target (V5, ADR-0008), and that the release builds an
@@ -28,17 +31,19 @@
 //       writes each program's third-party notices into the folder
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
 import { keyFingerprint } from '../release.mjs';
 
-import { cargoMetadata } from './lib/cargo.mjs';
+import { cargoMetadata, committedWorkspaces, manifestOf } from './lib/cargo.mjs';
 import {
   archiveName,
   buildCommands,
   dependencyClosure,
+  e2eBinaryPaths,
+  e2eHelperCommands,
   FORBIDDEN_CRATE,
   freebsdReleaseScript,
   freebsdScript,
@@ -107,6 +112,22 @@ function argumentsOf(count, usage) {
   return given;
 }
 
+/**
+ * Reads metadata for every committed plugin workspace.
+ * @returns {{ folder: string, metadata: import('./lib/cargo.mjs').Metadata }[]}
+ */
+function readPluginWorkspaces() {
+  return committedWorkspaces(root)
+    .filter((workspace) => workspace.kind === 'plugin')
+    .map((workspace) => {
+      const readMetadata = cargoMetadata(root, manifestOf(workspace), { locked: true, noDeps: true, offline: true });
+      if (!readMetadata.ok) {
+        fail([`cargo metadata failed for ${workspace.folder}:\n${readMetadata.stderr}`]);
+      }
+      return { folder: workspace.folder, metadata: readMetadata.metadata };
+    });
+}
+
 const read = readPrograms(root);
 if (read.problems.length > 0) {
   fail(read.problems);
@@ -115,11 +136,34 @@ const { programs } = read;
 
 switch (command) {
   case 'build': {
+    const e2e = options.includes('--e2e');
     for (const args of buildCommands(programs, {
-      e2e: options.includes('--e2e'),
+      e2e,
       release: options.includes('--release'),
     })) {
       run('cargo', args);
+    }
+    if (e2e) {
+      for (const args of e2eHelperCommands(readPluginWorkspaces())) {
+        run('cargo', args);
+      }
+    }
+    break;
+  }
+  case 'stage-e2e': {
+    const [destination] = argumentsOf(1, 'stage-e2e <folder>');
+    const sourceTarget = resolve(root, process.env.CARGO_TARGET_DIR ?? 'target');
+    const stageTarget = resolve(root, destination);
+    rmSync(stageTarget, { force: true, recursive: true });
+    for (const relative of e2eBinaryPaths(programs, readPluginWorkspaces(), process.platform)) {
+      const source = join(sourceTarget, relative);
+      if (!existsSync(source)) {
+        fail([`expected end-to-end binary is missing at ${source}; run task e2e:build first`]);
+      }
+      const target = join(stageTarget, relative);
+      mkdirSync(dirname(target), { recursive: true });
+      copyFileSync(source, target);
+      console.log(`programs: staged ${relative}`);
     }
     break;
   }
@@ -243,7 +287,7 @@ switch (command) {
   }
   default: {
     console.error(
-      'usage: node scripts/plugins/programs.mjs (build [--release] [--e2e] | check | matrix | freebsd | freebsd-release | archives | check-signed | sboms | notices)',
+      'usage: node scripts/plugins/programs.mjs (build [--release] [--e2e] | stage-e2e <folder> | check | matrix | freebsd | freebsd-release | archives | check-signed | sboms | notices)',
     );
     process.exit(2);
   }

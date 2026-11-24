@@ -25,7 +25,7 @@ import {
   waitForNewTurn,
 } from '../support/chat.ts';
 import { deleteProviderProfiles } from '../support/harness.ts';
-import { axeViolations, waitForApp } from '../support/page.ts';
+import { axeViolations, shownText, waitForApp } from '../support/page.ts';
 import { MODELS, type ProviderServer, startProviderServer } from '../support/provider-server.ts';
 
 const OPTION = '[data-mention-list] [role="option"]';
@@ -225,7 +225,7 @@ describe('mentions', () => {
       },
       { timeoutMsg: 'the list of a general conversation showed options' },
     );
-    expect(await $('[data-mention-list]').getText()).not.toBe('');
+    expect(await shownText(await $('[data-mention-list]'))).not.toBe('');
     expect(await axeViolations()).toEqual([]);
     await browser.keys(Key.Escape);
     await clear();

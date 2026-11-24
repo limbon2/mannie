@@ -16,7 +16,7 @@ import {
   waitForComposer,
 } from '../support/chat.ts';
 import { deleteProviderProfiles } from '../support/harness.ts';
-import { axeViolations, waitForApp, waitForShownText } from '../support/page.ts';
+import { axeViolations, waitForApp, waitForHidden, waitForShownText } from '../support/page.ts';
 import { MODELS, type ProviderServer, startProviderServer } from '../support/provider-server.ts';
 
 const VIEW = '[data-agents-view]';
@@ -128,7 +128,7 @@ describe('custom agents', () => {
     await $('[data-agent-row="explore"]').click();
     await $('[data-agent-leave]').waitForDisplayed();
     await browser.keys(Key.Escape);
-    await $('[data-agent-leave]').waitForDisplayed({ reverse: true });
+    await waitForHidden('[data-agent-leave]');
     await expect($('[data-agent-instructions]')).toHaveValue('Look harder.');
 
     await saveAgentChanges();

@@ -38,7 +38,10 @@ import {
   setPluginEnabled,
   shownText,
   waitForApp,
+  waitForGone,
+  waitForHidden,
   waitForShownText,
+  waitForTextAbsent,
 } from '#e2e/page.ts';
 import { MODELS, type ProviderServer, startProviderServer, TOOLS_DONE } from '#e2e/provider-server.ts';
 import { Key } from 'webdriverio';
@@ -543,7 +546,7 @@ async function trustCertificate(hostname: string, fingerprint: string): Promise<
   await $(`${CERTIFICATE_DIALOG} [data-browser-certificate-hostname]`).setValue(hostname);
   await $(`${CERTIFICATE_DIALOG} [data-browser-certificate-fingerprint]`).setValue(fingerprint);
   await $(`${CERTIFICATE_DIALOG} [data-browser-certificate-save]`).click();
-  await $(CERTIFICATE_DIALOG).waitForDisplayed({ reverse: true });
+  await waitForHidden(CERTIFICATE_DIALOG);
   const saved = $(`${CERTIFICATES} [role="listitem"][data-browser-saved-certificate]`);
   await waitForShownText(saved, expect.stringContaining(fingerprint.replaceAll(':', '').toLowerCase()));
   await expect($(ADD_CERTIFICATE)).toBeFocused();
@@ -560,10 +563,10 @@ async function forgetCertificate(fingerprint: string): Promise<void> {
       (await shownText(await $(CERTIFICATES))).includes('No saved certificates.'),
   );
   for (const entry of await $$(`${CERTIFICATES} [data-browser-saved-certificate]`)) {
-    if ((await entry.getText()).includes(normalized)) {
+    if ((await shownText(entry)).includes(normalized)) {
       await entry.$('[data-browser-certificate-forget]').click();
       await $('[role="alertdialog"] [data-browser-certificate-forget-confirm]').click();
-      await entry.waitForExist({ reverse: true });
+      await waitForTextAbsent(CERTIFICATES, normalized);
       break;
     }
   }
@@ -577,11 +580,11 @@ async function saveCredential(origin: string, label: string, value: string): Pro
   await $(`${CREDENTIAL_DIALOG} input[name="label"]`).setValue(label);
   await $(`${CREDENTIAL_DIALOG} input[name="value"]`).setValue(value);
   await $(`${CREDENTIAL_DIALOG} [data-browser-credential-save]`).click();
-  await $(CREDENTIAL_DIALOG).waitForDisplayed({ reverse: true });
+  await waitForHidden(CREDENTIAL_DIALOG);
   const saved = $(`${CREDENTIALS} [role="listitem"]`);
   await waitForShownText(saved, expect.stringContaining(label));
   await expect($(ADD_CREDENTIAL)).toBeFocused();
-  expect(await saved.getText()).not.toContain(value);
+  expect(await shownText(await saved)).not.toContain(value);
 }
 
 async function waitForHttpsFixture(path: string): Promise<void> {
@@ -592,7 +595,7 @@ async function waitForHttpsFixture(path: string): Promise<void> {
       timeoutMsg: `the HTTPS page at ${path} did not load its script`,
     },
   );
-  await $(CERTIFICATE_ERROR).waitForDisplayed({ reverse: true });
+  await waitForHidden(CERTIFICATE_ERROR);
 }
 
 async function waitForCertificateError(): Promise<void> {
@@ -718,7 +721,7 @@ describeBrowserPane('Browser pane', () => {
     ]);
     await checkThemes();
     await browser.keys(Key.Escape);
-    await $(CERTIFICATE_DIALOG).waitForDisplayed({ reverse: true });
+    await waitForHidden(CERTIFICATE_DIALOG);
     await expect($(ADD_CERTIFICATE)).toBeFocused();
     await checkThemes();
     await leaveSettings();
@@ -738,7 +741,7 @@ describeBrowserPane('Browser pane', () => {
     ]);
     await checkThemes();
     await clickWithText(`${CREDENTIAL_DIALOG} button`, 'Cancel');
-    await $(CREDENTIAL_DIALOG).waitForDisplayed({ reverse: true });
+    await waitForHidden(CREDENTIAL_DIALOG);
     await expect($(ADD_CREDENTIAL)).toBeFocused();
     await leaveSettings();
     await endBrowserSession();
@@ -788,7 +791,7 @@ describeBrowserPane('Browser pane', () => {
     await $(
       `[data-side-panel-tab="browser.session:${watched.conversationId}.${watched.tabId}"] [data-side-panel-close]`,
     ).click();
-    await $(PANEL).waitForDisplayed({ reverse: true });
+    await waitForHidden(PANEL);
     await $('[data-browser-control]').click();
     await clickWithText('[data-browser-open-tab]', 'Browser fixture');
     await $(PANEL).waitForDisplayed();
@@ -849,7 +852,14 @@ describeBrowserPane('Browser pane', () => {
 
     await clickWithText(`${PANEL} button:not(:disabled)`, 'Take over');
     await waitForShownText($(PANEL), expect.stringContaining('You have control'));
-    await expect($(ACTIVITY)).toHaveText('');
+    await browser.waitUntil(
+      async () =>
+        (await browser.execute(
+          (selector: string) => document.querySelector<HTMLElement>(selector)?.innerText.trim() ?? '',
+          ACTIVITY,
+        )) === '',
+      { timeoutMsg: 'the browser activity notice stayed populated' },
+    );
     const takenOver = await waitForSurface((surface) => surface.enabled, 'the page refused the owner in takeover');
     expect(takenOver.cursor).toBeNull();
     const otherOrigin = site.address.replace('127.0.0.1', 'localhost');
@@ -892,7 +902,11 @@ describeBrowserPane('Browser pane', () => {
     let labels: string[] = [];
     try {
       await browser.waitUntil(async () => {
-        labels = await $$(SHELL_TABS).map((tab) => tab.getText());
+        labels = await browser.execute(
+          (selector: string) =>
+            [...document.querySelectorAll<HTMLElement>(selector)].map((tab) => tab.innerText.trim()),
+          SHELL_TABS,
+        );
         return labels.includes('Browser fixture') && labels.includes('Batch todos');
       });
     } catch (error) {
@@ -922,9 +936,9 @@ describeBrowserPane('Browser pane', () => {
     const permissions = '[data-slot="dialog-content"]';
     await waitForShownText($(permissions), expect.stringContaining(site.address));
     await clickWithText(`${permissions} button`, 'Revoke');
-    await expect($(permissions)).not.toHaveText(expect.stringContaining(site.address));
+    await waitForTextAbsent(permissions, site.address);
     await clickWithText(`${permissions} button`, 'Close');
-    await $(permissions).waitForDisplayed({ reverse: true });
+    await waitForHidden(permissions);
 
     await send(callMessage('browser_navigate', { action: { kind: 'go', url: `${site.address}/after-revoke` } }));
     await waitForToolStatus('awaiting_approval');
@@ -948,10 +962,11 @@ describeBrowserPane('Browser pane', () => {
 
         await openBrowserConversation('Open a conversation for the HTTPS fixture.');
         await ownerNavigate('file:///wrong-scheme');
-        const dismiss = $(`${PANEL} [data-browser-dismiss-error]`);
+        const dismissSelector = `${PANEL} [data-browser-dismiss-error]`;
+        const dismiss = $(dismissSelector);
         await dismiss.waitForClickable();
         await dismiss.click();
-        await dismiss.waitForExist({ reverse: true });
+        await waitForGone(dismissSelector);
         await ownerNavigate(`${first.address}/without-exception`);
         await waitForCertificateError();
         expect(first.requests).toEqual([]);
@@ -961,7 +976,7 @@ describeBrowserPane('Browser pane', () => {
         await waitForCertificateError();
         expect(first.requests).toEqual([]);
         await $(`${CERTIFICATE_ERROR} [data-browser-dismiss-certificate-error]`).click();
-        await $(CERTIFICATE_ERROR).waitForDisplayed({ reverse: true });
+        await waitForHidden(CERTIFICATE_ERROR);
         await forgetCertificate(replacement.fingerprint);
 
         await trustCertificate(hostname, certificate.fingerprint);
@@ -1137,25 +1152,24 @@ describeBrowserPane('Browser pane', () => {
       expect(saved.holdClosedAt()).toBeUndefined();
 
       await openBrowserSettings();
-      const entry = $(`${CERTIFICATES} [data-slot="item-group"] [role="listitem"][data-browser-saved-certificate]`);
-      await expect(entry).toHaveText(expect.stringContaining(hostname));
-      await expect(entry).toHaveText(
-        expect.stringContaining(certificate.fingerprint.replaceAll(':', '').toLowerCase()),
-      );
+      const entrySelector = `${CERTIFICATES} [data-slot="item-group"] [role="listitem"][data-browser-saved-certificate]`;
+      const entry = $(entrySelector);
+      await waitForShownText(entry, expect.stringContaining(hostname));
+      await waitForShownText(entry, expect.stringContaining(certificate.fingerprint.replaceAll(':', '').toLowerCase()));
       await $(ADD_CERTIFICATE).click();
       await $(CERTIFICATE_DIALOG).waitForDisplayed();
       await clickWithText(`${CERTIFICATE_DIALOG} button`, 'Cancel');
-      await $(CERTIFICATE_DIALOG).waitForDisplayed({ reverse: true });
+      await waitForHidden(CERTIFICATE_DIALOG);
       await expect($(ADD_CERTIFICATE)).toBeFocused();
       await entry.$('[data-browser-certificate-forget]').click();
       await clickWithText('[role="alertdialog"] button', 'Cancel');
-      await $('[role="alertdialog"]').waitForDisplayed({ reverse: true });
+      await waitForHidden('[role="alertdialog"]');
       expect(saved.holdClosedAt()).toBeUndefined();
       await expect(entry).toBeDisplayed();
 
       await entry.$('[data-browser-certificate-forget]').click();
       await $('[role="alertdialog"] [data-browser-certificate-forget-confirm]').click();
-      await entry.waitForExist({ reverse: true });
+      await waitForGone(entrySelector);
       await waitForShownText($(CERTIFICATES), expect.stringContaining('No saved certificates.'));
       await leaveSettings();
       await waitForShownText(
@@ -1293,15 +1307,16 @@ describeBrowserPane('Browser pane', () => {
     expect(site.signIns).toHaveLength(1);
 
     await openBrowserSettings();
-    const credentialRow = $(`${CREDENTIALS} [data-slot="item-group"] [role="listitem"]`);
+    const credentialRowSelector = `${CREDENTIALS} [data-slot="item-group"] [role="listitem"]`;
+    const credentialRow = $(credentialRowSelector);
     await waitForShownText(credentialRow, expect.stringContaining('Fixture password'));
     await $(ADD_CREDENTIAL).click();
     await $(CREDENTIAL_DIALOG).waitForDisplayed();
     await clickWithText(`${CREDENTIAL_DIALOG} button`, 'Cancel');
-    await $(CREDENTIAL_DIALOG).waitForDisplayed({ reverse: true });
+    await waitForHidden(CREDENTIAL_DIALOG);
     await expect($(ADD_CREDENTIAL)).toBeFocused();
     await credentialRow.$('[data-browser-credential-remove]').click();
-    await credentialRow.waitForExist({ reverse: true });
+    await waitForGone(credentialRowSelector);
     await leaveSettings();
     await send(callMessage('browser_observe', { screenshot: false }));
     const removed = observation(await waitForCompleteReply());

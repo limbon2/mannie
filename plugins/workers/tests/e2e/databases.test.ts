@@ -23,6 +23,7 @@ import {
   runCommand,
   setPluginEnabled,
   waitForApp,
+  waitForHidden,
   waitForShownText,
 } from '#e2e/page.ts';
 import { Key } from 'webdriverio';
@@ -154,7 +155,7 @@ describe('databases', () => {
     await fill('#pair-worker-address', worker.address);
     await fill('#pair-worker-code', worker.code());
     await browser.keys(Key.Enter);
-    await $('[data-pair-worker-dialog]').waitForDisplayed({ reverse: true, timeout: 30_000 });
+    await waitForHidden('[data-pair-worker-dialog]', 30_000);
     await runCommand('Show Databases');
     const add = $(`${ON_WORKER} [data-add-database]`);
     await add.waitForDisplayed({ timeout: 30_000, timeoutMsg: 'the worker did not offer databases' });
@@ -181,10 +182,7 @@ describe('databases', () => {
 
     // The master notices the dropped link and shows the worker's databases
     // as offline, without the file states that it last listed changing.
-    await browser.waitUntil(async () => (await $(PAGE).getText()).includes('Worker offline'), {
-      timeout: 60_000,
-      timeoutMsg: 'the worker’s database did not show as offline',
-    });
+    await waitForShownText(PAGE, expect.stringContaining('Worker offline'), 60_000);
     await waitForShownText(`${ON_WORKER} [data-database-row]`, /Parts/u);
     await axeInBothThemes();
   });

@@ -4,6 +4,7 @@
 // releases. The app starts it itself as a local server, by the absolute path
 // that the spec types into the server's dialog.
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 import { repository } from '#e2e/app.ts';
@@ -27,8 +28,14 @@ export function serverProgram(): string {
   return join(targetDirectory, 'debug', 'examples', binary);
 }
 
-/** Builds the example program; cargo builds nothing when it is current. */
+/** Builds the example program; skipped when CI prebuilt it during `task e2e:build`. */
 export function buildServer(): void {
+  if (process.env.MANNIE_E2E_PREBUILT === '1') {
+    if (!existsSync(serverProgram())) {
+      throw new Error(`prebuilt MCP test server is missing at ${serverProgram()}; run task e2e:build first`);
+    }
+    return;
+  }
   execFileSync(
     'cargo',
     [

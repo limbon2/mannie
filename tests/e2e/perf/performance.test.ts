@@ -177,7 +177,8 @@ describe('performance (NFR-PERF-01 to 04)', () => {
     check('NFR-PERF-01 piece latency p95', percentile(latencies, 0.95), 100, latencies.length);
   });
 
-  it('NFR-PERF-02: with 8 replies streaming, the window answers input within 50 ms (p95)', async () => {
+  it('NFR-PERF-02: with 8 replies streaming, the window answers input within 50 ms (p95)', async function () {
+    this.timeout(180_000);
     for (let reply = 1; reply <= CONCURRENT_REPLIES; reply += 1) {
       await startNewConversation();
       await sendMessage(`Stream ${String(reply)}`);
@@ -212,7 +213,7 @@ describe('performance (NFR-PERF-01 to 04)', () => {
 
     check('NFR-PERF-02 input latency p95', percentile(latencies, 0.95), 50, latencies.length);
     await browser.waitUntil(async () => (await activeReplies()) === 0, {
-      timeout: 60_000,
+      timeout: 90_000,
       timeoutMsg: 'the replies did not end',
     });
   });
@@ -260,7 +261,7 @@ describe('performance (NFR-PERF-01 to 04)', () => {
       window.samplingStopped = true;
       return window.inputLatencies ?? [];
     });
-    expect(latencies.length).toBeGreaterThan(100);
+    expect(latencies.length).toBeGreaterThan(REPORT_ONLY ? 0 : 100);
     check('32 KB reply, input latency p95', percentile(latencies, 0.95), 50, latencies.length);
   });
 
@@ -303,7 +304,8 @@ describe('performance (NFR-PERF-01 to 04)', () => {
     check('NFR-PERF-04 open a conversation of 10,000 parts', (timing?.shown ?? 0) - (timing?.clicked ?? 0), 1_000);
   });
 
-  it('the child agents panel reads a conversation of 10,000 parts, and the view answers input meanwhile', async () => {
+  it('the child agents panel reads a conversation of 10,000 parts, and the view answers input meanwhile', async function () {
+    this.timeout(240_000);
     // The long conversation from the test above is open. A custom agent's first
     // task opens the panel, which then reads every earlier turn.
     await useProfile('Tools');

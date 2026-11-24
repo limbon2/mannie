@@ -114,6 +114,63 @@ export function buildCommands(programs, options) {
     ]);
 }
 
+/**
+ * The cargo commands that prebuild plugin test-server examples used by
+ * end-to-end specs, discovered generically from plugin workspace metadata so
+ * specs never invoke `cargo build` inside a live WebDriver session.
+ * @param {{ folder: string, metadata: Metadata }[]} workspaces
+ * @returns {string[][]}
+ */
+export function e2eHelperCommands(workspaces) {
+  /** @type {string[][]} */
+  const commands = [];
+  for (const { folder, metadata } of workspaces) {
+    for (const pkg of metadata.packages) {
+      for (const target of pkg.targets) {
+        const isExample = target.kind.includes('example');
+        const isTestServer = target.name.endsWith('-test-server');
+        if (isExample && isTestServer) {
+          commands.push([
+            'build',
+            '--locked',
+            '--manifest-path',
+            `${folder}/Cargo.toml`,
+            '-p',
+            pkg.name,
+            '--example',
+            target.name,
+          ]);
+        }
+      }
+    }
+  }
+  return commands;
+}
+
+/**
+ * Relative paths under a Cargo target directory for every binary that the
+ * end-to-end suite executes: the validation desktop app, each `e2e` plugin
+ * program and each discovered plugin `*-test-server` example.
+ * @param {Program[]} programs
+ * @param {{ folder: string, metadata: Metadata }[]} workspaces
+ * @param {NodeJS.Platform} platform
+ * @returns {string[]}
+ */
+export function e2eBinaryPaths(programs, workspaces, platform) {
+  const extension = platform === 'win32' ? '.exe' : '';
+  const binaries = [`debug/mannie-desktop${extension}`];
+  for (const program of programs.filter((candidate) => candidate.e2e)) {
+    binaries.push(`debug/${program.package}${extension}`);
+  }
+  for (const args of e2eHelperCommands(workspaces)) {
+    const example = args.at(-1);
+    if (example !== undefined) {
+      binaries.push(`debug/examples/${example}${extension}`);
+    }
+  }
+  return binaries;
+}
+
 /** The runners of CI's smoke tests, by the platform of a script. */
 const SMOKE_RUNNERS = { unix: 'ubuntu-24.04', windows: 'windows-2025' };
 
