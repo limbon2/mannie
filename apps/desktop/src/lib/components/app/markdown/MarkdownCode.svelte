@@ -1,11 +1,22 @@
 <script lang="ts">
   import { Button } from '#lib/components/ui/button/index.js';
+  import * as CodeBlock from '#lib/components/ui/code-block/index.js';
   import { m } from '#lib/paraglide/messages.js';
+  import { useHighlightedCode } from '#lib/state/highlighted-code.svelte.js';
 
-  let { language, value }: { language: string | null; value: string } = $props();
+  interface Props {
+    language: string | null;
+    value: string;
+  }
+
+  let { language, value }: Props = $props();
 
   let copied = $state<'failed' | 'idle' | 'succeeded'>('idle');
 
+  const highlighted = useHighlightedCode(
+    () => value,
+    () => language,
+  );
   const status = $derived.by(() => {
     if (copied === 'succeeded') {
       return m.markdown_copy_succeeded();
@@ -25,14 +36,22 @@
   }
 </script>
 
-<figure class="my-2 overflow-hidden rounded-md border">
-  <figcaption class="flex items-center justify-between gap-2 border-b bg-muted px-3 py-1 text-xs text-muted-foreground">
-    <span class="truncate font-mono" data-content>{language ?? ''}</span>
-    <span class="flex items-center gap-2">
-      <span role="status">{status}</span>
+<CodeBlock.Root class="my-2">
+  <CodeBlock.Header>
+    <CodeBlock.Title class="font-mono text-xs text-muted-foreground" data-content>{language ?? ''}</CodeBlock.Title>
+    <CodeBlock.Actions>
+      <span class="text-xs text-muted-foreground" role="status">{status}</span>
       <Button size="sm" variant="ghost" onclick={copy}>{m.markdown_copy()}</Button>
-    </span>
-  </figcaption>
-  <!-- Long lines wrap, so the code needs no scrolling region of its own. -->
-  <pre class="p-3 font-mono text-sm wrap-break-word whitespace-pre-wrap"><code data-content>{value}</code></pre>
-</figure>
+    </CodeBlock.Actions>
+  </CodeBlock.Header>
+  <!-- Long lines wrap, so the code needs no horizontal scrolling of its own. -->
+  {#if highlighted.lines !== null}
+    <CodeBlock.Content data-content wrap>
+      {#each highlighted.lines as line, index (index)}
+        <CodeBlock.Line code={line} />
+      {/each}
+    </CodeBlock.Content>
+  {:else}
+    <CodeBlock.Content code={value} data-content wrap />
+  {/if}
+</CodeBlock.Root>

@@ -24,7 +24,7 @@ describe('AttachedImages', () => {
 
     expect(body).toContain('data-image-chips');
     expect(body).toContain('src="data:image/jpeg;base64,AAAA"');
-    expect(body).toMatch(/<span[^>]*data-content[^>]*>ready\.png<\/span>/u);
+    expect(body).toMatch(/data-content(?:="true")?>(?:<!---->)?ready\.png(?:<!---->)?<\/span>/u);
     expect(body).toContain('aria-label="Remove waiting.png"');
     expect(body).toContain('Preparing the image…');
   });

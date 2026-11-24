@@ -1,7 +1,7 @@
 <script lang="ts">
   import XIcon from '@lucide/svelte/icons/x';
 
-  import { Button } from '#lib/components/ui/button/index.js';
+  import * as AttachmentItem from '#lib/components/ui/attachment/index.js';
   import type { Attachment, AttachmentRef } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
   import { sameKey } from '#lib/state/conversation-draft.svelte.js';
@@ -44,28 +44,27 @@
 
 <ul class="flex flex-wrap gap-1.5" aria-label={m.chat_context_chips_label()} data-attachment-chips>
   {#each chips as chip (chip.key)}
-    <li
-      class={[
-        'flex max-w-full min-w-0 items-center gap-1 rounded-md border bg-muted/50 py-0.5 ps-2 text-xs',
-        chip.isHome ? 'pe-2' : 'pe-0.5',
-      ]}
-      data-home={chip.isHome ? '' : undefined}
-    >
-      <chip.Icon class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-      <span class="sr-only">{chip.noun}</span>
-      <span class="min-w-0 truncate" data-content>{chip.attachment.label}</span>
-      {#if !chip.isHome}
-        <Button
-          class="size-5 rounded-sm"
-          aria-label={m.chat_context_detach({ label: chip.attachment.label })}
-          {disabled}
-          size="icon"
-          variant="ghost"
-          onclick={() => ondetach(chip.attachment)}
-        >
-          <XIcon class="size-3" />
-        </Button>
-      {/if}
+    <li class="max-w-full min-w-0">
+      <AttachmentItem.Root class="min-w-0" data-home={chip.isHome ? '' : undefined} size="xs">
+        <AttachmentItem.Media>
+          <chip.Icon />
+        </AttachmentItem.Media>
+        <AttachmentItem.Content>
+          <span class="sr-only">{chip.noun}</span>
+          <AttachmentItem.Title data-content>{chip.attachment.label}</AttachmentItem.Title>
+        </AttachmentItem.Content>
+        {#if !chip.isHome}
+          <AttachmentItem.Actions>
+            <AttachmentItem.Action
+              aria-label={m.chat_context_detach({ label: chip.attachment.label })}
+              {disabled}
+              onclick={() => ondetach(chip.attachment)}
+            >
+              <XIcon />
+            </AttachmentItem.Action>
+          </AttachmentItem.Actions>
+        {/if}
+      </AttachmentItem.Root>
     </li>
   {/each}
 </ul>

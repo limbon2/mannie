@@ -2,6 +2,7 @@
   import BotIcon from '@lucide/svelte/icons/bot';
   import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 
+  import { Badge } from '#lib/components/ui/badge/index.js';
   import { Button } from '#lib/components/ui/button/index.js';
   import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
   import { m } from '#lib/paraglide/messages.js';
@@ -16,8 +17,8 @@
   // conversation's first: one of the profiles, or the default
   // (docs/features/chat/conversation-view.md). `profileId` is the chosen
   // profile, or `null` for the default, and `onChoose` applies a choice. The
-  // registry's radio items keep their menu open by default; choosing a
-  // profile is a single choice, so the menu closes with it.
+  // default profile is marked inline inside its group instead of duplicated at
+  // the top of the menu; choosing it clears the per-conversation override.
   interface Props {
     onChoose: (profileId: string | null) => Promise<ChatFailure | null>;
     profileId: string | null;
@@ -25,20 +26,19 @@
 
   let { onChoose, profileId }: Props = $props();
 
-  /** The menu's value for "the default profile". No profile ID can be `*`. */
-  const DEFAULT_PROFILE = '*';
-
   let failure = $state<ChatFailure | null>(null);
 
   const chosen = $derived(providerProfiles.find(profileId));
+  const defaultProfileId = $derived(providerProfiles.defaultProfile?.id ?? null);
   const effective = $derived(chosen ?? providerProfiles.defaultProfile);
   const effectiveName = $derived(effective?.name ?? m.chat_profile_none());
-  const defaultName = $derived(providerProfiles.defaultProfile?.name ?? m.chat_profile_none());
-  const showsPlan = $derived(providerProfiles.planModels.length > 0 || chosen?.catalog);
+  const showsPlan = $derived(providerProfiles.planModels.length > 0 || chosen?.catalog !== undefined);
+  const hasConfigured = $derived(providerProfiles.configured.length > 0);
+  const hasProfiles = $derived(showsPlan || hasConfigured);
   const catalogMessage = $derived(planCatalogMessage(providerProfiles));
 
   async function choose(value: string): Promise<void> {
-    failure = await onChoose(value === DEFAULT_PROFILE ? null : value);
+    failure = await onChoose(value === defaultProfileId ? null : value);
   }
 </script>
 
@@ -59,43 +59,50 @@
         </Button>
       {/snippet}
     </DropdownMenu.Trigger>
+
     <DropdownMenu.Content class="w-72" align="start">
-      <DropdownMenu.Group>
-        <DropdownMenu.Label>{m.chat_profile_menu_label()}</DropdownMenu.Label>
-        <DropdownMenu.RadioGroup value={profileId ?? DEFAULT_PROFILE} onValueChange={choose}>
-          <DropdownMenu.RadioItem closeOnSelect value={DEFAULT_PROFILE}>
-            {m.chat_profile_default({ name: defaultName })}
-          </DropdownMenu.RadioItem>
+      {#if hasProfiles}
+        <DropdownMenu.RadioGroup value={effective?.id ?? ''} onValueChange={choose}>
           {#if showsPlan}
             <DropdownMenu.Group>
               <DropdownMenu.Label>{m.chat_chatgpt_plan()}</DropdownMenu.Label>
               {#each providerProfiles.planModels as profile (profile.id)}
                 <DropdownMenu.RadioItem closeOnSelect data-plan-model={profile.model} value={profile.id}>
-                  <span data-content>{profile.name}</span>
+                  <span class="min-w-0 truncate" data-content>{profile.name}</span>
+                  {#if profile.id === defaultProfileId}
+                    <Badge class="ms-auto shrink-0" variant="secondary">{m.chat_providers_default()}</Badge>
+                  {/if}
                 </DropdownMenu.RadioItem>
               {/each}
 
               {#if chosen?.catalog?.available === false}
                 <DropdownMenu.RadioItem disabled value={chosen.id}>
-                  <span data-content>{chosen.name}</span>
+                  <span class="min-w-0 truncate" data-content>{chosen.name}</span>
+                  {#if chosen.id === defaultProfileId}
+                    <Badge class="ms-auto shrink-0" variant="secondary">{m.chat_providers_default()}</Badge>
+                  {/if}
                 </DropdownMenu.RadioItem>
               {/if}
             </DropdownMenu.Group>
           {/if}
 
-          {#if providerProfiles.configured.length > 0}
+          {#if hasConfigured}
             <DropdownMenu.Group>
               <DropdownMenu.Label>{m.chat_profile_configured()}</DropdownMenu.Label>
               {#each providerProfiles.configured as profile (profile.id)}
                 <DropdownMenu.RadioItem closeOnSelect value={profile.id}>
-                  <span data-content>{profile.name}</span>
+                  <span class="min-w-0 truncate" data-content>{profile.name}</span>
+                  {#if profile.id === defaultProfileId}
+                    <Badge class="ms-auto shrink-0" variant="secondary">{m.chat_providers_default()}</Badge>
+                  {/if}
                 </DropdownMenu.RadioItem>
               {/each}
             </DropdownMenu.Group>
           {/if}
         </DropdownMenu.RadioGroup>
-      </DropdownMenu.Group>
-      <DropdownMenu.Separator />
+        <DropdownMenu.Separator />
+      {/if}
+
       <DropdownMenu.Group>
         {#if catalogMessage !== null}
           <DropdownMenu.Label>{catalogMessage}</DropdownMenu.Label>
@@ -111,6 +118,7 @@
       </DropdownMenu.Group>
     </DropdownMenu.Content>
   </DropdownMenu.Root>
+
   {#if failure !== null}
     <span class="text-sm text-destructive" role="alert">{chatFailureMessage(failure)}</span>
   {/if}

@@ -60,9 +60,11 @@ function shown(slots: ShellSlots, mentions: MentionChoice[]): string {
   return render(withSlots(slots), { props: { mentions } }).body;
 }
 
-/** The labels of the chips, in order. */
+/** The labels of the chips, in order, skipping Svelte's empty hydration markers. */
 function labels(body: string): string[] {
-  return [...body.matchAll(/<span[^>]*data-content[^>]*>([^<]*)<\/span>/gu)].map((match) => match[1]);
+  return [...body.matchAll(/data-content(?:="true")?>(?:<!---->)?([^<]*)(?:<!---->)?<\/span>/gu)].map(
+    (match) => match[1],
+  );
 }
 
 describe('MentionChips', () => {

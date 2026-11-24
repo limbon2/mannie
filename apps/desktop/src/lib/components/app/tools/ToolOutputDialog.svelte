@@ -3,6 +3,7 @@
 
   import * as Alert from '#lib/components/ui/alert/index.js';
   import { Button } from '#lib/components/ui/button/index.js';
+  import * as CodeBlock from '#lib/components/ui/code-block/index.js';
   import * as Dialog from '#lib/components/ui/dialog/index.js';
   import { Skeleton } from '#lib/components/ui/skeleton/index.js';
   import { Spinner } from '#lib/components/ui/spinner/index.js';
@@ -73,14 +74,16 @@
       {:else if request.totalLines === 0}
         <p class="text-sm text-muted-foreground">{m.tools_output_empty()}</p>
       {:else}
-        <!-- Focusable, so that the owner can scroll the output from the keyboard (WCAG 2.1.1). -->
-        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-        <pre
-          class="max-h-[60vh] overflow-auto rounded-md bg-muted px-3 py-2 font-mono text-xs break-all whitespace-pre-wrap outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          aria-label={title}
-          data-content
-          role="group"
-          tabindex="0">{request.lines.join('\n')}</pre>
+        <CodeBlock.Root size="sm">
+          <CodeBlock.Content
+            class="max-h-[60vh]"
+            aria-label={title}
+            code={request.lines.join('\n')}
+            data-content
+            role="group"
+            wrap
+          />
+        </CodeBlock.Root>
         <div class="flex flex-wrap items-center gap-3">
           <p class="text-xs text-muted-foreground" role="status">
             {m.tools_output_shown({ shown: request.lines.length, total: request.totalLines ?? 0 })}

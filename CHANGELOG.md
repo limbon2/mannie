@@ -9,10 +9,14 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - Add `NetworkRequest` tool access, per-endpoint approval grants and worker-ceiling refusal (`NoNetworkRequests`) to the core, plugin SDK and desktop approval UI ([ADR-0075](docs/adr/0075-let-plugins-send-network-requests-from-collections.md)).
 - Add a lazy-loaded, CSP-safe CodeMirror 6 `CodeEditor` component and `@mannie/plugin-sdk/code-editor` module to the desktop app and TypeScript plugin SDK, including single-line and URL/variable token highlighting modes ([ADR-0076](docs/adr/0076-provide-a-code-editor-through-the-plugin-sdk.md)).
 - Make the desktop shell sidebar resizable per activity with persisted widths, keyboard controls and opt-in `sidebarResizable` on `NavigationEntry` for plugins ([ADR-0077](docs/adr/0077-let-the-shell-sidebar-resize-per-activity.md)).
+- Highlight shell commands (PowerShell, Bash, cmd, fish), SQL statements, JSON arguments and Markdown fenced code blocks with lazy-loaded `shiki` mapped to theme CSS classes (no inline styles, [ADR-0079](docs/adr/0079-highlight-code-with-shiki-and-css-classes.md)).
 
 ### Changed
 
 - Build the validation app and end-to-end helper binaries once per platform in CI, run balanced Rust-free end-to-end shards with failure diagnostics, consolidate Linux credential store tests into one job, move report-only performance measurements and daily full dependency audits into dedicated workflows, allow upstream `unmaintained` and `yanked` churn on unrelated pull requests while keeping vulnerabilities, licenses, bans and sources enforced, and reuse worker and compiler caches cleanly during releases.
+- Upgrade the `shadcn-svelte` CLI to 1.8.1, add its `trace`, `attachment`, `marker` and `code-block` components, and replace the custom collapsible rows, attachment and mention chips, checkpoint and run status markers, and code and output blocks with them.
+- Reorder expanded tool call details to show accesses and output before metadata and collapsed raw JSON arguments, unify command and access blocks onto `CodeBlock` with copy buttons and metadata footers, and avoid repeating the command text in the expanded summary.
+- Remove the duplicate top "Default" items and the "Model for the next reply" heading from the chat model and reasoning effort menus, mark the default choice inline with a `Default` badge, and widen the reasoning effort menu.
 
 ### Fixed
 

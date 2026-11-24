@@ -12,7 +12,7 @@ import type { ToolCallView, ToolImageRef } from '../../../../../../../../apps/de
 const CONVERSATION = '0199e0f2-0000-7000-8000-000000000001';
 const PART = '0199e0f2-0000-7000-8000-000000000002';
 
-function completed(images: ToolImageRef[]): ToolCallView {
+function completed(images: ToolImageRef[], extra: Partial<ToolCallView> = {}): ToolCallView {
   return {
     accesses: [],
     activity: null,
@@ -28,11 +28,12 @@ function completed(images: ToolImageRef[]): ToolCallView {
     startedAt: null,
     status: 'completed',
     tool: 'mcp_browser_screenshot',
+    ...extra,
   };
 }
 
-function shown(call: ToolCallView): string {
-  return render(ToolCallDetails, { props: { call, conversationId: CONVERSATION, partId: PART } }).body;
+function shown(call: ToolCallView, extra: { hasFileChange?: boolean; outcomeNote?: string | null } = {}): string {
+  return render(ToolCallDetails, { props: { call, conversationId: CONVERSATION, partId: PART, ...extra } }).body;
 }
 
 describe('ToolCallDetails', () => {
@@ -57,5 +58,36 @@ describe('ToolCallDetails', () => {
 
     expect(body).not.toContain('data-tool-images');
     expect(body).not.toContain('Show image');
+  });
+
+  it('places the result above metadata and collapses raw arguments when accesses describe the call', () => {
+    const body = shown(
+      completed([], {
+        accesses: [
+          { background: false, command: 'echo hello', kind: 'command', shell: 'pwsh', workingDirectory: 'C:\\' },
+        ],
+        arguments: '{"command":"echo hello"}',
+        decision: 'full_access',
+        tool: 'run_command',
+      }),
+      { outcomeNote: 'Exit code 0, 1.1 sec' },
+    );
+
+    expect(body).toContain('echo hello');
+    expect(body).toContain('Copy');
+    expect(body).toContain('data-tool-metadata');
+    expect(body).toContain('Exit code 0, 1.1 sec');
+    expect(body).toContain('Full access allowed this.');
+    expect(body).toContain('data-tool-arguments-toggle');
+    expect(body).not.toContain('What it touches');
+    expect(body.indexOf('What the model read')).toBeLessThan(body.indexOf('data-tool-metadata'));
+    expect(body.indexOf('data-tool-metadata')).toBeLessThan(body.indexOf('data-tool-arguments-toggle'));
+  });
+
+  it('renders raw arguments directly when no accesses, plugin details or saved diff are present', () => {
+    const body = shown(completed([], { arguments: '{"query":"status"}' }));
+
+    expect(body).not.toContain('data-tool-arguments-toggle');
+    expect(body).toContain('"query": "status"');
   });
 });

@@ -4,6 +4,7 @@
 
   import * as Alert from '#lib/components/ui/alert/index.js';
   import { Button } from '#lib/components/ui/button/index.js';
+  import * as CodeBlock from '#lib/components/ui/code-block/index.js';
   import { Label } from '#lib/components/ui/label/index.js';
   import { Skeleton } from '#lib/components/ui/skeleton/index.js';
   import { Switch } from '#lib/components/ui/switch/index.js';
@@ -12,6 +13,7 @@
   import { toolsActions } from '#lib/state/tools-actions.svelte.js';
   import { CommandOutputView } from '#lib/state/tools-background.svelte.js';
   import type { SidePanelProps } from '#lib/types/shell-slots.js';
+  import { shellLanguage } from '#lib/utils/highlighter.js';
   import {
     commandLabel,
     commandPlace,
@@ -37,7 +39,8 @@
   const target = parseCommandPanelArgument(untrack(() => argument));
   const view = target === null ? null : new CommandOutputView(target.conversationId, target.number);
 
-  let follow = $state(true);
+  let follow = $state<boolean>(true);
+  let logRegion = $state<HTMLPreElement | null>(null);
 
   const command = $derived(view?.command ?? null);
   const running = $derived(view?.running ?? false);
@@ -58,23 +61,25 @@
       .join('\n'),
   );
 
-  /**
-   * Keeps the output at its end while the owner follows it. It runs again
-   * when lines arrive or the switch changes, after the output shows them.
-   */
-  function followEnd(region: HTMLElement): void {
-    const followsEnd = follow && text !== '';
-    if (followsEnd) {
-      region.scrollTop = region.scrollHeight;
-    }
-  }
-
   function showFullOutput(): void {
     const canShow = view !== null && archive !== null;
     if (canShow) {
       toolsActions.showOutput(view.conversationId, archive);
     }
   }
+
+  // Keeps the output at its end while the owner follows it, when lines arrive or the switch changes.
+  $effect(() => {
+    const region = logRegion;
+    if (region === null) {
+      return;
+    }
+
+    const followsEnd = follow && text !== '';
+    if (followsEnd) {
+      region.scrollTop = region.scrollHeight;
+    }
+  });
 
   // The shell keeps the tabs' labels; the panel tells it its own.
   $effect(() => {
@@ -104,7 +109,12 @@
   {:else}
     {#if command !== null}
       <div class="flex flex-col gap-2">
-        <AccessText label={m.tools_access_command()} text={command.command} />
+        <AccessText
+          copyable
+          label={m.tools_access_command()}
+          language={command.source.kind === 'local' ? shellLanguage(command.source.shell) : 'bash'}
+          text={command.command}
+        />
         <p class="text-sm break-all text-muted-foreground" data-content dir="auto">{commandPlace(command)}</p>
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div class="flex flex-wrap items-center gap-3">
@@ -137,15 +147,17 @@
       {:else if text === ''}
         <p class="text-sm text-muted-foreground">{m.tools_background_output_empty()}</p>
       {:else}
-        <!-- Focusable, so that the owner can scroll the output from the keyboard (WCAG 2.1.1). -->
-        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-        <pre
-          class="min-h-0 flex-1 overflow-auto rounded-md bg-muted px-3 py-2 font-mono text-xs break-all whitespace-pre-wrap outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          {@attach followEnd}
-          aria-label={m.tools_background_output_label({ number: command.number })}
-          data-content
-          role="log"
-          tabindex="0">{text}</pre>
+        <CodeBlock.Root class="min-h-0 flex-1" size="sm">
+          <CodeBlock.Content
+            class="min-h-0 flex-1"
+            aria-label={m.tools_background_output_label({ number: command.number })}
+            code={text}
+            data-content
+            role="log"
+            wrap
+            bind:ref={logRegion}
+          />
+        </CodeBlock.Root>
       {/if}
     {:else if failure === null}
       <div class="flex flex-col gap-2" aria-busy="true">

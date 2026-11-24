@@ -2,6 +2,7 @@
   import BrainIcon from '@lucide/svelte/icons/brain';
   import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 
+  import { Badge } from '#lib/components/ui/badge/index.js';
   import { Button } from '#lib/components/ui/button/index.js';
   import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
   import type { ProviderProfile, ReasoningEffort } from '#lib/generated/bindings.js';
@@ -27,19 +28,22 @@
     }
     return options.includes(effort) ? effort : 'server_default';
   });
-  const usesOverride = $derived(effort !== null && options.includes(effective));
-  const checked = $derived(usesOverride ? effective : 'default');
   const label = $derived(effortLabel(effective));
 
   function offered(level: ReasoningEffort): boolean {
     if (level === 'server_default') {
-      return profile.reasoningEffort !== 'server_default';
+      return true;
+    }
+    if (level === profile.reasoningEffort) {
+      return true;
     }
     return !profile.supportedEfforts || profile.supportedEfforts.includes(level);
   }
 
-  async function choose(value: ReasoningEffort | null): Promise<void> {
-    failure = await onChoose(value);
+  async function choose(option: ReasoningEffort): Promise<void> {
+    const next = option === profile.reasoningEffort ? null : option;
+
+    failure = await onChoose(next);
   }
 </script>
 
@@ -61,18 +65,10 @@
       {/snippet}
     </DropdownMenu.Trigger>
 
-    <DropdownMenu.Content align="start">
+    <DropdownMenu.Content class="w-64" align="start">
       <DropdownMenu.Group>
         <DropdownMenu.Label>{m.chat_providers_field_effort()}</DropdownMenu.Label>
-        <DropdownMenu.RadioGroup value={checked}>
-          <DropdownMenu.RadioItem
-            closeOnSelect
-            data-effort="default"
-            value="default"
-            onSelect={() => void choose(null)}
-          >
-            {m.chat_effort_default({ effort: effortLabel(profile.reasoningEffort) })}
-          </DropdownMenu.RadioItem>
+        <DropdownMenu.RadioGroup value={effective}>
           {#each options as option (option)}
             <DropdownMenu.RadioItem
               closeOnSelect
@@ -80,7 +76,10 @@
               value={option}
               onSelect={() => void choose(option)}
             >
-              {effortLabel(option)}
+              <span class="min-w-0 truncate">{effortLabel(option)}</span>
+              {#if option === profile.reasoningEffort}
+                <Badge class="ms-auto shrink-0" variant="secondary">{m.chat_providers_default()}</Badge>
+              {/if}
             </DropdownMenu.RadioItem>
           {/each}
         </DropdownMenu.RadioGroup>

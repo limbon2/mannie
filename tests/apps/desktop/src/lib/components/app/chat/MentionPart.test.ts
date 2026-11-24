@@ -76,8 +76,8 @@ describe('MentionPart', () => {
   it('shows the label and what the model got, in the words of the mention’s kind', () => {
     const body = shown(slotsWithFiles(), { kind: 'mention', mention: mention() });
 
-    expect(body).toMatch(/<div[^>]*data-mention="files"/u);
-    expect(body).toMatch(/<span[^>]*data-content[^>]*>src\/main\.rs<\/span>/u);
+    expect(body).toContain('data-mention="files"');
+    expect(body).toMatch(/data-content(?:="true")?>(?:<!---->)?src\/main\.rs(?:<!---->)?<\/span>/u);
     expect(body).toContain('<span class="sr-only">File</span>');
     expect(body).toContain('120 lines');
   });
@@ -88,8 +88,8 @@ describe('MentionPart', () => {
       mention: mention({ key: 'plan', label: 'Release plan', provider: 'notes', variant: 'note' }),
     });
 
-    expect(body).toMatch(/<div[^>]*data-mention="notes"/u);
-    expect(body).toMatch(/<span[^>]*data-content[^>]*>Release plan<\/span>/u);
+    expect(body).toContain('data-mention="notes"');
+    expect(body).toMatch(/data-content(?:="true")?>(?:<!---->)?Release plan(?:<!---->)?<\/span>/u);
     expect(body).toContain('<span class="sr-only">Mention</span>');
     expect(body).not.toContain('120 lines');
   });

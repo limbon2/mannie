@@ -138,7 +138,7 @@ describe('the chat and window views in the pseudo-locale', () => {
   it('shows only catalog text in a tool call that waits for approval, and in its details', async () => {
     // The profile menu's items show the profiles' names, which are content.
     await openToolbarMenu(0);
-    await clickWithText('[data-slot="dropdown-menu-radio-item"]', 'Tools');
+    await clickWithText('[data-slot="dropdown-menu-radio-item"] [data-content]', 'Tools');
     await waitForPointerInput();
     // Without a workspace, a change asks the owner.
     const path = join(tmpdir(), 'mannie-e2e-pseudo-locale.txt');

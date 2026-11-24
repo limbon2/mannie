@@ -11,6 +11,8 @@ Later changes: [ADR-0046](0046-let-plugins-attach-context-to-conversations.md) r
 
 Later changes: [ADR-0069](0069-open-local-paths-from-agent-responses.md) permits owner-initiated local file-manager navigation from replies.
 
+Later changes: [ADR-0079](0079-highlight-code-with-shiki-and-css-classes.md) supersedes decision 10 in part: code blocks highlight with `shiki` mapped to CSS classes, keeping zero inline `style` attributes and zero `{@html}`.
+
 ## Context
 
 Verified 2026-10-14:

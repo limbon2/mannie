@@ -436,6 +436,27 @@ function commandSummary(outcome: Extract<ToolOutcome, { kind: 'command_ran' }>):
   }
 }
 
+/** A command's outcome without repeating the command text, for expanded details that already show it. */
+export function commandOutcomeSummary(outcome: Extract<ToolOutcome, { kind: 'command_ran' }>): string {
+  const duration = formatDuration(outcome.durationMs);
+  switch (outcome.ending) {
+    case 'exited': {
+      return outcome.exitCode === null
+        ? m.tools_details_command_finished({ duration })
+        : m.tools_details_command_exited({ code: String(outcome.exitCode), duration });
+    }
+    case 'interrupted': {
+      return m.tools_details_command_interrupted();
+    }
+    case 'stopped': {
+      return m.tools_details_command_stopped({ duration });
+    }
+    case 'timed_out': {
+      return m.tools_details_command_timed_out({ duration });
+    }
+  }
+}
+
 /** What a finished call did, or `null` when the intent says more: it failed, it is a plugin's tool, or this version cannot read its outcome. */
 function outcomeSummary(outcome: ToolOutcome): string | null {
   switch (outcome.kind) {
