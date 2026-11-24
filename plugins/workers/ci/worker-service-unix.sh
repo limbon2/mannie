@@ -69,13 +69,19 @@ install -d -o "$account" -m 0750 "$work"
 sed -i.bak "s|^allowed_folders = \[\]|allowed_folders = [\"$work\"]|" "$config/worker.toml"
 rm "$config/worker.toml.bak"
 grep -q "^allowed_folders = \[\"$work\"\]" "$config/worker.toml" || fail "could not allow $work in the configuration"
+start_count() {
+	(grep -h -c "the worker started" "$data"/logs/* 2>/dev/null || true) | awk '{s+=$1} END {print s+0}'
+}
+
+starts_before=$(start_count)
+rm -f "$data/health"
 if [ "$system" = FreeBSD ]; then
 	service mannie_worker restart
 else
 	systemctl restart mannie-worker.service
 fi
 waited=0
-until [ -f "$data/health" ]; do
+until [ -f "$data/health" ] && [ "$(start_count)" -gt "$starts_before" ]; do
 	waited=$((waited + 1))
 	[ "$waited" -le 60 ] || fail "the worker did not start again with the allowed folder"
 	sleep 1

@@ -29,6 +29,7 @@ import {
   openSettings,
   setPluginEnabled,
   waitForApp,
+  waitForHidden,
   waitForShownText,
 } from '#e2e/page.ts';
 import { CITED_REPLY, MODELS, type ProviderServer, startProviderServer } from '#e2e/provider-server.ts';
@@ -89,7 +90,7 @@ async function addSearchProfile(
   await $('#search-profile-base-url').setValue(baseUrl);
   await $('#search-profile-model').setValue(model);
   await clickWithText('[role="dialog"] button[type="submit"]', 'Save');
-  await $('#search-profile-name').waitForDisplayed({ reverse: true });
+  await waitForHidden('#search-profile-name');
   await waitForShownText($('[data-search-profiles]'), expect.stringContaining(name));
 }
 
@@ -203,7 +204,7 @@ describe('the notebooks plugin', () => {
     await waitForShownText($('[data-notebooks-passage]'), PASSAGE);
     await axeInBothThemes();
     await browser.keys(Key.Escape);
-    await $('[data-notebooks-source-dialog]').waitForDisplayed({ reverse: true });
+    await waitForHidden('[data-notebooks-source-dialog]');
 
     await clickWithText(BAR_ENTRIES, 'Chat');
     expect(await chatTitles()).not.toContain(QUESTION);

@@ -43,7 +43,7 @@ export const MODELS = {
    * the tool's result (ADR-0052).
    */
   searches: 'e2e-searches',
-  /** Answers with numbered words for about 20 seconds, for replies that run at the same time. */
+  /** Answers with numbered words for about 60 seconds, for replies that run at the same time. */
   slow: 'e2e-slow',
   /** Answers with pieces that carry the time they were sent: `[t=<ms since the epoch>]`. */
   timed: 'e2e-timed',
@@ -96,7 +96,7 @@ export const PACED_WORDS = 200;
 const PACED_INTERVAL_MILLIS = 25;
 
 /** How many words the slow scenario sends, one every 50 ms. */
-const SLOW_WORDS = 400;
+const SLOW_WORDS = 1_200;
 
 /** How many pieces the timed scenario sends, one every 20 ms. */
 export const TIMED_PIECES = 250;

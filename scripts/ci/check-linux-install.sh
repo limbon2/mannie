@@ -24,18 +24,42 @@ esac
 # The container cannot create the user namespaces of WebKitGTK's sandbox. The
 # check runs as root in a throwaway container with no untrusted content.
 export WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
-status=0
-timeout 15 dbus-run-session -- xvfb-run --auto-servernum /usr/bin/mannie-desktop || status=$?
-# timeout exits with 124 when the app was still running after 15 seconds.
-[ "$status" -eq 124 ] || fail "the desktop app exited with status $status within 15 seconds"
+logs="${XDG_DATA_HOME:-$HOME/.local/share}/io.github.limbon2.mannie/logs"
+dbus-run-session -- xvfb-run --auto-servernum /usr/bin/mannie-desktop &
+app_pid=$!
+
+waited=0
+start=""
+while [ "$waited" -lt 60 ]; do
+	if ! kill -0 "$app_pid" 2>/dev/null; then
+		wait "$app_pid" || status=$?
+		fail "the desktop app exited early with status ${status:-0}"
+	fi
+	start=$(cat "$logs"/mannie.*.log 2>/dev/null | grep -F '"Mannie is starting"' | tail -n 1 || true)
+	if [ -n "$start" ]; then
+		break
+	fi
+	waited=$((waited + 1))
+	sleep 1
+done
+[ -n "$start" ] || {
+	kill "$app_pid" 2>/dev/null || true
+	fail "the log in $logs had no start line of the desktop app within 60 seconds"
+}
+
+# Confirm the app stays running briefly after logging startup, then stop it.
+sleep 2
+if ! kill -0 "$app_pid" 2>/dev/null; then
+	wait "$app_pid" || status=$?
+	fail "the desktop app exited shortly after startup with status ${status:-0}"
+fi
+kill "$app_pid" 2>/dev/null || true
+wait "$app_pid" 2>/dev/null || true
 
 # The bundler marks the app's binary with the kind of its package, and an
 # installed app chooses its package of a later release by that mark, so a
 # build without the mark would never update itself (ADR-0063, decision 5).
 # The app writes the mark into the start line of its log.
-logs="${XDG_DATA_HOME:-$HOME/.local/share}/io.github.limbon2.mannie/logs"
-start=$(cat "$logs"/mannie.*.log 2>/dev/null | grep -F '"Mannie is starting"' | tail -n 1)
-[ -n "$start" ] || fail "the log in $logs has no start line of the desktop app"
 installation=$(printf '%s\n' "$start" | sed -n 's/.*"installation":"\([^"]*\)".*/\1/p')
 [ "$installation" = "$package" ] || fail "the desktop app reports the installation \"$installation\", and a $package package installed it"
 

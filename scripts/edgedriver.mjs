@@ -8,6 +8,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 /** The registry keys where the WebView2 runtime records its version: per machine, then per user. */
@@ -52,6 +53,46 @@ function webView2Version() {
 }
 
 /**
+ * Fetches `url` with retries on transient network errors, HTTP 429 and 5xx.
+ * @param {string} url
+ * @param {{ attempts?: number; delayMillis?: number; fetcher?: typeof fetch; wait?: (millis: number) => Promise<void> }} [options]
+ * @returns {Promise<Response>}
+ */
+export async function fetchWithRetry(url, options = {}) {
+  const { attempts = 3, delayMillis = 1_000, fetcher = fetch, wait = delay } = options;
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    let response;
+    try {
+      response = await fetcher(url);
+    } catch (error) {
+      if (attempt === attempts) {
+        throw error;
+      }
+
+      lastError = error;
+
+      await wait(delayMillis * attempt);
+      continue;
+    }
+    if (response.ok) {
+      return response;
+    }
+    const isRetryable = response.status === 429 || response.status >= 500;
+    const error = new Error(`downloading ${url} failed with HTTP ${String(response.status)}`);
+    const shouldStop = !isRetryable || attempt === attempts;
+    if (shouldStop) {
+      throw error;
+    }
+
+    lastError = error;
+
+    await wait(delayMillis * attempt);
+  }
+  throw lastError;
+}
+
+/**
  * Downloads and unpacks the driver for `version` unless it is already there.
  * @param {string} repository
  * @param {string} version
@@ -68,10 +109,7 @@ async function install(repository, version) {
   rmSync(folder, { force: true, recursive: true });
   mkdirSync(folder, { recursive: true });
   const url = `https://msedgedriver.microsoft.com/${version}/edgedriver_win64.zip`;
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`downloading ${url} failed with HTTP ${String(response.status)}`);
-  }
+  const response = await fetchWithRetry(url);
   const archive = join(folder, 'edgedriver_win64.zip');
   writeFileSync(archive, Buffer.from(await response.arrayBuffer()));
   // Windows' own tar unpacks zip archives; other tar programs on the path may not.

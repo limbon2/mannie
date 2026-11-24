@@ -472,6 +472,31 @@ export default defineConfig(
     rules: {
       // The end-to-end tests print the measurements that the validation records cite.
       'no-console': 'off',
+      // WebKitWebDriver on Linux fails on reverse element waits and truncated-box text queries,
+      // and Node's realpathSync() disagrees with Rust canonical paths on Windows.
+      'no-restricted-syntax': [
+        'error',
+        {
+          message:
+            'Use waitForHidden() or waitForGone() from page.ts instead of reverse waits, which throw stale element errors on WebKitWebDriver.',
+          selector:
+            'CallExpression[callee.property.name=/^(?:waitForDisplayed|waitForExist)$/]:has(Property[key.name="reverse"][value.value=true])',
+        },
+        {
+          message:
+            'Use waitForShownText() or waitForTextAbsent() from page.ts instead of toHaveText(), which fails on WebKitWebDriver truncated boxes.',
+          selector: 'CallExpression[callee.property.name="toHaveText"]',
+        },
+        {
+          message:
+            'Use shownText() or waitForShownText() from page.ts instead of getText(), which returns empty strings on WebKitWebDriver truncated boxes.',
+          selector: 'CallExpression[callee.property.name="getText"]',
+        },
+        {
+          message: 'Use realpathSync.native() instead of realpathSync() so Windows paths match Rust canonical paths.',
+          selector: 'CallExpression[callee.name="realpathSync"]',
+        },
+      ],
     },
   },
 

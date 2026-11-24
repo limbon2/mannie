@@ -18,7 +18,14 @@ import {
   waitForLatestPart,
 } from '../support/chat.ts';
 import { chooseTrayItem, closeMainWindow, deleteProviderProfiles, processId, windowState } from '../support/harness.ts';
-import { axeViolations, openSettings, waitForAnimations, waitForApp, waitForShownText } from '../support/page.ts';
+import {
+  axeViolations,
+  openSettings,
+  waitForAnimations,
+  waitForApp,
+  waitForHidden,
+  waitForShownText,
+} from '../support/page.ts';
 import { MODELS, pacedText, type ProviderServer, startProviderServer } from '../support/provider-server.ts';
 
 const QUESTION = '[data-slot="dialog-content"]';
@@ -152,7 +159,7 @@ describe('window and tray', () => {
     await waitForShownText(warning, expect.stringContaining('Quit while replies are being written?'));
     expect(await axeViolations()).toEqual([]);
     await clickWithText(`${WARNING} button`, 'Cancel');
-    await warning.waitForDisplayed({ reverse: true });
+    await waitForHidden(WARNING);
     expect(await windowState()).toEqual({ tray: true, visible: true });
     expect(await waitForCompleteReply()).toBe(pacedText());
   });
@@ -166,7 +173,7 @@ describe('window and tray', () => {
     await warning.waitForDisplayed();
     await waitForAnimations();
     await clickWithText(`${WARNING} button`, 'Cancel');
-    await warning.waitForDisplayed({ reverse: true });
+    await waitForHidden(WARNING);
     expect(await waitForCompleteReply()).toBe(pacedText());
   });
 

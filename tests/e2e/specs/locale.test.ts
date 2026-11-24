@@ -4,7 +4,7 @@
 // caught.
 import { Key } from 'webdriverio';
 
-import { axeViolations, uncataloguedText, waitForApp } from '../support/page.ts';
+import { axeViolations, uncataloguedText, waitForApp, waitForHidden } from '../support/page.ts';
 
 const PSEUDO_LOCALE = 'en-XA';
 
@@ -61,7 +61,7 @@ describe('visible text and the locale (V11)', () => {
     expect(await uncataloguedText()).toEqual([]);
 
     await browser.keys(Key.Escape);
-    await $('[data-slot="command-input"]').waitForDisplayed({ reverse: true });
+    await waitForHidden('[data-slot="command-input"]');
   });
 
   it('keeps the layout under the longer text', async () => {

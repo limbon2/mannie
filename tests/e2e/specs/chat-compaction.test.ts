@@ -13,7 +13,7 @@ import {
   waitForCompleteReply,
 } from '../support/chat.ts';
 import { deleteProviderProfiles } from '../support/harness.ts';
-import { axeViolations, waitForAnimations, waitForApp, waitForShownText } from '../support/page.ts';
+import { axeViolations, waitForAnimations, waitForApp, waitForHidden, waitForShownText } from '../support/page.ts';
 import {
   isSummaryRequest,
   MODELS,
@@ -100,7 +100,7 @@ describe('context budget and compaction', () => {
     await waitForShownText(dialog, expect.stringContaining(SUMMARY_PREFIX));
     expect(await axeViolations()).toEqual([]);
     await clickWithText('[data-slot="dialog-content"] button', 'Close');
-    await dialog.waitForDisplayed({ reverse: true });
+    await waitForHidden('[data-slot="dialog-content"]');
   });
 
   it('says that a conversation with one turn has nothing to compact', async () => {

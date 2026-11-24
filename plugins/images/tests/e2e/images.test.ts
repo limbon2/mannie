@@ -28,7 +28,15 @@ import {
   waitForNewTurn,
 } from '#e2e/chat.ts';
 import { deleteProviderProfiles, setFileChoice } from '#e2e/harness.ts';
-import { axeViolations, leaveSettings, openPluginUses, openSettings, setPluginEnabled, waitForApp } from '#e2e/page.ts';
+import {
+  axeViolations,
+  leaveSettings,
+  openPluginUses,
+  openSettings,
+  setPluginEnabled,
+  waitForApp,
+  waitForHidden,
+} from '#e2e/page.ts';
 import { MODELS, type ProviderServer, startProviderServer } from '#e2e/provider-server.ts';
 import { Key } from 'webdriverio';
 
@@ -154,7 +162,7 @@ describe('images', () => {
     expect(await dialog.$('img').getAttribute('alt')).toBe('wide.png');
     expect(await axeViolations()).toEqual([]);
     await browser.keys(Key.Escape);
-    await dialog.waitForDisplayed({ reverse: true });
+    await waitForHidden('[data-slot="dialog-content"]');
   });
 
   it('adds a pasted image, leaves a paste with text to the text, and names a conversation after its image', async () => {

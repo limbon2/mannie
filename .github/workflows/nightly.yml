@@ -47,22 +47,51 @@ jobs:
           usesh: true
           copyback: false
           prepare: |
-            pkg install -y curl git
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+            retry() {
+              attempt=1
+              until "$@"; do
+                if [ "$attempt" -ge 4 ]; then
+                  return 1
+                fi
+                sleep $((attempt * 5))
+                attempt=$((attempt + 1))
+              done
+            }
+            retry pkg install -y curl git
+            retry sh -c "curl --proto '=https' --tlsv1.2 -sSf --retry 3 --retry-delay 5 https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none"
           run: |
             set -eu
             . "$HOME/.cargo/env"
             # The workflow's environment does not reach the virtual machine,
-            # whose disk lives on the runner's, so the setting of ci.yml that
-            # keeps the build folder small is set here. The debug information
-            # of dev builds comes from .cargo/config.toml, as in every build.
+            # whose disk lives on the runner's, so CI, network retries and the
+            # setting that keeps the build folder small are set here.
+            export CI=true
             export CARGO_INCREMENTAL=0
+            export CARGO_NET_RETRY=5
+            export RUSTUP_MAX_RETRIES=5
             rustup toolchain install
-            # The core's crates that run inside a worker: the system tools
-            # that its agents use, the provider adapters and the runtime
-            # (ADR-0015); the desktop app does not run on FreeBSD.
-            cargo test --locked -p mannie-store -p mannie-logging -p mannie-types -p mannie-tools
-            cargo test --locked -p mannie-provider -p mannie-runtime --features mannie-provider/testing,mannie-runtime/testing
+            # Build and run the worker-side core crates in one unified pass,
+            # then run the timing-sensitive tests serially as .config/nextest.toml does.
+            cargo test --locked \
+              -p mannie-store -p mannie-logging -p mannie-types -p mannie-tools \
+              -p mannie-provider -p mannie-runtime \
+              --features mannie-provider/testing,mannie-runtime/testing \
+              -- \
+              --skip stopping_the_parent_ends_every_child_within_a_second \
+              --skip stop_ends_a_running_command_and_its_reply_within_a_second \
+              --skip a_conversation_wakes_at_most_six_times_an_hour \
+              --skip a_slow_subscriber_falls_behind_and_catches_up_from_its_cursor \
+              --skip _ends_with_the_command
+            cargo test --locked \
+              -p mannie-store -p mannie-logging -p mannie-types -p mannie-tools \
+              -p mannie-provider -p mannie-runtime \
+              --features mannie-provider/testing,mannie-runtime/testing \
+              -- --test-threads=1 \
+              stopping_the_parent_ends_every_child_within_a_second \
+              stop_ends_a_running_command_and_its_reply_within_a_second \
+              a_conversation_wakes_at_most_six_times_an_hour \
+              a_slow_subscriber_falls_behind_and_catches_up_from_its_cursor \
+              _ends_with_the_command
             # Each program's workspace's tests, the program, its smoke
             # test's helpers and its smoke test.
             sh freebsd-programs.sh

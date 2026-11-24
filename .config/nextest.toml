@@ -41,3 +41,8 @@ threads-required = "num-test-threads"
 [[profile.default.overrides]]
 filter = "test(=a_slow_subscriber_falls_behind_and_catches_up_from_its_cursor)"
 threads-required = "num-test-threads"
+
+# Process-tree stop tests assert a tight stop budget while running nested shells.
+[[profile.default.overrides]]
+filter = "test(/_ends_with_the_command$/)"
+threads-required = "num-test-threads"

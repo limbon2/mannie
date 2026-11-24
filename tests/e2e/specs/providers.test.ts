@@ -6,7 +6,16 @@ import { Key } from 'webdriverio';
 
 import { clickWithText, waitForPointerInput } from '../support/chat.ts';
 import { deleteProviderProfiles } from '../support/harness.ts';
-import { axeViolations, openSettings, waitForAnimations, waitForApp, waitForShownText } from '../support/page.ts';
+import {
+  axeViolations,
+  openSettings,
+  shownText,
+  waitForAnimations,
+  waitForApp,
+  waitForHidden,
+  waitForShownText,
+  waitForTextAbsent,
+} from '../support/page.ts';
 import { MODELS, type ProviderServer, startProviderServer } from '../support/provider-server.ts';
 
 const DIALOG = '[data-slot="dialog-content"]';
@@ -116,7 +125,7 @@ describe('provider profiles', () => {
 
     await save();
 
-    await $(DIALOG).waitForDisplayed({ reverse: true });
+    await waitForHidden(DIALOG);
     expect(await profileRows()).toEqual([`Mock ${MODELS.echo} · Chat Completions Default Test`]);
   });
 
@@ -125,7 +134,7 @@ describe('provider profiles', () => {
 
     const dialog = await $(DIALOG);
     await waitForShownText(dialog, expect.stringContaining('Server: Other server'));
-    const text = await dialog.getText();
+    const text = await shownText(dialog);
     // Every check passes but reasoning, including the Tools check, which the
     // test provider answers with a call of its tool.
     expect(text.match(/Passed\./gu)?.length).toBe(6);
@@ -141,7 +150,7 @@ describe('provider profiles', () => {
     await clickWithText(`${DIALOG} button`, 'Use these limits');
     await waitForShownText(dialog, expect.stringContaining('The profile uses these limits now.'));
     await clickWithText(`${DIALOG} button`, 'Close');
-    await dialog.waitForDisplayed({ reverse: true });
+    await waitForHidden(DIALOG);
     expect(await profileRows()).toEqual([`Mock ${MODELS.echo} · Chat Completions Default Other server Test`]);
   });
 
@@ -158,12 +167,12 @@ describe('provider profiles', () => {
     expect(await axeViolations()).toEqual([]);
     // An empty field keeps the stored credential.
     await fill('#profile-credential', '');
-    await expect($(DIALOG)).not.toHaveText(expect.stringContaining('Saving replaces the saved key.'));
+    await waitForTextAbsent(DIALOG, 'Saving replaces the saved key.');
     await expect($('#profile-context-window')).toHaveValue('65536');
     await fill('#profile-name', 'Mock edited');
     await save();
 
-    await $(DIALOG).waitForDisplayed({ reverse: true });
+    await waitForHidden(DIALOG);
     expect(await profileRows()).toEqual([`Mock edited ${MODELS.echo} · Chat Completions Default Other server Test`]);
   });
 
@@ -178,14 +187,14 @@ describe('provider profiles', () => {
     await clickWithText(`${DIALOG} button`, 'Remove the key');
     await waitForShownText($(DIALOG), expect.stringContaining('Saving removes the saved key.'));
     await save();
-    await $(DIALOG).waitForDisplayed({ reverse: true });
+    await waitForHidden(DIALOG);
 
     const requestsBefore = provider.requests().length;
     await clickWithText('main button', 'Test');
     const dialog = await $(DIALOG);
     await waitForShownText(dialog, expect.stringContaining('Skipped because the profile has no API key.'));
     await clickWithText(`${DIALOG} button`, 'Close');
-    await dialog.waitForDisplayed({ reverse: true });
+    await waitForHidden(DIALOG);
 
     const authorized = provider
       .requests()
@@ -205,7 +214,7 @@ describe('provider profiles', () => {
     await fill('#profile-context-window', '32768');
     await fill('#profile-output-limit', '4096');
     await save();
-    await $(DIALOG).waitForDisplayed({ reverse: true });
+    await waitForHidden(DIALOG);
 
     await chooseProfileAction('Second', 'Make default');
 

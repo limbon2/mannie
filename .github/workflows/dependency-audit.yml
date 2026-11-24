@@ -1,0 +1,29 @@
+# Daily full dependency audit (ADR-0017): runs cargo-deny with every advisory
+# category enforced, including newly published upstream unmaintained and yanked
+# notices, plus license, ban, source and plugin boundary checks. Unrelated
+# feature pull requests allow unmaintained/yanked churn so upstream notices do
+# not block day-to-day work; releases always run the full strict check too.
+# Actions are pinned by commit SHA.
+name: Dependency audit
+
+on:
+  schedule:
+    - cron: "19 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Full dependency audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+        with:
+          compiler-cache: none
+          system-libraries: false
+      - run: task gen:launcher
+      - run: task lint:deps

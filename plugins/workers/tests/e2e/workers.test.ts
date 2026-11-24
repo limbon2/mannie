@@ -40,6 +40,7 @@ import {
   uncataloguedText,
   waitForAnimations,
   waitForApp,
+  waitForGone,
   waitForShownText,
 } from '#e2e/page.ts';
 import { MODELS, type ProviderServer, startProviderServer, TOOLS_DONE } from '#e2e/provider-server.ts';
@@ -205,7 +206,7 @@ describe('workers', () => {
     await fill('#pair-worker-name', OWNER_NAME);
     await browser.keys(Key.Enter);
 
-    await $('[data-pair-worker-dialog]').waitForExist({ reverse: true, timeout: 20_000 });
+    await waitForGone('[data-pair-worker-dialog]', 20_000);
     await waitForWorkerStatus('connected');
     await waitForShownText($(`${PANEL} [data-worker-row]`), expect.stringContaining(OWNER_NAME));
     await axeInBothThemes();
@@ -309,7 +310,7 @@ describe('workers', () => {
     await browser.keys(Key.Backspace);
     await browser.keys(Key.Enter);
 
-    await $('[data-rename-worker-dialog]').waitForExist({ reverse: true, timeout: 10_000 });
+    await waitForGone('[data-rename-worker-dialog]', 10_000);
     await waitForShownText($(`${PANEL} [data-worker-row]`), expect.stringContaining(WORKER_NAME));
   });
 

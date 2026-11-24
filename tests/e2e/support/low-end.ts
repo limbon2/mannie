@@ -79,14 +79,21 @@ function processTree(root: number): number[] {
 /** Limits Mannie's process and every process below it to two cores. */
 function limitToTwoCores(root: number): void {
   for (const pid of processTree(root)) {
-    if (process.platform === 'win32') {
-      execFileSync('powershell', [
-        '-NoProfile',
-        '-Command',
-        `(Get-Process -Id ${String(pid)}).ProcessorAffinity = ${String(TWO_CORES)}`,
-      ]);
-    } else {
-      execFileSync('taskset', ['-p', TWO_CORES.toString(16), String(pid)]);
+    try {
+      if (process.platform === 'win32') {
+        execFileSync('powershell', [
+          '-NoProfile',
+          '-Command',
+          `(Get-Process -Id ${String(pid)}).ProcessorAffinity = ${String(TWO_CORES)}`,
+        ]);
+      } else {
+        execFileSync('taskset', ['-p', TWO_CORES.toString(16), String(pid)]);
+      }
+    } catch (error) {
+      // Short-lived helper processes can exit between listing the tree and pinning them.
+      if (pid === root) {
+        throw error;
+      }
     }
   }
 }
@@ -120,8 +127,19 @@ export function cpuMilliseconds(root: number): number {
   const ticksPerSecond = Number(execFileSync('getconf', ['CLK_TCK'], { encoding: 'utf8' }).trim());
   let ticks = 0;
   for (const pid of tree) {
-    const stat = readFileSync(`/proc/${String(pid)}/stat`, 'utf8');
+    let stat: string;
+    try {
+      stat = readFileSync(`/proc/${String(pid)}/stat`, 'utf8');
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      const exited = code === 'ENOENT' || code === 'ESRCH';
+      if (exited) {
+        continue;
+      }
+      throw error;
+    }
     const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+
     ticks += Number(fields[11]) + Number(fields[12]);
   }
   return (ticks / ticksPerSecond) * 1_000;

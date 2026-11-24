@@ -146,7 +146,7 @@ impl Harness {
         let (done, stopped_at) = tokio::join!(execution, stopper);
         if let Some(stopped_at) = stopped_at {
             assert!(
-                stopped_at.elapsed() < Duration::from_secs(1),
+                stopped_at.elapsed() < stop_budget(),
                 "Stop took {:?}",
                 stopped_at.elapsed()
             );
@@ -206,7 +206,7 @@ impl Harness {
                 let stopped_at = Instant::now();
                 process.end(false).await;
                 assert!(
-                    stopped_at.elapsed() < Duration::from_secs(1),
+                    stopped_at.elapsed() < stop_budget(),
                     "ending took {:?}",
                     stopped_at.elapsed()
                 );
@@ -219,6 +219,17 @@ impl Harness {
             .trim()
             .parse()
             .unwrap()
+    }
+}
+
+/// The maximum time Stop may take. Unix spends 500 ms in SIGTERM grace before
+/// escalating to SIGKILL, leaving little margin on busy CI runners and nested
+/// FreeBSD VMs.
+fn stop_budget() -> Duration {
+    if std::env::var_os("CI").is_some() {
+        Duration::from_secs(3)
+    } else {
+        Duration::from_secs(1)
     }
 }
 

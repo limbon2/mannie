@@ -32,6 +32,7 @@ import {
   uncataloguedText,
   waitForAnimations,
   waitForApp,
+  waitForGone,
 } from '../support/page.ts';
 import { MODELS, type ProviderServer, startProviderServer } from '../support/provider-server.ts';
 
@@ -280,7 +281,7 @@ describe('the chat and window views in the pseudo-locale', () => {
     await $(`${card}[data-task-state="canceled"]`).waitForDisplayed({ timeout: 10_000 });
     expect(await uncataloguedText()).toEqual([]);
     await $('[data-side-panel-close]').click();
-    await $('[data-side-panels]').waitForExist({ reverse: true });
+    await waitForGone('[data-side-panels]');
   });
 
   it('shows only catalog text in the projects of the sidebar, their menu and their dialogs', async () => {
@@ -364,7 +365,7 @@ describe('the chat and window views in the pseudo-locale', () => {
 
   it('shows only catalog text in the skills settings, with a skill and a folder that is not one', async () => {
     // The names, descriptions and folders of skills are content.
-    const home = realpathSync(mkdtempSync(join(tmpdir(), 'mannie-e2e-skills-')));
+    const home = realpathSync.native(mkdtempSync(join(tmpdir(), 'mannie-e2e-skills-')));
     const skills = join(home, '.agents', 'skills');
     mkdirSync(join(skills, 'pdf-forms'), { recursive: true });
     writeFileSync(

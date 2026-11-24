@@ -212,15 +212,9 @@ tasks:
   lint:deps:
     desc: Check the dependencies' advisories, licenses, bans and sources in every Cargo workspace and the launcher (cargo-deny), the worker's graph (V5), the boundaries between the core and the plugins, and the desktop app's npm licenses
     cmds:
-      # The advisory database once, which the checks below read offline.
-      - cargo deny fetch db
-      # Every run reads the root's deny.toml, in the folder where it runs. Each
-      # workspace holds a part of the shipped graph and its own tests'
-      # crates, so a ban's wrapper or an ignored advisory outside its part is
-      # expected there.
-      - node scripts/plugins/each.mjs -- cargo deny --manifest-path {manifest} --locked --offline check --allow unused-wrapper --allow advisory-not-detected
-      # The launcher's graph is the one that ships in the desktop app.
-      - cargo deny --manifest-path .generated/desktop/Cargo.toml --locked --offline check
+      # Fetches the advisory database once and checks every workspace and the
+      # launcher offline (honors MANNIE_DENY_ALLOW_ADVISORY_CHURN=1 in CI).
+      - node scripts/check-deps.mjs
       # No crate of the desktop stack reaches a headless program, such as the
       # worker, on any target (V5).
       - node scripts/plugins/programs.mjs check
@@ -452,6 +446,23 @@ tasks:
       # The vendored agent skill keeps its authors' links (ADR-0006).
       - pnpm exec remark . --ignore-path .gitignore --ignore-pattern ".claude/skills/**" --ignore-pattern ".agents/skills/**" --frail --quiet --no-stdout
       - node scripts/check-docs.mjs
+
+  lint:rust:linux:
+    desc: Run Linux Clippy across every non-desktop Cargo workspace in Docker (fast check from Windows for cfg(unix) and Linux warnings)
+    vars:
+      LINUX_RUN: docker run --rm -v "{{.ROOT_DIR}}:/src:ro" -v mannie-linux-target:/target -v mannie-linux-cargo:/usr/local/cargo/registry -e CARGO_TARGET_DIR=/target -w /src rust:1.99
+      PLUGIN_MANIFESTS:
+        sh: node scripts/plugins/each.mjs --plugins --list
+    cmds:
+      - "{{.LINUX_RUN}} cargo clippy --workspace --all-targets --all-features --locked --exclude mannie-desktop-core -- -D warnings"
+      - for: { var: PLUGIN_MANIFESTS }
+        cmd: "{{.LINUX_RUN}} cargo clippy --manifest-path {{.ITEM}} --workspace --all-targets --all-features --locked -- -D warnings"
+
+  check:push:
+    desc: Fast pre-push checks on a workstation (formatting, static checks, desktop checks and Clippy)
+    cmds:
+      - task: fmt:check
+      - node scripts/ci.mjs static desktop clippy
 
   ci:
     desc: Run every check a change must pass, side by side within limits that keep the machine usable, and list each step's result and time (after `task setup`); `task ci -- static` runs one group of the checks, as a job of CI does

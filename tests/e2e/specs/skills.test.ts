@@ -69,8 +69,8 @@ describe('skills', () => {
     provider = await startProviderServer();
     await waitForApp();
     await addProfile(provider.baseUrl, { model: MODELS.tools, name: 'Tools', useTools: true });
-    home = realpathSync(mkdtempSync(join(tmpdir(), 'mannie-skills-home-')));
-    project = realpathSync(mkdtempSync(join(tmpdir(), 'mannie-skills-project-')));
+    home = realpathSync.native(mkdtempSync(join(tmpdir(), 'mannie-skills-home-')));
+    project = realpathSync.native(mkdtempSync(join(tmpdir(), 'mannie-skills-project-')));
     writeSkill(join(home, '.agents', 'skills'), 'pdf-forms', 'Fills PDF forms.');
     writeSkill(join(project, '.agents', 'skills'), 'docx', 'Writes Word documents.');
     await setSkillsFolder(join(home, '.agents', 'skills'));

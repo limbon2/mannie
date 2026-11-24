@@ -19,6 +19,7 @@ import {
   uncataloguedText,
   waitForAnimations,
   waitForApp,
+  waitForHidden,
   waitForShownText,
 } from '../support/page.ts';
 
@@ -183,7 +184,7 @@ describe('the shell', () => {
     expect(await axeViolations()).toEqual([]);
 
     await browser.keys(Key.Escape);
-    await $('[data-slot="command-input"]').waitForDisplayed({ reverse: true });
+    await waitForHidden('[data-slot="command-input"]');
   });
 
   it('opens the settings with Ctrl+, and changes the theme from the keyboard', async () => {
@@ -448,7 +449,7 @@ describe('the shell', () => {
         await waitForAnimations();
         const choice = await controlColors(selectedOption);
         await browser.keys(Key.Escape);
-        await $(selectedOption).waitForDisplayed({ reverse: true });
+        await waitForHidden(selectedOption);
 
         await browser.keys([Key.Ctrl, 'k']);
         await $('[data-slot="command-input"]').waitForDisplayed();
@@ -457,7 +458,7 @@ describe('the shell', () => {
         await waitForAnimations();
         const command = await controlColors(currentCommand);
         await browser.keys(Key.Escape);
-        await $('[data-slot="command-input"]').waitForDisplayed({ reverse: true });
+        await waitForHidden('[data-slot="command-input"]');
 
         expect(
           await lowContrast([
@@ -607,7 +608,7 @@ describe('the shell', () => {
           });
 
           await browser.keys(Key.Escape);
-          await $(dialog).waitForDisplayed({ reverse: true });
+          await waitForHidden(dialog);
         }
       }
       expect(await lowContrast(samples)).toEqual([]);

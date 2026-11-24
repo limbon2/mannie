@@ -41,6 +41,7 @@ import {
   waitForAnimations,
   waitForApp,
   waitForShownText,
+  waitForTextAbsent,
 } from '#e2e/page.ts';
 import { MODELS, type ProviderServer, startProviderServer } from '#e2e/provider-server.ts';
 import { Key } from 'webdriverio';
@@ -228,7 +229,7 @@ describe('MCP servers', () => {
     await chooseServerAction(SERVER, 'data-mcp-log');
     const log = $('[data-mcp-log-dialog]');
     await waitForShownText(log, expect.stringContaining('starting with the token [REDACTED]'));
-    await expect(log).not.toHaveText(expect.stringContaining(PLANTED_SECRET));
+    await waitForTextAbsent('[data-mcp-log-dialog]', PLANTED_SECRET);
     await axeInBothThemes();
     await browser.keys('Escape');
     await waitForAnimations();
@@ -256,7 +257,7 @@ describe('MCP servers', () => {
     expect(reply).toContain('[REDACTED]');
     expect(reply).not.toContain(PLANTED_SECRET);
     await waitForToolStatus('completed');
-    await expect($('main')).not.toHaveText(expect.stringContaining(PLANTED_SECRET));
+    await waitForTextAbsent('main', PLANTED_SECRET);
     for (const request of provider.requests()) {
       expect(JSON.stringify(request.body)).not.toContain(PLANTED_SECRET);
     }

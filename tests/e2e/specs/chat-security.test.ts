@@ -19,7 +19,7 @@ import {
 import { type ConnectionCounter, countConnections } from '../support/connections.ts';
 import { chooseTrayItem, cspViolations, deleteProviderProfiles, openedLinks, processId } from '../support/harness.ts';
 import { hostileMarkdown } from '../support/hostile-html.ts';
-import { axeViolations, waitForAnimations, waitForApp, waitForShownText } from '../support/page.ts';
+import { axeViolations, waitForAnimations, waitForApp, waitForHidden, waitForShownText } from '../support/page.ts';
 import { MODELS, type ProviderServer, startProviderServer } from '../support/provider-server.ts';
 
 /** A credential that must never appear outside the system's credential store. */
@@ -140,7 +140,7 @@ describe('chat security', () => {
     await waitForAnimations();
     await waitForShownText(dialog, expect.stringContaining(`${counter.origin}/link`));
     await clickWithText('[data-slot="alert-dialog-content"] button', 'Open in browser');
-    await dialog.waitForDisplayed({ reverse: true });
+    await waitForHidden('[data-slot="alert-dialog-content"]');
 
     expect(await openedLinks()).toEqual([`${counter.origin}/link`]);
     expect(counter.connections()).toBe(0);
@@ -160,7 +160,7 @@ describe('chat security', () => {
     );
     expect(buttons).toEqual(['Cancel']);
     await clickWithText('[data-slot="alert-dialog-content"] button', 'Cancel');
-    await dialog.waitForDisplayed({ reverse: true });
+    await waitForHidden('[data-slot="alert-dialog-content"]');
 
     expect(await openedLinks()).toEqual([`${counter.origin}/link`]);
     expect(await browser.execute(() => window.compromised === true)).toBe(false);

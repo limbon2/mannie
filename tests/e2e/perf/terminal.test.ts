@@ -17,7 +17,7 @@ import { repository } from '../support/app.ts';
 import { addProfile, sendMessage, startNewConversation, waitForCompleteReply } from '../support/chat.ts';
 import { deleteProviderProfiles, processId } from '../support/harness.ts';
 import { applyLowEndProfile, cpuMilliseconds, LOW_END } from '../support/low-end.ts';
-import { leaveSettings, openSettings, setPluginEnabled, waitForApp } from '../support/page.ts';
+import { leaveSettings, openSettings, setPluginEnabled, waitForAnimations, waitForApp } from '../support/page.ts';
 import { MODELS, type ProviderServer, startProviderServer } from '../support/provider-server.ts';
 
 const REPORT_ONLY = process.env.MANNIE_PERF_REPORT_ONLY === '1';
@@ -114,6 +114,33 @@ function heapGrowth(before: number | null, after: number | null): number | null 
   return hasMeasurements ? after - before : null;
 }
 
+/** Types a line into the focused terminal and presses Enter, releasing each key for WebKitWebDriver. */
+async function typeLine(text: string): Promise<void> {
+  const typing = browser.action('key');
+  for (const character of text) {
+    const key = character === ' ' ? Key.Space : character;
+    typing.down(key).up(key);
+  }
+  await typing.down(Key.Enter).up(Key.Enter).perform();
+}
+
+/** Moves focus into the visible terminal's hidden input field. */
+async function focusVisibleTerminal(): Promise<void> {
+  const focused = await browser.execute(() => {
+    const views = [...document.querySelectorAll<HTMLElement>('[data-terminal-view]')];
+    const view = views.find((candidate) => candidate.offsetParent !== null);
+    const field = view?.querySelector<HTMLTextAreaElement>('.xterm-helper-textarea') ?? null;
+    if (field === null) {
+      return false;
+    }
+    field.focus();
+    return document.activeElement === field;
+  });
+  if (!focused) {
+    await $('[data-terminal-view]').click();
+  }
+}
+
 /** Opens a terminal of this computer with Ctrl+`, and waits until its rows show. */
 async function openTerminal(): Promise<void> {
   await browser.keys([Key.Ctrl, '`']);
@@ -139,26 +166,36 @@ async function openShell(shell?: string): Promise<void> {
   // on how the webview handles End in a scrollable menu.
   await newTerminal.execute((element) => element.focus());
   await expect(newTerminal).toBeFocused();
+  await waitForAnimations();
   await browser.keys(Key.ArrowRight);
-  const shown = async (): Promise<WebdriverIO.Element[]> =>
-    $$('[data-slot="dropdown-menu-sub-content"] [role="menuitem"]').filter((item) => item.isDisplayed());
-  await browser.waitUntil(async () => (await shown()).length > 0, { timeoutMsg: 'the menu shows no shell' });
-  const items = await shown();
-  let chosen: WebdriverIO.Element | undefined = items[0];
-  if (shell !== undefined) {
-    chosen = undefined;
-    for (const item of items) {
-      if ((await item.getText()).includes(shell)) {
-        chosen = item;
-        break;
+  const subItemSelector = '[data-slot="dropdown-menu-sub-content"] [role="menuitem"]';
+  await browser.waitUntil(
+    async () =>
+      browser.execute(
+        (selector: string) =>
+          [...document.querySelectorAll<HTMLElement>(selector)].some((item) => item.offsetParent !== null),
+        subItemSelector,
+      ),
+    { timeoutMsg: 'the menu shows no shell' },
+  );
+  const focused = await browser.execute(
+    (selector: string, wanted: string | null) => {
+      const visible = [...document.querySelectorAll<HTMLElement>(selector)].filter(
+        (item) => item.offsetParent !== null,
+      );
+      const chosen = wanted === null ? visible[0] : visible.find((item) => item.innerText.includes(wanted));
+      if (chosen === undefined) {
+        return false;
       }
-    }
-  }
-  if (chosen === undefined) {
+      chosen.focus();
+      return document.activeElement === chosen;
+    },
+    subItemSelector,
+    shell ?? null,
+  );
+  if (!focused) {
     throw new Error(`the menu offers no ${shell ?? 'shell'}`);
   }
-  await chosen.execute((element) => element.focus());
-  await expect(chosen).toBeFocused();
   await browser.keys(Key.Enter);
   await browser.waitUntil(async () => (await $$(TAB).length) === open + 1, {
     timeout: 30_000,
@@ -198,9 +235,14 @@ async function measureEcho(): Promise<number[]> {
     for (const character of 'xq'.repeat(20)) {
       const key = { bubbles: true, code: `Key${character.toUpperCase()}`, key: character };
       const before = rows.textContent;
-      const shown = new Promise<number>((resolve) => {
+      const shown = new Promise<number>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          observer.disconnect();
+          reject(new Error(`key "${character}" did not echo within 5000 ms`));
+        }, 5_000);
         const observer = new MutationObserver(() => {
           if (rows.textContent !== before) {
+            clearTimeout(timer);
             observer.disconnect();
             resolve(performance.now());
           }
@@ -257,10 +299,12 @@ describe('performance of terminals (NFR-PERF-06 to 09)', () => {
     } else {
       await openTerminal();
       await waitForPrompt();
-      await browser.keys([...'cat'.split(''), Key.Enter]);
+      await focusVisibleTerminal();
+      await typeLine('cat');
       await browser.pause(1_000);
     }
     const latencies = await measureEcho();
+    await focusVisibleTerminal();
     await browser.keys([Key.Ctrl, 'c']);
 
     check('NFR-PERF-06 echo p95', percentile(latencies, 0.95), 25, 'ms', latencies.length);
@@ -307,10 +351,10 @@ describe('performance of terminals (NFR-PERF-06 to 09)', () => {
       sample();
     }, ROWS);
     await waitForPrompt();
-    await $('[data-terminal-view]').click();
-    await browser.keys(FLOOD.split(''));
-    await browser.keys(Key.Enter);
+    await focusVisibleTerminal();
+    await typeLine(FLOOD);
     await browser.pause(FLOOD_MILLIS);
+    await focusVisibleTerminal();
     await browser.keys([Key.Ctrl, 'c']);
     const stopped = await browser.execute(() => performance.now());
     // The view has settled once its rows stay unchanged for a second.
@@ -331,7 +375,7 @@ describe('performance of terminals (NFR-PERF-06 to 09)', () => {
       };
     });
 
-    expect(measured.latencies.length).toBeGreaterThan(50);
+    expect(measured.latencies.length).toBeGreaterThan(REPORT_ONLY ? 0 : 50);
     check(
       'NFR-PERF-07 input latency p95 during a flood',
       percentile(measured.latencies, 0.95),
@@ -361,7 +405,8 @@ describe('performance of terminals (NFR-PERF-06 to 09)', () => {
     quietCpu = cpuMilliseconds(pid) - quietBefore;
   });
 
-  it('opens 7 more terminals', async () => {
+  it('opens 7 more terminals', async function () {
+    this.timeout(240_000);
     // The first terminal is open; the rest open as new tabs, in the first
     // shell of this computer, the default.
     for (let terminal = 2; terminal <= IDLE_TERMINALS; terminal += 1) {

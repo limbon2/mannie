@@ -98,6 +98,7 @@ export async function shownText(element: WebdriverIO.Element): Promise<string> {
 export async function waitForShownText(
   target: ReturnType<typeof $> | string | WebdriverIO.Element,
   expected: RegExp | string | { asymmetricMatch(value: unknown): boolean },
+  timeout = 10_000,
 ): Promise<void> {
   const matches = (text: string): boolean => {
     if (typeof expected === 'string') {
@@ -136,12 +137,40 @@ export async function waitForShownText(
         return matches(last);
       },
       {
-        timeout: 10_000,
+        timeout,
         timeoutMsg: `${label} did not show ${expectedText}`,
       },
     );
   } catch (cause) {
     throw new Error(`${label} did not show ${expectedText}; it showed ${JSON.stringify(last)}`, { cause });
+  }
+}
+
+/**
+ * Waits until the element matching `selector` exists and its rendered DOM text
+ * no longer contains `forbidden`, avoiding WebKitWebDriver text truncation.
+ */
+export async function waitForTextAbsent(selector: string, forbidden: string, timeout = 10_000): Promise<void> {
+  let last = '';
+  try {
+    await browser.waitUntil(
+      async () => {
+        const text = await browser.execute((query: string) => {
+          const element = document.querySelector<HTMLElement>(query);
+          return element === null ? null : element.innerText.trim();
+        }, selector);
+        if (text === null) {
+          return false;
+        }
+        last = text;
+        return !text.includes(forbidden);
+      },
+      { timeout, timeoutMsg: `${selector} kept showing ${JSON.stringify(forbidden)}` },
+    );
+  } catch (cause) {
+    throw new Error(`${selector} kept showing ${JSON.stringify(forbidden)}; it showed ${JSON.stringify(last)}`, {
+      cause,
+    });
   }
 }
 
@@ -152,10 +181,35 @@ export async function waitForShownText(
  * the handle that the driver makes for it, which a row that is being removed
  * does.
  */
-export async function waitForGone(selector: string): Promise<void> {
+export async function waitForGone(selector: string, timeout = 10_000): Promise<void> {
   await browser.waitUntil(
     async () => browser.execute((query: string) => document.querySelector(query) === null, selector),
-    { timeout: 10_000, timeoutMsg: `${selector} stayed on the page` },
+    { timeout, timeoutMsg: `${selector} stayed on the page` },
+  );
+}
+
+/**
+ * Waits until no element matching `selector` is displayed, without requesting
+ * element handles from WebDriver so disappearing dialogs and menus cannot trigger
+ * WebKitWebDriver stale-element errors.
+ */
+export async function waitForHidden(selector: string, timeout = 10_000): Promise<void> {
+  await browser.waitUntil(
+    async () =>
+      browser.execute((query: string) => {
+        const matches = [...document.querySelectorAll<HTMLElement>(query)];
+        return matches.every((element) => {
+          if (element.closest('[hidden]') !== null) {
+            return true;
+          }
+          const style = getComputedStyle(element);
+          const isHiddenStyle = style.display === 'none' || style.visibility === 'hidden';
+          const rect = element.getBoundingClientRect();
+          const isCollapsed = rect.width === 0 && rect.height === 0;
+          return isHiddenStyle || isCollapsed;
+        });
+      }, selector),
+    { timeout, timeoutMsg: `${selector} stayed displayed` },
   );
 }
 
@@ -316,7 +370,7 @@ export async function runCommand(label: string): Promise<void> {
   await input.waitForDisplayed();
   await browser.keys(label.split(''));
   await browser.keys(Key.Enter);
-  await $('[data-slot="command-input"]').waitForDisplayed({ reverse: true });
+  await waitForHidden('[data-slot="command-input"]');
 }
 
 /** The element that has the keyboard focus, described for assertions. */

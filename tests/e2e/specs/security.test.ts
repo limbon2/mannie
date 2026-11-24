@@ -13,7 +13,7 @@ import {
   probeScripts,
 } from '../support/harness.ts';
 import { hostileHtml, hostileNavigations } from '../support/hostile-html.ts';
-import { waitForApp, waitForShownText } from '../support/page.ts';
+import { waitForApp, waitForHidden, waitForShownText } from '../support/page.ts';
 
 /**
  * Static inline style attributes in SvelteKit's route announcer and in
@@ -56,7 +56,7 @@ describe('the webview security baseline (V1)', () => {
     await browser.keys([Key.Ctrl, 'k']);
     await $('[data-slot="command-input"]').waitForDisplayed();
     await browser.keys(Key.Escape);
-    await $('[data-slot="command-input"]').waitForDisplayed({ reverse: true });
+    await waitForHidden('[data-slot="command-input"]');
 
     const violations = await cspViolations();
 

@@ -1,12 +1,14 @@
 # The checks of every pull request and every push to main (engineering
 # standards, Definition of Done): the groups of `task ci` and the end-to-end
-# tests on Windows and Linux, each in a job of its own, the performance
-# figures (NFR-PERF-01 to 04, enforced only on the reference machine), the
-# credential store with GNOME Keyring, KWallet and no Secret Service (V7), and
-# the programs of the plugins' manifests, such as the worker: their smoke
-# tests on Windows and Linux and their builds for FreeBSD and static Linux
-# (ADR-0035, decision 10). The release workflow takes the result of the run
-# that the push of its commit started, and runs these jobs itself when the
+# tests on Windows and Linux (built once per platform and executed across
+# lightweight balanced shards), the credential store with GNOME Keyring,
+# KWallet and no Secret Service (V7), and the programs of the plugins'
+# manifests, such as the worker: their smoke tests on Windows and Linux and
+# their builds for FreeBSD and static Linux (ADR-0035, decision 10). Report-only
+# performance measurements run on their own schedule in performance.yml, and
+# full upstream advisory checks run daily in dependency-audit.yml as well as on
+# dependency changes and releases. The release workflow takes the result of the
+# run that the push of its commit started, and runs these jobs itself when the
 # commit has none. Every job uses a standard GitHub-hosted runner, which is
 # free in this public repository (docs/engineering/ci-runners.md). Actions are
 # pinned by commit SHA.
@@ -92,6 +94,34 @@ jobs:
           save-rust-cache: ${{ matrix.groups == 'static' || contains(matrix.groups, 'clippy') }}
           compiler-cache: ${{ matrix.groups == 'static' && 'none' || 'write' }}
           system-libraries: ${{ matrix.groups != 'static' }}
+      # Unrelated feature changes should not break on newly filed upstream
+      # unmaintained/yanked notices; vulnerabilities, licenses, bans and
+      # sources stay enforced on every run, and dependency changes, daily
+      # audits and releases run the full strict check.
+      - name: Check whether Cargo dependencies changed
+        if: matrix.groups == 'static' && (github.event_name == 'pull_request' || github.event_name == 'push')
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -eu
+          if [ "$EVENT_NAME" = pull_request ]; then
+            base="$PR_BASE"
+            range="$base...HEAD"
+          else
+            base="$PUSH_BEFORE"
+            range="$base..HEAD"
+          fi
+          case "$base" in
+            ""|0000000000000000000000000000000000000000) exit 0 ;;
+          esac
+          if git cat-file -e "$base^{commit}" 2>/dev/null; then
+            if ! git diff --name-only "$range" | grep -Eq '(^|/)Cargo\.(toml|lock)$|^deny\.toml$'; then
+              echo "MANNIE_DENY_ALLOW_ADVISORY_CHURN=1" >> "$GITHUB_ENV"
+            fi
+          fi
       - name: Run the checks of the groups
         run: task ci -- ${{ matrix.groups }}
       - name: Report compiler cache use
@@ -121,15 +151,68 @@ jobs:
         if: always() && env.SCCACHE_PATH != ''
         run: sccache --show-stats
 
-  # The end-to-end specs in two parts, each in a job that builds the
-  # validation app, so the suite takes as long as its longer half
-  # (tests/e2e/support/shard.ts). A repair's one spec runs in one job.
+  # Builds the validation app, E2E plugin programs and plugin test-server
+  # examples once per platform and stores the staged binaries in GitHub's
+  # cache so the E2E shards and performance workflow reuse them without
+  # installing Rust or compiling again.
+  e2e-build:
+    if: inputs.scope != 'rust'
+    name: Build end-to-end app (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # V1 names the WebKitGTK 4.1 of Ubuntu 22.04, the oldest supported LTS.
+        os: ${{ fromJSON(inputs.scope == 'e2e' && inputs.platform == 'windows' && '["windows-2025"]' || inputs.scope == 'e2e' && inputs.platform == 'linux' && '["ubuntu-22.04"]' || '["windows-2025","ubuntu-22.04"]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check for prebuilt end-to-end binaries
+        id: e2e-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            target/e2e-bundle
+            target/edgedriver
+          key: e2e-bin-v1-${{ matrix.os }}-${{ github.sha }}
+          lookup-only: true
+      - uses: ./.github/actions/setup
+        if: steps.e2e-cache.outputs.cache-hit != 'true'
+        with:
+          compiler-cache: ${{ github.ref == 'refs/heads/main' && 'write' || 'read' }}
+      - name: Build the validation app and end-to-end helpers
+        if: steps.e2e-cache.outputs.cache-hit != 'true'
+        run: task e2e:build
+      - name: Report compiler cache use and stop sccache
+        if: always() && env.SCCACHE_PATH != ''
+        shell: bash
+        run: |
+          sccache --show-stats
+          sccache --stop-server || true
+      - name: Stage end-to-end binaries
+        if: steps.e2e-cache.outputs.cache-hit != 'true'
+        run: node scripts/plugins/programs.mjs stage-e2e target/e2e-bundle
+      - name: Cache staged end-to-end binaries
+        if: steps.e2e-cache.outputs.cache-hit != 'true'
+        uses: ./.github/actions/save-cache-verified
+        with:
+          path: |
+            target/e2e-bundle
+            target/edgedriver
+          key: e2e-bin-v1-${{ matrix.os }}-${{ github.sha }}
+
+  # The end-to-end specs in two balanced parts, running the binaries staged
+  # by e2e-build without Rust or compiler caches (tests/e2e/support/shard.ts).
+  # A repair's one spec runs in one job.
   e2e:
+    needs: e2e-build
     if: inputs.scope != 'rust'
     name: End-to-end tests ${{ matrix.shard }} (${{ matrix.os }})
     # These are disposable desktops. Let the webview paint normally rather
     # than using the off-screen mode that keeps local tests out of the way.
     env:
+      CARGO_TARGET_DIR: target/e2e-bundle
+      MANNIE_E2E_PREBUILT: "1"
       MANNIE_E2E_SHOW_WINDOW: "1"
       MANNIE_E2E_SPEC: ${{ inputs.scope == 'e2e' && inputs.e2e-spec || '' }}
       MANNIE_E2E_SHARD: ${{ matrix.shard }}
@@ -140,105 +223,88 @@ jobs:
         os: ${{ fromJSON(inputs.scope == 'e2e' && inputs.platform == 'windows' && '["windows-2025"]' || inputs.scope == 'e2e' && inputs.platform == 'linux' && '["ubuntu-22.04"]' || '["windows-2025","ubuntu-22.04"]') }}
         shard: ${{ fromJSON(inputs.scope == 'e2e' && inputs.e2e-spec != '' && '["1/1"]' || '["1/2","2/2"]') }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # Both parts build the same app, so the first stores the results.
-      - uses: ./.github/actions/setup
+      - name: Restore staged end-to-end binaries
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          compiler-cache: ${{ startsWith(matrix.shard, '1/') && 'write' || 'read' }}
-      - name: Build the validation app
-        run: task e2e:build
+          path: |
+            target/e2e-bundle
+            target/edgedriver
+          key: e2e-bin-v1-${{ matrix.os }}-${{ github.sha }}
+          fail-on-cache-miss: true
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          cache: true
+      - uses: go-task/setup-task@a00fbb05ce67b35648be3c78cbc9fd85354c757e # v2.2.0
+        with:
+          version: 3.40.1
+          repo-token: ${{ github.token }}
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.87.28
+        with:
+          tool: tauri-driver@2.1.0
+      - name: Install the test runner packages
+        run: pnpm install --frozen-lockfile --filter mannie
+      # Runtime libraries only: the binary was already compiled by e2e-build.
+      - name: Install Linux runtime libraries and GNOME Keyring
+        if: runner.os == 'Linux'
+        run: |
+          sudo sh scripts/ci/install-ubuntu-packages.sh \
+            libwebkit2gtk-4.1-0 librsvg2-2 libayatana-appindicator3-1 libxdo3 \
+            webkit2gtk-driver xvfb dbus-x11 gnome-keyring
       - name: Run the end-to-end tests on WebView2
         if: runner.os == 'Windows'
         run: pwsh -File scripts/ci/run-windows-e2e.ps1
       # WebKitGTK needs a display, the single-instance plugin a session bus,
       # and provider profiles a Secret Service for their credentials.
-      - name: Install GNOME Keyring
-        if: runner.os == 'Linux'
-        run: sudo sh scripts/ci/install-ubuntu-packages.sh gnome-keyring
       - name: Run the end-to-end tests on WebKitGTK
         if: runner.os == 'Linux'
         run: dbus-run-session -- sh scripts/ci/with-secret-service.sh gnome-keyring xvfb-run --auto-servernum task e2e:run
-      - name: Report compiler cache use
-        if: always() && env.SCCACHE_PATH != ''
-        run: sccache --show-stats
-
-  # The performance figures, in a job of their own beside the end-to-end
-  # tests, so their five minutes do not add to the suite's time. Shared
-  # runners measure their neighbours as much as Mannie, so CI records the
-  # figures without enforcing the targets. The job builds what the first
-  # end-to-end job builds and stores, so it only reads the compiler cache.
-  performance:
-    if: inputs.scope != 'rust' && (inputs.scope != 'e2e' || inputs.e2e-spec == '')
-    name: Performance measurements (${{ matrix.os }})
-    env:
-      MANNIE_E2E_SHOW_WINDOW: "1"
-    strategy:
-      fail-fast: false
-      matrix:
-        os: ${{ fromJSON(inputs.scope == 'e2e' && inputs.platform == 'windows' && '["windows-2025"]' || inputs.scope == 'e2e' && inputs.platform == 'linux' && '["ubuntu-22.04"]' || '["windows-2025","ubuntu-22.04"]') }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: ./.github/actions/setup
+      - name: Upload end-to-end failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          compiler-cache: read
-      - name: Build the validation app
-        run: task e2e:build
-      - name: Measure the performance targets on WebView2
-        if: runner.os == 'Windows'
-        env:
-          MANNIE_PERF_REPORT_ONLY: "1"
-        run: pwsh -File scripts/ci/run-windows-e2e.ps1 -Mode performance
-      - name: Install GNOME Keyring
-        if: runner.os == 'Linux'
-        run: sudo sh scripts/ci/install-ubuntu-packages.sh gnome-keyring
-      - name: Measure the performance targets on WebKitGTK
-        if: runner.os == 'Linux'
-        env:
-          MANNIE_PERF_REPORT_ONLY: "1"
-        run: dbus-run-session -- sh scripts/ci/with-secret-service.sh gnome-keyring xvfb-run --auto-servernum pnpm exec wdio run tests/e2e/wdio.perf.conf.ts
-      - name: Record the performance measurements
-        if: always()
-        run: node scripts/ci/summarize-performance.mjs
-      - name: Report compiler cache use
-        if: always() && env.SCCACHE_PATH != ''
-        run: sccache --show-stats
+          name: e2e-failures-${{ matrix.os }}-${{ strategy.job-index }}
+          path: target/e2e-failures
+          if-no-files-found: ignore
+          retention-days: 3
 
+  # Builds mannie-secrets tests once and verifies GNOME Keyring, KWallet and
+  # a session bus without any Secret Service (V7) in separate D-Bus sessions.
   credentials:
     if: inputs.scope != 'rust' && inputs.scope != 'e2e'
-    name: Credential store (${{ matrix.secret-service }})
+    name: Credential store (gnome-keyring, kwallet, none)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        secret-service: [gnome-keyring, kwallet, none]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # The three jobs build the same tests, so one stores the results.
       - uses: ./.github/actions/setup
         with:
-          compiler-cache: ${{ matrix.secret-service == 'gnome-keyring' && 'write' || 'read' }}
-      - name: Install the Secret Service
-        if: matrix.secret-service != 'none'
-        run: |
-          sudo sh scripts/ci/install-ubuntu-packages.sh ${{ matrix.secret-service == 'kwallet' && 'libkf5wallet-bin libqca-qt5-2-plugins' || 'gnome-keyring' }}
+          compiler-cache: write
+          system-libraries: false
+      - name: Install Secret Service backends and D-Bus
+        run: sudo sh scripts/ci/install-ubuntu-packages.sh dbus-x11 gnome-keyring libkf5wallet-bin libqca-qt5-2-plugins
       - name: Build the tests
         run: cargo test --locked -p mannie-secrets --no-run
-      - name: Store, read, replace and delete a credential
-        if: matrix.secret-service != 'none'
-        run: dbus-run-session -- sh scripts/ci/with-secret-service.sh ${{ matrix.secret-service }} cargo test --locked -p mannie-secrets -- --ignored --exact the_secret_service_stores_reads_replaces_and_deletes
-      - name: Keep a planted secret out of logs, databases and crash files
-        if: matrix.secret-service != 'none'
-        run: dbus-run-session -- sh scripts/ci/with-secret-service.sh ${{ matrix.secret-service }} cargo test --locked -p mannie-secrets --test planted_secret
+      - name: "GNOME Keyring: store, read, replace and delete a credential"
+        run: dbus-run-session -- sh scripts/ci/with-secret-service.sh gnome-keyring cargo test --locked -p mannie-secrets -- --ignored --exact the_secret_service_stores_reads_replaces_and_deletes
+      - name: "GNOME Keyring: keep a planted secret out of logs, databases and crash files"
+        run: dbus-run-session -- sh scripts/ci/with-secret-service.sh gnome-keyring cargo test --locked -p mannie-secrets --test planted_secret
+      - name: "KWallet: store, read, replace and delete a credential"
+        run: dbus-run-session -- sh scripts/ci/with-secret-service.sh kwallet cargo test --locked -p mannie-secrets -- --ignored --exact the_secret_service_stores_reads_replaces_and_deletes
+      - name: "KWallet: keep a planted secret out of logs, databases and crash files"
+        run: dbus-run-session -- sh scripts/ci/with-secret-service.sh kwallet cargo test --locked -p mannie-secrets --test planted_secret
       # A session bus without service directories cannot start a Secret
       # Service, whatever the runner has installed.
       - name: Refuse to store a credential without a Secret Service
-        if: matrix.secret-service == 'none'
         run: dbus-run-session --config-file=scripts/ci/session-without-services.conf -- cargo test --locked -p mannie-secrets -- --ignored --exact without_a_secret_service_no_credential_is_stored
+      - name: Report compiler cache use
+        if: always() && env.SCCACHE_PATH != ''
+        run: sccache --show-stats
 
   # The programs of the plugins' manifests and what CI does with each, so
   # that a plugin with a program changes no workflow (ADR-0035, decision 10).

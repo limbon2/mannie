@@ -21,6 +21,7 @@ import {
   openSettings,
   waitForAnimations,
   waitForApp,
+  waitForHidden,
   waitForShownText,
 } from '../support/page.ts';
 import {
@@ -50,7 +51,7 @@ async function chooseWithKeyboard(trigger: string, option: string): Promise<void
   for (let count = 0; count <= items.length; count += 1) {
     if (await item.isFocused()) {
       await browser.keys(Key.Enter);
-      await item.waitForDisplayed({ reverse: true });
+      await waitForHidden(option);
       return;
     }
     await browser.keys(Key.ArrowDown);
@@ -119,9 +120,9 @@ describe('the ChatGPT plan', () => {
 
     const notice = await $('[data-chatgpt-notice]');
     await notice.waitForDisplayed({ timeout: 10_000 });
-    await expect(notice).toHaveText(expect.stringContaining("You're using your ChatGPT plan"));
+    await waitForShownText(notice, expect.stringContaining("You're using your ChatGPT plan"));
     await clickWithText('[data-chatgpt-notice] button', 'Got it');
-    await notice.waitForDisplayed({ reverse: true, timeout: 10_000 });
+    await waitForHidden('[data-chatgpt-notice]', 10_000);
   });
 
   it('sends directly on the first listed model and remembers effort separately for each chat', async () => {
@@ -210,7 +211,7 @@ describe('the ChatGPT plan', () => {
     await $('#profile-context-window').setValue('65536');
     await $('#profile-output-limit').setValue('4096');
     await $(`${DIALOG} button[type="submit"]`).click();
-    await $(DIALOG).waitForDisplayed({ reverse: true, timeout: 10_000 });
+    await waitForHidden(DIALOG, 10_000);
 
     await $('[data-chatgpt-plan]').waitForDisplayed({ timeout: 10_000 });
     expect(
