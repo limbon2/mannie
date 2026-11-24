@@ -17,10 +17,11 @@ use std::sync::{Mutex, PoisonError};
 use std::time::Instant;
 
 use mannie_plugin_sdk::BoxFuture;
-use mannie_plugin_sdk::contracts::ProjectId;
+use mannie_plugin_sdk::contracts::{ProgramOperationId, ProjectId};
 use mannie_plugin_sdk::manifest::Manifest;
 use mannie_plugin_sdk::services::processes::{
-    ProcessError, ProcessesApi, ProgramEnding, ProgramOutput, ProgramRun,
+    OwnerOperationOutcome, OwnerOperationRequest, OwnerOperationTicket, ProcessError, ProcessesApi,
+    ProgramEnding, ProgramOutput, ProgramRun,
 };
 use tempfile::TempDir;
 
@@ -67,6 +68,15 @@ fn git_command(global: &Path) -> Command {
     command
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HostBehavior {
+    Normal,
+    Missing,
+    RefusesReads,
+    RefusesWrites,
+    TimeoutOwnerRuns,
+}
+
 /// The service `processes` of the plugin's unit tests, which runs the
 /// installed git.
 #[derive(Debug)]
@@ -74,8 +84,9 @@ pub struct HostGit {
     fixed: Vec<String>,
     configuration: EmptyConfiguration,
     runs: Mutex<Vec<ProgramRun>>,
-    missing: bool,
-    refuses_reads: bool,
+    owner_operations: Mutex<Vec<(ProgramOperationId, Option<OwnerOperationOutcome>)>>,
+    owner_requests: Mutex<Vec<OwnerOperationRequest>>,
+    behavior: HostBehavior,
     projects: Vec<(ProjectId, PathBuf)>,
 }
 
@@ -104,10 +115,43 @@ impl HostGit {
             fixed,
             configuration: EmptyConfiguration::new(),
             runs: Mutex::new(Vec::new()),
-            missing: false,
-            refuses_reads: false,
+            owner_operations: Mutex::new(Vec::new()),
+            owner_requests: Mutex::new(Vec::new()),
+            behavior: HostBehavior::Normal,
             projects: Vec::new(),
         }
+    }
+
+    /// The service of a place that refuses owner writes (e.g. external git dir
+    /// without a write grant).
+    pub fn refusing_writes() -> Self {
+        Self {
+            behavior: HostBehavior::RefusesWrites,
+            ..Self::new()
+        }
+    }
+
+    /// Makes every run carrying an owner operation ticket time out.
+    #[must_use]
+    pub fn timing_out_owner_runs(mut self) -> Self {
+        self.behavior = HostBehavior::TimeoutOwnerRuns;
+        self
+    }
+
+    /// The owner operations started through this test double and their outcomes.
+    pub fn owner_operations(&self) -> Vec<(ProgramOperationId, Option<OwnerOperationOutcome>)> {
+        self.owner_operations
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// The raw owner operation requests sent to the journal.
+    pub fn owner_requests(&self) -> Vec<OwnerOperationRequest> {
+        self.owner_requests
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// The service with the project `project` in `folder`, as the core finds
@@ -121,7 +165,7 @@ impl HostGit {
     /// The service of a machine without git, which finds it nowhere.
     pub fn missing() -> Self {
         Self {
-            missing: true,
+            behavior: HostBehavior::Missing,
             ..Self::new()
         }
     }
@@ -130,7 +174,7 @@ impl HostGit {
     /// read, as the core refuses a mention's run there.
     pub fn refusing_reads() -> Self {
         Self {
-            refuses_reads: true,
+            behavior: HostBehavior::RefusesReads,
             ..Self::new()
         }
     }
@@ -196,7 +240,7 @@ impl HostGit {
 
 impl ProcessesApi for HostGit {
     fn locate(&self, program: &str) -> BoxFuture<'static, Result<PathBuf, ProcessError>> {
-        let located = if self.missing {
+        let located = if self.behavior == HostBehavior::Missing {
             Err(ProcessError::NotFound {
                 program: program.to_owned(),
             })
@@ -211,14 +255,16 @@ impl ProcessesApi for HostGit {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(run.clone());
-        let output = if self.missing {
+        let output = if self.behavior == HostBehavior::Missing {
             Err(ProcessError::NotFound {
                 program: run.program,
             })
-        } else if self.refuses_reads && run.reads.is_some() {
+        } else if self.behavior == HostBehavior::RefusesReads && run.reads.is_some() {
             Err(ProcessError::ReadNotAllowed {
                 path: run.working_directory.display().to_string(),
             })
+        } else if self.behavior == HostBehavior::TimeoutOwnerRuns && run.owner_operation.is_some() {
+            Ok(ProgramOutput::new(ProgramEnding::TimedOut, None, 1))
         } else {
             self.run_now(&run)
         };
@@ -236,6 +282,60 @@ impl ProcessesApi for HostGit {
             .map(|(_project, folder)| folder.clone())
             .ok_or(ProcessError::ProjectNotFound);
         Box::pin(std::future::ready(folder))
+    }
+
+    fn begin_owner_operation(
+        &self,
+        request: OwnerOperationRequest,
+    ) -> BoxFuture<'static, Result<OwnerOperationTicket, ProcessError>> {
+        let result = if self.behavior == HostBehavior::Missing {
+            Err(ProcessError::NotFound {
+                program: request.program,
+            })
+        } else if self.behavior == HostBehavior::RefusesWrites {
+            let path = request
+                .folders
+                .first()
+                .map(|folder| folder.display().to_string())
+                .unwrap_or_default();
+            Err(ProcessError::WriteNotAllowed { path })
+        } else {
+            let mut ops = self
+                .owner_operations
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if ops.iter().any(|(id, _outcome)| *id == request.id) {
+                Err(ProcessError::AlreadyRun)
+            } else {
+                let token = request.id.to_string();
+                ops.push((request.id.clone(), None));
+                self.owner_requests
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push(request);
+                Ok(OwnerOperationTicket::new(token))
+            }
+        };
+        Box::pin(std::future::ready(result))
+    }
+
+    fn finish_owner_operation(
+        &self,
+        ticket: OwnerOperationTicket,
+        outcome: OwnerOperationOutcome,
+    ) -> BoxFuture<'static, Result<(), ProcessError>> {
+        let mut ops = self
+            .owner_operations
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let result = ops
+            .iter_mut()
+            .find(|(id, _recorded)| id.as_str() == ticket.as_str())
+            .map(|(_id, recorded)| {
+                *recorded = Some(outcome);
+            })
+            .ok_or(ProcessError::InvalidOperationTicket);
+        Box::pin(std::future::ready(result))
     }
 }
 

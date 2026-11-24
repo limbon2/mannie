@@ -6,7 +6,7 @@
 use serde::Serialize;
 
 /// A line that matched.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Match {
     /// The commit whose file matched, or `None` for the work tree.

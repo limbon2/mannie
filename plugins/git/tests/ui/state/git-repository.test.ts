@@ -23,12 +23,22 @@ import {
 
 const core = vi.hoisted(() => ({
   followRepository: vi.fn(),
+  mention: vi.fn(),
+  openConversationId: vi.fn(),
+  repositoryActionRun: vi.fn(),
+  repositoryBlame: vi.fn(),
   repositoryBranches: vi.fn(),
   repositoryCommit: vi.fn(),
+  repositoryCompare: vi.fn(),
   repositoryConflicts: vi.fn(),
   repositoryFileDiff: vi.fn(),
+  repositoryGrep: vi.fn(),
   repositoryHistory: vi.fn(),
+  repositoryHistoryQuery: vi.fn(),
   repositoryOverview: vi.fn(),
+  repositoryRefs: vi.fn(),
+  repositoryStashShow: vi.fn(),
+  repositoryTree: vi.fn(),
   unsubscribe: vi.fn(),
 }));
 
@@ -40,13 +50,27 @@ const channel = vi.hoisted(() => ({
 vi.mock('../../../ui/generated/bindings.js', () => ({
   channels: { followRepository: core.followRepository },
   commands: {
+    repositoryActionRun: core.repositoryActionRun,
+    repositoryBlame: core.repositoryBlame,
     repositoryBranches: core.repositoryBranches,
     repositoryCommit: core.repositoryCommit,
+    repositoryCompare: core.repositoryCompare,
     repositoryConflicts: core.repositoryConflicts,
     repositoryFileDiff: core.repositoryFileDiff,
+    repositoryGrep: core.repositoryGrep,
     repositoryHistory: core.repositoryHistory,
+    repositoryHistoryQuery: core.repositoryHistoryQuery,
     repositoryOverview: core.repositoryOverview,
+    repositoryRefs: core.repositoryRefs,
+    repositoryStashShow: core.repositoryStashShow,
+    repositoryTree: core.repositoryTree,
   },
+}));
+vi.mock('@mannie/plugin-sdk/message-box', () => ({
+  mention: core.mention,
+}));
+vi.mock('@mannie/plugin-sdk/navigation', () => ({
+  openConversationId: core.openConversationId,
 }));
 vi.mock('@mannie/plugin-sdk/ipc', async (importOriginal) => ({
   ...(await importOriginal<typeof Ipc>()),
@@ -96,8 +120,12 @@ function overview(head: string | null): RepositoryOverview {
     entriesTotal: 0,
     head: null,
     operation: null,
+    pushTarget: null,
+    remotes: [],
+    stagedStats: [],
     stash: 0,
     top: 'D:/Projects/app',
+    unstagedStats: [],
   };
 }
 
@@ -360,5 +388,178 @@ describe('the repository of an open panel', () => {
 
     expect(core.repositoryBranches).toHaveBeenCalledTimes(2);
     expect(core.repositoryConflicts).toHaveBeenCalledTimes(2);
+  });
+
+  it('stores pending confirmation when an owner action requires confirmation and completes after confirm', async () => {
+    const panel = new RepositoryPanel('project-1');
+    const preview = {
+      effects: [{ kind: 'runs_folder_code' as const, name: 'pre-commit', source: '.git/hooks/pre-commit' }],
+      effectsDigest: 'digest-123',
+      needsConfirmation: true,
+      state: 'state-1',
+    };
+    core.repositoryActionRun
+      .mockResolvedValueOnce(ok({ outcome: 'needs_confirmation', preview }))
+      .mockResolvedValueOnce(
+        ok({
+          count: null,
+          head: null,
+          outcome: 'completed',
+          snapshot: null,
+        }),
+      );
+
+    const action = { amend: false, kind: 'commit' as const, message: 'Add feature' };
+    await panel.runAction(action);
+
+    expect(panel.pendingConfirmation).toEqual({ action, preview });
+
+    await panel.confirmPendingAction();
+
+    expect(panel.pendingConfirmation).toBeNull();
+    expect(core.repositoryActionRun).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        action,
+        confirmation: { effectsDigest: 'digest-123', state: 'state-1' },
+        projectId: 'project-1',
+      }),
+    );
+  });
+
+  it('switches to Conflicts when an owner action stops with conflicts and shows a notice on refusal', async () => {
+    const panel = new RepositoryPanel('project-1');
+    core.repositoryConflicts.mockResolvedValue(ok({ files: [], head: null, operation: null }));
+    core.repositoryActionRun.mockResolvedValueOnce(
+      ok({
+        conflicts: 2,
+        operation: null,
+        outcome: 'stopped',
+      }),
+    );
+
+    await panel.runAction({ branch: 'feature', kind: 'merge', mode: 'default' });
+
+    expect(panel.activeTab).toBe('conflicts');
+    expect(panel.actionNotice?.kind).toBe('info');
+    expect(core.repositoryConflicts).toHaveBeenCalledTimes(1);
+
+    core.repositoryActionRun.mockResolvedValueOnce(
+      ok({
+        detail: 'Branch is not merged',
+        outcome: 'refused',
+      }),
+    );
+
+    await panel.runAction({ kind: 'delete_branch', name: 'feature' });
+
+    expect(panel.actionNotice?.kind).toBe('error');
+    expect(panel.actionNotice?.detail).toBe('Branch is not merged');
+  });
+
+  it('pages graph commits and reflog, and reloads graph only when HEAD moves', async () => {
+    const panel = new RepositoryPanel('project-1');
+    await panel.refresh();
+    core.repositoryHistoryQuery.mockResolvedValueOnce(
+      ok({ commits: [commit('c3'), commit('c2')], headOid: 'aaa', more: true, reflog: [] }),
+    );
+    core.repositoryHistoryQuery.mockResolvedValueOnce(
+      ok({ commits: [commit('c1')], headOid: 'aaa', more: false, reflog: [] }),
+    );
+
+    await panel.readGraph(true);
+    await panel.loadMoreGraph();
+
+    expect(panel.graphCommits.map((item) => item.oid)).toEqual(['c3', 'c2', 'c1']);
+    expect(panel.graphMore).toBe(false);
+
+    core.repositoryOverview.mockResolvedValue(ok(overview('bbb')));
+    core.repositoryHistoryQuery.mockResolvedValueOnce(
+      ok({ commits: [commit('c4')], headOid: 'bbb', more: false, reflog: [] }),
+    );
+    await panel.refresh();
+    await settle();
+
+    expect(panel.graphCommits.map((item) => item.oid)).toEqual(['c4']);
+    expect(panel.graphHeadOid).toBe('bbb');
+  });
+
+  it('runs compare, blame, grep and chat mentions through the plugin bindings and SDK', async () => {
+    const panel = new RepositoryPanel('project-1');
+    core.repositoryCompare.mockResolvedValueOnce(
+      ok({
+        ahead: [],
+        base: 'main',
+        behind: [],
+        files: [],
+        head: 'WORKTREE',
+        mode: 'three_dot',
+        patches: [],
+      }),
+    );
+    panel.openCompare('main', 'WORKTREE');
+    await settle();
+    expect(panel.activeTab).toBe('compare');
+    expect(core.repositoryCompare).toHaveBeenCalledWith(
+      expect.objectContaining({ base: 'main', head: 'WORKTREE', projectId: 'project-1' }),
+    );
+
+    core.repositoryBlame.mockResolvedValueOnce(
+      ok({ maxTimestamp: 0, minTimestamp: 0, path: 'src/lib.rs', revision: null, runs: [] }),
+    );
+    panel.openFileBlame('src/lib.rs');
+    await settle();
+    expect(panel.activeTab).toBe('inspect');
+    expect(panel.inspectMode).toBe('blame');
+    expect(core.repositoryBlame).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'src/lib.rs', projectId: 'project-1' }),
+    );
+
+    core.repositoryGrep.mockResolvedValueOnce(ok({ matches: [], truncated: false }));
+    panel.grepPattern = 'fn main';
+    await panel.runGrep();
+    expect(core.repositoryGrep).toHaveBeenCalledWith(
+      expect.objectContaining({ fixedStrings: true, pattern: 'fn main', projectId: 'project-1' }),
+    );
+
+    core.openConversationId.mockReturnValueOnce('conv-1');
+    core.mention.mockReturnValueOnce('added');
+    panel.mentionInChat({
+      expands: false,
+      key: 'changes',
+      label: 'Uncommitted changes',
+      token: '@changes',
+      variant: 'changes',
+      warning: null,
+    });
+    expect(core.mention).toHaveBeenCalledWith('conv-1', expect.objectContaining({ provider: 'git' }));
+    expect(panel.actionNotice?.kind).toBe('info');
+  });
+
+  it('clears stale diff data and target immediately when switching files', async () => {
+    const panel = new RepositoryPanel('project-1');
+    core.repositoryFileDiff.mockResolvedValueOnce(
+      ok({ binary: false, hunks: [], stat: null, truncated: false, untracked: false }),
+    );
+    panel.chooseFile('a.txt', false);
+    await settle();
+    expect(panel.fileDiff.status).toBe('ready');
+    expect(panel.fileDiffTarget).toEqual({ path: 'a.txt', staged: false });
+
+    let resolveSecond: (value: { data: unknown; status: 'ok' }) => void = () => undefined;
+    core.repositoryFileDiff.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSecond = resolve;
+      }),
+    );
+
+    panel.chooseFile('b.txt', false);
+    expect(panel.file).toEqual({ path: 'b.txt', staged: false });
+    expect(panel.fileDiff.value).toBeNull();
+    expect(panel.fileDiffTarget).toBeNull();
+
+    resolveSecond(ok({ binary: false, hunks: [], stat: null, truncated: false, untracked: false }));
+    await settle();
+    expect(panel.fileDiffTarget).toEqual({ path: 'b.txt', staged: false });
   });
 });

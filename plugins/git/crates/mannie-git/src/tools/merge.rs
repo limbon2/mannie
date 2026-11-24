@@ -6,7 +6,7 @@
 
 use mannie_plugin_sdk::BoxFuture;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::changes::{Acting, ChangeTool, Plan};
 use crate::effects::Change;
@@ -21,7 +21,7 @@ use crate::tools::{Answer, Reading};
 pub(crate) const GIT_MERGE: &str = "git_merge";
 
 /// How a merge joins the histories.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum MergeMode {
     Default,
@@ -35,16 +35,16 @@ pub(crate) enum MergeMode {
 #[serde(deny_unknown_fields)]
 pub(crate) struct MergeArguments {
     #[schemars(description = texts::REPOSITORY_ARGUMENT)]
-    repository: Option<String>,
+    pub(crate) repository: Option<String>,
     /// The branch or commit to merge, such as `feature` or `origin/main`.
-    branch: String,
+    pub(crate) branch: String,
     /// `default`: a fast-forward when possible, else a merge commit;
     /// `fast_forward_only`: refuse anything else; `no_fast_forward`: always a
     /// merge commit; `squash`: stage the changes for `git_commit`. `default`
     /// when null.
-    mode: Option<MergeMode>,
+    pub(crate) mode: Option<MergeMode>,
     /// The merge commit's message. git's when null.
-    message: Option<String>,
+    pub(crate) message: Option<String>,
 }
 
 /// `git_merge`.

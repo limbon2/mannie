@@ -9,6 +9,7 @@ import type { Component } from 'svelte';
 import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 
+import BlameCard from '../../../../ui/components/cards/BlameCard.svelte';
 import ConflictsCard from '../../../../ui/components/cards/ConflictsCard.svelte';
 import DiffCard from '../../../../ui/components/cards/DiffCard.svelte';
 import GrepCard from '../../../../ui/components/cards/GrepCard.svelte';
@@ -126,6 +127,32 @@ describe('the cards of the read tools', () => {
     expect(body).toContain('HEAD:src/lib.rs:12');
     expect(body).toContain('fn parse()');
   });
+
+  it('show a blame call’s grouped runs with short hash, author, day and numbered lines', () => {
+    const body = text(BlameCard, {
+      path: 'src/lib.rs',
+      revision: 'HEAD',
+      runs: [
+        {
+          commit: {
+            author: 'Ada Lovelace',
+            day: '2026-10-19',
+            oid: 'a1b2c3d4e5f6',
+            summary: 'Initial parser',
+            uncommitted: false,
+          },
+          lines: [{ number: 1, text: 'pub fn parse() {}' }],
+          short: 'a1b2c3d',
+        },
+      ],
+    });
+
+    expect(body).toContain('src/lib.rs at HEAD');
+    expect(body).toContain('a1b2c3d');
+    expect(body).toContain('Ada Lovelace');
+    expect(body).toContain('Initial parser');
+    expect(body).toContain('pub fn parse() {}');
+  });
 });
 
 describe('the cards of the change tools', () => {
@@ -175,7 +202,7 @@ describe('the cards of the change tools', () => {
   });
 
   it('show nothing without data', () => {
-    for (const card of [StatusCard, LogCard, DiffCard, ConflictsCard, GrepCard, TransferCard, OutcomeCard]) {
+    for (const card of [BlameCard, StatusCard, LogCard, DiffCard, ConflictsCard, GrepCard, TransferCard, OutcomeCard]) {
       expect(text(card, null).trim()).toBe('');
     }
   });

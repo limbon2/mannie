@@ -41,6 +41,8 @@ pub(crate) enum Change {
     Commit { amend: bool, all: bool },
     /// Creates, renames or deletes a branch, or moves a ref.
     MoveRef,
+    /// Creates a tag, which may invoke a repository-configured signing program.
+    CreateTag,
     /// Writes the configuration only, such as a branch's upstream.
     Configure,
     /// Switches the work tree to another branch or commit.
@@ -85,7 +87,9 @@ impl Change {
                 }
                 events
             }
-            Self::MoveRef | Self::Fetch { integrates: false } => vec!["reference-transaction"],
+            Self::MoveRef | Self::CreateTag | Self::Fetch { integrates: false } => {
+                vec!["reference-transaction"]
+            }
             Self::Configure => Vec::new(),
             Self::Switch | Self::Abort => {
                 vec![
@@ -141,7 +145,7 @@ impl Change {
     /// the filters that their attributes name.
     fn runs_filters(self) -> bool {
         match self {
-            Self::MoveRef | Self::Configure | Self::Push => false,
+            Self::MoveRef | Self::CreateTag | Self::Configure | Self::Push => false,
             Self::Unstage { snapshot } => snapshot,
             Self::Commit { all, .. } => all,
             Self::Reset {
@@ -173,11 +177,12 @@ impl Change {
         )
     }
 
-    /// Whether the change makes commits, which may sign them.
-    fn commits(self) -> bool {
+    /// Whether the change makes commits or tags, which may run a signing program.
+    fn signs(self) -> bool {
         matches!(
             self,
             Self::Commit { .. }
+                | Self::CreateTag
                 | Self::Integrate
                 | Self::EditHistory
                 | Self::Fetch { integrates: true }
@@ -256,7 +261,7 @@ pub(crate) fn configured_programs(settings: &[Setting], change: Change) -> Vec<P
         let runs = match program_kind(setting) {
             Some(ProgramKind::Filter) => change.runs_filters(),
             Some(ProgramKind::MergeDriver) => change.merges(),
-            Some(ProgramKind::Signing) => change.commits(),
+            Some(ProgramKind::Signing) => change.signs(),
             Some(ProgramKind::Transport) => change.reaches_remote(),
             None => false,
         };

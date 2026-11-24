@@ -404,6 +404,15 @@ impl Runtime {
             );
         }
 
+        let uncertain_programs = deps.store.recover_program_operations().await?;
+
+        if uncertain_programs > 0 {
+            tracing::warn!(
+                operations = uncertain_programs,
+                "owner operations on installed programs ran when Mannie ended and may have taken effect"
+            );
+        }
+
         let recovered = deps.store.recover_interrupted_runs().await?;
 
         if !recovered.is_empty() {

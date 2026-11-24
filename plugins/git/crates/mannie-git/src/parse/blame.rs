@@ -5,27 +5,48 @@
 
 use std::collections::HashMap;
 
+use mannie_plugin_sdk::contracts::UtcMillis;
 use serde::Serialize;
 
 /// The hash of lines that no commit holds yet.
 const NOT_COMMITTED: &str = "0000000000000000000000000000000000000000";
 
 /// A commit as blame names it.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BlameCommit {
     pub(crate) oid: String,
     pub(crate) author: String,
+    pub(crate) email: String,
     /// The day the author wrote it, in the author's time zone, such as
     /// `2026-10-19`.
     pub(crate) day: String,
+    /// When the author wrote it, in strict ISO 8601, when known.
+    pub(crate) authored: String,
+    /// Author time in UTC milliseconds since the Unix epoch.
+    pub(crate) timestamp: UtcMillis,
     pub(crate) summary: String,
     /// Whether the lines are changes that no commit holds yet.
     pub(crate) uncommitted: bool,
 }
 
+impl Default for BlameCommit {
+    fn default() -> Self {
+        Self {
+            oid: String::new(),
+            author: String::new(),
+            email: String::new(),
+            day: String::new(),
+            authored: String::new(),
+            timestamp: UtcMillis::EPOCH,
+            summary: String::new(),
+            uncommitted: false,
+        }
+    }
+}
+
 /// A line of a run.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BlameLine {
     /// Its number in the file.
@@ -34,16 +55,16 @@ pub(crate) struct BlameLine {
 }
 
 /// Lines in a row that one commit last changed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BlameRun {
     pub(crate) commit: BlameCommit,
     pub(crate) lines: Vec<BlameLine>,
 }
 
-/// The day of a time in seconds since 1970 in a zone such as `+0200`,
-/// as `YYYY-MM-DD`.
-fn day_of(seconds: i64, zone: &str) -> Option<String> {
+/// The day and strict ISO 8601 timestamp of a time in seconds since 1970
+/// in a zone such as `+0200`.
+fn date_parts(seconds: i64, zone: &str) -> Option<(String, String)> {
     let sign = match zone.get(..1)? {
         "+" => 1,
         "-" => -1,
@@ -51,9 +72,26 @@ fn day_of(seconds: i64, zone: &str) -> Option<String> {
     };
     let hours: i64 = zone.get(1..3)?.parse().ok()?;
     let minutes: i64 = zone.get(3..5)?.parse().ok()?;
+    if hours > 23 || minutes > 59 {
+        return None;
+    }
     let local = seconds + sign * (hours * 3600 + minutes * 60);
     let (year, month, day) = civil_from_days(local.div_euclid(86_400));
-    Some(format!("{year:04}-{month:02}-{day:02}"))
+    let secs_of_day = local.rem_euclid(86_400);
+    let hh = secs_of_day / 3600;
+    let mm = (secs_of_day % 3600) / 60;
+    let ss = secs_of_day % 60;
+    let day_text = format!("{year:04}-{month:02}-{day:02}");
+    let tz_sign = zone.get(..1)?;
+    let iso = format!("{day_text}T{hh:02}:{mm:02}:{ss:02}{tz_sign}{hours:02}:{minutes:02}");
+    Some((day_text, iso))
+}
+
+/// The day of a time in seconds since 1970 in a zone such as `+0200`,
+/// as `YYYY-MM-DD`.
+#[cfg(test)]
+fn day_of(seconds: i64, zone: &str) -> Option<String> {
+    date_parts(seconds, zone).map(|(day, _iso)| day)
 }
 
 /// The date of a day counted from 1970-01-01, in the proleptic Gregorian
@@ -146,10 +184,23 @@ pub(crate) fn parse_blame(output: &str) -> Vec<BlameRun> {
         };
         match key {
             "author" => value.clone_into(&mut commit.author),
-            "author-time" => commits.time = value.parse().ok(),
+            "author-mail" => {
+                let email = value
+                    .strip_prefix('<')
+                    .and_then(|rest| rest.strip_suffix('>'))
+                    .unwrap_or(value);
+                email.clone_into(&mut commit.email);
+            }
+            "author-time" => {
+                commits.time = value.parse().ok();
+                if let Some(time) = commits.time {
+                    commit.timestamp = UtcMillis::from_millis(time.saturating_mul(1000));
+                }
+            }
             "author-tz" => {
-                if let Some(day) = commits.time.and_then(|time| day_of(time, value)) {
+                if let Some((day, iso)) = commits.time.and_then(|time| date_parts(time, value)) {
                     commit.day = day;
+                    commit.authored = iso;
                 }
             }
             "summary" => value.clone_into(&mut commit.summary),

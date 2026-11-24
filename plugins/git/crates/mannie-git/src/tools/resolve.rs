@@ -12,7 +12,7 @@ use std::fmt::Write as _;
 
 use mannie_plugin_sdk::BoxFuture;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::arguments::{pathspec, repository_path};
 use crate::changes::{Acting, ChangeTool, Plan};
@@ -34,7 +34,7 @@ pub(crate) const GIT_RESOLVE: &str = "git_resolve";
 const REGULAR_FILE: &str = "100644";
 
 /// A side of a conflict.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Side {
     Current,
@@ -44,16 +44,16 @@ pub(crate) enum Side {
 }
 
 /// The resolution of one conflict of a file.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, specta::Type)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct HunkChoice {
     /// The conflict's number, as `git_conflicts` lists it.
-    number: u32,
+    pub(crate) number: u32,
     /// The side to keep: current, incoming, base, or both, current first.
     /// Not with text.
-    take: Option<Side>,
+    pub(crate) take: Option<Side>,
     /// The lines that replace the conflict. Not with take.
-    text: Option<String>,
+    pub(crate) text: Option<String>,
 }
 
 /// The arguments of `git_resolve`.
@@ -61,23 +61,23 @@ pub(crate) struct HunkChoice {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ResolveArguments {
     #[schemars(description = texts::REPOSITORY_ARGUMENT)]
-    repository: Option<String>,
+    pub(crate) repository: Option<String>,
     /// The conflicted file, relative to the repository's top.
-    path: String,
+    pub(crate) path: String,
     /// One side for the whole file: current, incoming or base take that
     /// side's version of the file, and both keeps both sides of every
     /// conflict, current first.
-    take: Option<Side>,
+    pub(crate) take: Option<Side>,
     /// A resolution for each remaining conflict of the file, by its number.
-    hunks: Option<Vec<HunkChoice>>,
+    pub(crate) hunks: Option<Vec<HunkChoice>>,
     /// The file's whole resolved content.
-    content: Option<String>,
+    pub(crate) content: Option<String>,
     /// For a file that one side deleted: true deletes it, false keeps the
     /// changed version.
-    deleted: Option<bool>,
+    pub(crate) deleted: Option<bool>,
     /// True when you resolved the file with `edit_file`, to stage it once no
     /// conflict markers remain.
-    edited: Option<bool>,
+    pub(crate) edited: Option<bool>,
 }
 
 /// How a file is resolved.

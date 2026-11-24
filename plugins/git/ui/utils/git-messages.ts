@@ -1,10 +1,11 @@
 // Messages for the git plugin's codes (ADR-0019): the variants, summaries
 // and refusals of its mentions, the failures of its tools' calls, the
 // failures of its side panel's commands, and the words of git's states.
+import { formatCount } from '@mannie/plugin-sdk/format';
 import { hostRefusalMessage, ipcFailureMessage } from '@mannie/plugin-sdk/messages';
 import type { MentionSummary } from '@mannie/plugin-sdk/slots';
 
-import type { Conflict, GitError } from '../generated/bindings.js';
+import type { Conflict, GitError, OwnerActionEffect } from '../generated/bindings.js';
 import { m } from '../generated/messages.js';
 import type { GitFailure } from '../types/git.js';
 
@@ -26,26 +27,34 @@ const FAILURES: Readonly<Partial<Record<string, () => string>>> = {
 /** The sentences of the codes that the tools' calls fail with, beyond the shared ones. */
 const TOOL_FAILURES: Readonly<Partial<Record<string, () => string>>> = {
   ...FAILURES,
+  already_run: () => m.git_failure_already_run(),
   identity_missing: () => m.git_failure_identity_missing(),
   invalid_argument: () => m.git_failure_invalid_argument(),
   operation_refused: () => m.git_failure_operation_refused(),
   repository_changed: () => m.git_failure_repository_changed(),
   unknown_revision: () => m.git_failure_unknown_revision(),
+  write_not_allowed: () => m.git_failure_write_not_allowed(),
 };
 
 /** The sentences of the panel's errors, which the type checks hold to the plugin's error type. */
 const PANEL_ERRORS: Record<GitError['code'], () => string> = {
+  already_run: () => m.git_error_already_run(),
   bare_repository: () => m.git_error_bare_repository(),
   dubious_ownership: () => m.git_error_dubious_ownership(),
   git_failed: () => m.git_error_git_failed(),
   git_missing: () => m.git_error_git_missing(),
   git_too_old: () => m.git_error_git_too_old(),
+  identity_missing: () => m.git_error_identity_missing(),
+  invalid_argument: () => m.git_error_invalid_argument(),
   locked: () => m.git_error_locked(),
   not_a_repository: () => m.git_error_not_a_repository(),
+  operation_refused: () => m.git_error_operation_refused(),
   project_not_found: () => m.git_error_project_not_found(),
   read_not_allowed: () => m.git_error_read_not_allowed(),
+  repository_changed: () => m.git_error_repository_changed(),
   timed_out: () => m.git_error_timed_out(),
   unknown_commit: () => m.git_error_unknown_commit(),
+  write_not_allowed: () => m.git_error_write_not_allowed(),
 };
 
 /** The sentence of a refusal or a failure of a git mention, or `null` for a code it does not know. */
@@ -166,6 +175,39 @@ export function conflictWords(conflict: Conflict): string {
     }
     case 'deleted_incoming': {
       return m.git_conflict_deleted_incoming();
+    }
+  }
+}
+
+/** Localized description of an owner action effect for the confirmation dialog. */
+export function formatActionEffect(effect: OwnerActionEffect): string {
+  switch (effect.kind) {
+    case 'runs_folder_code': {
+      return m.git_confirm_effect_hook({ name: effect.name, source: effect.source });
+    }
+    case 'discards_work': {
+      const count = formatCount(effect.count);
+      if (effect.work === 'commits') {
+        return m.git_confirm_effect_discards_commits({ count });
+      }
+      if (effect.work === 'stash_entries') {
+        return m.git_confirm_effect_discards_stash({ count });
+      }
+      return effect.snapshot
+        ? m.git_confirm_effect_discards_changes_snapshot({ count })
+        : m.git_confirm_effect_discards_changes_permanent({ count });
+    }
+    case 'rewrites_published': {
+      return m.git_confirm_effect_rewrites_published({
+        count: formatCount(effect.count),
+        places: effect.places.join(', '),
+      });
+    }
+    case 'deletes_ref': {
+      return m.git_confirm_effect_deletes_ref({ name: effect.name, refKind: effect.refKind });
+    }
+    case 'network': {
+      return m.git_confirm_effect_network({ endpoint: effect.endpoint });
     }
   }
 }

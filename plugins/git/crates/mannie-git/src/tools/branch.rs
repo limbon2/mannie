@@ -34,17 +34,17 @@ pub(crate) enum BranchAction {
 #[serde(deny_unknown_fields)]
 pub(crate) struct BranchArguments {
     #[schemars(description = texts::REPOSITORY_ARGUMENT)]
-    repository: Option<String>,
+    pub(crate) repository: Option<String>,
     /// What to do with the branch.
-    action: BranchAction,
+    pub(crate) action: BranchAction,
     /// The branch's name, such as feature/parser.
-    name: String,
+    pub(crate) name: String,
     /// For create: the commit to start the branch at. HEAD when null.
-    start: Option<String>,
+    pub(crate) start: Option<String>,
     /// For rename: the branch's new name.
-    new_name: Option<String>,
+    pub(crate) new_name: Option<String>,
     /// For `set_upstream`: the branch to track, such as `origin/main`.
-    upstream: Option<String>,
+    pub(crate) upstream: Option<String>,
 }
 
 /// `git_branch`.

@@ -164,6 +164,13 @@ uuid_id!(
     UpdateId
 );
 
+uuid_id!(
+    /// Identifies an owner-initiated run of an installed program from a
+    /// plugin's view, which the journal records before it runs and never runs
+    /// twice (ADR-0078, decision 1).
+    ProgramOperationId
+);
+
 #[cfg(test)]
 mod tests {
     use super::{ConversationId, RunId};

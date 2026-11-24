@@ -21,6 +21,7 @@ use crate::changes::{Acting, ChangeTool, Plan, branch_tip, current_branch};
 use crate::effects::{Change, remote_endpoints};
 use crate::failure::GitFailure;
 use crate::outcome::refusal;
+use crate::parse::remotes::Remote;
 use crate::texts;
 use crate::tools::fetch::{chosen_remote, setting, upstream_branch};
 use crate::tools::{Answer, Reading, fitting_data};
@@ -33,21 +34,21 @@ pub(crate) const GIT_PUSH: &str = "git_push";
 #[serde(deny_unknown_fields)]
 pub(crate) struct PushArguments {
     #[schemars(description = texts::REPOSITORY_ARGUMENT)]
-    repository: Option<String>,
+    pub(crate) repository: Option<String>,
     /// The remote, such as `origin`. The branch's push remote or remote, or
     /// `origin`, when null.
-    remote: Option<String>,
+    pub(crate) remote: Option<String>,
     /// The local branch to push. The current branch when null.
-    branch: Option<String>,
+    pub(crate) branch: Option<String>,
     /// Whether to make the remote's branch the local branch's upstream.
-    set_upstream: Option<bool>,
+    pub(crate) set_upstream: Option<bool>,
     /// Whether to replace the remote's branch even when it holds commits that
     /// the local branch lacks, but only while it is still where this call
     /// read it.
-    force_with_lease: Option<bool>,
+    pub(crate) force_with_lease: Option<bool>,
     /// Whether to also push the annotated tags that point into the pushed
     /// commits.
-    tags: Option<bool>,
+    pub(crate) tags: Option<bool>,
 }
 
 /// What a push keeps for its run.
@@ -93,6 +94,27 @@ fn invalid(detail: &str) -> GitFailure {
     GitFailure::InvalidArgument {
         detail: detail.to_owned(),
     }
+}
+
+/// The remote and credential-redacted push URL that `git push` would target
+/// for `branch`, matching `GitPush::plan`: `branch.<name>.pushRemote`,
+/// `remote.pushDefault`, `branch.<name>.remote`, or `origin`, and the remote's
+/// push URL (`remote.<name>.pushUrl` falling back to `remote.<name>.url`).
+pub(crate) async fn effective_push_target(reading: &Reading, branch: &str) -> Option<Remote> {
+    let push_remote = setting(reading, &format!("branch.{branch}.pushRemote"))
+        .or_else(|| setting(reading, "remote.pushDefault"))
+        .map(str::to_owned);
+    let remote = chosen_remote(reading, push_remote.as_deref(), Some(branch)).ok()?;
+    let endpoints = remote_endpoints(reading, &remote, true).await.ok()?;
+    let push_url = endpoints.into_iter().find_map(|effect| match effect {
+        ProgramEffect::Network { endpoint } => Some(endpoint),
+        _ => None,
+    })?;
+    Some(Remote {
+        name: remote,
+        fetch: None,
+        push: Some(push_url),
+    })
 }
 
 async fn plan(reading: &Reading, arguments: &PushArguments) -> Result<Plan<Pushing>, GitFailure> {

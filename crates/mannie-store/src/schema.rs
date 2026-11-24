@@ -353,6 +353,12 @@ const TOOLS: StoreModule = StoreModule {
             description: "create the rules for commands typed into terminals",
             sql: include_str!("tools/migrations/0038_create_terminal_rules.sql"),
         },
+        Migration {
+            version: 8,
+            legacy_version: None,
+            description: "create the journal of owner-initiated program operations",
+            sql: include_str!("tools/migrations/0047_create_program_operations.sql"),
+        },
     ]),
     confined: false,
 };

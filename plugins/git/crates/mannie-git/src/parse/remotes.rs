@@ -8,7 +8,7 @@ use serde::Serialize;
 use crate::redact::redact;
 
 /// A remote and its URLs, without credentials.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Remote {
     pub(crate) name: String,

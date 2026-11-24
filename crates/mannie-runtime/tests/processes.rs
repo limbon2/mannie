@@ -19,12 +19,14 @@ use mannie_plugin_sdk::host::PluginBinding;
 use mannie_plugin_sdk::ids::PluginId;
 use mannie_plugin_sdk::manifest::Manifest;
 use mannie_plugin_sdk::services::processes::{
-    ProcessError, Processes, ProcessesApi, ProgramEnding, ProgramRun, ReadPlace,
+    OwnerOperationOutcome, OwnerOperationRequest, OwnerOperationTicket, ProcessError, Processes,
+    ProcessesApi, ProgramEnding, ProgramRun, ReadPlace,
 };
 use mannie_runtime::testing::{Harness, HarnessOptions, reply};
+use mannie_store::ProgramOperationState;
 use mannie_types::chat::StartConversation;
-use mannie_types::ids::{ConversationId, ProjectId};
-use mannie_types::tools::SetFullAccess;
+use mannie_types::ids::{ConversationId, GrantId, ProgramOperationId, ProjectId};
+use mannie_types::tools::{AccessMode, GrantScope, SetFullAccess};
 use serde_json::json;
 use tempfile::TempDir;
 
@@ -411,4 +413,184 @@ async fn a_commands_run_reads_where_the_projects_conversations_read_without_aski
     assert_eq!(of_unknown, Err(ProcessError::ProjectNotFound));
     assert_eq!(folder, setup.root);
     assert_eq!(unknown_folder, Err(ProcessError::ProjectNotFound));
+}
+
+#[tokio::test]
+async fn owner_operations_journal_and_reject_duplicate_or_invalid_tickets() {
+    let setup = Setup::new().await;
+    let op_id = ProgramOperationId::parse("0199e0f2-0000-7000-8000-000000000401").unwrap();
+    let request = OwnerOperationRequest::new(
+        op_id.clone(),
+        setup.project.clone(),
+        "git",
+        "stage",
+        vec![setup.root.clone()],
+    )
+    .with_arguments(vec!["--version".to_owned()]);
+
+    let ticket = setup
+        .processes
+        .begin_owner_operation(request.clone())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        setup
+            .harness
+            .store
+            .program_operation_state(&op_id)
+            .await
+            .unwrap(),
+        Some(ProgramOperationState::Executing)
+    );
+    assert_eq!(
+        setup.processes.begin_owner_operation(request).await,
+        Err(ProcessError::AlreadyRun)
+    );
+
+    let ran = setup
+        .processes
+        .run(
+            setup
+                .git(&["--version"])
+                .for_owner_operation(ticket.clone()),
+        )
+        .await
+        .unwrap();
+    assert!(ran.succeeded());
+
+    // Running outside the ticket's authorized folders is refused.
+    let outside_run = setup
+        .processes
+        .run(git_in(&setup.outside, &["--version"]).for_owner_operation(ticket.clone()))
+        .await;
+    assert_eq!(
+        outside_run,
+        Err(ProcessError::WriteNotAllowed {
+            path: setup.outside.display().to_string()
+        })
+    );
+
+    setup
+        .processes
+        .finish_owner_operation(
+            ticket.clone(),
+            OwnerOperationOutcome::Completed {
+                exit_code: ran.exit_code,
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        setup
+            .harness
+            .store
+            .program_operation_state(&op_id)
+            .await
+            .unwrap(),
+        Some(ProgramOperationState::Completed)
+    );
+
+    // Reusing a finished ticket or passing a forged ticket is refused.
+    assert_eq!(
+        setup
+            .processes
+            .run(setup.git(&["--version"]).for_owner_operation(ticket))
+            .await,
+        Err(ProcessError::InvalidOperationTicket)
+    );
+    assert_eq!(
+        setup
+            .processes
+            .run(
+                setup
+                    .git(&["--version"])
+                    .for_owner_operation(OwnerOperationTicket::new("forged".to_owned()))
+            )
+            .await,
+        Err(ProcessError::InvalidOperationTicket)
+    );
+}
+
+#[tokio::test]
+async fn owner_operations_enforce_folder_boundaries_and_protected_paths() {
+    let setup = Setup::new().await;
+
+    // Folders outside the project without a write grant are refused.
+    let outside_id = ProgramOperationId::parse("0199e0f2-0000-7000-8000-000000000402").unwrap();
+    let outside_req = OwnerOperationRequest::new(
+        outside_id.clone(),
+        setup.project.clone(),
+        "git",
+        "stage",
+        vec![setup.outside.clone()],
+    );
+    assert_eq!(
+        setup
+            .processes
+            .begin_owner_operation(outside_req.clone())
+            .await,
+        Err(ProcessError::WriteNotAllowed {
+            path: setup.outside.display().to_string()
+        })
+    );
+
+    // Once a shared write grant for the project covers the external folder, it is allowed.
+    let grant_id = GrantId::parse("0199e0f2-0000-7000-8000-000000000403").unwrap();
+    setup
+        .harness
+        .store
+        .add_shared_grants(
+            Some(&setup.project),
+            vec![(
+                grant_id,
+                GrantScope::Path {
+                    folder: setup.outside.display().to_string(),
+                    mode: AccessMode::Write,
+                },
+            )],
+        )
+        .await
+        .unwrap();
+
+    let granted_ticket = setup
+        .processes
+        .begin_owner_operation(outside_req)
+        .await
+        .unwrap();
+    setup
+        .processes
+        .finish_owner_operation(
+            granted_ticket,
+            OwnerOperationOutcome::Failed {
+                code: "git_failed".to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        setup
+            .harness
+            .store
+            .program_operation_state(&outside_id)
+            .await
+            .unwrap(),
+        Some(ProgramOperationState::Failed)
+    );
+
+    // Mannie's own protected folders are always refused (T-18).
+    let protected =
+        PathBuf::from(mannie_tools::canonical_folder(setup.harness.data_folder()).unwrap());
+    let protected_req = OwnerOperationRequest::new(
+        ProgramOperationId::parse("0199e0f2-0000-7000-8000-000000000404").unwrap(),
+        setup.project.clone(),
+        "git",
+        "stage",
+        vec![protected],
+    );
+    assert!(matches!(
+        setup.processes.begin_owner_operation(protected_req).await,
+        Err(ProcessError::InvalidRun { .. })
+    ));
 }

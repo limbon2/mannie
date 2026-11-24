@@ -78,6 +78,7 @@ words:
   - Jina's
   - journalctl
   - journaled
+  - journaling
   - kdialog
   - keepalive
   - kwallet
@@ -207,10 +208,12 @@ words:
   - thiserror
   - Tombi
   - Tombi's
+  - topo
   - truecolor
   - Unpair
   - unpairing
   - unpairs
+  - unstaging
   - uploadpack
   - USERDOMAIN
   - userinfo

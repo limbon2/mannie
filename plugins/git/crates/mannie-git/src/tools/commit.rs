@@ -32,19 +32,19 @@ const MAX_MESSAGE_CHARS: usize = 100_000;
 #[serde(deny_unknown_fields)]
 pub(crate) struct CommitArguments {
     #[schemars(description = texts::REPOSITORY_ARGUMENT)]
-    repository: Option<String>,
+    pub(crate) repository: Option<String>,
     /// The message: a subject line, then a blank line and the body. Needed
     /// unless amend keeps HEAD's message or fixup makes it.
-    message: Option<String>,
+    pub(crate) message: Option<String>,
     /// Whether to replace HEAD's commit instead of adding one.
-    amend: Option<bool>,
+    pub(crate) amend: Option<bool>,
     /// Whether to stage every change of tracked files first.
-    all: Option<bool>,
+    pub(crate) all: Option<bool>,
     /// Whether to commit when nothing changed.
-    allow_empty: Option<bool>,
+    pub(crate) allow_empty: Option<bool>,
     /// A commit of the branch, such as 1a2b3c4, that the staged changes fix.
     /// The commit's message is then "fixup!" and that commit's subject.
-    fixup: Option<String>,
+    pub(crate) fixup: Option<String>,
 }
 
 /// `git_commit`.

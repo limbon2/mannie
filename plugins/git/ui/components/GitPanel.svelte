@@ -1,313 +1,347 @@
 <script lang="ts">
+  import * as Alert from '@mannie/plugin-sdk/components/alert';
+  import { Badge } from '@mannie/plugin-sdk/components/badge';
   import { Button } from '@mannie/plugin-sdk/components/button';
   import * as Empty from '@mannie/plugin-sdk/components/empty';
-  import { Skeleton } from '@mannie/plugin-sdk/components/skeleton';
+  import { Spinner } from '@mannie/plugin-sdk/components/spinner';
   import * as Tabs from '@mannie/plugin-sdk/components/tabs';
   import { formatCount } from '@mannie/plugin-sdk/format';
-  import ArrowLeftIcon from '@mannie/plugin-sdk/icons/arrow-left';
-  import FolderGit2Icon from '@mannie/plugin-sdk/icons/folder-git-2';
-  import RefreshCwIcon from '@mannie/plugin-sdk/icons/refresh-cw';
+  import GitBranchIcon from '@mannie/plugin-sdk/icons/git-branch';
+  import XIcon from '@mannie/plugin-sdk/icons/x';
   import type { SidePanelProps } from '@mannie/plugin-sdk/slots';
   import { untrack } from 'svelte';
 
-  import type { Entry, RepositoryOverview } from '../generated/bindings.js';
+  import type { OperationAction, OwnerGitAction } from '../generated/bindings.js';
   import { m } from '../generated/messages.js';
-  import { RepositoryPanel } from '../state/git-repository.svelte.js';
+  import { type GitPanelTab, RepositoryPanel } from '../state/git-repository.svelte.js';
+  import type { GitFailure } from '../types/git.js';
+  import { gitFailureMessage } from '../utils/git-messages.js';
 
-  import CommitList from './cards/CommitList.svelte';
-  import ConflictFiles from './cards/ConflictFiles.svelte';
-  import ConflictHunkView from './cards/ConflictHunkView.svelte';
-  import DiffView from './cards/DiffView.svelte';
-  import EntryList from './cards/EntryList.svelte';
-  import RefList from './cards/RefList.svelte';
-  import ReadFailure from './ReadFailure.svelte';
+  import BranchesTab from './panel/BranchesTab.svelte';
+  import ChangesTab from './panel/ChangesTab.svelte';
+  import CompareTab from './panel/CompareTab.svelte';
+  import ConfirmActionDialog from './panel/ConfirmActionDialog.svelte';
+  import ConflictsTab from './panel/ConflictsTab.svelte';
+  import GitDialogs from './panel/GitDialogs.svelte';
+  import GitPanelHeader from './panel/GitPanelHeader.svelte';
+  import GraphTab from './panel/GraphTab.svelte';
+  import InspectTab from './panel/InspectTab.svelte';
+  import OperationBanner from './panel/OperationBanner.svelte';
 
-  // The Git side panel (plugins/git/docs/panel.md): a project's repository
-  // beside the conversation. Its header names the branch, its upstream and
-  // the operation in progress; its tabs show the changed files with their
-  // diffs, the history with each commit's changes, the branches and tags,
-  // and the conflicts of an operation that stopped. It only reads.
+  // The interactive Git side panel (plugins/git/docs/panel.md; ADR-0038,
+  // ADR-0078). Registered with `hideHeading: true` so the panel header
+  // carries the repository context without duplicating the tab label.
   let { argument, setLabel }: SidePanelProps = $props();
 
-  let tab = $state('changes');
+  let container = $state<HTMLElement | null>(null);
+  let width = $state(0);
 
   const panel = $derived(new RepositoryPanel(argument));
+  const wide = $derived(width >= 680);
   const overview = $derived(panel.overview.value);
-  const tabLabel = $derived(overview === null ? null : folderName(overview.top));
-  const failure = $derived(panel.overview.failure);
-  const isNotARepository = $derived(
-    failure?.kind === 'core' && failure.error.origin === 'plugin' && failure.error.code === 'not_a_repository',
+  const conflictedCount = $derived(
+    overview === null ? 0 : overview.entries.filter((entry) => entry.kind === 'conflicted').length,
   );
-  const operation = $derived(overview === null ? null : operationLine(overview));
-  const hasConflicts = $derived(
-    overview !== null && (overview.operation !== null || overview.entries.some((entry) => entry.kind === 'conflicted')),
-  );
-  /** Whether the chosen tab is Conflicts, which went away with the conflicts. */
-  const isTabGone = $derived(tab === 'conflicts' && !hasConflicts);
-  const shownTab = $derived(isTabGone ? 'changes' : tab);
-
-  function folderName(top: string): string {
-    return top.split(/[\\/]/u).findLast((part) => part !== '') ?? top;
-  }
-
-  function branchLine(repository: RepositoryOverview): string {
-    const branch = repository.branch.head;
-    if (branch === null) {
-      return m.git_panel_detached();
+  const hasConflictsTab = $derived.by(() => {
+    if (overview === null) {
+      return false;
     }
-    return repository.branch.oid === null ? m.git_panel_unborn() : m.git_panel_on_branch({ branch });
-  }
-
-  function trackingLine(repository: RepositoryOverview): string {
-    const { ahead, behind, upstream } = repository.branch;
-    if (upstream === null) {
-      return m.git_panel_no_upstream();
+    const hasConflicted = conflictedCount > 0;
+    const hasOperation = overview.operation !== null;
+    return hasConflicted || hasOperation;
+  });
+  const initialFailure = $derived.by(() => {
+    const isEmpty = overview === null;
+    const isError = panel.overview.status === 'error';
+    if (isEmpty && isError) {
+      return panel.overview.failure;
     }
-    const isCounted = ahead !== null && behind !== null;
-    if (!isCounted) {
-      return m.git_refs_gone({ upstream });
+    return null;
+  });
+  const refreshFailure = $derived.by(() => {
+    const hasOverview = overview !== null;
+    const isError = panel.overview.status === 'error';
+    if (hasOverview && isError) {
+      return panel.overview.failure;
     }
-    return m.git_refs_ahead_behind({ ahead: formatCount(ahead), behind: formatCount(behind), upstream });
-  }
-
-  function operationLine(repository: RepositoryOverview): string | null {
-    const current = repository.operation;
-    if (current === null) {
+    return null;
+  });
+  const noticeDetail = $derived.by(() => {
+    const detail = panel.actionNotice?.detail;
+    if (detail === undefined) {
       return null;
     }
-    switch (current.kind) {
-      case 'cherry_pick': {
-        return m.git_panel_operation_cherry_pick();
-      }
-      case 'merge': {
-        return m.git_panel_operation_merge();
-      }
-      case 'rebase': {
-        const step = current.step;
-        return step === null
-          ? m.git_panel_operation_rebase()
-          : m.git_panel_operation_rebase_step({ step: formatCount(step.number), total: formatCount(step.total) });
-      }
-      case 'revert': {
-        return m.git_panel_operation_revert();
-      }
-    }
-  }
-
-  /** Reads what a tab shows, the first time that it opens for the repository. */
-  function readTab(repository: RepositoryPanel, name: string): void {
-    switch (name) {
-      case 'branches': {
-        if (repository.branches.status === 'idle') {
-          void repository.readBranches();
-        }
-        break;
-      }
-      case 'conflicts': {
-        if (repository.conflicts.status === 'idle') {
-          void repository.readConflicts();
-        }
-        break;
-      }
-      case 'history': {
-        if (repository.historyPage.status === 'idle') {
-          void repository.readHistory();
-        }
-        break;
-      }
-      default: {
-        break;
-      }
-    }
-  }
-
-  function chooseFile(entry: Entry, staged: boolean): void {
-    panel.chooseFile(entry.path, staged);
-  }
-
-  /** Shows a commit's changes, or closes them when the commit shows already. */
-  function chooseCommit(oid: string): void {
-    if (panel.chosenCommit === oid) {
-      panel.closeCommit();
-    } else {
-      panel.chooseCommit(oid);
-    }
-  }
-
-  function chooseTab(name: string): void {
-    tab = name;
-  }
-
-  // Only another repository starts another watch. The watch's own reads of
-  // the state stay untracked, or each value that it reads would restart it.
-  $effect(() => {
-    const watched = panel;
-    return untrack(() => watched.watch());
+    return detail.length > 0 ? detail : null;
   });
 
-  // The shell keeps the tabs' labels; the panel tells it its own.
+  function repositoryName(top: string): string {
+    const trimmed = top.replace(/[\\/]+$/, '');
+    const parts = trimmed.split(/[\\/]/);
+    const last = parts.at(-1);
+    if (last === undefined) {
+      return top;
+    }
+    return last.length > 0 ? last : top;
+  }
+
+  function isNotRepositoryFailure(failure: GitFailure): boolean {
+    if (failure.kind !== 'core') {
+      return false;
+    }
+    const isPlugin = failure.error.origin === 'plugin';
+    const isNotRepo = failure.error.code === 'not_a_repository';
+    return isPlugin && isNotRepo;
+  }
+
+  function canRetry(failure: GitFailure | null): boolean {
+    if (failure === null) {
+      return true;
+    }
+    return !isNotRepositoryFailure(failure);
+  }
+
+  function handleTabChange(next: string): void {
+    const tab = next as GitPanelTab;
+    panel.activeTab = tab;
+    if (tab === 'graph') {
+      if (panel.graphPage.status === 'idle') {
+        void panel.readGraph(true);
+      }
+      return;
+    }
+    if (tab === 'branches') {
+      if (panel.refs.status === 'idle') {
+        void panel.readRefs();
+      }
+      return;
+    }
+    if (tab === 'compare') {
+      if (panel.refs.status === 'idle') {
+        void panel.readRefs();
+      }
+      if (panel.compareBase.length === 0) {
+        if (overview !== null) {
+          panel.compareBase = overview.branch.upstream ?? overview.branch.head ?? 'HEAD';
+        }
+      }
+      return;
+    }
+    if (tab === 'inspect') {
+      if (panel.fileTree.status === 'idle') {
+        void panel.readFileTree();
+      }
+      return;
+    }
+    if (tab === 'conflicts') {
+      if (panel.conflicts.status === 'idle') {
+        void panel.readConflicts();
+      }
+    }
+  }
+
+  function handleOperationControl(action: OperationAction): void {
+    void panel.runAction({ action, kind: 'operation_control' });
+  }
+
+  function handleDialogSubmit(action: OwnerGitAction): void {
+    void panel.runAction(action);
+  }
+
+  function handleConfirmAction(): void {
+    void panel.confirmPendingAction();
+  }
+
+  function retryOverview(): void {
+    void panel.refresh();
+  }
+
   $effect(() => {
-    if (tabLabel !== null) {
-      setLabel(tabLabel, true);
+    const current = panel;
+    return untrack(() => current.watch());
+  });
+
+  $effect(() => {
+    const currentOverview = overview;
+    if (currentOverview !== null) {
+      setLabel(repositoryName(currentOverview.top), true);
     }
   });
 
-  // A tab reads what it shows when it first shows for a repository.
   $effect(() => {
-    const name = shownTab;
-    const shown = panel;
-    untrack(() => {
-      readTab(shown, name);
+    const isOnConflicts = panel.activeTab === 'conflicts';
+    if (!hasConflictsTab && isOnConflicts) {
+      panel.activeTab = 'changes';
+    }
+  });
+
+  $effect(() => {
+    const el = container;
+    const isMissingEl = el === null;
+    const hasNoObserver = typeof ResizeObserver === 'undefined';
+    if (isMissingEl || hasNoObserver) {
+      return;
+    }
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries.at(0);
+      if (entry !== undefined) {
+        width = entry.contentRect.width;
+      }
     });
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+    };
   });
 </script>
 
-<div class="flex h-full min-h-0 flex-col gap-3 overflow-y-auto p-3" data-git-panel="">
-  {#if isNotARepository}
-    <Empty.Root>
-      <Empty.Header>
-        <Empty.Media variant="icon">
-          <FolderGit2Icon />
-        </Empty.Media>
-        <Empty.Description>{m.git_error_not_a_repository()}</Empty.Description>
-      </Empty.Header>
-    </Empty.Root>
+<div
+  bind:this={container}
+  class="flex h-full min-h-0 flex-col overflow-hidden bg-background text-foreground"
+  data-git-panel=""
+>
+  {#if initialFailure !== null}
+    <div class="flex flex-1 items-center justify-center p-4">
+      <Empty.Root>
+        <Empty.Header>
+          <Empty.Media variant="icon">
+            <GitBranchIcon aria-hidden="true" />
+          </Empty.Media>
+          <Empty.Title>{m.git_panel_failed_title()}</Empty.Title>
+          <Empty.Description>{gitFailureMessage(initialFailure)}</Empty.Description>
+        </Empty.Header>
+        {#if canRetry(initialFailure)}
+          <Empty.Content>
+            <Button size="sm" variant="outline" onclick={retryOverview}>{m.git_panel_try_again()}</Button>
+          </Empty.Content>
+        {/if}
+      </Empty.Root>
+    </div>
   {:else if overview === null}
-    {#if failure === null}
-      <div class="flex flex-col gap-3" aria-busy="true">
-        <span class="sr-only" role="status">{m.git_panel_loading()}</span>
-        <Skeleton class="h-6 w-1/2" />
-        <Skeleton class="h-24 w-full" />
-      </div>
-    {:else}
-      <ReadFailure {failure} retry={() => void panel.refresh()} title={m.git_panel_failed_title()} />
-    {/if}
+    <div class="flex flex-1 items-center justify-center gap-2 p-4 text-sm text-muted-foreground" aria-busy="true">
+      <Spinner aria-label={m.git_panel_loading()} />
+      <span>{m.git_panel_loading()}</span>
+    </div>
   {:else}
-    <header class="flex items-start gap-2">
-      <div class="flex min-w-0 flex-col">
-        <p class="truncate font-medium" data-git-branch="">{branchLine(overview)}</p>
-        <p class="truncate text-sm text-muted-foreground">{trackingLine(overview)}</p>
-        {#if operation !== null}
-          <p class="text-sm" data-git-operation="">{operation}</p>
-        {/if}
-        {#if overview.stash > 0}
-          <p class="text-sm text-muted-foreground">{m.git_panel_stash({ count: overview.stash })}</p>
+    <GitPanelHeader {overview} {panel} />
+
+    {#if overview.operation !== null}
+      <OperationBanner busy={panel.runningAction} operation={overview.operation} onControl={handleOperationControl} />
+    {/if}
+
+    {#if refreshFailure !== null}
+      <div class="border-b px-3 py-2">
+        <Alert.Root variant="destructive">
+          <Alert.Description class="flex items-center justify-between gap-2 text-xs">
+            <span>{gitFailureMessage(refreshFailure)}</span>
+            <Button size="sm" variant="outline" onclick={retryOverview}>{m.git_panel_try_again()}</Button>
+          </Alert.Description>
+        </Alert.Root>
+      </div>
+    {/if}
+
+    {#if panel.actionNotice !== null}
+      <div class="border-b px-3 py-2">
+        <Alert.Root variant={panel.actionNotice.kind === 'error' ? 'destructive' : 'default'}>
+          <Alert.Description class="flex items-start justify-between gap-2 text-xs">
+            <div class="flex min-w-0 flex-1 flex-col gap-1">
+              <span>{panel.actionNotice.message}</span>
+              {#if noticeDetail !== null}
+                <pre
+                  class="max-h-24 overflow-auto rounded-xs bg-muted/60 p-1.5 font-mono text-[11px] whitespace-pre-wrap">{noticeDetail}</pre>
+              {/if}
+            </div>
+            <Button
+              class="size-5 shrink-0"
+              aria-label={m.git_action_dismiss()}
+              size="icon"
+              variant="ghost"
+              onclick={() => panel.dismissNotice()}
+            >
+              <XIcon class="size-3" aria-hidden="true" />
+            </Button>
+          </Alert.Description>
+        </Alert.Root>
+      </div>
+    {/if}
+
+    <Tabs.Root
+      class="flex min-h-0 flex-1 flex-col overflow-hidden"
+      value={panel.activeTab}
+      onValueChange={handleTabChange}
+    >
+      <div class="flex items-center justify-between gap-2 overflow-x-auto border-b px-2.5">
+        <Tabs.List class="h-8" aria-label={m.git_panel_tabs_label()} variant="line">
+          <Tabs.Trigger class="gap-1.5 text-xs" value="changes">
+            <span>{m.git_panel_changes()}</span>
+            {#if overview.entriesTotal > 0}
+              <Badge class="h-4 px-1 text-[10px]" variant="secondary">{formatCount(overview.entriesTotal)}</Badge>
+            {/if}
+          </Tabs.Trigger>
+
+          <Tabs.Trigger class="text-xs" value="graph">{m.git_panel_graph()}</Tabs.Trigger>
+
+          <Tabs.Trigger class="text-xs" value="branches">{m.git_panel_branches()}</Tabs.Trigger>
+
+          <Tabs.Trigger class="text-xs" value="compare">{m.git_panel_compare()}</Tabs.Trigger>
+
+          <Tabs.Trigger class="text-xs" value="inspect">{m.git_panel_inspect()}</Tabs.Trigger>
+
+          {#if hasConflictsTab}
+            <Tabs.Trigger class="gap-1.5 text-xs" value="conflicts">
+              <span>{m.git_panel_conflicts()}</span>
+              {#if conflictedCount > 0}
+                <Badge class="h-4 px-1 text-[10px]" variant="destructive">{formatCount(conflictedCount)}</Badge>
+              {/if}
+            </Tabs.Trigger>
+          {/if}
+        </Tabs.List>
+
+        {#if panel.runningAction}
+          <div class="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground" aria-busy="true">
+            <Spinner class="size-3.5" aria-label={m.git_action_running()} />
+          </div>
         {/if}
       </div>
-      <Button
-        class="ms-auto shrink-0"
-        aria-label={m.git_panel_refresh()}
-        size="icon-sm"
-        title={m.git_panel_refresh()}
-        variant="ghost"
-        onclick={() => void panel.refresh()}
-      >
-        <RefreshCwIcon />
-      </Button>
-    </header>
-    {#if failure !== null}
-      <ReadFailure {failure} retry={() => void panel.refresh()} />
-    {/if}
-    <Tabs.Root bind:value={() => shownTab, chooseTab}>
-      <Tabs.List aria-label={m.git_panel_tabs_label()}>
-        <Tabs.Trigger value="changes">{m.git_panel_changes()}</Tabs.Trigger>
-        <Tabs.Trigger value="history">{m.git_panel_history()}</Tabs.Trigger>
-        <Tabs.Trigger value="branches">{m.git_panel_branches()}</Tabs.Trigger>
-        {#if hasConflicts}
-          <Tabs.Trigger value="conflicts">{m.git_panel_conflicts()}</Tabs.Trigger>
-        {/if}
-      </Tabs.List>
-      <Tabs.Content class="flex flex-col gap-3" value="changes">
-        {#if panel.file === null}
-          <EntryList choose={chooseFile} entries={overview.entries} total={overview.entriesTotal} />
-          {#if overview.entries.length > 0}
-            <p class="text-sm text-muted-foreground">{m.git_panel_choose_file()}</p>
-          {/if}
-        {:else}
-          <Button class="self-start" size="sm" variant="ghost" onclick={() => panel.closeFile()}>
-            <ArrowLeftIcon data-icon="inline-start" />
-            {m.git_panel_back()}
-          </Button>
-          {#if panel.fileDiff.failure !== null}
-            <ReadFailure failure={panel.fileDiff.failure} retry={() => panel.readFile()} />
-          {/if}
-          {#if panel.fileDiff.value !== null}
-            {const diff = $derived(panel.fileDiff.value)}
-            {#if diff.stat === null}
-              <p class="text-sm text-muted-foreground">{m.git_diff_no_changes()}</p>
-            {:else}
-              <DiffView files={[diff.stat]} open patches={[{ hunks: diff.hunks, path: diff.stat.path }]} />
-            {/if}
-          {:else if panel.fileDiff.status === 'loading'}
-            <Skeleton class="h-24 w-full" />
-          {/if}
-        {/if}
+
+      <Tabs.Content class="flex min-h-0 flex-1 flex-col overflow-hidden" value="changes">
+        <ChangesTab {overview} {panel} {wide} />
       </Tabs.Content>
-      <Tabs.Content class="flex flex-col gap-3" value="history">
-        {#if panel.historyPage.failure !== null}
-          <ReadFailure failure={panel.historyPage.failure} retry={() => void panel.readHistory()} />
-        {/if}
-        {#if panel.history.length > 0}
-          <CommitList choose={chooseCommit} commits={panel.history} current={panel.chosenCommit} />
-          {#if panel.historyMore}
-            <Button class="self-start" size="sm" variant="outline" onclick={() => void panel.readHistory()}>
-              {m.git_panel_show_more()}
-            </Button>
-          {/if}
-          {#if panel.commit.failure !== null}
-            <ReadFailure failure={panel.commit.failure} retry={() => panel.readCommit()} />
-          {:else if panel.commit.value !== null}
-            {const shown = $derived(panel.commit.value)}
-            <section class="flex flex-col gap-2 border-t pt-3" aria-label={shown.commit.short}>
-              <pre class="font-sans text-sm whitespace-pre-wrap">{shown.commit.message}</pre>
-              <DiffView files={shown.files} patches={shown.patches} />
-            </section>
-          {:else if panel.commit.status === 'loading'}
-            <Skeleton class="h-24 w-full" />
-          {:else}
-            <p class="text-sm text-muted-foreground">{m.git_panel_choose_commit()}</p>
-          {/if}
-        {:else if panel.historyPage.status === 'ready'}
-          <p class="text-sm text-muted-foreground">{m.git_panel_history_empty()}</p>
-        {:else if panel.historyPage.status === 'loading'}
-          <Skeleton class="h-24 w-full" />
-        {/if}
+
+      <Tabs.Content class="flex min-h-0 flex-1 flex-col overflow-hidden" value="graph">
+        <GraphTab {panel} {wide} />
       </Tabs.Content>
-      <Tabs.Content class="flex flex-col gap-3" value="branches">
-        {#if panel.branches.failure !== null}
-          <ReadFailure failure={panel.branches.failure} retry={() => void panel.readBranches()} />
-        {/if}
-        {#if panel.branches.value !== null}
-          <RefList heading={m.git_refs_branches()} refs={panel.branches.value.branches} />
-          <RefList heading={m.git_refs_remote_branches()} refs={panel.branches.value.remoteBranches} />
-          <RefList heading={m.git_refs_tags()} refs={panel.branches.value.tags} />
-        {:else if panel.branches.status === 'loading'}
-          <Skeleton class="h-24 w-full" />
-        {/if}
+
+      <Tabs.Content class="flex min-h-0 flex-1 flex-col overflow-hidden" value="branches">
+        <BranchesTab {panel} {wide} />
       </Tabs.Content>
-      {#if hasConflicts}
-        <Tabs.Content class="flex flex-col gap-3" value="conflicts">
-          {#if panel.conflicts.failure !== null}
-            <ReadFailure failure={panel.conflicts.failure} retry={() => void panel.readConflicts()} />
-          {/if}
-          {#if panel.conflicts.value === null}
-            {#if panel.conflicts.status === 'loading'}
-              <Skeleton class="h-24 w-full" />
-            {/if}
-          {:else if panel.conflicts.value.files.length === 0}
-            <p class="text-sm text-muted-foreground">{m.git_panel_no_conflicts()}</p>
-          {:else}
-            {#each panel.conflicts.value.files as conflicted (conflicted.file.path)}
-              <section class="flex flex-col gap-2">
-                <ConflictFiles files={[conflicted.file]} />
-                {#each conflicted.hunks as hunk (hunk.number)}
-                  <ConflictHunkView {hunk} />
-                {/each}
-              </section>
-            {/each}
-          {/if}
+
+      <Tabs.Content class="flex min-h-0 flex-1 flex-col overflow-hidden" value="compare">
+        <CompareTab {overview} {panel} />
+      </Tabs.Content>
+
+      <Tabs.Content class="flex min-h-0 flex-1 flex-col overflow-hidden" value="inspect">
+        <InspectTab {panel} />
+      </Tabs.Content>
+
+      {#if hasConflictsTab}
+        <Tabs.Content class="flex min-h-0 flex-1 flex-col overflow-hidden" value="conflicts">
+          <ConflictsTab {panel} />
         </Tabs.Content>
       {/if}
     </Tabs.Root>
+
+    <ConfirmActionDialog
+      busy={panel.runningAction}
+      pending={panel.pendingConfirmation}
+      onCancel={() => panel.cancelPendingAction()}
+      onConfirm={handleConfirmAction}
+    />
+
+    <GitDialogs
+      busy={panel.runningAction}
+      dialog={panel.activeDialog}
+      onClose={() => panel.closeDialog()}
+      onSubmit={handleDialogSubmit}
+    />
   {/if}
 </div>
