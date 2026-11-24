@@ -387,6 +387,7 @@ describe('system tools', () => {
     expect(await waitForCompleteReply()).toContain('The owner denied this operation.');
     expect(await latestToolStatus()).toBe('denied');
     expect(existsSync(join(workspace, 'notes.txt'))).toBe(true);
+    await axeInBothThemes();
   });
 
   it('allows the same kind of change for the rest of the conversation, until the owner revokes it', async () => {

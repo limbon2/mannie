@@ -242,6 +242,7 @@
           {:else}
             <Trace.Description
               class={[
+                'text-muted-foreground',
                 status.tone === 'attention' && 'font-medium text-foreground',
                 status.tone === 'failed' && 'text-destructive',
               ]}
