@@ -31,6 +31,9 @@ const CONTROL = '[data-terminal-control]';
 /** The tabs of the open terminal side panels. */
 const TAB = '[data-side-panel-tab] [role="tab"]';
 
+/** The input of the terminal in the visible side panel. */
+const TERMINAL_INPUT = '[data-side-panels] [role="tabpanel"]:not([hidden]) [data-terminal-view] .xterm-helper-textarea';
+
 /** The conversation's terminals in the button's menu: its items without the submenu New terminal. */
 const LISTED_TERMINALS = '[data-slot="dropdown-menu-content"] [role="menuitem"]:not([aria-haspopup])';
 
@@ -200,6 +203,12 @@ async function openShell(shell?: string): Promise<void> {
   await browser.waitUntil(async () => (await $$(TAB).length) === open + 1, {
     timeout: 30_000,
     timeoutMsg: `terminal ${String(open + 1)} did not open`,
+  });
+  // The terminal takes focus after its first screen arrives, which can be
+  // after its tab shows. Let it do that before reopening the menu.
+  await browser.waitUntil(async () => $(TERMINAL_INPUT).isFocused(), {
+    timeout: 30_000,
+    timeoutMsg: `terminal ${String(open + 1)} did not take focus`,
   });
 }
 
