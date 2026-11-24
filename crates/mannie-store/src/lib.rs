@@ -19,6 +19,7 @@
 mod browser;
 mod browser_credentials;
 pub mod dbfiles;
+mod development;
 mod error;
 mod exports;
 mod legacy;
