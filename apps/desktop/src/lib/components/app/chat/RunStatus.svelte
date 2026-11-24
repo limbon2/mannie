@@ -2,6 +2,7 @@
   import RotateCcwIcon from '@lucide/svelte/icons/rotate-ccw';
 
   import { Button } from '#lib/components/ui/button/index.js';
+  import * as Marker from '#lib/components/ui/marker/index.js';
   import { Spinner } from '#lib/components/ui/spinner/index.js';
   import * as Tooltip from '#lib/components/ui/tooltip/index.js';
   import type { PartId, PartView, RunView, TaskKindCount } from '#lib/generated/bindings.js';
@@ -177,13 +178,15 @@
 </script>
 
 {#if line !== null}
-  <div class="flex flex-col items-start gap-2 text-sm text-muted-foreground">
-    <div class="flex flex-wrap items-center gap-2">
+  <div class="flex flex-col items-start gap-2">
+    <Marker.Root>
       {#if line.busy}
         <Spinner aria-label={m.chat_status_busy()} />
       {/if}
-      <span>{line.text}</span>
-    </div>
+      <Marker.Content class={[line.busy && 'shimmer motion-reduce:shimmer-none']}>
+        {line.text}
+      </Marker.Content>
+    </Marker.Root>
     {#if line.retryable && !readOnly}
       <Tooltip.Root>
         <Tooltip.Trigger disabled={retrying} onclick={retry}>

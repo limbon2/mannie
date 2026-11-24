@@ -1,46 +1,92 @@
 <script lang="ts">
+  import CodeIcon from '@lucide/svelte/icons/code';
   import FileOutputIcon from '@lucide/svelte/icons/file-output';
   import ImageIcon from '@lucide/svelte/icons/image';
 
+  import { Badge } from '#lib/components/ui/badge/index.js';
   import { Button } from '#lib/components/ui/button/index.js';
-  import type { ArchiveRef, ConversationId, PartId, ToolCallView, ToolImageRef } from '#lib/generated/bindings.js';
+  import * as CodeBlock from '#lib/components/ui/code-block/index.js';
+  import * as Trace from '#lib/components/ui/trace/index.js';
+  import type {
+    Access,
+    ArchiveRef,
+    ConversationId,
+    PartId,
+    ToolCallView,
+    ToolImageRef,
+  } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
   import { toolsActions } from '#lib/state/tools-actions.svelte.js';
   import type { ToolKind } from '#lib/types/shell-slots.js';
   import { toolKindCall } from '#lib/utils/tool-kinds.js';
   import { decisionMessage } from '#lib/utils/tools-messages.js';
 
+  import AccessText from './AccessText.svelte';
   import ToolAccessList from './ToolAccessList.svelte';
+  import ToolCopyButton from './ToolCopyButton.svelte';
   import ToolImageDialog from './ToolImageDialog.svelte';
 
   // The details of a tool call (docs/features/system-tools/tool-activity.md,
-  // tool calls in the reply): what it touches, the details that its tool
-  // kind shows of a plugin's call (ADR-0039), its arguments as the model
-  // wrote them, what allowed it, and the result the model read, with the
-  // outputs that did not fit and the images that the model saw (ADR-0044).
-  // Everything the model or the system wrote is content, shown as plain
-  // text (T-3).
+  // tool calls in the reply): plugin details, what it touches, the result the
+  // model read (with archives and images, ADR-0044), compact outcome and
+  // decision metadata, and the raw JSON arguments as the model wrote them
+  // (collapsed when a richer view already describes the call). Everything the
+  // model or the system wrote is content, shown as plain text (T-3).
   interface Props {
     call: ToolCallView;
     conversationId: ConversationId;
+    /** Whether the parent row already renders a saved file diff for this call. */
+    hasFileChange?: boolean;
     /** The tool kind of a plugin's call, which its own plugin registered. */
     kind?: ToolKind | undefined;
+    /** Concise command outcome (exit code and duration) shown in the metadata row. */
+    outcomeNote?: string | null;
     /** The call's part, which holds the images of its result. */
     partId: PartId;
   }
 
-  let { call, conversationId, kind, partId }: Props = $props();
+  let { call, conversationId, hasFileChange = false, kind, outcomeNote = null, partId }: Props = $props();
 
   const id = $props.id();
 
   /** The image that the viewer shows, once the owner opened one. */
   let shownImage: ToolImageRef | null = $state(null);
   let viewerOpen = $state(false);
+  let argumentsOpen = $state(false);
 
   const shownArguments = $derived(formatArguments(call));
   const archives = $derived(call.result?.archives ?? []);
   const images = $derived(call.result?.images ?? []);
   const KindDetails = $derived(kind?.details ?? null);
+  const hasUnheadedAccess = $derived(call.accesses.some(lacksBlockHeader));
+  const hasAccesses = $derived(call.accesses.length > 0);
+  const hasKindDetails = $derived(KindDetails !== null);
+  const collapseArguments = $derived(hasAccesses || hasKindDetails || hasFileChange);
+  const decision = $derived(call.decision === null ? null : decisionMessage(call.decision));
+  const hasOutcomeNote = $derived(outcomeNote !== null);
+  const hasDecision = $derived(decision !== null);
+  const hasMetadata = $derived(hasOutcomeNote || hasDecision);
+
+  /** Whether an access has no CodeBlock header of its own, so the section label introduces it. */
+  function lacksBlockHeader(access: Access): boolean {
+    switch (access.kind) {
+      case 'browser_action':
+      case 'browser_control':
+      case 'network_request':
+      case 'path':
+      case 'project': {
+        return true;
+      }
+      case 'command':
+      case 'database':
+      case 'external_tool':
+      case 'program':
+      case 'remote_command':
+      case 'terminal_command': {
+        return false;
+      }
+    }
+  }
 
   /** The arguments, indented when they are complete JSON, and nothing for a call without any. */
   function formatArguments(current: ToolCallView): string {
@@ -80,48 +126,48 @@
 </script>
 
 <div class="flex min-w-0 flex-col gap-3 text-sm">
-  {#if call.accesses.length > 0}
-    <div class="flex flex-col gap-1.5">
-      <p class="text-xs font-medium text-muted-foreground">{m.tools_details_accesses()}</p>
-      <ToolAccessList accesses={call.accesses} />
-    </div>
-  {/if}
   {#if KindDetails !== null}
     <div class="flex min-w-0 flex-col gap-1.5" data-tool-kind-details="">
       <KindDetails call={toolKindCall(call)} {conversationId} />
     </div>
   {/if}
-  {#if shownArguments !== ''}
+
+  {#if call.accesses.length > 0}
     <div class="flex flex-col gap-1.5">
-      <p id="{id}-arguments" class="text-xs font-medium text-muted-foreground">{m.tools_details_arguments()}</p>
-      <!-- Focusable, so that the owner can scroll it from the keyboard (WCAG 2.1.1). -->
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-      <pre
-        class="max-h-64 overflow-auto rounded-md bg-muted px-2 py-1.5 font-mono text-xs break-all whitespace-pre-wrap outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        aria-labelledby="{id}-arguments"
-        data-content
-        role="group"
-        tabindex="0">{shownArguments}</pre>
-      {#if call.argumentsCut}
-        <p class="text-xs text-muted-foreground">{m.tools_details_arguments_cut()}</p>
+      {#if hasUnheadedAccess}
+        <p class="text-xs font-medium text-muted-foreground">{m.tools_details_accesses()}</p>
       {/if}
+      <ToolAccessList accesses={call.accesses} copyable />
     </div>
   {/if}
-  {#if call.decision !== null}
-    <p class="text-xs text-muted-foreground">{decisionMessage(call.decision)}</p>
-  {/if}
+
   {#if call.result !== null}
-    <div class="flex flex-col gap-1.5">
-      <p id="{id}-result" class="text-xs font-medium text-muted-foreground">{m.tools_details_result()}</p>
-      <!-- Focusable, so that the owner can scroll it from the keyboard (WCAG 2.1.1). -->
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-      <pre
-        class="max-h-80 overflow-auto rounded-md bg-muted px-2 py-1.5 font-mono text-xs break-all whitespace-pre-wrap outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    <CodeBlock.Root size="sm">
+      <CodeBlock.Header>
+        <CodeBlock.Title id="{id}-result" class="text-xs font-medium text-muted-foreground">
+          {m.tools_details_result()}
+        </CodeBlock.Title>
+        <CodeBlock.Actions>
+          {#each archives as archive (archive.id)}
+            <Button size="xs" variant="ghost" onclick={() => toolsActions.showOutput(conversationId, archive)}>
+              <FileOutputIcon data-icon="inline-start" />
+              {archiveLabel(archive)}
+            </Button>
+          {/each}
+          <ToolCopyButton value={call.result.output} />
+        </CodeBlock.Actions>
+      </CodeBlock.Header>
+
+      <CodeBlock.Content
+        class="max-h-64"
         aria-labelledby="{id}-result"
+        code={call.result.output}
         data-content
         role="group"
-        tabindex="0">{call.result.output}</pre>
-    </div>
+        wrap
+      />
+    </CodeBlock.Root>
+
     {#if images.length > 0}
       <div class="flex flex-col gap-1.5" data-tool-images="">
         <p class="text-xs font-medium text-muted-foreground">{m.tools_details_images()}</p>
@@ -135,18 +181,61 @@
         </div>
       </div>
     {/if}
-    {#if archives.length > 0}
-      <div class="flex flex-wrap gap-2">
-        {#each archives as archive (archive.id)}
-          <Button size="sm" variant="outline" onclick={() => toolsActions.showOutput(conversationId, archive)}>
-            <FileOutputIcon data-icon="inline-start" />
-            {archiveLabel(archive)}
-          </Button>
-        {/each}
+  {/if}
+
+  {#if hasMetadata}
+    <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground" data-tool-metadata="">
+      {#if outcomeNote !== null}
+        <Badge variant="secondary">{outcomeNote}</Badge>
+      {/if}
+      {#if decision !== null}
+        <span>{decision}</span>
+      {/if}
+    </div>
+  {/if}
+
+  {#if shownArguments !== ''}
+    {#if collapseArguments}
+      <Trace.Collapsible bind:open={argumentsOpen}>
+        <Trace.CollapsibleTrigger data-tool-arguments-toggle="">
+          <Trace.Line class="text-xs">
+            <Trace.Icon>
+              <CodeIcon />
+            </Trace.Icon>
+            <Trace.Title>{m.tools_details_arguments()}</Trace.Title>
+          </Trace.Line>
+        </Trace.CollapsibleTrigger>
+
+        <Trace.CollapsibleContent class="flex flex-col gap-1.5 text-foreground">
+          <AccessText
+            contentClass="max-h-56"
+            copyable
+            label={m.tools_details_arguments()}
+            language="json"
+            text={shownArguments}
+          />
+          {#if call.argumentsCut}
+            <p class="text-xs text-muted-foreground">{m.tools_details_arguments_cut()}</p>
+          {/if}
+        </Trace.CollapsibleContent>
+      </Trace.Collapsible>
+    {:else}
+      <div class="flex flex-col gap-1.5">
+        <AccessText
+          contentClass="max-h-56"
+          copyable
+          label={m.tools_details_arguments()}
+          language="json"
+          text={shownArguments}
+        />
+        {#if call.argumentsCut}
+          <p class="text-xs text-muted-foreground">{m.tools_details_arguments_cut()}</p>
+        {/if}
       </div>
     {/if}
   {/if}
 </div>
+
 {#if shownImage !== null}
   <ToolImageDialog {conversationId} image={shownImage} {partId} bind:open={viewerOpen} />
 {/if}

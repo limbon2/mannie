@@ -94,3 +94,4 @@ Each ADR has exactly one of these statuses:
 | [0076](0076-provide-a-code-editor-through-the-plugin-sdk.md)                           | Provide a code editor through the plugin SDK                                                  | Accepted               | V15        |
 | [0077](0077-let-the-shell-sidebar-resize-per-activity.md)                              | Let the shell sidebar resize per activity                                                     | Accepted (D71)         | V15        |
 | [0078](0078-let-plugins-run-installed-programs-for-owner-actions.md)                   | Let plugins run installed programs for owner actions in projects                              | Accepted (D72)         | Tests      |
+| [0079](0079-highlight-code-with-shiki-and-css-classes.md)                              | Highlight code and shell commands with Shiki mapped to CSS classes                            | Accepted (D73)         | Continuous |

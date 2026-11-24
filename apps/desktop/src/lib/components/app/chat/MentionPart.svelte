@@ -1,4 +1,5 @@
 <script lang="ts">
+  import * as Attachment from '#lib/components/ui/attachment/index.js';
   import { getShellSlots } from '#lib/state/shell-slots.svelte.js';
   import type { PartRendererProps } from '#lib/types/shell-slots.js';
   import { mentionIcon, mentionSummary, mentionVariantName } from '#lib/utils/mention-kinds.js';
@@ -28,15 +29,16 @@
 </script>
 
 {#if shown !== null}
-  <div
-    class="ms-auto flex w-fit max-w-[85%] min-w-0 items-center gap-1.5 rounded-md border bg-muted/40 px-2 py-1 text-xs"
-    data-mention={shown.provider}
-  >
-    <shown.Icon class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-    <span class="sr-only">{shown.variantName}</span>
-    <span class="min-w-0 truncate font-mono" data-content>{shown.label}</span>
-    {#if shown.summary !== null}
-      <span class="shrink-0 text-muted-foreground">{shown.summary}</span>
-    {/if}
-  </div>
+  <Attachment.Root class="ms-auto max-w-[85%] min-w-0" data-mention={shown.provider} size="xs">
+    <Attachment.Media>
+      <shown.Icon />
+    </Attachment.Media>
+    <Attachment.Content>
+      <span class="sr-only">{shown.variantName}</span>
+      <Attachment.Title class="font-mono" data-content>{shown.label}</Attachment.Title>
+      {#if shown.summary !== null}
+        <Attachment.Description>{shown.summary}</Attachment.Description>
+      {/if}
+    </Attachment.Content>
+  </Attachment.Root>
 {/if}

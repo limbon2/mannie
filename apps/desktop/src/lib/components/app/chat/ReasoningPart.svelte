@@ -1,10 +1,8 @@
 <script lang="ts">
   import BrainIcon from '@lucide/svelte/icons/brain';
-  import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 
   import Markdown from '#lib/components/app/markdown/Markdown.svelte';
-  import { Button } from '#lib/components/ui/button/index.js';
-  import * as Collapsible from '#lib/components/ui/collapsible/index.js';
+  import * as Trace from '#lib/components/ui/trace/index.js';
   import { m } from '#lib/paraglide/messages.js';
   import type { PartRendererProps } from '#lib/types/shell-slots.js';
 
@@ -21,23 +19,24 @@
 </script>
 
 {#if hasText}
-  <Collapsible.Root bind:open>
-    <Collapsible.Trigger>
-      {#snippet child({ props })}
-        <Button {...props} class="text-muted-foreground" size="sm" variant="ghost">
-          <BrainIcon data-icon="inline-start" />
-          {streaming ? m.chat_reasoning_streaming() : m.chat_reasoning_show()}
-          <ChevronDownIcon class={['transition-transform', open && 'rotate-180']} data-icon="inline-end" />
-        </Button>
-      {/snippet}
-    </Collapsible.Trigger>
-    <Collapsible.Content class="ms-3 border-s-2 ps-3 text-muted-foreground">
+  <Trace.Collapsible bind:open>
+    <Trace.CollapsibleTrigger>
+      <Trace.Line status={streaming ? 'running' : undefined}>
+        <Trace.Icon>
+          <BrainIcon />
+        </Trace.Icon>
+        <Trace.Title>{streaming ? m.chat_reasoning_streaming() : m.chat_reasoning_show()}</Trace.Title>
+      </Trace.Line>
+    </Trace.CollapsibleTrigger>
+    <Trace.CollapsibleContent>
       <Markdown {streaming} {text} />
-    </Collapsible.Content>
-  </Collapsible.Root>
+    </Trace.CollapsibleContent>
+  </Trace.Collapsible>
 {:else}
-  <p class="flex items-center gap-2 text-xs text-muted-foreground">
-    <BrainIcon class="size-3.5" aria-hidden="true" />
-    <span>{m.chat_reasoning_hidden()}</span>
-  </p>
+  <Trace.Line class="text-xs">
+    <Trace.Icon>
+      <BrainIcon />
+    </Trace.Icon>
+    <Trace.Title>{m.chat_reasoning_hidden()}</Trace.Title>
+  </Trace.Line>
 {/if}

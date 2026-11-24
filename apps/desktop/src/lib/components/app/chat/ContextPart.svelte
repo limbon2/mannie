@@ -1,8 +1,6 @@
 <script lang="ts">
-  import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
-
   import { Button } from '#lib/components/ui/button/index.js';
-  import * as Collapsible from '#lib/components/ui/collapsible/index.js';
+  import * as Trace from '#lib/components/ui/trace/index.js';
   import type { ContextItemView } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
   import { getShellSlots } from '#lib/state/shell-slots.svelte.js';
@@ -43,28 +41,23 @@
 
 {#if shown !== null}
   {#if shown.items.length === 0}
-    <p class="flex items-center gap-1.5 self-end text-xs text-muted-foreground" data-context={shown.provider}>
-      <shown.Icon class="size-3.5 shrink-0" aria-hidden="true" />
-      <span>{shown.summary}</span>
-    </p>
+    <Trace.Line class="self-end text-xs" data-context={shown.provider}>
+      <Trace.Icon>
+        <shown.Icon />
+      </Trace.Icon>
+      <Trace.Title>{shown.summary}</Trace.Title>
+    </Trace.Line>
   {:else}
-    <Collapsible.Root class="flex flex-col items-end" data-context={shown.provider} bind:open>
-      <Collapsible.Trigger>
-        {#snippet child({ props })}
-          <Button
-            {...props}
-            class="max-w-full justify-start text-muted-foreground"
-            data-context-toggle
-            size="sm"
-            variant="ghost"
-          >
-            <shown.Icon data-icon="inline-start" />
-            <span class="truncate">{shown.summary}</span>
-            <ChevronDownIcon class={['transition-transform', open && 'rotate-180']} data-icon="inline-end" />
-          </Button>
-        {/snippet}
-      </Collapsible.Trigger>
-      <Collapsible.Content class="mt-1 w-full border-s-2 ps-3">
+    <Trace.Collapsible data-context={shown.provider} bind:open>
+      <Trace.CollapsibleTrigger class="self-end" data-context-toggle>
+        <Trace.Line>
+          <Trace.Icon>
+            <shown.Icon />
+          </Trace.Icon>
+          <Trace.Title>{shown.summary}</Trace.Title>
+        </Trace.Line>
+      </Trace.CollapsibleTrigger>
+      <Trace.CollapsibleContent class="text-foreground">
         <ol class="flex flex-col gap-3" aria-label={m.chat_context_items_label()}>
           {#each shown.items as item (item.number)}
             {const location = $derived(locationText(item.location))}
@@ -85,7 +78,7 @@
             </li>
           {/each}
         </ol>
-      </Collapsible.Content>
-    </Collapsible.Root>
+      </Trace.CollapsibleContent>
+    </Trace.Collapsible>
   {/if}
 {/if}

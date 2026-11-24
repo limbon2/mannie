@@ -125,7 +125,7 @@ export async function chooseContextAction(label: string): Promise<void> {
 export async function useProfile(name: string): Promise<void> {
   await waitForPointerInput();
   await $('main [data-model-picker]').click();
-  await clickWithText('[data-slot="dropdown-menu-radio-item"]', name);
+  await clickWithText('[data-slot="dropdown-menu-radio-item"] [data-content]', name);
   await waitForShownText($('main [data-model-picker]'), name);
 }
 

@@ -6,7 +6,7 @@
 
   import PartOutlet from '#lib/components/app/shell/PartOutlet.svelte';
   import { Button } from '#lib/components/ui/button/index.js';
-  import { Separator } from '#lib/components/ui/separator/index.js';
+  import * as Marker from '#lib/components/ui/marker/index.js';
   import { Spinner } from '#lib/components/ui/spinner/index.js';
   import type { RunView } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
@@ -268,15 +268,15 @@
           {/if}
         </article>
         {#if checkpointFollows(turn.position)}
-          <div class="flex items-center gap-3 text-xs text-muted-foreground">
-            <Separator class="flex-1" />
-            <span>{m.chat_checkpoint_marker()}</span>
-            <Button size="sm" variant="ghost" onclick={showCheckpoint}>
-              <BookTextIcon data-icon="inline-start" />
-              {m.chat_checkpoint_show()}
-            </Button>
-            <Separator class="flex-1" />
-          </div>
+          <Marker.Root class="text-xs" variant="separator">
+            <Marker.Content class="flex items-center gap-2">
+              <span>{m.chat_checkpoint_marker()}</span>
+              <Button size="sm" variant="ghost" onclick={showCheckpoint}>
+                <BookTextIcon data-icon="inline-start" />
+                {m.chat_checkpoint_show()}
+              </Button>
+            </Marker.Content>
+          </Marker.Root>
         {/if}
       {/each}
     </div>

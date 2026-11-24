@@ -1,7 +1,7 @@
 <script lang="ts">
   import XIcon from '@lucide/svelte/icons/x';
 
-  import { Button } from '#lib/components/ui/button/index.js';
+  import * as Attachment from '#lib/components/ui/attachment/index.js';
   import { Spinner } from '#lib/components/ui/spinner/index.js';
   import { m } from '#lib/paraglide/messages.js';
   import type { MessageImages } from '#lib/state/message-images.svelte.js';
@@ -15,23 +15,27 @@
 {#if images.images.length > 0}
   <ul class="flex flex-wrap gap-2" aria-label={m.chat_image_chips_label()} data-image-chips>
     {#each images.images as image (image.id)}
-      <li class="flex max-w-full min-w-0 items-center gap-1.5 rounded-md border bg-muted/50 p-1 text-xs">
-        {#if image.ready === null}
-          <span class="flex size-10 shrink-0 items-center justify-center rounded-sm bg-muted">
-            <Spinner aria-label={m.chat_image_preparing()} />
-          </span>
-        {:else}
-          <img class="size-10 shrink-0 rounded-sm object-cover" alt="" src={image.ready.thumbnailUrl} />
-        {/if}
-        <span class="max-w-40 min-w-0 truncate" data-content>{image.name}</span>
-        <Button
-          aria-label={m.chat_image_remove({ name: image.name })}
-          size="icon-xs"
-          variant="ghost"
-          onclick={() => images.remove(image.id)}
-        >
-          <XIcon />
-        </Button>
+      <li class="max-w-full min-w-0">
+        <Attachment.Root class="min-w-0" size="sm" state={image.ready === null ? 'processing' : 'done'}>
+          <Attachment.Media variant={image.ready === null ? 'icon' : 'image'}>
+            {#if image.ready === null}
+              <Spinner aria-label={m.chat_image_preparing()} />
+            {:else}
+              <img alt="" src={image.ready.thumbnailUrl} />
+            {/if}
+          </Attachment.Media>
+          <Attachment.Content>
+            <Attachment.Title class="max-w-40" data-content>{image.name}</Attachment.Title>
+          </Attachment.Content>
+          <Attachment.Actions>
+            <Attachment.Action
+              aria-label={m.chat_image_remove({ name: image.name })}
+              onclick={() => images.remove(image.id)}
+            >
+              <XIcon />
+            </Attachment.Action>
+          </Attachment.Actions>
+        </Attachment.Root>
       </li>
     {/each}
   </ul>

@@ -1,6 +1,7 @@
 <script lang="ts">
   import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
 
+  import * as Attachment from '#lib/components/ui/attachment/index.js';
   import { m } from '#lib/paraglide/messages.js';
   import type { MentionChoice } from '#lib/state/message-mentions.svelte.js';
   import { getShellSlots } from '#lib/state/shell-slots.svelte.js';
@@ -31,16 +32,22 @@
 
 <ul class="flex flex-wrap gap-1.5" aria-label={m.chat_mention_chips_label()} data-mention-chips>
   {#each chips as chip (chip.key)}
-    <li class="flex max-w-full min-w-0 items-center gap-1 rounded-md border bg-muted/50 px-2 py-0.5 text-xs">
-      <chip.Icon class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-      <span class="sr-only">{chip.variantName}</span>
-      <span class="min-w-0 truncate font-mono" data-content>{chip.label}</span>
-      {#if chip.warning !== null}
-        <span class="flex shrink-0 items-center gap-1 text-destructive" data-mention-warning>
-          <TriangleAlertIcon class="size-3.5" aria-hidden="true" />
-          {chip.warning}
-        </span>
-      {/if}
+    <li class="max-w-full min-w-0">
+      <Attachment.Root class="min-w-0" size="xs" state={chip.warning !== null ? 'error' : 'done'}>
+        <Attachment.Media>
+          <chip.Icon />
+        </Attachment.Media>
+        <Attachment.Content>
+          <span class="sr-only">{chip.variantName}</span>
+          <Attachment.Title class="font-mono" data-content>{chip.label}</Attachment.Title>
+          {#if chip.warning !== null}
+            <Attachment.Description class="flex items-center gap-1" data-mention-warning>
+              <TriangleAlertIcon class="size-3 shrink-0" aria-hidden="true" />
+              <span>{chip.warning}</span>
+            </Attachment.Description>
+          {/if}
+        </Attachment.Content>
+      </Attachment.Root>
     </li>
   {/each}
 </ul>

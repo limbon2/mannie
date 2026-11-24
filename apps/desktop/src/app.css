@@ -110,6 +110,19 @@
   --token-query: oklch(0.95 0.04 230);
   --token-query-border: oklch(0.7 0.12 230);
   --token-query-foreground: oklch(0.38 0.12 235);
+  /*
+   * Syntax highlighting tokens for Shiki (ADR-0079): mapped through CSS classes
+   * so no inline style attributes appear under the Content Security Policy.
+   * Each color keeps at least 4.5:1 contrast against the light and dark surfaces.
+   */
+  --syntax-comment: oklch(0.49 0.01 260);
+  --syntax-keyword: oklch(0.45 0.18 305);
+  --syntax-string: oklch(0.43 0.14 148);
+  --syntax-function: oklch(0.43 0.17 255);
+  --syntax-variable: oklch(0.46 0.15 45);
+  --syntax-number: oklch(0.46 0.16 20);
+  --syntax-type: oklch(0.43 0.13 200);
+  --syntax-operator: oklch(0.42 0.03 260);
 }
 
 .dark {
@@ -182,6 +195,14 @@
   --token-query: oklch(0.29 0.06 230);
   --token-query-border: oklch(0.62 0.13 230);
   --token-query-foreground: oklch(0.88 0.09 225);
+  --syntax-comment: oklch(0.68 0.01 260);
+  --syntax-keyword: oklch(0.76 0.14 305);
+  --syntax-string: oklch(0.77 0.13 148);
+  --syntax-function: oklch(0.76 0.13 245);
+  --syntax-variable: oklch(0.79 0.13 65);
+  --syntax-number: oklch(0.76 0.14 25);
+  --syntax-type: oklch(0.77 0.12 195);
+  --syntax-operator: oklch(0.78 0.03 260);
 }
 
 :root.palette-primary-blue {
@@ -461,6 +482,9 @@
   inline(
     "sm:group-data-[size=default]/alert-dialog-content:group-has-data-[slot=alert-dialog-media]/alert-dialog-content:col-start-2"
   );
+@source not inline("group-has-data-[slot=code-block-header]/code-block:pt-2");
+@source not inline("group-has-data-[slot=code-block-footer]/code-block:pb-2");
+@source not inline("group-data-[size=sm]/code-block:group-has-data-[slot=code-block-header]/code-block:pt-1.5");
 
 @layer utilities {
   /* A menu button leaves room for its item's action, on the right, where the action sits. */
@@ -482,6 +506,65 @@
   /* An alert's title takes the column beside the alert's icon. */
   [data-slot="alert"]:has(> svg) > [data-slot="alert-title"] {
     grid-column-start: 2;
+  }
+
+  /* Code block content adjusts padding when paired with a header or footer, and defaults its line counter without inline style. */
+  [data-slot="code-block"]:has([data-slot="code-block-header"]) > [data-slot="code-block-content"] {
+    padding-top: calc(var(--spacing) * 2);
+  }
+
+  [data-slot="code-block"][data-size="sm"]:has([data-slot="code-block-header"]) > [data-slot="code-block-content"] {
+    padding-top: calc(var(--spacing) * 1.5);
+  }
+
+  [data-slot="code-block"]:has([data-slot="code-block-footer"]) > [data-slot="code-block-content"] {
+    padding-bottom: calc(var(--spacing) * 2);
+  }
+
+  [data-slot="code-block-content"][data-numbered] {
+    counter-reset: line 0;
+  }
+
+  /* Shiki token classes (ADR-0079). */
+  .syntax-comment {
+    color: var(--syntax-comment);
+    font-style: italic;
+  }
+
+  .syntax-keyword {
+    color: var(--syntax-keyword);
+  }
+
+  .syntax-string {
+    color: var(--syntax-string);
+  }
+
+  .syntax-function {
+    color: var(--syntax-function);
+  }
+
+  .syntax-variable {
+    color: var(--syntax-variable);
+  }
+
+  .syntax-number {
+    color: var(--syntax-number);
+  }
+
+  .syntax-type {
+    color: var(--syntax-type);
+  }
+
+  .syntax-operator {
+    color: var(--syntax-operator);
+  }
+
+  .syntax-deleted {
+    color: var(--diff-removed-foreground);
+  }
+
+  .syntax-inserted {
+    color: var(--diff-added-foreground);
   }
 }
 

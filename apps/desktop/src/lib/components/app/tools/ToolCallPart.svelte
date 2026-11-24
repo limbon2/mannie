@@ -1,13 +1,11 @@
 <script lang="ts">
-  import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
   import LoaderCircleIcon from '@lucide/svelte/icons/loader-circle';
   import { untrack } from 'svelte';
 
   import PlanCard from '#lib/components/app/plans/PlanCard.svelte';
   import PluginsSettingsLink from '#lib/components/app/plugins/PluginsSettingsLink.svelte';
-  import { Button } from '#lib/components/ui/button/index.js';
-  import * as Collapsible from '#lib/components/ui/collapsible/index.js';
-  import type { ToolCallView } from '#lib/generated/bindings.js';
+  import * as Trace from '#lib/components/ui/trace/index.js';
+  import type { Access, ToolCallView } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
   import { getConversationContext } from '#lib/state/conversation-context.js';
   import { questionDrafts } from '#lib/state/question-drafts.svelte.js';
@@ -31,7 +29,14 @@
     toolsFailureMessage,
     uncertainMessage,
   } from '#lib/utils/tools-messages.js';
-  import { type CallStatus, callStatus, callSummary, RUN_COMMAND, toolIcon } from '#lib/utils/tools-summaries.js';
+  import {
+    type CallStatus,
+    callStatus,
+    callSummary,
+    commandOutcomeSummary,
+    RUN_COMMAND,
+    toolIcon,
+  } from '#lib/utils/tools-summaries.js';
 
   import BackgroundCommandActions from './BackgroundCommandActions.svelte';
   import QuestionAnswers from './QuestionAnswers.svelte';
@@ -82,7 +87,16 @@
   const summary = $derived(call === null ? '' : lineOf(call));
   const activity = $derived(call?.activity ?? null);
   const file = $derived(savedFileChange(call));
-  const showsSummary = $derived(activity !== null || file !== null);
+  const hasCommandAccess = $derived(call?.accesses.some(isCommandAccess) ?? false);
+  const outcomeNote = $derived.by(() => {
+    if (!hasCommandAccess) {
+      return null;
+    }
+    const outcome = call?.result?.outcome;
+    return outcome?.kind === 'command_ran' ? commandOutcomeSummary(outcome) : null;
+  });
+  const hasRowReplacement = $derived(activity !== null || file !== null);
+  const showsSummary = $derived(hasRowReplacement && !hasCommandAccess);
   const Icon = $derived(kind?.icon ?? toolIcon(call?.tool ?? ''));
   const request = $derived(call?.status === 'awaiting_approval' ? call.request : null);
   const asks = $derived(call?.status === 'awaiting_answer');
@@ -114,6 +128,35 @@
       return callStatus(current, at);
     }
     return { label: commandState(started, at), quiet: false, tone: 'done' };
+  }
+
+  /** Whether an access already displays a command block in the details. */
+  function isCommandAccess(access: Access): boolean {
+    switch (access.kind) {
+      case 'command':
+      case 'remote_command':
+      case 'terminal_command': {
+        return true;
+      }
+      case 'browser_action':
+      case 'browser_control':
+      case 'database':
+      case 'external_tool':
+      case 'network_request':
+      case 'path':
+      case 'program':
+      case 'project': {
+        return false;
+      }
+    }
+  }
+
+  /** Maps the call's tone to the Trace line status. */
+  function traceStatusOf(tone: CallStatus['tone']): 'error' | 'running' | undefined {
+    if (tone === 'busy') {
+      return 'running';
+    }
+    return tone === 'failed' ? 'error' : undefined;
   }
 
   /** The call's line: its tool kind's, or the one that Mannie builds. */
@@ -177,45 +220,39 @@
   <!-- The negative margins bring consecutive rows closer together than the
        reply's other parts, so a run of tool calls reads as one list. -->
   <div class="-my-1 flex min-w-0 flex-col gap-2" data-tool-status={call.status}>
-    <Collapsible.Root bind:open>
-      <Collapsible.Trigger>
-        {#snippet child({ props })}
-          <Button
-            {...props}
-            class="max-w-full justify-start text-muted-foreground"
-            data-tool-toggle
-            size="sm"
-            variant="ghost"
-            bind:ref={row}
-          >
+    <Trace.Collapsible bind:open>
+      <Trace.CollapsibleTrigger data-tool-toggle bind:ref={row}>
+        <Trace.Line status={traceStatusOf(status.tone)}>
+          <Trace.Icon>
             {#if status.tone === 'busy'}
-              <LoaderCircleIcon class="animate-spin" data-icon="inline-start" />
+              <LoaderCircleIcon class="animate-spin" />
             {:else}
-              <Icon class={[status.tone === 'failed' && 'text-destructive']} data-icon="inline-start" />
+              <Icon />
             {/if}
-            {#if file !== null}
-              <ToolFileSummary {file} />
-            {:else if activity === null}
-              <span class="truncate">{summary}</span>
-            {:else}
-              <span class="truncate" data-content dir="auto">{activity}</span>
-            {/if}
-            {#if status.quiet}
-              <span class="sr-only">{status.label}</span>
-            {:else}
-              <span
-                class={[
-                  'shrink-0',
-                  status.tone === 'attention' && 'font-medium text-foreground',
-                  status.tone === 'failed' && 'text-destructive',
-                ]}>{status.label}</span
-              >
-            {/if}
-            <ChevronDownIcon class={['transition-transform', open && 'rotate-180']} data-icon="inline-end" />
-          </Button>
-        {/snippet}
-      </Collapsible.Trigger>
-      <Collapsible.Content class="ms-3 mt-1 flex min-w-0 flex-col gap-2 border-s-2 ps-3">
+          </Trace.Icon>
+          {#if file !== null}
+            <ToolFileSummary {file} />
+          {:else if activity === null}
+            <Trace.Title>{summary}</Trace.Title>
+          {:else}
+            <Trace.Title data-content dir="auto">{activity}</Trace.Title>
+          {/if}
+          {#if status.quiet}
+            <span class="sr-only">{status.label}</span>
+          {:else}
+            <Trace.Description
+              class={[
+                'text-muted-foreground',
+                status.tone === 'attention' && 'font-medium text-foreground',
+                status.tone === 'failed' && 'text-destructive',
+              ]}
+            >
+              {status.label}
+            </Trace.Description>
+          {/if}
+        </Trace.Line>
+      </Trace.CollapsibleTrigger>
+      <Trace.CollapsibleContent class="flex flex-col gap-2 text-foreground">
         {#if file !== null}
           <ToolFileChange {file} />
           {#if activity !== null}
@@ -231,9 +268,9 @@
         {#if started !== undefined}
           <BackgroundCommandActions command={started} {conversationId} />
         {/if}
-        <ToolCallDetails {call} {conversationId} {kind} partId={part.id} />
-      </Collapsible.Content>
-    </Collapsible.Root>
+        <ToolCallDetails {call} {conversationId} hasFileChange={file !== null} {kind} {outcomeNote} partId={part.id} />
+      </Trace.CollapsibleContent>
+    </Trace.Collapsible>
     {#if decisionFailure !== null}
       <p class="text-sm text-destructive" role="alert">{toolsFailureMessage(decisionFailure)}</p>
       {#if failedForPluginOff(decisionFailure)}

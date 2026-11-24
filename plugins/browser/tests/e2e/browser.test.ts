@@ -62,7 +62,7 @@ const CREDENTIAL_DIALOG = '[role="dialog"] [data-browser-credential-dialog]';
 const ADD_CERTIFICATE = `${CERTIFICATES} [data-browser-certificate-add]`;
 const ADD_CREDENTIAL = `${CREDENTIALS} [data-browser-credential-add]`;
 const OWNER_ADDRESS = `${PANEL} [aria-label="Address"]:not([readonly])`;
-const CREDENTIAL_APPROVAL = `${LATEST_MAIN_TURN} [data-tool-status="awaiting_approval"] > :not([data-slot="collapsible"]) [data-browser-credential-access]`;
+const CREDENTIAL_APPROVAL = `${LATEST_MAIN_TURN} [data-tool-approval] [data-browser-credential-access]`;
 
 const form = `<!doctype html>
 <html lang="en">

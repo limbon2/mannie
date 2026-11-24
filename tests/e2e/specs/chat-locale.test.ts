@@ -138,7 +138,7 @@ describe('the chat and window views in the pseudo-locale', () => {
   it('shows only catalog text in a tool call that waits for approval, and in its details', async () => {
     // The profile menu's items show the profiles' names, which are content.
     await openToolbarMenu(0);
-    await clickWithText('[data-slot="dropdown-menu-radio-item"]', 'Tools');
+    await clickWithText('[data-slot="dropdown-menu-radio-item"] [data-content]', 'Tools');
     await waitForPointerInput();
     // Without a workspace, a change asks the owner.
     const path = join(tmpdir(), 'mannie-e2e-pseudo-locale.txt');
@@ -178,10 +178,10 @@ describe('the chat and window views in the pseudo-locale', () => {
           content: 'long content '.repeat(200),
         }),
       );
-      const waiting = $('main [data-tool-status="awaiting_approval"]');
-      await waiting.waitForDisplayed({ timeout: 30_000 });
-      const decisions = await waiting.$$('button:not([data-tool-toggle]):not([data-allow-for])');
-      await decisions[0]?.click();
+      // The first action in the approval footer is Allow once.
+      const allowOnce = $(`${LATEST_MAIN_TURN} [data-tool-approval] > div:last-child > button:first-of-type`);
+      await allowOnce.waitForDisplayed({ timeout: 30_000 });
+      await allowOnce.click();
       await waitForCompleteReply();
       await $('main article:last-of-type [data-tool-toggle]').click();
       await $('main article:last-of-type [data-file-change]').waitForDisplayed();
