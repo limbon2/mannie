@@ -33,8 +33,8 @@ export async function waitForApp(): Promise<void> {
 }
 
 /**
- * Waits until the page's finite animations, such as a dialog that fades in,
- * have finished. Animations that run forever, such as spinners, do not count.
+ * Waits for finite animations on the document timeline, such as a dialog
+ * fading in. Spinners repeat forever, and scroll fades follow scroll position.
  */
 export async function waitForAnimations(): Promise<void> {
   // A newly inserted dialog can be displayed before its first animation
@@ -52,9 +52,10 @@ export async function waitForAnimations(): Promise<void> {
     async () =>
       browser.execute(() =>
         document.getAnimations().every((animation) => {
+          const usesDocumentTimeline = animation.timeline === document.timeline;
           const runsForever = animation.effect?.getComputedTiming().endTime === Infinity;
           const isRunning = animation.playState === 'running';
-          return runsForever || !isRunning;
+          return !usesDocumentTimeline || runsForever || !isRunning;
         }),
       ),
     { timeout: 5_000, timeoutMsg: 'the page kept animating' },

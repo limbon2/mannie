@@ -41,7 +41,7 @@
   }
 </script>
 
-<div class="flex flex-col gap-3 rounded-md border bg-muted/40 p-3">
+<div class="flex flex-col gap-3 rounded-md border bg-muted/40 p-3" data-tool-approval>
   <p class="text-sm font-medium">{m.tools_approval_title()}</p>
   <div class="flex flex-col gap-1.5">
     <p class="text-xs font-medium text-muted-foreground">{m.tools_approval_will()}</p>
