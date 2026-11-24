@@ -97,7 +97,7 @@
               {#snippet child({ props })}
                 <RadioGroupPrimitive.Item
                   {...props}
-                  class="grid size-8 shrink-0 cursor-pointer place-items-center rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                  class="grid size-8 shrink-0 cursor-pointer place-items-center rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary dark:focus-visible:outline-ring"
                   aria-label={label}
                   value={choice.value}
                 >

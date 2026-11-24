@@ -10,17 +10,49 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
+use std::time::Duration;
 
 use rustix::io::Errno;
 use rustix::process::{Pid, PidfdFlags, Signal};
 
 use super::unix::{MAX_KILL_ROUNDS, POLL, TERM_GRACE};
 
+/// How long to wait for the kernel to stop the wrapper of a running command.
+const SHELL_STOP_GRACE: Duration = Duration::from_millis(500);
+
 /// Runs in the child between fork and exec: makes the shell a child
 /// subreaper, which exec keeps.
 pub(super) fn hold_descendants() -> io::Result<()> {
     rustix::process::set_child_subreaper(Some(Pid::INIT))?;
     Ok(())
+}
+
+/// Stops the wrapper before the process walk. It can still start the program
+/// when a run is stopped immediately, and must stay alive as its subreaper.
+pub(super) async fn stop_shell(shell: Pid, start_time: u64) {
+    signal(shell, start_time, Signal::STOP);
+
+    let deadline = tokio::time::Instant::now() + SHELL_STOP_GRACE;
+
+    while tokio::time::Instant::now() < deadline {
+        let Some(stat) = read_stat(shell) else {
+            return;
+        };
+
+        let same_shell = stat.start_time == start_time;
+        let may_run = !matches!(stat.state, 'T' | 'Z');
+
+        if !same_shell || !may_run {
+            return;
+        }
+
+        tokio::time::sleep(POLL).await;
+    }
+
+    tracing::warn!(
+        pid = shell.as_raw_pid(),
+        "the shell did not stop before ending its tree"
+    );
 }
 
 /// A shell's descendants, including processes that outlive the shell.

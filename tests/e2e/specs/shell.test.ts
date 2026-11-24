@@ -5,7 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import { Key } from 'webdriverio';
 
-import { chooseConversationAction } from '../support/chat.ts';
+import { chooseConversationAction, openConversationRowMenu } from '../support/chat.ts';
 import { chooseTrayItem, processId, seedConversation } from '../support/harness.ts';
 import {
   axeViolations,
@@ -103,12 +103,15 @@ async function themeColors(): Promise<{ primary: string; surface: string }> {
   });
 }
 
-async function controlColors(selector: string): Promise<{
-  background: string;
-  border: string;
-  foreground: string;
-  shadow: string;
-}> {
+interface ControlColors {
+  readonly background: string;
+  readonly border: string;
+  readonly foreground: string;
+  readonly outlineStyle: string;
+  readonly shadow: string;
+}
+
+async function controlColors(selector: string): Promise<ControlColors> {
   return browser.execute((query) => {
     const control = document.querySelector(query);
     if (control === null) {
@@ -119,6 +122,7 @@ async function controlColors(selector: string): Promise<{
       background: style.backgroundColor,
       border: style.borderTopColor,
       foreground: style.color,
+      outlineStyle: style.outlineStyle,
       shadow: style.boxShadow,
     };
   }, selector);
@@ -407,6 +411,15 @@ describe('the shell', () => {
         await $('#interface-surface-slate').click();
         await focusLanguage(mode);
         const neutral = await controlColors('#interface-language:focus-visible');
+        expect(neutral.outlineStyle).toBe('none');
+        const ringTokens = await browser.execute(() => {
+          const style = getComputedStyle(document.documentElement);
+          return {
+            primary: style.getPropertyValue('--primary').trim(),
+            ring: style.getPropertyValue('--ring').trim(),
+          };
+        });
+        expect(ringTokens.ring).not.toBe(ringTokens.primary);
 
         await $('#interface-primary-rose').click();
         await focusLanguage(mode);
@@ -448,6 +461,7 @@ describe('the shell', () => {
         await $(selectedOption).waitForDisplayed();
         await waitForAnimations();
         const choice = await controlColors(selectedOption);
+        expect(choice.outlineStyle).toBe('none');
         await browser.keys(Key.Escape);
         await waitForHidden(selectedOption);
 
@@ -457,6 +471,7 @@ describe('the shell', () => {
         await waitForShownText(currentCommand, 'Show Chat');
         await waitForAnimations();
         const command = await controlColors(currentCommand);
+        expect(command.outlineStyle).toBe('none');
         await browser.keys(Key.Escape);
         await waitForHidden('[data-slot="command-input"]');
 
@@ -477,6 +492,60 @@ describe('the shell', () => {
         expect(primary[index]).not.toBe(defaults[index]);
         expect(color).not.toBe(primary[index]);
       }
+    });
+
+    it('keeps highlighted menus, selects and focused invalid controls free of outlines', async () => {
+      await $('#interface-theme-dark').click();
+      await $('#interface-primary-default').click();
+      await $('#interface-surface-neutral').click();
+
+      const selectedOption = '[data-slot="select-item"][aria-selected="true"]';
+      const highlightedOption = '[data-slot="select-item"][data-highlighted]';
+      await $('#interface-language').click();
+      await $(selectedOption).waitForDisplayed();
+      await browser.keys(Key.ArrowDown);
+      await waitForAnimations();
+      const activeOption = await controlColors(highlightedOption);
+      const inactiveSelected = await controlColors(selectedOption);
+      expect(activeOption.outlineStyle).toBe('none');
+      expect(inactiveSelected.background).not.toBe(activeOption.background);
+      await browser.keys(Key.Escape);
+      await waitForHidden(selectedOption);
+
+      try {
+        await browser.execute(() => {
+          document.getElementById('interface-language')?.setAttribute('aria-invalid', 'true');
+        });
+        await $('#interface-theme-dark').click();
+        await browser.keys([Key.Shift, Key.Tab]);
+        await expect($('#interface-language')).toBeFocused();
+        await waitForAnimations();
+        const invalidControl = await controlColors('#interface-language:focus-visible');
+        expect(invalidControl.outlineStyle).toBe('none');
+      } finally {
+        await browser.execute(() => {
+          document.getElementById('interface-language')?.removeAttribute('aria-invalid');
+        });
+      }
+
+      const conversation = await seedConversation(1);
+      const url = new URL(await browser.getUrl());
+
+      url.pathname = '/';
+      url.search = new URLSearchParams({ conversation, view: 'chat' }).toString();
+
+      await browser.url(url.toString());
+      await waitForApp();
+      await openConversationRowMenu();
+      const renameItem = '[data-slot="dropdown-menu-item"]:not([data-variant="destructive"])';
+      const highlightedItem = `${renameItem}[data-highlighted]`;
+      await $(renameItem).moveTo();
+      await $(highlightedItem).waitForDisplayed();
+      await waitForAnimations();
+      const menuItem = await controlColors(highlightedItem);
+      expect(menuItem.outlineStyle).toBe('none');
+      await browser.keys(Key.Escape);
+      await waitForHidden('[data-slot="dropdown-menu-content"]');
     });
 
     it('restores both choices after reloading and restarting the app', async () => {

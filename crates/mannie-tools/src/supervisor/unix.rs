@@ -267,6 +267,11 @@ impl Contained {
         // Input that was never sent closes with the run.
         self.input = None;
         if let Ok(start) = self.record.start_time.parse() {
+            #[cfg(target_os = "linux")]
+            if !graceful_shell {
+                tree::stop_shell(self.shell, start).await;
+            }
+
             end_tree(self.shell, start).await;
         }
         if graceful_shell {

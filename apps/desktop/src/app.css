@@ -47,7 +47,7 @@
   --destructive-foreground: oklch(0.985 0 0);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
-  --ring: var(--primary);
+  --ring: oklch(0.708 0 0);
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
@@ -61,7 +61,7 @@
   --sidebar-accent: oklch(0.97 0 0);
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: var(--ring);
+  --sidebar-ring: oklch(0.708 0 0);
   /*
    * The lines that a diff adds and removes (ADR-0039): a tint behind the line
    * and a color for its marker. Foreground text on a tint has a contrast
@@ -132,6 +132,7 @@
   --destructive-foreground: oklch(0.205 0 0);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
@@ -144,6 +145,7 @@
   --sidebar-accent: oklch(0.269 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
   --diff-added: oklch(0.3 0.06 145);
   --diff-added-emphasis: oklch(0.39 0.1 145);
   --diff-added-foreground: oklch(0.85 0.12 145);
@@ -222,8 +224,10 @@
   .palette-primary-rose
 ) {
   --primary: var(--palette-primary-light);
+  --ring: var(--primary);
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-ring: var(--ring);
 
   &.dark {
     --primary: var(--palette-primary-dark);
@@ -366,7 +370,7 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring;
+    @apply border-border outline-ring/50;
   }
   body {
     @apply bg-background text-foreground;
@@ -481,12 +485,6 @@
   }
 }
 
-[class~="focus-visible:ring-ring/50"][aria-invalid="true"]:focus-visible,
-[data-slot="input-group"]:has([data-slot="input-group-control"][aria-invalid="true"]:focus-visible) {
-  outline: 2px solid var(--ring);
-  outline-offset: 3px;
-}
-
 [data-slot="tooltip-content"] [data-slot="kbd"] {
   background-color: color-mix(in oklab, var(--tooltip), var(--primary) 45%);
   color: var(--tooltip-foreground);
@@ -518,11 +516,11 @@
   [data-sidebar="menu-button"][data-active="true"],
   [data-sidebar="menu-sub-button"][data-active="true"],
   [data-slot="command-item"][data-selected],
-  [data-slot="select-item"]:is([data-selected], [data-highlighted]),
+  [data-slot="select-item"][data-highlighted],
   [data-slot="dropdown-menu-item"][data-highlighted]:not([data-variant="destructive"]),
   [data-slot="dropdown-menu-sub-trigger"]:is([data-highlighted], [data-state="open"]),
-  [data-slot="dropdown-menu-radio-item"]:is([aria-checked="true"], [data-highlighted]),
-  [data-slot="dropdown-menu-checkbox-item"]:is([aria-checked="true"], [aria-checked="mixed"], [data-highlighted]),
+  [data-slot="dropdown-menu-radio-item"][data-highlighted],
+  [data-slot="dropdown-menu-checkbox-item"][data-highlighted],
   [data-slot="tabs-list"][data-variant="default"] > [data-slot="tabs-trigger"][aria-selected="true"],
   [data-side-panel-tab]:has(> [role="tab"][aria-selected="true"]),
   [data-slot="table-row"][data-state="selected"],
@@ -531,20 +529,6 @@
 ) {
   background-color: color-mix(in oklab, var(--primary) 8%, var(--selection-base, var(--background)));
   color: var(--primary);
-}
-
-/* Distinguish the keyboard's active option from the value already selected. */
-:is(
-  [data-slot="command-item"][data-selected],
-  [data-slot="select-item"][data-highlighted],
-  [data-slot="dropdown-menu-item"][data-highlighted]:not([data-variant="destructive"]),
-  [data-slot="dropdown-menu-sub-trigger"][data-highlighted],
-  [data-slot="dropdown-menu-radio-item"][data-highlighted],
-  [data-slot="dropdown-menu-checkbox-item"][data-highlighted],
-  [data-mention-option][aria-selected="true"]
-) {
-  outline: 1px solid var(--primary);
-  outline-offset: -1px;
 }
 
 [data-slot="tabs-list"][data-variant="line"] > [data-slot="tabs-trigger"][aria-selected="true"],
