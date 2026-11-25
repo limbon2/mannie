@@ -4,6 +4,8 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+## 0.9.0 - 2026-11-25
+
 ### Added
 
 - Add `NetworkRequest` tool access, per-endpoint approval grants and worker-ceiling refusal (`NoNetworkRequests`) to the core, plugin SDK and desktop approval UI ([ADR-0075](docs/adr/0075-let-plugins-send-network-requests-from-collections.md)).
@@ -11,12 +13,36 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - Make the desktop shell sidebar resizable per activity with persisted widths, keyboard controls and opt-in `sidebarResizable` on `NavigationEntry` for plugins ([ADR-0077](docs/adr/0077-let-the-shell-sidebar-resize-per-activity.md)).
 - Highlight shell commands (PowerShell, Bash, cmd, fish), SQL statements, JSON arguments and Markdown fenced code blocks with lazy-loaded `shiki` mapped to theme CSS classes (no inline styles, [ADR-0079](docs/adr/0079-highlight-code-with-shiki-and-css-classes.md)).
 
+#### Git
+
+- Journaled owner actions in the Git side panel (staging, unstaging, per-hunk staging and discarding, committing and amending, branching, tagging, stashing, fetching, pulling, pushing, merging, rebasing, cherry-picking, reverting, and conflict resolution) with server-enforced confirmation for hooks, repository-configured programs, discarded work, published rewrites, and branch or tag deletions ([ADR-0078](docs/adr/0078-let-plugins-run-installed-programs-for-owner-actions.md)).
+- Topological SVG Commit Graph tab with scope switching (Current branch, All branches, Reflog), search and filter controls (message, author, path, `-S` pickaxe, merges, first-parent), and a responsive split Commit Inspector.
+- Compare tab for comparing any two refs or `WORKTREE` in three-dot and two-dot modes with Changed files, Ahead, and Behind views.
+- Inspect tab with interactive Blame (age heatmap gutter and commit details popover), File History (`--follow`), and Code Search (`git grep`).
+- Unified and side-by-side split diff modes with word-level intra-line change highlights and an Ignore whitespace toggle.
+- `BlameCard` transcript details card for `git_blame` tool calls, one-click "Mention in chat" controls from the side panel, live dirty and conflicted counts on the toolbar button, and an "Open Git panel" command palette entry.
+
+#### Network Client
+
+- Add the Network Client plugin (`network`) with Postman-style HTTP collections, OpenAPI v2 (Swagger 2.0) and v3 (3.0 and 3.1) JSON and YAML import, global, collection and environment variables, headers, query and path parameters, cookie jar management, owner workbench execution and redacted agent tools under per-endpoint approvals ([ADR-0075](docs/adr/0075-let-plugins-send-network-requests-from-collections.md)).
+
 ### Changed
 
 - Build the validation app and end-to-end helper binaries once per platform in CI, run balanced Rust-free end-to-end shards with failure diagnostics, consolidate Linux credential store tests into one job, move report-only performance measurements and daily full dependency audits into dedicated workflows, allow upstream `unmaintained` and `yanked` churn on unrelated pull requests while keeping vulnerabilities, licenses, bans and sources enforced, and reuse worker and compiler caches cleanly during releases.
 - Upgrade the `shadcn-svelte` CLI to 1.8.1, add its `trace`, `attachment`, `marker` and `code-block` components, and replace the custom collapsible rows, attachment and mention chips, checkpoint and run status markers, and code and output blocks with them.
 - Reorder expanded tool call details to show accesses and output before metadata and collapsed raw JSON arguments, unify command and access blocks onto `CodeBlock` with copy buttons and metadata footers, and avoid repeating the command text in the expanded summary.
 - Remove the duplicate top "Default" items and the "Model for the next reply" heading from the chat model and reasoning effort menus, mark the default choice inline with a `Default` badge, and widen the reasoning effort menu.
+
+#### Git
+
+- Redesigned the Git side panel header with a searchable branch switcher, compact ahead/behind indicators, sync buttons, and an operation banner with Continue, Skip, and Abort controls.
+- Replaced flat file lists in Changes with a filterable Tree/List browser featuring compressed single-child directory chains, status badges, and inline `+N -M` line counts.
+- Upgraded the Branches tab into a searchable explorer with two-line branch rows, grouped remote branches, newest-first tags, clickable stashes with diff previews, worktrees, and credential-redacted remotes.
+
+#### Network Client
+
+- Replace the sidebar quick-action bar with a vertical overflow menu, prevent menu label wrapping, add tooltips for truncated sidebar and overview names, separate Query and Path tabs with URL synchronization, add `{{variable}}` autocomplete across inputs and code editors, use the SDK CodeMirror 6 editor for request bodies, response bodies and OpenAPI paste views ([ADR-0076](docs/adr/0076-provide-a-code-editor-through-the-plugin-sdk.md)), keep dialogs bounded and steady across tabs, and smooth vertical workbench resizing.
+- Visually differentiate `{{variable}}` references, `{path}` placeholders and `?query=value` parameters across the URL editor, request bodies, read-only URLs, parameter/variable tables and variable inputs, dismiss resolved OpenAPI import notes (such as missing base URL and cookie warnings) as soon as they are fixed, and enable per-activity shell sidebar resizing for Network Client ([ADR-0077](docs/adr/0077-let-the-shell-sidebar-resize-per-activity.md)).
 
 ### Fixed
 
@@ -26,6 +52,22 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 - Remove the extra outlines on highlighted menus, selects, command items, mentions, and focused invalid inputs, and restore the neutral focus ring tokens when the default primary color is active.
 - Stop Linux command wrappers before walking their descendants so a server stopped during startup cannot keep running.
 - Store `task dev` SQLite databases per schema fingerprint under `io.github.limbon2.mannie.dev/dev/`, seeding new schemas from the closest compatible development database or backup so switching branches or editing migrations never hits a newer-schema startup refusal.
+
+#### Git
+
+- Removed the duplicate repository name heading inside the Git side panel by enabling `hideHeading` on the side panel registration.
+- Fixed ref badges in commit rows clipping on both sides by truncating the inner text span.
+- Fixed untracked files showing "No changes in this file." by synthesizing an added-lines diff preview with binary and size guards, and expanded untracked directories in the panel overview.
+- Named unborn branches explicitly in the panel header instead of hiding the branch name behind "No commits yet".
+
+#### Terminal
+
+- Wait for each benchmark terminal to take focus before opening the next one.
+
+#### Network Client
+
+- Check collection tab heights after the dialog opens and verify URL highlighting across both webviews in the end-to-end test.
+- Lock agent request execution to the owner-configured origin, extract secret query parameters from saved URLs, include a full-body SHA-256 digest in approval summaries, honor RFC 6265 host-only cookies, honor OpenAPI v2 and v3 document and per-operation `security` rules, stage secret updates by slot before SQLite commits, distinguish post-dispatch `response_lost` failures, cap expanded YAML bytes before cloning aliases, allow large OpenAPI and body IPC payloads, refuse ambiguous request names, support nested server-variable interpolation, bound tool archive size, track concurrent workbench runs per request, surface environment switch failures, preserve cookie expiry on edit and add an end-to-end test.
 
 ### Security
 
