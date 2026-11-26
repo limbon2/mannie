@@ -1,0 +1,30 @@
+#:schema ../../crates/mannie-plugin-sdk/plugin.schema.json
+# The Proxmox plugin (ADR-0080; plugins/proxmox/docs/README.md):
+# manages owner-approved Proxmox VE QEMU virtual machines (ISO attach/eject,
+# boot order, power actions) and live VNC consoles (screenshots, pointer and
+# keyboard input, plus an interactive live VNC side panel with owner takeover)
+# under the master's policy and journal.
+
+id = "proxmox"
+sdk = 1
+# After Workers, Images, SSH, Git, MCP, Notebooks, Terminal, Browser and Network Client.
+order = 100
+
+[rust]
+entry = "mannie-proxmox"
+
+[services]
+# Each registered Proxmox VE server's password lives in the master's OS
+# credential store under `proxmox/server/<server-id>`.
+secrets = 1
+# Tables of registered Proxmox VE servers and the owner's per-server VM allowlist.
+store = 1
+
+[secrets]
+# One secret entry per registered server: `proxmox/server/<server-id>`.
+keyed = ["server"]
+
+# Direct outbound TLS connections of the plugin's library crate (ADR-0035,
+# decision 6; ADR-0080). The SDK has no network service.
+[native]
+sockets = "The Proxmox plugin opens outbound TLS connections to owner-registered Proxmox VE HTTPS API and VNC WebSocket endpoints when the owner inspects certificates, tests login, configures allowed VMs, opens the live VNC panel, or runs an authorized agent tool call."

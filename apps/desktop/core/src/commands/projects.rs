@@ -72,9 +72,11 @@ pub(crate) async fn remove_project(
     core: State<'_, Core>,
     input: RemoveProject,
 ) -> Result<(), CommandError<ChatError>> {
-    runtime(&core)
+    let deleted = runtime(&core)
         .map_err(refused("remove_project"))?
-        .remove_project(input)
+        .remove_project_ids(input)
         .await
-        .map_err(refused("remove_project"))
+        .map_err(refused("remove_project"))?;
+    core.conversations_deleted(&deleted).await;
+    Ok(())
 }

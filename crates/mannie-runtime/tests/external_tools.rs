@@ -128,7 +128,8 @@ impl Tool for ServerTools {
                 | ToolAccess::BrowserControl(_)
                 | ToolAccess::BrowserAction(_)
                 | ToolAccess::Database(_)
-                | ToolAccess::NetworkRequest(_) => None,
+                | ToolAccess::NetworkRequest(_)
+                | ToolAccess::ProxmoxVm(_) => None,
             })
             .collect();
         self.executions.lock().unwrap().push(execution);

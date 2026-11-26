@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use crate::BoxFuture;
 use crate::context::{DefaultContext, FeatureContext, StartContext};
-use crate::contracts::WorkItem;
+use crate::contracts::{ConversationId, WorkItem};
 use crate::contributions::Contributions;
 use crate::error::{FEATURE_UNKNOWN, StartFailure};
 use crate::ipc::{Handlers, Interface};
@@ -121,6 +121,14 @@ pub trait Instance: Send + Sync + fmt::Debug + 'static {
     /// contributions out of the core's consumers. Work in progress ends as
     /// it ends when Mannie quits, and nothing is repeated or lost.
     fn stop(self: Box<Self>) -> BoxFuture<'static, ()>;
+
+    /// Notifies a running plugin that one or more conversations were deleted,
+    /// so it can release per-conversation in-memory sessions such as live VNC
+    /// consoles (ADR-0080, decision 6). Plugins without per-conversation
+    /// sessions keep this default no-op.
+    fn conversations_deleted(&self, _conversations: Vec<ConversationId>) -> BoxFuture<'static, ()> {
+        Box::pin(std::future::ready(()))
+    }
 
     /// Starts one of the plugin's optional features, which the owner turned
     /// on, with the services that the feature declares (ADR-0055, decision

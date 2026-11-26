@@ -132,6 +132,17 @@ impl Runtime {
     /// compacted keeps the project until that ends; a reply that is being
     /// written is stopped, as deleting one conversation stops it.
     pub async fn remove_project(&self, input: RemoveProject) -> Result<(), ChatError> {
+        self.remove_project_ids(input).await?;
+        Ok(())
+    }
+
+    /// Removes a project with its conversations and returns every deleted
+    /// conversation ID so the desktop core can notify plugins and host
+    /// services (ADR-0080, decision 6).
+    pub async fn remove_project_ids(
+        &self,
+        input: RemoveProject,
+    ) -> Result<Vec<ConversationId>, ChatError> {
         let project = input.project_id;
         let _removal = self.begin_removal(&project)?;
         self.inner
@@ -164,6 +175,7 @@ impl Runtime {
                 conversations: count,
             });
         }
+        let mut deleted_ids = Vec::new();
         for _round in 0..REMOVAL_ROUNDS {
             let conversations = self
                 .inner
@@ -186,6 +198,8 @@ impl Runtime {
                 .cloned()
                 .collect();
             self.forget_background_commands(&forgotten).await;
+            self.end_conversation_terminals(&forgotten).await;
+            deleted_ids.extend(forgotten);
             for conversation in &deletion.conversations {
                 self.inner.hubs.deleted(conversation).await;
             }
@@ -202,7 +216,7 @@ impl Runtime {
                     .await
                     .removed(project.clone());
                 tracing::info!(project = %project, conversations = count, "removed a project");
-                return Ok(());
+                return Ok(deleted_ids);
             }
             tracing::info!(project = %project, "conversations joined a project while it was removed");
         }

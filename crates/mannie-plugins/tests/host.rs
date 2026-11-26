@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use mannie_plugin_sdk::BoxFuture;
 use mannie_plugin_sdk::context::{DefaultContext, HostInfo, HostProfile, StartContext};
-use mannie_plugin_sdk::contracts::{Clock, Secret, UtcMillis, WorkItem};
+use mannie_plugin_sdk::contracts::{Clock, ConversationId, Secret, UtcMillis, WorkItem};
 use mannie_plugin_sdk::contributions::{Contributions, ExtensionPoint, IdRule, PointInfo};
 use mannie_plugin_sdk::error::{
     CONTRIBUTIONS_REFUSED, GRANT_MISSING, SDK_INCOMPATIBLE, SERVICE_UNAVAILABLE, StartFailure,
@@ -219,6 +219,8 @@ struct Record {
     seen: Mutex<Vec<Seen>>,
     /// What the instances report as work.
     work: Mutex<Vec<WorkItem>>,
+    /// Conversation IDs delivered through `conversations_deleted`.
+    deleted_conversations: Mutex<Vec<ConversationId>>,
 }
 
 /// A plugin that asks for the services that `asks` names at each start and
@@ -358,6 +360,11 @@ struct TestInstance {
 impl Instance for TestInstance {
     fn work(&self) -> BoxFuture<'static, Vec<WorkItem>> {
         Box::pin(std::future::ready(lock(&self.record.work).clone()))
+    }
+
+    fn conversations_deleted(&self, conversations: Vec<ConversationId>) -> BoxFuture<'static, ()> {
+        lock(&self.record.deleted_conversations).extend(conversations);
+        Box::pin(std::future::ready(()))
     }
 
     fn stop(self: Box<Self>) -> BoxFuture<'static, ()> {
@@ -1170,4 +1177,25 @@ async fn the_views_list_what_each_manifest_lets_its_plugin_use() {
         }
     );
     assert_eq!(views[1].uses, PluginUses::default());
+}
+
+#[tokio::test]
+async fn conversations_deleted_notifies_running_plugins_only() {
+    let fixture = Fixture::new();
+    let active = Arc::new(fixture.plugin("active").on_by_default());
+    let inactive = Arc::new(fixture.plugin("inactive"));
+    let (_store, host) = fixture.start(vec![entry(&active, 10, ""), entry(&inactive, 20, "")]);
+
+    host.start_chosen().await;
+
+    let first = ConversationId::parse("0199e0f2-0000-7000-8000-000000000001").unwrap();
+    let second = ConversationId::parse("0199e0f2-0000-7000-8000-000000000002").unwrap();
+    host.conversations_deleted(&[first.clone(), second.clone()])
+        .await;
+
+    assert_eq!(
+        *lock(&active.record.deleted_conversations),
+        vec![first, second]
+    );
+    assert!(lock(&inactive.record.deleted_conversations).is_empty());
 }

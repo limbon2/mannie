@@ -167,7 +167,8 @@ fn grants_cover(scopes: &[GrantScope], write: &HostWrite<'_>) -> bool {
             | GrantScope::TerminalCommand { .. }
             | GrantScope::BrowserSite { .. }
             | GrantScope::BrowserCredential { .. }
-            | GrantScope::NetworkRequest { .. } => false,
+            | GrantScope::NetworkRequest { .. }
+            | GrantScope::ProxmoxVm { .. } => false,
         })
     };
 

@@ -17,6 +17,7 @@ import type {
   PathRefusal,
   ProgramEffect,
   ProgramEffectKey,
+  ProxmoxVmScope,
   Refusal,
   StatementClass,
   TerminalTarget,
@@ -341,6 +342,9 @@ export function refusalMessage(refusal: Refusal): string {
     case 'no_network_requests': {
       return m.tools_refusal_no_network_requests();
     }
+    case 'no_proxmox': {
+      return m.tools_refusal_no_proxmox();
+    }
     case 'no_projects_on_host': {
       return m.tools_refusal_no_projects_on_host();
     }
@@ -406,6 +410,12 @@ export function approvalReasonMessage(reason: ApprovalReason): string {
     }
     case 'program': {
       return m.tools_reason_program();
+    }
+    case 'proxmox_vm': {
+      return m.tools_reason_proxmox_vm();
+    }
+    case 'proxmox_vnc': {
+      return m.tools_reason_proxmox_vnc();
     }
     case 'remote_command': {
       return m.tools_reason_remote_command();
@@ -735,6 +745,26 @@ export function terminalRulePlace(target: TerminalTarget): string {
     : m.tools_settings_rule_terminal_on_host({ endpoint: target.host.endpoint, host: target.host.label });
 }
 
+/** Label for a Proxmox VM permission scope shown in approvals and tool details. */
+export function proxmoxVmScopeLabel(scope: ProxmoxVmScope): string {
+  switch (scope) {
+    case 'config': {
+      return m.tools_access_proxmox_scope_config();
+    }
+    case 'power': {
+      return m.tools_access_proxmox_scope_power();
+    }
+    case 'vnc': {
+      return m.tools_access_proxmox_scope_vnc();
+    }
+  }
+}
+
+/** Label for a Proxmox server TLS identity shown in approvals. */
+export function proxmoxIdentityText(identity: string): string {
+  return identity === 'os_trust' ? m.tools_access_proxmox_identity_os_trust() : identity;
+}
+
 /** What a grant allows, such as "Changing files in D:\Projects\app". */
 export function grantScopeMessage(scope: GrantScope): string {
   if (scope.kind === 'browser_credential') {
@@ -763,6 +793,26 @@ export function grantScopeMessage(scope: GrantScope): string {
       origin: scope.origin,
       request: scope.requestLabel,
     });
+  }
+  if (scope.kind === 'proxmox_vm') {
+    const args = {
+      endpoint: scope.endpoint,
+      node: scope.node,
+      server: scope.serverLabel,
+      vm: scope.vmName,
+      vmid: String(scope.vmid),
+    };
+    switch (scope.scope) {
+      case 'config': {
+        return m.tools_grant_proxmox_vm_config(args);
+      }
+      case 'power': {
+        return m.tools_grant_proxmox_vm_power(args);
+      }
+      case 'vnc': {
+        return m.tools_grant_proxmox_vm_vnc(args);
+      }
+    }
   }
   if (scope.kind === 'remote_command') {
     return m.tools_grant_remote_command({ command: scope.command, endpoint: scope.endpoint, host: scope.label });

@@ -212,6 +212,7 @@ describe('pluginChangelogs', () => {
         { name: 'Terminal', path: 'plugins/terminal/CHANGELOG.md' },
         { name: 'Browser', path: 'plugins/browser/CHANGELOG.md' },
         { name: 'Network Client', path: 'plugins/network/CHANGELOG.md' },
+        { name: 'Proxmox', path: 'plugins/proxmox/CHANGELOG.md' },
       ],
     );
     for (const changelog of changelogs) {

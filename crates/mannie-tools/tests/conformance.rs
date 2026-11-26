@@ -897,7 +897,8 @@ fn path_accesses(accesses: &[Access]) -> Vec<(String, AccessMode, bool)> {
             | Access::BrowserControl { .. }
             | Access::BrowserAction { .. }
             | Access::Database { .. }
-            | Access::NetworkRequest { .. } => {
+            | Access::NetworkRequest { .. }
+            | Access::ProxmoxVm { .. } => {
                 panic!("not a path access: {access:?}")
             }
         })

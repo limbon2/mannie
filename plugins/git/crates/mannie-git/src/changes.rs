@@ -540,7 +540,8 @@ fn normalized(access: &ToolAccess) -> ToolAccess {
         | ToolAccess::BrowserControl(_)
         | ToolAccess::BrowserAction(_)
         | ToolAccess::Database(_)
-        | ToolAccess::NetworkRequest(_) => access.clone(),
+        | ToolAccess::NetworkRequest(_)
+        | ToolAccess::ProxmoxVm(_) => access.clone(),
     }
 }
 
@@ -603,7 +604,8 @@ pub(crate) mod testing {
                     | ToolAccess::BrowserControl(_)
                     | ToolAccess::BrowserAction(_)
                     | ToolAccess::Database(_)
-                    | ToolAccess::NetworkRequest(_) => None,
+                    | ToolAccess::NetworkRequest(_)
+                    | ToolAccess::ProxmoxVm(_) => None,
                 })
                 .flatten()
                 .collect()

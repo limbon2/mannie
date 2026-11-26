@@ -1,0 +1,76 @@
+# Proxmox VMs and VNC
+
+|              |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status       | Building                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Plugin       | `proxmox`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Last updated | 2026-11-24                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Related      | [ADR-0004](../../../docs/adr/0004-keep-system-access-in-the-rust-core.md), [ADR-0013](../../../docs/adr/0013-journal-every-side-effect.md), [ADR-0025](../../../docs/adr/0025-add-side-panels-to-the-shell.md), [ADR-0029](../../../docs/adr/0029-let-the-owner-give-conversations-and-hosts-full-access.md), [ADR-0030](../../../docs/adr/0030-split-mannie-into-a-core-and-plugins.md), [ADR-0034](../../../docs/adr/0034-build-plugins-on-a-plugin-sdk.md), [ADR-0035](../../../docs/adr/0035-find-plugins-at-build-time-in-folders-of-their-own.md), [ADR-0044](../../../docs/adr/0044-let-tool-results-carry-images-to-the-model.md), [ADR-0066](../../../docs/adr/0066-let-the-owner-trust-self-signed-browser-certificates.md), [ADR-0080](../../../docs/adr/0080-let-plugins-manage-proxmox-vms-and-vnc-consoles.md), [Extension points](../../../docs/architecture/extension-points.md), [Plugins](../../../docs/features/plugins.md), [SSH hosts](../../ssh/docs/README.md) |
+
+## Intent
+
+Proxmox is an optional plugin aimed at a regular Proxmox VE user account rather than a cluster administrator. Using their normal username and password, the owner registers a Proxmox server, explicitly chooses which QEMU virtual machines to make available to Mannie, lets agents pick an ISO from connected storage, attach it, update boot order, restart the VM, and use VNC tools to perform installations and other actions inside the VM while the owner watches or takes over in a live console side panel beside the conversation.
+
+## Behavior
+
+### Turning it on
+
+- Proxmox is an optional plugin on the Plugins page and starts off on a new installation.
+- While it is off, agents have no Proxmox or VNC tools, the system prompt lists no Proxmox servers, mentions offer none, and any open VNC side panel closes its session cleanly. Registered servers, their VM allowlists and their stored passwords remain.
+
+### Registering a Proxmox server and choosing allowed VMs
+
+- The Proxmox settings page lists registered servers and lets the owner add, edit, test, inspect certificates, choose allowed VMs and remove servers.
+- Each server has a name, base URL (HTTPS host and port, defaulting to 8006), username with realm (such as `user@pve` or `user@pam`), password and optional note for agents.
+- Passwords are kept only in the master's operating system credential store (`proxmox/server/<id>`) and are never shown again in the UI or written to SQLite, logs, transcripts or tool results. Editing a server with an empty password field keeps the stored password.
+- Proxmox authentication uses regular username and password ticket sign-in (`POST /api2/json/access/ticket`) and renews session tickets automatically while active. Access is bounded by the permissions Proxmox grants to that user account; the plugin requires no cluster administrator privileges.
+- TLS certificates are verified against the operating system trust store by default. Because Proxmox VE nodes commonly serve certificates signed by the local cluster CA (`pve-root-ca.pem`) or self-signed certificates on port 8006, Settings lets the owner inspect the presented leaf certificate (opening a TLS handshake only, before sending any password) and explicitly pin its SHA-256 fingerprint. Changing a server's host or port clears both its pinned fingerprint and its VM allowlist, and a presented certificate that differs from the pinned fingerprint stops before sending the password.
+- Every registered server starts with zero VMs exposed to Mannie. Right after adding a server (or trusting its certificate and testing login), Settings presents a pre-configure step listing the QEMU VMs visible to that account so the owner explicitly checks which VMs to expose. Unselected VMs and newly created VMs remain invisible and inaccessible to agents, enforced in Rust across every tool and `@` mention. Unchecking a VM closes any live VNC session on it immediately.
+
+### Discovering VMs and ISOs
+
+- Agents can list the explicitly allowed QEMU VMs (ID, name, node, power state and basic hardware info), inspect an allowed VM's configuration (CD-ROM drives, mounted ISOs and boot order), and list ISO images available on storages visible to the user on nodes hosting allowed VMs.
+- The system prompt lists registered Proxmox servers (name, endpoint, TLS trust status, owner note and allowed VMs) across conversations and the `general` child agent by default, and `@` mentions can reference registered servers or explicitly allowed VMs without leaking credentials.
+
+### Managing ISOs and VM power
+
+- Agents can attach an ISO from connected storage to an allowed QEMU VM's CD-ROM device, eject or clear a mounted ISO, update the VM's boot order so it boots from CD-ROM or disk, and perform power actions (start, graceful shutdown, reboot, hard stop and reset).
+- Each hardware configuration change or power action is a journaled, authorized `Access::ProxmoxVm` operation under the master's policy, supporting per-VM grants keyed by server, canonical endpoint, TLS identity, VMID and scope (`Config` or `Power`). Conversation full access allows these operations on allowed VMs automatically. If Proxmox rejects an action because the user lacks permission on that VM or storage, the tool returns a clear failure telling the model what Proxmox denied.
+- Read-only agents (`explore`, `Plan` and read-only custom agents) receive only read-only discovery tools, and workers receive no Proxmox tools (`no_proxmox`).
+
+### Agent VNC tools
+
+- For an allowed running QEMU VM, agents can open a VNC console session through Proxmox's `vncproxy` and `vncwebsocket` endpoints in Rust and interact with the VM over RFB 3.8:
+  - capture the current framebuffer as a PNG image returned through tool result images ([ADR-0044](../../../docs/adr/0044-let-tool-results-carry-images-to-the-model.md)), alongside framebuffer width and height;
+  - optionally pause unconditionally (`delay_ms`, up to 60 seconds, waking early on Stop or owner takeover) or wait for the screen to change (`wait_for_change_ms`, up to 10 seconds) on screenshots and input actions before capturing;
+  - move the pointer, click, double-click, right-click, middle-click, scroll and drag at framebuffer coordinates;
+  - type text and send explicit key combinations (such as `Enter`, `Tab`, `Esc`, function keys, arrow keys and `Ctrl+Alt+Del`);
+  - close the active VNC session cleanly.
+- VNC operations are authorized under `Access::ProxmoxVm` (`ProxmoxVmScope::Vnc`), supporting per-VM grants at conversation, project or always scope, and run under conversation full access unless the owner has taken over control in the live VNC side panel.
+- All Proxmox HTTP and WebSocket connections, tickets, CSRF tokens and RFB state live in Rust. The webview never holds Proxmox credentials or connects directly to Proxmox.
+- VNC sessions close when the conversation or project is deleted, when the plugin turns off, when the server record is edited or removed, when the VM is removed from the allowlist, when the owner or agent closes the session, or after an idle timeout.
+
+### Live VNC side panel and takeover
+
+- A side panel beside the conversation ([ADR-0025](../../../docs/adr/0025-add-side-panels-to-the-shell.md)) renders the active VM's live framebuffer on an HTML5 `<canvas>` fed from the Rust VNC session over an IPC channel, on both Windows and Linux.
+- While the agent controls the console, the owner watches live updates and cannot accidentally send input to the VM (canvas input is disabled in the UI and refused in Rust).
+- The owner can take over control at any time to click, type or enter sensitive installer credentials directly into the VM. While the owner has control, all agent VNC tools (both screenshots and input) are blocked in Rust, even under conversation full access, until the owner clicks Resume. Owner input grants the agent no permission.
+- The side panel shows connection state, control state (agent vs. owner), special key shortcuts (such as `Ctrl+Alt+Del`), loading, empty and error states, and supports keyboard focus entry and exit without trapping focus.
+
+### What it does not do in version 1
+
+- LXC containers (QEMU VMs only).
+- Two-factor authentication (TFA) and Proxmox API tokens.
+- Proxmox administration outside a regular user's VM workflow: creating or deleting VMs, cloning templates, managing storage pools, uploading or downloading ISOs, managing snapshots, or changing Proxmox users and roles.
+- Opaque session secret references for agent VNC typing (owner takeover handles guest passwords and disk passphrases).
+- SPICE consoles, VM audio, and bidirectional clipboard sync.
+
+## Fit
+
+- Lives in `plugins/proxmox/` following [ADR-0030](../../../docs/adr/0030-split-mannie-into-a-core-and-plugins.md), [ADR-0034](../../../docs/adr/0034-build-plugins-on-a-plugin-sdk.md), [ADR-0035](../../../docs/adr/0035-find-plugins-at-build-time-in-folders-of-their-own.md) and [ADR-0080](../../../docs/adr/0080-let-plugins-manage-proxmox-vms-and-vnc-consoles.md).
+- Uses SDK and shell extension points: `store`, keyed `secrets`, `[native] sockets`, `Instance::conversations_deleted`, static plugin tools with `ToolAccess::ProxmoxVm` and tool result images ([ADR-0044](../../../docs/adr/0044-let-tool-results-carry-images-to-the-model.md)), instruction sections, mention providers, settings sections, side panels ([ADR-0025](../../../docs/adr/0025-add-side-panels-to-the-shell.md)), conversation controls, tool kinds and plugin message catalogs.
+- Uses no new third-party crates outside the existing workspace graph: `png` and `flate2` (already in `Cargo.lock`, keeping `image` exclusive to `plugins/images/`), plus zero-unsafe pure-Rust RFC 6455 WebSocket and RFB 3.8 clients over `tokio-rustls` and `ring`.
+
+## Decisions
+
+- 2026-11-24 ([D74](../../../docs/roadmap/milestones.md#5-decisions), [ADR-0080](../../../docs/adr/0080-let-plugins-manage-proxmox-vms-and-vnc-consoles.md)): owner approved building the `proxmox` plugin with a mandatory fail-closed per-server VM allowlist pre-configure step in Settings, per-VM grants for config/power/VNC, conversation full access allowing operations on allowed VMs while active owner VNC takeover blocks all agent VNC screenshots and input until resumed, owner takeover alone for guest secrets, and visibility across conversations and the `general` child agent by default with `@` mentions.

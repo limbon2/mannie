@@ -24,7 +24,7 @@ mod terminal;
 
 pub use access::{
     Access, AccessMode, BrowserAccess, BrowserAction, BrowserControlAccess,
-    BrowserCredentialAccess, EntryCount,
+    BrowserCredentialAccess, EntryCount, ProxmoxVmScope,
 };
 pub use approval::{
     ApprovalChoice, ApprovalReason, ApprovalRequest, DecideApproval, Decision, GrantScope,

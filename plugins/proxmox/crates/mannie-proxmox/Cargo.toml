@@ -1,0 +1,56 @@
+[package]
+name = "mannie-proxmox"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "The Proxmox plugin: manages owner-approved Proxmox VE QEMU virtual machines and live VNC consoles under the master's policy and journal (ADR-0080)."
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Base64 encoding for live VNC PNG frames streamed over the session channel.
+base64 = { workspace = true }
+# Bounded zlib inflation for RFB Zlib-encoded framebuffer rectangles.
+flate2 = { workspace = true }
+# Streams and sinks for live channels and WebSocket VNC frames.
+futures-util = { workspace = true }
+# The plugin SDK: tools, sections, mentions, IPC, store and secrets.
+mannie-plugin-sdk = { workspace = true }
+# PNG encoding for VNC screenshots (ADR-0044) and live side-panel frames.
+png = { workspace = true }
+# HTTPS client for Proxmox VE API requests over rustls (ring).
+reqwest = { workspace = true, features = ["http2", "rustls-no-provider"] }
+# Signature verification for pinned leaf certificates.
+ring = { workspace = true }
+# Custom TLS configuration shared between HTTPS API and VNC WebSockets.
+rustls = { workspace = true }
+# OS trust verification for Proxmox servers without a pinned leaf certificate.
+rustls-platform-verifier = { workspace = true }
+# Leaf certificate validity and TLS handshake verification.
+rustls-webpki = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# SHA-256 leaf fingerprints and framebuffer change hashes.
+sha2 = { workspace = true }
+specta = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+# Async TLS transport for certificate inspection and VNC WebSocket connections.
+tokio-rustls = { workspace = true }
+tracing = { workspace = true }
+# Canonical HTTPS origins, URL percent-encoding and WebSocket request URIs.
+url = { workspace = true }
+# UUIDv7 identifiers for registered Proxmox servers.
+uuid = { workspace = true }
+# Zeroizes cached Proxmox auth tickets, CSRF tokens and VNC passwords on drop.
+zeroize = { workspace = true }
+
+[dev-dependencies]
+# Real plugin host on the core's test runtime, plus SDK conformance checks.
+mannie-plugin-harness = { workspace = true }
+# Manifest parsing and in-memory secrets test doubles.
+mannie-plugin-sdk = { workspace = true, features = ["manifest", "testing"] }
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
+
+[lints]
+workspace = true

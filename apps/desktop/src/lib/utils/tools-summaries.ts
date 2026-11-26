@@ -191,6 +191,26 @@ function accessNetworkRequest(accesses: readonly Access[]): NetworkRequestSummar
     : null;
 }
 
+/** The Proxmox VM operation that a plugin's call runs (ADR-0080). */
+interface ProxmoxVmSummary {
+  readonly action: string;
+  readonly server: string;
+  readonly vm: string;
+  readonly vmid: string;
+}
+
+function accessProxmoxVm(accesses: readonly Access[]): ProxmoxVmSummary | null {
+  const access = accesses.find((candidate) => candidate.kind === 'proxmox_vm');
+  return access?.kind === 'proxmox_vm'
+    ? {
+        action: access.action,
+        server: access.serverLabel,
+        vm: access.vmName,
+        vmid: String(access.vmid),
+      }
+    : null;
+}
+
 /**
  * How a call on a registered database is named, by the strongest of its
  * statements, with the database's name (ADR-0056, decision 7).
@@ -399,7 +419,11 @@ function intentSummary(call: ToolCallView): string {
         return m.tools_call_external_tool(external);
       }
       const network = accessNetworkRequest(call.accesses);
-      return network === null ? toolLabel(call.tool) : m.tools_call_network_request(network);
+      if (network !== null) {
+        return m.tools_call_network_request(network);
+      }
+      const proxmox = accessProxmoxVm(call.accesses);
+      return proxmox === null ? toolLabel(call.tool) : m.tools_call_proxmox_vm(proxmox);
     }
   }
 }

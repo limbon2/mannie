@@ -273,11 +273,11 @@ pub(crate) async fn delete_conversation(
     core: State<'_, Core>,
     input: ConversationRef,
 ) -> Result<(), CommandError<ChatError>> {
-    runtime(&core)?
-        .delete_conversation(&input.conversation_id)
+    let deleted = runtime(&core)?
+        .delete_conversation_ids(&input.conversation_id)
         .await
         .map_err(refused("delete_conversation"))?;
-    core.end_conversation_browser(&input.conversation_id).await;
+    core.conversations_deleted(&deleted).await;
     Ok(())
 }
 

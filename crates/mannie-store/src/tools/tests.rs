@@ -3,8 +3,8 @@ use std::sync::Arc;
 use mannie_types::clock::{Clock, ManualClock, UtcMillis};
 use mannie_types::ids::{ConversationId, GrantId, ProjectId, RuleId};
 use mannie_types::tools::{
-    AccessMode, GrantScope, ProgramEffectKey, ProgramTarget, RemoteTarget, TerminalHost,
-    TerminalTarget, ToolServerEndpoint,
+    AccessMode, GrantScope, ProgramEffectKey, ProgramTarget, ProxmoxVmScope, RemoteTarget,
+    TerminalHost, TerminalTarget, ToolServerEndpoint,
 };
 
 use super::ToolsStoreError;
@@ -627,6 +627,53 @@ async fn a_grant_for_a_network_request_is_kept_with_its_endpoint() {
         protocol: "http".to_owned(),
         method: "GET".to_owned(),
         origin: "https://api.example.com".to_owned(),
+    };
+
+    fixture
+        .store
+        .add_grants(&conversation, vec![(grant_id(1), scope.clone())])
+        .await
+        .unwrap();
+    let shared = fixture
+        .store
+        .add_shared_grants(None, vec![(grant_id(2), scope.clone())])
+        .await
+        .unwrap();
+
+    assert_eq!(
+        fixture
+            .store
+            .grants(&conversation)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|grant| grant.scope)
+            .collect::<Vec<_>>(),
+        vec![scope.clone()]
+    );
+    assert_eq!(
+        shared
+            .into_iter()
+            .map(|grant| grant.scope)
+            .collect::<Vec<_>>(),
+        vec![scope]
+    );
+}
+
+#[tokio::test]
+async fn a_grant_for_a_proxmox_vm_is_kept_with_its_server_identity_and_scope() {
+    let fixture = Fixture::new();
+    let conversation = fixture.conversation(1).await;
+    let scope = GrantScope::ProxmoxVm {
+        plugin: "proxmox".to_owned(),
+        server_id: "0199e0f2-0000-7000-8000-0000000000dd".to_owned(),
+        server_label: "Home Lab".to_owned(),
+        endpoint: "https://pve.lan:8006".to_owned(),
+        identity: "os_trust".to_owned(),
+        node: "pve1".to_owned(),
+        vmid: 101,
+        vm_name: "debian-test".to_owned(),
+        scope: ProxmoxVmScope::Vnc,
     };
 
     fixture

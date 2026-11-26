@@ -5,9 +5,10 @@ use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{DatabaseKey, ProjectId, RuleId, WorkerId};
 use mannie_types::tools::{
     Access, AccessMode, ApprovalReason, ApprovalRequest, CommandRule, DatabaseHome, Decision,
-    DiscardedWork, EntryCount, GrantScope, ProgramEffect, ProgramRule, ProgramTarget, Refusal,
-    RemoteCommandRule, RemoteTarget, RuleProposal, StatementClass, TerminalCommandRule,
-    TerminalHost, TerminalTarget, ToolHint, ToolServerEndpoint, ToolsError, effect_keys,
+    DiscardedWork, EntryCount, GrantScope, ProgramEffect, ProgramRule, ProgramTarget,
+    ProxmoxVmScope, Refusal, RemoteCommandRule, RemoteTarget, RuleProposal, StatementClass,
+    TerminalCommandRule, TerminalHost, TerminalTarget, ToolHint, ToolServerEndpoint, ToolsError,
+    effect_keys,
 };
 
 use super::{BrowserSiteConsent, Grants, PolicyInputs, SavedRule, Verdict, decide, saved_rule};
@@ -3010,4 +3011,219 @@ fn a_network_grant_covers_another_only_for_the_same_endpoint() {
         &network_grant("GET", API_ORIGIN),
         &network_grant("GET", "https://prod.example.com")
     ));
+}
+
+const PROXMOX_SERVER_ID: &str = "0199e0f2-0000-7000-8000-0000000000dd";
+const PROXMOX_ENDPOINT: &str = "https://pve.lan:8006";
+const PROXMOX_PIN: &str = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+fn proxmox_access_on(
+    server_id: &str,
+    endpoint: &str,
+    identity: &str,
+    vmid: u32,
+    scope: ProxmoxVmScope,
+    action: &str,
+) -> Access {
+    Access::ProxmoxVm {
+        plugin: "proxmox".to_owned(),
+        server_id: server_id.to_owned(),
+        server_label: "Home Lab".to_owned(),
+        endpoint: endpoint.to_owned(),
+        identity: identity.to_owned(),
+        node: "pve1".to_owned(),
+        vmid,
+        vm_name: "debian-test".to_owned(),
+        scope,
+        action: action.to_owned(),
+        summary: r#"{"device":"ide2"}"#.to_owned(),
+        summary_cut: false,
+    }
+}
+
+fn proxmox_grant(endpoint: &str, identity: &str, vmid: u32, scope: ProxmoxVmScope) -> GrantScope {
+    GrantScope::ProxmoxVm {
+        plugin: "proxmox".to_owned(),
+        server_id: PROXMOX_SERVER_ID.to_owned(),
+        server_label: "Home Lab".to_owned(),
+        endpoint: endpoint.to_owned(),
+        identity: identity.to_owned(),
+        node: "pve1".to_owned(),
+        vmid,
+        vm_name: "debian-test".to_owned(),
+        scope,
+    }
+}
+
+#[test]
+fn a_proxmox_vm_action_asks_with_matching_reason_and_per_vm_grant() {
+    let mut inputs = Inputs::new();
+    inputs.allow_changes_in_workspace = true;
+    let config_access = [proxmox_access_on(
+        PROXMOX_SERVER_ID,
+        PROXMOX_ENDPOINT,
+        PROXMOX_PIN,
+        101,
+        ProxmoxVmScope::Config,
+        "attach_iso",
+    )];
+    let vnc_access = [proxmox_access_on(
+        PROXMOX_SERVER_ID,
+        PROXMOX_ENDPOINT,
+        PROXMOX_PIN,
+        101,
+        ProxmoxVmScope::Vnc,
+        "vnc_keyboard",
+    )];
+
+    assert_eq!(
+        inputs.decide(&config_access),
+        ask(
+            &config_access,
+            &[ApprovalReason::ProxmoxVm],
+            vec![proxmox_grant(
+                PROXMOX_ENDPOINT,
+                PROXMOX_PIN,
+                101,
+                ProxmoxVmScope::Config
+            )],
+            None
+        )
+    );
+    assert_eq!(
+        inputs.decide(&vnc_access),
+        ask(
+            &vnc_access,
+            &[ApprovalReason::ProxmoxVnc],
+            vec![proxmox_grant(
+                PROXMOX_ENDPOINT,
+                PROXMOX_PIN,
+                101,
+                ProxmoxVmScope::Vnc
+            )],
+            None
+        )
+    );
+}
+
+#[test]
+fn a_proxmox_vm_grant_binds_to_server_endpoint_identity_vmid_and_scope() {
+    let mut inputs = Inputs::new();
+    inputs.grants = vec![proxmox_grant(
+        PROXMOX_ENDPOINT,
+        PROXMOX_PIN,
+        101,
+        ProxmoxVmScope::Config,
+    )];
+
+    let same = proxmox_access_on(
+        PROXMOX_SERVER_ID,
+        PROXMOX_ENDPOINT,
+        PROXMOX_PIN,
+        101,
+        ProxmoxVmScope::Config,
+        "set_boot_order",
+    );
+    assert_eq!(inputs.decide(&[same]), Verdict::Allowed(Decision::Grant));
+
+    // Display-only labels and node migration do not invalidate the grant.
+    let mut renamed = proxmox_access_on(
+        PROXMOX_SERVER_ID,
+        PROXMOX_ENDPOINT,
+        PROXMOX_PIN,
+        101,
+        ProxmoxVmScope::Config,
+        "eject_iso",
+    );
+
+    if let Access::ProxmoxVm {
+        server_label,
+        node,
+        vm_name,
+        ..
+    } = &mut renamed
+    {
+        "Cluster".clone_into(server_label);
+        "pve2".clone_into(node);
+        "debian-new".clone_into(vm_name);
+    }
+
+    assert_eq!(inputs.decide(&[renamed]), Verdict::Allowed(Decision::Grant));
+
+    for access in [
+        proxmox_access_on(
+            PROXMOX_SERVER_ID,
+            "https://other.lan:8006",
+            PROXMOX_PIN,
+            101,
+            ProxmoxVmScope::Config,
+            "attach_iso",
+        ),
+        proxmox_access_on(
+            PROXMOX_SERVER_ID,
+            PROXMOX_ENDPOINT,
+            "os_trust",
+            101,
+            ProxmoxVmScope::Config,
+            "attach_iso",
+        ),
+        proxmox_access_on(
+            PROXMOX_SERVER_ID,
+            PROXMOX_ENDPOINT,
+            PROXMOX_PIN,
+            102,
+            ProxmoxVmScope::Config,
+            "attach_iso",
+        ),
+        proxmox_access_on(
+            PROXMOX_SERVER_ID,
+            PROXMOX_ENDPOINT,
+            PROXMOX_PIN,
+            101,
+            ProxmoxVmScope::Power,
+            "reboot",
+        ),
+        proxmox_access_on(
+            PROXMOX_SERVER_ID,
+            PROXMOX_ENDPOINT,
+            PROXMOX_PIN,
+            101,
+            ProxmoxVmScope::Vnc,
+            "vnc_screenshot",
+        ),
+    ] {
+        assert!(
+            matches!(
+                inputs.decide(std::slice::from_ref(&access)),
+                Verdict::Ask(_)
+            ),
+            "{access:?}"
+        );
+    }
+}
+
+#[test]
+fn full_access_allows_proxmox_vm_actions_and_workers_refuse_them_in_every_mode() {
+    let mut inputs = Inputs::new();
+    inputs.full_access = true;
+    let vnc = proxmox_access_on(
+        PROXMOX_SERVER_ID,
+        PROXMOX_ENDPOINT,
+        "os_trust",
+        101,
+        ProxmoxVmScope::Vnc,
+        "vnc_pointer",
+    );
+    assert_eq!(
+        inputs.decide(std::slice::from_ref(&vnc)),
+        Verdict::Allowed(Decision::FullAccess)
+    );
+
+    for mode in MODES.into_iter().chain([CeilingMode::FullAccess]) {
+        assert_eq!(
+            Inputs::worker(mode).decide(std::slice::from_ref(&vnc)),
+            Verdict::Refused(Refusal::NoProxmox),
+            "{mode:?}"
+        );
+    }
 }

@@ -303,7 +303,8 @@ fn program_of(execution: &ToolExecution) -> ProgramAccess {
             | ToolAccess::BrowserControl(_)
             | ToolAccess::BrowserAction(_)
             | ToolAccess::Database(_)
-            | ToolAccess::NetworkRequest(_) => None,
+            | ToolAccess::NetworkRequest(_)
+            | ToolAccess::ProxmoxVm(_) => None,
         })
         .expect("the execution names its program's run")
 }
