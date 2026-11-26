@@ -725,7 +725,7 @@ mod tests {
         let refusal = added.unwrap_err();
 
         assert_eq!((refusal.point, refusal.code), ("notes", NO_CONSUMER));
-        assert!(refusal.detail.contains("notes"), "{}", refusal.detail);
+        assert!(refusal.detail.contains("notes"), "refusal must name notes");
         assert_eq!(calls(&log), Vec::<String>::new());
     }
 

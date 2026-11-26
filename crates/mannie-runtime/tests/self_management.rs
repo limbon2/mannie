@@ -48,7 +48,7 @@ use serde_json::{Value, json};
 #[derive(Debug, Clone)]
 struct RecordedAction {
     action: String,
-    token: Option<String>,
+    token: Option<Secret>,
 }
 
 /// A fake plugin management provider that accepts a `save_item` action with a
@@ -178,10 +178,7 @@ impl ManagementProvider for DemoManagementProvider {
                     .and_then(Value::as_str)
                     .unwrap_or("unnamed")
                     .to_owned();
-                let token = request
-                    .secrets
-                    .get("token")
-                    .map(|secret| secret.expose().to_owned());
+                let token = request.secrets.get("token").cloned();
                 self.items.lock().expect("items mutex").push(name.clone());
                 self.recorded
                     .lock()
@@ -522,7 +519,7 @@ fn assert_absent_from_sqlite_files(db_path: &Path, needle: &str) {
         if let Ok(content) = std::fs::read(&path) {
             assert!(
                 !content.windows(bytes.len()).any(|window| window == bytes),
-                "planted secret {needle:?} leaked into {}",
+                "planted secret leaked into {}",
                 path.display()
             );
         }
@@ -771,13 +768,21 @@ async fn verify_card_secret_path(
 
     let recorded = demo.recorded();
     assert_eq!(recorded.len(), 1);
-    assert_eq!(recorded[0].token.as_deref(), Some(card_secret));
+    assert!(
+        recorded[0].token.as_ref().map(Secret::expose) == Some(card_secret),
+        "provider must receive the card secret"
+    );
     assert_absent_from_sqlite_files(db_path, card_secret);
     let call_json = serde_json::to_string(&call).expect("serialize call view");
-    assert!(!call_json.contains(card_secret), "{call_json}");
+    assert!(
+        !call_json.contains(card_secret),
+        "card secret leaked into the call view"
+    );
     for req in harness.model.requests_for("CARD:") {
-        let req_debug = format!("{req:?}");
-        assert!(!req_debug.contains(card_secret), "{req_debug}");
+        assert!(
+            !format!("{req:?}").contains(card_secret),
+            "card secret leaked into a model request"
+        );
     }
 }
 
@@ -845,13 +850,21 @@ async fn verify_chat_secret_and_override_paths(
 
     let recorded = demo.recorded();
     assert_eq!(recorded.len(), 3);
-    assert_eq!(recorded[1].token.as_deref(), Some(chat_secret));
-    assert_eq!(recorded[2].token.as_deref(), Some(override_secret));
+    assert!(
+        recorded[1].token.as_ref().map(Secret::expose) == Some(chat_secret),
+        "provider must receive the chat secret"
+    );
+    assert!(
+        recorded[2].token.as_ref().map(Secret::expose) == Some(override_secret),
+        "provider must receive the card override"
+    );
     for leaked in [chat_secret, override_secret, "CHAT-REPLACED-666444"] {
         assert_absent_from_sqlite_files(db_path, leaked);
         for req in harness.model.requests_for("CHATSECRET:") {
-            let debug = format!("{req:?}");
-            assert!(!debug.contains(leaked), "secret {leaked} leaked in {debug}");
+            assert!(
+                !format!("{req:?}").contains(leaked),
+                "planted secret leaked into a model request"
+            );
         }
     }
 }

@@ -7,3 +7,7 @@ Each change to the plugin adds one line under Unreleased, below its kind of chan
 ### Added
 
 - Add a self-management provider exposing redacted inspection and chat-driven actions for collections, folders, requests, environments, global variables, and cookies ([ADR-0081](../../docs/adr/0081-let-agents-inspect-and-configure-mannie.md)).
+
+### Fixed
+
+- Align OpenAPI YAML node counting with JSON by counting value nodes and charging mapping keys against the expanded-size limit, allowing large specifications such as GitLab's `openapi_v3.yaml` to import within the ADR-0075 safety bounds.

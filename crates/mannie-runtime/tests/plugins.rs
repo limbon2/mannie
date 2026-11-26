@@ -905,7 +905,10 @@ async fn a_point_without_a_consumer_refuses_the_plugin_and_names_the_point() {
     harness.wait_for_run(&conversation, &run).await;
 
     assert_eq!((refused.point, refused.code), ("things", NO_CONSUMER));
-    assert!(refused.detail.contains("things"), "{}", refused.detail);
+    assert!(
+        refused.detail.contains("things"),
+        "refusal must name things"
+    );
     // The plugin's entries of the points that have a consumer did not join
     // either.
     assert!(!remove_plugin(&harness.runtime, PLUGIN));
