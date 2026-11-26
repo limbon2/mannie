@@ -9,10 +9,10 @@ use mannie_types::images::ImageData;
 use mannie_types::ipc::{ChannelBatch, CommandError};
 use mannie_types::tools::{
     AnswerQuestion, BackgroundCommandView, CommandOutputUpdate, CommandRule, ConversationGrant,
-    DecideApproval, GrantRef, ProgramRule, ProgramRuleRef, ReadToolImage, ReadToolOutput,
-    RemoteCommandRule, RemoteRuleRef, RuleRef, SetFullAccess, SharedGrant, SharedGrantRef,
-    StopBackgroundCommand, SubscribeCommandOutput, TerminalCommandRule, TerminalRuleRef,
-    ToolOutputPage, ToolsError, ToolsSettings, UpdateToolsSettings,
+    DecideApproval, DecideConfigApproval, GrantRef, ProgramRule, ProgramRuleRef, ReadToolImage,
+    ReadToolOutput, RemoteCommandRule, RemoteRuleRef, RuleRef, SetFullAccess, SharedGrant,
+    SharedGrantRef, StopBackgroundCommand, SubscribeCommandOutput, TerminalCommandRule,
+    TerminalRuleRef, ToolOutputPage, ToolsError, ToolsSettings, UpdateToolsSettings,
 };
 use mannie_types::transcript::SubscriptionId;
 use tauri::State;
@@ -50,6 +50,25 @@ pub(crate) async fn decide_approval(
         .decide_approval(input)
         .await
         .map_err(refused("decide_approval"))
+}
+
+/// The owner's one-time decision on a configuration approval, optionally
+/// carrying masked secrets entered directly on the approval card (ADR-0081).
+/// Master-only and never logs or persists secret values.
+#[tauri::command]
+#[specta::specta]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri hands command arguments over by value"
+)]
+pub(crate) fn decide_config_approval(
+    core: State<'_, Core>,
+    input: DecideConfigApproval,
+) -> Result<(), CommandError<ToolsError>> {
+    runtime(&core)
+        .map_err(refused("decide_config_approval"))?
+        .decide_config_approval(input)
+        .map_err(refused("decide_config_approval"))
 }
 
 /// The owner's reply to the questions of a call of `ask_owner` (ADR-0058). The

@@ -232,6 +232,11 @@ impl Git {
         }
     }
 
+    /// The cached git version if a git run has already probed it.
+    pub(crate) fn cached_version(&self) -> Option<Version> {
+        self.version.get().copied()
+    }
+
     /// git's version, found once with a run in `folder`. A git that is
     /// missing or too old fails every run; neither is kept, so installing a
     /// newer git helps at once.

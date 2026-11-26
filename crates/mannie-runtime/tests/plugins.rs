@@ -34,6 +34,10 @@ use mannie_plugin_sdk::points::context::{
 };
 use mannie_plugin_sdk::points::executors::{Executors, TaskExecutor};
 use mannie_plugin_sdk::points::images::{ImageSource, ImageSources, SourcedImage};
+use mannie_plugin_sdk::points::management::{
+    ActionResult, ExecuteActionRequest, Management, ManagementError, ManagementGuide,
+    ManagementProvider, ManagementSnapshot, PluginManagement, PrepareActionRequest, PreparedAction,
+};
 use mannie_plugin_sdk::points::mentions::{
     MentionContent, MentionContext, MentionProvider, Mentions, ProviderSuggestions, RenderedMention,
 };
@@ -466,6 +470,54 @@ impl ContextProvider for Shelf {
     }
 }
 
+/// A minimal management provider that reports a guide and refuses unknown actions.
+#[derive(Debug)]
+struct FakeManagement;
+
+impl ManagementProvider for FakeManagement {
+    fn guide(&self) -> ManagementGuide {
+        ManagementGuide {
+            summary: "Fake plugin management provider.".to_owned(),
+            storage: "No persistent storage.".to_owned(),
+            troubleshooting: "No diagnostics needed.".to_owned(),
+            actions: Vec::new(),
+        }
+    }
+
+    fn inspect(
+        &self,
+        _topic: Option<String>,
+    ) -> BoxFuture<'static, Result<ManagementSnapshot, ManagementError>> {
+        futures_util::future::ready(Ok(ManagementSnapshot::new(
+            "Fake status",
+            serde_json::json!({ "ok": true }),
+        )))
+        .boxed()
+    }
+
+    fn prepare_action(
+        &self,
+        request: PrepareActionRequest,
+    ) -> BoxFuture<'static, Result<PreparedAction, ManagementError>> {
+        futures_util::future::ready(Err(ManagementError::new(
+            "unknown_action",
+            format!("unknown action {}", request.action),
+        )))
+        .boxed()
+    }
+
+    fn execute_action(
+        &self,
+        request: ExecuteActionRequest,
+    ) -> BoxFuture<'static, Result<ActionResult, ManagementError>> {
+        futures_util::future::ready(Err(ManagementError::new(
+            "unknown_action",
+            format!("unknown action {}", request.action),
+        )))
+        .boxed()
+    }
+}
+
 /// The contributions of a plugin to every point of the SDK, with the image
 /// source `source`. The plugin's ID is the fake executor's kind.
 fn every_point(source: &'static str) -> Contributions {
@@ -482,6 +534,10 @@ fn every_point(source: &'static str) -> Contributions {
         .add::<TerminalHosts>(PluginTerminalHostSource::new(
             FAKE_EXECUTOR_KIND,
             Arc::new(OneHost),
+        ))
+        .add::<Management>(PluginManagement::new(
+            FAKE_EXECUTOR_KIND,
+            Arc::new(FakeManagement),
         ))
 }
 
@@ -745,6 +801,13 @@ async fn reached(harness: &Harness, marker: &str) -> Vec<&'static str> {
         (ToolSources::NAME, tools.contains(&PUBLISHED.to_owned())),
         (ContextProviders::NAME, context),
         (TerminalHosts::NAME, lists_terminal_host(harness).await),
+        (
+            Management::NAME,
+            harness
+                .runtime
+                .management_provider(FAKE_EXECUTOR_KIND)
+                .is_some(),
+        ),
     ];
     offered
         .into_iter()
@@ -842,7 +905,10 @@ async fn a_point_without_a_consumer_refuses_the_plugin_and_names_the_point() {
     harness.wait_for_run(&conversation, &run).await;
 
     assert_eq!((refused.point, refused.code), ("things", NO_CONSUMER));
-    assert!(refused.detail.contains("things"), "{}", refused.detail);
+    assert!(
+        refused.detail.contains("things"),
+        "refusal must name things"
+    );
     // The plugin's entries of the points that have a consumer did not join
     // either.
     assert!(!remove_plugin(&harness.runtime, PLUGIN));

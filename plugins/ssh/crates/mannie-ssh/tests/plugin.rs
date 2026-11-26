@@ -503,3 +503,147 @@ async fn a_host_whose_password_could_not_be_kept_is_not_registered() {
     assert_eq!(refused, "ssh.credential_store_unavailable");
     assert_eq!(added["name"], "build-box");
 }
+
+async fn run_ssh_action(
+    provider: &dyn mannie_plugin_sdk::points::management::ManagementProvider,
+    action: &str,
+    arguments: Value,
+    secrets: std::collections::BTreeMap<String, mannie_plugin_sdk::contracts::Secret>,
+) -> (
+    mannie_plugin_sdk::points::management::PreparedAction,
+    mannie_plugin_sdk::points::management::ActionResult,
+) {
+    use mannie_plugin_sdk::points::management::{ExecuteActionRequest, PrepareActionRequest};
+
+    let provided_secrets = secrets.keys().cloned().collect();
+    let prepared = provider
+        .prepare_action(PrepareActionRequest {
+            action: action.to_owned(),
+            arguments,
+            provided_secrets,
+        })
+        .await
+        .expect("ssh management action prepare succeeded");
+    let result = provider
+        .execute_action(ExecuteActionRequest {
+            action: action.to_owned(),
+            arguments: prepared.canonical_arguments.clone(),
+            secrets,
+        })
+        .await
+        .expect("ssh management action execute succeeded");
+    (prepared, result)
+}
+
+#[tokio::test]
+async fn management_provider_adds_scans_trusts_and_tests_host_without_exposing_password() {
+    use std::collections::BTreeMap;
+
+    use mannie_plugin_sdk::contracts::Secret;
+
+    let secrets = FakeSecrets::new();
+    let hosted = hosted(&secrets).await;
+    let server = server(Options::default()).await;
+    let planted_password = "SSH-Planted-Management-Secret-991";
+
+    let provider = hosted
+        .runtime()
+        .management_provider(SSH)
+        .expect("SSH plugin registers a management provider");
+
+    let mut add_secrets = BTreeMap::new();
+    add_secrets.insert(
+        "password".to_owned(),
+        Secret::new(planted_password.to_owned()),
+    );
+    let (prepared_add, add_result) = run_ssh_action(
+        provider.as_ref(),
+        "add_host",
+        json!({
+            "name": "managed-box",
+            "address": "127.0.0.1",
+            "port": server.port(),
+            "username": USERNAME,
+            "note": "Managed from chat",
+        }),
+        add_secrets,
+    )
+    .await;
+    assert!(prepared_add.security_sensitive);
+    assert_eq!(prepared_add.secret_fields.len(), 1);
+    assert_eq!(prepared_add.secret_fields[0].key, "password");
+    assert!(prepared_add.secret_fields[0].required);
+    assert!(prepared_add.secret_fields[0].provided_in_chat);
+
+    let host_id = add_result
+        .data
+        .as_ref()
+        .and_then(|data| data["id"].as_str())
+        .expect("host id returned")
+        .to_owned();
+    assert_eq!(
+        secrets
+            .stored(&format!("ssh/host/{host_id}"))
+            .expect("password stored")
+            .expose(),
+        planted_password
+    );
+    assert!(
+        !serde_json::to_string(&add_result)
+            .unwrap()
+            .contains(planted_password),
+        "add_host result must not contain the password"
+    );
+
+    let snapshot = provider.inspect(None).await.expect("inspect succeeds");
+    assert!(
+        !serde_json::to_string(&snapshot)
+            .unwrap()
+            .contains(planted_password),
+        "inspect snapshot must not contain the password"
+    );
+    assert_eq!(snapshot.data["count"], 1);
+
+    let (prepared_scan, scan_result) = run_ssh_action(
+        provider.as_ref(),
+        "scan_host_key",
+        json!({ "hostId": host_id }),
+        BTreeMap::new(),
+    )
+    .await;
+    assert!(!prepared_scan.security_sensitive);
+    let fingerprint = scan_result.data.as_ref().unwrap()["key"]["fingerprint"]
+        .as_str()
+        .expect("fingerprint scanned")
+        .to_owned();
+
+    let (prepared_trust, trust_result) = run_ssh_action(
+        provider.as_ref(),
+        "trust_host_key",
+        json!({ "hostId": host_id, "fingerprint": fingerprint }),
+        BTreeMap::new(),
+    )
+    .await;
+    assert!(prepared_trust.security_sensitive);
+    assert_eq!(trust_result.data.as_ref().unwrap()["status"], "ready");
+
+    // Update password to server's actual PASSWORD so test_host succeeds.
+    let mut update_secrets = BTreeMap::new();
+    update_secrets.insert("password".to_owned(), Secret::new(PASSWORD.to_owned()));
+    run_ssh_action(
+        provider.as_ref(),
+        "update_host",
+        json!({ "hostId": host_id }),
+        update_secrets,
+    )
+    .await;
+
+    let (_, test_result) = run_ssh_action(
+        provider.as_ref(),
+        "test_host",
+        json!({ "hostId": host_id }),
+        BTreeMap::new(),
+    )
+    .await;
+    assert_eq!(test_result.data.as_ref().unwrap()["ok"], true);
+}

@@ -18,6 +18,7 @@ pub mod executor;
 mod follow;
 pub mod hub;
 pub mod keys;
+mod management;
 pub mod plugin;
 mod schema;
 pub mod store;

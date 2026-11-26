@@ -171,6 +171,9 @@ pub enum Refusal {
     /// A worker performs no Proxmox VM or VNC operations, for the same reason
     /// (ADR-0080, decision 5).
     NoProxmox,
+    /// A worker cannot inspect or mutate Mannie's master configuration
+    /// (ADR-0081).
+    NoAppConfig,
 }
 
 /// Why an operation that was executing ended without its result while the
@@ -428,6 +431,11 @@ fn view_access(access: &Access) -> Access {
             summary_cut,
             ..
         } => cut_text_for_view(summary, summary_cut),
+        Access::AppConfig {
+            payload,
+            payload_cut,
+            ..
+        } => cut_text_for_view(payload, payload_cut),
         _uncut => {}
     }
 
@@ -706,6 +714,41 @@ mod tests {
         assert!(long.starts_with(shown.as_str()));
         assert_eq!(view.accesses[1], network_request("{}".to_owned()));
         assert_eq!(document.accesses[0], network_request(long));
+    }
+
+    #[test]
+    fn the_view_cuts_a_long_app_config_payload_and_keeps_the_document_whole() {
+        let long = format!("{{\"note\":\"{}\"}}", "é".repeat(MAX_VIEW_ARGUMENTS_BYTES));
+        let make = |payload: String| Access::AppConfig {
+            owner: "core".to_owned(),
+            domain: "chat".to_owned(),
+            action: "update_settings".to_owned(),
+            title: "Update chat settings".to_owned(),
+            fields: Vec::new(),
+            secret_fields: Vec::new(),
+            security_sensitive: false,
+            payload,
+            payload_cut: false,
+        };
+        let mut document =
+            ToolCallDocument::receiving("call_1".to_owned(), "mannie_configure".to_owned());
+        document.accesses = vec![make(long.clone()), make("{}".to_owned())];
+
+        let view = document.view("{}");
+
+        let Access::AppConfig {
+            payload: shown,
+            payload_cut,
+            ..
+        } = &view.accesses[0]
+        else {
+            panic!("not an app config access: {:?}", view.accesses[0]);
+        };
+        assert!(*payload_cut);
+        assert!(shown.len() <= MAX_VIEW_ARGUMENTS_BYTES);
+        assert!(long.starts_with(shown.as_str()));
+        assert_eq!(view.accesses[1], make("{}".to_owned()));
+        assert_eq!(document.accesses[0], make(long));
     }
 
     #[test]

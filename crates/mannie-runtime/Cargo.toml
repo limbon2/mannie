@@ -218,6 +218,13 @@ required-features = ["testing"]
 name = "chatgpt"
 required-features = ["testing"]
 
+# Self-awareness, read-only diagnostics, redacted log reading and chat-driven
+# self-configuration with masked approval-card secrets and scrubbed throwaway
+# secrets (ADR-0081).
+[[test]]
+name = "self_management"
+required-features = ["testing"]
+
 [dependencies]
 # The bytes of a stored image as `read_image` returns them (ADR-0033).
 base64 = { workspace = true }

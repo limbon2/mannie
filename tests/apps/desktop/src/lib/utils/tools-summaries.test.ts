@@ -508,5 +508,35 @@ describe('helpers', () => {
   it('gives an unknown tool the generic icon', () => {
     expect(toolIcon('translate')).toBe(toolIcon('another_unknown_tool'));
     expect(toolIcon('read_file')).not.toBe(toolIcon('translate'));
+    expect(toolIcon('mannie_inspect')).not.toBe(toolIcon('translate'));
+    expect(toolIcon('mannie_read_logs')).not.toBe(toolIcon('translate'));
+    expect(toolIcon('mannie_configure')).not.toBe(toolIcon('translate'));
+  });
+
+  it('summarizes mannie_inspect, mannie_read_logs and mannie_configure calls and outcomes', () => {
+    expect(callSummary(call('mannie_inspect', { target: 'ssh', topic: 'plugin' }))).toContain('ssh');
+    expect(callSummary(call('mannie_inspect', { target: null, topic: 'overview' }))).toContain('overview');
+    expect(callSummary(call('mannie_read_logs', {}))).toContain('logs');
+    expect(
+      callSummary(
+        call(
+          'mannie_configure',
+          { action: 'add_host', target: 'ssh' },
+          {
+            result: result({ action: 'add_host', domain: 'ssh', kind: 'mannie_configure', owner: 'ssh' }),
+            status: 'completed',
+          },
+        ),
+      ),
+    ).toContain('add_host');
+    expect(
+      callSummary(
+        call(
+          'mannie_read_logs',
+          {},
+          { result: result({ entries: 12, kind: 'mannie_logs', truncated: true }), status: 'completed' },
+        ),
+      ),
+    ).toContain('12');
   });
 });

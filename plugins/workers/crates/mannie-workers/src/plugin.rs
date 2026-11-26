@@ -25,6 +25,7 @@ use mannie_plugin_sdk::error::{FEATURE_UNKNOWN, StartFailure};
 use mannie_plugin_sdk::ipc::{Handlers, Interface, PluginError, PluginStream};
 use mannie_plugin_sdk::plugin::{FeatureStarted, Instance, Plugin, Started};
 use mannie_plugin_sdk::points::executors::Executors;
+use mannie_plugin_sdk::points::management::{Management, PluginManagement};
 use mannie_plugin_sdk::services::credentials::Credentials;
 use mannie_plugin_sdk::services::executor_host::ExecutorHost;
 use mannie_plugin_sdk::services::secrets::Secrets;
@@ -39,6 +40,7 @@ use crate::databases::{self, DATABASES};
 use crate::executor::WorkersExecutor;
 use crate::hub::{Hub, HubConfig};
 use crate::keys::SecretsKeyStore;
+use crate::management::{WORKERS, WorkersManagement};
 use crate::store::{WORKERS_MODULE, WorkersStore, has_paired_workers};
 use crate::view::{WorkerListUpdate, WorkerView};
 
@@ -179,7 +181,12 @@ impl Plugin for WorkersPlugin {
             let executor = WorkersExecutor::new(host, credentials, Arc::new(hub.clone()), clock);
             executor.start();
             tracing::info!("the Workers plugin started");
-            let contributions = Contributions::new().add::<Executors>(Arc::new(executor.clone()));
+            let contributions = Contributions::new()
+                .add::<Executors>(Arc::new(executor.clone()))
+                .add::<Management>(PluginManagement::new(
+                    WORKERS,
+                    Arc::new(WorkersManagement::new(hub.clone())),
+                ));
             let handlers = handlers(&hub);
             let instance = WorkersInstance { hub, executor };
             Ok(Started::new(instance)

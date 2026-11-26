@@ -70,6 +70,7 @@
   /** Whether an access has no CodeBlock header of its own, so the section label introduces it. */
   function lacksBlockHeader(access: Access): boolean {
     switch (access.kind) {
+      case 'app_config':
       case 'browser_action':
       case 'browser_control':
       case 'network_request':

@@ -8,6 +8,7 @@ import CirclePlayIcon from '@lucide/svelte/icons/circle-play';
 import CircleStopIcon from '@lucide/svelte/icons/circle-stop';
 import ClipboardListIcon from '@lucide/svelte/icons/clipboard-list';
 import CopyIcon from '@lucide/svelte/icons/copy';
+import FileClockIcon from '@lucide/svelte/icons/file-clock';
 import FileOutputIcon from '@lucide/svelte/icons/file-output';
 import FilePenIcon from '@lucide/svelte/icons/file-pen';
 import FilePenLineIcon from '@lucide/svelte/icons/file-pen-line';
@@ -21,7 +22,9 @@ import MessageCircleQuestionMarkIcon from '@lucide/svelte/icons/message-circle-q
 import MonitorIcon from '@lucide/svelte/icons/monitor';
 import MoveIcon from '@lucide/svelte/icons/move';
 import ScrollTextIcon from '@lucide/svelte/icons/scroll-text';
+import Settings2Icon from '@lucide/svelte/icons/settings-2';
 import SquareTerminalIcon from '@lucide/svelte/icons/square-terminal';
+import StethoscopeIcon from '@lucide/svelte/icons/stethoscope';
 import TextSearchIcon from '@lucide/svelte/icons/text-search';
 import Trash2Icon from '@lucide/svelte/icons/trash-2';
 import WrenchIcon from '@lucide/svelte/icons/wrench';
@@ -66,6 +69,9 @@ const ICONS: Readonly<Record<string, Component>> = {
   file_info: InfoIcon,
   find_files: FileSearchIcon,
   list_directory: FolderOpenIcon,
+  mannie_configure: Settings2Icon,
+  mannie_inspect: StethoscopeIcon,
+  mannie_read_logs: FileClockIcon,
   move_path: MoveIcon,
   move_to_project: FolderInputIcon,
   read_file: FileTextIcon,
@@ -280,6 +286,15 @@ function toolLabel(tool: string): string {
     case 'list_directory': {
       return m.tools_tool_list_directory();
     }
+    case 'mannie_configure': {
+      return m.tools_tool_mannie_configure();
+    }
+    case 'mannie_inspect': {
+      return m.tools_tool_mannie_inspect();
+    }
+    case 'mannie_read_logs': {
+      return m.tools_tool_mannie_read_logs();
+    }
     case 'move_path': {
       return m.tools_tool_move_path();
     }
@@ -359,6 +374,28 @@ function intentSummary(call: ToolCallView): string {
     }
     case 'list_directory': {
       return path === null ? m.tools_call_list_workspace() : m.tools_call_list_directory({ path });
+    }
+    case 'mannie_configure': {
+      const configAccess = call.accesses.find((candidate) => candidate.kind === 'app_config');
+      if (configAccess?.kind === 'app_config') {
+        return configAccess.title;
+      }
+      const target = argumentText(values, 'target');
+      const action = argumentText(values, 'action');
+      const hasTarget = target !== null;
+      const hasAction = action !== null;
+      return hasTarget && hasAction ? m.tools_call_mannie_configure({ action, domain: target }) : toolLabel(call.tool);
+    }
+    case 'mannie_inspect': {
+      const target = argumentText(values, 'target');
+      if (target !== null) {
+        return m.tools_call_mannie_inspect_target({ target });
+      }
+      const topic = argumentText(values, 'topic');
+      return topic === null ? toolLabel(call.tool) : m.tools_call_mannie_inspect({ topic });
+    }
+    case 'mannie_read_logs': {
+      return m.tools_call_mannie_read_logs();
     }
     case 'move_path': {
       return hasEnds ? m.tools_call_move_path({ destination, source }) : toolLabel(call.tool);
@@ -526,6 +563,20 @@ function outcomeSummary(outcome: ToolOutcome): string | null {
     }
     case 'listed': {
       return m.tools_done_listed({ path: outcome.path, shown: outcome.shown, total: outcome.total });
+    }
+    case 'mannie_configure': {
+      return m.tools_done_mannie_configure({ action: outcome.action, domain: outcome.domain });
+    }
+    case 'mannie_inspect': {
+      const target = outcome.target ?? null;
+      return target === null
+        ? m.tools_done_mannie_inspect({ topic: outcome.topic })
+        : m.tools_done_mannie_inspect_target({ target });
+    }
+    case 'mannie_logs': {
+      return outcome.truncated
+        ? m.tools_done_mannie_logs_truncated({ entries: outcome.entries })
+        : m.tools_done_mannie_logs({ entries: outcome.entries });
     }
     case 'moved': {
       return m.tools_done_moved({ destination: outcome.destination, source: outcome.source });

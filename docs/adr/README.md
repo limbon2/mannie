@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                           |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Living index                                                                                                                                                                              |
-| Last updated | 2026-11-24                                                                                                                                                                                |
+| Last updated | 2026-11-26                                                                                                                                                                                |
 | Related      | [ADR-0001](0001-record-architecture-decisions.md), [Template](0000-template.md), [Decisions](../roadmap/milestones.md#5-decisions), [Validations](../roadmap/milestones.md#4-validations) |
 
 [ADR-0001](0001-record-architecture-decisions.md) describes the process, and new ADRs start from the [template](0000-template.md).
@@ -96,3 +96,4 @@ Each ADR has exactly one of these statuses:
 | [0078](0078-let-plugins-run-installed-programs-for-owner-actions.md)                   | Let plugins run installed programs for owner actions in projects                              | Accepted (D72)         | Tests      |
 | [0079](0079-highlight-code-with-shiki-and-css-classes.md)                              | Highlight code and shell commands with Shiki mapped to CSS classes                            | Accepted (D73)         | Continuous |
 | [0080](0080-let-plugins-manage-proxmox-vms-and-vnc-consoles.md)                        | Let plugins manage Proxmox VMs and VNC consoles                                               | Accepted (D74)         | V16        |
+| [0081](0081-let-agents-inspect-and-configure-mannie.md)                                | Let agents inspect and configure Mannie from chat                                             | Accepted (D75)         | V17        |

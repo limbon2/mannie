@@ -67,6 +67,12 @@ pub enum ApprovalReason {
     /// A live VNC console operation on an allowed Proxmox VM, which no grant
     /// allows (ADR-0080, decision 5).
     ProxmoxVnc,
+    /// A configuration change to Mannie or a plugin, which always asks
+    /// (ADR-0081).
+    AppConfig,
+    /// A security-sensitive configuration change to Mannie or a plugin, such
+    /// as altering trust pins, credentials or safety settings (ADR-0081).
+    AppConfigSecurity,
 }
 
 /// What a grant covers.
@@ -357,6 +363,30 @@ pub struct DecideApproval {
     pub choice: ApprovalChoice,
 }
 
+/// The argument of `decide_config_approval`, the master-only command for
+/// approving or denying an [`Access::AppConfig`](super::Access::AppConfig)
+/// request with optional owner-entered secrets (ADR-0081).
+///
+/// This type intentionally never implements `Serialize`, so secrets entered on
+/// the local approval card arrive once from the desktop UI and cannot leave the
+/// core over IPC or the Workers link.
+#[derive(Debug, Deserialize, Type)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DecideConfigApproval {
+    /// The conversation.
+    pub conversation_id: ConversationId,
+    /// The tool call's part.
+    pub part_id: PartId,
+    /// The digest of the request the owner answers.
+    pub digest: String,
+    /// Whether the owner allows this configuration action once.
+    pub allow: bool,
+    /// Masked secret values entered by the owner on the approval card, keyed by
+    /// [`ConfigSecretField::key`](super::ConfigSecretField::key).
+    #[serde(default)]
+    pub secrets: std::collections::BTreeMap<String, crate::secret::Secret>,
+}
+
 /// What allowed or denied an operation, and when.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
@@ -468,5 +498,25 @@ mod tests {
             assert!(Decision::of_choice(choice).allows(), "{choice:?}");
         }
         assert!(!Decision::of_choice(&ApprovalChoice::Deny).allows());
+    }
+
+    #[test]
+    fn config_approval_deserializes_secrets_and_redacts_debug() {
+        let secret_text = "planted-config-card-secret-987654";
+        let decision: super::DecideConfigApproval = serde_json::from_value(serde_json::json!({
+            "conversationId": "0199e0f2-0000-7000-8000-000000000001",
+            "partId": "0199e0f2-0000-7000-8000-000000000002",
+            "digest": "abcdef",
+            "allow": true,
+            "secrets": {
+                "password": secret_text
+            }
+        }))
+        .unwrap();
+
+        assert!(decision.allow);
+        assert_eq!(decision.secrets["password"].expose(), secret_text);
+        let formatted = format!("{decision:?}");
+        assert!(!formatted.contains(secret_text), "{formatted}");
     }
 }

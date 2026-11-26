@@ -77,6 +77,7 @@ use crate::attachments;
 use crate::plans::SAVE_PLAN;
 use crate::plugins::Snapshot;
 use crate::questions::ASK_OWNER;
+use crate::self_management::SELF_MANAGEMENT_TOOLS;
 use crate::sqlite_files::{
     checked_worker_database, engine_error, engine_values, parameters_digest,
 };
@@ -270,6 +271,7 @@ fn fixed_names(registry: &ToolRegistry, snapshot: &Snapshot) -> HashSet<String> 
     let tasks = TASK_TOOLS
         .iter()
         .chain([&ASK_OWNER, &SAVE_PLAN])
+        .chain(SELF_MANAGEMENT_TOOLS.iter())
         .map(|name| (*name).to_owned());
     let executors = snapshot
         .items::<Executors>()
@@ -445,6 +447,7 @@ pub(crate) fn check_plugin_tools<'a>(
             || TASK_TOOLS.contains(&name)
             || name == ASK_OWNER
             || name == SAVE_PLAN
+            || SELF_MANAGEMENT_TOOLS.contains(&name)
             || plugin_tools.contains(&name)
             || executor_tools.contains(&name)
             || names.contains(&name);
@@ -2087,7 +2090,10 @@ fn sdk_access(access: &Access) -> Option<ToolAccess> {
             sdk_network_request(access).map(ToolAccess::NetworkRequest)
         }
         Access::ProxmoxVm { .. } => sdk_proxmox_vm(access).map(ToolAccess::ProxmoxVm),
-        Access::Command { .. } | Access::Project { .. } | Access::Database { .. } => None,
+        Access::Command { .. }
+        | Access::Project { .. }
+        | Access::Database { .. }
+        | Access::AppConfig { .. } => None,
     }
 }
 

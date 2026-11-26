@@ -54,7 +54,7 @@ pub use runtime::{
     TaskExecution, TaskOrigin, UncertainCall,
 };
 pub use settings::SettingsStoreError;
-pub use store::{Store, StoreOptions};
+pub use store::{Store, StoreDiagnostics, StoreOptions};
 pub use tools::{
     NewProgramOperation, ProgramOperationError, ProgramOperationState, ToolsStoreError,
 };

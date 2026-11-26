@@ -429,6 +429,22 @@ pub(crate) fn mentions(call: &ToolCallView, needle: &str) -> bool {
                 || action.contains(needle)
                 || summary.contains(needle)
         }
+        Access::AppConfig {
+            owner,
+            domain,
+            action,
+            title,
+            fields,
+            ..
+        } => {
+            owner.contains(needle)
+                || domain.contains(needle)
+                || action.contains(needle)
+                || title.contains(needle)
+                || fields
+                    .iter()
+                    .any(|field| field.label.contains(needle) || field.value.contains(needle))
+        }
     });
     in_arguments || in_accesses
 }
@@ -718,7 +734,8 @@ fn owner_choice(task: &Task, call: &ToolCallView) -> ApprovalChoice {
             | Access::BrowserControl { .. }
             | Access::BrowserAction { .. }
             | Access::NetworkRequest { .. }
-            | Access::ProxmoxVm { .. } => false,
+            | Access::ProxmoxVm { .. }
+            | Access::AppConfig { .. } => false,
         });
 
     if allowed {

@@ -18,6 +18,7 @@ image = { workspace = true }
 # plugin's source implements (ADR-0034, decisions 2 and 4).
 mannie-plugin-sdk = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 # The plugin's IPC types, from which the desktop app generates bindings
 # (ADR-0007).
 specta = { workspace = true }

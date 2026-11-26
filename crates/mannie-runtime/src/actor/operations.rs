@@ -9,6 +9,7 @@
 //! conversation run one at a time, and a run holds no model slot while its
 //! tools run or wait.
 
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -24,6 +25,7 @@ use mannie_types::ceiling::CeilingMode;
 use mannie_types::context::Attachment;
 use mannie_types::ids::ProjectId;
 use mannie_types::run::{RunActivity, RunFailure};
+use mannie_types::secret::Secret;
 use mannie_types::tools::{
     Access, ApprovalChoice, ApprovalReason, ApprovalRequest, ArchiveRef, CommandRule, Decision,
     GrantScope, Interruption, NotRunReason, ProcessRecord, ProgramRule, Refusal, RemoteCommandRule,
@@ -41,6 +43,7 @@ use crate::plans::{self, SAVE_PLAN};
 use crate::policy::PolicyGrants;
 use crate::projects::Moves;
 use crate::questions::{self, ASK_OWNER};
+use crate::self_management::{ConfigSecrets, MANNIE_CONFIGURE, SecretGuard};
 use crate::tool_images;
 
 /// How a tool call ended, for the calls after it in the same step.
@@ -83,16 +86,32 @@ enum Unprepared {
     Failed(Done),
 }
 
-/// The owner's choice and the decision that an answer to an approval gives.
-fn decision_of(answer: Answer) -> (Option<ApprovalChoice>, Decision) {
+/// The owner's choice, the decision and any approval-card secrets that an
+/// answer to an approval gives.
+fn decision_of(
+    answer: Answer,
+) -> (
+    Option<ApprovalChoice>,
+    Decision,
+    Option<BTreeMap<String, Secret>>,
+) {
     match answer {
         Answer::Owner(choice) => {
             let decision = Decision::of_choice(&choice);
-            (Some(choice), decision)
+            (Some(choice), decision, None)
+        }
+        Answer::ConfigApproval { allow, secrets } => {
+            let choice = if allow {
+                ApprovalChoice::AllowOnce
+            } else {
+                ApprovalChoice::Deny
+            };
+            let decision = Decision::of_choice(&choice);
+            (Some(choice), decision, allow.then_some(secrets))
         }
         // Full access allows this call once; it grants nothing longer and
         // saves no rule (ADR-0029, decision 5).
-        Answer::FullAccess => (None, Decision::FullAccess),
+        Answer::FullAccess => (None, Decision::FullAccess, None),
     }
 }
 
@@ -228,6 +247,31 @@ impl RunActor {
         Ok(tool)
     }
 
+    fn begin_config_secrets(&self, call: &mut StepCall) -> Option<SecretGuard> {
+        (call.document.tool == MANNIE_CONFIGURE).then(|| {
+            ConfigSecrets::begin(
+                self.runtime.clone(),
+                self.conversation.clone(),
+                call.part_id.clone(),
+                std::mem::take(&mut call.secrets),
+            )
+        })
+    }
+
+    fn record_owner_config_secrets(
+        &self,
+        call: &StepCall,
+        owner_secrets: Option<BTreeMap<String, Secret>>,
+    ) {
+        if call.document.tool == MANNIE_CONFIGURE {
+            self.runtime.config_secrets().set_owner_secrets(
+                &self.conversation,
+                &call.part_id,
+                owner_secrets.unwrap_or_default(),
+            );
+        }
+    }
+
     async fn run_call(&mut self, setup: &Setup, mut call: StepCall) -> Result<CallEnd, Ending> {
         let tool = match self.tool_to_run(setup, &call.document.tool) {
             Ok(tool) => tool,
@@ -241,6 +285,7 @@ impl RunActor {
         call.document.plugin = setup
             .plugin_tool(&call.document.tool)
             .map(|offered| offered.plugin.clone());
+        let _secret_guard = self.begin_config_secrets(&mut call);
         let arguments = call.arguments.clone().unwrap_or_default();
         let mut surroundings = self.surroundings(setup).await?;
         let mut accesses = match self
@@ -274,7 +319,8 @@ impl RunActor {
                     return Ok(CallEnd::Ran);
                 }
             };
-            let (choice, decision) = decision_of(self.ask(&mut call, &accesses, &request).await?);
+            let (choice, decision, owner_secrets) =
+                decision_of(self.ask(&mut call, &accesses, &request).await?);
             let decision = self
                 .remember_approval(&request, &accesses, choice.as_ref(), decision)
                 .await?;
@@ -288,6 +334,7 @@ impl RunActor {
                 self.flush(Durability::Full).await?;
                 return Ok(CallEnd::Denied);
             }
+            self.record_owner_config_secrets(&call, owner_secrets);
             // The owner may have turned off the tool's plugin while the call
             // waited, and a plugin that is off prepares nothing again
             // (ADR-0030, decision 8).
@@ -592,9 +639,9 @@ impl RunActor {
         call.document.request = Some(request.clone());
         // The request is registered before any window can see it, so a
         // decision never arrives before it.
-        let (waiting, answer) = self
-            .runtime
-            .ask_owner(&self.conversation, &call.part_id, request);
+        let (waiting, answer) =
+            self.runtime
+                .ask_owner(&self.conversation, &call.part_id, request, accesses);
         self.pending.push(call.update(Vec::new()));
         let awaiting = self.activity(RunActivity::AwaitingApproval {
             part_id: call.part_id.clone(),

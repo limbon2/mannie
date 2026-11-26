@@ -5,6 +5,7 @@
 mod api;
 pub mod commands;
 mod keysyms;
+mod management;
 mod mentions;
 pub mod model;
 mod plugin;

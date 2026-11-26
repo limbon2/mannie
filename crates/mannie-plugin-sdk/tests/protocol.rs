@@ -9,9 +9,10 @@ use std::collections::BTreeSet;
 
 use mannie_plugin_sdk::context::{HostInfo, HostProfile};
 use mannie_plugin_sdk::contracts::{
-    AccessMode, ArchiveId, CommandError, ContextLocation, DatabaseKey, ImageFormat, MentionEntry,
-    MentionSummary, ProfileSnapshot, ProxmoxVmScope, StatementClass, SubscriptionEnd,
-    TaskExecutorRef, TaskState, ToolHint, ToolServerEndpoint, WorkItem,
+    AccessMode, ArchiveId, CommandError, ConfigFieldPreview, ConfigSecretField, ContextLocation,
+    DatabaseKey, ImageFormat, MentionEntry, MentionSummary, ProfileSnapshot, ProxmoxVmScope,
+    Secret, StatementClass, SubscriptionEnd, TaskExecutorRef, TaskState, ToolHint,
+    ToolServerEndpoint, WorkItem,
 };
 use mannie_plugin_sdk::error::StartFailure;
 use mannie_plugin_sdk::ids::PluginId;
@@ -21,6 +22,10 @@ use mannie_plugin_sdk::points::context::{ContextItem, ContextRequest};
 use mannie_plugin_sdk::points::executors::{
     ExecutorRefusal, ExecutorSection, FollowUpPlan, PlanError, SubmitError, TaskPlan,
     TaskSubmission,
+};
+use mannie_plugin_sdk::points::management::{
+    ActionResult, ExecuteActionRequest, ManagementActionSpec, ManagementError, ManagementGuide,
+    ManagementSnapshot, PrepareActionRequest, PreparedAction, SecretFieldSpec,
 };
 use mannie_plugin_sdk::points::mentions::{ProviderSuggestions, ReadVerdict, RenderedMention};
 use mannie_plugin_sdk::points::sections::SectionContext;
@@ -164,6 +169,14 @@ const KNOWN_EXCEPTIONS: &[KnownException] = &[
         reason: "a plugin's secret crosses the service as `contracts::Secret`, which never \
                  serializes, for the reason of `services::credentials`; a boundary that \
                  carries the service needs a transport of its own for the secret",
+    },
+    KnownException {
+        module: "points::management",
+        reason: "a management provider is a trait object whose `ExecuteActionRequest` carries \
+                 entered secrets as `contracts::Secret`, which never serializes (ADR-0081), for \
+                 the reason of `services::credentials`; a boundary proxies the provider and \
+                 carries secrets in a transport of their own, while guides, snapshots, prepare \
+                 requests, prepared actions, results and errors cross JSON",
     },
     KnownException {
         module: "services::store",
@@ -1993,4 +2006,109 @@ fn a_sqlite_files_error_crosses_json_as_its_code_and_fields() {
     let error =
         serde_json::from_value::<SqliteFilesError>(json!({ "code": "locked" })).unwrap_err();
     assert!(error.is_data(), "{error}");
+}
+
+#[test]
+fn management_point_values_cross_json_unchanged_and_redact_execute_secrets() {
+    let guide = ManagementGuide {
+        summary: "Manages SSH hosts.".to_owned(),
+        storage: "ssh_hosts table and ssh/host/<id> keyring entries.".to_owned(),
+        troubleshooting: "Verify host key pin and port.".to_owned(),
+        actions: vec![ManagementActionSpec {
+            name: "add_host".to_owned(),
+            description: "Adds an SSH host.".to_owned(),
+            security_sensitive: true,
+            parameters: json!({
+                "type": "object",
+                "properties": { "name": { "type": "string" } },
+                "required": ["name"],
+                "additionalProperties": false
+            }),
+            secret_fields: vec![SecretFieldSpec {
+                key: "password".to_owned(),
+                label: "Password".to_owned(),
+                description: "SSH password.".to_owned(),
+                required: true,
+            }],
+        }],
+    };
+    let snapshot = ManagementSnapshot::new("1 host configured.", json!({ "hosts": [] }));
+    let prepare = PrepareActionRequest {
+        action: "add_host".to_owned(),
+        arguments: json!({ "name": "prod" }),
+        provided_secrets: vec!["password".to_owned()],
+    };
+    let prepared = PreparedAction {
+        title: "Add SSH host prod".to_owned(),
+        fields: vec![ConfigFieldPreview {
+            label: "Name".to_owned(),
+            value: "prod".to_owned(),
+        }],
+        secret_fields: vec![ConfigSecretField {
+            key: "password".to_owned(),
+            label: "Password".to_owned(),
+            required: true,
+            provided_in_chat: true,
+        }],
+        security_sensitive: true,
+        canonical_arguments: json!({ "name": "prod" }),
+    };
+    let result = ActionResult::new("Added prod.").with_data(json!({ "id": "h1" }));
+    let error = ManagementError::invalid_field("port", "port must be 1..=65535");
+
+    for (encoded, decoded_ok) in [
+        (
+            serde_json::to_value(&guide).unwrap(),
+            serde_json::from_value::<ManagementGuide>(serde_json::to_value(&guide).unwrap())
+                .unwrap()
+                == guide,
+        ),
+        (
+            serde_json::to_value(&snapshot).unwrap(),
+            serde_json::from_value::<ManagementSnapshot>(serde_json::to_value(&snapshot).unwrap())
+                .unwrap()
+                == snapshot,
+        ),
+        (
+            serde_json::to_value(&prepare).unwrap(),
+            serde_json::from_value::<PrepareActionRequest>(serde_json::to_value(&prepare).unwrap())
+                .unwrap()
+                == prepare,
+        ),
+        (
+            serde_json::to_value(&prepared).unwrap(),
+            serde_json::from_value::<PreparedAction>(serde_json::to_value(&prepared).unwrap())
+                .unwrap()
+                == prepared,
+        ),
+        (
+            serde_json::to_value(&result).unwrap(),
+            serde_json::from_value::<ActionResult>(serde_json::to_value(&result).unwrap()).unwrap()
+                == result,
+        ),
+        (
+            serde_json::to_value(&error).unwrap(),
+            serde_json::from_value::<ManagementError>(serde_json::to_value(&error).unwrap())
+                .unwrap()
+                == error,
+        ),
+    ] {
+        assert!(decoded_ok, "{encoded}");
+    }
+
+    let planted = "planted-sdk-execute-secret-55555";
+    let execute = ExecuteActionRequest {
+        action: "add_host".to_owned(),
+        arguments: json!({ "name": "prod" }),
+        secrets: std::collections::BTreeMap::from([(
+            "password".to_owned(),
+            Secret::new(planted.to_owned()),
+        )]),
+    };
+    let debug = format!("{execute:?}");
+    assert!(!debug.contains(planted), "{debug}");
+    assert_eq!(
+        execute.secret("password").map(Secret::expose),
+        Some(planted)
+    );
 }

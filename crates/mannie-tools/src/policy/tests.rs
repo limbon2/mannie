@@ -3227,3 +3227,54 @@ fn full_access_allows_proxmox_vm_actions_and_workers_refuse_them_in_every_mode()
         );
     }
 }
+
+fn app_config_access(security_sensitive: bool) -> Access {
+    Access::AppConfig {
+        owner: "ssh".to_owned(),
+        domain: "ssh".to_owned(),
+        action: "add_host".to_owned(),
+        title: "Add SSH host prod".to_owned(),
+        fields: Vec::new(),
+        secret_fields: Vec::new(),
+        security_sensitive,
+        payload: r#"{"name":"prod"}"#.to_owned(),
+        payload_cut: false,
+    }
+}
+
+#[test]
+fn app_config_always_asks_with_no_grants_or_rules_even_in_full_access() {
+    let mut inputs = Inputs::new();
+    inputs.full_access = true;
+    inputs.allow_changes_in_workspace = true;
+
+    let normal = [app_config_access(false)];
+    assert_eq!(
+        inputs.decide(&normal),
+        ask(&normal, &[ApprovalReason::AppConfig], Vec::new(), None)
+    );
+
+    let sensitive = [app_config_access(true)];
+    assert_eq!(
+        inputs.decide(&sensitive),
+        ask(
+            &sensitive,
+            &[ApprovalReason::AppConfigSecurity],
+            Vec::new(),
+            None
+        )
+    );
+}
+
+#[test]
+fn workers_refuse_app_config_in_every_mode() {
+    let access = [app_config_access(false)];
+
+    for mode in MODES.into_iter().chain([CeilingMode::FullAccess]) {
+        assert_eq!(
+            Inputs::worker(mode).decide(&access),
+            Verdict::Refused(Refusal::NoAppConfig),
+            "{mode:?}"
+        );
+    }
+}

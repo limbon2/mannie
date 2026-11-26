@@ -203,4 +203,34 @@ describe('ToolAccessList', () => {
     expect(body).not.toContain('0199e0f2');
     expect(shown([{ ...request, summaryCut: true }])).toMatch(/longer than shown/u);
   });
+
+  it('shows a configuration change with its domain, action, security badge, fields and payload', () => {
+    const config: Access = {
+      action: 'add_host',
+      domain: 'ssh',
+      fields: [
+        { label: 'Name', value: 'prod-box' },
+        { label: 'Address', value: 'deploy@10.0.0.5:22' },
+      ],
+      kind: 'app_config',
+      owner: 'ssh',
+      payload: '{"host":"10.0.0.5","name":"prod-box"}',
+      payloadCut: false,
+      secretFields: [{ key: 'password', label: 'SSH password', providedInChat: false, required: true }],
+      securitySensitive: true,
+      title: 'Add SSH host prod-box',
+    };
+    const body = shown([config]);
+
+    expect(body).toContain('data-app-config');
+    expect(body).toContain('data-app-config-security');
+    expect(body).toContain('ssh');
+    expect(body).toContain('add_host');
+    expect(body).toContain('Add SSH host prod-box');
+    expect(body).toContain('prod-box');
+    expect(body).toContain('deploy@10.0.0.5:22');
+    expect(body).toContain('10.0.0.5');
+    expect(body).not.toMatch(/longer than shown/u);
+    expect(shown([{ ...config, payloadCut: true }])).toMatch(/longer than shown/u);
+  });
 });

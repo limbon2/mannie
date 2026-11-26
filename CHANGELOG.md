@@ -4,6 +4,10 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+### Added
+
+- Add Mannie self-awareness and chat-driven self-configuration (`mannie_inspect`, `mannie_read_logs`, `mannie_configure`, `Access::AppConfig`, `decide_config_approval`, and the Plugin SDK `management` extension point) with masked approval-card secret inputs, scrubbed throwaway chat secrets, always-ask authorization even in full access, and management providers across all core domains and plugins ([ADR-0081](docs/adr/0081-let-agents-inspect-and-configure-mannie.md)).
+
 ## 0.10.0 - 2026-11-26
 
 ### Added

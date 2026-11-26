@@ -21,6 +21,7 @@ use mannie_plugin_sdk::contributions::Contributions;
 use mannie_plugin_sdk::error::StartFailure;
 use mannie_plugin_sdk::ipc::{Handlers, Interface, PluginStream};
 use mannie_plugin_sdk::plugin::{Instance, Plugin, Started};
+use mannie_plugin_sdk::points::management::{Management, PluginManagement};
 use mannie_plugin_sdk::points::mentions::{MentionProvider, Mentions};
 use mannie_plugin_sdk::points::sections::{Section, SectionBody, Sections};
 use mannie_plugin_sdk::points::tools::{AgentSelector, PluginTool, Tools};
@@ -39,6 +40,7 @@ use crate::commands::{
     ResizeTerminalCommand, TerminalError, TerminalRef, TerminalSettings, TerminalSummary,
     TerminalUpdate, UpdateSettingsCommand, WriteTerminal, WriteTerminalCommand, interface,
 };
+use crate::management::TerminalManagement;
 use crate::mentions::{CommandMentions, block_entry, selection_entry};
 use crate::registry::{HostChoice, OpenRequest, Terminals};
 use crate::section::{AGENTS, SECTION_ID, SECTION_POSITION, TerminalsSection};
@@ -349,11 +351,16 @@ impl TerminalPlugin {
             SectionBody::Source(Arc::new(TerminalsSection::new(terminals.clone()))),
         );
         let mentions: Arc<dyn MentionProvider> = Arc::new(CommandMentions::new(terminals.clone()));
+        let management = PluginManagement::new(
+            TERMINAL,
+            Arc::new(TerminalManagement::new(terminals.clone(), settings.clone())),
+        );
         let contributions = Contributions::new()
             .add::<Tools>(run)
             .add::<Tools>(list)
             .add::<Sections>(section)
-            .add::<Mentions>(mentions);
+            .add::<Mentions>(mentions)
+            .add::<Management>(management);
         let shared = Shared {
             terminals: terminals.clone(),
             settings,

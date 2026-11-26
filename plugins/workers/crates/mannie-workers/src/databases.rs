@@ -13,6 +13,7 @@
 //! the workers and releases the service; the registrations stay.
 
 pub mod commands;
+mod management;
 mod mentions;
 mod output;
 mod registry;
@@ -34,6 +35,7 @@ use mannie_plugin_sdk::contributions::Contributions;
 use mannie_plugin_sdk::error::StartFailure;
 use mannie_plugin_sdk::ipc::{Handlers, PluginError as _, PluginStream};
 use mannie_plugin_sdk::plugin::{FeatureInstance, FeatureStarted};
+use mannie_plugin_sdk::points::management::{Management, PluginManagement};
 use mannie_plugin_sdk::points::mentions::{MentionProvider, Mentions};
 use mannie_plugin_sdk::points::sections::{Section, SectionBody, Sections};
 use mannie_plugin_sdk::points::tools::{AgentSelector, PluginTool, Tools};
@@ -51,6 +53,7 @@ use self::commands::{
     RefreshDatabasesCommand, RemoveDatabaseCommand, RenameDatabase, RenameDatabaseCommand,
     StopRead, StopReadCommand,
 };
+use self::management::{DatabasesManagement, WORKERS_DATABASES};
 use self::mentions::DatabaseMentions;
 use self::registry::Databases;
 use self::section::{DatabasesSection, SECTION_ID, SECTION_POSITION};
@@ -122,12 +125,17 @@ fn contributions(databases: &Databases) -> Contributions {
         SectionBody::Source(Arc::new(DatabasesSection::new(databases.clone()))),
     );
     let mentions: Arc<dyn MentionProvider> = Arc::new(DatabaseMentions::new(databases.clone()));
+    let management = PluginManagement::new(
+        WORKERS_DATABASES,
+        Arc::new(DatabasesManagement::new(databases.clone())),
+    );
     Contributions::new()
         .add::<Tools>(describe)
         .add::<Tools>(query)
         .add::<Tools>(change)
         .add::<Sections>(section)
         .add::<Mentions>(mentions)
+        .add::<Management>(management)
 }
 
 /// The view's statements that run: the reads that it may stop, by the IDs

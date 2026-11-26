@@ -47,6 +47,7 @@ mod projects;
 mod questions;
 mod retry;
 mod search_profiles;
+mod self_management;
 mod skills;
 mod sqlite_files;
 mod tasks;
@@ -64,7 +65,7 @@ mod wake_ups;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
 use mannie_plugin_sdk::host::ServiceProvider;
@@ -99,6 +100,10 @@ pub use mentions::{
 pub use plans::PlanMentions;
 pub use profiles::{CredentialVault, Protection, VaultError};
 pub use retry::RetryPolicy;
+pub use self_management::{
+    AppHost, AppRuntimeInfo, MANNIE_CONFIGURE, MANNIE_INSPECT, MANNIE_READ_LOGS,
+    SELF_MANAGEMENT_TOOLS,
+};
 pub use skills::{READ_SKILL, SKILLS, SkillCatalog, SkillMentions, skill_token};
 pub use sqlite_files::{
     DATABASE_EXTENSIONS, DatabaseChooser, DatabaseFilters, HostDatabaseError, HostDatabaseSettings,
@@ -275,6 +280,12 @@ struct Inner {
     /// The skills of the master, or `None` on a machine that offers none
     /// (ADR-0061, decision 1).
     skills: Option<Arc<SkillCatalog>>,
+    /// The desktop application host port for self-inspection and configuration
+    /// (ADR-0081). Never attached on workers.
+    app_host: OnceLock<Arc<dyn AppHost>>,
+    /// Ephemeral zeroizing secrets held in RAM only for an active
+    /// `mannie_configure` tool call (ADR-0081).
+    config_secrets: self_management::ConfigSecrets,
     /// The runs that follow the tasks of plugins' executors, and the changes
     /// of the executors' outbox.
     executors: ExecutorFollows,
@@ -466,6 +477,8 @@ impl Runtime {
             machine: deps.machine,
             mentions: deps.mentions,
             skills: deps.skills,
+            app_host: OnceLock::new(),
+            config_secrets: self_management::ConfigSecrets::default(),
             executors: ExecutorFollows::default(),
             contributions: Registry::default(),
             agent_plugins: AgentPlugins::default(),

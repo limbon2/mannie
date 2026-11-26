@@ -18,6 +18,7 @@ mod effects;
 mod failure;
 mod git;
 mod layout;
+mod management;
 mod mentions;
 mod operation;
 mod outcome;

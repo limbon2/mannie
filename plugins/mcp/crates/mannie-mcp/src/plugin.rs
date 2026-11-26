@@ -21,6 +21,7 @@ use mannie_plugin_sdk::contributions::Contributions;
 use mannie_plugin_sdk::error::StartFailure;
 use mannie_plugin_sdk::ipc::{Handlers, Interface, PluginStream};
 use mannie_plugin_sdk::plugin::{Instance, Plugin, Started};
+use mannie_plugin_sdk::points::management::{Management, PluginManagement};
 use mannie_plugin_sdk::points::mentions::{MentionProvider, Mentions};
 use mannie_plugin_sdk::points::sections::{Section, SectionBody, Sections};
 use mannie_plugin_sdk::points::tool_sources::{PluginToolSource, ToolSources};
@@ -38,6 +39,7 @@ use crate::commands::{
     SetToolEnabledCommand, SignOutCommand, UpdateServer, UpdateServerCommand, interface,
 };
 use crate::imports;
+use crate::management::McpManagement;
 use crate::mentions::ResourceMentions;
 use crate::oauth;
 use crate::section::{SECTION_ID, SECTION_POSITION, ServersSection};
@@ -221,10 +223,12 @@ impl McpPlugin {
             SectionBody::Source(Arc::new(ServersSection::new(servers.clone()))),
         );
         let mentions: Arc<dyn MentionProvider> = Arc::new(ResourceMentions::new(servers.clone()));
+        let management = PluginManagement::new(MCP, Arc::new(McpManagement::new(servers.clone())));
         let contributions = Contributions::new()
             .add::<ToolSources>(source)
             .add::<Sections>(section)
-            .add::<Mentions>(mentions);
+            .add::<Mentions>(mentions)
+            .add::<Management>(management);
         let handlers = handlers(&servers);
         servers.start_all();
         tracing::info!("the MCP plugin started");

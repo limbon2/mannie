@@ -244,6 +244,7 @@ impl RunActor {
             arguments: None,
             text: String::new(),
             task: None,
+            secrets: std::collections::BTreeMap::new(),
         }
     }
 }

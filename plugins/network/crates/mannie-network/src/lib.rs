@@ -5,6 +5,7 @@
 
 pub mod commands;
 mod http;
+mod management;
 mod mentions;
 pub mod model;
 mod openapi;

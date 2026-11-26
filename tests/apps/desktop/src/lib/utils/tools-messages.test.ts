@@ -68,6 +68,8 @@ const TOOLS_ERRORS: ToolsError[] = [
   { code: 'plugin_off', plugin: 'workers' },
   { code: 'full_access_follows_parent' },
   { code: 'full_access_refused' },
+  { code: 'secret_required', field: 'password' },
+  { code: 'secret_invalid', field: 'password' },
 ];
 
 const TOOL_FAILURES: ToolFailure[] = [
@@ -184,6 +186,7 @@ const GRANTS: GrantScope[] = [
 ];
 
 const REFUSALS: Refusal[] = [
+  'no_app_config',
   'no_projects_on_host',
   'no_remote_commands',
   'no_programs_on_host',
@@ -298,6 +301,8 @@ describe('tools messages', () => {
       'database_write',
       'database_schema',
       'network_request',
+      'app_config',
+      'app_config_security',
     ];
     const decisions: Decision[] = [
       'workspace',

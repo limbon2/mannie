@@ -59,6 +59,23 @@ impl StoreOptions {
     }
 }
 
+/// Read-only schema and storage metadata for Mannie's SQLite database
+/// (ADR-0081). Never exposes raw table rows or secrets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoreDiagnostics {
+    /// The database file path on disk.
+    pub database_path: PathBuf,
+    /// Each recorded store module and its applied migration version, sorted by
+    /// module name.
+    pub module_versions: Vec<(String, u32)>,
+    /// SQLite page size in bytes.
+    pub page_size: u64,
+    /// SQLite total page count.
+    pub page_count: u64,
+    /// Active SQLite journal mode (for example `"wal"`).
+    pub journal_mode: String,
+}
+
 /// The open database of one machine.
 ///
 /// Cloning is cheap: every clone shares the writer thread and the readers.
@@ -226,6 +243,42 @@ impl Store {
     /// The names of the modules that the store opened with.
     pub fn modules(&self) -> &[&'static str] {
         &self.inner.modules
+    }
+
+    /// Reads schema module versions and storage metadata for diagnostics
+    /// (ADR-0081). Never returns raw row contents or secrets.
+    pub async fn diagnostics(&self) -> Result<StoreDiagnostics, StoreError> {
+        let database_path = self.inner.path.clone();
+        let (module_versions, page_size, page_count, journal_mode) = self
+            .read(|connection| {
+                let mut select = connection
+                    .prepare("SELECT module, version FROM store_modules ORDER BY module")?;
+                let rows = select.query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)?))
+                })?;
+                let module_versions: Vec<(String, u32)> = rows.collect::<rusqlite::Result<_>>()?;
+                let page_size: i64 =
+                    connection.pragma_query_value(None, "page_size", |row| row.get(0))?;
+                let page_count: i64 =
+                    connection.pragma_query_value(None, "page_count", |row| row.get(0))?;
+                let journal_mode: String =
+                    connection.pragma_query_value(None, "journal_mode", |row| row.get(0))?;
+                Ok((
+                    module_versions,
+                    u64::try_from(page_size).unwrap_or(0),
+                    u64::try_from(page_count).unwrap_or(0),
+                    journal_mode,
+                ))
+            })
+            .await?;
+
+        Ok(StoreDiagnostics {
+            database_path,
+            module_versions,
+            page_size,
+            page_count,
+            journal_mode,
+        })
     }
 
     /// The plugins' modules with their listed statements.

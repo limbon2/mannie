@@ -1634,3 +1634,17 @@ async fn rules_of_0_4_0_cover_only_the_foreground_after_the_upgrade() {
         ]
     );
 }
+
+#[tokio::test]
+async fn diagnostics_reports_path_module_versions_and_storage_pragmas() {
+    let fixture = Fixture::new();
+    let store = fixture.open_latest().unwrap();
+
+    let diagnostics = store.diagnostics().await.unwrap();
+
+    assert_eq!(diagnostics.database_path, fixture.database());
+    assert_eq!(diagnostics.journal_mode, "wal");
+    assert!(diagnostics.page_size > 0);
+    assert!(diagnostics.page_count > 0);
+    assert_eq!(diagnostics.module_versions, records(&fixture.database()));
+}

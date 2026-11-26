@@ -54,6 +54,14 @@
     }
     return summary !== '{}';
   }
+
+  function hasConfigPayload(payload: string): boolean {
+    const trimmed = payload.trim();
+    if (trimmed === '') {
+      return false;
+    }
+    return trimmed !== '{}';
+  }
 </script>
 
 <ul class="flex flex-col gap-2">
@@ -322,6 +330,38 @@
           <AccessText {copyable} label={m.tools_access_proxmox_details()} text={access.summary} />
           {#if access.summaryCut ?? false}
             <p class="text-xs text-muted-foreground">{m.tools_access_proxmox_summary_cut()}</p>
+          {/if}
+        {/if}
+      {:else if access.kind === 'app_config'}
+        <div class="flex min-w-0 flex-wrap items-center gap-2">
+          <Badge data-content variant="outline">{access.domain}</Badge>
+          <Badge data-content variant="secondary">{access.action}</Badge>
+
+          {#if access.securitySensitive ?? false}
+            <Badge data-app-config-security="" variant="destructive">
+              {m.tools_access_app_config_security()}
+            </Badge>
+          {/if}
+        </div>
+
+        <p class="text-sm font-medium wrap-anywhere" data-content dir="auto">{access.title}</p>
+
+        {#if access.fields.length > 0}
+          <dl class="flex flex-wrap gap-x-4 gap-y-1 text-xs" data-app-config="">
+            {#each access.fields as field, fieldIndex (fieldIndex)}
+              <div class="flex min-w-0 items-baseline gap-1.5">
+                <dt class="shrink-0 text-muted-foreground" data-content dir="auto">{field.label}</dt>
+                <dd class="min-w-0 font-mono wrap-anywhere" data-content dir="auto">{field.value}</dd>
+              </div>
+            {/each}
+          </dl>
+        {/if}
+
+        {#if hasConfigPayload(access.payload)}
+          <AccessText {copyable} label={m.tools_access_app_config_details()} language="json" text={access.payload} />
+
+          {#if access.payloadCut ?? false}
+            <p class="text-xs text-muted-foreground">{m.tools_access_app_config_payload_cut()}</p>
           {/if}
         {/if}
       {:else}

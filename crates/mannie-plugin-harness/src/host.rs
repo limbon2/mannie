@@ -178,6 +178,11 @@ impl HostedPlugin {
         &self.id
     }
 
+    /// The test runtime that hosts this plugin's contributions.
+    pub fn runtime(&self) -> &mannie_runtime::Runtime {
+        &self.core.runtime
+    }
+
     /// The core and the host, for a test that calls them itself.
     pub fn into_parts(self) -> (Harness, PluginHost) {
         (self.core, self.host)

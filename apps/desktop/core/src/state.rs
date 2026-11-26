@@ -22,8 +22,9 @@ use mannie_plugin_sdk::plugin::PluginEntry;
 use mannie_plugins::{PluginHost, PluginHostDeps, PluginList};
 use mannie_provider::{HttpClient, ProviderRegistry};
 use mannie_runtime::{
-    AgentRegistry, FileMentions, InstructionRegistry, MachineSettings, MentionRegistry,
-    PlanMentions, Runtime, RuntimeConfig, RuntimeDeps, SkillCatalog, SkillMentions, ToolsDeps,
+    AgentRegistry, AppRuntimeInfo, FileMentions, InstructionRegistry, MachineSettings,
+    MentionRegistry, PlanMentions, Runtime, RuntimeConfig, RuntimeDeps, SkillCatalog,
+    SkillMentions, ToolsDeps,
 };
 use mannie_store::{Store, StoreError, StoreOptions};
 use mannie_tools::{MutationLock, SystemFacts, ToolRegistry};
@@ -39,6 +40,7 @@ use crate::credentials::{KeyringVault, SecretsProvider};
 use crate::file_dialog::FileDialogProvider;
 use crate::ipc::subscriptions::Subscriptions;
 use crate::notifications::Notifications;
+use crate::self_management::{DesktopAppHost, credential_store_description};
 use crate::updates::{Automatic, Updates};
 use crate::window::requests::WindowRequests;
 
@@ -66,8 +68,8 @@ struct Services {
 struct Inner {
     services: Result<Services, StartupProblem>,
     /// The window settings, kept in memory so that closing the window never
-    /// waits for the database.
-    window_settings: RwLock<WindowSettings>,
+    /// waits for the database. Shared with [`DesktopAppHost`] (ADR-0081).
+    window_settings: Arc<RwLock<WindowSettings>>,
     window_requests: WindowRequests,
     subscriptions: Subscriptions,
     /// Desktop notifications, unread finished conversations and tray badge
@@ -354,21 +356,35 @@ pub(crate) fn start(app: &App, plugins: Vec<PluginEntry>) -> Core {
             )
         },
     );
+    let window_settings = Arc::new(RwLock::new(
+        services
+            .as_ref()
+            .map(|services| load_window_settings(&services.store))
+            .unwrap_or_default(),
+    ));
     match &services {
         Ok(services) => {
             start_updates(&updates, &services.store);
             start_notifications(app, &notifications, &services.store, &services.runtime);
+            let info = app_runtime_info(app, &services.store);
+            let host = DesktopAppHost::new(
+                app.handle().clone(),
+                services.store.clone(),
+                services.plugins.clone(),
+                Arc::clone(&services.browser),
+                updates.clone(),
+                notifications.clone(),
+                Arc::clone(&window_settings),
+                info,
+            );
+            services.runtime.attach_app_host(Arc::new(host));
         }
         Err(problem) => tracing::error!(?problem, "Mannie started without its database"),
     }
-    let window_settings = services
-        .as_ref()
-        .map(|services| load_window_settings(&services.store))
-        .unwrap_or_default();
     Core {
         inner: Arc::new(Inner {
             services,
-            window_settings: RwLock::new(window_settings),
+            window_settings,
             window_requests: WindowRequests::default(),
             subscriptions: Subscriptions::default(),
             notifications,
@@ -383,6 +399,44 @@ pub(crate) fn start(app: &App, plugins: Vec<PluginEntry>) -> Core {
             #[cfg(feature = "validation")]
             folder_choice: Mutex::default(),
         }),
+    }
+}
+
+/// Builds canonical runtime facts reported to conversation agents through
+/// `mannie_inspect` and the `mannie-state` prompt section (ADR-0081).
+fn app_runtime_info(app: &App, store: &Store) -> AppRuntimeInfo {
+    let database_path = store.path().to_path_buf();
+    let data_dir = app.path().app_local_data_dir().map_or_else(
+        |_| {
+            database_path
+                .parent()
+                .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+        },
+        |folder| protected_folder(&folder),
+    );
+    let log_dir = app.path().app_log_dir().map_or_else(
+        |_| data_dir.join("logs"),
+        |folder| protected_folder(&folder),
+    );
+    let build_profile = match host_profile() {
+        HostProfile::Development => "development",
+        HostProfile::Validation => "validation",
+        HostProfile::Release | _ => "release",
+    }
+    .to_owned();
+    AppRuntimeInfo {
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+        build_profile,
+        bundle_identifier: app.config().identifier.clone(),
+        os: std::env::consts::OS.to_owned(),
+        arch: std::env::consts::ARCH.to_owned(),
+        backups_dir: data_dir.join("backups"),
+        browser_data_dir: Some(data_dir.join("browser")),
+        data_dir,
+        database_path,
+        log_dir,
+        skills_dir: computer_skills(app),
+        credential_store: credential_store_description(),
     }
 }
 

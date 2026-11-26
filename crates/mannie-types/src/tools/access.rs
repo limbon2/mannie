@@ -183,6 +183,35 @@ pub enum ProxmoxVmScope {
     Vnc,
 }
 
+/// One sanitized field row shown on an `AppConfig` approval card (ADR-0081).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigFieldPreview {
+    /// Human-readable field label.
+    pub label: String,
+    /// Sanitized display value, never holding a raw secret.
+    pub value: String,
+}
+
+/// Metadata for one secret input accepted or required by an `AppConfig` action
+/// (ADR-0081).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigSecretField {
+    /// Stable secret key matching the action's secret map, such as `password`,
+    /// `apiKey` or `var:TOKEN`.
+    pub key: String,
+    /// Human-readable label shown beside the masked input.
+    pub label: String,
+    /// Whether a value is required before the action can run, unless
+    /// `provided_in_chat` is true.
+    pub required: bool,
+    /// Whether the owner supplied a throwaway value in chat, held only in
+    /// zeroizing memory for this call.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub provided_in_chat: bool,
+}
+
 /// One access of an operation. Authorization decides on accesses, never on
 /// the arguments the model wrote (docs/architecture/tools.md, operations).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
@@ -480,6 +509,36 @@ pub enum Access {
         #[serde(default)]
         summary_cut: bool,
     },
+    /// A configuration change to Mannie's core or a plugin (ADR-0081). Every
+    /// configuration change asks the owner for explicit one-time approval,
+    /// never runs under full access, produces no reusable grants or saved
+    /// rules, and is refused on workers.
+    AppConfig {
+        /// `"core"` for a built-in domain or the plugin ID (or feature ID).
+        owner: String,
+        /// The configuration domain, such as `providers`, `plugins` or `ssh`.
+        domain: String,
+        /// The typed action name, such as `add_host` or `set_enabled`.
+        action: String,
+        /// Human-readable summary shown on the approval card.
+        title: String,
+        /// Sanitized field rows shown on the approval card, never holding raw
+        /// secrets.
+        fields: Vec<ConfigFieldPreview>,
+        /// Metadata for secret inputs accepted or required by this action.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        secret_fields: Vec<ConfigSecretField>,
+        /// Whether the action alters trust boundaries, credentials or safety
+        /// settings.
+        #[serde(default)]
+        security_sensitive: bool,
+        /// Canonical sanitized JSON of the prepared non-secret arguments.
+        payload: String,
+        /// Whether a call's view cut the payload to its limit. An access that
+        /// the policy decides on is never cut.
+        #[serde(default)]
+        payload_cut: bool,
+    },
 }
 
 impl Access {
@@ -521,7 +580,8 @@ impl Access {
             | Self::TerminalCommand { .. }
             | Self::BrowserControl { .. }
             | Self::NetworkRequest { .. }
-            | Self::ProxmoxVm { .. } => true,
+            | Self::ProxmoxVm { .. }
+            | Self::AppConfig { .. } => true,
         }
     }
 }
@@ -817,6 +877,48 @@ mod tests {
                 "action": "attach_iso",
                 "summary": r#"{"device":"ide2","iso":"local:iso/debian.iso"}"#,
                 "summaryCut": false,
+            })
+        );
+        assert_eq!(serde_json::from_value::<Access>(json).unwrap(), access);
+    }
+
+    #[test]
+    fn an_app_config_access_changes_something_and_serializes_with_every_field() {
+        let access = Access::AppConfig {
+            owner: "ssh".to_owned(),
+            domain: "ssh".to_owned(),
+            action: "add_host".to_owned(),
+            title: "Add SSH host prod".to_owned(),
+            fields: vec![super::ConfigFieldPreview {
+                label: "Host".to_owned(),
+                value: "deploy@10.0.0.9:22".to_owned(),
+            }],
+            secret_fields: vec![super::ConfigSecretField {
+                key: "password".to_owned(),
+                label: "Password".to_owned(),
+                required: true,
+                provided_in_chat: false,
+            }],
+            security_sensitive: true,
+            payload: r#"{"address":"10.0.0.9","name":"prod","port":22,"user":"deploy"}"#.to_owned(),
+            payload_cut: false,
+        };
+
+        assert!(access.changes());
+        let json = serde_json::to_value(&access).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "kind": "app_config",
+                "owner": "ssh",
+                "domain": "ssh",
+                "action": "add_host",
+                "title": "Add SSH host prod",
+                "fields": [{ "label": "Host", "value": "deploy@10.0.0.9:22" }],
+                "secretFields": [{ "key": "password", "label": "Password", "required": true }],
+                "securitySensitive": true,
+                "payload": r#"{"address":"10.0.0.9","name":"prod","port":22,"user":"deploy"}"#,
+                "payloadCut": false,
             })
         );
         assert_eq!(serde_json::from_value::<Access>(json).unwrap(), access);

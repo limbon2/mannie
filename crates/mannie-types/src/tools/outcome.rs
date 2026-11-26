@@ -542,6 +542,33 @@ pub enum ToolOutcome {
         /// frontmatter.
         total_lines: u32,
     },
+    /// `mannie_inspect` read Mannie's self-knowledge or current configuration
+    /// state (ADR-0081).
+    MannieInspect {
+        /// The requested topic, such as `overview`, `plugins`, `core` or `plugin`.
+        topic: String,
+        /// The optional target domain or plugin ID.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target: Option<String>,
+    },
+    /// `mannie_read_logs` read bounded entries from Mannie's log files
+    /// (ADR-0081).
+    MannieLogs {
+        /// The number of entries returned.
+        entries: u32,
+        /// Whether more matching entries were omitted because of bounds.
+        truncated: bool,
+    },
+    /// `mannie_configure` completed a configuration action on Mannie's core or
+    /// a plugin (ADR-0081).
+    MannieConfigure {
+        /// `"core"` or the plugin ID (or feature ID).
+        owner: String,
+        /// The configuration domain.
+        domain: String,
+        /// The typed action name.
+        action: String,
+    },
     /// A plugin's tool ran (ADR-0034, decision 6). The model reads only its
     /// output; the data and the failure are for the call's card, which the
     /// plugin describes through the slot of tool kinds (ADR-0039).

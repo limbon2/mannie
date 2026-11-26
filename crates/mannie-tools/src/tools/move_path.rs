@@ -135,6 +135,7 @@ fn volume(access: &Access) -> Option<&str> {
         | Access::BrowserAction { .. }
         | Access::Database { .. }
         | Access::NetworkRequest { .. }
-        | Access::ProxmoxVm { .. } => None,
+        | Access::ProxmoxVm { .. }
+        | Access::AppConfig { .. } => None,
     }
 }

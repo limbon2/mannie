@@ -22,6 +22,7 @@ use mannie_plugin_sdk::contributions::Contributions;
 use mannie_plugin_sdk::error::StartFailure;
 use mannie_plugin_sdk::ipc::{Handlers, Interface, PluginStream};
 use mannie_plugin_sdk::plugin::{Instance, Plugin, Started};
+use mannie_plugin_sdk::points::management::{Management, PluginManagement};
 use mannie_plugin_sdk::points::mentions::{MentionProvider, Mentions};
 use mannie_plugin_sdk::points::sections::{Section, SectionBody, Sections};
 use mannie_plugin_sdk::points::terminal_hosts::{PluginTerminalHostSource, TerminalHosts};
@@ -38,6 +39,7 @@ use crate::commands::{
     UpdateHostCommand, interface,
 };
 use crate::hosts::Hosts;
+use crate::management::SshManagement;
 use crate::mentions::HostMentions;
 use crate::section::{AGENTS, HostsSection, SECTION_ID, SECTION_POSITION};
 use crate::store::{HostRecord, MODULE};
@@ -164,12 +166,14 @@ impl SshPlugin {
         let mentions: Arc<dyn MentionProvider> = Arc::new(HostMentions::new(hosts.clone()));
         let terminal_hosts =
             PluginTerminalHostSource::new(SSH, Arc::new(SshTerminalHosts::new(hosts.clone())));
+        let management = PluginManagement::new(SSH, Arc::new(SshManagement::new(hosts.clone())));
         let contributions = Contributions::new()
             .add::<Tools>(tool)
             .add::<Tools>(background_tool)
             .add::<Sections>(section)
             .add::<Mentions>(mentions)
-            .add::<TerminalHosts>(terminal_hosts);
+            .add::<TerminalHosts>(terminal_hosts)
+            .add::<Management>(management);
         let handlers = handlers(&hosts);
         let (stop_closing, stopped) = oneshot::channel();
         tokio::spawn(close_idle_sessions(hosts.clone(), stopped));

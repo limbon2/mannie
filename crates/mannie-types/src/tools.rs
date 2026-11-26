@@ -24,11 +24,11 @@ mod terminal;
 
 pub use access::{
     Access, AccessMode, BrowserAccess, BrowserAction, BrowserControlAccess,
-    BrowserCredentialAccess, EntryCount, ProxmoxVmScope,
+    BrowserCredentialAccess, ConfigFieldPreview, ConfigSecretField, EntryCount, ProxmoxVmScope,
 };
 pub use approval::{
-    ApprovalChoice, ApprovalReason, ApprovalRequest, DecideApproval, Decision, GrantScope,
-    RemoteTarget, RuleProposal,
+    ApprovalChoice, ApprovalReason, ApprovalRequest, DecideApproval, DecideConfigApproval,
+    Decision, GrantScope, RemoteTarget, RuleProposal,
 };
 pub use background::{
     BackgroundCommandDocument, BackgroundCommandView, BackgroundEnding, BackgroundLimit,

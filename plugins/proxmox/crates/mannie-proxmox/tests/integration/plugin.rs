@@ -256,3 +256,129 @@ async fn idle_vnc_session_is_reaped_after_inactivity() {
     .await
     .expect("idle session reaped");
 }
+
+async fn run_proxmox_action(
+    provider: &dyn mannie_plugin_sdk::points::management::ManagementProvider,
+    action: &str,
+    arguments: Value,
+    secrets: std::collections::BTreeMap<String, mannie_plugin_sdk::contracts::Secret>,
+) -> (
+    mannie_plugin_sdk::points::management::PreparedAction,
+    mannie_plugin_sdk::points::management::ActionResult,
+) {
+    use mannie_plugin_sdk::points::management::{ExecuteActionRequest, PrepareActionRequest};
+
+    let provided_secrets = secrets.keys().cloned().collect();
+    let prepared = provider
+        .prepare_action(PrepareActionRequest {
+            action: action.to_owned(),
+            arguments,
+            provided_secrets,
+        })
+        .await
+        .expect("proxmox management action prepare succeeded");
+    let result = provider
+        .execute_action(ExecuteActionRequest {
+            action: action.to_owned(),
+            arguments: prepared.canonical_arguments.clone(),
+            secrets,
+        })
+        .await
+        .expect("proxmox management action execute succeeded");
+    (prepared, result)
+}
+
+#[tokio::test]
+async fn management_provider_pins_certificate_and_updates_vm_allowlist_without_leaking_password() {
+    use std::collections::BTreeMap;
+
+    use mannie_plugin_sdk::contracts::Secret;
+
+    let secrets = FakeSecrets::new();
+    let hosted = hosted_plugin(&secrets, false).await;
+    let fake = FakeProxmoxServer::start(valid_self_signed_cert(5)).await;
+    let provider = hosted
+        .runtime()
+        .management_provider(PROXMOX)
+        .expect("Proxmox plugin registers a management provider");
+
+    let mut add_secrets = BTreeMap::new();
+    add_secrets.insert("password".to_owned(), Secret::new(PASSWORD.to_owned()));
+    let (prepared_add, add_result) = run_proxmox_action(
+        provider.as_ref(),
+        "add_server",
+        json!({
+            "name": "ManagedPVE",
+            "host": "127.0.0.1",
+            "port": fake.port(),
+            "username": USERNAME,
+            "note": "Managed from chat",
+        }),
+        add_secrets,
+    )
+    .await;
+    assert!(prepared_add.security_sensitive);
+    assert_eq!(prepared_add.secret_fields.len(), 1);
+    assert_eq!(prepared_add.secret_fields[0].key, "password");
+    assert!(
+        !serde_json::to_string(&add_result)
+            .unwrap()
+            .contains(PASSWORD)
+    );
+    let server_id = add_result.data.as_ref().unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let (_, cert_result) = run_proxmox_action(
+        provider.as_ref(),
+        "inspect_certificate",
+        json!({ "serverId": server_id }),
+        BTreeMap::new(),
+    )
+    .await;
+    let sha256 = cert_result.data.as_ref().unwrap()["sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    run_proxmox_action(
+        provider.as_ref(),
+        "pin_certificate",
+        json!({ "serverId": server_id, "sha256": sha256 }),
+        BTreeMap::new(),
+    )
+    .await;
+
+    let (_, discovered) = run_proxmox_action(
+        provider.as_ref(),
+        "discover_vms",
+        json!({ "serverId": server_id }),
+        BTreeMap::new(),
+    )
+    .await;
+    let first_vm = discovered.data.as_ref().unwrap()["vms"]
+        .as_array()
+        .and_then(|vms| vms.first())
+        .expect("discovered at least one VM");
+
+    let (_, allow_result) = run_proxmox_action(
+        provider.as_ref(),
+        "set_allowed_vms",
+        json!({
+            "serverId": server_id,
+            "vms": [{
+                "vmid": first_vm["vmid"],
+                "node": first_vm["node"],
+                "name": first_vm["name"],
+            }]
+        }),
+        BTreeMap::new(),
+    )
+    .await;
+    assert_eq!(allow_result.data.as_ref().unwrap()["status"], "ready");
+
+    let snapshot = provider.inspect(None).await.expect("inspect succeeds");
+    assert!(!serde_json::to_string(&snapshot).unwrap().contains(PASSWORD));
+    assert_eq!(snapshot.data["readyCount"], 1);
+}

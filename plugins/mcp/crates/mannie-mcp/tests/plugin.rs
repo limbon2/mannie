@@ -290,3 +290,152 @@ async fn the_core_says_where_it_finds_a_program() {
 
     assert_eq!(missing.code(), "mcp.program_not_found");
 }
+
+async fn run_management_action(
+    provider: &dyn mannie_plugin_sdk::points::management::ManagementProvider,
+    action: &str,
+    arguments: Value,
+    secrets: std::collections::BTreeMap<String, mannie_plugin_sdk::contracts::Secret>,
+) -> (
+    mannie_plugin_sdk::points::management::PreparedAction,
+    mannie_plugin_sdk::points::management::ActionResult,
+) {
+    use mannie_plugin_sdk::points::management::{ExecuteActionRequest, PrepareActionRequest};
+
+    let provided_secrets = secrets.keys().cloned().collect();
+    let prepared = provider
+        .prepare_action(PrepareActionRequest {
+            action: action.to_owned(),
+            arguments,
+            provided_secrets,
+        })
+        .await
+        .expect("management action prepare succeeded");
+    let result = provider
+        .execute_action(ExecuteActionRequest {
+            action: action.to_owned(),
+            arguments: prepared.canonical_arguments.clone(),
+            secrets,
+        })
+        .await
+        .expect("management action execute succeeded");
+    (prepared, result)
+}
+
+#[tokio::test]
+async fn management_provider_handles_dynamic_secret_vars_and_headers_without_leaking_values() {
+    use std::collections::BTreeMap;
+
+    use mannie_plugin_sdk::contracts::Secret;
+
+    let secrets = Arc::new(FakeSecrets::new());
+    let hosted = hosted(&secrets).await;
+    let planted_var = "MCP-Planted-Stdio-Token-7741";
+    let planted_header = "Bearer MCP-Planted-Http-Token-8823";
+
+    let provider = hosted
+        .runtime()
+        .management_provider(MCP)
+        .expect("MCP plugin registers a management provider");
+
+    // 1. Add stdio server with dynamic `var:GITHUB_TOKEN` secret.
+    let mut stdio_secrets = BTreeMap::new();
+    stdio_secrets.insert(
+        "var:GITHUB_TOKEN".to_owned(),
+        Secret::new(planted_var.to_owned()),
+    );
+    let (prepared_stdio, stdio_result) = run_management_action(
+        provider.as_ref(),
+        "add_server",
+        json!({
+            "name": "github",
+            "transport": "stdio",
+            "program": "mannie-no-such-program-for-tests",
+            "secretNames": ["GITHUB_TOKEN"],
+        }),
+        stdio_secrets,
+    )
+    .await;
+    assert!(prepared_stdio.security_sensitive);
+    assert_eq!(prepared_stdio.secret_fields.len(), 1);
+    assert_eq!(prepared_stdio.secret_fields[0].key, "var:GITHUB_TOKEN");
+    assert!(prepared_stdio.secret_fields[0].required);
+    assert!(prepared_stdio.secret_fields[0].provided_in_chat);
+    let stdio_id = stdio_result.data.as_ref().unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        !serde_json::to_string(&stdio_result)
+            .unwrap()
+            .contains(planted_var)
+    );
+
+    // 2. Add HTTP server with dynamic `header:Authorization` secret.
+    let mut http_secrets = BTreeMap::new();
+    http_secrets.insert(
+        "header:Authorization".to_owned(),
+        Secret::new(planted_header.to_owned()),
+    );
+    let (prepared_http, http_result) = run_management_action(
+        provider.as_ref(),
+        "add_server",
+        json!({
+            "name": "remote",
+            "transport": "http",
+            "url": "https://mcp.example.com/mcp",
+            "secretNames": ["Authorization"],
+        }),
+        http_secrets,
+    )
+    .await;
+    assert_eq!(prepared_http.secret_fields.len(), 1);
+    assert_eq!(prepared_http.secret_fields[0].key, "header:Authorization");
+    assert!(
+        !serde_json::to_string(&http_result)
+            .unwrap()
+            .contains(planted_header)
+    );
+
+    // 3. Inspect default + tools:<id> + log:<id> never expose secret values.
+    let snapshot = provider.inspect(None).await.expect("inspect succeeds");
+    let snapshot_json = serde_json::to_string(&snapshot).unwrap();
+    assert!(!snapshot_json.contains(planted_var));
+    assert!(!snapshot_json.contains(planted_header));
+    assert_eq!(snapshot.data["servers"].as_array().unwrap().len(), 2);
+
+    let tools_snap = provider
+        .inspect(Some(format!("tools:{stdio_id}")))
+        .await
+        .expect("tools inspect succeeds");
+    assert_eq!(tools_snap.data["serverId"], stdio_id);
+
+    let log_snap = provider
+        .inspect(Some(format!("log:{stdio_id}")))
+        .await
+        .expect("log inspect succeeds");
+    assert!(
+        !serde_json::to_string(&log_snap)
+            .unwrap()
+            .contains(planted_var)
+    );
+
+    // 4. Disable and remove server.
+    run_management_action(
+        provider.as_ref(),
+        "set_server_enabled",
+        json!({ "serverId": stdio_id, "enabled": false }),
+        BTreeMap::new(),
+    )
+    .await;
+    run_management_action(
+        provider.as_ref(),
+        "remove_server",
+        json!({ "serverId": stdio_id }),
+        BTreeMap::new(),
+    )
+    .await;
+
+    let after = provider.inspect(None).await.expect("inspect after remove");
+    assert_eq!(after.data["servers"].as_array().unwrap().len(), 1);
+}

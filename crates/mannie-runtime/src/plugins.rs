@@ -46,6 +46,7 @@ use mannie_plugin_sdk::points::agents::Agents;
 use mannie_plugin_sdk::points::context::ContextProviders;
 use mannie_plugin_sdk::points::executors::Executors;
 use mannie_plugin_sdk::points::images::ImageSources;
+use mannie_plugin_sdk::points::management::Management;
 use mannie_plugin_sdk::points::mentions::Mentions;
 use mannie_plugin_sdk::points::sections::Sections;
 use mannie_plugin_sdk::points::terminal_hosts::TerminalHosts;
@@ -60,6 +61,7 @@ use crate::images::check_image_sources;
 use crate::instructions::check_sections;
 use crate::plugin_executions::ExecutionGuard;
 use crate::plugin_tools::{OfferedPluginTool, kept_published};
+use crate::self_management::check_management;
 
 /// An entry of a point, with the plugin that contributed it, the feature
 /// whose start contributed it, and the generation of that start.
@@ -343,7 +345,7 @@ struct RuntimeContributions {
 }
 
 /// The points that the runtime consumes.
-const RUNTIME_POINTS: [PointInfo; 9] = [
+const RUNTIME_POINTS: [PointInfo; 10] = [
     PointInfo::of::<Tools>(),
     PointInfo::of::<Agents>(),
     PointInfo::of::<Sections>(),
@@ -353,6 +355,7 @@ const RUNTIME_POINTS: [PointInfo; 9] = [
     PointInfo::of::<ToolSources>(),
     PointInfo::of::<ContextProviders>(),
     PointInfo::of::<TerminalHosts>(),
+    PointInfo::of::<Management>(),
 ];
 
 impl ContributionConsumer for RuntimeContributions {
@@ -401,6 +404,7 @@ impl ContributionConsumer for RuntimeContributions {
         let sources = contributions.take::<ToolSources>();
         let context = contributions.take::<ContextProviders>();
         let terminal_hosts = contributions.take::<TerminalHosts>();
+        let management = contributions.take::<Management>();
         tracing::info!(
             plugin = %contributor,
             generation,
@@ -413,6 +417,7 @@ impl ContributionConsumer for RuntimeContributions {
             tool_sources = sources.len(),
             context_providers = context.len(),
             terminal_hosts = terminal_hosts.len(),
+            management = management.len(),
             "a plugin's contributions were registered"
         );
         self.runtime.inner.agent_plugins.record(plugin, &agents);
@@ -424,6 +429,7 @@ impl ContributionConsumer for RuntimeContributions {
         next.push::<Mentions>(contributor, generation, mentions);
         next.push::<ImageSources>(contributor, generation, images);
         next.push::<ContextProviders>(contributor, generation, context);
+        next.push::<Management>(contributor, generation, management);
         // Each source starts empty, so its place in the order is fixed
         // before its first set arrives.
         next.published
@@ -531,7 +537,8 @@ impl Runtime {
         check_executors(snapshot, contributions)?;
         self.check_mention_providers(snapshot, contributions)?;
         check_image_sources(snapshot, contributions)?;
-        check_context_providers(snapshot, contributions)
+        check_context_providers(snapshot, contributions)?;
+        check_management(snapshot, contributions)
     }
 
     /// Takes each of a contributor's tool sources and drains its stream of

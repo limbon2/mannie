@@ -1273,3 +1273,96 @@ async fn large_payloads_body_digest_toctou_lost_response_and_archive_cap_hold() 
     let huge_result = calls[2].result.as_ref().expect("huge response result");
     assert_eq!(huge_result.archives.len(), 1);
 }
+
+#[tokio::test]
+async fn management_provider_manages_collections_and_redacts_every_secret() {
+    use std::collections::BTreeMap;
+
+    use mannie_plugin_sdk::contracts::Secret;
+    use mannie_plugin_sdk::points::management::{ExecuteActionRequest, PrepareActionRequest};
+
+    let secrets = Arc::new(FakeSecrets::new());
+    let dialog = Arc::new(FakeFileDialog::new());
+    let hosted = hosted_with(&secrets, &dialog).await;
+    let provider = hosted
+        .runtime()
+        .management_provider(NETWORK)
+        .expect("Network plugin registers a management provider");
+
+    let planted_bearer = "Network-Planted-Bearer-Token-5519";
+    let planted_var = "Network-Planted-Secret-Var-9931";
+
+    // Refuses literal secret inside arguments.
+    let misplaced = provider
+        .prepare_action(PrepareActionRequest {
+            action: "create_collection".to_owned(),
+            arguments: json!({
+                "name": "Bad",
+                "auth": { "kind": "bearer", "token": planted_bearer }
+            }),
+            provided_secrets: Vec::new(),
+        })
+        .await
+        .expect_err("literal bearer token in arguments must be refused");
+    assert_eq!(misplaced.code, "invalid_arguments");
+
+    // Accepts empty token + dynamic secret key `authToken` and secret var `var:API_KEY`.
+    let prepared = provider
+        .prepare_action(PrepareActionRequest {
+            action: "create_collection".to_owned(),
+            arguments: json!({
+                "name": "Payments",
+                "baseUrl": "https://api.example.com",
+                "auth": { "kind": "bearer", "token": "" },
+                "variables": [
+                    { "key": "API_KEY", "value": "", "secret": true }
+                ]
+            }),
+            provided_secrets: vec!["authToken".to_owned()],
+        })
+        .await
+        .expect("create_collection prepares");
+    assert!(prepared.security_sensitive);
+    assert_eq!(prepared.secret_fields.len(), 2);
+
+    let mut action_secrets = BTreeMap::new();
+    action_secrets.insert(
+        "authToken".to_owned(),
+        Secret::new(planted_bearer.to_owned()),
+    );
+    action_secrets.insert(
+        "var:API_KEY".to_owned(),
+        Secret::new(planted_var.to_owned()),
+    );
+    let created = provider
+        .execute_action(ExecuteActionRequest {
+            action: "create_collection".to_owned(),
+            arguments: prepared.canonical_arguments,
+            secrets: action_secrets,
+        })
+        .await
+        .expect("create_collection executes");
+    let created_json = serde_json::to_string(&created).unwrap();
+    assert!(!created_json.contains(planted_bearer));
+    assert!(!created_json.contains(planted_var));
+    let col_id = created.data.as_ref().unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    // Inspect default and collection:<id> never leak secrets.
+    let overview = provider.inspect(None).await.expect("inspect overview");
+    let detail = provider
+        .inspect(Some(format!("collection:{col_id}")))
+        .await
+        .expect("inspect collection");
+    for text in [
+        serde_json::to_string(&overview).unwrap(),
+        serde_json::to_string(&detail).unwrap(),
+    ] {
+        assert!(!text.contains(planted_bearer));
+        assert!(!text.contains(planted_var));
+    }
+    assert_eq!(detail.data["auth"]["token"], "[redacted]");
+    assert_eq!(detail.data["variables"][0]["value"], "[redacted]");
+}
