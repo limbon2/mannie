@@ -300,6 +300,33 @@ pub const NO_NETWORK_REQUESTS: &str = "Not run: this host sends no collection ne
 /// no plugin (ADR-0080, decision 5).
 pub const NO_PROXMOX: &str = "Not run: this host manages no Proxmox virtual machines.";
 
+/// The result of a configuration change that a worker refused: workers never
+/// alter Mannie's configuration (ADR-0081).
+pub const NO_APP_CONFIG: &str = "Not run: this host cannot change Mannie's configuration.";
+
+/// Guidance for conversation agents that can inspect and configure Mannie
+/// itself (ADR-0081).
+pub const MANNIE_SELF_MANAGEMENT_GUIDANCE: &str = "You can inspect and configure Mannie itself \
+for the owner. Use mannie_inspect to look up Mannie's paths, storage layout, plugins, core \
+settings and plugin guides without asking for approval. Use mannie_read_logs to read recent \
+redacted entries from Mannie's log folder when diagnosing an error. Use mannie_configure to \
+change core settings, enable or disable plugins, or run a plugin's management actions. Before \
+calling mannie_configure on a domain or plugin, inspect its actions with mannie_inspect so your \
+arguments match its schema. Every mannie_configure call asks the owner for one-time approval, \
+even in full access. For real passwords, API keys, tokens or private keys, omit them from \
+mannie_configure arguments and let the owner enter them into the masked fields on the approval \
+card. If the owner explicitly gave a throwaway secret in chat and asked you to configure it, \
+pass it only in the top-level secrets object of mannie_configure (never inside arguments); \
+Mannie scrubs it before storing the call. To configure a plugin that is off, enable it first \
+with mannie_configure on target \"plugins\", then inspect and configure it on the next step.";
+
+/// Guidance for read-only conversation agents (such as Plan) that can inspect
+/// Mannie and read its logs while making no changes (ADR-0081).
+pub const MANNIE_INSPECT_ONLY_GUIDANCE: &str = "You can inspect Mannie itself for the owner. \
+Use mannie_inspect to look up Mannie's paths, storage layout, plugins, core settings and plugin \
+guides, and use mannie_read_logs to read recent redacted entries from Mannie's log folder. You \
+cannot change Mannie's configuration in this read-only mode.";
+
 /// The result of a call that names a database that the plugin has not
 /// registered (ADR-0056).
 pub fn database_not_registered(key: &str) -> String {

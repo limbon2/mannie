@@ -144,6 +144,12 @@ export function toolsFailureMessage(failure: ToolsFailure): string {
     case 'rule_prefix_invalid': {
       return m.tools_error_rule_prefix_invalid();
     }
+    case 'secret_invalid': {
+      return m.tools_error_secret_invalid({ field: error.field });
+    }
+    case 'secret_required': {
+      return m.tools_error_secret_required({ field: error.field });
+    }
     case 'shutting_down': {
       return m.tools_error_shutting_down();
     }
@@ -327,6 +333,9 @@ export function refusalMessage(refusal: Refusal): string {
     case 'browser_site_denied': {
       return m.tools_refusal_browser_site_denied();
     }
+    case 'no_app_config': {
+      return m.tools_refusal_no_app_config();
+    }
     case 'no_browser': {
       return m.tools_refusal_no_browser();
     }
@@ -363,6 +372,12 @@ export function refusalMessage(refusal: Refusal): string {
 /** Why the policy asks the owner about an operation. */
 export function approvalReasonMessage(reason: ApprovalReason): string {
   switch (reason) {
+    case 'app_config': {
+      return m.tools_reason_app_config();
+    }
+    case 'app_config_security': {
+      return m.tools_reason_app_config_security();
+    }
     case 'browser_control': {
       return m.tools_reason_browser_control();
     }

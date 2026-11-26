@@ -138,6 +138,7 @@
       case 'terminal_command': {
         return true;
       }
+      case 'app_config':
       case 'browser_action':
       case 'browser_control':
       case 'database':

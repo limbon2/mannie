@@ -11,6 +11,10 @@ import {
   type RunView,
   type SubscriptionId,
 } from '#lib/generated/bindings.js';
+import { agents } from '#lib/state/agents.svelte.js';
+import { providerProfiles } from '#lib/state/provider-profiles.svelte.js';
+import { searchProfiles } from '#lib/state/search-profiles.svelte.js';
+import { skills } from '#lib/state/skills.svelte.js';
 import type { Failure } from '#lib/types/calls.js';
 import { batchChannel, call } from '#lib/utils/calls.js';
 import {
@@ -122,6 +126,7 @@ export class OpenConversation {
       case 'applied': {
         this.status = 'ready';
         this.failure = null;
+        this.#refreshConfiguredDomain(update);
         return true;
       }
       case 'deleted': {
@@ -178,6 +183,51 @@ export class OpenConversation {
     const isMissing = outcome.failure.kind === 'core' && outcome.failure.error.code === 'conversation_not_found';
     this.status = isMissing ? 'deleted' : 'error';
     this.failure = outcome.failure;
+  }
+
+  /** Reloads core lists silently when a `mannie_configure` tool call completes (ADR-0081). */
+  #refreshConfiguredDomain(update: ConversationUpdate): void {
+    if (update.type !== 'event') {
+      return;
+    }
+    if (update.event.kind !== 'part_finished') {
+      return;
+    }
+    const { content } = update.event.part;
+    if (content.kind !== 'tool_call') {
+      return;
+    }
+    if (content.call.status !== 'completed') {
+      return;
+    }
+    const outcome = content.call.result?.outcome;
+    if (outcome?.kind !== 'mannie_configure') {
+      return;
+    }
+    if (outcome.owner !== 'core') {
+      return;
+    }
+    switch (outcome.domain) {
+      case 'agents': {
+        void agents.reload();
+        return;
+      }
+      case 'providers': {
+        void providerProfiles.reload();
+        return;
+      }
+      case 'search_profiles': {
+        void searchProfiles.reload();
+        return;
+      }
+      case 'skills': {
+        void skills.load();
+        return;
+      }
+      default: {
+        return;
+      }
+    }
   }
 
   #unsubscribe(): void {

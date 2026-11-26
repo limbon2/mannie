@@ -21,6 +21,7 @@ import { EMPTY_DRAFT } from '../../../../../../apps/desktop/src/lib/utils/questi
 const core = vi.hoisted(() => ({
   answerQuestion: vi.fn(),
   decideApproval: vi.fn(),
+  decideConfigApproval: vi.fn(),
   listConversationGrants: vi.fn(),
   listSharedGrants: vi.fn(),
   readToolOutput: vi.fn(),
@@ -107,6 +108,30 @@ describe('approvals', () => {
     expect(second).toBe(false);
     expect(await first).toBe(true);
     expect(core.decideApproval).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends configuration approvals with masked secrets and keeps validation failures', async () => {
+    const actions = new ToolsActions();
+    core.decideConfigApproval.mockResolvedValueOnce(refused({ code: 'secret_required', field: 'password' }));
+    core.decideConfigApproval.mockResolvedValueOnce(ok(null));
+
+    const rejected = await actions.decideConfig(CONVERSATION, PART, REQUEST.digest, true, {});
+    expect(rejected).toBe(false);
+    expect(actions.decisionFailures[PART]).toEqual({
+      error: { code: 'secret_required', description: 'refused', field: 'password' },
+      kind: 'core',
+    });
+
+    const accepted = await actions.decideConfig(CONVERSATION, PART, REQUEST.digest, true, { password: 'secret-value' });
+    expect(accepted).toBe(true);
+    expect(core.decideConfigApproval).toHaveBeenLastCalledWith({
+      allow: true,
+      conversationId: CONVERSATION,
+      digest: REQUEST.digest,
+      partId: PART,
+      secrets: { password: 'secret-value' },
+    });
+    expect(actions.decisionFailures[PART]).toBeUndefined();
   });
 });
 

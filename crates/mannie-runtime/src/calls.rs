@@ -45,6 +45,7 @@ use crate::plugin_tools::{OfferedPluginTool, offered_tools};
 use crate::plugins::Snapshot;
 use crate::profiles::{VaultError, effort_for_model, in_vault};
 use crate::retry::RetryDecision;
+use crate::self_management::MANNIE_INSPECT;
 use crate::{Runtime, lock, plans, questions, tasks, texts};
 
 /// The newest tool results of the latest turn that stay in the context when
@@ -473,16 +474,22 @@ impl Runtime {
             );
             return Err(RunFailure::Internal);
         };
+        let self_management = if profile.use_tools && !task && agent.requester == Requester::Owner {
+            self.self_management_tools(agent.read_only)
+        } else {
+            Vec::new()
+        };
         let (plugin_tools, adapters) = if profile.use_tools {
-            self.plugin_tools_for(&snapshot, &agent)
+            self.plugin_tools_for(&snapshot, &agent, self_management.len())
         } else {
             (Vec::new(), Vec::new())
         };
-        let tools = if profile.use_tools {
+        let mut tools = if profile.use_tools {
             self.tools_of(&agent, adapters)
         } else {
             Vec::new()
         };
+        tools.extend(self_management);
         let definitions: Vec<ToolDefinition> = tools
             .iter()
             .map(|tool| ToolDefinition {
@@ -631,6 +638,7 @@ impl Runtime {
         &self,
         snapshot: &Snapshot,
         agent: &AgentDefinition,
+        self_management_count: usize,
     ) -> (Vec<OfferedPluginTool>, Vec<Arc<dyn Tool>>) {
         let core = agent
             .tools
@@ -639,8 +647,12 @@ impl Runtime {
             .count();
         let asks = usize::from(agent.tools.contains(&questions::ASK_OWNER));
         let saves = usize::from(agent.tools.contains(&plans::SAVE_PLAN));
-        let others =
-            core + asks + saves + tasks::TASK_TOOLS.len() + snapshot.items::<Executors>().len();
+        let others = core
+            + asks
+            + saves
+            + self_management_count
+            + tasks::TASK_TOOLS.len()
+            + snapshot.items::<Executors>().len();
         within_request_room(offered_tools(snapshot, agent, self), others)
             .into_iter()
             .unzip()
@@ -941,6 +953,7 @@ impl Runtime {
         let full_context = chosen_context(&turns);
         let attached = self.attached_sources(&attachments, home.as_ref()).await;
         let skills_section = skills.section();
+        let mannie_state = self.mannie_state_for_setup(setup);
         let context = InstructionContext {
             agent: &setup.agent,
             owner_instructions: owner.as_str(),
@@ -959,6 +972,7 @@ impl Runtime {
             machine: self.machine_context(setup),
             sources: attached.context(!full_context.is_empty()),
             skills: skills_section.as_deref(),
+            mannie_state: mannie_state.as_deref(),
         };
         let instructions = self
             .inner
@@ -1006,6 +1020,17 @@ impl Runtime {
     async fn ledger_of(&self, conversation: &ConversationId) -> Result<Ledger, CallError> {
         let stored = self.inner.store.context_ledger(conversation).await?;
         Ok(Ledger::parse(stored.as_deref()))
+    }
+
+    fn mannie_state_for_setup(&self, setup: &Setup) -> Option<String> {
+        let eligible = setup.assigned.is_none()
+            && setup.agent.requester == Requester::Owner
+            && setup.tool(MANNIE_INSPECT).is_some();
+        if eligible {
+            self.mannie_state_section()
+        } else {
+            None
+        }
     }
 
     /// What the instructions say of a conversation's attachments: the

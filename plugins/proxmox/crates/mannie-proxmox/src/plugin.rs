@@ -10,6 +10,7 @@ use mannie_plugin_sdk::contributions::Contributions;
 use mannie_plugin_sdk::error::StartFailure;
 use mannie_plugin_sdk::ipc::Interface;
 use mannie_plugin_sdk::plugin::{Instance, Plugin, Started};
+use mannie_plugin_sdk::points::management::{Management, PluginManagement};
 use mannie_plugin_sdk::points::mentions::{MentionProvider, Mentions};
 use mannie_plugin_sdk::points::sections::{Section, SectionBody, Sections};
 use mannie_plugin_sdk::points::tools::Tools;
@@ -18,7 +19,9 @@ use mannie_plugin_sdk::services::store::{Store, StoreModule};
 use tokio::sync::oneshot;
 
 use crate::commands::{handlers, interface};
+use crate::management::ProxmoxManagement;
 use crate::mentions::ProxmoxMentions;
+use crate::model::PROXMOX;
 use crate::section::{ProxmoxSection, SECTION_ID, SECTION_POSITION};
 use crate::state::ProxmoxManager;
 use crate::store::MODULE;
@@ -92,9 +95,12 @@ impl ProxmoxPlugin {
             SectionBody::Source(Arc::new(ProxmoxSection::new(manager.clone()))),
         );
         let mentions: Arc<dyn MentionProvider> = Arc::new(ProxmoxMentions::new(manager.clone()));
+        let management =
+            PluginManagement::new(PROXMOX, Arc::new(ProxmoxManagement::new(manager.clone())));
         contributions = contributions
             .add::<Sections>(section)
-            .add::<Mentions>(mentions);
+            .add::<Mentions>(mentions)
+            .add::<Management>(management);
 
         let ipc_handlers = handlers(&manager);
         let (stop_reaper, reaper_rx) = oneshot::channel();

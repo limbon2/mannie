@@ -292,6 +292,47 @@ export class ToolsActions {
   }
 
   /**
+   * Sends the owner's one-time decision on a configuration approval, carrying
+   * any masked secrets entered on the approval card (ADR-0081). Never logs or
+   * retains secret values.
+   */
+  async decideConfig(
+    conversationId: ConversationId,
+    partId: PartId,
+    digest: string,
+    allow: boolean,
+    secrets: Record<string, string>,
+  ): Promise<boolean> {
+    if (this.deciding.includes(partId)) {
+      return false;
+    }
+
+    this.deciding = [...this.deciding, partId];
+
+    const { [partId]: _previous, ...others } = this.decisionFailures;
+
+    this.decisionFailures = others;
+
+    const outcome = await call(() =>
+      commands.decideConfigApproval({
+        allow,
+        conversationId,
+        digest,
+        partId,
+        secrets,
+      }),
+    );
+
+    this.deciding = this.deciding.filter((deciding) => deciding !== partId);
+    if (!outcome.ok) {
+      this.decisionFailures = { ...this.decisionFailures, [partId]: outcome.failure };
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
    * Sends the owner's reply to the questions of a call of `ask_owner`
    * (ADR-0058), forgets what they chose once the core accepted it, and returns
    * whether it did. A refusal is kept for the call's card, as it is for a

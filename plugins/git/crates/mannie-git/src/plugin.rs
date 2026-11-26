@@ -19,6 +19,7 @@ use mannie_plugin_sdk::contributions::Contributions;
 use mannie_plugin_sdk::error::StartFailure;
 use mannie_plugin_sdk::ipc::Interface;
 use mannie_plugin_sdk::plugin::{Instance, Plugin, Started};
+use mannie_plugin_sdk::points::management::{Management, PluginManagement};
 use mannie_plugin_sdk::points::mentions::{MentionProvider, Mentions};
 use mannie_plugin_sdk::points::sections::{Section, SectionBody, Sections};
 use mannie_plugin_sdk::points::tools::{AgentSelector, PluginTool, ToolOffering, Tools};
@@ -27,6 +28,7 @@ use mannie_plugin_sdk::services::processes::Processes;
 use crate::changes::{ChangeTool, ChangingTool, RepositoryLocks};
 use crate::commands::interface;
 use crate::git::Git;
+use crate::management::GitManagement;
 use crate::mentions::GitMentions;
 use crate::panel::{Changes, handlers};
 use crate::section::{GitSection, SECTION_ID, SECTION_POSITION};
@@ -119,7 +121,11 @@ impl GitPlugin {
             .add::<Tools>(changing.tool::<GitFetch>())
             .add::<Tools>(changing.tool::<GitPush>())
             .add::<Sections>(section)
-            .add::<Mentions>(mentions);
+            .add::<Mentions>(mentions)
+            .add::<Management>(PluginManagement::new(
+                GIT,
+                Arc::new(GitManagement::new(git.clone())),
+            ));
         let handlers = handlers(&git, &locks, &changes);
         tracing::info!("the git plugin started");
         Ok(Started::new(GitInstance)

@@ -20,6 +20,7 @@ use mannie_plugin_sdk::error::StartFailure;
 use mannie_plugin_sdk::ipc::{Handlers, Interface};
 use mannie_plugin_sdk::plugin::{Instance, Plugin, Started};
 use mannie_plugin_sdk::points::images::{ImageSources, SourcedImage};
+use mannie_plugin_sdk::points::management::{Management, PluginManagement};
 use mannie_plugin_sdk::services::file_dialog::{FileDialog, FileFilter};
 
 use crate::commands::{
@@ -27,6 +28,7 @@ use crate::commands::{
     PickedImage, PickedImageRef, PrepareImage, PrepareImageCommand, PreparePickedImageCommand,
     PreparedImage, PreparedImageRef, interface, max_base64_len,
 };
+use crate::management::ImagesManagement;
 use crate::shelf::Shelf;
 use crate::source::ShelfSource;
 
@@ -112,9 +114,15 @@ impl ImagesPlugin {
         let shelf = Arc::new(Shelf::new(context.service::<FileDialog>()?));
         tracing::info!("the Images plugin started");
         let source = Arc::new(ShelfSource::new(Arc::clone(&shelf)));
+        let management =
+            PluginManagement::new(IMAGES, Arc::new(ImagesManagement::new(Arc::clone(&shelf))));
         let handlers = handlers(&shelf);
         Ok(Started::new(ImagesInstance { shelf })
-            .with_contributions(Contributions::new().add::<ImageSources>(source))
+            .with_contributions(
+                Contributions::new()
+                    .add::<ImageSources>(source)
+                    .add::<Management>(management),
+            )
             .with_handlers(handlers))
     }
 }

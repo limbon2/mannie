@@ -370,6 +370,20 @@ pub enum ToolsError {
     /// machine (ADR-0041).
     #[error("the background command does not exist")]
     BackgroundCommandNotFound,
+    /// A required secret input on an `AppConfig` approval card was left blank
+    /// (ADR-0081).
+    #[error("a required secret field {field:?} was not provided")]
+    SecretRequired {
+        /// The key of the missing required secret field.
+        field: String,
+    },
+    /// A secret input on an `AppConfig` approval card was unknown, oversized or
+    /// contained invalid characters (ADR-0081).
+    #[error("the secret field {field:?} is not valid")]
+    SecretInvalid {
+        /// The key of the rejected secret field.
+        field: String,
+    },
 }
 
 impl ToolsError {
@@ -402,6 +416,8 @@ impl ToolsError {
             Self::FullAccessFollowsParent => "tools.full_access_follows_parent",
             Self::FullAccessRefused => "tools.full_access_refused",
             Self::BackgroundCommandNotFound => "tools.background_command_not_found",
+            Self::SecretRequired { .. } => "tools.secret_required",
+            Self::SecretInvalid { .. } => "tools.secret_invalid",
         }
     }
 }

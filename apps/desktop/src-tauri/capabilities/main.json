@@ -20,6 +20,7 @@
     "allow-create-provider-profile",
     "allow-create-search-profile",
     "allow-decide-approval",
+    "allow-decide-config-approval",
     "allow-delete-agent",
     "allow-delete-command-rule",
     "allow-delete-plan",

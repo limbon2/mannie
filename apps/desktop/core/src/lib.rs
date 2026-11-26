@@ -24,6 +24,7 @@ mod ipc;
 mod links;
 mod notifications;
 mod plugin_ipc;
+mod self_management;
 mod state;
 mod updates;
 mod window;

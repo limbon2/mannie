@@ -17,6 +17,7 @@ mod operations;
 mod remote;
 mod tasks;
 
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,6 +32,7 @@ use mannie_types::clock::UtcMillis;
 use mannie_types::ids::{ConversationId, PartId, ProfileId, RunId, TurnId};
 use mannie_types::provider::ReasoningEffort;
 use mannie_types::run::{FinishReason, RunActivity, RunFailure, RunOutcome, RunState, Usage};
+use mannie_types::secret::Secret;
 use mannie_types::tasks::TaskPartDocument;
 use mannie_types::tools::{NotRunReason, ToolCallDocument, ToolCallStatus};
 use mannie_types::transcript::{PartKind, PartState};
@@ -46,6 +48,7 @@ use crate::calls::{CallCredential, CallError, CallOptions, Prepared, Setup};
 use crate::chatgpt::QueuedAccount;
 use crate::compaction::{self, ContextSize, Trigger};
 use crate::retry::RetryDecision;
+use crate::self_management::{MANNIE_CONFIGURE, scrub_configure_arguments};
 use crate::{Busy, RunHandle, Runtime, lock, texts};
 
 /// How many commands a run's mailbox holds.
@@ -160,6 +163,9 @@ struct StepCall {
     /// The task section of a call of a task tool, which makes its part a
     /// `task` part; `None` for a tool call.
     task: Option<TaskPartDocument>,
+    /// Ephemeral secrets extracted from top-level `secrets` of a
+    /// `mannie_configure` call before `Change::Delta` is persisted (ADR-0081).
+    secrets: BTreeMap<String, Secret>,
 }
 
 impl StepCall {
@@ -934,6 +940,7 @@ impl RunActor {
             arguments: None,
             text: String::new(),
             task: is_task.then(TaskPartDocument::default),
+            secrets: BTreeMap::new(),
         });
         self.schedule_flush();
     }
@@ -948,6 +955,14 @@ impl RunActor {
         {
             self.start_call(call_id.to_owned(), name.to_owned());
         }
+        // Scrub any secrets from `mannie_configure` before estimating,
+        // persisting Change::Delta, or publishing events (ADR-0081).
+        let (arguments, secrets) = if name == MANNIE_CONFIGURE {
+            let scrubbed = scrub_configure_arguments(&arguments);
+            (scrubbed.stored_arguments, scrubbed.secrets)
+        } else {
+            (arguments, BTreeMap::new())
+        };
         self.step.output = self.step.output.saturating_add(estimate_text(&arguments));
         let Some(call) = self
             .calls
@@ -965,6 +980,7 @@ impl RunActor {
         call.document.status = ToolCallStatus::Pending;
         call.text.clone_from(&arguments);
         call.arguments = Some(split.arguments);
+        call.secrets = secrets;
         self.pending.push(Change::Delta {
             part_id: call.part_id.clone(),
             text: arguments,

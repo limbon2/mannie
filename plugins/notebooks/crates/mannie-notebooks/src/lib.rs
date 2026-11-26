@@ -7,6 +7,7 @@
 pub mod commands;
 mod indexer;
 mod library;
+mod management;
 mod mentions;
 pub mod plugin;
 mod provider;

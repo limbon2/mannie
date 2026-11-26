@@ -246,10 +246,13 @@ pub fn decide(accesses: &[Access], inputs: &PolicyInputs<'_>) -> Verdict {
 
 /// Whether the master's full access allows an access: every access but a
 /// write or a change of a schema on a worker's database whose host does not
-/// take it (ADR-0057, decision 6) and browser actions (ADR-0064).
+/// take it (ADR-0057, decision 6), browser actions (ADR-0064) and Mannie's own
+/// configuration changes (ADR-0081).
 fn takes_full_access(access: &Access) -> bool {
     match access {
-        Access::BrowserAction { .. } | Access::BrowserControl { .. } => false,
+        Access::BrowserAction { .. } | Access::BrowserControl { .. } | Access::AppConfig { .. } => {
+            false
+        }
         Access::Database { home, class, .. } => {
             let reads = *class == StatementClass::Read;
             reads || home.takes_full_access()
@@ -413,6 +416,7 @@ fn decide_under_ceiling(
         }
         Access::NetworkRequest { .. } => Err(Hold::Refuse(Refusal::NoNetworkRequests)),
         Access::ProxmoxVm { .. } => Err(Hold::Refuse(Refusal::NoProxmox)),
+        Access::AppConfig { .. } => Err(Hold::Refuse(Refusal::NoAppConfig)),
     }
 }
 
@@ -559,6 +563,15 @@ fn decide_access(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decision,
         Access::BrowserControl { .. } => Err(ApprovalReason::BrowserControl),
         Access::NetworkRequest { .. } => decide_network_request(access, inputs),
         Access::ProxmoxVm { .. } => decide_proxmox_vm(access, inputs),
+        Access::AppConfig {
+            security_sensitive, ..
+        } => {
+            if *security_sensitive {
+                Err(ApprovalReason::AppConfigSecurity)
+            } else {
+                Err(ApprovalReason::AppConfig)
+            }
+        }
     }
 }
 
@@ -1346,7 +1359,7 @@ fn grant_scope(access: &Access) -> Option<GrantScope> {
                 background: *background,
             })
         }
-        Access::Project { .. } | Access::BrowserControl { .. } => None,
+        Access::Project { .. } | Access::BrowserControl { .. } | Access::AppConfig { .. } => None,
         Access::BrowserAction {
             plugin,
             origin,

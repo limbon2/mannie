@@ -17,6 +17,7 @@ mod client;
 pub mod commands;
 mod hosts;
 mod lines;
+mod management;
 mod mentions;
 mod output;
 pub mod plugin;

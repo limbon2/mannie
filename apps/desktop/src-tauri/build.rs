@@ -224,6 +224,7 @@ const APP_COMMANDS: &[&str] = &[
     "create_provider_profile",
     "create_search_profile",
     "decide_approval",
+    "decide_config_approval",
     "answer_question",
     "delete_agent",
     "delete_command_rule",

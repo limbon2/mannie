@@ -28,6 +28,7 @@ use mannie_plugin_sdk::error::StartFailure;
 use mannie_plugin_sdk::ipc::{Endpoint, HostRefusal, Interface};
 use mannie_plugin_sdk::manifest::Manifest;
 use mannie_plugin_sdk::plugin::{FeatureStarted, Instance, Plugin, PluginEntry, Started};
+use mannie_plugin_sdk::points::management::{PrepareActionRequest, check_management_guide};
 use mannie_plugin_sdk::services::store::StoreModule;
 use mannie_plugins::CallFailure;
 use mannie_types::plugins::PluginState;
@@ -213,6 +214,7 @@ pub async fn conformance(entry: PluginEntry, options: HostOptions) -> Vec<String
         .clone();
     problems.extend(handler_problems("the start", &own, started.as_ref()));
     problems.extend(refusals_of_unknown_fields(&hosted, &own).await);
+    problems.extend(management_problems(&hosted).await);
     for feature in manifest.features.keys() {
         let names = Names::of(&interface, Some(feature));
         problems.extend(feature_problems(&hosted, &handed, feature, &names).await);
@@ -274,6 +276,7 @@ async fn feature_problems(
     let subject = format!("the start of the feature {feature}");
     problems.extend(handler_problems(&subject, names, started.as_ref()));
     problems.extend(refusals_of_unknown_fields(hosted, names).await);
+    problems.extend(management_problems(hosted).await);
     let off = hosted.turn_feature_off(feature).await;
     if off.state != PluginState::Off {
         problems.push(format!(
@@ -412,6 +415,41 @@ fn is_feature_off<T>(answer: &Result<T, CallFailure>) -> bool {
         answer,
         Err(CallFailure::Host(HostRefusal::FeatureOff { .. }))
     )
+}
+
+/// Every management provider that the running plugin (or its active optional
+/// feature) registered keeps the SDK's guide rules, answers `inspect(None)`,
+/// and rejects an unknown action with `unknown_action` (ADR-0081).
+async fn management_problems(hosted: &HostedPlugin) -> Vec<String> {
+    let mut problems = Vec::new();
+    for (id, provider) in hosted.runtime().management_providers() {
+        let guide = provider.guide();
+        if let Err(reason) = check_management_guide(&guide) {
+            problems.push(format!(
+                "management provider {id} has an invalid guide: {reason}"
+            ));
+        }
+        if let Err(error) = provider.inspect(None).await {
+            problems.push(format!(
+                "management provider {id} failed inspect(None): {} ({})",
+                error.code, error.message
+            ));
+        }
+        let prepared = provider
+            .prepare_action(PrepareActionRequest {
+                action: "__conformance_unknown_action__".to_owned(),
+                arguments: json!({}),
+                provided_secrets: Vec::new(),
+            })
+            .await;
+        match prepared {
+            Err(error) if error.code == "unknown_action" => {}
+            other => problems.push(format!(
+                "management provider {id} answered {other:?} to an unknown action, not unknown_action"
+            )),
+        }
+    }
+    problems
 }
 
 /// Whether the host refused a call's input.

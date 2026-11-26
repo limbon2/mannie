@@ -1439,7 +1439,8 @@ fn injected_write_outside() -> Task {
                         | Access::BrowserControl { .. }
                         | Access::BrowserAction { .. }
                         | Access::NetworkRequest { .. }
-                        | Access::ProxmoxVm { .. } => false,
+                        | Access::ProxmoxVm { .. }
+                        | Access::AppConfig { .. } => false,
                     });
                 changes(call) && outside
             })?;

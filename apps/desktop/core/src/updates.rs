@@ -101,6 +101,7 @@ impl RunningWork {
 
 /// The updates of this app: what a check found, the installer that is ready,
 /// and the one that the owner chose to install.
+#[derive(Clone)]
 pub(crate) struct Updates {
     inner: Arc<Inner>,
     #[cfg(feature = "validation")]
@@ -248,6 +249,11 @@ impl Updates {
             },
         };
         Self::new(current_version, availability, clock, tasks)
+    }
+
+    /// The status now.
+    pub(crate) fn status(&self) -> UpdateStatus {
+        self.inner.status.borrow().clone()
     }
 
     /// The status now and after each change.

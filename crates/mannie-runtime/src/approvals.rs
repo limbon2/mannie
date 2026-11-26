@@ -6,20 +6,26 @@
 //! approvals). On a worker, a conversation in full access on the master can
 //! answer instead of the owner (ADR-0029, decision 5).
 
+use std::collections::BTreeMap;
+
 use mannie_tools::saved_rule;
 use mannie_types::ids::{ConversationId, PartId};
+use mannie_types::secret::Secret;
 use mannie_types::tools::{
-    ApprovalChoice, ApprovalReason, ApprovalRequest, DecideApproval, ToolsError,
+    Access, ApprovalChoice, ApprovalReason, ApprovalRequest, ConfigSecretField, DecideApproval,
+    DecideConfigApproval, ToolsError,
 };
 use tokio::sync::oneshot;
 
+use crate::self_management::MAX_CONFIG_SECRET_BYTES;
 use crate::{Runtime, lock};
 
 /// Refuses a choice that the request does not offer, so the UI cannot widen
 /// what an approval allows. A worker's request offers only Allow once and
 /// Deny, whatever the master sends, so its ceiling stays what its
 /// configuration says (ADR-0028, decision 5). Browser site consent can last
-/// for the run or conversation. Browser control is a one-time choice (ADR-0064).
+/// for the run or conversation. Browser control and app configuration changes
+/// are one-time choices (ADR-0064, ADR-0081).
 fn check_choice(request: &ApprovalRequest, choice: &ApprovalChoice) -> Result<(), ToolsError> {
     if request.reasons.contains(&ApprovalReason::BrowserCredential)
         && !matches!(
@@ -33,8 +39,11 @@ fn check_choice(request: &ApprovalRequest, choice: &ApprovalChoice) -> Result<()
     if !once {
         let browser_site = request.reasons.contains(&ApprovalReason::BrowserSite);
         let browser_control = request.reasons.contains(&ApprovalReason::BrowserControl);
+        let app_config = request.reasons.contains(&ApprovalReason::AppConfig)
+            || request.reasons.contains(&ApprovalReason::AppConfigSecurity);
         if request.host.is_some()
             || browser_control
+            || app_config
             || browser_site && !matches!(choice, ApprovalChoice::AllowForConversation)
         {
             return Err(ToolsError::GrantNotPossible);
@@ -70,10 +79,18 @@ fn check_choice(request: &ApprovalRequest, choice: &ApprovalChoice) -> Result<()
 }
 
 /// The answer to an approval that a run waits for.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub(crate) enum Answer {
     /// The owner's choice.
     Owner(ApprovalChoice),
+    /// The owner's one-time decision on an `AppConfig` approval, carrying any
+    /// secrets entered directly on the approval card (ADR-0081).
+    ConfigApproval {
+        /// Whether the owner chose Allow once (`true`) or Deny (`false`).
+        allow: bool,
+        /// Masked secret values entered on the card, never logged or serialized.
+        secrets: BTreeMap<String, Secret>,
+    },
     /// On a worker: Allow once from the conversation on the master that
     /// delegated the task, which is in full access. The call records the
     /// decision `full_access` (ADR-0029, decision 5).
@@ -85,6 +102,7 @@ pub(crate) enum Answer {
 pub(crate) struct Pending {
     part_id: PartId,
     request: ApprovalRequest,
+    config_secrets: Option<Vec<ConfigSecretField>>,
     answer: oneshot::Sender<Answer>,
 }
 
@@ -117,13 +135,19 @@ impl Runtime {
         conversation: &ConversationId,
         part_id: &PartId,
         request: &ApprovalRequest,
+        accesses: &[Access],
     ) -> (Waiting, oneshot::Receiver<Answer>) {
         let (answer, receiver) = oneshot::channel();
+        let config_secrets = accesses.iter().find_map(|access| match access {
+            Access::AppConfig { secret_fields, .. } => Some(secret_fields.clone()),
+            _ => None,
+        });
         lock(&self.inner.approvals).insert(
             conversation.clone(),
             Pending {
                 part_id: part_id.clone(),
                 request: request.clone(),
+                config_secrets,
                 answer,
             },
         );
@@ -192,6 +216,77 @@ impl Runtime {
         Ok(())
     }
 
+    /// The owner's answer to a pending `AppConfig` approval, optionally
+    /// carrying masked secrets entered directly on the approval card
+    /// (ADR-0081). Master-only: never forwarded to workers, and never logs or
+    /// persists secret values.
+    pub fn decide_config_approval(&self, input: DecideConfigApproval) -> Result<(), ToolsError> {
+        let mut approvals = lock(&self.inner.approvals);
+        let pending = approvals
+            .get(&input.conversation_id)
+            .filter(|pending| pending.part_id == input.part_id)
+            .ok_or(ToolsError::ApprovalNotPending)?;
+
+        if pending.request.digest != input.digest {
+            return Err(ToolsError::ApprovalChanged);
+        }
+
+        let Some(fields) = &pending.config_secrets else {
+            return Err(ToolsError::GrantNotPossible);
+        };
+
+        let validated = if input.allow {
+            let mut accepted = BTreeMap::new();
+
+            for (key, value) in input.secrets {
+                let Some(_spec) = fields.iter().find(|field| field.key == key) else {
+                    return Err(ToolsError::SecretInvalid { field: key });
+                };
+
+                let raw = value.expose();
+                if raw.len() > MAX_CONFIG_SECRET_BYTES || raw.contains('\0') {
+                    return Err(ToolsError::SecretInvalid { field: key });
+                }
+
+                if !raw.is_empty() {
+                    accepted.insert(key, value);
+                }
+            }
+
+            for field in fields {
+                if field.required && !field.provided_in_chat && !accepted.contains_key(&field.key) {
+                    return Err(ToolsError::SecretRequired {
+                        field: field.key.clone(),
+                    });
+                }
+            }
+
+            accepted
+        } else {
+            BTreeMap::new()
+        };
+
+        let pending = approvals
+            .remove(&input.conversation_id)
+            .ok_or(ToolsError::ApprovalNotPending)?;
+
+        pending
+            .answer
+            .send(Answer::ConfigApproval {
+                allow: input.allow,
+                secrets: validated,
+            })
+            .map_err(|_stopped| ToolsError::ApprovalNotPending)?;
+
+        tracing::info!(
+            conversation = %input.conversation_id,
+            part = %input.part_id,
+            allow = input.allow,
+            "the owner decided about a configuration change"
+        );
+        Ok(())
+    }
+
     /// Delivers the owner's decision to a run of this machine that waits for
     /// it.
     fn decide_here(&self, input: &DecideApproval) -> Result<(), ToolsError> {
@@ -214,7 +309,21 @@ impl Runtime {
         if pending.request.digest != input.digest {
             return Err(ToolsError::ApprovalChanged);
         }
+        if matches!(answer, Answer::FullAccess) && pending.config_secrets.is_some() {
+            return Err(ToolsError::FullAccessRefused);
+        }
         check_choice(&pending.request, &input.choice)?;
+        if input.choice == ApprovalChoice::AllowOnce
+            && let Some(fields) = &pending.config_secrets
+        {
+            for field in fields {
+                if field.required && !field.provided_in_chat {
+                    return Err(ToolsError::SecretRequired {
+                        field: field.key.clone(),
+                    });
+                }
+            }
+        }
         let pending = approvals
             .remove(&input.conversation_id)
             .ok_or(ToolsError::ApprovalNotPending)?;

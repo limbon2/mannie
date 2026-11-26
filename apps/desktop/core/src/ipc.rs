@@ -135,6 +135,7 @@ macro_rules! app_commands {
             notifications::set_viewed_conversation,
             notifications::subscribe_notifications,
             tools::decide_approval,
+            tools::decide_config_approval,
             tools::answer_question,
             tools::set_full_access,
             tools::get_tools_settings,

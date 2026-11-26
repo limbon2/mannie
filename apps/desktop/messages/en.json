@@ -821,6 +821,36 @@
   "tools_tool_run_command": "Run a command",
   "tools_tool_search_text": "Search text in files",
   "tools_tool_write_file": "Write a file",
+  "tools_tool_mannie_inspect": "Inspect Mannie",
+  "tools_tool_mannie_read_logs": "Read Mannie's logs",
+  "tools_tool_mannie_configure": "Change Mannie's configuration",
+  "tools_call_mannie_inspect": "Inspect Mannie ({topic})",
+  "tools_call_mannie_inspect_target": "Inspect {target} in Mannie",
+  "tools_call_mannie_read_logs": "Read Mannie's logs",
+  "tools_call_mannie_configure": "Change {domain}: {action}",
+  "tools_done_mannie_inspect": "Inspected Mannie ({topic})",
+  "tools_done_mannie_inspect_target": "Inspected {target} in Mannie",
+  "tools_done_mannie_logs": [
+    {
+      "declarations": ["input entries", "local entriesPlural = entries: plural"],
+      "selectors": ["entriesPlural"],
+      "match": {
+        "entriesPlural=one": "Read 1 log entry",
+        "entriesPlural=other": "Read {entries: number} log entries"
+      }
+    }
+  ],
+  "tools_done_mannie_logs_truncated": [
+    {
+      "declarations": ["input entries", "local entriesPlural = entries: plural"],
+      "selectors": ["entriesPlural"],
+      "match": {
+        "entriesPlural=one": "Read 1 log entry (more omitted)",
+        "entriesPlural=other": "Read {entries: number} log entries (more omitted)"
+      }
+    }
+  ],
+  "tools_done_mannie_configure": "Changed {domain}: {action}",
   "tools_call_system_info": "Read the system information",
   "tools_call_list_directory": "List {path}",
   "tools_call_list_workspace": "List the workspace",
@@ -973,6 +1003,7 @@
   "tools_refusal_no_databases": "The computer that runs this task works with no registered databases.",
   "tools_refusal_no_network_requests": "The computer that runs this task sends no collection network requests.",
   "tools_refusal_no_proxmox": "The computer that runs this task manages no Proxmox virtual machines.",
+  "tools_refusal_no_app_config": "The computer that runs this task cannot change Mannie's configuration.",
   "tools_details_accesses": "What it touches",
   "tools_details_arguments": "Arguments",
   "tools_details_arguments_cut": "The arguments are longer than shown here.",
@@ -1034,6 +1065,9 @@
   "tools_access_proxmox_identity_os_trust": "System certificate store",
   "tools_access_proxmox_details": "Action details",
   "tools_access_proxmox_summary_cut": "The action details are longer than shown here.",
+  "tools_access_app_config_security": "Security change",
+  "tools_access_app_config_details": "Configuration details",
+  "tools_access_app_config_payload_cut": "The configuration details are longer than shown here.",
   "tools_access_browser_site": "Site",
   "tools_access_browser_control": "Return control of this browser session to the agent",
   "tools_access_browser_observe": "Read the page",
@@ -1208,6 +1242,15 @@
   "tools_reason_proxmox_vnc": "It views or controls the VNC console of a Proxmox virtual machine, and no permission covers VNC on it.",
   "tools_reason_database_write": "It changes rows of a database that you registered, and no permission covers this statement.",
   "tools_reason_database_schema": "It changes the schema of a database that you registered, which always asks.",
+  "tools_reason_app_config": "It changes Mannie's configuration, which always asks.",
+  "tools_reason_app_config_security": "It changes Mannie's credentials, trust settings or safety controls, which always asks.",
+  "tools_approval_config_secrets_title": "Secrets for this change",
+  "tools_approval_config_secrets_note": "Values you enter here go straight to Mannie and are never stored in the transcript or sent to the model.",
+  "tools_approval_config_secret_optional": "Optional",
+  "tools_approval_config_secret_required_tag": "Required",
+  "tools_approval_config_secret_in_chat": "Provided in chat; leave empty to use it, or enter a value here to replace it.",
+  "tools_approval_config_secret_missing": "Enter {label} before allowing this change.",
+  "tools_approval_config_security_note": "Review every field carefully before allowing this security-sensitive change.",
   "tools_plugin_failed": "The tool reported the failure {code}.",
   "tools_grant_read": "Reading in {folder}",
   "tools_grant_write": "Changing files in {folder}",
@@ -1394,6 +1437,8 @@
   "tools_error_rule_prefix_invalid": "Choose how many of the command's words the rule keeps.",
   "tools_error_not_in_a_project": "This conversation belongs to no project.",
   "tools_error_grant_not_possible": "This operation can only be allowed once.",
+  "tools_error_secret_required": "Enter a value for {field} before allowing this change.",
+  "tools_error_secret_invalid": "The value for {field} is not valid. Check it and try again.",
   "tools_error_image_not_found": "This image is no longer in the conversation.",
   "tools_error_rule_not_found": "The rule no longer exists.",
   "tools_error_grant_not_found": "The permission no longer exists.",

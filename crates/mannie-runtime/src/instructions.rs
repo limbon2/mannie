@@ -28,6 +28,7 @@ use crate::agents::AgentDefinition;
 use crate::plans::SAVE_PLAN;
 use crate::plugins::Snapshot;
 use crate::questions::ASK_OWNER;
+use crate::self_management::{MANNIE_CONFIGURE, MANNIE_INSPECT};
 use crate::skills::READ_SKILL;
 use crate::texts;
 
@@ -54,6 +55,10 @@ pub struct InstructionContext<'a> {
     /// The list of the skills that the call's agent may see, as the section
     /// `skills` shows it, or `None` without one (ADR-0061, decision 6).
     pub skills: Option<&'a str>,
+    /// Compact live summary of Mannie's version and plugin states, emitted in
+    /// the dynamic `mannie-state` section for owner conversation agents
+    /// (ADR-0081).
+    pub mannie_state: Option<&'a str>,
 }
 
 /// What a conversation's attachments give its instructions (ADR-0049).
@@ -278,6 +283,18 @@ pub fn builtin_sections() -> Vec<InstructionSection> {
                 text
             })
         }),
+        InstructionSection::new("mannie", 155, |context| {
+            let tools = context.tools?;
+            if !tools.offered.contains(&MANNIE_INSPECT) {
+                return None;
+            }
+            let guidance = if tools.offered.contains(&MANNIE_CONFIGURE) {
+                texts::MANNIE_SELF_MANAGEMENT_GUIDANCE
+            } else {
+                texts::MANNIE_INSPECT_ONLY_GUIDANCE
+            };
+            Some(guidance.to_owned())
+        }),
         InstructionSection::new("tasks", 160, |context| {
             context.offers_tasks.then(|| {
                 let guidance = if context.agent.tools.contains(&"run_command") {
@@ -313,6 +330,9 @@ pub fn builtin_sections() -> Vec<InstructionSection> {
         }),
         InstructionSection::new("environment", 300, |context| {
             context.tools.map(|tools| texts::environment(&tools))
+        }),
+        InstructionSection::new("mannie-state", 305, |context| {
+            context.mannie_state.and_then(non_empty).map(str::to_owned)
         }),
         checkpoint_section(),
     ]
@@ -458,6 +478,7 @@ mod tests {
             machine: None,
             sources: None,
             skills: None,
+            mannie_state: None,
         };
         let full = InstructionContext {
             agent: &CONVERSATION,
@@ -468,6 +489,7 @@ mod tests {
             machine: None,
             sources: None,
             skills: None,
+            mannie_state: None,
         };
 
         assert_eq!(registry.assemble(&plain), texts::BASE_INSTRUCTIONS);
@@ -496,6 +518,7 @@ mod tests {
             machine: None,
             sources: None,
             skills: None,
+            mannie_state: None,
         };
 
         let assembled = registry.assemble(&context);
@@ -529,6 +552,7 @@ mod tests {
             machine: None,
             sources: None,
             skills: None,
+            mannie_state: None,
         };
         let without_tools = InstructionContext {
             tools: None,
@@ -564,6 +588,7 @@ mod tests {
             machine: None,
             sources: None,
             skills: None,
+            mannie_state: None,
         };
         let child_in_full_access = InstructionContext {
             agent: &EXPLORE,
@@ -631,6 +656,7 @@ mod tests {
             machine: None,
             sources: None,
             skills: None,
+            mannie_state: None,
         };
 
         let assembled = registry.assemble(&context);
@@ -671,6 +697,7 @@ mod tests {
             machine: None,
             sources: None,
             skills: None,
+            mannie_state: None,
         };
         let child = InstructionContext {
             agent: &EXPLORE,

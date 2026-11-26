@@ -18,6 +18,7 @@ pub mod commands;
 mod config;
 mod imports;
 mod log;
+mod management;
 mod mentions;
 mod naming;
 mod oauth;

@@ -15,6 +15,7 @@ mod blocks;
 mod cite;
 pub mod commands;
 mod emulator;
+mod management;
 mod marks;
 mod mentions;
 pub mod plugin;

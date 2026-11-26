@@ -24,6 +24,7 @@ use mannie_plugin_sdk::error::StartFailure;
 use mannie_plugin_sdk::ipc::{Handlers, Interface, PluginStream};
 use mannie_plugin_sdk::plugin::{Instance, Plugin, Started};
 use mannie_plugin_sdk::points::context::{ContextProviders, PluginContextProvider};
+use mannie_plugin_sdk::points::management::{Management, PluginManagement};
 use mannie_plugin_sdk::points::mentions::{MentionProvider, Mentions};
 use mannie_plugin_sdk::points::tools::Tools;
 use mannie_plugin_sdk::services::file_dialog::FileDialog;
@@ -44,6 +45,7 @@ use crate::commands::{
 };
 use crate::indexer;
 use crate::library::{Library, Timing};
+use crate::management::NotebooksManagement;
 use crate::mentions::NotebookMentions;
 use crate::provider::NotebookContext;
 use crate::store::{MODULE, NotebookStore};
@@ -234,10 +236,15 @@ impl NotebooksPlugin {
         );
         let mentions: Arc<dyn MentionProvider> =
             Arc::new(NotebookMentions::new(Arc::clone(&library)));
+        let management = PluginManagement::new(
+            NOTEBOOKS,
+            Arc::new(NotebooksManagement::new(Arc::clone(&library))),
+        );
         let contributions = tools(&library).into_iter().fold(
             Contributions::new()
                 .add::<ContextProviders>(provider)
-                .add::<Mentions>(mentions),
+                .add::<Mentions>(mentions)
+                .add::<Management>(management),
             Contributions::add::<Tools>,
         );
         let handlers = handlers(&library);

@@ -12,6 +12,7 @@
 //! file dialog gives it the chosen files as handles.
 
 pub mod commands;
+mod management;
 pub mod plugin;
 mod prepare;
 mod shelf;

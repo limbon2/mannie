@@ -11,6 +11,7 @@ use mannie_plugin_sdk::contributions::Contributions;
 use mannie_plugin_sdk::error::StartFailure;
 use mannie_plugin_sdk::ipc::{Handlers, Interface, PluginStream};
 use mannie_plugin_sdk::plugin::{Instance, Plugin, Started};
+use mannie_plugin_sdk::points::management::{Management, PluginManagement};
 use mannie_plugin_sdk::points::mentions::{MentionProvider, Mentions};
 use mannie_plugin_sdk::points::sections::{Section, SectionBody, Sections};
 use mannie_plugin_sdk::points::tools::{AgentSelector, PluginTool, Tools};
@@ -33,6 +34,7 @@ use crate::commands::{
     UpdateCollection, UpdateCollectionCommand, UpdateRequest, UpdateRequestCommand, interface,
 };
 use crate::http::build_http_client;
+use crate::management::NetworkManagement;
 use crate::mentions::NetworkMentions;
 use crate::model::{NetworkError, NetworkStateSnapshot};
 use crate::section::{NetworkCollectionsSection, SECTION_ID, SECTION_POSITION};
@@ -275,7 +277,11 @@ impl NetworkPlugin {
                 SECTION_POSITION,
                 SectionBody::Source(Arc::new(NetworkCollectionsSection::new(manager.clone()))),
             ))
-            .add::<Mentions>(mention_provider);
+            .add::<Mentions>(mention_provider)
+            .add::<Management>(PluginManagement::new(
+                NETWORK,
+                Arc::new(NetworkManagement::new(manager.clone())),
+            ));
 
         let ipc_handlers = handlers(&manager);
         let started = Started::new(NetworkInstance { manager })

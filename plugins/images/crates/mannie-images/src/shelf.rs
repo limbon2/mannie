@@ -233,8 +233,7 @@ impl Shelf {
             .retain(|prepared| !keys.contains(&prepared.key));
     }
 
-    /// The number of waiting files and images, for the tests.
-    #[cfg(test)]
+    /// The number of waiting files and prepared images on the shelf.
     pub(crate) fn counts(&self) -> (usize, usize) {
         let entries = self.entries();
         (entries.picked.len(), entries.prepared.len())

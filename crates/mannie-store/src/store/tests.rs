@@ -192,7 +192,7 @@ async fn a_new_database_gets_the_whole_schema_in_wal_mode_without_a_backup() {
     assert_eq!(
         records(&fixture.database()),
         [
-            ("browser".to_owned(), 3),
+            ("browser".to_owned(), 4),
             ("dbfiles".to_owned(), 1),
             ("exports".to_owned(), 1),
             ("notifications".to_owned(), 1),
@@ -371,7 +371,7 @@ async fn a_database_of_0_2_0_gets_the_version_of_each_module() {
     assert_eq!(
         records(&fixture.database()),
         [
-            ("browser".to_owned(), 3),
+            ("browser".to_owned(), 4),
             ("dbfiles".to_owned(), 1),
             ("exports".to_owned(), 1),
             ("notifications".to_owned(), 1),
@@ -1622,7 +1622,7 @@ async fn rules_of_0_4_0_cover_only_the_foreground_after_the_upgrade() {
     assert_eq!(
         records(&fixture.database()),
         [
-            ("browser".to_owned(), 3),
+            ("browser".to_owned(), 4),
             ("dbfiles".to_owned(), 1),
             ("exports".to_owned(), 1),
             ("notifications".to_owned(), 1),
@@ -1633,4 +1633,18 @@ async fn rules_of_0_4_0_cover_only_the_foreground_after_the_upgrade() {
             ("updates".to_owned(), 1),
         ]
     );
+}
+
+#[tokio::test]
+async fn diagnostics_reports_path_module_versions_and_storage_pragmas() {
+    let fixture = Fixture::new();
+    let store = fixture.open_latest().unwrap();
+
+    let diagnostics = store.diagnostics().await.unwrap();
+
+    assert_eq!(diagnostics.database_path, fixture.database());
+    assert_eq!(diagnostics.journal_mode, "wal");
+    assert!(diagnostics.page_size > 0);
+    assert!(diagnostics.page_count > 0);
+    assert_eq!(diagnostics.module_versions, records(&fixture.database()));
 }
