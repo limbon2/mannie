@@ -2,10 +2,12 @@
 //! JSON and YAML specifications (ADR-0075, decision 7).
 //!
 //! YAML parsing uses `saphyr-parser` 0.4.0's event iterator with hard bounds
-//! on input bytes (10 MiB), nesting depth (64), total nodes (200,000, counting
-//! nodes added by alias expansion) and alias expansions (1,000). Local `$ref`
-//! JSON pointers resolve with cycle and depth guards; remote `$ref` URLs are
-//! never fetched.
+//! on input bytes (10 MiB), expanded bytes (32 MiB, including mapping key
+//! bytes), nesting depth (64), total value nodes (200,000, matching JSON
+//! value-node counting and including nodes added by alias expansion) and alias
+//! expansions (1,000). Local `$ref` JSON pointers resolve with cycle and depth
+//! guards; remote `$ref` URLs are never fetched. Imports cap at 2,000 endpoints
+//! with a warning.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -295,7 +297,22 @@ impl YamlBuilder {
         )
     }
 
+    fn expecting_mapping_key(&self) -> bool {
+        matches!(
+            self.stack.last(),
+            Some(Frame::Mapping {
+                pending_key: None,
+                ..
+            })
+        )
+    }
+
     fn push_container(&mut self, frame: Frame) -> Result<(), NetworkError> {
+        if self.expecting_mapping_key() {
+            return Err(NetworkError::InvalidSpec {
+                detail: "YAML mapping keys must be scalar values".to_owned(),
+            });
+        }
         if self.stack.len() >= MAX_YAML_DEPTH {
             return Err(NetworkError::SpecTooComplex);
         }
@@ -311,6 +328,90 @@ impl YamlBuilder {
         }
 
         push_value(&mut self.stack, &mut self.root, value)
+    }
+
+    fn apply_scalar(
+        &mut self,
+        raw: &str,
+        style: ScalarStyle,
+        anchor: usize,
+        tag: Option<&Tag>,
+    ) -> Result<(), NetworkError> {
+        let value = yaml_scalar_to_json(raw, style, tag);
+
+        // Match `check_value_bounds` for JSON objects: count value nodes
+        // against `MAX_YAML_NODES`, while charging every mapping key's byte
+        // length to `expanded_bytes` (ADR-0075, T-116).
+        if self.expecting_mapping_key() {
+            let key_len = mapping_key_len(&value)?;
+            let anchor_bytes = if anchor == 0 {
+                0
+            } else {
+                NODE_OVERHEAD_BYTES.saturating_add(key_len)
+            };
+
+            charge_expanded_bytes(
+                &mut self.expanded_bytes,
+                key_len.saturating_add(anchor_bytes),
+            )?;
+
+            if anchor != 0 {
+                self.anchors.insert(anchor, value.clone());
+            }
+
+            let key = value_to_mapping_key(value)?;
+
+            if let Some(Frame::Mapping { pending_key, .. }) = self.stack.last_mut() {
+                *pending_key = Some(key);
+            }
+            return Ok(());
+        }
+
+        let payload_bytes = match &value {
+            Value::String(text) => text.len(),
+            _other => 0,
+        };
+
+        self.count_node(payload_bytes)?;
+        self.finish_value(anchor, value)
+    }
+
+    fn apply_alias(&mut self, anchor: usize) -> Result<(), NetworkError> {
+        self.aliases = self.aliases.saturating_add(1);
+
+        if self.aliases > MAX_YAML_ALIASES {
+            return Err(NetworkError::SpecTooComplex);
+        }
+
+        let Some(target_ref) = self.anchors.get(&anchor) else {
+            return Err(NetworkError::InvalidSpec {
+                detail: "YAML alias references an unknown anchor".to_owned(),
+            });
+        };
+
+        if self.expecting_mapping_key() {
+            let key_len = mapping_key_len(target_ref)?;
+            charge_expanded_bytes(&mut self.expanded_bytes, key_len)?;
+
+            let key = value_to_mapping_key(target_ref.clone())?;
+
+            if let Some(Frame::Mapping { pending_key, .. }) = self.stack.last_mut() {
+                *pending_key = Some(key);
+            }
+            return Ok(());
+        }
+
+        // Account for the full node count, depth and expanded byte budget
+        // BEFORE cloning the aliased subtree (ADR-0075, T-116).
+        check_value_bounds(
+            target_ref,
+            self.stack.len(),
+            &mut self.nodes,
+            &mut self.expanded_bytes,
+        )?;
+
+        let target = target_ref.clone();
+        push_value(&mut self.stack, &mut self.root, target)
     }
 
     fn apply_event(&mut self, event: Event<'_>) -> Result<bool, NetworkError> {
@@ -363,39 +464,38 @@ impl YamlBuilder {
                 Ok(false)
             }
             Event::Scalar(raw, style, anchor, tag) => {
-                let value = yaml_scalar_to_json(&raw, style, tag.as_deref());
-                let payload_bytes = match &value {
-                    Value::String(text) => text.len(),
-                    _other => 0,
-                };
-                self.count_node(payload_bytes)?;
-                self.finish_value(anchor, value)?;
+                self.apply_scalar(&raw, style, anchor, tag.as_deref())?;
                 Ok(false)
             }
             Event::Alias(anchor) => {
-                self.aliases = self.aliases.saturating_add(1);
-                if self.aliases > MAX_YAML_ALIASES {
-                    return Err(NetworkError::SpecTooComplex);
-                }
-
-                let Some(target_ref) = self.anchors.get(&anchor) else {
-                    return Err(NetworkError::InvalidSpec {
-                        detail: "YAML alias references an unknown anchor".to_owned(),
-                    });
-                };
-                // Account for the full node count, depth and expanded byte
-                // budget BEFORE cloning the aliased subtree (ADR-0075, T-116).
-                check_value_bounds(
-                    target_ref,
-                    self.stack.len(),
-                    &mut self.nodes,
-                    &mut self.expanded_bytes,
-                )?;
-                let target = target_ref.clone();
-                push_value(&mut self.stack, &mut self.root, target)?;
+                self.apply_alias(anchor)?;
                 Ok(false)
             }
         }
+    }
+}
+
+fn mapping_key_len(value: &Value) -> Result<usize, NetworkError> {
+    match value {
+        Value::String(text) => Ok(text.len()),
+        Value::Number(num) => Ok(num.to_string().len()),
+        Value::Bool(flag) => Ok(if *flag { 4 } else { 5 }),
+        Value::Null => Ok(4),
+        _other => Err(NetworkError::InvalidSpec {
+            detail: "YAML mapping keys must be scalar values".to_owned(),
+        }),
+    }
+}
+
+fn value_to_mapping_key(value: Value) -> Result<String, NetworkError> {
+    match value {
+        Value::String(text) => Ok(text),
+        Value::Number(num) => Ok(num.to_string()),
+        Value::Bool(flag) => Ok(flag.to_string()),
+        Value::Null => Ok("null".to_owned()),
+        _other => Err(NetworkError::InvalidSpec {
+            detail: "YAML mapping keys must be scalar values".to_owned(),
+        }),
     }
 }
 
@@ -446,17 +546,7 @@ fn push_value(
                     entries.insert(key, value);
                 }
             } else {
-                let key = match value {
-                    Value::String(text) => text,
-                    Value::Number(num) => num.to_string(),
-                    Value::Bool(flag) => flag.to_string(),
-                    Value::Null => "null".to_owned(),
-                    _other => {
-                        return Err(NetworkError::InvalidSpec {
-                            detail: "YAML mapping keys must be scalar values".to_owned(),
-                        });
-                    }
-                };
+                let key = value_to_mapping_key(value)?;
                 *pending_key = Some(key);
             }
             Ok(())
@@ -2349,5 +2439,135 @@ f: &f [*e, *e, *e, *e, *e, *e, *e, *e, *e, *e]
         assert!(v2.warning_items.contains(&OpenApiWarning::MissingBaseUrl {
             source: MissingBaseUrlSource::V2Host,
         }));
+    }
+
+    #[test]
+    fn yaml_counts_value_nodes_consistently_with_json_for_large_mapping_specs() {
+        use std::fmt::Write as _;
+
+        use super::{YamlBuilder, check_value_bounds};
+        use saphyr_parser::Parser;
+
+        // Build an OpenAPI 3.0 YAML spec whose total YAML events (containers +
+        // mapping keys + values) exceed MAX_YAML_NODES (200,000), while its
+        // JSON value node count stays within the 200,000-node budget, matching
+        // large real-world specs such as GitLab's `openapi_v3.yaml`.
+        let mut yaml = String::from(
+            "openapi: 3.0.0\ninfo:\n  title: Large Mapping API\nservers:\n  - url: https://api.example.com\npaths:\n",
+        );
+
+        for index in 0..1_700 {
+            writeln!(yaml, "  /api/v4/items/{index}:").unwrap();
+            yaml.push_str("    get:\n");
+            writeln!(yaml, "      summary: Get item {index}").unwrap();
+            yaml.push_str("      tags:\n        - Items\n");
+            yaml.push_str("      parameters:\n");
+
+            for param in 0..9 {
+                writeln!(yaml, "        - name: p_{param}").unwrap();
+                yaml.push_str("          in: query\n");
+                yaml.push_str("          required: false\n");
+                yaml.push_str("          description: Filter parameter\n");
+                yaml.push_str("          schema:\n");
+                yaml.push_str("            type: string\n");
+                yaml.push_str("            example: sample\n");
+            }
+        }
+
+        let mut builder = YamlBuilder::default();
+        let mut yaml_node_events = 0usize;
+
+        for next in Parser::new_from_str(&yaml) {
+            let (event, _span) = next.unwrap();
+
+            if matches!(
+                event,
+                saphyr_parser::Event::MappingStart(..)
+                    | saphyr_parser::Event::SequenceStart(..)
+                    | saphyr_parser::Event::Scalar(..)
+            ) {
+                yaml_node_events += 1;
+            }
+
+            if builder.apply_event(event).unwrap() {
+                break;
+            }
+        }
+
+        let value = builder.root.unwrap();
+        let mut json_nodes = 0usize;
+        let mut json_bytes = 0usize;
+        check_value_bounds(&value, 0, &mut json_nodes, &mut json_bytes).unwrap();
+
+        assert_eq!(builder.nodes, json_nodes);
+        assert_eq!(builder.expanded_bytes, json_bytes);
+        assert!(yaml_node_events > super::MAX_YAML_NODES);
+        assert!(json_nodes > 120_000 && json_nodes <= super::MAX_YAML_NODES);
+
+        let imported = parse_openapi(&yaml).unwrap();
+        assert_eq!(imported.title, "Large Mapping API");
+        assert_eq!(imported.requests.len(), 1_700);
+    }
+
+    #[test]
+    fn rejects_excessive_yaml_value_nodes_large_aliased_keys_and_non_scalar_keys() {
+        use std::fmt::Write as _;
+
+        // Exceeding MAX_YAML_NODES in actual value nodes still fails.
+        let mut too_many_nodes = String::from("items:\n");
+
+        for index in 0..=super::MAX_YAML_NODES {
+            writeln!(too_many_nodes, "  - {index}").unwrap();
+        }
+
+        assert_eq!(
+            parse_openapi(&too_many_nodes).unwrap_err(),
+            NetworkError::SpecTooComplex
+        );
+
+        // Large aliased scalar keys still hit MAX_YAML_EXPANDED_BYTES before
+        // unbounded allocation.
+        let big_key = "k".repeat(256 * 1024);
+        let mut aliased_keys = format!("seed: &big \"{big_key}\"\nentries:\n");
+
+        for index in 0..200 {
+            writeln!(aliased_keys, "  - *big : {index}").unwrap();
+        }
+
+        assert_eq!(
+            parse_openapi(&aliased_keys).unwrap_err(),
+            NetworkError::SpecTooComplex
+        );
+
+        // Non-scalar YAML mapping keys (literal or aliased) are refused.
+        let sequence_key = "?\n  - a\n  - b\n: 1\n";
+        assert!(matches!(
+            parse_openapi(sequence_key),
+            Err(NetworkError::InvalidSpec { .. })
+        ));
+
+        let aliased_seq_key = "arr: &arr [1, 2]\nmap:\n  *arr : 1\n";
+        assert!(matches!(
+            parse_openapi(aliased_seq_key),
+            Err(NetworkError::InvalidSpec { .. })
+        ));
+
+        // Anchored and aliased scalar mapping keys remain supported.
+        let anchored_scalar_key = "\
+openapi: 3.0.3
+info:
+  &title_key title: Anchored Key API
+servers:
+  - url: https://api.example.com
+paths:
+  /ping:
+    get:
+      summary: Ping
+x-copy:
+  *title_key : mirrored
+";
+        let imported = parse_openapi(anchored_scalar_key).unwrap();
+        assert_eq!(imported.title, "Anchored Key API");
+        assert_eq!(imported.requests.len(), 1);
     }
 }
