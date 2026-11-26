@@ -74,7 +74,8 @@
       case 'browser_control':
       case 'network_request':
       case 'path':
-      case 'project': {
+      case 'project':
+      case 'proxmox_vm': {
         return true;
       }
       case 'command':

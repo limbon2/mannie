@@ -296,6 +296,10 @@ pub const BROWSER_SITE_DENIED: &str = "The owner denied this browser site for th
 /// plugin (ADR-0075, decision 3).
 pub const NO_NETWORK_REQUESTS: &str = "Not run: this host sends no collection network requests.";
 
+/// The result of a Proxmox VM operation that a worker refused: a worker runs
+/// no plugin (ADR-0080, decision 5).
+pub const NO_PROXMOX: &str = "Not run: this host manages no Proxmox virtual machines.";
+
 /// The result of a call that names a database that the plugin has not
 /// registered (ADR-0056).
 pub fn database_not_registered(key: &str) -> String {

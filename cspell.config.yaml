@@ -15,6 +15,9 @@ ignorePaths:
   - .agents/skills/**
 words:
   - ALLUSERSPROFILE
+  - allowlist
+  - allowlisted
+  - allowlists
   - ALPN
   - APIKEY
   - appindicator
@@ -26,6 +29,7 @@ words:
   - Backquote
   - bsdtar
   - bufbuild
+  - cdrom
   - chatpass
   - checksummed
   - choco
@@ -72,6 +76,7 @@ words:
   - huntabyte
   - inlang
   - IPTC
+  - isos
   - itoa
   - jexec
   - Jina
@@ -81,6 +86,8 @@ words:
   - journaling
   - kdialog
   - keepalive
+  - keysym
+  - keysyms
   - kwallet
   - Lanczos
   - LASTEXITCODE
@@ -124,6 +131,7 @@ words:
   - nextest
   - nohup
   - nologin
+  - noVNC
   - NSIS
   - Ollama
   - openat
@@ -150,7 +158,9 @@ words:
   - prost
   - protoc
   - protox
+  - Proxmox
   - pypirc
+  - QEMU
   - QUIC
   - Qwen
   - rcfile
@@ -169,6 +179,7 @@ words:
   - rerankers
   - reranking
   - reranks
+  - RFB
   - RGBA
   - RLIMIT
   - rmcp
@@ -212,6 +223,7 @@ words:
   - Tombi's
   - topo
   - truecolor
+  - tungstenite
   - Unpair
   - unpairing
   - unpairs
@@ -220,10 +232,18 @@ words:
   - USERDOMAIN
   - userinfo
   - USERPROFILE
+  - VMID
+  - VMIDs
+  - vncproxy
+  - vncticket
+  - vncwebsocket
+  - volid
+  - volids
   - vtable
   - WALLIX
   - WCAG
   - webgl
+  - webpki
   - winapi
   - windir
   - winget

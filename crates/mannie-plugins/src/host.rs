@@ -23,7 +23,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use mannie_plugin_sdk::context::{DefaultContext, FeatureContext, HostInfo, StartContext};
-use mannie_plugin_sdk::contracts::{Clock, SubscriptionEnd, WorkItem};
+use mannie_plugin_sdk::contracts::{Clock, ConversationId, SubscriptionEnd, WorkItem};
 use mannie_plugin_sdk::error::{CONTRIBUTIONS_REFUSED, SDK_INCOMPATIBLE, SERVICE_UNAVAILABLE};
 use mannie_plugin_sdk::host::{
     CORE_WORK_PREFIX, ContributionConsumer, PluginBinding, ServiceProvider, add_contributions,
@@ -818,6 +818,28 @@ impl PluginHost {
             .iter()
             .flat_map(|consumer| consumer.work(contributor));
         own.chain(core).filter(|item| item.count > 0).collect()
+    }
+
+    /// Notifies every running plugin that one or more conversations were
+    /// deleted so they can release conversation-scoped in-memory state such
+    /// as open sessions (ADR-0080, decision 6).
+    pub async fn conversations_deleted(&self, conversations: &[ConversationId]) {
+        if conversations.is_empty() {
+            return;
+        }
+
+        let pending: Vec<_> = self
+            .inner
+            .entries
+            .iter()
+            .filter_map(|entry| {
+                lock(&entry.running)
+                    .as_ref()
+                    .map(|instance| instance.conversations_deleted(conversations.to_vec()))
+            })
+            .collect();
+
+        futures_util::future::join_all(pending).await;
     }
 
     /// Stops the plugins that are on, the last started first, because Mannie

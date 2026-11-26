@@ -166,13 +166,21 @@ impl Core {
             .map(|services| services.browser.as_ref())
     }
 
-    /// Releases a conversation's browser session when the owner deletes it.
-    pub(crate) async fn end_conversation_browser(
+    /// Releases conversation-scoped sessions in host services and running
+    /// plugins when conversations are deleted (ADR-0080, decision 6).
+    pub(crate) async fn conversations_deleted(
         &self,
-        conversation: &mannie_types::ids::ConversationId,
+        conversations: &[mannie_types::ids::ConversationId],
     ) {
+        if conversations.is_empty() {
+            return;
+        }
+
         if let Ok(services) = &self.inner.services {
-            services.browser.deleted(conversation).await;
+            for conversation in conversations {
+                services.browser.deleted(conversation).await;
+            }
+            services.plugins.conversations_deleted(conversations).await;
         }
     }
 

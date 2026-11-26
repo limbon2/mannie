@@ -79,8 +79,8 @@ pub use mannie_types::tasks::{
 // decision 6).
 pub use mannie_types::tools::{
     AccessMode, ApprovalChoice, DecideApproval, DiscardedWork, MAX_EFFECT_ITEMS,
-    MAX_TOOL_IMAGE_BYTES, MAX_TOOL_IMAGE_SIDE, MAX_TOOL_IMAGES, ProgramEffect, ReadToolOutput,
-    ToolHint, ToolOutputPage, ToolServerEndpoint, ToolsError, looks_like_secret,
+    MAX_TOOL_IMAGE_BYTES, MAX_TOOL_IMAGE_SIDE, MAX_TOOL_IMAGES, ProgramEffect, ProxmoxVmScope,
+    ReadToolOutput, ToolHint, ToolOutputPage, ToolServerEndpoint, ToolsError, looks_like_secret,
 };
 // What a task conversation that an executor serves shows: its checkpoints and
 // the updates of a subscription, and why the core ends a subscription, which

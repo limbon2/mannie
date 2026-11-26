@@ -1438,7 +1438,8 @@ fn injected_write_outside() -> Task {
                         | Access::TerminalCommand { .. }
                         | Access::BrowserControl { .. }
                         | Access::BrowserAction { .. }
-                        | Access::NetworkRequest { .. } => false,
+                        | Access::NetworkRequest { .. }
+                        | Access::ProxmoxVm { .. } => false,
                     });
                 changes(call) && outside
             })?;

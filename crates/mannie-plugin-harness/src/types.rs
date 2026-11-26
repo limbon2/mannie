@@ -27,9 +27,9 @@ pub use mannie_types::tasks::{TaskDocument, TaskPartDocument, TaskRefusal, TaskV
 pub use mannie_types::tools::{
     Access, ApprovalChoice, ApprovalReason, ApprovalRequest, BackgroundCommandView,
     BackgroundEnding, BackgroundSource, CitedItemView, CommandRule, DecideApproval, Decision,
-    GrantScope, Interruption, ProgramEffectKey, ProgramRule, ProgramTarget, ReadToolOutput,
-    RemoteCommandRule, RemoteTarget, SetFullAccess, StopBackgroundCommand, TerminalCommandRule,
-    TerminalHost, TerminalTarget, ToolCallDocument, ToolCallStatus, ToolCallView, ToolOutcome,
-    UpdateToolsSettings,
+    GrantScope, Interruption, ProgramEffectKey, ProgramRule, ProgramTarget, ProxmoxVmScope,
+    ReadToolOutput, RemoteCommandRule, RemoteTarget, SetFullAccess, StopBackgroundCommand,
+    TerminalCommandRule, TerminalHost, TerminalTarget, ToolCallDocument, ToolCallStatus,
+    ToolCallView, ToolOutcome, UpdateToolsSettings,
 };
 pub use mannie_types::transcript::{PartContent, PartKind};

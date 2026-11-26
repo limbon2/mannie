@@ -6,7 +6,7 @@ use specta::Type;
 
 use crate::ids::{ConversationId, DatabaseKey, PartId, ProjectId};
 
-use super::access::AccessMode;
+use super::access::{AccessMode, ProxmoxVmScope};
 use super::external::ToolServerEndpoint;
 use super::program::{ProgramEffectKey, ProgramTarget};
 use super::terminal::{TerminalHost, TerminalTarget};
@@ -61,6 +61,12 @@ pub enum ApprovalReason {
     /// A network request from a collection, which no grant allows (ADR-0075,
     /// decision 3).
     NetworkRequest,
+    /// A configuration or power action on an allowed Proxmox VM, which no grant
+    /// allows (ADR-0080, decision 5).
+    ProxmoxVm,
+    /// A live VNC console operation on an allowed Proxmox VM, which no grant
+    /// allows (ADR-0080, decision 5).
+    ProxmoxVnc,
 }
 
 /// What a grant covers.
@@ -204,6 +210,29 @@ pub enum GrantScope {
         method: String,
         /// The canonical HTTP or HTTPS origin.
         origin: String,
+    },
+    /// Operations of one scope (config, power or VNC) on one allowed QEMU VM
+    /// of a configured Proxmox server at the same endpoint and TLS identity
+    /// (ADR-0080, decision 5).
+    ProxmoxVm {
+        /// The plugin that acts on the VM.
+        plugin: String,
+        /// The plugin's immutable key for the Proxmox server.
+        server_id: String,
+        /// The server's name when the owner allowed it, for display only.
+        server_label: String,
+        /// The canonical `https://host:port` endpoint.
+        endpoint: String,
+        /// The TLS trust identity (`os_trust` or `sha256:<64 hex>`).
+        identity: String,
+        /// The Proxmox node name when the owner allowed it, for display only.
+        node: String,
+        /// The QEMU virtual machine ID.
+        vmid: u32,
+        /// The VM's name when the owner allowed it, for display only.
+        vm_name: String,
+        /// The covered scope: config, power or VNC.
+        scope: ProxmoxVmScope,
     },
 }
 

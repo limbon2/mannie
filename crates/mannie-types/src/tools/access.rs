@@ -171,6 +171,18 @@ fn is_browser_id(value: &str) -> bool {
         .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
 }
 
+/// Which category of operation a Proxmox VM access performs (ADR-0080).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ProxmoxVmScope {
+    /// Hardware configuration changes such as attaching/ejecting ISOs or changing boot order.
+    Config,
+    /// Power state transitions: start, shutdown, reboot, stop and reset.
+    Power,
+    /// Live VNC console session, screen capture and pointer/keyboard input.
+    Vnc,
+}
+
 /// One access of an operation. Authorization decides on accesses, never on
 /// the arguments the model wrote (docs/architecture/tools.md, operations).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
@@ -435,6 +447,39 @@ pub enum Access {
         #[serde(default)]
         summary_cut: bool,
     },
+    /// An operation on an explicitly allowed QEMU virtual machine on a
+    /// configured Proxmox VE server (ADR-0080, decision 5). The plugin names
+    /// the server, canonical HTTPS endpoint, TLS trust identity, node, VMID,
+    /// scope, action and sanitized summary; the core adds the plugin, so no
+    /// plugin speaks for another.
+    ProxmoxVm {
+        /// The plugin whose tool acts on the VM.
+        plugin: String,
+        /// The plugin's immutable key for the Proxmox server.
+        server_id: String,
+        /// The server's name, as the owner gave it, for display only.
+        server_label: String,
+        /// Canonical `https://host:port` origin without userinfo, path, query or fragment.
+        endpoint: String,
+        /// TLS trust identity (`os_trust` or `sha256:<64 hex>` pinned leaf fingerprint).
+        identity: String,
+        /// The Proxmox node hosting the VM.
+        node: String,
+        /// The QEMU virtual machine ID.
+        vmid: u32,
+        /// The VM's display name, for display only.
+        vm_name: String,
+        /// The operation scope: config, power or VNC.
+        scope: ProxmoxVmScope,
+        /// Specific lower-case action tag, such as `attach_iso`, `reboot` or `vnc_keyboard`.
+        action: String,
+        /// Sanitized JSON or plain-text details of the operation without secrets.
+        summary: String,
+        /// Whether a call's view cut the summary to its limit. An access that
+        /// the policy decides on is never cut.
+        #[serde(default)]
+        summary_cut: bool,
+    },
 }
 
 impl Access {
@@ -475,7 +520,8 @@ impl Access {
             | Self::ExternalTool { .. }
             | Self::TerminalCommand { .. }
             | Self::BrowserControl { .. }
-            | Self::NetworkRequest { .. } => true,
+            | Self::NetworkRequest { .. }
+            | Self::ProxmoxVm { .. } => true,
         }
     }
 }
@@ -734,5 +780,45 @@ mod tests {
             })
         );
         assert_eq!(serde_json::from_value::<Access>(json).unwrap(), request);
+    }
+
+    #[test]
+    fn a_proxmox_vm_access_changes_something_and_serializes_with_every_field() {
+        let access = Access::ProxmoxVm {
+            plugin: "proxmox".to_owned(),
+            server_id: "0199e0f2-0000-7000-8000-0000000000aa".to_owned(),
+            server_label: "Home Lab".to_owned(),
+            endpoint: "https://pve.lan:8006".to_owned(),
+            identity: "os_trust".to_owned(),
+            node: "pve1".to_owned(),
+            vmid: 101,
+            vm_name: "debian-test".to_owned(),
+            scope: super::ProxmoxVmScope::Config,
+            action: "attach_iso".to_owned(),
+            summary: r#"{"device":"ide2","iso":"local:iso/debian.iso"}"#.to_owned(),
+            summary_cut: false,
+        };
+
+        assert!(access.changes());
+        let json = serde_json::to_value(&access).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "kind": "proxmox_vm",
+                "plugin": "proxmox",
+                "serverId": "0199e0f2-0000-7000-8000-0000000000aa",
+                "serverLabel": "Home Lab",
+                "endpoint": "https://pve.lan:8006",
+                "identity": "os_trust",
+                "node": "pve1",
+                "vmid": 101,
+                "vmName": "debian-test",
+                "scope": "config",
+                "action": "attach_iso",
+                "summary": r#"{"device":"ide2","iso":"local:iso/debian.iso"}"#,
+                "summaryCut": false,
+            })
+        );
+        assert_eq!(serde_json::from_value::<Access>(json).unwrap(), access);
     }
 }

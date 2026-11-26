@@ -10,9 +10,9 @@ use mannie_types::ceiling::CeilingMode;
 use mannie_types::ids::{DatabaseKey, ProjectId};
 use mannie_types::tools::{
     Access, AccessMode, ApprovalReason, ApprovalRequest, BrowserCredentialAccess, CommandRule,
-    DatabaseHome, Decision, GrantScope, ProgramEffectKey, ProgramRule, ProgramTarget, Refusal,
-    RemoteCommandRule, RemoteTarget, RuleProposal, StatementClass, TerminalCommandRule,
-    TerminalHost, TerminalTarget, ToolServerEndpoint, ToolsError, effect_keys,
+    DatabaseHome, Decision, GrantScope, ProgramEffectKey, ProgramRule, ProgramTarget,
+    ProxmoxVmScope, Refusal, RemoteCommandRule, RemoteTarget, RuleProposal, StatementClass,
+    TerminalCommandRule, TerminalHost, TerminalTarget, ToolServerEndpoint, ToolsError, effect_keys,
 };
 
 use crate::ceiling::Ceiling;
@@ -261,7 +261,8 @@ fn takes_full_access(access: &Access) -> bool {
         | Access::Program { .. }
         | Access::ExternalTool { .. }
         | Access::TerminalCommand { .. }
-        | Access::NetworkRequest { .. } => true,
+        | Access::NetworkRequest { .. }
+        | Access::ProxmoxVm { .. } => true,
     }
 }
 
@@ -411,6 +412,7 @@ fn decide_under_ceiling(
             Err(Hold::Refuse(Refusal::NoBrowser))
         }
         Access::NetworkRequest { .. } => Err(Hold::Refuse(Refusal::NoNetworkRequests)),
+        Access::ProxmoxVm { .. } => Err(Hold::Refuse(Refusal::NoProxmox)),
     }
 }
 
@@ -556,6 +558,7 @@ fn decide_access(access: &Access, inputs: &PolicyInputs<'_>) -> Result<Decision,
         ),
         Access::BrowserControl { .. } => Err(ApprovalReason::BrowserControl),
         Access::NetworkRequest { .. } => decide_network_request(access, inputs),
+        Access::ProxmoxVm { .. } => decide_proxmox_vm(access, inputs),
     }
 }
 
@@ -672,7 +675,8 @@ fn covers_database(grant: &GrantScope, plugin: &str, key: &DatabaseKey, statemen
         | GrantScope::TerminalCommand { .. }
         | GrantScope::BrowserSite { .. }
         | GrantScope::BrowserCredential { .. }
-        | GrantScope::NetworkRequest { .. } => false,
+        | GrantScope::NetworkRequest { .. }
+        | GrantScope::ProxmoxVm { .. } => false,
     }
 }
 
@@ -791,6 +795,62 @@ impl<'a> NetworkEndpointKey<'a> {
             protocol,
             method,
             origin,
+        })
+    }
+}
+
+/// What allows an operation on an allowed Proxmox VM, or why it asks: a grant
+/// covering the same plugin, server, canonical endpoint, TLS trust identity,
+/// VMID and scope. Neither the workspace nor saved rules apply (ADR-0080,
+/// decision 5).
+fn decide_proxmox_vm(
+    access: &Access,
+    inputs: &PolicyInputs<'_>,
+) -> Result<Decision, ApprovalReason> {
+    let Some(vm) = ProxmoxVmKey::of(access) else {
+        return Err(ApprovalReason::ProxmoxVm);
+    };
+    let reason = if vm.scope == ProxmoxVmScope::Vnc {
+        ApprovalReason::ProxmoxVnc
+    } else {
+        ApprovalReason::ProxmoxVm
+    };
+    granted(&inputs.grants, |grant| covers_proxmox_vm(grant, &vm)).ok_or(reason)
+}
+
+/// The parts of a Proxmox VM access that a grant binds to: plugin, server key,
+/// canonical endpoint, TLS trust identity, VMID and scope, never display labels
+/// or action arguments (ADR-0080, decision 5).
+struct ProxmoxVmKey<'a> {
+    plugin: &'a str,
+    server_id: &'a str,
+    endpoint: &'a str,
+    identity: &'a str,
+    vmid: u32,
+    scope: ProxmoxVmScope,
+}
+
+impl<'a> ProxmoxVmKey<'a> {
+    fn of(access: &'a Access) -> Option<Self> {
+        let Access::ProxmoxVm {
+            plugin,
+            server_id,
+            endpoint,
+            identity,
+            vmid,
+            scope,
+            ..
+        } = access
+        else {
+            return None;
+        };
+        Some(Self {
+            plugin,
+            server_id,
+            endpoint,
+            identity,
+            vmid: *vmid,
+            scope: *scope,
         })
     }
 }
@@ -973,7 +1033,8 @@ fn covers_path(grant: &GrantScope, path: &Path, mode: AccessMode) -> bool {
         | GrantScope::Database { .. }
         | GrantScope::BrowserSite { .. }
         | GrantScope::BrowserCredential { .. }
-        | GrantScope::NetworkRequest { .. } => false,
+        | GrantScope::NetworkRequest { .. }
+        | GrantScope::ProxmoxVm { .. } => false,
     }
 }
 
@@ -1006,7 +1067,8 @@ fn covers_command(grant: &GrantScope, command: &str, directory: &Path, backgroun
         | GrantScope::Database { .. }
         | GrantScope::BrowserSite { .. }
         | GrantScope::BrowserCredential { .. }
-        | GrantScope::NetworkRequest { .. } => false,
+        | GrantScope::NetworkRequest { .. }
+        | GrantScope::ProxmoxVm { .. } => false,
     }
 }
 
@@ -1040,7 +1102,8 @@ fn covers_remote_command(
         | GrantScope::Database { .. }
         | GrantScope::BrowserSite { .. }
         | GrantScope::BrowserCredential { .. }
-        | GrantScope::NetworkRequest { .. } => false,
+        | GrantScope::NetworkRequest { .. }
+        | GrantScope::ProxmoxVm { .. } => false,
     }
 }
 
@@ -1071,7 +1134,8 @@ fn covers_terminal_command(
         | GrantScope::Database { .. }
         | GrantScope::BrowserSite { .. }
         | GrantScope::BrowserCredential { .. }
-        | GrantScope::NetworkRequest { .. } => false,
+        | GrantScope::NetworkRequest { .. }
+        | GrantScope::ProxmoxVm { .. } => false,
     }
 }
 
@@ -1107,7 +1171,8 @@ fn covers_external_tool(
         | GrantScope::Database { .. }
         | GrantScope::BrowserSite { .. }
         | GrantScope::BrowserCredential { .. }
-        | GrantScope::NetworkRequest { .. } => false,
+        | GrantScope::NetworkRequest { .. }
+        | GrantScope::ProxmoxVm { .. } => false,
     }
 }
 
@@ -1141,7 +1206,42 @@ fn covers_network_request(grant: &GrantScope, endpoint: &NetworkEndpointKey<'_>)
         | GrantScope::TerminalCommand { .. }
         | GrantScope::Database { .. }
         | GrantScope::BrowserSite { .. }
-        | GrantScope::BrowserCredential { .. } => false,
+        | GrantScope::BrowserCredential { .. }
+        | GrantScope::ProxmoxVm { .. } => false,
+    }
+}
+
+/// Whether a grant covers an operation on an allowed Proxmox VM: the same
+/// plugin, server, canonical endpoint, TLS trust identity, VMID and scope
+/// (ADR-0080, decision 5).
+fn covers_proxmox_vm(grant: &GrantScope, vm: &ProxmoxVmKey<'_>) -> bool {
+    match grant {
+        GrantScope::ProxmoxVm {
+            plugin,
+            server_id,
+            endpoint,
+            identity,
+            vmid,
+            scope,
+            ..
+        } => {
+            let same_server = plugin == vm.plugin
+                && server_id == vm.server_id
+                && endpoint == vm.endpoint
+                && identity == vm.identity;
+            let same_vm = *vmid == vm.vmid && *scope == vm.scope;
+            same_server && same_vm
+        }
+        GrantScope::Path { .. }
+        | GrantScope::Command { .. }
+        | GrantScope::RemoteCommand { .. }
+        | GrantScope::Program { .. }
+        | GrantScope::ExternalTool { .. }
+        | GrantScope::TerminalCommand { .. }
+        | GrantScope::Database { .. }
+        | GrantScope::BrowserSite { .. }
+        | GrantScope::BrowserCredential { .. }
+        | GrantScope::NetworkRequest { .. } => false,
     }
 }
 
@@ -1177,7 +1277,8 @@ fn covers_program(grant: &GrantScope, run: &RunKey<'_>) -> bool {
         | GrantScope::Database { .. }
         | GrantScope::BrowserSite { .. }
         | GrantScope::BrowserCredential { .. }
-        | GrantScope::NetworkRequest { .. } => false,
+        | GrantScope::NetworkRequest { .. }
+        | GrantScope::ProxmoxVm { .. } => false,
     }
 }
 
@@ -1312,7 +1413,37 @@ fn grant_scope(access: &Access) -> Option<GrantScope> {
         }
         Access::Database { .. } => database_grant(access),
         Access::NetworkRequest { .. } => network_request_grant(access),
+        Access::ProxmoxVm { .. } => proxmox_vm_grant(access),
     }
+}
+
+fn proxmox_vm_grant(access: &Access) -> Option<GrantScope> {
+    let Access::ProxmoxVm {
+        plugin,
+        server_id,
+        server_label,
+        endpoint,
+        identity,
+        node,
+        vmid,
+        vm_name,
+        scope,
+        ..
+    } = access
+    else {
+        return None;
+    };
+    Some(GrantScope::ProxmoxVm {
+        plugin: plugin.clone(),
+        server_id: server_id.clone(),
+        server_label: server_label.clone(),
+        endpoint: endpoint.clone(),
+        identity: identity.clone(),
+        node: node.clone(),
+        vmid: *vmid,
+        vm_name: vm_name.clone(),
+        scope: *scope,
+    })
 }
 
 fn network_request_grant(access: &Access) -> Option<GrantScope> {
@@ -1517,8 +1648,37 @@ fn plugin_scope_covers(wider: &GrantScope, narrower: &GrantScope) -> bool {
         (GrantScope::NetworkRequest { .. }, GrantScope::NetworkRequest { .. }) => {
             covers_network_scope(wider, narrower)
         }
+        (GrantScope::ProxmoxVm { .. }, GrantScope::ProxmoxVm { .. }) => {
+            covers_proxmox_scope(wider, narrower)
+        }
         _ => false,
     }
+}
+
+fn covers_proxmox_scope(wider: &GrantScope, narrower: &GrantScope) -> bool {
+    let GrantScope::ProxmoxVm {
+        plugin,
+        server_id,
+        endpoint,
+        identity,
+        vmid,
+        scope,
+        ..
+    } = narrower
+    else {
+        return false;
+    };
+    covers_proxmox_vm(
+        wider,
+        &ProxmoxVmKey {
+            plugin,
+            server_id,
+            endpoint,
+            identity,
+            vmid: *vmid,
+            scope: *scope,
+        },
+    )
 }
 
 fn covers_network_scope(wider: &GrantScope, narrower: &GrantScope) -> bool {

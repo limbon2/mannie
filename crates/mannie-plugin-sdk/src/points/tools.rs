@@ -40,8 +40,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::BoxFuture;
 use crate::contracts::{
-    AccessMode, ArchiveId, ConversationId, DatabaseKey, ImageBytes, ProgramEffect, RunId,
-    StatementClass, ToolHint, ToolServerEndpoint,
+    AccessMode, ArchiveId, ConversationId, DatabaseKey, ImageBytes, ProgramEffect, ProxmoxVmScope,
+    RunId, StatementClass, ToolHint, ToolServerEndpoint,
 };
 use crate::contributions::{ExtensionPoint, IdRule};
 use crate::points::context::ContextItem;
@@ -207,6 +207,75 @@ pub enum ToolAccess {
     /// A network request sent from an owner-configured collection (ADR-0075,
     /// decision 2).
     NetworkRequest(NetworkRequestAccess),
+    /// An operation on an explicitly allowed QEMU VM on an owner-configured
+    /// Proxmox server (ADR-0080, decision 5).
+    ProxmoxVm(ProxmoxVmAccess),
+}
+
+/// An operation on an explicitly allowed QEMU virtual machine on a configured
+/// Proxmox VE server, as a plugin's tool prepares it (ADR-0080, decision 5).
+/// The core adds the plugin, checks every field and decides on every field: an
+/// approval covers this exact prepared action, a grant covers operations of the
+/// same scope on the same VM at the same endpoint and TLS identity, and a
+/// changed endpoint or pinned certificate identity sends the call back to
+/// policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+pub struct ProxmoxVmAccess {
+    /// The plugin's immutable key for the Proxmox server.
+    pub server_id: String,
+    /// The server's name, as the owner gave it, for display only.
+    pub server_label: String,
+    /// Canonical `https://host:port` origin without userinfo, path, query or fragment.
+    pub endpoint: String,
+    /// TLS trust identity (`os_trust` or `sha256:<64 lowercase hex>`).
+    pub identity: String,
+    /// The Proxmox node hosting the VM.
+    pub node: String,
+    /// The QEMU virtual machine ID.
+    pub vmid: u32,
+    /// The VM's display name, for display only.
+    pub vm_name: String,
+    /// The operation scope: config, power or VNC.
+    pub scope: ProxmoxVmScope,
+    /// Specific lower-case action tag, such as `attach_iso`, `reboot` or `vnc_keyboard`.
+    pub action: String,
+    /// Sanitized JSON or plain-text summary of the operation without secrets.
+    pub summary: String,
+}
+
+impl ProxmoxVmAccess {
+    /// A prepared Proxmox VM operation.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "each field of a prepared Proxmox VM operation is required and checked by the core"
+    )]
+    pub fn new(
+        server_id: String,
+        server_label: String,
+        endpoint: String,
+        identity: String,
+        node: String,
+        vmid: u32,
+        vm_name: String,
+        scope: ProxmoxVmScope,
+        action: String,
+        summary: String,
+    ) -> Self {
+        Self {
+            server_id,
+            server_label,
+            endpoint,
+            identity,
+            node,
+            vmid,
+            vm_name,
+            scope,
+            action,
+            summary,
+        }
+    }
 }
 
 /// A network request from an owner-configured collection, as a plugin's tool

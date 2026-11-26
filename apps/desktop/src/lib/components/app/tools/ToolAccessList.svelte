@@ -12,6 +12,8 @@
     programEffectItems,
     programEffectMessage,
     programRunText,
+    proxmoxIdentityText,
+    proxmoxVmScopeLabel,
     statementClassLabel,
     toolHintsMessage,
     toolServerEndpointText,
@@ -37,6 +39,7 @@
   // registered database with its values, what it does and where the database
   // lives, this computer or a worker's host (ADR-0056, decision 7; ADR-0057),
   // a saved network request with its collection and target URL (ADR-0075),
+  // a Proxmox VM operation with its server, VM and scope (ADR-0080),
   // or the project that the conversation moves into, with its folder
   // (docs/features/system-tools/tool-activity.md).
   // Paths, commands, statements, values, arguments, names and a server's
@@ -289,6 +292,36 @@
           <AccessText {copyable} label={m.tools_access_network_details()} text={access.summary} />
           {#if access.summaryCut ?? false}
             <p class="text-xs text-muted-foreground">{m.tools_access_network_summary_cut()}</p>
+          {/if}
+        {/if}
+      {:else if access.kind === 'proxmox_vm'}
+        <div class="flex min-w-0 flex-wrap items-center gap-2">
+          <Badge variant="outline">{proxmoxVmScopeLabel(access.scope)}</Badge>
+          <Badge data-content variant="secondary">{access.action}</Badge>
+          <span class="min-w-0 text-sm wrap-anywhere" data-content dir="auto">
+            {m.tools_access_proxmox_vm_value({ node: access.node, vm: access.vmName, vmid: String(access.vmid) })}
+          </span>
+        </div>
+
+        <dl class="flex flex-wrap gap-x-4 gap-y-1 text-xs" data-proxmox-vm="">
+          <div class="flex min-w-0 items-baseline gap-1.5">
+            <dt class="shrink-0 text-muted-foreground">{m.tools_access_proxmox_server()}</dt>
+            <dd class="min-w-0 wrap-anywhere" data-content dir="auto">{access.serverLabel}</dd>
+          </div>
+          <div class="flex min-w-0 items-baseline gap-1.5">
+            <dt class="shrink-0 text-muted-foreground">{m.tools_access_proxmox_endpoint()}</dt>
+            <dd class="min-w-0 font-mono wrap-anywhere" data-content>{access.endpoint}</dd>
+          </div>
+          <div class="flex min-w-0 items-baseline gap-1.5">
+            <dt class="shrink-0 text-muted-foreground">{m.tools_access_proxmox_identity()}</dt>
+            <dd class="min-w-0 font-mono wrap-anywhere" data-content>{proxmoxIdentityText(access.identity)}</dd>
+          </div>
+        </dl>
+
+        {#if access.summary !== ''}
+          <AccessText {copyable} label={m.tools_access_proxmox_details()} text={access.summary} />
+          {#if access.summaryCut ?? false}
+            <p class="text-xs text-muted-foreground">{m.tools_access_proxmox_summary_cut()}</p>
           {/if}
         {/if}
       {:else}

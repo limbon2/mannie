@@ -145,7 +145,8 @@
       case 'network_request':
       case 'path':
       case 'program':
-      case 'project': {
+      case 'project':
+      case 'proxmox_vm': {
         return false;
       }
     }

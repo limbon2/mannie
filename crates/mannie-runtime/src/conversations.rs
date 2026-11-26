@@ -859,6 +859,17 @@ impl Runtime {
         &self,
         conversation: &ConversationId,
     ) -> Result<(), ChatError> {
+        self.delete_conversation_ids(conversation).await?;
+        Ok(())
+    }
+
+    /// Deletes a conversation with its child task conversations and returns
+    /// every deleted conversation ID so the desktop core can notify plugins
+    /// and host services (ADR-0080, decision 6).
+    pub async fn delete_conversation_ids(
+        &self,
+        conversation: &ConversationId,
+    ) -> Result<Vec<ConversationId>, ChatError> {
         self.refuse_when_task_conversation(conversation).await?;
         let running = {
             let busy = lock(&self.inner.busy);
@@ -899,7 +910,7 @@ impl Runtime {
         // the outbox until each executor takes them.
         self.inner.executors.notify_outbox();
         tracing::info!(conversation = %conversation, task_conversations = children.len(), "deleted a conversation");
-        Ok(())
+        Ok(forgotten)
     }
 
     /// Compacts a conversation now, at the owner's request.

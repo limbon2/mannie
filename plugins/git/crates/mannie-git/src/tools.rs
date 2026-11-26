@@ -295,7 +295,8 @@ pub(crate) async fn authorized_layout(
             | ToolAccess::BrowserControl(_)
             | ToolAccess::BrowserAction(_)
             | ToolAccess::Database(_)
-            | ToolAccess::NetworkRequest(_) => None,
+            | ToolAccess::NetworkRequest(_)
+            | ToolAccess::ProxmoxVm(_) => None,
         })
         .collect();
     let top = folders.first().ok_or(GitFailure::RepositoryChanged)?;

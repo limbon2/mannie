@@ -48,8 +48,9 @@ use mannie_plugin_sdk::points::tools::{
     AgentSelector, BrowserAccess, BrowserAction, BrowserAuthorization, BrowserControlAccess,
     DatabaseAccess, ExternalToolAccess, MAX_FAILURE_CODE_CHARS, MAX_TOOL_ARCHIVE_BYTES,
     MAX_TOOL_ARCHIVES, MAX_TOOL_DATA_BYTES, NetworkRequestAccess, PathAccess, PluginTool,
-    ProgramAccess, RemoteCommandAccess, TerminalCommandAccess, Tool as SdkTool, ToolAccess,
-    ToolArchive, ToolCall, ToolEffect, ToolExecution, ToolOffering, ToolSpec, Tools, is_tool_name,
+    ProgramAccess, ProxmoxVmAccess, RemoteCommandAccess, TerminalCommandAccess, Tool as SdkTool,
+    ToolAccess, ToolArchive, ToolCall, ToolEffect, ToolExecution, ToolOffering, ToolSpec, Tools,
+    is_tool_name,
 };
 use mannie_plugin_sdk::services::sqlite_files::{SqliteFilesError, Statement, WorkerDatabase};
 use mannie_plugin_sdk::services::terminals::{ExpectedHost, TerminalHostRef};
@@ -123,6 +124,11 @@ const MAX_SERVER_URL_BYTES: usize = 8 * 1024;
 const MAX_PROTOCOL_CHARS: usize = 32;
 const MAX_METHOD_CHARS: usize = 32;
 const MAX_ORIGIN_BYTES: usize = 512;
+
+/// The limits of a Proxmox VM access's node name and action identifier
+/// (ADR-0080, decision 5).
+const MAX_PROXMOX_NODE_CHARS: usize = 64;
+const MAX_PROXMOX_ACTION_CHARS: usize = 32;
 
 /// The most characters of the entry whose presence offers a tool.
 const MAX_MARKER_CHARS: usize = 64;
@@ -991,6 +997,9 @@ fn core_accesses(
             ToolAccess::NetworkRequest(request) => {
                 network_request_access(plugin, request).ok_or_else(|| broken(plugin))
             }
+            ToolAccess::ProxmoxVm(vm) => {
+                proxmox_vm_access(plugin, vm).ok_or_else(|| broken(plugin))
+            }
         })
         .collect()
 }
@@ -1542,6 +1551,111 @@ fn network_request_access(plugin: &str, request: NetworkRequestAccess) -> Option
     })
 }
 
+/// The core's access of a Proxmox QEMU VM operation, with the plugin's ID, or
+/// `None` when any identifier, endpoint, TLS identity, node, VMID, action or
+/// summary breaks the SDK's rules (ADR-0080, decision 5).
+fn proxmox_vm_access(plugin: &str, vm: ProxmoxVmAccess) -> Option<Access> {
+    let fits = bounded_plain_text;
+    let names_fit = fits(&vm.server_id, MAX_TARGET_CHARS)
+        && fits(&vm.server_label, MAX_LABEL_CHARS)
+        && fits(&vm.vm_name, MAX_LABEL_CHARS);
+    let target_fits = is_canonical_https_origin(&vm.endpoint)
+        && is_proxmox_identity(&vm.identity)
+        && is_proxmox_node(&vm.node)
+        && vm.vmid > 0;
+    let action_fits = is_proxmox_action(&vm.action);
+    let summary_fits = vm.summary.len() <= MAX_ARGUMENTS_BYTES && !vm.summary.contains('\0');
+
+    if !(names_fit && target_fits && action_fits && summary_fits) {
+        return None;
+    }
+
+    Some(Access::ProxmoxVm {
+        plugin: plugin.to_owned(),
+        server_id: vm.server_id,
+        server_label: vm.server_label,
+        endpoint: vm.endpoint,
+        identity: vm.identity,
+        node: vm.node,
+        vmid: vm.vmid,
+        vm_name: vm.vm_name,
+        scope: vm.scope,
+        action: vm.action,
+        summary: vm.summary,
+        summary_cut: false,
+    })
+}
+
+/// Whether an endpoint is a canonical `https` origin within its byte limit,
+/// without user information, path, query, fragment or control characters.
+fn is_canonical_https_origin(endpoint: &str) -> bool {
+    let clean = !endpoint.is_empty()
+        && endpoint.len() <= MAX_ENDPOINT_CHARS
+        && !endpoint
+            .chars()
+            .any(|character| character.is_control() || character.is_whitespace());
+
+    if !clean {
+        return false;
+    }
+
+    Url::parse(endpoint).is_ok_and(|parsed| {
+        let https_scheme = parsed.scheme() == "https";
+        let exact_origin = parsed.origin().ascii_serialization() == endpoint;
+        https_scheme && exact_origin
+    })
+}
+
+/// Whether a Proxmox server TLS identity is `"os_trust"` or
+/// `"sha256:<64 lower-case hex digits>"`.
+fn is_proxmox_identity(identity: &str) -> bool {
+    if identity == "os_trust" {
+        return true;
+    }
+
+    let Some(digest) = identity.strip_prefix("sha256:") else {
+        return false;
+    };
+    let expected_len = digest.len() == 64;
+    let lower_hex = digest
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'));
+    expected_len && lower_hex
+}
+
+/// Whether a Proxmox node name is 1 to 64 ASCII letters, digits, hyphens,
+/// underscores or dots, starting with an ASCII letter or digit.
+fn is_proxmox_node(node: &str) -> bool {
+    let mut bytes = node.bytes();
+    let starts_alnum = bytes
+        .next()
+        .is_some_and(|byte| byte.is_ascii_alphanumeric());
+    let fits = starts_alnum && node.len() <= MAX_PROXMOX_NODE_CHARS;
+
+    if !fits {
+        return false;
+    }
+
+    bytes.all(|byte| {
+        let separator = matches!(byte, b'-' | b'_' | b'.');
+        byte.is_ascii_alphanumeric() || separator
+    })
+}
+
+/// Whether a Proxmox action identifier is 1 to 32 lower-case ASCII letters,
+/// digits or underscores, starting with a lower-case letter.
+fn is_proxmox_action(action: &str) -> bool {
+    let mut bytes = action.bytes();
+    let starts_lower = bytes.next().is_some_and(|byte| byte.is_ascii_lowercase());
+    let fits = starts_lower && action.len() <= MAX_PROXMOX_ACTION_CHARS;
+
+    if !fits {
+        return false;
+    }
+
+    bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+}
+
 /// Whether a protocol identifier is 1 to 32 lower-case ASCII letters, digits,
 /// hyphens or underscores, starting with a lower-case letter.
 fn is_protocol_name(protocol: &str) -> bool {
@@ -1972,6 +2086,7 @@ fn sdk_access(access: &Access) -> Option<ToolAccess> {
         Access::NetworkRequest { .. } => {
             sdk_network_request(access).map(ToolAccess::NetworkRequest)
         }
+        Access::ProxmoxVm { .. } => sdk_proxmox_vm(access).map(ToolAccess::ProxmoxVm),
         Access::Command { .. } | Access::Project { .. } | Access::Database { .. } => None,
     }
 }
@@ -2029,6 +2144,37 @@ fn sdk_network_request(access: &Access) -> Option<NetworkRequestAccess> {
         method.clone(),
         origin.clone(),
         target_url.clone(),
+        summary.clone(),
+    ))
+}
+
+fn sdk_proxmox_vm(access: &Access) -> Option<ProxmoxVmAccess> {
+    let Access::ProxmoxVm {
+        server_id,
+        server_label,
+        endpoint,
+        identity,
+        node,
+        vmid,
+        vm_name,
+        scope,
+        action,
+        summary,
+        ..
+    } = access
+    else {
+        return None;
+    };
+    Some(ProxmoxVmAccess::new(
+        server_id.clone(),
+        server_label.clone(),
+        endpoint.clone(),
+        identity.clone(),
+        node.clone(),
+        *vmid,
+        vm_name.clone(),
+        *scope,
+        action.clone(),
         summary.clone(),
     ))
 }
@@ -2135,9 +2281,9 @@ mod tests {
     use mannie_plugin_sdk::BoxFuture;
     use mannie_plugin_sdk::points::tools::{
         AgentSelector, ExternalToolAccess, MAX_TOOL_ARCHIVE_BYTES, MAX_TOOL_DATA_BYTES,
-        NetworkRequestAccess, PathAccess, PluginTool, ProgramAccess, RemoteCommandAccess, Tool,
-        ToolAccess, ToolArchive, ToolCall, ToolEffect, ToolExecution, ToolOffering, ToolRefusal,
-        ToolResult, ToolSpec,
+        NetworkRequestAccess, PathAccess, PluginTool, ProgramAccess, ProxmoxVmAccess,
+        RemoteCommandAccess, Tool, ToolAccess, ToolArchive, ToolCall, ToolEffect, ToolExecution,
+        ToolOffering, ToolRefusal, ToolResult, ToolSpec,
     };
     use mannie_tools::{Availability, Done, PrepareError, ToolRegistry};
     use mannie_types::clock::UtcMillis;
@@ -2145,8 +2291,8 @@ mod tests {
     use mannie_types::ids::{ArchiveId, ProjectId};
     use mannie_types::projects::ProjectView;
     use mannie_types::tools::{
-        Access, AccessMode, DiscardedWork, ProgramEffect, ToolFailure, ToolHint, ToolOutcome,
-        ToolServerEndpoint,
+        Access, AccessMode, DiscardedWork, ProgramEffect, ProxmoxVmScope, ToolFailure, ToolHint,
+        ToolOutcome, ToolServerEndpoint,
     };
     use serde_json::{Value, json};
 
@@ -3287,6 +3433,104 @@ mod tests {
                 "network",
                 ToolEffect::SideEffects,
                 vec![ToolAccess::NetworkRequest(broken.clone())],
+                &HashMap::new(),
+                &HashMap::new(),
+                &HashMap::new(),
+            );
+            assert!(
+                matches!(
+                    result,
+                    Err(PrepareError::Failed(ToolFailure::PluginInvalid { .. }))
+                ),
+                "{broken:?} -> {result:?}"
+            );
+        }
+    }
+
+    fn sample_proxmox_vm() -> ProxmoxVmAccess {
+        ProxmoxVmAccess::new(
+            "0199e0f2-0000-7000-8000-0000000000p1".to_owned(),
+            "Home Lab".to_owned(),
+            "https://pve.lan:8006".to_owned(),
+            format!("sha256:{}", "a".repeat(64)),
+            "pve1".to_owned(),
+            101,
+            "debian-test".to_owned(),
+            ProxmoxVmScope::Config,
+            "attach_iso".to_owned(),
+            "Attach local:iso/debian.iso to ide2".to_owned(),
+        )
+    }
+
+    #[test]
+    fn a_valid_proxmox_vm_access_maps_to_core_access_and_back_and_rejects_broken_fields() {
+        let prepared = sample_proxmox_vm();
+        let core = super::core_accesses(
+            "proxmox",
+            ToolEffect::SideEffects,
+            vec![ToolAccess::ProxmoxVm(prepared.clone())],
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap();
+
+        assert_eq!(core.len(), 1);
+        assert_eq!(
+            sdk_accesses(&core),
+            vec![ToolAccess::ProxmoxVm(prepared.clone())]
+        );
+
+        let mut os_trust = prepared.clone();
+        "os_trust".clone_into(&mut os_trust.identity);
+        assert_eq!(
+            super::core_accesses(
+                "proxmox",
+                ToolEffect::SideEffects,
+                vec![ToolAccess::ProxmoxVm(os_trust)],
+                &HashMap::new(),
+                &HashMap::new(),
+                &HashMap::new(),
+            )
+            .unwrap()
+            .len(),
+            1
+        );
+
+        let mut http_endpoint = prepared.clone();
+        "http://pve.lan:8006".clone_into(&mut http_endpoint.endpoint);
+
+        let mut endpoint_with_path = prepared.clone();
+        "https://pve.lan:8006/api2".clone_into(&mut endpoint_with_path.endpoint);
+
+        let mut bad_identity = prepared.clone();
+        "sha256:ABCDEF".clone_into(&mut bad_identity.identity);
+
+        let mut bad_node = prepared.clone();
+        "../pve1".clone_into(&mut bad_node.node);
+
+        let mut zero_vmid = prepared.clone();
+        zero_vmid.vmid = 0;
+
+        let mut bad_action = prepared.clone();
+        "AttachIso".clone_into(&mut bad_action.action);
+
+        let mut bad_summary = prepared;
+        bad_summary.summary.push('\0');
+
+        for broken in [
+            http_endpoint,
+            endpoint_with_path,
+            bad_identity,
+            bad_node,
+            zero_vmid,
+            bad_action,
+            bad_summary,
+        ] {
+            let result = super::core_accesses(
+                "proxmox",
+                ToolEffect::SideEffects,
+                vec![ToolAccess::ProxmoxVm(broken.clone())],
                 &HashMap::new(),
                 &HashMap::new(),
                 &HashMap::new(),

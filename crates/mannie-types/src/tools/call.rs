@@ -168,6 +168,9 @@ pub enum Refusal {
     /// A worker sends no plugin's network requests, for the same reason
     /// (ADR-0075, decision 3).
     NoNetworkRequests,
+    /// A worker performs no Proxmox VM or VNC operations, for the same reason
+    /// (ADR-0080, decision 5).
+    NoProxmox,
 }
 
 /// Why an operation that was executing ended without its result while the
@@ -416,6 +419,11 @@ fn view_access(access: &Access) -> Access {
             ..
         } => cut_text_for_view(statement, statement_cut),
         Access::NetworkRequest {
+            summary,
+            summary_cut,
+            ..
+        }
+        | Access::ProxmoxVm {
             summary,
             summary_cut,
             ..

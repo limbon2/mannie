@@ -10,8 +10,8 @@ use std::collections::BTreeSet;
 use mannie_plugin_sdk::context::{HostInfo, HostProfile};
 use mannie_plugin_sdk::contracts::{
     AccessMode, ArchiveId, CommandError, ContextLocation, DatabaseKey, ImageFormat, MentionEntry,
-    MentionSummary, ProfileSnapshot, StatementClass, SubscriptionEnd, TaskExecutorRef, TaskState,
-    ToolHint, ToolServerEndpoint, WorkItem,
+    MentionSummary, ProfileSnapshot, ProxmoxVmScope, StatementClass, SubscriptionEnd,
+    TaskExecutorRef, TaskState, ToolHint, ToolServerEndpoint, WorkItem,
 };
 use mannie_plugin_sdk::error::StartFailure;
 use mannie_plugin_sdk::ids::PluginId;
@@ -27,8 +27,8 @@ use mannie_plugin_sdk::points::sections::SectionContext;
 use mannie_plugin_sdk::points::terminal_hosts::{TerminalHostEntry, TerminalOpenFailure};
 use mannie_plugin_sdk::points::tools::{
     AgentSelector, CitedItem, DatabaseAccess, ExternalToolAccess, NetworkRequestAccess, PathAccess,
-    RemoteCommandAccess, TerminalCommandAccess, ToolAccess, ToolArchive, ToolCall, ToolExecution,
-    ToolImage, ToolOffering, ToolRefusal, ToolResult, ToolSpec,
+    ProxmoxVmAccess, RemoteCommandAccess, TerminalCommandAccess, ToolAccess, ToolArchive, ToolCall,
+    ToolExecution, ToolImage, ToolOffering, ToolRefusal, ToolResult, ToolSpec,
 };
 use mannie_plugin_sdk::services::background_commands::{
     BackgroundError, BackgroundScope, BackgroundTicket, RemoteEnding, RemoteOutput, StartedCommand,
@@ -679,6 +679,45 @@ fn a_network_request_crosses_json_with_every_field() {
         "kind": "network_request",
         "collectionId": "a",
         "protocol": "http"
+    });
+    let error = serde_json::from_value::<ToolAccess>(incomplete).unwrap_err();
+    assert!(error.is_data(), "{error}");
+}
+
+#[test]
+fn a_proxmox_vm_access_crosses_json_with_every_field() {
+    let access = ToolAccess::ProxmoxVm(ProxmoxVmAccess::new(
+        "0199e0f2-0000-7000-8000-0000000000aa".to_owned(),
+        "Home Lab".to_owned(),
+        "https://pve.lan:8006".to_owned(),
+        "os_trust".to_owned(),
+        "pve1".to_owned(),
+        101,
+        "debian-test".to_owned(),
+        ProxmoxVmScope::Vnc,
+        "vnc_screenshot".to_owned(),
+        r#"{"waitForChangeMs":1000}"#.to_owned(),
+    ));
+    let json = json!({
+        "kind": "proxmox_vm",
+        "serverId": "0199e0f2-0000-7000-8000-0000000000aa",
+        "serverLabel": "Home Lab",
+        "endpoint": "https://pve.lan:8006",
+        "identity": "os_trust",
+        "node": "pve1",
+        "vmid": 101,
+        "vmName": "debian-test",
+        "scope": "vnc",
+        "action": "vnc_screenshot",
+        "summary": r#"{"waitForChangeMs":1000}"#
+    });
+
+    assert_eq!(serde_json::to_value(&access).unwrap(), json);
+    assert_eq!(serde_json::from_value::<ToolAccess>(json).unwrap(), access);
+    let incomplete = json!({
+        "kind": "proxmox_vm",
+        "serverId": "a",
+        "vmid": 101
     });
     let error = serde_json::from_value::<ToolAccess>(incomplete).unwrap_err();
     assert!(error.is_data(), "{error}");

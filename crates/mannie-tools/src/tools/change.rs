@@ -60,7 +60,8 @@ pub(crate) fn path_of(access: &Access) -> Result<(PathBuf, &str), ToolFailure> {
         | Access::BrowserControl { .. }
         | Access::BrowserAction { .. }
         | Access::Database { .. }
-        | Access::NetworkRequest { .. } => Err(ToolFailure::PathChanged),
+        | Access::NetworkRequest { .. }
+        | Access::ProxmoxVm { .. } => Err(ToolFailure::PathChanged),
     }
 }
 

@@ -417,6 +417,18 @@ pub(crate) fn mentions(call: &ToolCallView, needle: &str) -> bool {
                 || target_url.contains(needle)
                 || summary.contains(needle)
         }
+        Access::ProxmoxVm {
+            server_label,
+            vm_name,
+            action,
+            summary,
+            ..
+        } => {
+            server_label.contains(needle)
+                || vm_name.contains(needle)
+                || action.contains(needle)
+                || summary.contains(needle)
+        }
     });
     in_arguments || in_accesses
 }
@@ -705,7 +717,8 @@ fn owner_choice(task: &Task, call: &ToolCallView) -> ApprovalChoice {
             | Access::TerminalCommand { .. }
             | Access::BrowserControl { .. }
             | Access::BrowserAction { .. }
-            | Access::NetworkRequest { .. } => false,
+            | Access::NetworkRequest { .. }
+            | Access::ProxmoxVm { .. } => false,
         });
 
     if allowed {

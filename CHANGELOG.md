@@ -4,6 +4,10 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+### Added
+
+- Add `ProxmoxVm` tool access, per-VM scoped approval grants (`Config`, `Power`, `Vnc`), worker-ceiling refusal (`NoProxmox`), `Instance::conversations_deleted` lifecycle notifications and desktop approval UI rendering for Proxmox VM operations ([ADR-0080](docs/adr/0080-let-plugins-manage-proxmox-vms-and-vnc-consoles.md)).
+
 ## 0.9.0 - 2026-11-25
 
 ### Added
