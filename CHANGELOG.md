@@ -4,9 +4,64 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+## 0.10.1 - 2026-11-26
+
 ### Added
 
 - Add Mannie self-awareness and chat-driven self-configuration (`mannie_inspect`, `mannie_read_logs`, `mannie_configure`, `Access::AppConfig`, `decide_config_approval`, and the Plugin SDK `management` extension point) with masked approval-card secret inputs, scrubbed throwaway chat secrets, always-ask authorization even in full access, and management providers across all core domains and plugins ([ADR-0081](docs/adr/0081-let-agents-inspect-and-configure-mannie.md)).
+
+#### Workers
+
+- Add self-management providers for `workers` (pairing, renaming, and removing workers) and optional feature `workers.databases` (worker database registration, renaming, read-only toggling, file acceptance, removal, and refresh) ([ADR-0081](docs/adr/0081-let-agents-inspect-and-configure-mannie.md)).
+
+#### Images
+
+- Add a read-only self-management provider exposing image format limits and shelf diagnostics ([ADR-0081](docs/adr/0081-let-agents-inspect-and-configure-mannie.md)).
+
+#### SSH
+
+- Add a self-management provider exposing secret-free host inspection and chat-driven actions to add, update, remove, scan, trust, and test SSH hosts ([ADR-0081](docs/adr/0081-let-agents-inspect-and-configure-mannie.md)).
+
+#### Git
+
+- Add a read-only self-management provider exposing the plugin guide and detected git diagnostics ([ADR-0081](docs/adr/0081-let-agents-inspect-and-configure-mannie.md)).
+
+#### MCP
+
+- Add a self-management provider exposing server inspection, tool/log/program queries, and chat-driven actions with dynamic secret inputs for variables, headers, and OAuth client secrets ([ADR-0081](docs/adr/0081-let-agents-inspect-and-configure-mannie.md)).
+
+#### Notebooks
+
+- Add a self-management provider exposing notebook and indexing diagnostics and chat-driven actions for notebooks, text sources, source status, and search preferences ([ADR-0081](docs/adr/0081-let-agents-inspect-and-configure-mannie.md)).
+
+#### Terminal
+
+- Add a self-management provider exposing terminal settings, local shells, remote hosts, and chat-driven settings updates ([ADR-0081](docs/adr/0081-let-agents-inspect-and-configure-mannie.md)).
+
+#### Browser
+
+- Add a self-management provider exposing saved site credential metadata and certificate pins with chat-driven actions to add or remove credentials and certificate pins ([ADR-0081](docs/adr/0081-let-agents-inspect-and-configure-mannie.md)).
+- Add an owner-only **Inspect certificate** dialog on Browser certificate error banners showing presented certificate details with one-click **Save trust and retry**, and support multiple saved certificate pins per hostname ([ADR-0082](docs/adr/0082-soften-browser-certificate-pinning-and-inspect-rejected-certificates.md)).
+
+#### Network Client
+
+- Add a self-management provider exposing redacted inspection and chat-driven actions for collections, folders, requests, environments, global variables, and cookies ([ADR-0081](docs/adr/0081-let-agents-inspect-and-configure-mannie.md)).
+
+#### Proxmox
+
+- Add a self-management provider exposing server and VM allowlist inspection and chat-driven actions for servers, TLS certificate pinning, VM discovery, and allowlist updates ([ADR-0081](docs/adr/0081-let-agents-inspect-and-configure-mannie.md)).
+
+### Changed
+
+#### Browser
+
+- Soften Browser SHA-256 leaf certificate pinning to accept private-CA-signed, hostname-mismatched, CN-only, Ed25519 and expired certificates over `https` and `wss`, remove the five-second active-session expiry hard-kill, accept pasted URLs and formatted fingerprints, add structured rejection logs, return `certificate_rejected` or `no_page_loaded` on unloaded agent tabs, and treat hide-only `browser_place` calls on ended sessions as a no-op ([ADR-0082](docs/adr/0082-soften-browser-certificate-pinning-and-inspect-rejected-certificates.md)).
+
+### Fixed
+
+#### Network Client
+
+- Align OpenAPI YAML node counting with JSON by counting value nodes and charging mapping keys against the expanded-size limit, allowing large specifications such as GitLab's `openapi_v3.yaml` to import within the ADR-0075 safety bounds.
 
 ## 0.10.0 - 2026-11-26
 
