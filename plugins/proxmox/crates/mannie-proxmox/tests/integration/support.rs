@@ -25,6 +25,7 @@ use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::net::TcpListener;
+use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tokio_rustls::TlsAcceptor;
 
@@ -109,6 +110,7 @@ pub(crate) struct FakeState {
     pub(crate) power_actions: Vec<(u32, String)>,
     pub(crate) vnc_pointer_events: Vec<(u32, u16, u16, u8)>,
     pub(crate) vnc_key_events: Vec<(u32, u32, bool)>,
+    vnc_key_event_received: Arc<Notify>,
 }
 
 impl Default for FakeState {
@@ -140,6 +142,7 @@ impl Default for FakeState {
             power_actions: Vec::new(),
             vnc_pointer_events: Vec::new(),
             vnc_key_events: Vec::new(),
+            vnc_key_event_received: Arc::new(Notify::new()),
         }
     }
 }
@@ -225,6 +228,38 @@ impl FakeProxmoxServer {
 
     pub(crate) fn auth_attempts(&self) -> usize {
         self.state.lock().unwrap().auth_attempts
+    }
+
+    pub(crate) async fn wait_for_vnc_key_events(
+        &self,
+        vmid: u32,
+        count: usize,
+    ) -> Vec<(u32, bool)> {
+        let received = Arc::clone(&self.state.lock().unwrap().vnc_key_event_received);
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                // Subscribe before reading the events so a concurrent update cannot be missed.
+                let notified = received.notified();
+                let events: Vec<_> = self
+                    .state
+                    .lock()
+                    .unwrap()
+                    .vnc_key_events
+                    .iter()
+                    .filter(|&&(id, _, _)| id == vmid)
+                    .map(|&(_, keysym, down)| (keysym, down))
+                    .collect();
+
+                if events.len() >= count {
+                    return events;
+                }
+
+                notified.await;
+            }
+        })
+        .await
+        .expect("fake Proxmox server receives the expected VNC key events")
     }
 }
 
@@ -1014,11 +1049,14 @@ where
                 {
                     let mut guard = state.lock().unwrap();
                     guard.vnc_key_events.push((vmid, keysym, down));
+
                     if let Some(vm) = guard.vms.iter_mut().find(|v| v.vmid == vmid) {
                         seq_tick = seq_tick.wrapping_add(17);
                         vm.pixels[0] = seq_tick;
                         vm.pixels[1] = seq_tick.wrapping_add(50);
                     }
+
+                    guard.vnc_key_event_received.notify_waiters();
                 }
                 let frame = encode_rfb_update(&state, vmid);
                 ws_send_binary(&mut stream, &frame).await?;

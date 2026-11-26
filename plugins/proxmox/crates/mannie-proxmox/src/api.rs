@@ -1,6 +1,7 @@
 //! Proxmox VE HTTPS REST API client (ADR-0080):
 //! - Uses a shared `rustls::ClientConfig` (OS trust or pinned leaf SHA-256)
 //!   via `reqwest::ClientBuilder::tls_backend_preconfigured`.
+//! - Allows only HTTPS requests.
 //! - Disables automatic redirects (`Policy::none()`) so auth cookies never
 //!   cross origins.
 //! - Manages per-server `PVEAuthCookie` + `CSRFPreventionToken` in memory with
@@ -102,6 +103,7 @@ impl ProxmoxApiClient {
         let http = reqwest::Client::builder()
             .user_agent(concat!("Mannie/", env!("CARGO_PKG_VERSION")))
             .tls_backend_preconfigured(tls_config)
+            .https_only(true)
             // Connect directly to the Proxmox host just like certificate
             // inspection and VNC WebSockets (`connect_tls`), and prevent Cargo
             // feature unification (`reqwest/system-proxy` from sibling crates)

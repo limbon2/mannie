@@ -374,7 +374,8 @@ impl ProxmoxManager {
         let state = self
             .find_server(server_id)
             .ok_or(ProxmoxError::ServerNotFound)?;
-        let (api, password) = self.api_and_password(&state.server).await?;
+        let password = self.load_password(&state.server).await?;
+        let api = self.api_client(&state.server)?;
         let vms = api.list_qemu_vms(&password).await?;
         Ok(TestConnectionResult {
             endpoint: state.server.endpoint(),
@@ -393,7 +394,8 @@ impl ProxmoxManager {
             .find_server(server_id)
             .ok_or(ProxmoxError::ServerNotFound)?;
         let allowed_set: BTreeSet<u32> = state.allowed_vms.iter().map(|vm| vm.vmid).collect();
-        let (api, password) = self.api_and_password(&state.server).await?;
+        let password = self.load_password(&state.server).await?;
+        let api = self.api_client(&state.server)?;
         let vms = api.list_qemu_vms(&password).await?;
 
         Ok(vms
@@ -468,7 +470,8 @@ impl ProxmoxManager {
             }
 
             let allowed_ids: BTreeSet<u32> = state.allowed_vms.iter().map(|vm| vm.vmid).collect();
-            let (api, password) = self.api_and_password(&state.server).await?;
+            let password = self.load_password(&state.server).await?;
+            let api = self.api_client(&state.server)?;
             let all_live = api.list_qemu_vms(&password).await?;
             let filtered: Vec<ProxmoxVmInfo> = all_live
                 .into_iter()
@@ -512,21 +515,22 @@ impl ProxmoxManager {
         node: &str,
         storage_filter: Option<&str>,
     ) -> Result<IsoListResult, ProxmoxError> {
-        let (api, password) = self.api_and_password(server).await?;
+        let password = self.load_password(server).await?;
+        let api = self.api_client(server)?;
+
         api.list_isos(node, storage_filter, &password).await
     }
 
-    /// Returns a server's cached REST API client and live password from the OS keyring.
-    pub(crate) async fn api_and_password(
+    /// Reads the server's current password from the OS keyring.
+    pub(crate) async fn load_password(
         &self,
         server: &ServerRecord,
-    ) -> Result<(Arc<ProxmoxApiClient>, Secret), ProxmoxError> {
+    ) -> Result<Secret, ProxmoxError> {
         if !server.password_set {
             return Err(ProxmoxError::PasswordMissing);
         }
 
-        let password = self
-            .inner
+        self.inner
             .secrets
             .load(&secret_entry(&server.id))
             .await
@@ -534,20 +538,22 @@ impl ProxmoxManager {
                 tracing::warn!(%error, server = %server.id, "could not read Proxmox password");
                 ProxmoxError::CredentialsFailed
             })?
-            .ok_or(ProxmoxError::PasswordMissing)?;
+            .ok_or(ProxmoxError::PasswordMissing)
+    }
 
-        let client = {
-            let mut map = lock(&self.inner.clients);
-            if let Some(existing) = map.get(&server.id) {
-                Arc::clone(existing)
-            } else {
-                let created = Arc::new(ProxmoxApiClient::new(server)?);
-                map.insert(server.id.clone(), Arc::clone(&created));
-                created
-            }
-        };
+    /// Returns the cached REST API client, building it from the server settings when needed.
+    pub(crate) fn api_client(
+        &self,
+        server: &ServerRecord,
+    ) -> Result<Arc<ProxmoxApiClient>, ProxmoxError> {
+        let mut clients = lock(&self.inner.clients);
+        if let Some(existing) = clients.get(&server.id) {
+            return Ok(Arc::clone(existing));
+        }
 
-        Ok((client, password))
+        let client = Arc::new(ProxmoxApiClient::new(server)?);
+        clients.insert(server.id.clone(), Arc::clone(&client));
+        Ok(client)
     }
 
     /// Owner opens (or attaches to) a live VNC session from the conversation UI.
@@ -558,7 +564,9 @@ impl ProxmoxManager {
         target: VncSessionTarget,
     ) -> Result<VncSessionSummary, ProxmoxError> {
         let (server, vm) = self.resolve_allowed_vm(&target.server_id, target.vmid)?;
-        let (api, password) = self.api_and_password(&server).await?;
+        let password = self.load_password(&server).await?;
+        let api = self.api_client(&server)?;
+
         self.inner
             .vnc
             .ensure_session(
@@ -583,7 +591,8 @@ impl ProxmoxManager {
         server: &ServerRecord,
         vm: &AllowedVmRecord,
     ) -> Result<SessionKey, ProxmoxError> {
-        let (api, password) = self.api_and_password(server).await?;
+        let password = self.load_password(server).await?;
+        let api = self.api_client(server)?;
         let _summary = self
             .inner
             .vnc

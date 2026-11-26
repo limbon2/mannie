@@ -647,16 +647,6 @@ async fn typing_shifted_shell_punctuation_holds_shift_around_each_symbol() {
     let [call] = transcript.tool_calls(0).try_into().unwrap();
     assert_eq!(call.status, ToolCallStatus::Completed);
 
-    let events: Vec<(u32, bool)> = fake
-        .state
-        .lock()
-        .unwrap()
-        .vnc_key_events
-        .iter()
-        .filter(|&&(v, _, _)| v == 100)
-        .map(|&(_, ks, down)| (ks, down))
-        .collect();
-
     let expected = vec![
         (u32::from(b'a'), true),
         (u32::from(b'a'), false),
@@ -691,6 +681,7 @@ async fn typing_shifted_shell_punctuation_holds_shift_around_each_symbol() {
         (u32::from(b'd'), true),
         (u32::from(b'd'), false),
     ];
+    let events = fake.wait_for_vnc_key_events(100, expected.len()).await;
     assert_eq!(events, expected);
 }
 
@@ -933,6 +924,8 @@ async fn keyboard_and_pointer_delay_ms_pause_before_capture() {
 
 #[tokio::test]
 async fn keyboard_delay_ms_aborts_immediately_on_owner_takeover() {
+    const RETURN: u32 = 0xff0d;
+
     let secrets = FakeSecrets::new();
     let hosted = hosted_plugin(&secrets, true).await;
     let fake = FakeProxmoxServer::start(valid_self_signed_cert(35)).await;
@@ -960,10 +953,12 @@ async fn keyboard_delay_ms_aborts_immediately_on_owner_takeover() {
         .expect("start");
     let conv_id = started.conversation_id;
 
-    let t_takeover = std::time::Instant::now();
     approve(&hosted, &conv_id, 0, ApprovalChoice::AllowForConversation).await;
-    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
 
+    let events = fake.wait_for_vnc_key_events(100, 2).await;
+    assert_eq!(events, [(RETURN, true), (RETURN, false)]);
+
+    let t_takeover = std::time::Instant::now();
     let _summary = hosted
         .invoke(
             "set_vnc_control",

@@ -7,3 +7,8 @@ Each change to the plugin adds one line under Unreleased, below its kind of chan
 ### Added
 
 - Add the Proxmox plugin (`proxmox`) for regular non-admin Proxmox VE user accounts with explicit per-server QEMU VM allowlist pre-configuration, OS-trusted and pinned SHA-256 leaf TLS verification, write-only OS credential storage, auto-renewed ticket sessions, ISO/boot-order/power tools under per-VM `Access::ProxmoxVm` approvals, pure-Rust RFB 3.8 VNC tools with PNG screenshots, and a live VNC canvas side panel with owner takeover ([ADR-0080](../../docs/adr/0080-let-plugins-manage-proxmox-vms-and-vnc-consoles.md)).
+
+### Fixed
+
+- Enforce HTTPS in the Proxmox REST client and keep credential loading separate from client construction.
+- Make the VNC keyboard integration tests wait for the fake server to receive the key events they assert on.

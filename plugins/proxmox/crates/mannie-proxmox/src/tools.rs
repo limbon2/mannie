@@ -452,8 +452,12 @@ impl Tool for GetVmConfigTool {
                 }
             };
 
-            let (api, password) = match manager.api_and_password(&server).await {
-                Ok(pair) => pair,
+            let password = match manager.load_password(&server).await {
+                Ok(password) => password,
+                Err(error) => return error_result(&error),
+            };
+            let api = match manager.api_client(&server) {
+                Ok(api) => api,
                 Err(error) => return error_result(&error),
             };
             let config = match api.get_vm_config(&vm.node, vm.vmid, &password).await {
@@ -808,8 +812,12 @@ impl Tool for AttachIsoTool {
                 return result;
             }
 
-            let (api, password) = match this.manager.api_and_password(&server).await {
-                Ok(pair) => pair,
+            let password = match this.manager.load_password(&server).await {
+                Ok(password) => password,
+                Err(error) => return error_result(&error),
+            };
+            let api = match this.manager.api_client(&server) {
+                Ok(api) => api,
                 Err(error) => return error_result(&error),
             };
             let value = format!("{volid},media=cdrom");
@@ -921,8 +929,12 @@ impl Tool for EjectIsoTool {
                 return result;
             }
 
-            let (api, password) = match this.manager.api_and_password(&server).await {
-                Ok(pair) => pair,
+            let password = match this.manager.load_password(&server).await {
+                Ok(password) => password,
+                Err(error) => return error_result(&error),
+            };
+            let api = match this.manager.api_client(&server) {
+                Ok(api) => api,
                 Err(error) => return error_result(&error),
             };
             if let Err(error) = api
@@ -1056,8 +1068,12 @@ impl Tool for SetBootOrderTool {
                 return result;
             }
 
-            let (api, password) = match this.manager.api_and_password(&server).await {
-                Ok(pair) => pair,
+            let password = match this.manager.load_password(&server).await {
+                Ok(password) => password,
+                Err(error) => return error_result(&error),
+            };
+            let api = match this.manager.api_client(&server) {
+                Ok(api) => api,
                 Err(error) => return error_result(&error),
             };
             let joined = order.join(";");
@@ -1186,8 +1202,12 @@ impl Tool for VmPowerTool {
                 return result;
             }
 
-            let (api, password) = match this.manager.api_and_password(&server).await {
-                Ok(pair) => pair,
+            let password = match this.manager.load_password(&server).await {
+                Ok(password) => password,
+                Err(error) => return error_result(&error),
+            };
+            let api = match this.manager.api_client(&server) {
+                Ok(api) => api,
                 Err(error) => return error_result(&error),
             };
             let upid = match api.vm_power(&vm.node, vm.vmid, &action, &password).await {

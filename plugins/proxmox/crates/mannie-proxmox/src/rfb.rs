@@ -1011,6 +1011,7 @@ fn des_encrypt_block(block: u64, subkeys: &[u64; 16]) -> u64 {
 #[cfg(test)]
 mod tests {
     use flate2::{Compress, Compression, Decompress, FlushCompress};
+    use ring::rand::{SystemRandom, generate};
 
     use super::{
         Framebuffer, Rect, des_encrypt_block, des_key_schedule, inflate_bounded,
@@ -1028,16 +1029,29 @@ mod tests {
 
     #[test]
     fn vnc_des_auth_reverses_key_bits_and_encrypts_both_blocks() {
-        // Verify deterministic RFC 6143 SecurityType 2 encryption:
-        // password "password" -> bit-reversed bytes match known DES output.
-        let challenge = [
-            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
-            0x0f, 0x10,
-        ];
-        let resp = vnc_des_encrypt_challenge(b"secret12", &challenge);
-        let resp_same = vnc_des_encrypt_challenge(b"secret12extraignored", &challenge);
-        assert_eq!(resp, resp_same);
-        assert_ne!(resp, challenge);
+        let first_block = 0x0102_0304_0506_0708u64;
+        let second_block = 0x090a_0b0c_0d0e_0f10u64;
+        let mut challenge = [0; 16];
+        challenge[..8].copy_from_slice(&first_block.to_be_bytes());
+        challenge[8..].copy_from_slice(&second_block.to_be_bytes());
+
+        let password = generate::<[u8; 12]>(&SystemRandom::new()).unwrap().expose();
+        let first_eight = &password[..8];
+        // Reading little-endian and reversing the full word reverses only
+        // the bits within each password byte when written back as big-endian.
+        let des_key = u64::from_le_bytes(first_eight.try_into().unwrap()).reverse_bits();
+        let subkeys = des_key_schedule(des_key);
+
+        let response = vnc_des_encrypt_challenge(first_eight, &challenge);
+        assert_eq!(
+            response[..8],
+            des_encrypt_block(first_block, &subkeys).to_be_bytes()
+        );
+        assert_eq!(
+            response[8..],
+            des_encrypt_block(second_block, &subkeys).to_be_bytes()
+        );
+        assert_eq!(response, vnc_des_encrypt_challenge(&password, &challenge));
     }
 
     #[test]
