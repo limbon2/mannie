@@ -12,7 +12,7 @@ use serde_json::Value;
 use tokio::sync::oneshot;
 use zeroize::Zeroizing;
 
-use super::ChromeError;
+use super::{ChromeError, ChromeRejectedCertificate};
 
 /// How a `DevTools` command ended at the host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,6 +114,9 @@ pub enum ChromeEvent {
         id: u64,
         /// Whether certificate validation failed.
         certificate_error: bool,
+        /// Presented leaf certificate metadata when TLS verification rejected
+        /// this top-level navigation.
+        rejected_certificate: Option<ChromeRejectedCertificate>,
     },
     /// The engine closed a tab, for example after `window.close()`.
     TabClosed {

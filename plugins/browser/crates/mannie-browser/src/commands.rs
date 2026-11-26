@@ -188,7 +188,7 @@ fn validate_certificate_field(
 
 fn validate_pin(hostname: &str, fingerprint: &str) -> Result<(), InputRefusal> {
     validate_certificate_field(hostname, 1024, "hostname")?;
-    validate_certificate_field(fingerprint, 128, "fingerprint")
+    validate_certificate_field(fingerprint, 160, "fingerprint")
 }
 
 #[derive(Debug, Deserialize, Type)]
@@ -462,12 +462,12 @@ mod tests {
     fn saved_certificate_requires_bounded_hostname_and_fingerprint() {
         let input = serde_json::json!({
             "hostname": "::1",
-            "fingerprint": "AA".repeat(32),
+            "fingerprint": format!("SHA-256 Fingerprint={}", ["AA"; 32].join(":")),
         });
         let parsed: SavedCertificateInput = serde_json::from_value(input.clone()).unwrap();
         parsed.validate().unwrap();
 
-        for (field, oversized) in [("hostname", 1025), ("fingerprint", 129)] {
+        for (field, oversized) in [("hostname", 1025), ("fingerprint", 161)] {
             let mut invalid = input.clone();
             invalid[field] = serde_json::json!("a".repeat(oversized));
             serde_json::from_value::<SavedCertificateInput>(invalid)

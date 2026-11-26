@@ -65,6 +65,35 @@ pub trait ChromeNavigation: Send + Sync {
     fn allow(&self, request: ChromeRequest) -> BoxFuture<'_, bool>;
 }
 
+/// Sanitized metadata of a server certificate rejected on a top-level
+/// navigation, carried to the owner's Browser pane for inspection (ADR-0082).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChromeRejectedCertificate {
+    /// Canonical hostname from the rejected navigation.
+    pub hostname: String,
+    /// Lowercase 64-character hex SHA-256 fingerprint of the presented leaf DER.
+    pub fingerprint: String,
+    /// Formatted X.509 subject.
+    pub subject: String,
+    /// Formatted X.509 issuer.
+    pub issuer: String,
+    /// Subject Alternative Name DNS and IP entries.
+    pub sans: Vec<String>,
+    /// Validity start in ISO-8601 UTC.
+    pub not_before: String,
+    /// Validity end in ISO-8601 UTC.
+    pub not_after: String,
+    /// Whether the certificate is outside its validity window.
+    pub expired: bool,
+    /// Whether the leaf issuer equals its subject.
+    pub self_signed: bool,
+    /// Machine-readable TLS rejection reason: `untrusted_authority`,
+    /// `hostname_mismatch`, `expired`, `revoked`, or `invalid`.
+    pub reason: String,
+    /// Top-level URL that failed verification (query and fragment stripped).
+    pub url: String,
+}
+
 /// A tab and the origin of each available history destination.
 #[derive(Clone, Debug)]
 pub struct ChromeTab {
@@ -86,6 +115,8 @@ pub struct ChromeTab {
     pub navigation_error: Option<ChromeError>,
     /// Changes when a new top-level navigation fails, even if the error repeats.
     pub navigation_error_sequence: u32,
+    /// Presented certificate details from the latest top-level TLS rejection.
+    pub rejected_certificate: Option<ChromeRejectedCertificate>,
 }
 
 /// The agent's latest gesture in a tab, for the owner's activity line.

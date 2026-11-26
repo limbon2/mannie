@@ -5,24 +5,21 @@ use rusqlite::params;
 use crate::{Durability, Store, StoreError};
 
 const LIST_SAVED: &str =
-    "SELECT hostname, fingerprint FROM browser_saved_certificates ORDER BY hostname";
+    "SELECT hostname, fingerprint FROM browser_saved_certificates ORDER BY hostname, fingerprint";
 const SAVE: &str = "INSERT INTO browser_saved_certificates (hostname, fingerprint)
     VALUES (?1, ?2)
-    ON CONFLICT (hostname) DO NOTHING";
-const SAVED_FINGERPRINT: &str =
-    "SELECT fingerprint FROM browser_saved_certificates WHERE hostname = ?1";
+    ON CONFLICT (hostname, fingerprint) DO NOTHING";
 const FORGET: &str =
     "DELETE FROM browser_saved_certificates WHERE hostname = ?1 AND fingerprint = ?2";
 const RECORD_CHANGE: &str = "INSERT INTO browser_certificate_trust_changes
     (hostname, fingerprint, action, recorded_at) VALUES (?1, ?2, ?3, ?4)";
 
 #[cfg(test)]
-pub(crate) const STATEMENTS: &[&str] =
-    &[LIST_SAVED, SAVE, SAVED_FINGERPRINT, FORGET, RECORD_CHANGE];
+pub(crate) const STATEMENTS: &[&str] = &[LIST_SAVED, SAVE, FORGET, RECORD_CHANGE];
 
 impl Store {
-    /// Lists the owner's saved trust by hostname. Session-only confirmations
-    /// remain in their original journal for audit history.
+    /// Lists the owner's saved trust by hostname and fingerprint. Session-only
+    /// confirmations remain in their original journal for audit history.
     pub async fn list_browser_saved_certificates(
         &self,
     ) -> Result<Vec<(String, [u8; 32])>, StoreError> {
@@ -35,8 +32,9 @@ impl Store {
         .await
     }
 
-    /// Saves and journals the owner's trust. An identical pin is idempotent.
-    /// Returns false if the hostname is already saved with another fingerprint.
+    /// Saves and journals the owner's trust. Multiple distinct fingerprints
+    /// may be saved for the same hostname. Returns true when a new pin was
+    /// inserted and false when the exact pair was already saved.
     pub async fn save_browser_certificate(
         &self,
         hostname: &str,
@@ -48,9 +46,7 @@ impl Store {
         self.write(Durability::Full, move |transaction| {
             let inserted = transaction.execute(SAVE, params![hostname, &fingerprint[..]])?;
             if inserted == 0 {
-                let saved: [u8; 32] =
-                    transaction.query_row(SAVED_FINGERPRINT, [&hostname], |row| row.get(0))?;
-                return Ok(saved == fingerprint);
+                return Ok(false);
             }
             transaction.execute(
                 RECORD_CHANGE,
@@ -100,13 +96,14 @@ mod tests {
     use crate::{Durability, Store, StoreOptions};
 
     #[tokio::test]
-    async fn saved_trust_survives_reopen_and_forget_checks_the_fingerprint() {
+    async fn saved_trust_allows_multiple_pins_per_host_and_forgets_exact_pairs() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("test.sqlite");
         let options = StoreOptions::new(directory.path().join("backups"), Arc::new(SystemClock));
         let store = Store::open(&path, &options).unwrap();
         let original = [1; 32];
-        let replacement = [2; 32];
+        let second = [2; 32];
+        let unknown = [3; 32];
 
         assert!(
             store
@@ -115,14 +112,14 @@ mod tests {
                 .unwrap()
         );
         assert!(
-            store
+            !store
                 .save_browser_certificate("localhost", &original)
                 .await
                 .unwrap()
         );
         assert!(
-            !store
-                .save_browser_certificate("localhost", &replacement)
+            store
+                .save_browser_certificate("localhost", &second)
                 .await
                 .unwrap()
         );
@@ -131,30 +128,20 @@ mod tests {
         let store = Store::open(&path, &options).unwrap();
         assert_eq!(
             store.list_browser_saved_certificates().await.unwrap(),
-            vec![("localhost".to_owned(), original)],
+            vec![
+                ("localhost".to_owned(), original),
+                ("localhost".to_owned(), second),
+            ],
         );
         assert!(
             !store
-                .forget_browser_certificate("localhost", &replacement)
+                .forget_browser_certificate("localhost", &unknown)
                 .await
                 .unwrap()
         );
         assert!(
             store
                 .forget_browser_certificate("localhost", &original)
-                .await
-                .unwrap()
-        );
-        assert!(
-            !store
-                .forget_browser_certificate("localhost", &original)
-                .await
-                .unwrap()
-        );
-        assert_eq!(store.list_browser_saved_certificates().await.unwrap(), []);
-        assert!(
-            store
-                .save_browser_certificate("localhost", &replacement)
                 .await
                 .unwrap()
         );
@@ -166,8 +153,15 @@ mod tests {
         );
         assert_eq!(
             store.list_browser_saved_certificates().await.unwrap(),
-            vec![("localhost".to_owned(), replacement)],
+            vec![("localhost".to_owned(), second)],
         );
+        assert!(
+            store
+                .forget_browser_certificate("localhost", &second)
+                .await
+                .unwrap()
+        );
+        assert_eq!(store.list_browser_saved_certificates().await.unwrap(), []);
 
         let operations: Vec<(String, [u8; 32])> = store
             .read(|connection| {
@@ -182,8 +176,56 @@ mod tests {
             operations,
             vec![
                 ("save".to_owned(), original),
+                ("save".to_owned(), second),
                 ("forget".to_owned(), original),
-                ("save".to_owned(), replacement),
+                ("forget".to_owned(), second),
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn upgrading_from_single_pin_schema_preserves_saved_trust_and_enables_multi_pin() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("test.sqlite");
+        let options = StoreOptions::new(directory.path().join("backups"), Arc::new(SystemClock));
+        let mut modules = CORE_MODULES;
+        let browser = modules
+            .iter_mut()
+            .find(|module| module.name == "browser")
+            .unwrap();
+        browser.migrations = Cow::Owned(browser.migrations[..3].to_vec());
+
+        let original = [1; 32];
+        let second = [2; 32];
+        let store = Store::open_with_modules(&path, &options, &modules).unwrap();
+        store
+            .write(Durability::Full, move |transaction| {
+                transaction.execute(
+                    "INSERT INTO browser_saved_certificates (hostname, fingerprint) VALUES (?1, ?2)",
+                    params!["192.168.1.10", &original[..]],
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        drop(store);
+
+        let store = Store::open(&path, &options).unwrap();
+        assert_eq!(
+            store.list_browser_saved_certificates().await.unwrap(),
+            vec![("192.168.1.10".to_owned(), original)],
+        );
+        assert!(
+            store
+                .save_browser_certificate("192.168.1.10", &second)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            store.list_browser_saved_certificates().await.unwrap(),
+            vec![
+                ("192.168.1.10".to_owned(), original),
+                ("192.168.1.10".to_owned(), second),
             ],
         );
     }

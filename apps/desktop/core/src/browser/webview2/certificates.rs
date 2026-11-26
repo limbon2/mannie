@@ -1,165 +1,90 @@
-//! Saved server certificate exceptions (ADR-0066).
+//! Saved server certificate pinning and owner inspection metadata (ADR-0082).
 
 #[cfg(test)]
 mod tests;
 mod verify;
 
 use std::collections::HashSet;
-use std::ffi::c_void;
-use std::sync::atomic::Ordering;
-use std::sync::{Arc, Weak};
-use std::time::Duration;
+use std::sync::Arc;
 
+use mannie_tools::browser::ChromeRejectedCertificate;
+use mannie_types::clock::{Clock, SystemClock};
 use sha2::{Digest, Sha256};
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_ALWAYS_ALLOW,
-    COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_CANCEL,
-    COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_IS_INVALID, COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN,
+    COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_CANCEL, COREWEBVIEW2_WEB_ERROR_STATUS,
+    COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_COMMON_NAME_IS_INCORRECT,
+    COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_EXPIRED,
+    COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_IS_INVALID,
+    COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_REVOKED, COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN,
     ICoreWebView2, ICoreWebView2_14, ICoreWebView2ServerCertificateErrorDetectedEventArgs,
 };
 use webview2_com::{ServerCertificateErrorDetectedEventHandler, take_pwstr};
-use windows::Win32::Foundation::FILETIME;
-use windows::Win32::System::SystemInformation::GetSystemTimeAsFileTime;
-use windows::Win32::System::Threading::{
-    CloseThreadpoolTimer, CreateThreadpoolTimer, DisassociateCurrentThreadFromCallback,
-    PTP_CALLBACK_INSTANCE, PTP_TIMER, SetThreadpoolTimer, WaitForThreadpoolTimerCallbacks,
-};
 use windows::core::{Interface as _, PWSTR};
 
-use super::super::certificate::{CertificatePin, https_hostname};
+use super::super::certificate::{CertificatePin, fingerprint_hex, tls_hostname};
 use super::{Shared, lock};
-use verify::{decode_pem, verified_leaf};
+use verify::{decode_pem, parse_leaf};
 
-/// WebView2's cache does not expire with the leaf. Reserve time to terminate
-/// its processes and close any pooled connections before `NotAfter`.
-const SHUTDOWN_MARGIN: Duration = Duration::from_secs(5);
-const TICKS_PER_SECOND: u64 = 10_000_000;
-/// The saved pins that WebView2 allowed and the earliest cutoff.
+/// The saved pins that WebView2 allowed during this session, tracked so
+/// forgetting a pin can immediately end sessions with cached allowances.
 #[derive(Default)]
 pub(super) struct Certificates {
     allowed: HashSet<CertificatePin>,
-    expiry: Option<ExpiryTimer>,
-    cutoff: Option<u64>,
 }
 
 impl Certificates {
     pub(super) fn allowed(&self, pin: &CertificatePin) -> bool {
         self.allowed.contains(pin)
     }
+}
 
-    pub(super) fn due(&self) -> bool {
-        self.cutoff.is_some_and(|cutoff| cutoff <= current_ticks())
-    }
+enum Decision {
+    Allowed,
+    Rejected(Option<Box<ChromeRejectedCertificate>>),
+}
 
-    fn arm(&mut self, shared: &Arc<Shared>, not_after: FILETIME) -> windows::core::Result<bool> {
-        let cutoff = ticks(not_after).saturating_sub(SHUTDOWN_MARGIN.as_secs() * TICKS_PER_SECOND);
-        if cutoff <= current_ticks() || self.due() {
-            return Ok(false);
+/// Maps a WebView2 certificate error status to a stable reason code and
+/// whether an owner-saved leaf SHA-256 pin may allow it (ADR-0082).
+fn classify_status(status: COREWEBVIEW2_WEB_ERROR_STATUS) -> (&'static str, bool) {
+    match status {
+        COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_IS_INVALID => ("untrusted_authority", true),
+        COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_COMMON_NAME_IS_INCORRECT => {
+            ("hostname_mismatch", true)
         }
-        if self.cutoff.is_some_and(|scheduled| scheduled <= cutoff) {
-            return Ok(true);
-        }
-        if self.expiry.is_none() {
-            self.expiry = Some(ExpiryTimer::new(shared)?);
-        }
-        let Some(timer) = &self.expiry else {
-            return Ok(false);
-        };
-        timer.arm(cutoff);
-        self.cutoff = Some(cutoff);
-        Ok(true)
+        COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_EXPIRED => ("expired", true),
+        COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_REVOKED => ("revoked", false),
+        _ => ("invalid", false),
     }
 }
 
-/// The stable callback context outlives the timer and its pending callbacks.
-struct ExpiryTimer {
-    timer: PTP_TIMER,
-    _session: Box<Weak<Shared>>,
+fn current_unix_seconds() -> i64 {
+    SystemClock.now().as_millis() / 1_000
 }
 
-impl ExpiryTimer {
-    fn new(shared: &Arc<Shared>) -> windows::core::Result<Self> {
-        let session = Box::new(Arc::downgrade(shared));
-        let context = std::ptr::from_ref(session.as_ref()).cast_mut().cast();
-        // SAFETY: the boxed context stays at the same address through teardown.
-        let timer = unsafe { CreateThreadpoolTimer(Some(expire), Some(context), None) }?;
-        Ok(Self {
-            timer,
-            _session: session,
-        })
-    }
-
-    fn arm(&self, cutoff: u64) {
-        let due = FILETIME {
-            dwLowDateTime: u32::try_from(cutoff & u64::from(u32::MAX)).expect("masked to 32 bits"),
-            dwHighDateTime: u32::try_from(cutoff >> 32).expect("shifted to 32 bits"),
-        };
-        // SAFETY: the timer is live. Windows copies the absolute UTC due time.
-        unsafe { SetThreadpoolTimer(self.timer, Some(&raw const due), 0, Some(0)) };
-    }
-}
-
-impl Drop for ExpiryTimer {
-    fn drop(&mut self) {
-        // SAFETY: this owns the timer. Cancel new callbacks before waiting.
-        unsafe { SetThreadpoolTimer(self.timer, None, 0, None) };
-        // SAFETY: the live timer's callback disassociates before touching Shared.
-        unsafe { WaitForThreadpoolTimerCallbacks(self.timer, true) };
-        // SAFETY: callbacks can no longer use the timer or boxed context.
-        unsafe { CloseThreadpoolTimer(self.timer) };
-    }
-}
-
-unsafe extern "system" fn expire(
-    instance: PTP_CALLBACK_INSTANCE,
-    context: *mut c_void,
-    _timer: PTP_TIMER,
-) {
-    // SAFETY: the timer owns this boxed Weak until after this callback
-    // disassociates. Take an independent reference before disassociating.
-    let shared = unsafe { &*context.cast::<Weak<Shared>>() }.upgrade();
-    // SAFETY: this is the instance of the current timer callback. No later
-    // code touches the timer or context, so teardown can proceed.
-    unsafe { DisassociateCurrentThreadFromCallback(instance) };
-    if let Some(shared) = shared {
-        expire_session(&shared);
-    }
-}
-
-pub(super) fn expire_session(shared: &Shared) {
-    if shared.ended.load(Ordering::Acquire)
-        || shared.certificate_expired.swap(true, Ordering::AcqRel)
-    {
-        return;
-    }
-    // End the browser immediately. Clearing cached TLS decisions would not
-    // close established connections. Normal session cleanup follows.
-    if let Err(error) = shared.job.terminate() {
-        tracing::warn!(%error, "could not terminate a browser session with an expiring certificate");
-        shared.terminate_tracked_processes();
-    }
-    shared.fail();
-}
-
-fn ticks(time: FILETIME) -> u64 {
-    (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime)
-}
-
-fn current_ticks() -> u64 {
-    // SAFETY: the system call takes no arguments and returns a value.
-    ticks(unsafe { GetSystemTimeAsFileTime() })
+fn log_rejection(info: &ChromeRejectedCertificate, reject_reason: &str) {
+    tracing::warn!(
+        hostname = %info.hostname,
+        presented_fingerprint = %info.fingerprint,
+        status = %info.reason,
+        reject_reason,
+        subject = %info.subject,
+        issuer = %info.issuer,
+        expired = info.expired,
+        "rejected a Browser server certificate"
+    );
 }
 
 /// Install the TLS guard on every tab before it can navigate.
 pub(super) fn guard(
     shared: &Arc<Shared>,
     webview: &ICoreWebView2,
-    rejected: impl Fn(&str) + 'static,
+    rejected: impl Fn(&str, Option<ChromeRejectedCertificate>) + 'static,
 ) -> windows::core::Result<()> {
     let api: ICoreWebView2_14 = webview.cast()?;
     let session = Arc::clone(shared);
-    let handler =
-        ServerCertificateErrorDetectedEventHandler::create(Box::new(move |_, arguments| {
+    let handler = ServerCertificateErrorDetectedEventHandler::create(Box::new(
+        move |_, arguments| {
             if let Some(arguments) = arguments {
                 // SAFETY: the callback arguments are live on this thread.
                 unsafe {
@@ -169,72 +94,129 @@ pub(super) fn guard(
                 // SAFETY: the arguments are live and the output is writable.
                 unsafe { arguments.RequestUri(&raw mut uri) }?;
                 let uri = take_pwstr(uri);
-                // Verification errors leave the explicit cancellation in place.
-                if !allow_if_trusted(&session, &arguments, &uri).unwrap_or(false) {
-                    rejected(&uri);
+                // Any callback error leaves the explicit cancellation in place.
+                match evaluate_certificate(&session, &arguments, &uri) {
+                    Ok(Decision::Allowed) => {}
+                    Ok(Decision::Rejected(info)) => rejected(&uri, info.map(|boxed| *boxed)),
+                    Err(error) => {
+                        tracing::warn!(
+                            %error,
+                            "could not inspect a Browser server certificate; keeping request cancelled"
+                        );
+                        rejected(&uri, None);
+                    }
                 }
             }
             Ok(())
-        }));
+        },
+    ));
     let mut token = 0;
     // SAFETY: WebView2 retains the handler, and the token is writable.
     unsafe { api.add_ServerCertificateErrorDetected(&handler, &raw mut token) }
 }
 
-fn allow_if_trusted(
+fn evaluate_certificate(
     shared: &Arc<Shared>,
     arguments: &ICoreWebView2ServerCertificateErrorDetectedEventArgs,
     uri: &str,
-) -> windows::core::Result<bool> {
-    if shared.stopping() || shared.certificate_deadline_reached() {
-        return Ok(false);
+) -> windows::core::Result<Decision> {
+    if shared.stopping() {
+        return Ok(Decision::Rejected(None));
     }
+
     let mut status = COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN;
     // SAFETY: the arguments are live on this thread and the output is writable.
     unsafe { arguments.ErrorStatus(&raw mut status) }?;
-    if status != COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_IS_INVALID {
-        return Ok(false);
-    }
-    let Some(hostname) = https_hostname(uri) else {
-        return Ok(false);
+    let (reason, pinnable) = classify_status(status);
+
+    let Some(hostname) = tls_hostname(uri) else {
+        tracing::warn!(
+            status = reason,
+            reject_reason = "unsupported_scheme",
+            "rejected a Browser server certificate"
+        );
+        return Ok(Decision::Rejected(None));
     };
-    let fingerprint = {
-        let saved = lock(&shared.saved_certificates);
-        saved.as_ref().and_then(|pins| pins.get(&hostname)).copied()
-    };
-    let Some(fingerprint) = fingerprint else {
-        return Ok(false);
-    };
+
     // SAFETY: the arguments are live on this thread.
     let certificate = unsafe { arguments.ServerCertificate() }?;
     let mut pem = PWSTR::null();
     // SAFETY: the certificate is live and the output is writable. take_pwstr frees it.
     unsafe { certificate.ToPemEncoding(&raw mut pem) }?;
     let der = decode_pem(&take_pwstr(pem))?;
-    if Sha256::digest(&der)[..] != fingerprint {
-        return Ok(false);
-    }
-    let Some(not_after) = verified_leaf(&der, &hostname, None) else {
-        return Ok(false);
+    let fingerprint: [u8; 32] = Sha256::digest(&der).into();
+    let fingerprint_text = fingerprint_hex(&fingerprint);
+
+    let Some(parsed) = parse_leaf(&der) else {
+        tracing::warn!(
+            hostname = %hostname,
+            presented_fingerprint = %fingerprint_text,
+            status = reason,
+            reject_reason = "malformed_certificate",
+            "rejected a Browser server certificate"
+        );
+        return Ok(Decision::Rejected(None));
     };
+
+    let expired = parsed.is_expired(current_unix_seconds());
+    let info = ChromeRejectedCertificate {
+        hostname: hostname.clone(),
+        fingerprint: fingerprint_text.clone(),
+        subject: parsed.subject,
+        issuer: parsed.issuer,
+        sans: parsed.sans,
+        not_before: parsed.not_before_iso,
+        not_after: parsed.not_after_iso,
+        expired,
+        self_signed: parsed.self_signed,
+        reason: reason.to_owned(),
+        url: uri.to_owned(),
+    };
+
+    if !pinnable {
+        let reject_reason = if status == COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_REVOKED {
+            "certificate_revoked"
+        } else {
+            "unsupported_status"
+        };
+        log_rejection(&info, reject_reason);
+        return Ok(Decision::Rejected(Some(Box::new(info))));
+    }
+
     let pin = CertificatePin {
-        hostname,
+        hostname: hostname.clone(),
         fingerprint,
     };
     // Forget takes these locks in the same order. It either sees the allowance
     // here or prevents it before WebView2 can cache it.
     let saved = lock(&shared.saved_certificates);
     let mut certificates = lock(&shared.certificates);
-    if shared.stopping()
-        || shared.certificate_expired.load(Ordering::Acquire)
-        || saved.as_ref().and_then(|pins| pins.get(&pin.hostname)) != Some(&pin.fingerprint)
-        || !certificates.arm(shared, not_after)?
-    {
-        return Ok(false);
+    if shared.stopping() {
+        return Ok(Decision::Rejected(Some(Box::new(info))));
     }
+
+    let host_pins = saved.as_ref().and_then(|pins| pins.get(&pin.hostname));
+    let matched = host_pins.is_some_and(|fingerprints| fingerprints.contains(&pin.fingerprint));
+    if !matched {
+        let reject_reason = if host_pins.is_some_and(|fingerprints| !fingerprints.is_empty()) {
+            "fingerprint_mismatch"
+        } else {
+            "unpinned_host"
+        };
+        log_rejection(&info, reject_reason);
+        return Ok(Decision::Rejected(Some(Box::new(info))));
+    }
+
     // Keep the allowance recorded even if WebView2 reports an error setting it.
     certificates.allowed.insert(pin);
     // SAFETY: the live callback arguments accept this action.
     unsafe { arguments.SetAction(COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_ALWAYS_ALLOW) }?;
-    Ok(true)
+    tracing::info!(
+        hostname = %hostname,
+        fingerprint = %fingerprint_text,
+        status = reason,
+        expired,
+        "allowed a pinned Browser server certificate"
+    );
+    Ok(Decision::Allowed)
 }

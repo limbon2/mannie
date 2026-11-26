@@ -10,19 +10,30 @@
   import RotateCwIcon from '@mannie/plugin-sdk/icons/rotate-cw';
   import type { SidePanelProps } from '@mannie/plugin-sdk/slots';
 
-  import type { BrowserControl, BrowserStatus_Serialize as BrowserStatus, BrowserTab } from '../generated/bindings.js';
+  import type {
+    BrowserControl,
+    BrowserRejectedCertificate,
+    BrowserStatus_Serialize as BrowserStatus,
+    BrowserTab,
+  } from '../generated/bindings.js';
   import { m } from '../generated/messages.js';
   import { BrowserSession } from '../state/browser-session.svelte.js';
   import { browserAddress } from '../utils/browser-address.js';
-  import { browserActivityMessage, browserErrorMessage } from '../utils/browser-messages.js';
+  import {
+    browserActivityMessage,
+    browserCertificateReasonMessage,
+    browserErrorMessage,
+  } from '../utils/browser-messages.js';
   import { browserPanelTarget, labelBrowserTab, openBrowserTab } from '../utils/browser-panel.js';
 
+  import BrowserCertificateInspectDialog from './BrowserCertificateInspectDialog.svelte';
   import BrowserErrorAlert from './BrowserErrorAlert.svelte';
   import BrowserViewport from './BrowserViewport.svelte';
 
   let { argument }: SidePanelProps = $props();
   let draftAddress = $state<string | null>(null);
   let confirmingEnd = $state(false);
+  let inspectingCertificate = $state(false);
   let pane = $state<HTMLElement | null>(null);
   let address = $state<HTMLInputElement | null>(null);
   let keyboardHelp = $state<HTMLElement | null>(null);
@@ -43,7 +54,43 @@
   const interactive = $derived(owner && !session.busy);
   const activity = $derived(activityMessage(status));
   const certificateRejected = $derived(tab?.navigationError?.code === 'certificate_rejected');
+  const rejectedCertificate = $derived(certificateRejected ? (tab?.rejectedCertificate ?? null) : null);
+  const certificateMessage = $derived(certificateErrorMessage(rejectedCertificate));
   const ended = $derived(endedMessage(status));
+
+  function certificateErrorMessage(certificate: BrowserRejectedCertificate | null): string {
+    if (certificate === null) {
+      return m.browser_error_certificate_rejected();
+    }
+    return m.browser_error_certificate_rejected_host({
+      hostname: certificate.hostname,
+      reason: browserCertificateReasonMessage(certificate.reason),
+    });
+  }
+
+  function openCertificateInspect(): void {
+    if (rejectedCertificate !== null) {
+      inspectingCertificate = true;
+    }
+  }
+
+  function handleCertificateTrusted(url: string): void {
+    void retryAfterTrust(url);
+  }
+
+  async function retryAfterTrust(url: string): Promise<void> {
+    if (!owner) {
+      return;
+    }
+
+    if (url === '') {
+      return;
+    }
+
+    if (await control({ kind: 'navigate', url })) {
+      draftAddress = null;
+    }
+  }
 
   /** The agent's latest gesture while it has control. */
   function activityMessage(current: BrowserStatus | null): string {
@@ -159,6 +206,12 @@
     const latest = status;
     if (latest !== null) {
       void followTabs(latest);
+    }
+  });
+
+  $effect(() => {
+    if (rejectedCertificate === null) {
+      inspectingCertificate = false;
     }
   });
 
@@ -300,7 +353,12 @@
       </form>
       {#if certificateRejected}
         {#key `${status.sessionId ?? ''}:${tab.navigationErrorSequence}`}
-          <BrowserErrorAlert certificate message={m.browser_error_certificate_rejected()} onDismiss={focusAfterError} />
+          <BrowserErrorAlert
+            certificate
+            message={certificateMessage}
+            onDismiss={focusAfterError}
+            onInspect={rejectedCertificate !== null ? openCertificateInspect : undefined}
+          />
         {/key}
       {/if}
       {#key tab.id}
@@ -323,6 +381,13 @@
     {/if}
   {/if}
 </section>
+
+<BrowserCertificateInspectDialog
+  canRetry={owner}
+  certificate={rejectedCertificate}
+  bind:open={inspectingCertificate}
+  onTrusted={handleCertificateTrusted}
+/>
 
 <AlertDialog.Root bind:open={confirmingEnd}>
   <AlertDialog.Content>

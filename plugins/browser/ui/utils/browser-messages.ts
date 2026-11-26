@@ -59,6 +59,9 @@ export function browserErrorMessage(code: string): string | null {
     case 'limit_reached': {
       return m.browser_error_limit();
     }
+    case 'no_page_loaded': {
+      return m.browser_error_no_page_loaded();
+    }
     case 'navigation_denied': {
       return m.browser_error_navigation_denied();
     }
@@ -128,4 +131,38 @@ export function browserActivityMessage(kind: string): string {
 export function browserFailureMessage(failure: PluginCallFailure<BrowserError>): string {
   const code = failure.kind === 'core' ? failure.error.code : null;
   return (code === null ? null : browserErrorMessage(code)) ?? m.browser_error_ipc();
+}
+
+/** Human-readable explanation of a WebView2 TLS rejection reason code. */
+export function browserCertificateReasonMessage(reason: string): string {
+  switch (reason) {
+    case 'untrusted_authority': {
+      return m.browser_certificate_reason_untrusted_authority();
+    }
+    case 'hostname_mismatch': {
+      return m.browser_certificate_reason_hostname_mismatch();
+    }
+    case 'expired': {
+      return m.browser_certificate_reason_expired();
+    }
+    case 'revoked': {
+      return m.browser_certificate_reason_revoked();
+    }
+    default: {
+      return m.browser_certificate_reason_invalid();
+    }
+  }
+}
+
+/** Formats a 64-character hex SHA-256 fingerprint as uppercase colon-separated pairs. */
+export function formatCertificateFingerprint(fingerprint: string): string {
+  const hex = fingerprint.trim().toUpperCase();
+  if (!/^[0-9A-F]{64}$/u.test(hex)) {
+    return fingerprint;
+  }
+  const pairs: string[] = [];
+  for (let index = 0; index < hex.length; index += 2) {
+    pairs.push(hex.slice(index, index + 2));
+  }
+  return pairs.join(':');
 }

@@ -97,3 +97,4 @@ Each ADR has exactly one of these statuses:
 | [0079](0079-highlight-code-with-shiki-and-css-classes.md)                              | Highlight code and shell commands with Shiki mapped to CSS classes                            | Accepted (D73)         | Continuous |
 | [0080](0080-let-plugins-manage-proxmox-vms-and-vnc-consoles.md)                        | Let plugins manage Proxmox VMs and VNC consoles                                               | Accepted (D74)         | V16        |
 | [0081](0081-let-agents-inspect-and-configure-mannie.md)                                | Let agents inspect and configure Mannie from chat                                             | Accepted (D75)         | V17        |
+| [0082](0082-soften-browser-certificate-pinning-and-inspect-rejected-certificates.md)   | Soften Browser certificate pinning and inspect rejected certificates                          | Accepted (D76)         | V13        |

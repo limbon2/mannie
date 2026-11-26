@@ -183,6 +183,7 @@ impl Page {
                 loading: false,
                 navigation_error: None,
                 navigation_error_sequence: 0,
+                rejected_certificate: None,
             },
             revision: 1,
             elements: HashMap::new(),
@@ -727,6 +728,7 @@ impl Driver {
                 if let Some(page) = lock(&self.state).tabs.get_mut(&tab) {
                     page.native_navigation = Some(id);
                     page.tab.navigation_error = None;
+                    page.tab.rejected_certificate = None;
                 }
                 Ok(())
             }
@@ -734,8 +736,15 @@ impl Driver {
                 tab,
                 id,
                 certificate_error,
+                rejected_certificate,
             } => {
-                if let Some(page) = lock(&self.state).tabs.get_mut(&tab)
+                let mut state = lock(&self.state);
+                let State {
+                    tabs,
+                    protected_values,
+                    ..
+                } = &mut *state;
+                if let Some(page) = tabs.get_mut(&tab)
                     && page.native_navigation == Some(id)
                     && certificate_error
                 {
@@ -744,6 +753,10 @@ impl Driver {
                             page.tab.navigation_error_sequence.wrapping_add(1);
                     }
                     page.tab.navigation_error = Some(ChromeError::CertificateRejected);
+                    if let Some(mut certificate) = rejected_certificate {
+                        certificate.url = sanitized_address(&certificate.url, protected_values);
+                        page.tab.rejected_certificate = Some(certificate);
+                    }
                 }
                 Ok(())
             }
@@ -1092,6 +1105,7 @@ impl Driver {
         }
         if !url.starts_with("chrome-error:") && !frame["unreachableUrl"].is_string() {
             page.tab.navigation_error = None;
+            page.tab.rejected_certificate = None;
         }
         page.fresh = false;
         string(&frame["id"])?.clone_into(&mut page.main_frame);

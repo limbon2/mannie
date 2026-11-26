@@ -58,6 +58,7 @@ const BROWSER_SETTINGS = '[data-browser-settings]';
 const CERTIFICATES = `${BROWSER_SETTINGS} [data-browser-trusted-hosts]`;
 const CREDENTIALS = `${BROWSER_SETTINGS} [data-browser-site-credentials]`;
 const CERTIFICATE_DIALOG = '[role="dialog"] [data-browser-certificate-dialog]';
+const INSPECT_CERTIFICATE_DIALOG = '[role="dialog"] [data-browser-certificate-inspect-dialog]';
 const CREDENTIAL_DIALOG = '[role="dialog"] [data-browser-credential-dialog]';
 const ADD_CERTIFICATE = `${CERTIFICATES} [data-browser-certificate-add]`;
 const ADD_CREDENTIAL = `${CREDENTIALS} [data-browser-credential-add]`;
@@ -547,8 +548,7 @@ async function trustCertificate(hostname: string, fingerprint: string): Promise<
   await $(`${CERTIFICATE_DIALOG} [data-browser-certificate-fingerprint]`).setValue(fingerprint);
   await $(`${CERTIFICATE_DIALOG} [data-browser-certificate-save]`).click();
   await waitForHidden(CERTIFICATE_DIALOG);
-  const saved = $(`${CERTIFICATES} [role="listitem"][data-browser-saved-certificate]`);
-  await waitForShownText(saved, expect.stringContaining(fingerprint.replaceAll(':', '').toLowerCase()));
+  await waitForShownText($(CERTIFICATES), expect.stringContaining(fingerprint.replaceAll(':', '').toLowerCase()));
   await expect($(ADD_CERTIFICATE)).toBeFocused();
   await leaveSettings();
 }
@@ -557,11 +557,11 @@ async function forgetCertificate(fingerprint: string): Promise<void> {
   await openSettings('browser.settings');
   const normalized = fingerprint.replaceAll(':', '').toLowerCase();
   await $(CERTIFICATES).waitForDisplayed();
-  await browser.waitUntil(
-    async () =>
-      (await $(`${CERTIFICATES} [data-browser-saved-certificate]`).isExisting()) ||
-      (await shownText(await $(CERTIFICATES))).includes('No saved certificates.'),
-  );
+  await browser.waitUntil(async () => {
+    const hasSavedCertificates = (await $$(`${CERTIFICATES} [data-browser-saved-certificate]`).length) > 0;
+    const showsEmptyState = (await shownText(await $(CERTIFICATES))).includes('No saved certificates.');
+    return hasSavedCertificates || showsEmptyState;
+  });
   for (const entry of await $$(`${CERTIFICATES} [data-browser-saved-certificate]`)) {
     if ((await shownText(entry)).includes(normalized)) {
       await entry.$('[data-browser-certificate-forget]').click();
@@ -1070,36 +1070,91 @@ describeBrowserPane('Browser pane', () => {
     }
   });
 
-  it('ends the Browser session and closes a live HTTPS connection before an allowed certificate expires', async () => {
-    await openBrowserConversation('Open a conversation for the short-lived HTTPS fixture.');
-    const certificate = selfSignedCertificate(35);
-    const shortLived = await startHttpsSite(certificate);
+  it('inspects and trusts private-CA, hostname-mismatched, expired and multi-port certificates in the pane', async () => {
+    const privateCa = selfSignedCertificate({ caSigned: true });
+    const mismatchedExpired = selfSignedCertificate({ expired: true, mismatchedHost: true });
+    const first = await startHttpsSite(privateCa);
     try {
-      await trustCertificate(new URL(shortLived.address).hostname, certificate.fingerprint);
-      await ownerNavigate(`${shortLived.address}/keep-connection`);
-      await waitForHttpsFixture('/keep-connection');
-      await browser.waitUntil(() => shortLived.requests.includes('/hold'), {
-        timeoutMsg: 'the page did not open a long-lived HTTPS response',
-      });
-      expect(shortLived.holdClosedAt()).toBeUndefined();
-
-      await browser.waitUntil(() => shortLived.holdClosedAt() !== undefined, {
-        timeout: Math.max(1_000, certificate.notAfter - Date.now() + 5_000),
-        timeoutMsg: 'the connection stayed open after certificate expiry',
-      });
-      expect(shortLived.holdClosedAt()).toBeLessThan(certificate.notAfter);
-      await waitForShownText($(PANEL), expect.stringContaining('A trusted certificate was about to expire'));
-
-      await startBrowserSession();
-      await ownerNavigate(`${shortLived.address}/after-cutoff`);
-      await waitForCertificateError();
-      expect(shortLived.requests).not.toContain('/after-cutoff');
-    } finally {
+      const second = await startHttpsSite(mismatchedExpired);
       try {
-        await forgetCertificate(certificate.fingerprint);
+        await openBrowserConversation('Open a conversation for private-CA and expired HTTPS fixtures.');
+
+        // Private-CA-signed leaf (Issuer != Subject, as on Proxmox VE / Caddy / mkcert).
+        await ownerNavigate(`${first.address}/private-ca`);
+        await waitForCertificateError();
+        expect(first.requests).toEqual([]);
+
+        await $(`${CERTIFICATE_ERROR} [data-browser-inspect-certificate]`).click();
+        await $(INSPECT_CERTIFICATE_DIALOG).waitForDisplayed();
+        await waitForShownText(
+          $(`${INSPECT_CERTIFICATE_DIALOG} [data-browser-inspect-issuer]`),
+          expect.stringContaining('Mannie Fixture Local CA'),
+        );
+        await waitForShownText(
+          $(`${INSPECT_CERTIFICATE_DIALOG} [data-browser-inspect-subject]`),
+          expect.stringContaining('pve-fixture.local'),
+        );
+        await waitForShownText(
+          $(`${INSPECT_CERTIFICATE_DIALOG} [data-browser-inspect-fingerprint]`),
+          expect.stringContaining(privateCa.fingerprint.toUpperCase()),
+        );
+        expect(await axeViolations()).toEqual([]);
+
+        await $(`${INSPECT_CERTIFICATE_DIALOG} [data-browser-certificate-inspect-trust]`).click();
+        await waitForHidden(INSPECT_CERTIFICATE_DIALOG);
+        await waitForHttpsFixture('/private-ca');
+        expect(first.requests).toContain('/private-ca');
+
+        // A second HTTPS service on the same IP with a hostname-mismatched expired cert
+        // saves beside the first pin without conflict and opens after inspecting its warning.
+        await ownerNavigate(`${second.address}/expired-mismatch`);
+        await waitForCertificateError();
+        expect(second.requests).toEqual([]);
+
+        await $(`${CERTIFICATE_ERROR} [data-browser-inspect-certificate]`).click();
+        await $(INSPECT_CERTIFICATE_DIALOG).waitForDisplayed();
+        await $(`${INSPECT_CERTIFICATE_DIALOG} [data-browser-inspect-expired-warning]`).waitForDisplayed();
+        await waitForShownText(
+          $(`${INSPECT_CERTIFICATE_DIALOG} [data-browser-inspect-fingerprint]`),
+          expect.stringContaining(mismatchedExpired.fingerprint.toUpperCase()),
+        );
+
+        await $(`${INSPECT_CERTIFICATE_DIALOG} [data-browser-certificate-inspect-trust]`).click();
+        await waitForHidden(INSPECT_CERTIFICATE_DIALOG);
+        await waitForHttpsFixture('/expired-mismatch');
+        expect(second.requests).toContain('/expired-mismatch');
+
+        // Both pins for 127.0.0.1 appear in Settings, and forgetting the second keeps the first working.
+        await openBrowserSettings();
+        await waitForShownText(
+          $(CERTIFICATES),
+          expect.stringContaining(privateCa.fingerprint.replaceAll(':', '').toLowerCase()),
+        );
+        await waitForShownText(
+          $(CERTIFICATES),
+          expect.stringContaining(mismatchedExpired.fingerprint.replaceAll(':', '').toLowerCase()),
+        );
+        await leaveSettings();
+
+        await forgetCertificate(mismatchedExpired.fingerprint);
+        await waitForShownText($(PANEL), expect.stringContaining('removed a certificate it trusted'));
+        await startBrowserSession();
+        await ownerNavigate(`${first.address}/still-trusted`);
+        await waitForHttpsFixture('/still-trusted');
+        await ownerNavigate(`${second.address}/forgotten-second`);
+        await waitForCertificateError();
+        expect(second.requests).not.toContain('/forgotten-second');
+        await endBrowserSession();
       } finally {
-        await shortLived.close();
+        try {
+          await forgetCertificate(privateCa.fingerprint);
+          await forgetCertificate(mismatchedExpired.fingerprint);
+        } finally {
+          await second.close();
+        }
       }
+    } finally {
+      await first.close();
     }
   });
 
@@ -1281,6 +1336,7 @@ describeBrowserPane('Browser pane', () => {
 
     expect(privateBrowserProfiles()).toEqual(expect.arrayContaining(newProfiles));
     await restartMannie();
+    await $('[data-new-conversation]').waitForClickable();
 
     await openBrowserConversation('Open a second conversation for the protected sign-in fixture.');
     await clickWithText(`${PANEL} button:not(:disabled)`, 'Resume agent');

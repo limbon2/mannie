@@ -213,8 +213,7 @@ fn guard(shared: &Arc<Shared>, id: &str, webview: &ICoreWebView2) -> windows::co
             // SAFETY: `uri` is writable, and `take_pwstr` frees it.
             unsafe { arguments.Uri(&raw mut uri) }?;
             let uri = take_pwstr(uri);
-            if !web_address(&uri) || starting.stopping() || starting.certificate_deadline_reached()
-            {
+            if !web_address(&uri) || starting.stopping() {
                 // SAFETY: a plain value on live event arguments.
                 unsafe { arguments.SetCancel(true) }?;
             } else {
@@ -270,6 +269,7 @@ fn guard(shared: &Arc<Shared>, id: &str, webview: &ICoreWebView2) -> windows::co
                 tab: complete_tab.clone(),
                 id,
                 certificate_error,
+                rejected_certificate: None,
             });
         }
         Ok(())
@@ -413,16 +413,18 @@ fn guard(shared: &Arc<Shared>, id: &str, webview: &ICoreWebView2) -> windows::co
 
     let certificate_session = Arc::clone(shared);
     let certificate_tab = id.to_owned();
-    super::certificates::guard(shared, webview, move |uri| {
+    super::certificates::guard(shared, webview, move |uri, rejected_certificate| {
         // WebView2 can report a cancelled navigation after rejecting TLS.
-        // Use its certificate event only for the matching top-level request.
+        // Use its certificate event only for the matching top-level request so
+        // subresource rejections stay silent (ADR-0082).
         if let Some((navigation_id, address)) = navigation.borrow().as_ref()
-            && address == uri
+            && same_navigation_target(address, uri)
         {
             certificate_session.emit(ChromeEvent::NavigationCompleted {
                 tab: certificate_tab.clone(),
                 id: *navigation_id,
                 certificate_error: true,
+                rejected_certificate,
             });
         }
     })?;
@@ -571,6 +573,21 @@ fn refused_key(key: u32, control: bool, shift: bool) -> bool {
 fn web_address(address: &str) -> bool {
     address == "about:blank"
         || url::Url::parse(address).is_ok_and(|url| matches!(url.scheme(), "http" | "https"))
+}
+
+/// Compares a top-level `NavigationStarting` URL against a `ServerCertificateErrorDetected`
+/// request URI after normalizing scheme/host casing and trailing slashes.
+fn same_navigation_target(navigation_address: &str, request_uri: &str) -> bool {
+    if navigation_address == request_uri {
+        return true;
+    }
+    match (
+        url::Url::parse(navigation_address),
+        url::Url::parse(request_uri),
+    ) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
 }
 
 /// Hands a deferred new window the tab that the driver set up, or refuses

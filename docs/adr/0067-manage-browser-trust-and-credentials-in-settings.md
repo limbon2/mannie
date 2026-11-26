@@ -7,6 +7,8 @@
 | Deciders | Owner                                                                                                                                                                                                                                                                   |
 | Related  | [ADR-0025](0025-add-side-panels-to-the-shell.md), [ADR-0064](0064-give-agents-an-isolated-browser-beside-the-conversation.md), [ADR-0065](0065-let-browser-access-follow-the-conversation.md), [ADR-0066](0066-let-the-owner-trust-self-signed-browser-certificates.md) |
 
+Later changes: [ADR-0082](0082-soften-browser-certificate-pinning-and-inspect-rejected-certificates.md) refines decision 3 with softened leaf pinning, multiple pins per hostname, removal of the expiry cutoff and owner-only in-pane certificate inspection.
+
 ## Context
 
 The owner wants the Browser toolbar to work like Terminal and wants to manage certificates and credentials in Settings. The owner chose saved certificate trust for all Browser sessions and reusable site credentials with separate consent in each conversation.

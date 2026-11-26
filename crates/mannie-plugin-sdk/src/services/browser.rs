@@ -173,7 +173,7 @@ pub enum BrowserError {
     NavigationDenied,
     /// A top-level navigation failed certificate verification.
     #[error(
-        "the site's certificate was rejected. The owner can add a trusted self-signed certificate in Browser settings"
+        "the site's certificate was rejected. The owner can inspect and trust it from the Browser pane or add its fingerprint in Browser settings"
     )]
     CertificateRejected,
     /// The browser session ended at the approved certificate's expiry cutoff.
@@ -223,6 +223,9 @@ pub enum BrowserError {
     /// The desktop's browser resource limit was reached.
     #[error("the browser session or tab limit was reached")]
     LimitReached,
+    /// The selected tab has no loaded HTTP or HTTPS page.
+    #[error("the selected tab has no loaded web page. Navigate to an HTTP or HTTPS URL first")]
+    NoPageLoaded,
 }
 
 impl BrowserError {
@@ -253,6 +256,7 @@ impl BrowserError {
             Self::CredentialAlreadyExists => "credential_already_exists",
             Self::SessionCredentialsRetired => "session_credentials_retired",
             Self::LimitReached => "limit_reached",
+            Self::NoPageLoaded => "no_page_loaded",
         }
     }
 }
@@ -309,6 +313,36 @@ pub struct BrowserCertificateException {
     pub fingerprint: String,
 }
 
+/// Sanitized details of a server certificate rejected on a top-level
+/// navigation, shown only to the owner in the Browser pane (ADR-0082).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserRejectedCertificate {
+    /// Canonical hostname from the rejected navigation.
+    pub hostname: String,
+    /// Lowercase 64-character hex SHA-256 fingerprint of the presented leaf DER.
+    pub fingerprint: String,
+    /// Formatted X.509 subject.
+    pub subject: String,
+    /// Formatted X.509 issuer.
+    pub issuer: String,
+    /// Subject Alternative Name DNS and IP entries.
+    pub sans: Vec<String>,
+    /// Validity start in ISO-8601 UTC.
+    pub not_before: String,
+    /// Validity end in ISO-8601 UTC.
+    pub not_after: String,
+    /// Whether the certificate is outside its validity window.
+    pub expired: bool,
+    /// Whether the leaf issuer equals its subject.
+    pub self_signed: bool,
+    /// Machine-readable TLS rejection reason: `untrusted_authority`,
+    /// `hostname_mismatch`, `expired`, `revoked`, or `invalid`.
+    pub reason: String,
+    /// Query-stripped top-level URL that failed verification, for owner retry.
+    pub url: String,
+}
+
 /// The agent's latest gesture.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct BrowserActivity {
@@ -349,6 +383,10 @@ pub struct BrowserTab {
     /// Identifies separate occurrences of the same top-level navigation error.
     #[serde(default)]
     pub navigation_error_sequence: u32,
+    /// Presented certificate details from the latest top-level TLS rejection,
+    /// for owner inspection in the pane. Never sent to models.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rejected_certificate: Option<BrowserRejectedCertificate>,
 }
 
 /// Where the pane wants a tab's page, in the app webview's CSS pixels. The
