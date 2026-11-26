@@ -4,9 +4,22 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+## 0.10.0 - 2026-11-26
+
 ### Added
 
 - Add `ProxmoxVm` tool access, per-VM scoped approval grants (`Config`, `Power`, `Vnc`), worker-ceiling refusal (`NoProxmox`), `Instance::conversations_deleted` lifecycle notifications and desktop approval UI rendering for Proxmox VM operations ([ADR-0080](docs/adr/0080-let-plugins-manage-proxmox-vms-and-vnc-consoles.md)).
+
+#### Proxmox
+
+- Add the Proxmox plugin (`proxmox`) for regular non-admin Proxmox VE user accounts with explicit per-server QEMU VM allowlist pre-configuration, OS-trusted and pinned SHA-256 leaf TLS verification, write-only OS credential storage, auto-renewed ticket sessions, ISO/boot-order/power tools under per-VM `Access::ProxmoxVm` approvals, pure-Rust RFB 3.8 VNC tools with PNG screenshots, and a live VNC canvas side panel with owner takeover ([ADR-0080](docs/adr/0080-let-plugins-manage-proxmox-vms-and-vnc-consoles.md)).
+
+### Fixed
+
+#### Proxmox
+
+- Enforce HTTPS in the Proxmox REST client and keep credential loading separate from client construction.
+- Make the VNC keyboard integration tests wait for the fake server to receive the key events they assert on.
 
 ## 0.9.0 - 2026-11-25
 
