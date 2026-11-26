@@ -10,9 +10,11 @@
     certificate?: boolean;
     message: string;
     onDismiss: () => void;
+    onInspect?: () => void;
   }
 
-  let { certificate = false, message, onDismiss }: Props = $props();
+  let { certificate = false, message, onDismiss, onInspect }: Props = $props();
+
   let dismissed = $state(false);
 
   function dismiss(): void {
@@ -25,7 +27,17 @@
   <Alert.Root data-browser-certificate-error={certificate ? '' : undefined} variant="destructive">
     <CircleAlertIcon />
     <Alert.Title>{m.browser_error_title()}</Alert.Title>
-    <Alert.Description>{message}</Alert.Description>
+    <Alert.Description>
+      <p>{message}</p>
+
+      {#if onInspect !== undefined}
+        <div class="mt-2 flex flex-wrap gap-2">
+          <Button data-browser-inspect-certificate="" size="sm" type="button" variant="outline" onclick={onInspect}>
+            {m.browser_certificate_inspect()}
+          </Button>
+        </div>
+      {/if}
+    </Alert.Description>
     <Alert.Action>
       <Button
         aria-label={m.browser_dismiss_error()}

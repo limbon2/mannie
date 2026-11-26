@@ -159,7 +159,6 @@ pub(super) struct Shared {
     teardown: AsyncMutex<bool>,
     saved_certificates: SavedCertificates,
     certificates: Mutex<certificates::Certificates>,
-    certificate_expired: AtomicBool,
     certificate_revoked: AtomicBool,
     owner: AtomicBool,
     next_tab: AtomicU64,
@@ -198,18 +197,6 @@ impl Shared {
                 process.terminate();
             }
         }
-    }
-
-    /// Refuses queued engine work once the deadline for the native cache arrives.
-    pub(super) fn certificate_deadline_reached(&self) -> bool {
-        if self.certificate_expired.load(Ordering::Acquire) {
-            return true;
-        }
-        let due = lock(&self.certificates).due();
-        if due {
-            certificates::expire_session(self);
-        }
-        due
     }
 
     #[cfg(test)]
@@ -330,7 +317,6 @@ async fn start_session(
         teardown: AsyncMutex::new(false),
         saved_certificates,
         certificates: Mutex::default(),
-        certificate_expired: AtomicBool::new(false),
         certificate_revoked: AtomicBool::new(false),
         owner: AtomicBool::new(false),
         next_tab: AtomicU64::new(1),
@@ -370,7 +356,7 @@ impl ChromeHost for WebView2Session {
         method: &str,
         params: Zeroizing<String>,
     ) -> Result<ChromeReply, ChromeError> {
-        if self.shared.stopping() || self.shared.certificate_deadline_reached() {
+        if self.shared.stopping() {
             return Err(ChromeError::Disconnected);
         }
         if !lock(&self.shared.tabs).contains(tab) {
@@ -389,7 +375,7 @@ impl ChromeHost for WebView2Session {
     fn create_tab(&self) -> BoxFuture<'static, Result<String, ChromeError>> {
         let shared = Arc::clone(&self.shared);
         Box::pin(async move {
-            if shared.stopping() || shared.certificate_deadline_reached() {
+            if shared.stopping() {
                 return Err(ChromeError::Disconnected);
             }
             let id = format!("tab-{}", shared.next_tab.fetch_add(1, Ordering::Relaxed));
@@ -520,10 +506,6 @@ impl PageViews for WebView2Session {
 
     fn certificate_revoked(&self) -> bool {
         self.shared.certificate_revoked.load(Ordering::Acquire)
-    }
-
-    fn certificate_expired(&self) -> bool {
-        self.shared.certificate_expired.load(Ordering::Acquire)
     }
 
     fn place(&self, placement: BrowserPlacement) -> Result<(), ChromeError> {

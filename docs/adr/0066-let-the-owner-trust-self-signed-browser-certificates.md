@@ -11,6 +11,8 @@ This revision follows D61. D60 records the original decision to trust a certific
 
 [ADR-0067](0067-manage-browser-trust-and-credentials-in-settings.md) refines the Browser controls and Settings.
 
+Later changes: [ADR-0082](0082-soften-browser-certificate-pinning-and-inspect-rejected-certificates.md) supersedes decisions 2, 3, 4 and 5 in part, softening pinned leaf verification, removing the expiry cutoff timer, allowing multiple saved pins per hostname and adding in-pane certificate inspection.
+
 ## Context
 
 The owner needs Browser to open HTTPS sites that use self-signed server certificates without re-entering the same fingerprint in every session. [ADR-0064](0064-give-agents-an-isolated-browser-beside-the-conversation.md), decision 8, requires the host to cancel server certificate errors. Trusting a private certificate in Windows can make it available to WebView2 and other applications that use the same store.

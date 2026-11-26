@@ -37,8 +37,6 @@ pub(crate) trait PageViews: Send + Sync {
     fn certificate_engine_stopped(&self) -> bool;
     /// Whether the owner forgot a certificate this session could still use.
     fn certificate_revoked(&self) -> bool;
-    /// Whether the native engine ended at an approved certificate's expiry cutoff.
-    fn certificate_expired(&self) -> bool;
     /// Where each tab's window is, for the end-to-end tests (V13).
     #[cfg(feature = "validation")]
     fn surfaces(&self) -> mannie_plugin_sdk::BoxFuture<'static, Vec<SurfaceReport>>;

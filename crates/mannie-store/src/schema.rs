@@ -426,6 +426,12 @@ const BROWSER: StoreModule = StoreModule {
             description: "create the Browser site credential catalog and its journal",
             sql: include_str!("browser/0003_create_site_credentials.sql"),
         },
+        Migration {
+            version: 4,
+            legacy_version: None,
+            description: "allow multiple saved Browser certificate pins per hostname",
+            sql: include_str!("browser/0004_allow_multiple_saved_certificates_per_host.sql"),
+        },
     ]),
     confined: false,
 };

@@ -138,8 +138,9 @@ fn guide_actions() -> Vec<ManagementActionSpec> {
         },
         ManagementActionSpec {
             name: ACTION_SAVE_CERTIFICATE.to_owned(),
-            description: "Save an owner-confirmed TLS certificate SHA-256 pin for a hostname \
-                across Browser sessions."
+            description: "Save an owner-confirmed TLS leaf certificate SHA-256 pin for a hostname \
+                across Browser sessions (supports self-signed, private-CA, hostname-mismatched \
+                and expired certificates, and multiple pins per hostname)."
                 .to_owned(),
             security_sensitive: true,
             parameters: json!({
@@ -147,11 +148,11 @@ fn guide_actions() -> Vec<ManagementActionSpec> {
                 "properties": {
                     "hostname": {
                         "type": "string",
-                        "description": "Hostname or IP address to trust this certificate for."
+                        "description": "Hostname, IP address, or pasted HTTPS URL to trust this certificate for."
                     },
                     "fingerprint": {
                         "type": "string",
-                        "description": "SHA-256 certificate fingerprint (hex, optional colon separators)."
+                        "description": "SHA-256 leaf certificate fingerprint (plain hex, colon-, space-, or hyphen-separated, or prefixed)."
                     }
                 },
                 "required": ["hostname", "fingerprint"],
@@ -197,8 +198,10 @@ impl ManagementProvider for BrowserManagement {
                 only in the master's OS credential store and never reach the model or webview."
                 .to_owned(),
             troubleshooting: "Browser requires Microsoft Edge WebView2 on Windows and does not \
-                start on unsupported platforms. For self-signed certificates, check Mannie's log \
-                and pin the hostname and SHA-256 fingerprint via save_certificate or Settings."
+                start on unsupported platforms. If navigation fails with certificate_rejected, \
+                check Mannie's log for the exact rejection reason and presented fingerprint, or \
+                inspect and trust the certificate in the Browser pane or via save_certificate. \
+                Multiple certificate pins may be saved for the same hostname."
                 .to_owned(),
             actions: guide_actions(),
         }

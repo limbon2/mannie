@@ -309,6 +309,20 @@ async fn certificate_errors_are_typed_and_only_the_current_navigation_can_set_th
         Some(ChromeError::CertificateRejected)
     );
 
+    let sample_certificate = crate::browser::ChromeRejectedCertificate {
+        hostname: "localhost".to_owned(),
+        fingerprint: "aa".repeat(32),
+        subject: "CN=pve.local".to_owned(),
+        issuer: "CN=PVE Cluster CA".to_owned(),
+        sans: vec!["DNS:pve.local".to_owned()],
+        not_before: "2026-01-01T00:00:00Z".to_owned(),
+        not_after: "2027-01-01T00:00:00Z".to_owned(),
+        expired: false,
+        self_signed: false,
+        reason: "untrusted_authority".to_owned(),
+        url: "https://localhost:8006/login?token=secret#frag".to_owned(),
+    };
+
     for event in [
         ChromeEvent::NavigationStarted {
             tab: tab.clone(),
@@ -318,6 +332,7 @@ async fn certificate_errors_are_typed_and_only_the_current_navigation_can_set_th
             tab: tab.clone(),
             id: 1,
             certificate_error: true,
+            rejected_certificate: None,
         },
         ChromeEvent::NavigationStarted {
             tab: tab.clone(),
@@ -327,20 +342,36 @@ async fn certificate_errors_are_typed_and_only_the_current_navigation_can_set_th
             tab: tab.clone(),
             id: 2,
             certificate_error: true,
+            rejected_certificate: Some(sample_certificate),
+        },
+        ChromeEvent::NavigationCompleted {
+            tab: tab.clone(),
+            id: 2,
+            certificate_error: true,
+            rejected_certificate: None,
         },
         ChromeEvent::NavigationCompleted {
             tab: tab.clone(),
             id: 2,
             certificate_error: false,
+            rejected_certificate: None,
         },
         ChromeEvent::NavigationCompleted {
             tab: tab.clone(),
             id: 1,
             certificate_error: true,
+            rejected_certificate: None,
         },
     ] {
         fixture.events.send(event).await.unwrap();
     }
+    eventually(|| fixture.chrome.tabs()[0].rejected_certificate.is_some()).await;
+    let rejected = fixture.chrome.tabs()[0]
+        .rejected_certificate
+        .clone()
+        .unwrap();
+    assert_eq!(rejected.hostname, "localhost");
+    assert_eq!(rejected.url, "https://localhost:8006/login");
     fixture.approve("https://localhost");
     fixture
         .pause(&tab, "retry", "https://localhost/", "main", json!({}))
@@ -348,6 +379,7 @@ async fn certificate_errors_are_typed_and_only_the_current_navigation_can_set_th
     fixture.commit(&tab, "https://localhost/", "retry").await;
     eventually(|| fixture.chrome.tabs()[0].url == "https://localhost/").await;
     assert_eq!(fixture.chrome.tabs()[0].navigation_error, None);
+    assert_eq!(fixture.chrome.tabs()[0].rejected_certificate, None);
     assert_eq!(fixture.chrome.tabs()[0].navigation_error_sequence, 3);
 }
 

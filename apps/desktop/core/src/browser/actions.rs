@@ -6,7 +6,8 @@ use mannie_plugin_sdk::contracts::ConversationId;
 use mannie_plugin_sdk::points::tools::BrowserAction;
 use mannie_plugin_sdk::services::browser::{
     BrowserControl, BrowserError, BrowserFillValue, BrowserFrame, BrowserInteraction,
-    BrowserNavigation, BrowserNode, BrowserRequest, BrowserResult, BrowserTab, BrowserTarget,
+    BrowserNavigation, BrowserNode, BrowserRejectedCertificate, BrowserRequest, BrowserResult,
+    BrowserTab, BrowserTarget,
 };
 use mannie_tools::browser::{
     Chrome, ChromeError, ChromeFrame, ChromeHost, ChromeInput, ChromeNavigationAction,
@@ -113,7 +114,13 @@ pub(super) fn site_and_action(
 ) -> Result<(String, BrowserAction), BrowserError> {
     let tab_origin = || {
         let tab = tab.ok_or(BrowserError::SessionMissing)?;
-        origin(&tab.url)
+        origin(&tab.url).map_err(|_unloaded| {
+            if tab.navigation_error == Some(ChromeError::CertificateRejected) {
+                BrowserError::CertificateRejected
+            } else {
+                BrowserError::NoPageLoaded
+            }
+        })
     };
     match request {
         BrowserRequest::Navigate(
@@ -150,6 +157,21 @@ pub(super) fn site_and_action(
 }
 
 pub(super) fn browser_tab(tab: ChromeTab) -> BrowserTab {
+    let rejected_certificate =
+        tab.rejected_certificate
+            .map(|certificate| BrowserRejectedCertificate {
+                hostname: certificate.hostname,
+                fingerprint: certificate.fingerprint,
+                subject: certificate.subject,
+                issuer: certificate.issuer,
+                sans: certificate.sans,
+                not_before: certificate.not_before,
+                not_after: certificate.not_after,
+                expired: certificate.expired,
+                self_signed: certificate.self_signed,
+                reason: certificate.reason,
+                url: certificate.url,
+            });
     BrowserTab {
         can_go_back: tab.back.is_some(),
         can_go_forward: tab.forward.is_some(),
@@ -159,6 +181,7 @@ pub(super) fn browser_tab(tab: ChromeTab) -> BrowserTab {
         loading: tab.loading,
         navigation_error: tab.navigation_error.map(error),
         navigation_error_sequence: tab.navigation_error_sequence,
+        rejected_certificate,
     }
 }
 
@@ -889,6 +912,38 @@ mod tests {
         assert_eq!(
             credential_origin("https://example.com/path"),
             Err(BrowserError::InvalidBrowserInput)
+        );
+    }
+
+    #[test]
+    fn unloaded_tabs_report_typed_errors_instead_of_invalid_input() {
+        let blank = ChromeTab {
+            id: "tab-1".to_owned(),
+            url: "about:blank".to_owned(),
+            title: String::new(),
+            revision: "1".to_owned(),
+            back: None,
+            forward: None,
+            loading: false,
+            navigation_error: None,
+            navigation_error_sequence: 0,
+            rejected_certificate: None,
+        };
+        assert_eq!(
+            site_and_action(&BrowserRequest::Observe { screenshot: false }, Some(&blank)),
+            Err(BrowserError::NoPageLoaded)
+        );
+
+        let rejected = ChromeTab {
+            navigation_error: Some(ChromeError::CertificateRejected),
+            ..blank
+        };
+        assert_eq!(
+            site_and_action(
+                &BrowserRequest::Observe { screenshot: false },
+                Some(&rejected)
+            ),
+            Err(BrowserError::CertificateRejected)
         );
     }
 }

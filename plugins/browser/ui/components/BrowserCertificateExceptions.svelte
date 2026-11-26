@@ -172,7 +172,7 @@
         </Dialog.Trigger>
       </div>
       <Item.Group aria-labelledby={id}>
-        {#each saved as exception (exception.hostname)}
+        {#each saved as exception (`${exception.hostname}:${exception.fingerprint}`)}
           <Item.Root data-browser-saved-certificate="" role="listitem" variant="outline">
             <Item.Content class="min-w-0">
               <Item.Title class="wrap-anywhere" data-content dir="ltr">{exception.hostname}</Item.Title>
@@ -282,7 +282,7 @@
               autocomplete="off"
               data-browser-certificate-fingerprint=""
               dir="ltr"
-              maxlength={128}
+              maxlength={160}
               placeholder={m.browser_certificate_fingerprint_placeholder()}
               required
               spellcheck={false}

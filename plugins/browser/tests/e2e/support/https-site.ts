@@ -21,8 +21,26 @@ function certificateCommand(...args: string[]): string {
   }).trim();
 }
 
-export function selfSignedCertificate(lifetimeSeconds = 3600): TestCertificate {
-  const { cert, key } = JSON.parse(certificateCommand('-LifetimeSeconds', String(lifetimeSeconds))) as {
+export interface CertificateOptions {
+  caSigned?: boolean;
+  expired?: boolean;
+  lifetimeSeconds?: number;
+  mismatchedHost?: boolean;
+}
+
+export function selfSignedCertificate(options: CertificateOptions | number = {}): TestCertificate {
+  const resolved: CertificateOptions = typeof options === 'number' ? { lifetimeSeconds: options } : options;
+  const args = ['-LifetimeSeconds', String(resolved.lifetimeSeconds ?? 3600)];
+  if (resolved.caSigned === true) {
+    args.push('-CaSigned');
+  }
+  if (resolved.mismatchedHost === true) {
+    args.push('-MismatchedHost');
+  }
+  if (resolved.expired === true) {
+    args.push('-Expired');
+  }
+  const { cert, key } = JSON.parse(certificateCommand(...args)) as {
     cert: string;
     key: string;
   };

@@ -15,6 +15,8 @@ mod engine;
 mod webview2;
 
 use std::collections::HashMap;
+#[cfg(windows)]
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -739,7 +741,11 @@ impl BoundBrowser {
                 .list_browser_saved_certificates()
                 .await
                 .map_err(|error| store_failure(&error))?;
-            *lock(saved) = Some(pins.into_iter().collect());
+            let mut by_host: HashMap<String, HashSet<[u8; 32]>> = HashMap::new();
+            for (hostname, fingerprint) in pins {
+                by_host.entry(hostname).or_default().insert(fingerprint);
+            }
+            *lock(saved) = Some(by_host);
         }
         Ok(())
     }
@@ -755,12 +761,14 @@ impl BoundBrowser {
         let mut pins: Vec<_> = lock(&runtime.saved)
             .iter()
             .flatten()
-            .map(|(hostname, fingerprint)| {
-                CertificatePin {
-                    hostname: hostname.clone(),
-                    fingerprint: *fingerprint,
-                }
-                .descriptor()
+            .flat_map(|(hostname, fingerprints)| {
+                fingerprints.iter().map(move |fingerprint| {
+                    CertificatePin {
+                        hostname: hostname.clone(),
+                        fingerprint: *fingerprint,
+                    }
+                    .descriptor()
+                })
             })
             .collect();
         // A failed teardown keeps its row available for another Forget attempt.
@@ -769,7 +777,11 @@ impl BoundBrowser {
                 .keys()
                 .map(CertificatePin::descriptor),
         );
-        pins.sort_unstable_by(|left, right| left.hostname.cmp(&right.hostname));
+        pins.sort_unstable_by(|left, right| {
+            left.hostname
+                .cmp(&right.hostname)
+                .then_with(|| left.fingerprint.cmp(&right.fingerprint))
+        });
         Ok(pins)
     }
 
@@ -779,24 +791,19 @@ impl BoundBrowser {
         self.ensure_bound()?;
         self.load_saved_certificates().await?;
         let runtime = &self.registry.certificates;
-        if lock(&runtime.revocations)
-            .keys()
-            .any(|pending| pending.hostname == pin.hostname)
-        {
+        if lock(&runtime.revocations).contains_key(&pin) {
             return Err(BrowserError::CertificateRevocationFailed);
         }
-        if !self
-            .registry
+        self.registry
             .store
             .save_browser_certificate(&pin.hostname, &pin.fingerprint)
             .await
-            .map_err(|error| store_failure(&error))?
-        {
-            return Err(BrowserError::CertificateSavedConflict);
-        }
+            .map_err(|error| store_failure(&error))?;
         lock(&runtime.saved)
             .get_or_insert_with(HashMap::new)
-            .insert(pin.hostname, pin.fingerprint);
+            .entry(pin.hostname)
+            .or_default()
+            .insert(pin.fingerprint);
         Ok(())
     }
 
@@ -818,8 +825,13 @@ impl BoundBrowser {
                 .map_err(|error| store_failure(&error))?
         {
             let mut saved = lock(&runtime.saved);
-            if let Some(pins) = saved.as_mut() {
-                pins.remove(&pin.hostname);
+            if let Some(pins) = saved.as_mut()
+                && let Some(fingerprints) = pins.get_mut(&pin.hostname)
+            {
+                fingerprints.remove(&pin.fingerprint);
+                if fingerprints.is_empty() {
+                    pins.remove(&pin.hostname);
+                }
             }
             // The saved-pin lock excludes the callback's final allowance. An
             // engine that is already closing can still own live connections.
@@ -1095,14 +1107,29 @@ impl BoundBrowser {
         placement: BrowserPlacement,
     ) -> Result<(), BrowserError> {
         self.ensure_bound()?;
-        let slot = self
-            .existing(conversation)
-            .ok_or(BrowserError::SessionMissing)?;
+        let Some(slot) = self.existing(conversation) else {
+            return if placement.visible {
+                Err(BrowserError::SessionMissing)
+            } else {
+                Ok(())
+            };
+        };
         // Only a pane that follows the conversation may show its pages.
+        // Hiding a view after unmount or lease drop is a safe no-op (ADR-0082).
         if lock(&slot.state).followers == 0 {
-            return Err(BrowserError::SessionMissing);
+            return if placement.visible {
+                Err(BrowserError::SessionMissing)
+            } else {
+                Ok(())
+            };
         }
-        let views = slot.views().ok_or(BrowserError::SessionMissing)?;
+        let Some(views) = slot.views() else {
+            return if placement.visible {
+                Err(BrowserError::SessionMissing)
+            } else {
+                Ok(())
+            };
+        };
         views.place(placement).map_err(error)
     }
 
@@ -1225,7 +1252,6 @@ async fn watch_end(slot: Arc<Slot>, chrome: Arc<Chrome>, epoch: u64) {
         if same {
             state.failure = Some(match state.views.as_deref() {
                 Some(views) if views.certificate_revoked() => BrowserError::CertificateRevoked,
-                Some(views) if views.certificate_expired() => BrowserError::CertificateExpired,
                 _ => BrowserError::BrowserDisconnected,
             });
             state.epoch += 1;
