@@ -25,7 +25,7 @@ use mannie_provider::testing::Step;
 use mannie_provider::{Content, ModelRequest, Role};
 use mannie_runtime::testing::{
     FakeModel, MemoryVault, Transcript, fast_config, open_store, reply, start_runtime_with_tools,
-    test_tools, tool_calls, wait_for_leftover_command,
+    test_tools, tool_calls, wait_for_leftover_command, wait_for_run_release,
 };
 use mannie_runtime::{AgentRegistry, ConversationSubscription, Runtime, texts};
 use mannie_store::Store;
@@ -330,7 +330,12 @@ fn run_child_until(directory: &Path, kill: KillPoint) {
 }
 
 /// Follows a conversation until its latest run, `run`, has ended.
-async fn wait_for_run(store: &Store, conversation: &ConversationId, run: &RunId) -> RunState {
+async fn wait_for_run(
+    runtime: &Runtime,
+    store: &Store,
+    conversation: &ConversationId,
+    run: &RunId,
+) -> RunState {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         let snapshot = store
@@ -346,6 +351,7 @@ async fn wait_for_run(store: &Store, conversation: &ConversationId, run: &RunId)
         if let Some(view) = current
             && !view.state.is_active()
         {
+            wait_for_run_release(runtime, conversation, run).await;
             return view.state;
         }
         assert!(Instant::now() < deadline, "the run {run} did not end");
@@ -452,7 +458,7 @@ async fn retry_starts_no_child(
 ) {
     model.push_reply(reply("Checked."));
     let retried = runtime.retry_reply(conversation).await.unwrap();
-    let state = wait_for_run(store, conversation, &retried.run_id).await;
+    let state = wait_for_run(runtime, store, conversation, &retried.run_id).await;
     assert_eq!(state, RunState::Completed, "{label}");
     let request = model.requests_for("OWNER:").pop().unwrap();
     let (_parent, task_state, _child, _command) = kill.recovered();
@@ -490,7 +496,7 @@ async fn follow_up_reads_the_result(
         .send_message(SendMessage::new(conversation.clone(), "Did it run?"))
         .await
         .unwrap();
-    let state = wait_for_run(store, conversation, &sent.run_id).await;
+    let state = wait_for_run(runtime, store, conversation, &sent.run_id).await;
     assert_eq!(state, RunState::Completed, "{label}");
     let child_request = model.requests_for(CHILD).remove(0);
     let command_result = results(&child_request).remove(0);

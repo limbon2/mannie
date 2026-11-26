@@ -69,10 +69,10 @@ use mannie_types::transcript::{
 use tokio::sync::watch;
 
 use crate::{
-    AgentDefinition, AgentRegistry, CredentialVault, FileMentions, GENERAL, InstructionRegistry,
-    InstructionSection, MachineSettings, MentionRegistry, PlanMentions, RetryPolicy, Runtime,
-    RuntimeConfig, RuntimeDeps, SkillCatalog, SkillMentions, ToolsDeps, VaultError,
-    checkpoint_section, texts,
+    AgentDefinition, AgentRegistry, Busy, CredentialVault, FileMentions, GENERAL,
+    InstructionRegistry, InstructionSection, MachineSettings, MentionRegistry, PlanMentions,
+    RetryPolicy, Runtime, RuntimeConfig, RuntimeDeps, SkillCatalog, SkillMentions, ToolsDeps,
+    VaultError, checkpoint_section, texts,
 };
 
 /// How long a helper waits for a state before it fails the test. Shared CI
@@ -83,6 +83,28 @@ const WAIT_LIMIT: Duration = Duration::from_secs(120);
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Waits for the supervisor to release a run that the test saw reach its
+/// terminal state. The terminal state can be stored before the runtime lets
+/// the conversation start another reply.
+///
+/// # Panics
+///
+/// When the supervisor does not report the release within two minutes.
+pub async fn wait_for_run_release(runtime: &Runtime, conversation: &ConversationId, run: &RunId) {
+    let mut ended = {
+        let busy = lock(&runtime.inner.busy);
+        match busy.get(conversation) {
+            Some(Busy::Running(handle)) if handle.run_id == *run => handle.ended.clone(),
+            _ => return,
+        }
+    };
+
+    tokio::time::timeout(WAIT_LIMIT, ended.wait_for(|ended| *ended))
+        .await
+        .expect("the supervisor releases the run within two minutes")
+        .expect("the supervisor reports that the run was released");
 }
 
 #[derive(Debug, Default)]

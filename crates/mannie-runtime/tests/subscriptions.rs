@@ -18,6 +18,7 @@ use mannie_provider::ProviderEvent;
 use mannie_provider::testing::Step;
 use mannie_runtime::testing::{
     Harness, HarnessOptions, Transcript, fast_config, reply, server_error, tool_calls,
+    wait_for_run_release,
 };
 use mannie_runtime::{Runtime, RuntimeConfig, SubscriptionLimits};
 use mannie_store::Store;
@@ -150,7 +151,12 @@ fn script(harness: &Harness, index: usize, plan: &TurnPlan) {
     }
 }
 
-async fn wait_for_end(store: &Store, conversation: &ConversationId, run: &RunId) {
+async fn wait_for_end(
+    runtime: &Runtime,
+    store: &Store,
+    conversation: &ConversationId,
+    run: &RunId,
+) {
     loop {
         let snapshot = store
             .snapshot(conversation, 100, 10_000)
@@ -163,6 +169,7 @@ async fn wait_for_end(store: &Store, conversation: &ConversationId, run: &RunId)
             .filter_map(|turn| turn.run.as_ref())
             .any(|view| view.id == *run && !view.state.is_active());
         if ended {
+            wait_for_run_release(runtime, conversation, run).await;
             return;
         }
         tokio::time::sleep(Duration::from_millis(2)).await;
@@ -201,14 +208,14 @@ async fn drive(
                     .unwrap()
                     .run_id;
             }
-            wait_for_end(&store, &background_conversation, &run).await;
+            wait_for_end(&runtime, &store, &background_conversation, &run).await;
             if matches!(plan.outcome, Outcome::FailsThenRetried) {
                 run = runtime
                     .retry_reply(&background_conversation)
                     .await
                     .unwrap()
                     .run_id;
-                wait_for_end(&store, &background_conversation, &run).await;
+                wait_for_end(&runtime, &store, &background_conversation, &run).await;
             }
         }
         let last_seq = match store
