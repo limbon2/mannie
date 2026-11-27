@@ -2,6 +2,7 @@
 
 mod commands;
 mod management;
+mod section;
 mod tools;
 
 use std::sync::Arc;
@@ -13,10 +14,12 @@ use mannie_plugin_sdk::error::StartFailure;
 use mannie_plugin_sdk::ipc::Interface;
 use mannie_plugin_sdk::plugin::{Instance, Plugin, Started};
 use mannie_plugin_sdk::points::management::{Management, PluginManagement};
+use mannie_plugin_sdk::points::sections::{Section, SectionBody, Sections};
 use mannie_plugin_sdk::points::tools::{AgentSelector, PluginTool, Tools};
 use mannie_plugin_sdk::services::browser::Browser;
 
 use crate::management::{BROWSER, BrowserManagement};
+use crate::section::{BrowserSection, SECTION_ID, SECTION_POSITION};
 use crate::tools::{BrowserTool, BrowserToolKind};
 
 /// The code of a start on a system without a usable browser engine, which
@@ -66,6 +69,11 @@ impl Plugin for BrowserPlugin {
                 };
                 contributions = contributions.add::<Tools>(tool);
             }
+            contributions = contributions.add::<Sections>(Section::new(
+                SECTION_ID,
+                SECTION_POSITION,
+                SectionBody::Source(Arc::new(BrowserSection)),
+            ));
             contributions = contributions.add::<Management>(PluginManagement::new(
                 BROWSER,
                 Arc::new(BrowserManagement::new(Arc::clone(&browser))),

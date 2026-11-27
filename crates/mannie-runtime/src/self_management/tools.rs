@@ -138,7 +138,7 @@ impl MannieInspectTool {
                 },
                 "target": {
                     "type": ["string", "null"],
-                    "description": "Core domain name (such as 'providers', 'plugins', 'projects') or plugin/feature ID (such as 'ssh', 'mcp', 'workers.databases'). Pass null when inspecting top-level topics."
+                    "description": "Core domain name (such as 'providers', 'plugins', 'projects') or plugin/feature ID (such as 'browser', 'ssh', 'mcp', 'workers.databases'). Pass null when inspecting top-level topics."
                 },
                 "query": {
                     "type": ["string", "null"],
