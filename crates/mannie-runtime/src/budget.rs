@@ -12,6 +12,19 @@ use serde::{Deserialize, Serialize};
 /// framing that every API adds.
 const MESSAGE_OVERHEAD: u32 = 4;
 
+/// Baseline framing tokens for an encrypted reasoning item whose ciphertext
+/// bytes are not token text (ADR-0083).
+const PROVIDER_ITEM_OVERHEAD: u32 = 32;
+
+/// Cap for non-JSON provider items so an opaque blob cannot dominate estimates.
+const MAX_OPAQUE_PROVIDER_ITEM_TOKENS: u32 = 256;
+
+/// Lower bound on the calibrated ratio (`reported / estimated`).
+const MIN_CALIBRATION_RATIO: f64 = 0.25;
+
+/// Upper bound on the calibrated ratio (`reported / estimated`).
+const MAX_CALIBRATION_RATIO: f64 = 2.0;
+
 /// The growth of a request, in tokens, below which an estimate's error hides
 /// whether a server cut it.
 const MEASURABLE_GROWTH: u32 = 64;
@@ -56,13 +69,34 @@ pub(crate) fn budget_bytes(tokens: u32) -> usize {
     usize::try_from(u64::from(tokens) * 5 / 2).unwrap_or(usize::MAX)
 }
 
+/// Estimates a provider-private item such as Responses API encrypted reasoning
+/// without counting Base64 ciphertext bytes as token text (ADR-0083).
+pub(crate) fn estimate_provider_item(item: &str) -> u32 {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(item) else {
+        return estimate_text(item).min(MAX_OPAQUE_PROVIDER_ITEM_TOKENS);
+    };
+
+    let summary_tokens = value
+        .get("summary")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, |entries| {
+            entries
+                .iter()
+                .filter_map(|entry| entry.get("text").and_then(serde_json::Value::as_str))
+                .map(estimate_text)
+                .fold(0, u32::saturating_add)
+        });
+    summary_tokens.saturating_add(PROVIDER_ITEM_OVERHEAD)
+}
+
 /// The estimated tokens of one message.
 pub(crate) fn estimate_message(message: &Message) -> u32 {
     message
         .content
         .iter()
         .map(|content| match content {
-            Content::Text(text) | Content::ProviderItem(text) => estimate_text(text),
+            Content::Text(text) => estimate_text(text),
+            Content::ProviderItem(text) => estimate_provider_item(text),
             Content::ToolCall {
                 call_id,
                 name,
@@ -125,6 +159,32 @@ pub(crate) struct Ledger {
     pub(crate) reported_input: Option<u32>,
     /// What Mannie estimated for the same input.
     pub(crate) estimated_input: Option<u32>,
+    /// Calibrated `reported / estimated` ratio in thousandths, preserved across
+    /// checkpoints for the same binding so post-checkpoint projections stay
+    /// calibrated (ADR-0083).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) ratio_milli: Option<u32>,
+}
+
+/// Scales `tokens` by `ratio`, rounding up and capping at `u32::MAX`.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "scaled token counts are non-negative and capped at u32::MAX"
+)]
+pub(crate) fn scale_tokens(tokens: u32, ratio: f64) -> u32 {
+    let scaled = (f64::from(tokens) * ratio).ceil();
+    scaled.clamp(0.0, f64::from(u32::MAX)) as u32
+}
+
+/// Encodes a calibration ratio as thousandths.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "clamped calibration ratios are strictly positive and <= 2_000"
+)]
+fn ratio_to_milli(ratio: f64) -> u32 {
+    (ratio.clamp(MIN_CALIBRATION_RATIO, MAX_CALIBRATION_RATIO) * 1_000.0).round() as u32
 }
 
 impl Ledger {
@@ -139,28 +199,90 @@ impl Ledger {
         serde_json::to_string(self).unwrap_or_else(|_unencodable| "{}".to_owned())
     }
 
+    /// Builds a ledger after a model call that reported its input tokens.
+    pub(crate) fn from_report(
+        binding: String,
+        checkpoint: Option<String>,
+        reported_input: u32,
+        estimated_input: u32,
+    ) -> Self {
+        let ratio_milli = (estimated_input > 0)
+            .then(|| ratio_to_milli(f64::from(reported_input) / f64::from(estimated_input)));
+        Self {
+            binding: Some(binding),
+            checkpoint,
+            reported_input: Some(reported_input),
+            estimated_input: Some(estimated_input),
+            ratio_milli,
+        }
+    }
+
+    /// Builds a post-checkpoint ledger that carries the calibrated ratio of the
+    /// same binding across the compaction boundary (ADR-0083).
+    pub(crate) fn after_checkpoint(&self, binding: &str, checkpoint_id: &str) -> Self {
+        let ratio_milli = self.calibration_ratio(binding).map(ratio_to_milli);
+        Self {
+            binding: Some(binding.to_owned()),
+            checkpoint: Some(checkpoint_id.to_owned()),
+            reported_input: None,
+            estimated_input: None,
+            ratio_milli,
+        }
+    }
+
+    /// The calibrated `reported / estimated` ratio for `binding`, when known.
+    pub(crate) fn calibration_ratio(&self, binding: &str) -> Option<f64> {
+        if self.binding.as_deref() != Some(binding) {
+            return None;
+        }
+        if let (Some(reported), Some(estimated)) = (self.reported_input, self.estimated_input)
+            && estimated > 0
+        {
+            return Some(
+                (f64::from(reported) / f64::from(estimated))
+                    .clamp(MIN_CALIBRATION_RATIO, MAX_CALIBRATION_RATIO),
+            );
+        }
+        self.ratio_milli.filter(|milli| *milli > 0).map(|milli| {
+            (f64::from(milli) / 1_000.0).clamp(MIN_CALIBRATION_RATIO, MAX_CALIBRATION_RATIO)
+        })
+    }
+
     /// The tokens a request is expected to use. With a report from a call of
     /// the same binding and checkpoint, the reported input is the base, and
-    /// only what was added since is estimated, scaled by how far the estimate
-    /// was off on that call.
+    /// only the delta since is scaled by how far the estimate was off. Across a
+    /// checkpoint of the same binding, the preserved calibration ratio scales
+    /// the new estimate (ADR-0083).
     pub(crate) fn project(&self, binding: &str, checkpoint: Option<&str>, estimate: u32) -> u32 {
-        let same_context =
-            self.binding.as_deref() == Some(binding) && self.checkpoint.as_deref() == checkpoint;
-        let (Some(reported), Some(estimated)) = (self.reported_input, self.estimated_input) else {
-            return estimate;
-        };
-        if !same_context || estimated == 0 {
+        let same_binding = self.binding.as_deref() == Some(binding);
+        if !same_binding {
             return estimate;
         }
-        let ratio = (f64::from(reported) / f64::from(estimated)).clamp(0.5, 2.0);
-        let added = f64::from(estimate.saturating_sub(estimated)) * ratio;
-        #[expect(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "the added estimate is non-negative and capped at u32::MAX below"
-        )]
-        let added = added.ceil().min(f64::from(u32::MAX)) as u32;
-        reported.saturating_add(added)
+        let same_checkpoint = self.checkpoint.as_deref() == checkpoint;
+        if same_checkpoint
+            && let (Some(reported), Some(estimated)) = (self.reported_input, self.estimated_input)
+            && estimated > 0
+        {
+            let ratio = (f64::from(reported) / f64::from(estimated))
+                .clamp(MIN_CALIBRATION_RATIO, MAX_CALIBRATION_RATIO);
+            if estimate >= estimated {
+                let added = scale_tokens(estimate - estimated, ratio);
+                return reported.saturating_add(added);
+            }
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "the dropped estimate is non-negative and capped at u32::MAX"
+            )]
+            let dropped = (f64::from(estimated - estimate) * ratio)
+                .floor()
+                .clamp(0.0, f64::from(u32::MAX)) as u32;
+            return reported.saturating_sub(dropped);
+        }
+        if let Some(ratio) = self.calibration_ratio(binding) {
+            return scale_tokens(estimate, ratio);
+        }
+        estimate
     }
 
     /// Whether a call's reported input shows that the server cut its request.
@@ -191,6 +313,25 @@ pub(crate) fn usage(used: u32, budget: u32, estimated: bool) -> ContextUsage {
         used_tokens: used,
         budget_tokens: budget,
         estimated,
+        results_pruned: false,
+        unpruned_tokens: None,
+    }
+}
+
+/// The usage that the conversation view shows when older tool results of the
+/// active turn are trimmed to stay inside the budget (ADR-0083).
+pub(crate) fn pruned_usage(
+    used: u32,
+    budget: u32,
+    estimated: bool,
+    unpruned_tokens: u32,
+) -> ContextUsage {
+    ContextUsage {
+        used_tokens: used,
+        budget_tokens: budget,
+        estimated,
+        results_pruned: true,
+        unpruned_tokens: Some(unpruned_tokens),
     }
 }
 
@@ -200,9 +341,26 @@ mod tests {
     use mannie_types::provider::ReasoningEffort;
 
     use super::{
-        Ledger, estimate_image, estimate_message, estimate_request, estimate_scaled_image,
-        estimate_text,
+        Ledger, estimate_image, estimate_message, estimate_provider_item, estimate_request,
+        estimate_scaled_image, estimate_text,
     };
+
+    #[test]
+    fn encrypted_reasoning_items_do_not_count_ciphertext_bytes() {
+        let ciphertext = "A".repeat(120_000);
+        let item = serde_json::json!({
+            "type": "reasoning",
+            "id": "rs_1",
+            "encrypted_content": ciphertext,
+            "summary": [{ "type": "summary_text", "text": "Checked the config." }]
+        })
+        .to_string();
+
+        let tokens = estimate_provider_item(&item);
+
+        assert!(tokens < 200, "expected bounded estimate, got {tokens}");
+        assert!(tokens >= estimate_text("Checked the config."));
+    }
 
     #[test]
     fn an_image_counts_its_pixels_never_its_bytes() {
@@ -325,21 +483,21 @@ mod tests {
     }
 
     #[test]
-    fn projections_use_reported_counts_for_the_same_context_only() {
-        let ledger = Ledger {
-            binding: Some("p:1".to_owned()),
-            checkpoint: None,
-            reported_input: Some(1_000),
-            estimated_input: Some(1_250),
-        };
+    fn projections_calibrate_same_binding_and_preserve_ratio_across_checkpoints() {
+        let ledger = Ledger::from_report("p:1".to_owned(), None, 1_000, 1_250);
 
         assert_eq!(ledger.project("p:1", None, 1_750), 1_400);
+        assert_eq!(ledger.project("p:1", None, 750), 600, "shrinks cleanly");
         assert_eq!(ledger.project("p:2", None, 1_750), 1_750, "another binding");
         assert_eq!(
             ledger.project("p:1", Some("c"), 1_750),
-            1_750,
-            "another checkpoint"
+            1_400,
+            "another checkpoint on the same binding keeps calibration"
         );
+        let after = ledger.after_checkpoint("p:1", "c");
+        assert_eq!(after.reported_input, None);
+        assert_eq!(after.project("p:1", Some("c"), 1_750), 1_400);
+        assert_eq!(after.project("p:2", Some("c"), 1_750), 1_750);
         assert_eq!(Ledger::default().project("p:1", None, 900), 900);
     }
 
@@ -350,6 +508,7 @@ mod tests {
             checkpoint: None,
             reported_input: Some(3_900),
             estimated_input: Some(6_000),
+            ratio_milli: None,
         };
 
         assert!(
@@ -393,6 +552,7 @@ mod tests {
             checkpoint: Some("c".to_owned()),
             reported_input: Some(10),
             estimated_input: Some(12),
+            ratio_milli: Some(833),
         };
 
         assert_eq!(Ledger::parse(Some(&ledger.to_json())), ledger);

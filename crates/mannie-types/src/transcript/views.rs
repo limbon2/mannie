@@ -5,7 +5,7 @@ use specta::Type;
 
 use crate::clock::UtcMillis;
 use crate::context::{Attachment, AttachmentRef};
-use crate::ids::{CheckpointId, ConversationId, ProfileId, ProjectId, TurnId};
+use crate::ids::{CheckpointId, ConversationId, PartId, ProfileId, ProjectId, TurnId};
 use crate::provider::ReasoningEffort;
 use crate::run::RunView;
 use crate::tasks::TaskConversation;
@@ -141,6 +141,15 @@ pub struct ContextUsage {
     /// Whether `used_tokens` is an estimate rather than built on the counts the
     /// provider reported.
     pub estimated: bool,
+    /// Whether older tool results of the active turn were pruned from the
+    /// measured call to stay inside the budget (ADR-0083). Left out while
+    /// false, so link documents of earlier versions stay identical.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub results_pruned: bool,
+    /// The estimated tokens of the full unpruned context when `results_pruned`
+    /// is true (ADR-0083).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unpruned_tokens: Option<u32>,
 }
 
 /// A checkpoint as the conversation view marks it.
@@ -151,10 +160,19 @@ pub struct CheckpointView {
     pub id: CheckpointId,
     /// The position of the last turn it covers.
     pub covers_through_turn: u32,
+    /// When set, the checkpoint ends inside `covers_through_turn` after this
+    /// settled step's last part rather than covering the whole turn
+    /// (ADR-0083).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub covers_through_part: Option<PartId>,
     /// The context's size before the compaction, in tokens.
     pub tokens_before: u32,
     /// The context's expected size after the compaction, in tokens.
     pub tokens_after: u32,
+    /// What triggered the compaction (`automatic`, `overflow` or `manual`),
+    /// when recorded (ADR-0083).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<String>,
     /// When it was written.
     pub created_at: UtcMillis,
 }
@@ -184,6 +202,10 @@ pub struct ConversationSnapshot {
     pub has_earlier_turns: bool,
     /// The latest checkpoint, if the conversation has one.
     pub checkpoint: Option<CheckpointView>,
+    /// Every checkpoint of the conversation, oldest first (ADR-0083). Left out
+    /// when empty so link documents of earlier versions stay identical.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checkpoints: Vec<CheckpointView>,
     /// How much of the context the conversation uses, once it is known.
     pub context: Option<ContextUsage>,
     /// The conversation's background commands, oldest first (ADR-0041). A

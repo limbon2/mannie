@@ -190,6 +190,24 @@ pub(crate) fn effort_for_model(
     }
 }
 
+/// The lowest explicit reasoning effort that a profile's model supports, for
+/// compaction summary calls so reasoning does not exhaust the summary output
+/// limit (ADR-0083).
+pub(crate) fn summary_reasoning_effort(profile: &StoredProfile) -> ReasoningEffort {
+    let Some(supported) = supported_efforts(profile) else {
+        return ReasoningEffort::ServerDefault;
+    };
+
+    [
+        ReasoningEffort::None,
+        ReasoningEffort::Minimal,
+        ReasoningEffort::Low,
+    ]
+    .into_iter()
+    .find(|effort| supported.contains(effort))
+    .unwrap_or(ReasoningEffort::ServerDefault)
+}
+
 fn profile_view(profile: &StoredProfile) -> ProviderProfile {
     let mut view = profile.view();
     view.supported_efforts = supported_efforts(profile);
@@ -462,5 +480,66 @@ impl Runtime {
                 tracing::warn!(%error, "could not delete a credential that is no longer used");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use mannie_store::StoredProfile;
+    use mannie_types::clock::UtcMillis;
+    use mannie_types::ids::ProfileId;
+    use mannie_types::provider::{ApiInterface, ProfileAccess, ReasoningEffort};
+
+    use super::summary_reasoning_effort;
+
+    fn profile(model: &str, advertised_efforts: Option<Vec<ReasoningEffort>>) -> StoredProfile {
+        StoredProfile {
+            id: ProfileId::parse("0199e0f2-0000-7000-8000-000000000001").unwrap(),
+            name: "Test".to_owned(),
+            access: ProfileAccess::Endpoint,
+            interface: ApiInterface::Responses,
+            base_url: "https://api.openai.com/v1".to_owned(),
+            model: model.to_owned(),
+            credential_ref: None,
+            context_window: 200_000,
+            output_limit: 16_384,
+            reasoning_effort: ReasoningEffort::High,
+            use_tools: true,
+            is_default: true,
+            config_revision: 1,
+            server: None,
+            catalog_account: None,
+            catalog_available: true,
+            advertised_efforts,
+            created_at: UtcMillis::EPOCH,
+            updated_at: UtcMillis::EPOCH,
+        }
+    }
+
+    #[test]
+    fn summary_reasoning_effort_picks_lowest_supported_explicit_level() {
+        assert_eq!(
+            summary_reasoning_effort(&profile("gpt-5.1", None)),
+            ReasoningEffort::None
+        );
+        assert_eq!(
+            summary_reasoning_effort(&profile("gpt-5", None)),
+            ReasoningEffort::Minimal
+        );
+        assert_eq!(
+            summary_reasoning_effort(&profile("o3", None)),
+            ReasoningEffort::Low
+        );
+        assert_eq!(
+            summary_reasoning_effort(&profile("gpt-4o", None)),
+            ReasoningEffort::ServerDefault
+        );
+        assert_eq!(
+            summary_reasoning_effort(&profile(
+                "custom-reasoning",
+                Some(vec![ReasoningEffort::Medium, ReasoningEffort::High])
+            )),
+            ReasoningEffort::ServerDefault
+        );
     }
 }

@@ -22,8 +22,14 @@ const OVERFLOW_PHRASES: &[&str] = &[
     "exceeds the maximum context",
     "longer than the model's context",
     "prompt is too long",
+    "prompt exceeds",
     "input is too long",
     "reduce the length of the messages",
+    "too many tokens",
+    "token limit",
+    "request too large",
+    "payload too large",
+    "request entity too large",
 ];
 
 /// Phrases that servers use when they refuse a request because of its tools,
@@ -236,7 +242,8 @@ pub(crate) fn classify_status(
             ProviderError::Permanent(RunFailure::QuotaExceeded)
         }
         429 => context.rate_limited(retry_after),
-        400 | 413 | 422 if context.is_context_overflow(details) => ProviderError::ContextOverflow,
+        413 => ProviderError::ContextOverflow,
+        400 | 422 if context.is_context_overflow(details) => ProviderError::ContextOverflow,
         400..=499 if details.has_code(&["content_filter", "content_policy_violation"]) => {
             ProviderError::Permanent(RunFailure::ContentFiltered)
         }

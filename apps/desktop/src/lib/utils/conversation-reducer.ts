@@ -9,6 +9,7 @@ import type {
   CheckpointView,
   ContextUsage,
   ConversationEvent,
+  ConversationSnapshot,
   ConversationSummary,
   ConversationUpdate,
   PartView,
@@ -24,6 +25,8 @@ export interface TranscriptState {
   backgroundCommands: BackgroundCommandView[];
   /** The latest checkpoint. */
   checkpoint: CheckpointView | null;
+  /** Every checkpoint of the conversation, oldest first (ADR-0083). */
+  checkpoints: CheckpointView[];
   /** How much of the context the conversation uses, once known. */
   context: ContextUsage | null;
   /** The conversation as the list shows it. */
@@ -47,6 +50,7 @@ export function emptyTranscript(): TranscriptState {
   return {
     backgroundCommands: [],
     checkpoint: null,
+    checkpoints: [],
     context: null,
     conversation: null,
     cursor: null,
@@ -57,6 +61,36 @@ export function emptyTranscript(): TranscriptState {
 
 function byPosition(left: { position: number }, right: { position: number }): number {
   return left.position - right.position;
+}
+
+function byCheckpointOrder(left: CheckpointView, right: CheckpointView): number {
+  if (left.coversThroughTurn !== right.coversThroughTurn) {
+    return left.coversThroughTurn - right.coversThroughTurn;
+  }
+  if (left.createdAt !== right.createdAt) {
+    return left.createdAt - right.createdAt;
+  }
+  return left.id.localeCompare(right.id);
+}
+
+/** Inserts or replaces a checkpoint by its ID, keeping oldest-first order. */
+function putCheckpoint(checkpoints: CheckpointView[], checkpoint: CheckpointView): void {
+  const index = checkpoints.findIndex((existing) => existing.id === checkpoint.id);
+  if (index === -1) {
+    checkpoints.push(checkpoint);
+    checkpoints.sort(byCheckpointOrder);
+  } else {
+    checkpoints[index] = checkpoint;
+  }
+}
+
+/** The checkpoints of a snapshot, oldest first, including snapshots from older versions that only send `checkpoint`. */
+function checkpointsFromSnapshot(snapshot: ConversationSnapshot): CheckpointView[] {
+  const listed = snapshot.checkpoints ?? [];
+  if (listed.length > 0) {
+    return [...listed].sort(byCheckpointOrder);
+  }
+  return snapshot.checkpoint === null ? [] : [snapshot.checkpoint];
 }
 
 /** Inserts or replaces a background command by its number, keeping the order. */
@@ -180,7 +214,8 @@ function applyEvent(state: TranscriptState, event: ConversationEvent): void {
       return;
     }
     case 'checkpoint_created': {
-      state.checkpoint = event.checkpoint;
+      putCheckpoint(state.checkpoints, event.checkpoint);
+      state.checkpoint = state.checkpoints.at(-1) ?? event.checkpoint;
       return;
     }
     case 'context_usage_changed': {
@@ -211,7 +246,9 @@ export function applyUpdate(state: TranscriptState, update: ConversationUpdate):
       state.conversation = snapshot.conversation;
       state.turns = [...snapshot.turns].sort(byPosition);
       state.hasEarlierTurns = snapshot.hasEarlierTurns;
-      state.checkpoint = snapshot.checkpoint;
+      const checkpoints = checkpointsFromSnapshot(snapshot);
+      state.checkpoints = checkpoints;
+      state.checkpoint = snapshot.checkpoint ?? checkpoints.at(-1) ?? null;
       state.context = snapshot.context;
       // A snapshot of a version before background commands has none.
       state.backgroundCommands = [...(snapshot.backgroundCommands ?? [])].sort(

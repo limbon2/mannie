@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Meter } from 'bits-ui';
 
+  import { Badge } from '#lib/components/ui/badge/index.js';
   import { Button } from '#lib/components/ui/button/index.js';
   import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
   import type { CheckpointView, ContextUsage } from '#lib/generated/bindings.js';
@@ -10,7 +11,8 @@
 
   // The share of the context budget that a conversation uses (docs/features/
   // chat/conversation-view.md, layout), with the exact counts, whether they
-  // are estimated, the latest checkpoint and "Compact now".
+  // are estimated, whether older tool results are trimmed, the latest
+  // checkpoint and "Compact now".
   interface Props {
     checkpoint: CheckpointView | null;
     context: ContextUsage | null;
@@ -22,10 +24,19 @@
   const used = $derived(context?.usedTokens ?? 0);
   const budget = $derived(context?.budgetTokens ?? 0);
   const percent = $derived(budget === 0 ? 0 : Math.min(100, Math.round((used / budget) * 100)));
+  const pruned = $derived(context?.resultsPruned === true);
+  const unpruned = $derived(context?.unprunedTokens ?? used);
   const compacting = $derived(chatActions.compacting.includes(conversationId));
   const label = $derived(
     context === null ? m.chat_context_unknown() : m.chat_context_label({ percent: formatCount(percent) }),
   );
+  const ariaLabel = $derived.by(() => {
+    if (context === null) {
+      return m.chat_context_unknown();
+    }
+    const count = formatCount(percent);
+    return pruned ? m.chat_context_label_pruned({ percent: count }) : m.chat_context_label({ percent: count });
+  });
 
   function showCheckpoint(): void {
     if (checkpoint !== null) {
@@ -37,7 +48,7 @@
 <DropdownMenu.Root>
   <DropdownMenu.Trigger>
     {#snippet child({ props })}
-      <Button {...props} aria-label={label} data-context-meter="" size="sm" variant="ghost">
+      <Button {...props} aria-label={ariaLabel} data-context-meter="" size="sm" variant="ghost">
         <Meter.Root
           class="h-1.5 w-16 overflow-hidden rounded-full bg-muted"
           aria-hidden="true"
@@ -47,12 +58,17 @@
           <div class="h-full rounded-full bg-primary" style:width="{percent}%"></div>
         </Meter.Root>
         <span class="text-xs text-muted-foreground tabular-nums">{label}</span>
+        {#if pruned}
+          <Badge variant="secondary">{m.chat_context_pruned_badge()}</Badge>
+        {/if}
       </Button>
     {/snippet}
   </DropdownMenu.Trigger>
+
   <DropdownMenu.Content class="w-72" align="end">
     <DropdownMenu.Group>
       <DropdownMenu.Label>{m.chat_context_title()}</DropdownMenu.Label>
+
       <p class="px-2 py-1 text-sm">
         {#if context === null}
           {m.chat_context_unknown_details()}
@@ -60,8 +76,19 @@
           {m.chat_context_details({ budget: formatCount(budget), used: formatCount(used) })}
         {/if}
       </p>
+
+      {#if context !== null}
+        <p class="px-2 pb-1 text-xs text-muted-foreground">{m.chat_context_threshold()}</p>
+      {/if}
+
       {#if context?.estimated}
         <p class="px-2 pb-1 text-xs text-muted-foreground">{m.chat_context_estimated()}</p>
+      {/if}
+
+      {#if pruned}
+        <p class="px-2 pb-1 text-xs text-muted-foreground">
+          {m.chat_context_pruned({ unpruned: formatCount(unpruned) })}
+        </p>
       {/if}
     </DropdownMenu.Group>
     <DropdownMenu.Separator />

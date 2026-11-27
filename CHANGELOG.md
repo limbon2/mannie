@@ -4,6 +4,14 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+### Changed
+
+- Overhaul context compaction with step-boundary intra-turn checkpoints, calibrated token estimation that excludes encrypted reasoning payload bytes, preserved calibration across checkpoints, capped ChatGPT plan output reserve, richer head-and-tail summaries with an `In progress` live-state heading, fail-soft proactive compaction, cache-friendly epoch tool-result pruning with factual stubs, visible markers for every checkpoint and pruned-context state in the context meter ([ADR-0083](docs/adr/0083-compact-conversations-on-step-boundaries.md)).
+
+### Fixed
+
+- Classify HTTP 413 and additional token-limit provider errors as context overflows, log redacted provider refusal metadata at `warn` level, and run manual compaction with the conversation's configured agent and reasoning effort.
+
 ## 0.10.3 - 2026-11-27
 
 ### Fixed

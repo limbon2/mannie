@@ -136,6 +136,8 @@ pub(crate) struct CheckpointDocument {
     pub(crate) tokens_before: u32,
     pub(crate) tokens_after: u32,
     pub(crate) trigger: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) covers_through_part: Option<PartId>,
 }
 
 /// The body of a stored event. Most events name the row they concern, and the
@@ -641,6 +643,26 @@ impl TurnRow {
     }
 }
 
+/// Builds a checkpoint view from its stored columns.
+pub(crate) fn checkpoint_view_from(
+    id: &str,
+    covers: i64,
+    document: &str,
+    created_at: i64,
+) -> Result<CheckpointView, RuntimeStoreError> {
+    let document: CheckpointDocument = from_json(document, "checkpoint document")?;
+    let trigger = (!document.trigger.is_empty()).then_some(document.trigger);
+    Ok(CheckpointView {
+        id: parse_id(id, CheckpointId::parse)?,
+        covers_through_turn: position(covers, "a checkpoint's turn")?,
+        covers_through_part: document.covers_through_part,
+        tokens_before: document.tokens_before,
+        tokens_after: document.tokens_after,
+        trigger,
+        created_at: millis(created_at),
+    })
+}
+
 /// Reads a checkpoint as the conversation view marks it.
 pub(crate) fn checkpoint_view(
     connection: &Connection,
@@ -658,14 +680,7 @@ pub(crate) fn checkpoint_view(
         })
         .optional()?;
     raw.map(|(id, covers, document, created_at)| {
-        let document: CheckpointDocument = from_json(&document, "checkpoint document")?;
-        Ok(CheckpointView {
-            id: parse_id(&id, CheckpointId::parse)?,
-            covers_through_turn: position(covers, "a checkpoint's turn")?,
-            tokens_before: document.tokens_before,
-            tokens_after: document.tokens_after,
-            created_at: millis(created_at),
-        })
+        checkpoint_view_from(&id, covers, &document, created_at)
     })
     .transpose()
 }

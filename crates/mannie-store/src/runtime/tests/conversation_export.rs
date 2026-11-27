@@ -230,6 +230,7 @@ async fn export_keeps_complete_archives_checkpoints_and_unknown_parts_without_pr
                     checkpoint: NewCheckpoint {
                         id: checkpoint_id.clone(),
                         covers_through_turn: 0,
+                        covers_through_part: None,
                         content_hash: "hash".to_owned(),
                         summary: "saved checkpoint".to_owned(),
                         tokens_before: 1000,

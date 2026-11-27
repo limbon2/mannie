@@ -928,43 +928,45 @@ impl Runtime {
             .map_err(store_failure)?
             .ok_or(ChatError::ConversationNotFound)?;
         refuse_task_conversation(&summary)?;
-        let profile = self.profile_for(summary.profile_id.as_ref()).await?;
+        let mut profile = self.profile_for(summary.profile_id.as_ref()).await?;
+        if let Some(effort) = summary.reasoning_effort {
+            profile.reasoning_effort = effort_for_model(&profile, effort);
+        }
         let account = self
             .account_for_run(&profile)
             .await
             .map_err(|failure| ChatError::CompactionFailed { failure })?;
+        let agent = self.conversation_agent_name(summary.agent_key.as_deref());
         let setup = self
-            .setup_for(&profile, CONVERSATION_AGENT, false, account.as_ref())
+            .setup_for(&profile, &agent, false, account.as_ref())
             .await
             .map_err(|failure| ChatError::CompactionFailed { failure })?;
         let prepared = self
-            .prepare_call(conversation, conversation, &setup, CallOptions::default())
+            .prepare_call(conversation, conversation, &setup, &CallOptions::default())
             .await
             .map_err(call_failure)?;
-        if prepared.turns.len() < 2 {
+        let Some(plan) =
+            Self::plan_checkpoint(&setup, &prepared, Trigger::Manual, prepared.size, false)
+        else {
             return Err(ChatError::NothingToCompact);
-        }
+        };
         let slots = Arc::clone(&self.inner.slots);
         // The runtime never closes the semaphore.
         let _permit = slots
             .acquire_owned()
             .await
             .map_err(|_closed| ChatError::ShuttingDown)?;
-        let written = self
-            .write_checkpoint(
-                conversation,
-                &setup,
-                &prepared,
-                Trigger::Manual,
-                prepared.size,
-            )
-            .await
-            .map_err(call_failure)?;
-        if written {
-            Ok(())
-        } else {
-            Err(ChatError::NothingToCompact)
-        }
+        self.write_checkpoint_plan(
+            conversation,
+            &setup,
+            &prepared,
+            plan,
+            Trigger::Manual,
+            prepared.size,
+        )
+        .await
+        .map_err(call_failure)?;
+        Ok(())
     }
 
     /// Refuses a command of the owner on a task conversation. A conversation

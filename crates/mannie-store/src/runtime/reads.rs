@@ -35,8 +35,9 @@ const SELECT_TURN_PARTS: &str = "SELECT id, turn_id, run_id, position, kind, aud
      FROM runtime_parts WHERE turn_id = ?1 AND (run_id IS NULL OR run_id = ?2 \
      OR run_id IN (SELECT id FROM runtime_runs WHERE turn_id = ?1 AND kept = 1)) AND state <> 'discarded' \
      ORDER BY position";
-const SELECT_LATEST_CHECKPOINT: &str = "SELECT id FROM runtime_checkpoints WHERE conversation_id = ?1 \
-     ORDER BY covers_through_turn DESC, created_at DESC LIMIT 1";
+const SELECT_CHECKPOINT_VIEWS: &str = "SELECT id, covers_through_turn, document, created_at \
+     FROM runtime_checkpoints WHERE conversation_id = ?1 \
+     ORDER BY covers_through_turn ASC, created_at ASC, id ASC";
 const SELECT_CONTEXT_USAGE: &str = "SELECT context_usage FROM runtime_conversations WHERE id = ?1";
 const SELECT_CONTEXT_LEDGER: &str = "SELECT context FROM runtime_conversations WHERE id = ?1";
 const SELECT_EVENTS_AFTER: &str = "SELECT seq, kind, part_id, body FROM runtime_events \
@@ -51,9 +52,9 @@ const SELECT_ALL_SUMMARIES: &str = concat!(
 );
 // The draft of a place (ADR-0068): `IS` matches a missing project or home.
 const SELECT_DRAFT: &str = "SELECT id FROM runtime_conversations      WHERE draft = 1 AND project_id IS ?1 AND home_provider IS ?2 AND home_key IS ?3";
-const SELECT_CHECKPOINTS: &str = "SELECT id, covers_through_turn, content_hash, summary, created_at \
+const SELECT_CHECKPOINTS: &str = "SELECT id, covers_through_turn, content_hash, summary, document, created_at \
      FROM runtime_checkpoints WHERE conversation_id = ?1 \
-     ORDER BY covers_through_turn DESC, created_at DESC";
+     ORDER BY covers_through_turn DESC, created_at DESC, id DESC";
 const SELECT_CHECKPOINT_SUMMARY: &str =
     "SELECT summary FROM runtime_checkpoints WHERE id = ?1 AND conversation_id = ?2";
 const SELECT_MODEL_TURNS: &str = "SELECT t.id, t.position, t.current_run_id, r.state FROM runtime_turns t \
@@ -108,7 +109,7 @@ pub(crate) const STATEMENTS: &[&str] = &[
     SELECT_LATEST_TURNS,
     SELECT_TURNS_BEFORE,
     SELECT_TURN_PARTS,
-    SELECT_LATEST_CHECKPOINT,
+    SELECT_CHECKPOINT_VIEWS,
     SELECT_CONTEXT_USAGE,
     SELECT_CONTEXT_LEDGER,
     SELECT_EVENTS_AFTER,
@@ -158,6 +159,9 @@ pub struct StoredCheckpoint {
     pub id: CheckpointId,
     /// The position of the last turn it covers.
     pub covers_through_turn: u32,
+    /// When set, the checkpoint ends inside `covers_through_turn` after this
+    /// settled step's last part (ADR-0083).
+    pub covers_through_part: Option<PartId>,
     /// The hash of the covered text.
     pub content_hash: String,
     /// The summary.
@@ -403,7 +407,7 @@ impl Store {
     ) -> Result<Vec<StoredCheckpoint>, RuntimeStoreError> {
         let conversation = conversation_id.as_str().to_owned();
         read_consistently(self, move |connection| {
-            let raw: Vec<(String, i64, String, String, i64)> = {
+            let raw: Vec<(String, i64, String, String, String, i64)> = {
                 let mut select = connection.prepare_cached(SELECT_CHECKPOINTS)?;
                 let rows = select.query_map([conversation], |row| {
                     Ok((
@@ -412,20 +416,26 @@ impl Store {
                         row.get(2)?,
                         row.get(3)?,
                         row.get(4)?,
+                        row.get(5)?,
                     ))
                 })?;
                 rows.collect::<Result<_, _>>()?
             };
             raw.into_iter()
-                .map(|(id, covers, content_hash, summary, created_at)| {
-                    Ok(StoredCheckpoint {
-                        id: parse_id(&id, CheckpointId::parse)?,
-                        covers_through_turn: position(covers, "a checkpoint's turn")?,
-                        content_hash,
-                        summary,
-                        created_at: millis(created_at),
-                    })
-                })
+                .map(
+                    |(id, covers, content_hash, summary, document, created_at)| {
+                        let document: rows::CheckpointDocument =
+                            from_json(&document, "checkpoint document")?;
+                        Ok(StoredCheckpoint {
+                            id: parse_id(&id, CheckpointId::parse)?,
+                            covers_through_turn: position(covers, "a checkpoint's turn")?,
+                            covers_through_part: document.covers_through_part,
+                            content_hash,
+                            summary,
+                            created_at: millis(created_at),
+                        })
+                    },
+                )
                 .collect()
         })
         .await
@@ -713,14 +723,20 @@ fn snapshot_in(
         turns.push(turn);
     }
     turns.reverse();
-    let checkpoint_id: Option<String> = connection
-        .prepare_cached(SELECT_LATEST_CHECKPOINT)?
-        .query_row([conversation], |row| row.get(0))
-        .optional()?;
-    let checkpoint = match checkpoint_id {
-        Some(id) => rows::checkpoint_view(connection, &id)?,
-        None => None,
+    let checkpoint_rows: Vec<(String, i64, String, i64)> = {
+        let mut select = connection.prepare_cached(SELECT_CHECKPOINT_VIEWS)?;
+        let rows = select.query_map([conversation], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?;
+        rows.collect::<Result<_, _>>()?
     };
+    let checkpoints: Vec<mannie_types::transcript::CheckpointView> = checkpoint_rows
+        .into_iter()
+        .map(|(id, covers, document, created_at)| {
+            rows::checkpoint_view_from(&id, covers, &document, created_at)
+        })
+        .collect::<Result<_, _>>()?;
+    let checkpoint = checkpoints.last().cloned();
     let usage: Option<String> = connection
         .prepare_cached(SELECT_CONTEXT_USAGE)?
         .query_row([conversation], |row| row.get(0))?;
@@ -738,6 +754,7 @@ fn snapshot_in(
         turns,
         has_earlier_turns,
         checkpoint,
+        checkpoints,
         context,
         background_commands,
     }))

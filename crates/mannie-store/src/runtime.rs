@@ -315,6 +315,9 @@ pub struct NewCheckpoint {
     pub id: CheckpointId,
     /// The position of the last turn it covers.
     pub covers_through_turn: u32,
+    /// When set, the checkpoint ends inside `covers_through_turn` after this
+    /// settled step's last part (ADR-0083).
+    pub covers_through_part: Option<PartId>,
     /// The hash of the covered text.
     pub content_hash: String,
     /// The summary.

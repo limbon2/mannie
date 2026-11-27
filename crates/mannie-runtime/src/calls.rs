@@ -33,9 +33,9 @@ use mannie_types::transcript::PartKind;
 
 use crate::agents::{AgentDefinition, Requester};
 use crate::assigned::{AssignedRun, lease_reference};
-use crate::budget::{Ledger, estimate_request, estimate_text, usage};
+use crate::budget::{Ledger, estimate_request, estimate_scaled_image, estimate_text, usage};
 use crate::chatgpt::AccountKey;
-use crate::compaction::{self, ContextSize, Trigger};
+use crate::compaction::{self, CheckpointCursor, ContextSize, Plan, Trigger};
 use crate::context::{RequestShape, SentImages, build_request, chosen_context};
 use crate::instructions::{
     InstructionContext, InstructionSection, MachineContext, SourcesContext, ToolEnvironment,
@@ -43,14 +43,30 @@ use crate::instructions::{
 };
 use crate::plugin_tools::{OfferedPluginTool, offered_tools};
 use crate::plugins::Snapshot;
-use crate::profiles::{VaultError, effort_for_model, in_vault};
+use crate::profiles::{VaultError, effort_for_model, in_vault, summary_reasoning_effort};
 use crate::retry::RetryDecision;
 use crate::self_management::MANNIE_INSPECT;
 use crate::{Runtime, lock, plans, questions, tasks, texts};
 
 /// The newest tool results of the latest turn that stay in the context when
-/// older ones are left out to save space.
+/// older ones are pruned to save space.
 const KEPT_RESULTS: usize = 3;
+
+/// Output reserve cap for ChatGPT plan profiles, which omit `max_output_tokens`
+/// on the wire (ADR-0062, decision 10; ADR-0083).
+const CHATGPT_PLAN_OUTPUT_RESERVE: u32 = 32_768;
+
+/// Context budget for a profile: ChatGPT plan profiles omit `max_output_tokens`
+/// on the wire (ADR-0062, decision 10), so their output reserve is capped rather
+/// than subtracting the full advertised `output_limit` (ADR-0083).
+fn profile_budget(access: ProfileAccess, context_window: u32, output_limit: u32) -> u32 {
+    let output_reserve = match access {
+        ProfileAccess::ChatGptPlan => output_limit.min(CHATGPT_PLAN_OUTPUT_RESERVE),
+        ProfileAccess::Endpoint => output_limit,
+    };
+
+    context_budget(context_window, output_reserve)
+}
 
 /// The tool that moves a general conversation into a project.
 const MOVE_TO_PROJECT: &str = "move_to_project";
@@ -167,6 +183,9 @@ pub(crate) struct Setup {
     pub(crate) budget: u32,
     /// The reasoning effort.
     pub(crate) reasoning_effort: ReasoningEffort,
+    /// The lowest explicit reasoning effort supported by the model, used for
+    /// compaction summary calls (ADR-0083).
+    pub(crate) summary_reasoning_effort: ReasoningEffort,
     /// The tools of the run: those its agent names that the registry holds,
     /// or none when the profile does not use tools.
     pub(crate) tools: Vec<Arc<dyn Tool>>,
@@ -355,12 +374,12 @@ impl Setup {
 }
 
 /// How a call is prepared.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct CallOptions {
-    /// Even after compaction the context runs low: the latest turn's older
-    /// tool results are left out (docs/features/system-tools/tool-calls.md,
-    /// context).
-    pub(crate) leave_out_results: bool,
+    /// When set, prune eligible completed tool and task results of the latest
+    /// turn up through this part (inclusive), keeping the trimmed prefix fixed
+    /// across steps for prompt-prefix caching (ADR-0083).
+    pub(crate) prune_through: Option<PartId>,
 }
 
 /// One call, ready to be made.
@@ -370,10 +389,27 @@ pub(crate) struct Prepared {
     pub(crate) request: ModelRequest,
     /// The size of the request's context.
     pub(crate) size: ContextSize,
-    /// The checkpoint that stands in for older turns.
+    /// The checkpoint that stands in for older turns or steps.
     pub(crate) checkpoint: Option<StoredCheckpoint>,
-    /// The turns after the checkpoint, as the model reads them.
+    /// The uncovered turns after the checkpoint, as the model reads them.
     pub(crate) turns: Vec<ModelTurn>,
+    /// The full turns loaded from the store from the checkpoint's turn onward,
+    /// used to build candidate slices and resumed-turn anchors.
+    pub(crate) full_turns: Vec<ModelTurn>,
+    /// The system prompt without the checkpoint section, used to evaluate
+    /// candidate cuts and post-compaction request sizes without re-querying
+    /// the store.
+    pub(crate) base_instructions: String,
+    /// The tool definitions offered to this call.
+    pub(crate) definitions: Vec<ToolDefinition>,
+    /// The tool result images loaded for this call.
+    pub(crate) tool_images: SentImages,
+    /// Whether older tool results of the latest turn were pruned from this
+    /// request (ADR-0083).
+    pub(crate) results_pruned: bool,
+    /// Mannie's uncalibrated estimate of the same call with no results pruned,
+    /// when `results_pruned` is true.
+    pub(crate) unpruned_estimate: Option<u32>,
     /// The ledger of the conversation's last call.
     pub(crate) ledger: Ledger,
 }
@@ -545,6 +581,7 @@ impl Runtime {
         }
         let target = self.target_of(profile, &route).await?;
         let agent = self.with_roster_named(&snapshot, agent, &child_agents, offers_tasks);
+        let budget = profile_budget(profile.access, profile.context_window, profile.output_limit);
         Ok(Setup {
             agent,
             adapter,
@@ -554,8 +591,9 @@ impl Runtime {
             model: profile.model.clone(),
             binding: route.binding,
             output_limit: profile.output_limit,
-            budget: context_budget(profile.context_window, profile.output_limit),
+            budget,
             reasoning_effort: profile.reasoning_effort,
+            summary_reasoning_effort: summary_reasoning_effort(profile),
             tools,
             definitions,
             task_definitions,
@@ -907,14 +945,15 @@ impl Runtime {
         conversation: &ConversationId,
         authority: &ConversationId,
         setup: &Setup,
-        options: CallOptions,
+        options: &CallOptions,
     ) -> Result<Prepared, CallError> {
         let owner = self.owner_instructions_of(setup).await?;
         let checkpoint = self.current_checkpoint(conversation).await?;
-        let covered = checkpoint
-            .as_ref()
-            .map(|checkpoint| checkpoint.covers_through_turn);
-        let turns = self.inner.store.model_turns(conversation, covered).await?;
+        let cursor = checkpoint.as_ref().map(CheckpointCursor::from_stored);
+        let after = cursor.as_ref().and_then(CheckpointCursor::load_after_turn);
+        let full_turns = self.inner.store.model_turns(conversation, after).await?;
+        let (turns, anchor) =
+            compaction::uncovered_turns(full_turns.clone(), cursor.as_ref(), setup.budget);
         let ConversationFacts {
             project_id,
             projects,
@@ -942,47 +981,25 @@ impl Runtime {
             .iter()
             .map(|definition| definition.name.as_str())
             .collect();
-        // Only a run that can move into a project learns the owner's
-        // projects; a child works in its parent's workspace.
-        let movable: &[_] = if setup.tool(MOVE_TO_PROJECT).is_some() {
-            &projects
-        } else {
-            &[]
-        };
-        let system = &self.inner.tools.system;
         let full_context = chosen_context(&turns);
         let attached = self.attached_sources(&attachments, home.as_ref()).await;
         let skills_section = skills.section();
         let mannie_state = self.mannie_state_for_setup(setup);
-        let context = InstructionContext {
+        let base_context = InstructionContext {
             agent: &setup.agent,
             owner_instructions: owner.as_str(),
-            checkpoint: checkpoint
-                .as_ref()
-                .map(|checkpoint| checkpoint.summary.as_str()),
-            tools: setup.uses_tools().then(|| ToolEnvironment {
-                system: &system.system,
-                shell: system.shell.as_ref().map(|shell| shell.name.as_str()),
-                project,
-                projects: movable,
-                full_access,
-                offered: &offered,
-            }),
+            checkpoint: None,
+            tools: self.tool_environment(setup, project, &projects, full_access, &offered),
             offers_tasks: setup.offers_tasks(),
             machine: self.machine_context(setup),
             sources: attached.context(!full_context.is_empty()),
             skills: skills_section.as_deref(),
             mannie_state: mannie_state.as_deref(),
         };
-        let instructions = self
-            .inner
-            .instructions
-            .assemble_with(&context, &setup.plugin_sections);
-        let left_out = if options.leave_out_results {
-            older_results(&turns)
-        } else {
-            HashSet::new()
-        };
+        let (base_instructions, instructions) =
+            self.call_instructions(base_context, &setup.plugin_sections, checkpoint.as_ref());
+        let left_out = left_out_through(&turns, options.prune_through.as_ref());
+        let results_pruned = !left_out.is_empty();
         // A model without tools reads the images of results as lines, so a
         // request without tools reads none of their bytes.
         let tool_images = if definitions.is_empty() {
@@ -991,15 +1008,19 @@ impl Runtime {
             self.sent_tool_images(conversation, &turns, &left_out)
                 .await?
         };
+        let anchor_ref = anchor.as_ref().map(|(id, text)| (id, text.as_str()));
         let shape = Shaping {
             instructions: &instructions,
             definitions: &definitions,
             left_out: &left_out,
             tool_images: &tool_images,
             full_context: &full_context,
+            resumed_turn_anchor: anchor_ref,
         };
         let request = call_request(setup, &shape, &turns);
         let estimate = estimate_request(&request);
+        let unpruned_estimate =
+            results_pruned.then(|| unpruned_request_estimate(setup, &shape, &turns, &tool_images));
         let ledger = self.ledger_of(conversation).await?;
         let checkpoint_id = checkpoint.as_ref().map(|checkpoint| checkpoint.id.as_str());
         let projected = ledger.project(&setup.binding, checkpoint_id, estimate);
@@ -1012,8 +1033,71 @@ impl Runtime {
             },
             checkpoint,
             turns,
+            full_turns,
+            base_instructions,
+            definitions,
+            tool_images,
+            results_pruned,
+            unpruned_estimate,
             ledger,
         })
+    }
+
+    /// Builds the tool environment context section for a call when tools are
+    /// enabled; only runs that can move into a project learn the project list.
+    fn tool_environment<'a>(
+        &'a self,
+        setup: &Setup,
+        project: Option<&'a ProjectView>,
+        projects: &'a [ProjectView],
+        full_access: bool,
+        offered: &'a [&'a str],
+    ) -> Option<ToolEnvironment<'a>> {
+        if !setup.uses_tools() {
+            return None;
+        }
+        let movable: &[ProjectView] = if setup.tool(MOVE_TO_PROJECT).is_some() {
+            projects
+        } else {
+            &[]
+        };
+        let system = &self.inner.tools.system;
+        Some(ToolEnvironment {
+            system: &system.system,
+            shell: system.shell.as_ref().map(|shell| shell.name.as_str()),
+            project,
+            projects: movable,
+            full_access,
+            offered,
+        })
+    }
+
+    /// Assembles the base system instructions (without checkpoint) and the full
+    /// instructions (including the active checkpoint summary when present).
+    fn call_instructions(
+        &self,
+        base_context: InstructionContext<'_>,
+        plugin_sections: &[InstructionSection],
+        checkpoint: Option<&StoredCheckpoint>,
+    ) -> (String, String) {
+        let base = self
+            .inner
+            .instructions
+            .assemble_with(&base_context, plugin_sections);
+        let full = match checkpoint {
+            Some(cp) if !cp.summary.trim().is_empty() => {
+                let with_checkpoint = InstructionContext {
+                    checkpoint: Some(cp.summary.as_str()),
+                    ..base_context
+                };
+                self.inner
+                    .instructions
+                    .assemble_with(&with_checkpoint, plugin_sections)
+            }
+            _ => base.clone(),
+        };
+
+        (base, full)
     }
 
     /// The ledger of a conversation's context sizes, as the store keeps it.
@@ -1138,8 +1222,8 @@ impl Runtime {
         }
     }
 
-    /// The newest checkpoint whose hash still matches the turns it covers. A
-    /// checkpoint is checked once per process.
+    /// The newest checkpoint whose hash still matches the turns or step prefix
+    /// it covers. A checkpoint is checked once per process.
     async fn current_checkpoint(
         &self,
         conversation: &ConversationId,
@@ -1150,17 +1234,21 @@ impl Runtime {
                 return Ok(Some(checkpoint.clone()));
             }
             let previous = checkpoints.get(index + 1);
-            let after = previous.map(|previous| previous.covers_through_turn);
+            let previous_cursor = previous.map(CheckpointCursor::from_stored);
+            let this_cursor = CheckpointCursor::from_stored(checkpoint);
+            let after = previous_cursor
+                .as_ref()
+                .and_then(CheckpointCursor::load_after_turn);
             let turns = self.inner.store.model_turns(conversation, after).await?;
-            let covered: Vec<ModelTurn> = turns
-                .into_iter()
-                .filter(|turn| turn.position <= checkpoint.covers_through_turn)
-                .collect();
-            let hash = compaction::content_hash(
-                previous.map(|previous| previous.content_hash.as_str()),
-                &covered,
-            );
-            if hash == checkpoint.content_hash {
+            let covered = compaction::slice_between(&turns, previous_cursor.as_ref(), &this_cursor);
+            let hash_matches = covered.is_some_and(|covered| {
+                let hash = compaction::content_hash(
+                    previous.map(|previous| previous.content_hash.as_str()),
+                    &covered,
+                );
+                hash == checkpoint.content_hash
+            });
+            if hash_matches {
                 lock(&self.inner.verified_checkpoints).insert(checkpoint.id.clone());
                 return Ok(Some(checkpoint.clone()));
             }
@@ -1173,66 +1261,75 @@ impl Runtime {
         Ok(None)
     }
 
-    /// Summarizes the turns that a compaction plan covers and stores the
-    /// checkpoint. `Ok(false)` when nothing is worth compacting. The caller
-    /// holds a model slot.
-    pub(crate) async fn write_checkpoint(
-        &self,
-        conversation: &ConversationId,
+    /// Plans a compaction for `prepared` without performing any model call or
+    /// store write, so callers avoid switching UI status when nothing is worth
+    /// compacting (ADR-0083).
+    pub(crate) fn plan_checkpoint(
         setup: &Setup,
         prepared: &Prepared,
         trigger: Trigger,
         size: ContextSize,
-    ) -> Result<bool, CallError> {
-        // The latest turn holds the request being answered, which is never
-        // compacted.
-        let candidates = prepared
-            .turns
-            .split_last()
-            .map_or(&[][..], |(_latest, earlier)| earlier);
+        allow_active_turn_end: bool,
+    ) -> Option<Plan> {
         let allowance = compaction::summary_allowance(setup.budget, setup.output_limit);
-        let Some(plan) = compaction::plan(candidates, size, allowance, trigger, setup.requester())
-        else {
-            return Ok(false);
-        };
-        let covered = &candidates[..plan.covered];
-        let Some(last) = covered.last() else {
-            return Ok(false);
-        };
+        compaction::plan_compaction(
+            &prepared.turns,
+            size,
+            allowance,
+            trigger,
+            allow_active_turn_end,
+            |cursor| estimate_after_cursor(setup, prepared, cursor, None),
+        )
+    }
+
+    /// Summarizes the turns or step prefix in `plan`, measures the actual
+    /// post-compaction context estimate, and stores the checkpoint. The caller
+    /// holds a model slot.
+    pub(crate) async fn write_checkpoint_plan(
+        &self,
+        conversation: &ConversationId,
+        setup: &Setup,
+        prepared: &Prepared,
+        plan: Plan,
+        trigger: Trigger,
+        size: ContextSize,
+    ) -> Result<(), CallError> {
+        let allowance = compaction::summary_allowance(setup.budget, setup.output_limit);
         let previous = prepared.checkpoint.as_ref();
         let summary = self
             .summarize(
                 setup,
                 previous.map(|previous| previous.summary.as_str()),
-                covered,
+                &plan.covered,
                 allowance,
             )
             .await?;
         let id = self.inner.ids.checkpoint();
-        let ledger = Ledger {
-            binding: Some(setup.binding.clone()),
-            checkpoint: Some(id.as_str().to_owned()),
-            reported_input: None,
-            estimated_input: None,
-        };
+        let ledger = prepared
+            .ledger
+            .after_checkpoint(&setup.binding, id.as_str());
+        let actual_estimate =
+            estimate_after_cursor(setup, prepared, &plan.cursor, Some(summary.as_str()));
+        let tokens_after = ledger.project(&setup.binding, Some(id.as_str()), actual_estimate);
         let changes = vec![
             Change::AddCheckpoint {
                 checkpoint: NewCheckpoint {
                     id: id.clone(),
-                    covers_through_turn: last.position,
+                    covers_through_turn: plan.cursor.turn,
+                    covers_through_part: plan.cursor.part.clone(),
                     content_hash: compaction::content_hash(
                         previous.map(|previous| previous.content_hash.as_str()),
-                        covered,
+                        &plan.covered,
                     ),
                     summary,
                     tokens_before: size.projected,
-                    tokens_after: plan.after,
+                    tokens_after,
                     trigger: trigger.as_str().to_owned(),
                 },
             },
             Change::UpdateContext {
                 ledger: ledger.to_json(),
-                usage: usage(plan.after, setup.budget, true),
+                usage: usage(tokens_after, setup.budget, true),
             },
         ];
         self.inner
@@ -1243,13 +1340,15 @@ impl Runtime {
         tracing::info!(
             conversation = %conversation,
             checkpoint = %id,
-            turns = covered.len(),
+            turns = plan.covered.len(),
+            covers_through_turn = plan.cursor.turn,
+            step_boundary = plan.cursor.part.is_some(),
             trigger = trigger.as_str(),
             tokens_before = size.projected,
-            tokens_after = plan.after,
+            tokens_after,
             "wrote a checkpoint"
         );
-        Ok(true)
+        Ok(())
     }
 
     /// Summarizes turns, folding them in chunks that each fit one call.
@@ -1260,18 +1359,23 @@ impl Runtime {
         covered: &[ModelTurn],
         allowance: u32,
     ) -> Result<String, CallError> {
-        let rendered = compaction::render_turns(covered, setup.requester());
         let overhead = compaction::request_overhead(previous, allowance);
         let chunk_tokens = setup
             .budget
             .saturating_sub(allowance)
             .saturating_sub(overhead)
             .max(MIN_CHUNK_TOKENS);
+        let rendered = compaction::render_turns(covered, setup.requester(), chunk_tokens);
         let mut summary = previous.map(str::to_owned);
         for chunk in compaction::chunks(&rendered, chunk_tokens) {
             let chunk = compaction::fit(&chunk, chunk_tokens);
-            let request =
-                compaction::summary_request(&setup.model, summary.as_deref(), &chunk, allowance);
+            let request = compaction::summary_request(
+                &setup.model,
+                summary.as_deref(),
+                &chunk,
+                allowance,
+                setup.summary_reasoning_effort,
+            );
             summary = Some(self.summary_call(setup, request).await?);
         }
         summary
@@ -1404,6 +1508,9 @@ struct Shaping<'a> {
     tool_images: &'a SentImages,
     /// The parts `context` whose excerpts the request sends in full.
     full_context: &'a HashSet<PartId>,
+    /// When a step-boundary checkpoint ends inside a turn, the user anchor
+    /// message emitted before that turn's remaining steps.
+    resumed_turn_anchor: Option<(&'a mannie_types::ids::TurnId, &'a str)>,
 }
 
 /// The request of a call: its instructions, the tools that it offers and the
@@ -1423,8 +1530,138 @@ fn call_request(setup: &Setup, shaping: &Shaping<'_>, turns: &[ModelTurn]) -> Mo
         requester: setup.requester(),
         tool_images: shaping.tool_images,
         full_context: shaping.full_context,
+        resumed_turn_anchor: shaping.resumed_turn_anchor,
     };
     build_request(shape, turns)
+}
+
+/// Estimates the request that would remain after cutting at `cursor`, with an
+/// optional newly written checkpoint summary included in the instructions.
+fn estimate_after_cursor(
+    setup: &Setup,
+    prepared: &Prepared,
+    cursor: &CheckpointCursor,
+    summary: Option<&str>,
+) -> u32 {
+    let (remaining, anchor) =
+        compaction::uncovered_turns(prepared.full_turns.clone(), Some(cursor), setup.budget);
+    let full_context = chosen_context(&remaining);
+    let empty_left_out = HashSet::new();
+    let instructions = match summary.map(str::trim).filter(|text| !text.is_empty()) {
+        Some(summary) if prepared.base_instructions.is_empty() => {
+            format!("{}\n\n{summary}", texts::CHECKPOINT_HEADING)
+        }
+        Some(summary) => format!(
+            "{}\n\n{}\n\n{summary}",
+            prepared.base_instructions,
+            texts::CHECKPOINT_HEADING
+        ),
+        None => prepared.base_instructions.clone(),
+    };
+    let anchor_ref = anchor.as_ref().map(|(id, text)| (id, text.as_str()));
+    let shape = Shaping {
+        instructions: &instructions,
+        definitions: &prepared.definitions,
+        left_out: &empty_left_out,
+        tool_images: &prepared.tool_images,
+        full_context: &full_context,
+        resumed_turn_anchor: anchor_ref,
+    };
+    let request = call_request(setup, &shape, &remaining);
+    estimate_request(&request)
+}
+
+/// Extra image tokens of unpruned results that were not loaded into
+/// `loaded_images` because they had been pruned from the active call.
+fn unpruned_image_tokens(turns: &[ModelTurn], loaded_images: &SentImages) -> u32 {
+    let chosen = chosen_tool_images(turns, &HashSet::new());
+    let mut extra = 0_u32;
+    for (part_id, positions) in chosen {
+        let already = loaded_images.get(&part_id);
+        let Some(part) = turns
+            .iter()
+            .flat_map(|turn| &turn.parts)
+            .find(|part| part.id == part_id)
+        else {
+            continue;
+        };
+        let images = part
+            .tool_call
+            .as_ref()
+            .and_then(|call| call.result.as_ref())
+            .map_or(&[][..], |result| result.images.as_slice());
+        for position in positions {
+            let loaded = already.is_some_and(|list| list.iter().any(|(pos, _)| *pos == position));
+            if loaded {
+                continue;
+            }
+            if let Some(image) = images.iter().find(|image| image.position == position) {
+                extra = extra.saturating_add(estimate_scaled_image(image.width, image.height));
+            }
+        }
+    }
+    extra
+}
+
+/// Advances the epoch tool-result pruning watermark for the latest turn in a
+/// coarse batch until calibrated context fits within the compaction target
+/// (keeping at least the newest [`KEPT_RESULTS`] results), so the pruned prefix
+/// stays stable across subsequent steps for prompt caching (ADR-0083).
+pub(crate) fn next_prune_watermark(
+    setup: &Setup,
+    prepared: &Prepared,
+    current: Option<&PartId>,
+) -> Option<PartId> {
+    let prunable = prunable_results(&prepared.turns);
+    let start_index = match current {
+        Some(mark) => prunable
+            .iter()
+            .position(|id| *id == mark)
+            .map_or(0, |pos| pos + 1),
+        None => 0,
+    };
+    if start_index >= prunable.len() {
+        return None;
+    }
+
+    let target = compaction::share(setup.budget, compaction::TARGET_PERCENT);
+    let full_context = chosen_context(&prepared.turns);
+    let anchor = prepared
+        .checkpoint
+        .as_ref()
+        .map(CheckpointCursor::from_stored)
+        .filter(|cursor| cursor.part.is_some())
+        .and_then(|cursor| {
+            compaction::uncovered_turns(prepared.full_turns.clone(), Some(&cursor), setup.budget).1
+        });
+    let anchor_ref = anchor.as_ref().map(|(id, text)| (id, text.as_str()));
+
+    for candidate_index in start_index..prunable.len() {
+        let left_out: HashSet<PartId> = prunable[..=candidate_index]
+            .iter()
+            .map(|id| (*id).clone())
+            .collect();
+        let shape = Shaping {
+            instructions: &prepared.request.instructions,
+            definitions: &prepared.definitions,
+            left_out: &left_out,
+            tool_images: &prepared.tool_images,
+            full_context: &full_context,
+            resumed_turn_anchor: anchor_ref,
+        };
+        let req = call_request(setup, &shape, &prepared.turns);
+        let est = estimate_request(&req);
+        let checkpoint_id = prepared
+            .checkpoint
+            .as_ref()
+            .map(|checkpoint| checkpoint.id.as_str());
+        let projected = prepared.ledger.project(&setup.binding, checkpoint_id, est);
+        if projected <= target {
+            return Some(prunable[candidate_index].clone());
+        }
+    }
+
+    prunable.last().map(|id| (*id).clone())
 }
 
 /// The most results whose images a request sends, and the most images in all
@@ -1467,14 +1704,31 @@ fn chosen_tool_images(turns: &[ModelTurn], left_out: &HashSet<PartId>) -> Vec<(P
     chosen
 }
 
-/// The calls of the latest turn whose results can be left out: every
-/// completed tool call and every task call that returned reports, but the
-/// newest three. The owner's replies to questions always stay, because the
-/// note that replaces a result asks the model to run the tool again (ADR-0058,
-/// decision 7).
-fn older_results(turns: &[ModelTurn]) -> HashSet<PartId> {
+/// Estimates the full unpruned token count of a call when tool results are
+/// currently trimmed by an epoch watermark.
+fn unpruned_request_estimate(
+    setup: &Setup,
+    shape: &Shaping<'_>,
+    turns: &[ModelTurn],
+    tool_images: &SentImages,
+) -> u32 {
+    let empty_left_out = HashSet::new();
+    let unpruned_shape = Shaping {
+        left_out: &empty_left_out,
+        ..*shape
+    };
+    let unpruned_req = call_request(setup, &unpruned_shape, turns);
+    let extra_images = unpruned_image_tokens(turns, tool_images);
+
+    estimate_request(&unpruned_req).saturating_add(extra_images)
+}
+
+/// Eligible completed tool and task calls of the latest turn whose results can
+/// be pruned, in order, excluding the newest [`KEPT_RESULTS`], owner question
+/// replies (ADR-0058, decision 7), and saved plans (ADR-0060).
+fn prunable_results(turns: &[ModelTurn]) -> Vec<&PartId> {
     let Some(latest) = turns.last() else {
-        return HashSet::new();
+        return Vec::new();
     };
     let completed: Vec<&PartId> = latest
         .parts
@@ -1494,18 +1748,31 @@ fn older_results(turns: &[ModelTurn]) -> HashSet<PartId> {
         .map(|part| &part.id)
         .collect();
     let older = completed.len().saturating_sub(KEPT_RESULTS);
-    completed[..older].iter().map(|id| (*id).clone()).collect()
+    completed[..older].to_vec()
+}
+
+/// The prunable calls of the latest turn up through `watermark` (inclusive).
+fn left_out_through(turns: &[ModelTurn], watermark: Option<&PartId>) -> HashSet<PartId> {
+    let Some(mark) = watermark else {
+        return HashSet::new();
+    };
+    let prunable = prunable_results(turns);
+    let Some(end) = prunable.iter().position(|id| *id == mark) else {
+        return HashSet::new();
+    };
+    prunable[..=end].iter().map(|id| (*id).clone()).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use mannie_store::{ModelPart, ModelTurn};
     use mannie_types::ids::{PartId, TurnId};
+    use mannie_types::provider::ProfileAccess;
     use mannie_types::tools::ToolResult;
     use mannie_types::tools::{QuestionAnswer, ToolCallDocument, ToolCallStatus, ToolOutcome};
     use mannie_types::transcript::{PartKind, PartState};
 
-    use super::older_results;
+    use super::{left_out_through, profile_budget, prunable_results};
 
     fn part_id(number: u32) -> PartId {
         PartId::parse(&format!("0199e0f2-0000-7000-8000-{number:012}")).unwrap()
@@ -1538,7 +1805,7 @@ mod tests {
     }
 
     #[test]
-    fn the_owners_replies_stay_while_older_results_are_left_out() {
+    fn the_owners_replies_stay_while_older_results_are_prunable() {
         let answered = ToolOutcome::QuestionAnswered {
             answers: vec![QuestionAnswer {
                 selected: vec![0],
@@ -1562,10 +1829,35 @@ mod tests {
             ],
         };
 
-        let left_out = older_results(&[turn]);
+        let turns = [turn];
+        let prunable = prunable_results(&turns);
 
-        assert_eq!(left_out.len(), 2, "{left_out:?}");
-        assert!(left_out.contains(&part_id(3)));
-        assert!(left_out.contains(&part_id(4)));
+        assert_eq!(prunable, vec![&part_id(3), &part_id(4)]);
+        let first_epoch = left_out_through(&turns, Some(&part_id(3)));
+        assert_eq!(first_epoch.len(), 1);
+        assert!(first_epoch.contains(&part_id(3)));
+        let second_epoch = left_out_through(&turns, Some(&part_id(4)));
+        assert_eq!(second_epoch.len(), 2);
+        assert!(second_epoch.contains(&part_id(3)));
+        assert!(second_epoch.contains(&part_id(4)));
+    }
+
+    #[test]
+    fn chatgpt_plan_profile_caps_output_reserve_in_budget() {
+        // 400K window with 128K output limit: endpoint keeps full 128K reserve
+        // (252K budget), while ChatGPT plan caps reserve at 32,768 (347,232).
+        assert_eq!(
+            profile_budget(ProfileAccess::Endpoint, 400_000, 128_000),
+            252_000
+        );
+        assert_eq!(
+            profile_budget(ProfileAccess::ChatGptPlan, 400_000, 128_000),
+            347_232
+        );
+        // Smaller output limits stay unchanged on both access modes.
+        assert_eq!(
+            profile_budget(ProfileAccess::ChatGptPlan, 128_000, 16_384),
+            profile_budget(ProfileAccess::Endpoint, 128_000, 16_384)
+        );
     }
 }

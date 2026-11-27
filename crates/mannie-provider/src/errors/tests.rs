@@ -158,10 +158,18 @@ fn context_overflows_are_recognized_by_code_and_by_wording() {
         r#"{"error":"Trying to keep the first 9000 tokens when context the overflows. However, the model is loaded with context length of only 8192 tokens"}"#,
         &[],
     );
+    let payload_too_large = classify(413, r#"{"error":{"message":"Entity too large"}}"#, &[]);
+    let token_limit = classify(
+        400,
+        r#"{"error":{"message":"Request has too many tokens for this model"}}"#,
+        &[],
+    );
 
     assert_eq!(openai, ProviderError::ContextOverflow);
     assert_eq!(vllm, ProviderError::ContextOverflow);
     assert_eq!(lm_studio, ProviderError::ContextOverflow);
+    assert_eq!(payload_too_large, ProviderError::ContextOverflow);
+    assert_eq!(token_limit, ProviderError::ContextOverflow);
 }
 
 #[test]

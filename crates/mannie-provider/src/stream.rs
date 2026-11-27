@@ -231,12 +231,23 @@ async fn open(
             now: client.clock().now(),
         };
         let error = errors::classify_status(status.as_u16(), &headers, &details, context);
+        let code = loggable(details.code.as_deref(), credential).map(|value| log_label(&value));
+        let kind = loggable(details.kind.as_deref(), credential).map(|value| log_label(&value));
+        let param = loggable(details.param.as_deref(), credential).map(|value| log_label(&value));
+        tracing::warn!(
+            status = status.as_u16(),
+            failure = error.failure().code(),
+            code = code.as_deref(),
+            kind = kind.as_deref(),
+            param = param.as_deref(),
+            "the provider refused the call"
+        );
         tracing::debug!(
             status = status.as_u16(),
-            code = details.code.as_deref(),
-            param = details.param.as_deref(),
+            code = code.as_deref(),
+            param = param.as_deref(),
             message = loggable(details.message.as_deref(), credential).as_deref(),
-            "the provider refused the call"
+            "the provider's refusal message"
         );
         return Err(error);
     }
