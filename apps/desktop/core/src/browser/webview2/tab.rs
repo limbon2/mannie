@@ -12,16 +12,42 @@ use tokio::sync::oneshot;
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
     COREWEBVIEW2_MOVE_FOCUS_REASON_NEXT, COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS,
-    COREWEBVIEW2_PERMISSION_STATE_DENY,
+    COREWEBVIEW2_PERMISSION_STATE_DENY, COREWEBVIEW2_PROCESS_FAILED_KIND,
+    COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED,
+    COREWEBVIEW2_PROCESS_FAILED_KIND_FRAME_RENDER_PROCESS_EXITED,
+    COREWEBVIEW2_PROCESS_FAILED_KIND_GPU_PROCESS_EXITED,
+    COREWEBVIEW2_PROCESS_FAILED_KIND_PPAPI_BROKER_PROCESS_EXITED,
+    COREWEBVIEW2_PROCESS_FAILED_KIND_PPAPI_PLUGIN_PROCESS_EXITED,
+    COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED,
+    COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE,
+    COREWEBVIEW2_PROCESS_FAILED_KIND_SANDBOX_HELPER_PROCESS_EXITED,
+    COREWEBVIEW2_PROCESS_FAILED_KIND_UNKNOWN_PROCESS_EXITED,
+    COREWEBVIEW2_PROCESS_FAILED_KIND_UTILITY_PROCESS_EXITED, COREWEBVIEW2_PROCESS_FAILED_REASON,
+    COREWEBVIEW2_PROCESS_FAILED_REASON_CRASHED, COREWEBVIEW2_PROCESS_FAILED_REASON_LAUNCH_FAILED,
+    COREWEBVIEW2_PROCESS_FAILED_REASON_OUT_OF_MEMORY,
+    COREWEBVIEW2_PROCESS_FAILED_REASON_PROFILE_DELETED,
+    COREWEBVIEW2_PROCESS_FAILED_REASON_TERMINATED, COREWEBVIEW2_PROCESS_FAILED_REASON_UNEXPECTED,
+    COREWEBVIEW2_PROCESS_FAILED_REASON_UNRESPONSIVE, COREWEBVIEW2_WEB_ERROR_STATUS,
+    COREWEBVIEW2_WEB_ERROR_STATUS_CANNOT_CONNECT,
     COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_COMMON_NAME_IS_INCORRECT,
     COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_EXPIRED,
     COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_IS_INVALID,
-    COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_REVOKED, COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN,
-    ICoreWebView2, ICoreWebView2_4, ICoreWebView2_5, ICoreWebView2_10, ICoreWebView2_11,
-    ICoreWebView2_13, ICoreWebView2_18, ICoreWebView2_25,
-    ICoreWebView2AcceleratorKeyPressedEventArgs2, ICoreWebView2ContextMenuItemCollection,
-    ICoreWebView2Controller, ICoreWebView2Controller4, ICoreWebView2Profile6,
-    ICoreWebView2Settings3,
+    COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_REVOKED,
+    COREWEBVIEW2_WEB_ERROR_STATUS_CLIENT_CERTIFICATE_CONTAINS_ERRORS,
+    COREWEBVIEW2_WEB_ERROR_STATUS_CONNECTION_ABORTED,
+    COREWEBVIEW2_WEB_ERROR_STATUS_CONNECTION_RESET, COREWEBVIEW2_WEB_ERROR_STATUS_DISCONNECTED,
+    COREWEBVIEW2_WEB_ERROR_STATUS_ERROR_HTTP_INVALID_SERVER_RESPONSE,
+    COREWEBVIEW2_WEB_ERROR_STATUS_HOST_NAME_NOT_RESOLVED,
+    COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED,
+    COREWEBVIEW2_WEB_ERROR_STATUS_REDIRECT_FAILED,
+    COREWEBVIEW2_WEB_ERROR_STATUS_SERVER_UNREACHABLE, COREWEBVIEW2_WEB_ERROR_STATUS_TIMEOUT,
+    COREWEBVIEW2_WEB_ERROR_STATUS_UNEXPECTED_ERROR, COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN,
+    COREWEBVIEW2_WEB_ERROR_STATUS_VALID_AUTHENTICATION_CREDENTIALS_REQUIRED,
+    COREWEBVIEW2_WEB_ERROR_STATUS_VALID_PROXY_AUTHENTICATION_REQUIRED, ICoreWebView2,
+    ICoreWebView2_4, ICoreWebView2_5, ICoreWebView2_10, ICoreWebView2_11, ICoreWebView2_13,
+    ICoreWebView2_18, ICoreWebView2_25, ICoreWebView2AcceleratorKeyPressedEventArgs2,
+    ICoreWebView2ContextMenuItemCollection, ICoreWebView2Controller, ICoreWebView2Controller4,
+    ICoreWebView2ProcessFailedEventArgs2, ICoreWebView2Profile6, ICoreWebView2Settings3,
 };
 use webview2_com::{
     AcceleratorKeyPressedEventHandler, BasicAuthenticationRequestedEventHandler,
@@ -30,8 +56,8 @@ use webview2_com::{
     DownloadStartingEventHandler, FocusChangedEventHandler, LaunchingExternalUriSchemeEventHandler,
     MoveFocusRequestedEventHandler, NavigationCompletedEventHandler,
     NavigationStartingEventHandler, NewWindowRequestedEventHandler,
-    PermissionRequestedEventHandler, SaveAsUIShowingEventHandler, WindowCloseRequestedEventHandler,
-    take_pwstr,
+    PermissionRequestedEventHandler, ProcessFailedEventHandler, SaveAsUIShowingEventHandler,
+    WindowCloseRequestedEventHandler, take_pwstr,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, VK_C, VK_CONTROL, VK_F6, VK_F12, VK_I, VK_J, VK_P, VK_S, VK_SHIFT, VK_U,
@@ -213,7 +239,17 @@ fn guard(shared: &Arc<Shared>, id: &str, webview: &ICoreWebView2) -> windows::co
             // SAFETY: `uri` is writable, and `take_pwstr` frees it.
             unsafe { arguments.Uri(&raw mut uri) }?;
             let uri = take_pwstr(uri);
-            if !web_address(&uri) || starting.stopping() {
+            let allowed = web_address(&uri);
+            let stopping = starting.stopping();
+            if !allowed || stopping {
+                if !allowed && !stopping {
+                    tracing::warn!(
+                        session = starting.id,
+                        tab = %start_tab,
+                        scheme = address_scheme(&uri),
+                        "cancelled a browser navigation to a non-web address"
+                    );
+                }
                 // SAFETY: a plain value on live event arguments.
                 unsafe { arguments.SetCancel(true) }?;
             } else {
@@ -265,6 +301,16 @@ fn guard(shared: &Arc<Shared>, id: &str, webview: &ICoreWebView2) -> windows::co
                     | COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_IS_INVALID
                     | COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_REVOKED
             );
+            if !success.as_bool() && !completing.stopping() {
+                tracing::warn!(
+                    session = completing.id,
+                    tab = %complete_tab,
+                    navigation_id = id,
+                    web_error_status = web_error_status_name(status),
+                    certificate_error,
+                    "a browser top-level navigation did not succeed"
+                );
+            }
             completing.emit(ChromeEvent::NavigationCompleted {
                 tab: complete_tab.clone(),
                 id,
@@ -374,21 +420,87 @@ fn guard(shared: &Arc<Shared>, id: &str, webview: &ICoreWebView2) -> windows::co
     // SAFETY: as above.
     unsafe { downloads_api.add_DownloadStarting(&downloads, &raw mut token) }?;
 
-    let certificates_api: ICoreWebView2_5 = webview.cast()?;
-    let certificates = ClientCertificateRequestedEventHandler::create(Box::new(|_, arguments| {
-        if let Some(arguments) = arguments {
-            // SAFETY: a plain value on live event arguments.
-            unsafe { arguments.SetCancel(true) }?;
+    let process_failed_session = Arc::clone(shared);
+    let process_failed_tab = id.to_owned();
+    let process_failed = ProcessFailedEventHandler::create(Box::new(move |_, arguments| {
+        if process_failed_session.stopping() {
+            return Ok(());
         }
+        let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND_UNKNOWN_PROCESS_EXITED;
+        let mut reason = None;
+        let mut exit_code = None;
+        let mut description = String::new();
+        if let Some(arguments) = arguments {
+            // SAFETY: the event arguments are live on this thread and the output is writable.
+            drop(unsafe { arguments.ProcessFailedKind(&raw mut kind) });
+            if let Ok(arguments2) = arguments.cast::<ICoreWebView2ProcessFailedEventArgs2>() {
+                let mut failed_reason = COREWEBVIEW2_PROCESS_FAILED_REASON_UNEXPECTED;
+                // SAFETY: the event arguments are live on this thread and the output is writable.
+                if unsafe { arguments2.Reason(&raw mut failed_reason) }.is_ok() {
+                    reason = Some(process_failed_reason_name(failed_reason));
+                }
+                let mut code = 0;
+                // SAFETY: as above.
+                if unsafe { arguments2.ExitCode(&raw mut code) }.is_ok() {
+                    exit_code = Some(code);
+                }
+                let mut text = PWSTR::null();
+                // SAFETY: `text` is writable, and `take_pwstr` frees it.
+                if unsafe { arguments2.ProcessDescription(&raw mut text) }.is_ok() {
+                    description = sanitize_process_description(&take_pwstr(text));
+                }
+            }
+        }
+        let exit_code_hex = exit_code.map(|code| format!("0x{:08x}", code.cast_unsigned()));
+        tracing::warn!(
+            session = process_failed_session.id,
+            tab = %process_failed_tab,
+            kind = process_failed_kind_name(kind),
+            reason = reason.unwrap_or("unknown"),
+            exit_code,
+            exit_code_hex = exit_code_hex.as_deref().unwrap_or(""),
+            process_description = %description,
+            "a WebView2 process failed"
+        );
         Ok(())
     }));
+    // SAFETY: as above.
+    unsafe { webview.add_ProcessFailed(&process_failed, &raw mut token) }?;
+
+    let certificates_api: ICoreWebView2_5 = webview.cast()?;
+    let client_cert_session = Arc::clone(shared);
+    let client_cert_tab = id.to_owned();
+    let certificates =
+        ClientCertificateRequestedEventHandler::create(Box::new(move |_, arguments| {
+            if let Some(arguments) = arguments {
+                if !client_cert_session.stopping() {
+                    tracing::warn!(
+                        session = client_cert_session.id,
+                        tab = %client_cert_tab,
+                        "cancelled a browser client certificate request"
+                    );
+                }
+                // SAFETY: a plain value on live event arguments.
+                unsafe { arguments.SetCancel(true) }?;
+            }
+            Ok(())
+        }));
     // SAFETY: as above.
     unsafe { certificates_api.add_ClientCertificateRequested(&certificates, &raw mut token) }?;
 
     let authentication_api: ICoreWebView2_10 = webview.cast()?;
+    let auth_session = Arc::clone(shared);
+    let auth_tab = id.to_owned();
     let authentication =
-        BasicAuthenticationRequestedEventHandler::create(Box::new(|_, arguments| {
+        BasicAuthenticationRequestedEventHandler::create(Box::new(move |_, arguments| {
             if let Some(arguments) = arguments {
+                if !auth_session.stopping() {
+                    tracing::warn!(
+                        session = auth_session.id,
+                        tab = %auth_tab,
+                        "cancelled a browser basic authentication prompt"
+                    );
+                }
                 // SAFETY: a plain value on live event arguments.
                 unsafe { arguments.SetCancel(true) }?;
             }
@@ -573,6 +685,91 @@ fn refused_key(key: u32, control: bool, shift: bool) -> bool {
 fn web_address(address: &str) -> bool {
     address == "about:blank"
         || url::Url::parse(address).is_ok_and(|url| matches!(url.scheme(), "http" | "https"))
+}
+
+fn address_scheme(address: &str) -> String {
+    url::Url::parse(address).map_or_else(|_| "<invalid>".to_owned(), |url| url.scheme().to_owned())
+}
+
+fn sanitize_process_description(text: &str) -> String {
+    text.chars()
+        .filter(|character| !character.is_control())
+        .take(128)
+        .collect()
+}
+
+fn web_error_status_name(status: COREWEBVIEW2_WEB_ERROR_STATUS) -> &'static str {
+    match status {
+        COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN => "unknown",
+        COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_COMMON_NAME_IS_INCORRECT => {
+            "certificate_common_name_is_incorrect"
+        }
+        COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_EXPIRED => "certificate_expired",
+        COREWEBVIEW2_WEB_ERROR_STATUS_CLIENT_CERTIFICATE_CONTAINS_ERRORS => {
+            "client_certificate_contains_errors"
+        }
+        COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_REVOKED => "certificate_revoked",
+        COREWEBVIEW2_WEB_ERROR_STATUS_CERTIFICATE_IS_INVALID => "certificate_is_invalid",
+        COREWEBVIEW2_WEB_ERROR_STATUS_SERVER_UNREACHABLE => "server_unreachable",
+        COREWEBVIEW2_WEB_ERROR_STATUS_TIMEOUT => "timeout",
+        COREWEBVIEW2_WEB_ERROR_STATUS_ERROR_HTTP_INVALID_SERVER_RESPONSE => {
+            "error_http_invalid_server_response"
+        }
+        COREWEBVIEW2_WEB_ERROR_STATUS_CONNECTION_ABORTED => "connection_aborted",
+        COREWEBVIEW2_WEB_ERROR_STATUS_CONNECTION_RESET => "connection_reset",
+        COREWEBVIEW2_WEB_ERROR_STATUS_DISCONNECTED => "disconnected",
+        COREWEBVIEW2_WEB_ERROR_STATUS_CANNOT_CONNECT => "cannot_connect",
+        COREWEBVIEW2_WEB_ERROR_STATUS_HOST_NAME_NOT_RESOLVED => "host_name_not_resolved",
+        COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED => "operation_canceled",
+        COREWEBVIEW2_WEB_ERROR_STATUS_REDIRECT_FAILED => "redirect_failed",
+        COREWEBVIEW2_WEB_ERROR_STATUS_UNEXPECTED_ERROR => "unexpected_error",
+        COREWEBVIEW2_WEB_ERROR_STATUS_VALID_AUTHENTICATION_CREDENTIALS_REQUIRED => {
+            "valid_authentication_credentials_required"
+        }
+        COREWEBVIEW2_WEB_ERROR_STATUS_VALID_PROXY_AUTHENTICATION_REQUIRED => {
+            "valid_proxy_authentication_required"
+        }
+        _ => "other",
+    }
+}
+
+fn process_failed_kind_name(kind: COREWEBVIEW2_PROCESS_FAILED_KIND) -> &'static str {
+    match kind {
+        COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED => "browser_process_exited",
+        COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED => "render_process_exited",
+        COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE => {
+            "render_process_unresponsive"
+        }
+        COREWEBVIEW2_PROCESS_FAILED_KIND_FRAME_RENDER_PROCESS_EXITED => {
+            "frame_render_process_exited"
+        }
+        COREWEBVIEW2_PROCESS_FAILED_KIND_UTILITY_PROCESS_EXITED => "utility_process_exited",
+        COREWEBVIEW2_PROCESS_FAILED_KIND_SANDBOX_HELPER_PROCESS_EXITED => {
+            "sandbox_helper_process_exited"
+        }
+        COREWEBVIEW2_PROCESS_FAILED_KIND_GPU_PROCESS_EXITED => "gpu_process_exited",
+        COREWEBVIEW2_PROCESS_FAILED_KIND_PPAPI_PLUGIN_PROCESS_EXITED => {
+            "ppapi_plugin_process_exited"
+        }
+        COREWEBVIEW2_PROCESS_FAILED_KIND_PPAPI_BROKER_PROCESS_EXITED => {
+            "ppapi_broker_process_exited"
+        }
+        COREWEBVIEW2_PROCESS_FAILED_KIND_UNKNOWN_PROCESS_EXITED => "unknown_process_exited",
+        _ => "other",
+    }
+}
+
+fn process_failed_reason_name(reason: COREWEBVIEW2_PROCESS_FAILED_REASON) -> &'static str {
+    match reason {
+        COREWEBVIEW2_PROCESS_FAILED_REASON_UNEXPECTED => "unexpected",
+        COREWEBVIEW2_PROCESS_FAILED_REASON_UNRESPONSIVE => "unresponsive",
+        COREWEBVIEW2_PROCESS_FAILED_REASON_TERMINATED => "terminated",
+        COREWEBVIEW2_PROCESS_FAILED_REASON_CRASHED => "crashed",
+        COREWEBVIEW2_PROCESS_FAILED_REASON_LAUNCH_FAILED => "launch_failed",
+        COREWEBVIEW2_PROCESS_FAILED_REASON_OUT_OF_MEMORY => "out_of_memory",
+        COREWEBVIEW2_PROCESS_FAILED_REASON_PROFILE_DELETED => "profile_deleted",
+        _ => "other",
+    }
 }
 
 /// Compares a top-level `NavigationStarting` URL against a `ServerCertificateErrorDetected`

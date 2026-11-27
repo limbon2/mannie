@@ -441,7 +441,9 @@ impl Chrome {
                 return Err(error);
             }
         }
-        if result["errorText"].is_string() && !certificate_load_committed {
+        if let Some(error_text) = result["errorText"].as_str()
+            && !certificate_load_committed
+        {
             // A request that waited for the owner failed in the engine and
             // was replayed after approval. The navigation succeeded when the
             // tab now shows the destination.
@@ -453,6 +455,7 @@ impl Chrome {
                     .is_some_and(|current| current == destination)
             });
             if !replayed {
+                tracing::warn!(tab, error_text, "a browser navigation returned an error");
                 return Err(ChromeError::Rejected);
             }
         }
@@ -671,19 +674,29 @@ impl Driver {
     }
 
     async fn events(self: Arc<Self>, mut events: mpsc::Receiver<ChromeEvent>) {
+        let mut reason = "closed";
         loop {
             let event = tokio::select! {
                 () = self.wire.closed.cancelled() => break,
                 event = events.recv() => event,
             };
-            let Some(event) = event else { break };
-            if self.event(event).await.is_err() {
+            let Some(event) = event else {
+                reason = "event_channel_closed";
+                break;
+            };
+            if let Err(error) = self.event(event).await {
+                reason = error.code();
+                tracing::warn!(
+                    error = error.code(),
+                    "a browser event failed; ending session"
+                );
                 break;
             }
         }
         // A host that stops reporting, or an event that breaks the commit
         // rules, ends the whole session rather than leaving a tab ungoverned.
         if !self.wire.closed.is_cancelled() {
+            tracing::warn!(reason, "the browser driver is ending the session");
             self.wire.closed.cancel();
             for pending in lock(&self.state).pending.values() {
                 pending.cancel();
@@ -1070,7 +1083,15 @@ impl Driver {
             // A tab that closed meanwhile took its request with it.
             Ok(_) | Err(ChromeError::NoTab) => Ok(()),
             Err(ChromeError::Protocol) if !lock(&self.state).tabs.contains_key(tab) => Ok(()),
-            Err(error) => Err(error),
+            Err(error) => {
+                tracing::warn!(
+                    tab,
+                    method,
+                    error = error.code(),
+                    "could not resolve a paused browser request on an open tab"
+                );
+                Err(error)
+            }
         }
     }
 
@@ -1088,16 +1109,38 @@ impl Driver {
         let Some(page) = tabs.get_mut(tab) else {
             return Ok(());
         };
-        let url = string(&frame["url"])?;
+        let Ok(url) = string(&frame["url"]) else {
+            tracing::warn!(tab, "Page.frameNavigated was missing frame.url");
+            return Err(ChromeError::Protocol);
+        };
         let origin = chrome_origin(url);
         if let Some(origin) = &origin
             && !page.approved.contains(origin)
         {
             // A document that no checked request produced, such as one
             // restored from a cache that bypassed interception.
+            let safe_url = loggable_url(url, protected_values);
+            let frame_id = frame["id"].as_str().unwrap_or_default();
+            tracing::warn!(
+                tab,
+                origin = %origin,
+                url = %safe_url,
+                frame_id,
+                expected_main_frame = %page.main_frame,
+                approved_count = page.approved.len(),
+                "a browser tab committed an unapproved origin without interception"
+            );
             return Err(ChromeError::Disconnected);
         }
-        if origin.is_none() && url != "about:blank" && !url.starts_with("chrome-error:") {
+        let disallowed_non_web =
+            origin.is_none() && url != "about:blank" && !url.starts_with("chrome-error:");
+        if disallowed_non_web {
+            let safe_url = loggable_url(url, protected_values);
+            tracing::warn!(
+                tab,
+                url = %safe_url,
+                "a browser tab committed a disallowed top-level URL"
+            );
             return Err(ChromeError::InvalidAddress);
         }
         if let Some(host) = origin.as_deref().and_then(origin_host) {
@@ -1108,7 +1151,11 @@ impl Driver {
             page.tab.rejected_certificate = None;
         }
         page.fresh = false;
-        string(&frame["id"])?.clone_into(&mut page.main_frame);
+        let Ok(frame_id) = string(&frame["id"]) else {
+            tracing::warn!(tab, "Page.frameNavigated was missing frame.id");
+            return Err(ChromeError::Protocol);
+        };
+        frame_id.clone_into(&mut page.main_frame);
         frame["loaderId"]
             .as_str()
             .unwrap_or_default()
@@ -1136,7 +1183,17 @@ impl Driver {
             return;
         }
         if let Some(url) = params["url"].as_str() {
-            if chrome_origin(url) != chrome_origin(&page.tab.url) {
+            let next_origin = chrome_origin(url);
+            let current_origin = chrome_origin(&page.tab.url);
+            if next_origin != current_origin {
+                let safe_url = loggable_url(url, protected_values);
+                tracing::warn!(
+                    tab,
+                    url = %safe_url,
+                    next_origin = next_origin.as_deref().unwrap_or("<none>"),
+                    current_origin = current_origin.as_deref().unwrap_or("<none>"),
+                    "a same-document browser navigation changed origin; ending session"
+                );
                 self.wire.closed.cancel();
                 return;
             }
@@ -1267,7 +1324,8 @@ impl Driver {
 
     async fn deny_auth(&self, tab: &str, params: &Value) -> Result<(), ChromeError> {
         self.mark_prompt(tab);
-        self.wire
+        if let Err(error) = self
+            .wire
             .command(
                 tab,
                 "Fetch.continueWithAuth",
@@ -1276,19 +1334,36 @@ impl Driver {
                     "authChallengeResponse": { "response": "CancelAuth" },
                 }),
             )
-            .await?;
+            .await
+        {
+            tracing::warn!(
+                tab,
+                error = error.code(),
+                "could not dismiss a browser authentication prompt"
+            );
+            return Err(error);
+        }
         Ok(())
     }
 
     async fn dismiss_prompt(&self, tab: &str) -> Result<(), ChromeError> {
         self.mark_prompt(tab);
-        self.wire
+        if let Err(error) = self
+            .wire
             .command(
                 tab,
                 "Page.handleJavaScriptDialog",
                 json!({ "accept": false }),
             )
-            .await?;
+            .await
+        {
+            tracing::warn!(
+                tab,
+                error = error.code(),
+                "could not dismiss a browser script dialog"
+            );
+            return Err(error);
+        }
         Ok(())
     }
 }
@@ -1368,6 +1443,60 @@ fn sanitized_address(address: &str, protected_values: &[Zeroizing<String>]) -> S
         url.set_path("/");
     }
     url.into()
+}
+
+/// Formats a URL for diagnostic logs without query strings, fragments,
+/// embedded credentials, protected path values or non-web payloads.
+fn loggable_url(address: &str, protected_values: &[Zeroizing<String>]) -> String {
+    if address.is_empty() {
+        return "<empty>".to_owned();
+    }
+    if address.len() > 8192 {
+        return format!("<oversized-url len={}>", address.len());
+    }
+    if address == "about:blank" || address == "about:blank#blocked" {
+        return address.to_owned();
+    }
+    if address.starts_with("about:") {
+        let head = address.split(['?', '#']).next().unwrap_or("about:");
+        return head
+            .chars()
+            .filter(|character| !character.is_control())
+            .take(64)
+            .collect();
+    }
+    let Ok(mut url) = url::Url::parse(address) else {
+        return format!("<unparseable-url len={}>", address.len());
+    };
+    match url.scheme() {
+        "http" | "https" => {
+            let has_credentials = !url.username().is_empty() || url.password().is_some();
+            if has_credentials {
+                let host = url.host_str().unwrap_or("<no-host>");
+                return format!("{}://<credentials-omitted>@{host}", url.scheme());
+            }
+            url.set_query(None);
+            url.set_fragment(None);
+            if contains_protected(url.path(), protected_values) {
+                url.set_path("/[redacted]");
+            }
+            url.as_str()
+                .chars()
+                .filter(|character| !character.is_control())
+                .take(256)
+                .collect()
+        }
+        "chrome-error" | "chrome" | "edge" => {
+            url.set_query(None);
+            url.set_fragment(None);
+            url.as_str()
+                .chars()
+                .filter(|character| !character.is_control())
+                .take(128)
+                .collect()
+        }
+        scheme => format!("{scheme}:<redacted>"),
+    }
 }
 
 fn history_entry(history: &Value, back: bool) -> Option<&Value> {
