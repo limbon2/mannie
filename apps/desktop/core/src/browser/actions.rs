@@ -43,7 +43,9 @@ pub(super) fn error(error: ChromeError) -> BrowserError {
         | ChromeError::PointOutOfBounds => BrowserError::StaleTarget,
         ChromeError::NativePrompt => BrowserError::UnsupportedPrompt,
         ChromeError::Uncertain => BrowserError::OperationUncertain,
-        ChromeError::InvalidAddress => BrowserError::InvalidBrowserInput,
+        ChromeError::InvalidAddress | ChromeError::PasswordRequiresCredential => {
+            BrowserError::InvalidBrowserInput
+        }
         ChromeError::Limit => BrowserError::LimitReached,
         ChromeError::NoTab => BrowserError::NotFound,
     }
@@ -706,7 +708,29 @@ async fn interact(
         }
         Err(ChromeError::ViewportChanged) => Ok(StaleInteraction::ViewportChanged.result(point)),
         Err(ChromeError::PointOutOfBounds) => Ok(StaleInteraction::PointOutOfBounds.result(point)),
+        Err(ChromeError::PasswordRequiresCredential) => Ok(password_requires_credential_result()),
         Err(failure) => Err(error(failure)),
+    }
+}
+
+fn password_requires_credential_result() -> BrowserResult {
+    let failure = BrowserError::InvalidBrowserInput;
+    BrowserResult {
+        data: json!({
+            "code": failure.as_code(),
+            "reason": "password_requires_credential",
+            "message": concat!(
+                "Password fields cannot be filled with plain text (`value: {\"kind\":\"text\"}`). ",
+                "Call `browser_observe` again and fill the field with a saved Browser site credential: ",
+                "`value: {\"kind\":\"credential\",\"reference\":\"<uuid>\"}` using the 36-character ",
+                "`reference` UUID from `browser_observe`'s `credentials` array (or inspect saved origins ",
+                "with `mannie_inspect(topic=\"plugin\", target=\"browser\")`). ",
+                "If no credential is saved for this exact origin, ask the owner to add one in Settings > Browser ",
+                "(or propose `mannie_configure` on `browser` with action `add_site_credential`) or take over the Browser pane."
+            ),
+        }),
+        frame: None,
+        failure: Some(failure),
     }
 }
 
@@ -945,5 +969,23 @@ mod tests {
             ),
             Err(BrowserError::CertificateRejected)
         );
+    }
+
+    #[test]
+    fn password_fill_refusal_explains_saved_credential_usage() {
+        assert_eq!(
+            error(ChromeError::PasswordRequiresCredential),
+            BrowserError::InvalidBrowserInput
+        );
+
+        let result = password_requires_credential_result();
+        assert_eq!(result.failure, Some(BrowserError::InvalidBrowserInput));
+        assert_eq!(result.data["code"], "invalid_browser_input");
+        assert_eq!(result.data["reason"], "password_requires_credential");
+
+        let message = result.data["message"].as_str().unwrap();
+        assert!(message.contains("browser_observe"));
+        assert!(message.contains(r#""kind":"credential""#));
+        assert!(message.contains("mannie_inspect"));
     }
 }

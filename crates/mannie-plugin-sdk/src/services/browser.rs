@@ -673,14 +673,16 @@ pub enum BrowserTarget {
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BrowserFillValue {
-    /// Ordinary, nonsensitive text.
+    /// Ordinary, nonsensitive text. Rejected on password inputs.
     Text {
         /// Text to enter.
         text: String,
     },
-    /// A secret supplied through the Browser pane.
+    /// A saved Browser site credential from Settings > Browser.
     Credential {
-        /// Origin-bound secret reference.
+        /// 36-character opaque credential reference UUID returned by `browser_observe`
+        /// (in `credentials`) or `mannie_inspect` on `browser` for this exact origin, not
+        /// the label.
         reference: String,
     },
 }

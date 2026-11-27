@@ -21,7 +21,7 @@ const FILL_FIELD: &str = "function (value, allowPassword, allowTextarea, protect
     let prototype;
     if (this instanceof HTMLInputElement) {
         if (!['text', 'email', 'password', 'search', 'tel', 'url', 'number'].includes(this.type)) return false;
-        if (this.type === 'password' && !allowPassword) return false;
+        if (this.type === 'password' && !allowPassword) return { applied: false, reason: 'password_requires_credential' };
         prototype = HTMLInputElement.prototype;
     } else if (this instanceof HTMLTextAreaElement && allowTextarea) {
         prototype = HTMLTextAreaElement.prototype;
@@ -554,6 +554,9 @@ impl Driver {
         result: &Value,
         kind: &'static str,
     ) -> Result<(), ChromeError> {
+        if result["result"]["value"]["reason"].as_str() == Some("password_requires_credential") {
+            return Err(ChromeError::PasswordRequiresCredential);
+        }
         if result["result"]["value"]["applied"].as_bool() != Some(true) {
             return Err(ChromeError::Rejected);
         }

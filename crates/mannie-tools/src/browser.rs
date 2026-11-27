@@ -280,6 +280,11 @@ pub enum ChromeError {
     /// The request or the target was refused.
     #[error("the browser request was refused")]
     Rejected,
+    /// A password field rejected an unprotected plain-text fill.
+    #[error(
+        "password fields cannot be filled with plain text; use a saved Browser site credential reference"
+    )]
+    PasswordRequiresCredential,
     /// A top-level navigation failed certificate verification.
     #[error("the site's certificate was rejected")]
     CertificateRejected,
@@ -327,6 +332,7 @@ impl ChromeError {
             Self::Disconnected => "browser_disconnected",
             Self::Protocol => "browser_protocol",
             Self::Rejected => "browser_rejected",
+            Self::PasswordRequiresCredential => "browser_password_requires_credential",
             Self::CertificateRejected => "browser_certificate_rejected",
             Self::Stale => "browser_stale",
             Self::ScreenshotRequired => "browser_screenshot_required",

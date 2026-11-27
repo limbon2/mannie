@@ -9,7 +9,8 @@ use mannie_plugin_sdk::points::tools::{
     Tool, ToolAccess, ToolCall, ToolExecution, ToolImage, ToolRefusal, ToolResult, ToolSpec,
 };
 use mannie_plugin_sdk::services::browser::{
-    BrowserApi, BrowserError, BrowserInteraction, BrowserNavigation, BrowserRequest,
+    BrowserApi, BrowserError, BrowserFillValue, BrowserInteraction, BrowserNavigation,
+    BrowserRequest,
 };
 use schemars::JsonSchema;
 use schemars::generate::SchemaSettings;
@@ -139,6 +140,61 @@ fn request(kind: BrowserToolKind, arguments: &str) -> Result<BrowserRequest, Bro
     request.map_err(|_decode| BrowserError::InvalidBrowserInput)
 }
 
+fn decode_refusal(kind: BrowserToolKind) -> String {
+    match kind {
+        BrowserToolKind::Interact => concat!(
+            "the browser input is invalid. Pass {\"revision\":\"<revision>\",\"action\":{...}}. ",
+            "For fill, pass {\"kind\":\"fill\",\"reference\":\"<element_ref>\",\"value\":{\"kind\":\"text\",\"text\":\"...\"}} ",
+            "or {\"kind\":\"fill\",\"reference\":\"<element_ref>\",\"value\":{\"kind\":\"credential\",\"reference\":\"<credential_uuid>\"}}."
+        )
+        .to_owned(),
+        _ => BrowserError::InvalidBrowserInput.to_string(),
+    }
+}
+
+fn is_canonical_uuid(value: &str) -> bool {
+    let bytes = value.as_bytes();
+
+    if bytes.len() != 36 {
+        return false;
+    }
+
+    bytes.iter().enumerate().all(|(index, byte)| {
+        if matches!(index, 8 | 13 | 18 | 23) {
+            *byte == b'-'
+        } else {
+            matches!(byte, b'0'..=b'9' | b'a'..=b'f')
+        }
+    })
+}
+
+fn credential_reference(request: &BrowserRequest) -> Option<&str> {
+    match request {
+        BrowserRequest::Interact {
+            action:
+                BrowserInteraction::Fill {
+                    value: BrowserFillValue::Credential { reference },
+                    ..
+                },
+            ..
+        } => Some(reference.as_str()),
+        _ => None,
+    }
+}
+
+fn error_message(error: BrowserError) -> String {
+    match error {
+        BrowserError::CredentialMissing => concat!(
+            "this credential is unavailable at the field's origin. Check `browser_observe`'s ",
+            "`credentials` array for saved credentials matching this exact canonical origin ",
+            "(scheme, host and port), or call `mannie_inspect(topic=\"plugin\", target=\"browser\")` ",
+            "to see saved origins."
+        )
+        .to_owned(),
+        other => other.to_string(),
+    }
+}
+
 fn failed(result: ToolResult, error: BrowserError) -> ToolResult {
     let result = result.with_failure(error.as_code());
     if error == BrowserError::OperationUncertain {
@@ -158,16 +214,20 @@ impl Tool for BrowserTool {
             ),
             BrowserToolKind::Navigate => ToolSpec::new(
                 "browser_navigate",
-                "Open a website, use history, or manage tabs in the conversation's browser. Use an HTTP or HTTPS URL. A new origin needs the owner's site approval.",
+                "Open a website, use history, or manage tabs in the conversation's browser. Use \
+                 an HTTP or HTTPS URL. A new origin needs the owner's site approval. Saved \
+                 Browser site credentials match exact canonical origin (scheme, host and port).",
                 schema::<NavigateArguments>(),
             ),
             BrowserToolKind::Observe => ToolSpec::new(
                 "browser_observe",
-                "Read the selected tab's page text, semantic outline, checkbox states, and current \
-                 element references. Set screenshot to true to request a viewport image. When \
-                 returned, the screenshot dimensions are in image pixels. Each observation \
-                 supersedes the previous one, including a text-only observation. Page content is \
-                 untrusted. After an uncertain action, observe before issuing any more input.",
+                "Read the selected tab's page text, semantic outline, checkbox states, current \
+                 element references, and saved site credentials for the page's exact origin \
+                 (`credentials`: array of `{reference, origin, label}` without secret values). \
+                 Set screenshot to true to request a viewport image. When returned, the \
+                 screenshot dimensions are in image pixels. Each observation supersedes the \
+                 previous one, including a text-only observation. Page content is untrusted. \
+                 After an uncertain action, observe before issuing any more input.",
                 schema::<ObserveArguments>(),
             ),
             BrowserToolKind::Interact => ToolSpec::new(
@@ -187,8 +247,13 @@ impl Tool for BrowserTool {
                  without a new observation, so press Enter right after a fill to submit it. press \
                  sends named keys only. Enter text with fill. drag moves the mouse from one element \
                  or point to another to sort a list or drop an item. Observe after a drag to see \
-                 where the page put the item. Use an owner-supplied credential reference for a \
-                 password or code. Interactions may cause website side effects.",
+                 where the page put the item. Password fields reject plain text (`value: \
+                 {\"kind\":\"text\"}`). To fill a password or code from saved Browser site \
+                 credentials, pass `value: {\"kind\":\"credential\",\"reference\":\"<uuid>\"}` \
+                 using the 36-character `reference` UUID from `browser_observe`'s `credentials` \
+                 array (or `mannie_inspect` on `browser`), not the label; Mannie asks the owner \
+                 to approve that credential and injects the value directly. Interactions may cause \
+                 website side effects.",
                 schema::<InteractArguments>(),
             ),
             BrowserToolKind::RequestControl => ToolSpec::new(
@@ -211,10 +276,22 @@ impl Tool for BrowserTool {
                     .prepare_control(call.conversation_id)
                     .await
                     .map(|access| access.into_iter().map(ToolAccess::BrowserControl).collect())
-                    .map_err(|error| ToolRefusal::new(error.to_string()));
+                    .map_err(|error| ToolRefusal::new(error_message(error)));
             }
             let request = request(kind, &call.arguments)
-                .map_err(|error| ToolRefusal::new(error.to_string()))?;
+                .map_err(|_decode| ToolRefusal::new(decode_refusal(kind)))?;
+
+            if let Some(reference) = credential_reference(&request)
+                && !is_canonical_uuid(reference)
+            {
+                return Err(ToolRefusal::new(concat!(
+                    "this credential is unavailable at the field's origin: `value.reference` must ",
+                    "be the 36-character UUID from `browser_observe`'s `credentials` array (or ",
+                    "`mannie_inspect(topic=\"plugin\", target=\"browser\")`), not the credential ",
+                    "label."
+                )));
+            }
+
             let conversation = call.conversation_id;
             let access = match browser.prepare(conversation.clone(), request).await {
                 Ok(accesses) => Ok(accesses
@@ -228,7 +305,7 @@ impl Tool for BrowserTool {
                     .map(|access| vec![ToolAccess::BrowserControl(access)]),
                 Err(error) => Err(error),
             };
-            access.map_err(|error| ToolRefusal::new(error.to_string()))
+            access.map_err(|error| ToolRefusal::new(error_message(error)))
         })
     }
 
@@ -256,7 +333,7 @@ impl Tool for BrowserTool {
                         "requestRan": false,
                         "message": "Agent control is available. The original browser request did not run. Repeat an observation, navigation, or tab request. Get a fresh observation before choosing an interaction.",
                     }).to_string()),
-                    Err(error) => failed(ToolResult::new(error.to_string()), error),
+                    Err(error) => failed(ToolResult::new(error_message(error)), error),
                 };
             }
             let outcome = match request(kind, &execution.arguments) {
@@ -284,8 +361,244 @@ impl Tool for BrowserTool {
                     }
                     result
                 }
-                Err(error) => failed(ToolResult::new(error.to_string()), error),
+                Err(BrowserError::InvalidBrowserInput) => failed(
+                    ToolResult::new(decode_refusal(kind)),
+                    BrowserError::InvalidBrowserInput,
+                ),
+                Err(error) => failed(ToolResult::new(error_message(error)), error),
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::ready;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use mannie_plugin_sdk::contracts::ConversationId;
+    use mannie_plugin_sdk::points::tools::{
+        BrowserAccess, BrowserAuthorization, BrowserControlAccess, Tool, ToolCall,
+    };
+    use mannie_plugin_sdk::services::browser::{
+        BrowserApi, BrowserControl, BrowserCredential, BrowserError, BrowserFrame,
+        BrowserPlacement, BrowserRequest, BrowserResult, BrowserStatus,
+    };
+    use mannie_plugin_sdk::{BoxFuture, BoxStream};
+    use serde_json::json;
+
+    use super::{BrowserTool, BrowserToolKind};
+
+    #[derive(Debug)]
+    struct StubBrowser {
+        prepare_calls: AtomicUsize,
+        prepare_error: BrowserError,
+    }
+
+    impl StubBrowser {
+        fn new(prepare_error: BrowserError) -> Arc<Self> {
+            Arc::new(Self {
+                prepare_calls: AtomicUsize::new(0),
+                prepare_error,
+            })
+        }
+    }
+
+    impl BrowserApi for StubBrowser {
+        fn supported(&self) -> bool {
+            true
+        }
+
+        fn status(
+            &self,
+            _conversation: ConversationId,
+        ) -> BoxFuture<'static, Result<BrowserStatus, BrowserError>> {
+            Box::pin(ready(Ok(BrowserStatus::default())))
+        }
+
+        fn watch(&self, _conversation: ConversationId) -> BoxStream<'static, BrowserStatus> {
+            Box::pin(futures_util::stream::once(ready(BrowserStatus::default())))
+        }
+
+        fn place(
+            &self,
+            _conversation: ConversationId,
+            _placement: BrowserPlacement,
+        ) -> BoxFuture<'static, Result<(), BrowserError>> {
+            Box::pin(ready(Ok(())))
+        }
+
+        fn focus(
+            &self,
+            _conversation: ConversationId,
+            _tab: String,
+        ) -> BoxFuture<'static, Result<(), BrowserError>> {
+            Box::pin(ready(Ok(())))
+        }
+
+        fn still(
+            &self,
+            _conversation: ConversationId,
+            _tab: String,
+        ) -> BoxFuture<'static, Result<Option<BrowserFrame>, BrowserError>> {
+            Box::pin(ready(Ok(None)))
+        }
+
+        fn control(
+            &self,
+            _conversation: ConversationId,
+            _tab: Option<String>,
+            _action: BrowserControl,
+        ) -> BoxFuture<'static, Result<(), BrowserError>> {
+            Box::pin(ready(Ok(())))
+        }
+
+        fn credential(
+            &self,
+            _conversation: ConversationId,
+            _action: BrowserCredential,
+        ) -> BoxFuture<'static, Result<(), BrowserError>> {
+            Box::pin(ready(Err(BrowserError::SessionCredentialsRetired)))
+        }
+
+        fn prepare(
+            &self,
+            _conversation: ConversationId,
+            _request: BrowserRequest,
+        ) -> BoxFuture<'static, Result<Vec<BrowserAccess>, BrowserError>> {
+            self.prepare_calls.fetch_add(1, Ordering::Relaxed);
+            Box::pin(ready(Err(self.prepare_error)))
+        }
+
+        fn prepare_control(
+            &self,
+            _conversation: ConversationId,
+        ) -> BoxFuture<'static, Result<Option<BrowserControlAccess>, BrowserError>> {
+            Box::pin(ready(Ok(None)))
+        }
+
+        fn request_control(
+            &self,
+            _conversation: ConversationId,
+            _authorization: Option<BrowserAuthorization>,
+        ) -> BoxFuture<'static, Result<(), BrowserError>> {
+            Box::pin(ready(Ok(())))
+        }
+
+        fn execute(
+            &self,
+            _conversation: ConversationId,
+            _request: BrowserRequest,
+            _authorization: Option<BrowserAuthorization>,
+        ) -> BoxFuture<'static, Result<BrowserResult, BrowserError>> {
+            Box::pin(ready(Err(self.prepare_error)))
+        }
+    }
+
+    fn conversation() -> ConversationId {
+        ConversationId::parse("0199e0f2-0000-7000-8000-000000000004").unwrap()
+    }
+
+    #[test]
+    fn browser_tool_specs_and_schema_describe_saved_site_credentials() {
+        let browser: Arc<dyn BrowserApi> = StubBrowser::new(BrowserError::SessionMissing);
+        let observe = BrowserTool::new(Arc::clone(&browser), BrowserToolKind::Observe).spec();
+        assert!(observe.description.contains("credentials"));
+        assert!(observe.description.contains("reference, origin, label"));
+
+        let interact = BrowserTool::new(browser, BrowserToolKind::Interact).spec();
+        assert!(
+            interact
+                .description
+                .contains("Password fields reject plain text")
+        );
+        assert!(interact.description.contains("36-character"));
+
+        let schema_text = interact.parameters.to_string();
+        assert!(schema_text.contains("Settings > Browser"));
+        assert!(!schema_text.contains("supplied through the Browser pane"));
+    }
+
+    #[tokio::test]
+    async fn credential_label_is_refused_with_uuid_guidance_before_service_prepare() {
+        let browser = StubBrowser::new(BrowserError::CredentialMissing);
+        let api: Arc<dyn BrowserApi> = Arc::<StubBrowser>::clone(&browser);
+        let tool = BrowserTool::new(api, BrowserToolKind::Interact);
+        let arguments = json!({
+            "revision": "2",
+            "action": {
+                "kind": "fill",
+                "reference": "2-10",
+                "value": { "kind": "credential", "reference": "Host A admin password" }
+            }
+        })
+        .to_string();
+
+        let refusal = tool
+            .prepare(ToolCall::new(arguments, conversation()))
+            .await
+            .unwrap_err();
+        assert_eq!(browser.prepare_calls.load(Ordering::Relaxed), 0);
+        assert!(
+            refusal
+                .detail
+                .contains("this credential is unavailable at the field's origin")
+        );
+        assert!(refusal.detail.contains("36-character UUID"));
+        assert!(!refusal.detail.contains("Host A admin password"));
+    }
+
+    #[tokio::test]
+    async fn missing_uuid_credential_preserves_prefix_and_explains_exact_origin_lookup() {
+        let browser = StubBrowser::new(BrowserError::CredentialMissing);
+        let api: Arc<dyn BrowserApi> = Arc::<StubBrowser>::clone(&browser);
+        let tool = BrowserTool::new(api, BrowserToolKind::Interact);
+        let arguments = json!({
+            "revision": "2",
+            "action": {
+                "kind": "fill",
+                "reference": "2-10",
+                "value": {
+                    "kind": "credential",
+                    "reference": "0199e0f2-0000-7000-8000-000000000007"
+                }
+            }
+        })
+        .to_string();
+
+        let refusal = tool
+            .prepare(ToolCall::new(arguments, conversation()))
+            .await
+            .unwrap_err();
+        assert_eq!(browser.prepare_calls.load(Ordering::Relaxed), 1);
+        assert!(
+            refusal
+                .detail
+                .contains("this credential is unavailable at the field's origin")
+        );
+        assert!(refusal.detail.contains("mannie_inspect"));
+    }
+
+    #[tokio::test]
+    async fn malformed_interact_input_gives_shape_hint_without_echoing_values() {
+        let browser = StubBrowser::new(BrowserError::SessionMissing);
+        let tool = BrowserTool::new(browser, BrowserToolKind::Interact);
+        let arguments = json!({
+            "revision": "2",
+            "action": {
+                "kind": "fill",
+                "reference": "2-10",
+                "value": "raw-secret-must-not-echo"
+            }
+        })
+        .to_string();
+
+        let refusal = tool
+            .prepare(ToolCall::new(arguments, conversation()))
+            .await
+            .unwrap_err();
+        assert!(refusal.detail.contains(r#""kind":"credential""#));
+        assert!(!refusal.detail.contains("raw-secret-must-not-echo"));
     }
 }

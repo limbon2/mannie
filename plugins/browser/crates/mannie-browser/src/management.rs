@@ -189,9 +189,14 @@ fn guide_actions() -> Vec<ManagementActionSpec> {
 impl ManagementProvider for BrowserManagement {
     fn guide(&self) -> ManagementGuide {
         ManagementGuide {
-            summary: "Provides an embedded browser pane and conversation browser tools \
-                (navigation, page observation, interaction, and owner handoff) backed by the \
-                desktop WebView2 engine on Windows."
+            summary: "Provides an embedded browser pane, conversation browser tools (navigation, \
+                page observation, interaction, and owner handoff), saved TLS certificate pins, and \
+                saved site credentials scoped to exact canonical HTTP or HTTPS origins backed by \
+                the desktop WebView2 engine on Windows. `inspect` returns all saved \
+                `siteCredentials` (`reference`, `origin`, `label`) without secret values. To enter \
+                a saved credential on its matching origin, pass its 36-character UUID `reference` \
+                (not the label) to `browser_interact` with `action: {\"kind\":\"fill\",\"reference\":\
+                \"<element_ref>\",\"value\":{\"kind\":\"credential\",\"reference\":\"<uuid>\"}}`."
                 .to_owned(),
             storage: "Stores saved site credential metadata and certificate pins in the desktop \
                 host's browser catalog in SQLite, while actual site credential secret values live \
@@ -201,7 +206,10 @@ impl ManagementProvider for BrowserManagement {
                 start on unsupported platforms. If navigation fails with certificate_rejected, \
                 check Mannie's log for the exact rejection reason and presented fingerprint, or \
                 inspect and trust the certificate in the Browser pane or via save_certificate. \
-                Multiple certificate pins may be saved for the same hostname."
+                Multiple certificate pins may be saved for the same hostname. Password fields \
+                reject plain-text fills (`value.kind = \"text\"`): use `value.kind = \"credential\"` \
+                with the 36-character UUID from `browser_observe`'s `credentials` array or \
+                `inspect`. Saved credentials match exact canonical origin (`scheme://host[:port]`)."
                 .to_owned(),
             actions: guide_actions(),
         }

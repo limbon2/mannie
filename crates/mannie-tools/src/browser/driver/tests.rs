@@ -979,3 +979,47 @@ async fn closing_the_event_stream_ends_the_session() {
         ChromeError::Disconnected
     );
 }
+
+#[tokio::test]
+async fn plain_text_fill_on_password_field_reports_credential_requirement() {
+    let fixture = fixture_with(|method| match method {
+        "Page.createIsolatedWorld" => json!({ "executionContextId": 7 }),
+        "DOM.resolveNode" => json!({ "object": { "objectId": "obj-1" } }),
+        "Runtime.callFunctionOn" => json!({
+            "result": {
+                "value": { "applied": false, "reason": "password_requires_credential" }
+            }
+        }),
+        other => page_responses(other),
+    });
+    let tab = fixture.chrome.open_tab().await.unwrap();
+    fixture.approve("http://approved.test");
+    fixture
+        .pause(&tab, "r1", "http://approved.test/login", "main", json!({}))
+        .await;
+    fixture
+        .commit(&tab, "http://approved.test/login", "doc-1")
+        .await;
+    eventually(|| fixture.chrome.tabs()[0].url == "http://approved.test/login").await;
+
+    let observation = fixture.chrome.observe(&tab, false).await.unwrap();
+    let reference = observation
+        .outline
+        .into_iter()
+        .find_map(|node| node.reference)
+        .unwrap();
+    let result = fixture
+        .chrome
+        .interact(
+            &tab,
+            &observation.tab.revision,
+            ChromeInput::Fill {
+                target: ChromeTarget::Element(reference),
+                text: "not-for-password".to_owned(),
+                protected: false,
+            },
+        )
+        .await;
+
+    assert_eq!(result, Err(ChromeError::PasswordRequiresCredential));
+}
