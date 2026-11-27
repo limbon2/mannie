@@ -46,8 +46,9 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_WEB_ERROR_STATUS_VALID_PROXY_AUTHENTICATION_REQUIRED, ICoreWebView2,
     ICoreWebView2_4, ICoreWebView2_5, ICoreWebView2_10, ICoreWebView2_11, ICoreWebView2_13,
     ICoreWebView2_18, ICoreWebView2_25, ICoreWebView2AcceleratorKeyPressedEventArgs2,
-    ICoreWebView2ContextMenuItemCollection, ICoreWebView2Controller, ICoreWebView2Controller4,
-    ICoreWebView2ProcessFailedEventArgs2, ICoreWebView2Profile6, ICoreWebView2Settings3,
+    ICoreWebView2ClientCertificate, ICoreWebView2ContextMenuItemCollection,
+    ICoreWebView2Controller, ICoreWebView2Controller4, ICoreWebView2ProcessFailedEventArgs2,
+    ICoreWebView2Profile6, ICoreWebView2Settings3,
 };
 use webview2_com::{
     AcceleratorKeyPressedEventHandler, BasicAuthenticationRequestedEventHandler,
@@ -473,15 +474,37 @@ fn guard(shared: &Arc<Shared>, id: &str, webview: &ICoreWebView2) -> windows::co
     let certificates =
         ClientCertificateRequestedEventHandler::create(Box::new(move |_, arguments| {
             if let Some(arguments) = arguments {
-                if !client_cert_session.stopping() {
-                    tracing::warn!(
-                        session = client_cert_session.id,
-                        tab = %client_cert_tab,
-                        "cancelled a browser client certificate request"
-                    );
+                if client_cert_session.stopping() {
+                    // SAFETY: a plain value on live event arguments.
+                    unsafe { arguments.SetCancel(true) }?;
+                    return Ok(());
                 }
+                let mut is_proxy = windows::core::BOOL::default();
+                // SAFETY: the event arguments are live on this thread and the output is writable.
+                drop(unsafe { arguments.IsProxy(&raw mut is_proxy) });
+                let mut available_certs = 0_u32;
+                // SAFETY: the event arguments are live on this thread.
+                if let Ok(certs) = unsafe { arguments.MutuallyTrustedCertificates() } {
+                    // SAFETY: the collection is live on this thread and the output is writable.
+                    drop(unsafe { certs.Count(&raw mut available_certs) });
+                }
+                tracing::info!(
+                    session = client_cert_session.id,
+                    tab = %client_cert_tab,
+                    is_proxy = is_proxy.as_bool(),
+                    available_certs,
+                    "responded to a browser client certificate request without a certificate"
+                );
+                // Respond without presenting a client certificate and suppress
+                // the OS picker dialog. Optional-mTLS servers proceed without a
+                // client certificate while required-mTLS servers still reject
+                // the handshake.
+                // SAFETY: `None` passes a null certificate pointer on live event arguments.
+                unsafe {
+                    arguments.SetSelectedCertificate(None::<&ICoreWebView2ClientCertificate>)
+                }?;
                 // SAFETY: a plain value on live event arguments.
-                unsafe { arguments.SetCancel(true) }?;
+                unsafe { arguments.SetHandled(true) }?;
             }
             Ok(())
         }));
