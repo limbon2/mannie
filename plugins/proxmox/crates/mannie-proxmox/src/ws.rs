@@ -18,8 +18,24 @@ const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 /// Maximum HTTP 101 upgrade response header size (16 KiB).
 const MAX_HANDSHAKE_HEADER_BYTES: usize = 16 * 1024;
 
+/// Maximum length of a single gateway diagnostic header included in handshake errors.
+const MAX_DIAGNOSTIC_HEADER_CHARS: usize = 80;
+
+/// Maximum length of a plain-text body snippet included in non-101 handshake errors.
+const MAX_DIAGNOSTIC_BODY_CHARS: usize = 160;
+
 /// Maximum incoming WebSocket frame or assembled message size (16 MiB).
 pub(crate) const MAX_WS_FRAME_BYTES: usize = 16 * 1024 * 1024;
+
+/// HTTP/1.1 WebSocket upgrade parameters for [`WsByteStream::connect`].
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct WsHandshake<'a> {
+    pub(crate) host_header: &'a str,
+    pub(crate) origin: &'a str,
+    pub(crate) user_agent: &'a str,
+    pub(crate) path_and_query: &'a str,
+    pub(crate) cookie_header: &'a str,
+}
 
 /// Errors returned by the RFC 6455 client transport.
 #[derive(Debug, thiserror::Error)]
@@ -59,30 +75,38 @@ pub(crate) struct WsByteStream<S> {
 
 impl<S: AsyncRead + AsyncWrite + Unpin> WsByteStream<S> {
     /// Performs the HTTP/1.1 WebSocket upgrade handshake with
-    /// `Sec-WebSocket-Protocol: binary` and `Cookie: PVEAuthCookie=<ticket>`,
+    /// `Sec-WebSocket-Protocol: binary`, `Origin`, `User-Agent`, and `Cookie`,
     /// verifying status 101 and `Sec-WebSocket-Accept`.
     pub(crate) async fn connect(
         mut stream: S,
-        host_header: &str,
-        path_and_query: &str,
-        cookie_header: &str,
+        handshake: WsHandshake<'_>,
     ) -> Result<Self, WsError> {
         let rng = SystemRandom::new();
         let mut nonce = [0u8; 16];
         rng.fill(&mut nonce).map_err(|_err| WsError::Random)?;
+
         let ws_key = base64::engine::general_purpose::STANDARD.encode(nonce);
         let expected_accept = compute_accept_key(&ws_key);
 
         let request = format!(
-            "GET {path_and_query} HTTP/1.1\r\n\
-             Host: {host_header}\r\n\
+            "GET {} HTTP/1.1\r\n\
+             Host: {}\r\n\
              Upgrade: websocket\r\n\
              Connection: Upgrade\r\n\
+             Origin: {}\r\n\
+             User-Agent: {}\r\n\
+             Pragma: no-cache\r\n\
+             Cache-Control: no-cache\r\n\
              Sec-WebSocket-Key: {ws_key}\r\n\
              Sec-WebSocket-Version: 13\r\n\
              Sec-WebSocket-Protocol: binary\r\n\
-             Cookie: {cookie_header}\r\n\
-             \r\n"
+             Cookie: {}\r\n\
+             \r\n",
+            handshake.path_and_query,
+            handshake.host_header,
+            handshake.origin,
+            handshake.user_agent,
+            handshake.cookie_header,
         );
         stream.write_all(request.as_bytes()).await?;
         stream.flush().await?;
@@ -111,13 +135,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> WsByteStream<S> {
 
         let header_text = std::str::from_utf8(&header_buf[..header_end])
             .map_err(|_err| WsError::Handshake("non-UTF-8 HTTP response headers".to_owned()))?;
-        verify_handshake_response(header_text, &expected_accept)?;
+        let leftover = &header_buf[header_end + 4..];
+        verify_handshake_response(header_text, leftover, &expected_accept)?;
 
-        let leftover = header_buf[header_end + 4..].to_vec();
         Ok(Self {
             stream,
             rng,
-            raw_buf: leftover,
+            raw_buf: leftover.to_vec(),
             app_buf: Vec::with_capacity(8192),
             app_pos: 0,
             closed: false,
@@ -617,17 +641,21 @@ fn find_header_end(buf: &[u8]) -> Option<usize> {
     buf.windows(4).position(|w| w == b"\r\n\r\n")
 }
 
-fn verify_handshake_response(headers: &str, expected_accept: &str) -> Result<(), WsError> {
+fn verify_handshake_response(
+    headers: &str,
+    body_preview: &[u8],
+    expected_accept: &str,
+) -> Result<(), WsError> {
     let mut lines = headers.split("\r\n");
     let status_line = lines
         .next()
+        .map(str::trim)
         .ok_or_else(|| WsError::Handshake("empty HTTP response".to_owned()))?;
     let is_101 = status_line.starts_with("HTTP/1.1 101") || status_line.starts_with("HTTP/1.0 101");
 
     if !is_101 {
-        return Err(WsError::Handshake(format!(
-            "server returned unexpected status line: {status_line}"
-        )));
+        let detail = format_unexpected_status(status_line, lines, body_preview);
+        return Err(WsError::Handshake(detail));
     }
 
     let mut upgrade_ok = false;
@@ -639,20 +667,27 @@ fn verify_handshake_response(headers: &str, expected_accept: &str) -> Result<(),
             continue;
         };
         let value = value.trim();
-        if name.eq_ignore_ascii_case("upgrade") && value.eq_ignore_ascii_case("websocket") {
-            upgrade_ok = true;
-        } else if name.eq_ignore_ascii_case("connection")
+        let is_upgrade_ws =
+            name.eq_ignore_ascii_case("upgrade") && value.eq_ignore_ascii_case("websocket");
+        let is_connection_upgrade = name.eq_ignore_ascii_case("connection")
             && value
                 .split(',')
-                .any(|part| part.trim().eq_ignore_ascii_case("upgrade"))
-        {
+                .any(|part| part.trim().eq_ignore_ascii_case("upgrade"));
+        let is_accept_match =
+            name.eq_ignore_ascii_case("sec-websocket-accept") && value == expected_accept;
+
+        if is_upgrade_ws {
+            upgrade_ok = true;
+        } else if is_connection_upgrade {
             connection_ok = true;
-        } else if name.eq_ignore_ascii_case("sec-websocket-accept") && value == expected_accept {
+        } else if is_accept_match {
             accept_ok = true;
         }
     }
 
-    if !(upgrade_ok && connection_ok && accept_ok) {
+    let handshake_valid = upgrade_ok && connection_ok && accept_ok;
+
+    if !handshake_valid {
         return Err(WsError::Handshake(
             "server HTTP 101 response missing valid WebSocket upgrade headers".to_owned(),
         ));
@@ -661,9 +696,113 @@ fn verify_handshake_response(headers: &str, expected_accept: &str) -> Result<(),
     Ok(())
 }
 
+/// Formats a concise, sanitized diagnostic message for a non-101 handshake
+/// response, keeping only safe gateway metadata (`server`, `via`) and a short
+/// plain-text excerpt of any buffered body.
+fn format_unexpected_status<'a>(
+    status_line: &str,
+    header_lines: impl Iterator<Item = &'a str>,
+    body_preview: &[u8],
+) -> String {
+    let mut hints = Vec::new();
+
+    for line in header_lines {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        let label = if name.eq_ignore_ascii_case("server") {
+            "server"
+        } else if name.eq_ignore_ascii_case("via") {
+            "via"
+        } else {
+            continue;
+        };
+        let clean = sanitize_inline(value, MAX_DIAGNOSTIC_HEADER_CHARS);
+
+        if !clean.is_empty() {
+            hints.push(format!("{label}: {clean}"));
+        }
+    }
+
+    let mut out = format!("server returned unexpected status line: {status_line}");
+
+    if !hints.is_empty() {
+        out.push_str(" (");
+        out.push_str(&hints.join(", "));
+        out.push(')');
+    }
+
+    let snippet = extract_body_snippet(body_preview, MAX_DIAGNOSTIC_BODY_CHARS);
+
+    if !snippet.is_empty() {
+        out.push_str(": ");
+        out.push_str(&snippet);
+    }
+
+    out
+}
+
+fn sanitize_inline(raw: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    let mut pending_space = false;
+    let mut count = 0usize;
+
+    for ch in raw.chars() {
+        if ch.is_control() || ch.is_whitespace() {
+            pending_space = !out.is_empty();
+            continue;
+        }
+
+        if pending_space {
+            if count >= max_chars {
+                break;
+            }
+
+            out.push(' ');
+            count += 1;
+            pending_space = false;
+        }
+
+        if count >= max_chars {
+            break;
+        }
+
+        out.push(ch);
+        count += 1;
+    }
+
+    out
+}
+
+fn extract_body_snippet(bytes: &[u8], max_chars: usize) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+
+    let text = String::from_utf8_lossy(bytes);
+    let mut stripped = String::with_capacity(text.len().min(max_chars * 2));
+    let mut in_tag = false;
+
+    for ch in text.chars() {
+        if ch == '<' {
+            in_tag = true;
+            stripped.push(' ');
+        } else if ch == '>' {
+            in_tag = false;
+            stripped.push(' ');
+        } else if !in_tag {
+            stripped.push(ch);
+        }
+    }
+
+    sanitize_inline(&stripped, max_chars)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::compute_accept_key;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    use super::{WsByteStream, WsHandshake, compute_accept_key, verify_handshake_response};
 
     #[test]
     fn rfc6455_accept_key_matches_spec_example() {
@@ -671,6 +810,96 @@ mod tests {
         assert_eq!(
             compute_accept_key("dGhlIHNhbXBsZSBub25jZQ=="),
             "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+        );
+    }
+
+    #[test]
+    fn non_101_response_includes_gateway_headers_and_body_without_cookies() {
+        let headers = "HTTP/1.0 502 Bad Gateway\r\n\
+             Server: haproxy\r\n\
+             Via: 1.1 edge-gw\r\n\
+             Set-Cookie: SECRET_SESSION=should_not_appear\r\n\
+             Content-Type: text/html";
+        let body = b"<html><body><h1>502 Bad Gateway</h1>\nThe server returned an invalid or incomplete response.\n</body></html>";
+        let err = verify_handshake_response(headers, body, "unused").expect_err("expected 502");
+        let text = err.to_string();
+
+        assert!(text.contains("HTTP/1.0 502 Bad Gateway"), "got: {text}");
+        assert!(text.contains("server: haproxy"), "got: {text}");
+        assert!(text.contains("via: 1.1 edge-gw"), "got: {text}");
+        assert!(
+            text.contains("The server returned an invalid or incomplete response."),
+            "got: {text}"
+        );
+        assert!(
+            !text.contains("SECRET_SESSION"),
+            "must not echo Set-Cookie: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn connect_sends_browser_compatible_upgrade_headers() {
+        let (client_io, mut server_io) = tokio::io::duplex(4096);
+        let server_task = tokio::spawn(async move {
+            let mut raw = Vec::new();
+            let mut buf = [0u8; 512];
+            loop {
+                let n = server_io.read(&mut buf).await.unwrap();
+                assert!(n > 0, "unexpected EOF reading WS request");
+                raw.extend_from_slice(&buf[..n]);
+                if raw.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+
+            let req = String::from_utf8(raw).unwrap();
+            let key = req
+                .lines()
+                .find_map(|line| line.strip_prefix("Sec-WebSocket-Key: "))
+                .expect("Sec-WebSocket-Key header")
+                .trim()
+                .to_owned();
+            let accept = compute_accept_key(&key);
+            let reply = format!(
+                "HTTP/1.1 101 Switching Protocols\r\n\
+                 Upgrade: websocket\r\n\
+                 Connection: Upgrade\r\n\
+                 Sec-WebSocket-Accept: {accept}\r\n\
+                 Sec-WebSocket-Protocol: binary\r\n\
+                 \r\n"
+            );
+            server_io.write_all(reply.as_bytes()).await.unwrap();
+            server_io.flush().await.unwrap();
+            req
+        });
+
+        let handshake = WsHandshake {
+            host_header: "pve.work.example",
+            origin: "https://pve.work.example",
+            user_agent: "Mannie/test",
+            path_and_query: "/api2/json/nodes/pve1/qemu/768/vncwebsocket?port=5900&vncticket=tkt",
+            cookie_header: "PVEAuthCookie=abc; SERVERID=pve1",
+        };
+        let _ws = WsByteStream::connect(client_io, handshake)
+            .await
+            .expect("WS upgrade succeeds");
+
+        let req = server_task.await.unwrap();
+        assert!(req.contains("Host: pve.work.example\r\n"), "got:\n{req}");
+        assert!(
+            req.contains("Origin: https://pve.work.example\r\n"),
+            "got:\n{req}"
+        );
+        assert!(req.contains("User-Agent: Mannie/test\r\n"), "got:\n{req}");
+        assert!(req.contains("Pragma: no-cache\r\n"), "got:\n{req}");
+        assert!(req.contains("Cache-Control: no-cache\r\n"), "got:\n{req}");
+        assert!(
+            req.contains("Sec-WebSocket-Protocol: binary\r\n"),
+            "got:\n{req}"
+        );
+        assert!(
+            req.contains("Cookie: PVEAuthCookie=abc; SERVERID=pve1\r\n"),
+            "got:\n{req}"
         );
     }
 }

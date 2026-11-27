@@ -24,7 +24,7 @@ use tokio::net::TcpStream;
 use tokio::sync::{Notify, oneshot};
 use tokio_rustls::client::TlsStream;
 
-use crate::api::{ProxmoxApiClient, build_vnc_tls_config, encode_vnc_ticket};
+use crate::api::{ProxmoxApiClient, USER_AGENT, build_vnc_tls_config, encode_vnc_ticket};
 use crate::keysyms::{KEYSYM_KP_ENTER, KEYSYM_RETURN, KeyStroke, ctrl_alt_delete};
 use crate::model::{
     ProxmoxError, ServerRecord, VncControlOwner, VncSessionState, VncSessionSummary,
@@ -32,7 +32,7 @@ use crate::model::{
 };
 use crate::rfb::{Framebuffer, Rect, RfbClient, RfbEvent, RfbWriter};
 use crate::tls::connect_tls;
-use crate::ws::WsByteStream;
+use crate::ws::{WsByteStream, WsHandshake};
 
 /// Maximum concurrent live VNC sessions across all conversations.
 pub(crate) const MAX_VNC_SESSIONS: usize = 8;
@@ -1250,41 +1250,59 @@ async fn open_rfb_connection(
     ),
     ProxmoxError,
 > {
-    let cookie_ticket = api.current_cookie_ticket(password).await?;
     let proxy = api.create_vnc_proxy(node, vmid, password).await?;
     let tls_config = build_vnc_tls_config(server)?;
     let tls_stream =
         connect_tls(&server.host, server.port, tls_config, VNC_CONNECT_TIMEOUT).await?;
 
-    let host_header = if server.host.contains(':') {
-        format!("[{}]:{}", server.host, server.port)
-    } else {
-        format!("{}:{}", server.host, server.port)
-    };
+    let host_header = server.host_header();
+    let origin = server.endpoint();
     let encoded_ticket = encode_vnc_ticket(proxy.ticket.as_str());
     let ws_path = format!(
         "/api2/json/nodes/{node}/qemu/{vmid}/vncwebsocket?port={}&vncticket={encoded_ticket}",
         proxy.port
     );
-    let cookie_header = format!("PVEAuthCookie={}", cookie_ticket.as_str());
-    let ws = tokio::time::timeout(
+    let handshake = WsHandshake {
+        host_header: &host_header,
+        origin: &origin,
+        user_agent: USER_AGENT,
+        path_and_query: &ws_path,
+        cookie_header: proxy.cookie_header.as_str(),
+    };
+    let ws_result = tokio::time::timeout(
         VNC_CONNECT_TIMEOUT,
-        WsByteStream::connect(tls_stream, &host_header, &ws_path, &cookie_header),
+        WsByteStream::connect(tls_stream, handshake),
     )
     .await
-    .map_err(|_elapsed| ProxmoxError::Timeout)?
-    .map_err(|error| describe_vnc_connect_error(&error.to_string()))?;
+    .map_err(|_elapsed| ProxmoxError::Timeout)?;
 
-    let (rfb_client, framebuffer) = tokio::time::timeout(
+    let ws = match ws_result {
+        Ok(ws) => ws,
+        Err(error) => {
+            let scrubbed = api
+                .scrub_vnc_error(&error.to_string(), password, &proxy, &encoded_ticket)
+                .await;
+            return Err(describe_vnc_connect_error(&scrubbed));
+        }
+    };
+
+    let rfb_result = tokio::time::timeout(
         VNC_CONNECT_TIMEOUT,
         RfbClient::handshake(ws, &proxy.password),
     )
     .await
-    .map_err(|_elapsed| ProxmoxError::Timeout)?
-    .map_err(|error| match error {
-        ProxmoxError::VncFailed { detail } => describe_vnc_connect_error(&detail),
-        other => other,
-    })?;
+    .map_err(|_elapsed| ProxmoxError::Timeout)?;
+
+    let (rfb_client, framebuffer) = match rfb_result {
+        Ok(pair) => pair,
+        Err(ProxmoxError::VncFailed { detail }) => {
+            let scrubbed = api
+                .scrub_vnc_error(&detail, password, &proxy, &encoded_ticket)
+                .await;
+            return Err(describe_vnc_connect_error(&scrubbed));
+        }
+        Err(other) => return Err(other),
+    };
     let (reader, writer) = rfb_client.into_split();
     Ok((reader, writer, framebuffer))
 }

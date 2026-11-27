@@ -643,6 +643,7 @@ async fn typing_shifted_shell_punctuation_holds_shift_around_each_symbol() {
     let conv_id = started.conversation_id;
 
     approve(&hosted, &conv_id, 0, ApprovalChoice::AllowOnce).await;
+
     let transcript = hosted.core.wait_for_run(&conv_id, &started.run_id).await;
     let [call] = transcript.tool_calls(0).try_into().unwrap();
     assert_eq!(call.status, ToolCallStatus::Completed);
@@ -990,4 +991,182 @@ async fn keyboard_delay_ms_aborts_immediately_on_owner_takeover() {
         aborted_in < std::time::Duration::from_secs(2),
         "keyboard delay_ms must wake promptly on takeover (took {aborted_in:?})"
     );
+}
+
+#[tokio::test]
+async fn vnc_websocket_preserves_proxy_cookies_alpn_and_browser_upgrade_headers() {
+    let secrets = FakeSecrets::new();
+    let hosted = hosted_plugin(&secrets, true).await;
+    let fake = FakeProxmoxServer::start(valid_self_signed_cert(36)).await;
+    {
+        let mut st = fake.state.lock().unwrap();
+        st.ticket_set_cookies = vec![
+            "SERVERID=PLANTED_PROXY_COOKIE_1122; Path=/; HttpOnly; Secure".to_owned(),
+            "FOREIGN=ignored; Domain=evil.example; Path=/".to_owned(),
+        ];
+        st.vncproxy_set_cookies =
+            vec!["VNCNODE=PLANTED_VNC_COOKIE_3344; Path=/api2/json/nodes/pve1; Secure".to_owned()];
+        st.require_ws_cookies = vec![
+            "SERVERID=PLANTED_PROXY_COOKIE_1122".to_owned(),
+            "VNCNODE=PLANTED_VNC_COOKIE_3344".to_owned(),
+        ];
+    }
+    let _server = register_pinned_server(&hosted, "ProxyLab", &fake, &[100]).await;
+
+    let shot_args =
+        json!({ "activity": "Capture behind proxy", "server": "ProxyLab", "vmid": 100 })
+            .to_string();
+    hosted
+        .core
+        .model
+        .push_reply(tool_calls(&[("p1", TOOL_VNC_SCREENSHOT, &shot_args)]));
+    hosted.core.model.push_reply(reply("Captured behind proxy"));
+
+    let started = hosted
+        .core
+        .runtime
+        .start_conversation(StartConversation::new("Capture VM behind reverse proxy"))
+        .await
+        .expect("start");
+    let conv_id = started.conversation_id;
+
+    approve(&hosted, &conv_id, 0, ApprovalChoice::AllowOnce).await;
+
+    let transcript = hosted.core.wait_for_run(&conv_id, &started.run_id).await;
+    let [call] = transcript.tool_calls(0).try_into().unwrap();
+    assert_eq!(call.status, ToolCallStatus::Completed);
+    assert!(
+        matches!(
+            call.result.as_ref().map(|r| &r.outcome),
+            Some(ToolOutcome::Plugin { failure: None, .. })
+        ),
+        "VNC behind reverse proxy failed: {:?}",
+        call.result
+    );
+
+    let st = fake.state.lock().unwrap();
+    assert_eq!(
+        st.last_ws_alpn.as_deref(),
+        Some(b"http/1.1".as_slice()),
+        "VNC TLS handshake must negotiate http/1.1 ALPN"
+    );
+
+    let headers = st
+        .last_ws_headers
+        .as_ref()
+        .expect("recorded VNC WebSocket headers");
+    let expected_host = format!("127.0.0.1:{}", fake.port());
+    let expected_origin = format!("https://{expected_host}");
+    assert_eq!(
+        headers.get("host").map(String::as_str),
+        Some(expected_host.as_str())
+    );
+    assert_eq!(
+        headers.get("origin").map(String::as_str),
+        Some(expected_origin.as_str())
+    );
+    assert!(
+        headers
+            .get("user-agent")
+            .is_some_and(|ua| ua.starts_with("Mannie/")),
+        "missing Mannie User-Agent: {headers:?}"
+    );
+    assert_eq!(headers.get("pragma").map(String::as_str), Some("no-cache"));
+    assert_eq!(
+        headers.get("cache-control").map(String::as_str),
+        Some("no-cache")
+    );
+    let cookie = headers
+        .get("cookie")
+        .map(String::as_str)
+        .unwrap_or_default();
+    assert!(!cookie.contains("FOREIGN"), "foreign domain cookie sent");
+}
+
+#[tokio::test]
+async fn vnc_non_101_gateway_error_includes_safe_diagnostics_and_scrubs_secrets() {
+    let secrets = FakeSecrets::new();
+    let hosted = hosted_plugin(&secrets, true).await;
+    let fake = FakeProxmoxServer::start(valid_self_signed_cert(37)).await;
+    let proxy_cookie = "PLANTED_GATEWAY_COOKIE_7788";
+    {
+        let mut st = fake.state.lock().unwrap();
+        st.ticket_set_cookies = vec![format!("SERVERID={proxy_cookie}; Path=/; Secure")];
+        st.ws_error_response = Some(format!(
+            "HTTP/1.0 502 Bad Gateway\r\n\
+             Server: haproxy\r\n\
+             Via: 1.1 work-edge\r\n\
+             Set-Cookie: LEAKED=SHOULD_NOT_SHOW\r\n\
+             Content-Type: text/html\r\n\
+             \r\n\
+             <html><body><h1>502 Bad Gateway</h1>\n\
+             The server returned an invalid or incomplete response while proxying {VNC_TICKET} {TICKET} {proxy_cookie}.\n\
+             </body></html>"
+        ));
+    }
+    let _server = register_pinned_server(&hosted, "BadGatewayLab", &fake, &[100]).await;
+
+    let shot_args =
+        json!({ "activity": "Trigger 502", "server": "BadGatewayLab", "vmid": 100 }).to_string();
+    hosted
+        .core
+        .model
+        .push_reply(tool_calls(&[("bg1", TOOL_VNC_SCREENSHOT, &shot_args)]));
+    hosted.core.model.push_reply(reply("Handled 502"));
+
+    let started = hosted
+        .core
+        .runtime
+        .start_conversation(StartConversation::new("Capture VM with 502 gateway"))
+        .await
+        .expect("start");
+    let conv_id = started.conversation_id;
+
+    approve(&hosted, &conv_id, 0, ApprovalChoice::AllowOnce).await;
+
+    let transcript = hosted.core.wait_for_run(&conv_id, &started.run_id).await;
+    let [call] = transcript.tool_calls(0).try_into().unwrap();
+    let result = call.result.as_ref().expect("tool result");
+    assert!(
+        matches!(
+            &result.outcome,
+            ToolOutcome::Plugin {
+                failure: Some(code),
+                ..
+            } if code == "vnc_failed"
+        ),
+        "expected vnc_failed, got {:?}",
+        result.outcome
+    );
+
+    let output = &result.output;
+    assert!(
+        output.contains("HTTP/1.0 502 Bad Gateway"),
+        "missing status line: {output}"
+    );
+    assert!(
+        output.contains("server: haproxy"),
+        "missing server header: {output}"
+    );
+    assert!(
+        output.contains("via: 1.1 work-edge"),
+        "missing via header: {output}"
+    );
+    assert!(
+        output.contains("The server returned an invalid or incomplete response"),
+        "missing body diagnostic: {output}"
+    );
+    for leaked in [
+        PASSWORD,
+        TICKET,
+        CSRF,
+        VNC_TICKET,
+        proxy_cookie,
+        "SHOULD_NOT_SHOW",
+    ] {
+        assert!(
+            !output.contains(leaked),
+            "secret {leaked} leaked into VNC error output: {output}"
+        );
+    }
 }

@@ -238,10 +238,9 @@ pub fn normalize_host(raw: &str) -> Option<String> {
     Some(host.to_ascii_lowercase())
 }
 
-/// Formats the canonical HTTPS origin for a stored host and port, matching
-/// `Url::origin().ascii_serialization()` (e.g. `https://pve.lan:8006` or
-/// `https://pve.lan` when port is 443).
-pub fn canonical_endpoint(host: &str, port: u16) -> String {
+/// Formats the canonical HTTPS `Host` header value for a stored host and port,
+/// omitting the default HTTPS port `443` (RFC 9110 §7.2).
+pub fn canonical_host_header(host: &str, port: u16) -> String {
     let host_part = if host.contains(':') {
         format!("[{host}]")
     } else {
@@ -249,10 +248,17 @@ pub fn canonical_endpoint(host: &str, port: u16) -> String {
     };
 
     if port == 443 {
-        format!("https://{host_part}")
+        host_part
     } else {
-        format!("https://{host_part}:{port}")
+        format!("{host_part}:{port}")
     }
+}
+
+/// Formats the canonical HTTPS origin for a stored host and port, matching
+/// `Url::origin().ascii_serialization()` (e.g. `https://pve.lan:8006` or
+/// `https://pve.lan` when port is 443).
+pub fn canonical_endpoint(host: &str, port: u16) -> String {
+    format!("https://{}", canonical_host_header(host, port))
 }
 
 /// Validates a server display name.
@@ -391,6 +397,11 @@ impl ServerRecord {
     /// Canonical `https://host[:port]` origin.
     pub fn endpoint(&self) -> String {
         canonical_endpoint(&self.host, self.port)
+    }
+
+    /// Canonical HTTPS `Host` header value (omits `:443`).
+    pub fn host_header(&self) -> String {
+        canonical_host_header(&self.host, self.port)
     }
 
     /// TLS trust identity used in `Access::ProxmoxVm` and `GrantScope::ProxmoxVm`.
