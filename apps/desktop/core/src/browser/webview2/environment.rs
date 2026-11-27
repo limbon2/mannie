@@ -8,9 +8,11 @@ use std::sync::Arc;
 use mannie_tools::browser::{ChromeError, ProcessHandle};
 use tokio::sync::oneshot;
 use webview2_com::Microsoft::Web::WebView2::Win32::{
-    COREWEBVIEW2_PROCESS_KIND_BROWSER, CreateCoreWebView2EnvironmentWithOptions,
-    GetAvailableCoreWebView2BrowserVersionString, ICoreWebView2Environment,
-    ICoreWebView2Environment7, ICoreWebView2Environment8, ICoreWebView2EnvironmentOptions,
+    COREWEBVIEW2_BROWSER_PROCESS_EXIT_KIND, COREWEBVIEW2_BROWSER_PROCESS_EXIT_KIND_FAILED,
+    COREWEBVIEW2_BROWSER_PROCESS_EXIT_KIND_NORMAL, COREWEBVIEW2_PROCESS_KIND_BROWSER,
+    CreateCoreWebView2EnvironmentWithOptions, GetAvailableCoreWebView2BrowserVersionString,
+    ICoreWebView2Environment, ICoreWebView2Environment7, ICoreWebView2Environment8,
+    ICoreWebView2EnvironmentOptions,
 };
 use webview2_com::{
     BrowserProcessExitedEventHandler, CoreWebView2EnvironmentOptions,
@@ -131,7 +133,23 @@ fn adopt(
         .cast::<webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Environment5>()
         .map_err(|_old| ChromeError::Incompatible)?;
     let exited = Arc::clone(shared);
-    let browser_exited = BrowserProcessExitedEventHandler::create(Box::new(move |_, _| {
+    let browser_exited = BrowserProcessExitedEventHandler::create(Box::new(move |_, arguments| {
+        let mut kind = COREWEBVIEW2_BROWSER_PROCESS_EXIT_KIND_NORMAL;
+        let mut process_id = 0;
+        if let Some(arguments) = arguments {
+            // SAFETY: the event arguments are live on this thread and the outputs are writable.
+            drop(unsafe { arguments.BrowserProcessExitKind(&raw mut kind) });
+            // SAFETY: as above.
+            drop(unsafe { arguments.BrowserProcessId(&raw mut process_id) });
+        }
+        if !exited.stopping() {
+            tracing::warn!(
+                session = exited.id,
+                browser_pid = process_id,
+                exit_kind = browser_exit_kind_name(kind),
+                "the WebView2 browser process exited unexpectedly"
+            );
+        }
         exited.fail();
         Ok(())
     }));
@@ -139,6 +157,12 @@ fn adopt(
     // SAFETY: as above.
     unsafe { environment5.add_BrowserProcessExited(&browser_exited, &raw mut token) }
         .map_err(|_failed| ChromeError::Incompatible)?;
+
+    tracing::info!(
+        session = shared.id,
+        runtime_version = runtime_version().as_deref().unwrap_or("unknown"),
+        "a WebView2 browser environment started"
+    );
 
     SESSIONS.with_borrow_mut(|sessions| {
         sessions.insert(
@@ -218,6 +242,14 @@ fn same_folder(reported: &Path, requested: &Path) -> bool {
         .to_lowercase()
     };
     canonical(reported) == canonical(requested)
+}
+
+fn browser_exit_kind_name(kind: COREWEBVIEW2_BROWSER_PROCESS_EXIT_KIND) -> &'static str {
+    match kind {
+        COREWEBVIEW2_BROWSER_PROCESS_EXIT_KIND_NORMAL => "normal",
+        COREWEBVIEW2_BROWSER_PROCESS_EXIT_KIND_FAILED => "failed",
+        _ => "unknown",
+    }
 }
 
 /// Drops the `\\?\` prefix that canonicalization adds on Windows.

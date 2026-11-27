@@ -74,11 +74,13 @@ fn pointer_activity(method: &str, params: &str) -> Option<(f64, f64, bool)> {
 /// Sends one command to a tab, on the main thread. A missing tab drops the
 /// reply, which the driver reads as a closed tab.
 pub(super) fn call(session: u64, tab: &str, method: &str, params: Zeroizing<String>, reply: Reply) {
-    let Some(tab) = tab_ui(session, tab) else {
+    let Some(tab_handle) = tab_ui(session, tab) else {
         return;
     };
     let activity = pointer_activity(method, &params);
-    let method = HSTRING::from(method);
+    let method_name = method.to_owned();
+    let tab_id = tab.to_owned();
+    let method_wide = HSTRING::from(method);
     // The parameters can hold a value that the owner protected. Pass them
     // from a buffer that is wiped after the call copied it.
     let mut wide: Vec<u16> = params.encode_utf16().chain(std::iter::once(0)).collect();
@@ -86,8 +88,31 @@ pub(super) fn call(session: u64, tab: &str, method: &str, params: Zeroizing<Stri
     let handler =
         CallDevToolsProtocolMethodCompletedHandler::create(Box::new(move |result, json| {
             let answer = match result {
-                Ok(()) => serde_json::from_str(&json).map_err(|_json| ChromeHostFailure::Protocol),
-                Err(_failed) => Err(ChromeHostFailure::Protocol),
+                Ok(()) => serde_json::from_str(&json).map_err(|error| {
+                    tracing::warn!(
+                        session,
+                        tab = %tab_id,
+                        method = %method_name,
+                        %error,
+                        "could not parse a browser DevTools reply"
+                    );
+                    ChromeHostFailure::Protocol
+                }),
+                Err(error) => {
+                    let cdp_code = serde_json::from_str::<Value>(&json)
+                        .ok()
+                        .and_then(|value| value.get("code").and_then(Value::as_i64));
+                    tracing::warn!(
+                        session,
+                        tab = %tab_id,
+                        method = %method_name,
+                        hresult = %error.code(),
+                        %error,
+                        cdp_code,
+                        "a browser DevTools command failed"
+                    );
+                    Err(ChromeHostFailure::Protocol)
+                }
             };
             let _delivered = reply.send(answer);
             Ok(())
@@ -95,14 +120,21 @@ pub(super) fn call(session: u64, tab: &str, method: &str, params: Zeroizing<Stri
     // SAFETY: the method and the NUL-terminated parameter buffer live until
     // the call returns, and the handler is a COM object that WebView2 keeps.
     let sent = unsafe {
-        tab.webview
-            .CallDevToolsProtocolMethod(&method, PCWSTR(wide.as_ptr()), &handler)
+        tab_handle
+            .webview
+            .CallDevToolsProtocolMethod(&method_wide, PCWSTR(wide.as_ptr()), &handler)
     };
     wide.zeroize();
     if let Err(error) = sent {
-        tracing::warn!(%error, "WebView2 refused a DevTools command");
+        tracing::warn!(
+            session,
+            tab,
+            method,
+            %error,
+            "WebView2 refused a DevTools command"
+        );
     } else if let Some((x, y, pulse)) = activity {
-        cursor::show(&tab, x, y, pulse);
+        cursor::show(&tab_handle, x, y, pulse);
     }
 }
 
@@ -143,7 +175,16 @@ pub(super) fn subscribe(
                     }
                     // An event the driver cannot read could be a request it
                     // must govern.
-                    Err(_json) => emitting.fail(),
+                    Err(error) => {
+                        tracing::warn!(
+                            session = emitting.id,
+                            tab = %id,
+                            event,
+                            %error,
+                            "could not parse a browser DevTools event; ending session"
+                        );
+                        emitting.fail();
+                    }
                 }
                 Ok(())
             }));

@@ -39,12 +39,12 @@ impl Wire {
         self.submit(tab, method, params)?.wait().await
     }
 
-    pub(super) fn submit(
-        &self,
-        tab: &str,
-        method: &str,
+    pub(super) fn submit<'a>(
+        &'a self,
+        tab: &'a str,
+        method: &'a str,
         mut params: Value,
-    ) -> Result<Call<'_>, ChromeError> {
+    ) -> Result<Call<'a>, ChromeError> {
         if self.closed.is_cancelled() {
             return Err(ChromeError::Disconnected);
         }
@@ -78,12 +78,20 @@ impl Wire {
         let reply = match self.host.send(tab, method, text) {
             Ok(reply) => reply,
             Err(ChromeError::NoTab) => return Err(ChromeError::NoTab),
-            Err(_) => {
+            Err(error) => {
+                tracing::warn!(
+                    tab,
+                    method,
+                    error = error.code(),
+                    "browser host rejected a DevTools command; ending session"
+                );
                 self.closed.cancel();
                 return Err(ChromeError::Disconnected);
             }
         };
         Ok(Call {
+            tab,
+            method,
             reply,
             deadline,
             observation,
@@ -93,6 +101,8 @@ impl Wire {
 }
 
 pub(super) struct Call<'a> {
+    tab: &'a str,
+    method: &'a str,
     reply: ChromeReply,
     deadline: Duration,
     observation: bool,
@@ -107,19 +117,48 @@ impl Call<'_> {
         };
         match answer {
             Ok(Ok(Ok(result))) if result.is_object() => Ok(result),
-            Ok(Ok(Ok(_))) => Err(ChromeError::Protocol),
-            Ok(Ok(Err(ChromeHostFailure::Protocol))) => Err(if self.observation {
-                ChromeError::Stale
-            } else {
-                ChromeError::Protocol
-            }),
+            Ok(Ok(Ok(_))) => {
+                tracing::warn!(
+                    tab = self.tab,
+                    method = self.method,
+                    "a browser DevTools command returned a non-object result"
+                );
+                Err(ChromeError::Protocol)
+            }
+            Ok(Ok(Err(ChromeHostFailure::Protocol))) => {
+                if !self.observation {
+                    tracing::warn!(
+                        tab = self.tab,
+                        method = self.method,
+                        "a browser DevTools command failed with a protocol error"
+                    );
+                }
+                Err(if self.observation {
+                    ChromeError::Stale
+                } else {
+                    ChromeError::Protocol
+                })
+            }
             // The tab ended while the command ran, so its page is gone.
             Ok(Ok(Err(ChromeHostFailure::Disconnected)) | Err(_)) => Err(ChromeError::Disconnected),
-            Err(_timeout) if self.observation && !self.closed.is_cancelled() => {
+            Err(_timeout) if self.closed.is_cancelled() => Err(ChromeError::Disconnected),
+            Err(_timeout) if self.observation => {
+                tracing::debug!(
+                    tab = self.tab,
+                    method = self.method,
+                    timeout_secs = self.deadline.as_secs(),
+                    "a browser observation command timed out"
+                );
                 Err(ChromeError::Stale)
             }
             Err(_timeout) => {
                 // A command that never answers leaves the page ungoverned.
+                tracing::warn!(
+                    tab = self.tab,
+                    method = self.method,
+                    timeout_secs = self.deadline.as_secs(),
+                    "a browser DevTools command timed out; ending session"
+                );
                 self.closed.cancel();
                 Err(ChromeError::Disconnected)
             }

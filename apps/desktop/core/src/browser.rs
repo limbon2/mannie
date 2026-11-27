@@ -1242,7 +1242,7 @@ fn status(slot: &Slot) -> BrowserStatus {
 /// process exited, so the pane can say so.
 async fn watch_end(slot: Arc<Slot>, chrome: Arc<Chrome>, epoch: u64) {
     chrome.closed().await;
-    let ended_alone = {
+    let ended_failure = {
         let mut state = lock(&slot.state);
         let same = state.epoch == epoch
             && state
@@ -1250,10 +1250,11 @@ async fn watch_end(slot: Arc<Slot>, chrome: Arc<Chrome>, epoch: u64) {
                 .as_ref()
                 .is_some_and(|current| Arc::ptr_eq(current, &chrome));
         if same {
-            state.failure = Some(match state.views.as_deref() {
+            let failure = match state.views.as_deref() {
                 Some(views) if views.certificate_revoked() => BrowserError::CertificateRevoked,
                 _ => BrowserError::BrowserDisconnected,
-            });
+            };
+            state.failure = Some(failure);
             state.epoch += 1;
             state.id = None;
             state.views = None;
@@ -1262,11 +1263,16 @@ async fn watch_end(slot: Arc<Slot>, chrome: Arc<Chrome>, epoch: u64) {
             state.needs_observation = false;
             state.last_observation = None;
             slot.gate.set_mode(BrowserControlMode::Agent);
+            Some(failure)
+        } else {
+            None
         }
-        same
     };
-    if ended_alone {
-        tracing::warn!("a browser session ended on its own");
+    if let Some(failure) = ended_failure {
+        tracing::warn!(
+            failure = failure.as_code(),
+            "a browser session ended on its own"
+        );
         chrome.end().await;
     }
 }
