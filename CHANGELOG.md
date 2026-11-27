@@ -4,6 +4,14 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+## 0.10.3 - 2026-11-27
+
+### Fixed
+
+#### Browser
+
+- Respond without a client certificate to WebView2 client certificate requests instead of aborting the request, allowing sites with optional mutual TLS to load while keeping the Windows certificate store unused and the native picker suppressed.
+
 ## 0.10.2 - 2026-11-27
 
 ### Changed
