@@ -9,7 +9,7 @@ use mannie_provider::{
     Content, ImageInput, Message, ModelRequest, Role, ToolChoice, ToolDefinition,
 };
 use mannie_store::{ModelPart, ModelTurn};
-use mannie_types::ids::{PartId, RunId};
+use mannie_types::ids::{PartId, RunId, TurnId};
 use mannie_types::provider::{ApiInterface, ReasoningEffort};
 use mannie_types::run::RunState;
 use mannie_types::tools::{Interruption, NotRunReason, Refusal, ToolCallDocument, ToolCallStatus};
@@ -52,6 +52,9 @@ pub(crate) struct RequestShape<'a> {
     /// The parts `context` whose excerpts the request sends in full; every
     /// other one is a line (ADR-0046, decision 4).
     pub(crate) full_context: &'a HashSet<PartId>,
+    /// When a step-boundary checkpoint ends inside a turn, the user anchor
+    /// message emitted before that turn's remaining steps (ADR-0083).
+    pub(crate) resumed_turn_anchor: Option<(&'a TurnId, &'a str)>,
 }
 
 /// How many of the newest owner messages with excerpts send them in full.
@@ -148,7 +151,17 @@ fn join_owner_message(messages: &mut Vec<Message>, text: &str) {
     }
 }
 
+fn append_resumed_anchor(messages: &mut Vec<Message>, turn: &ModelTurn, shape: RequestShape<'_>) {
+    if let Some((turn_id, anchor)) = shape.resumed_turn_anchor
+        && *turn_id == turn.turn_id
+    {
+        messages.push(Message::text(Role::User, anchor.to_owned()));
+    }
+}
+
 fn append_turn(messages: &mut Vec<Message>, turn: &ModelTurn, shape: RequestShape<'_>) {
+    append_resumed_anchor(messages, turn, shape);
+
     let mut reply = Reply::default();
     // The parts of the runs that the turn keeps come first, run by run; each
     // ends with the marker of how it ended.
@@ -160,15 +173,12 @@ fn append_turn(messages: &mut Vec<Message>, turn: &ModelTurn, shape: RequestShap
     let mut excerpts_headed = false;
 
     for part in &turn.parts {
-        let new_run = part.run_id.as_ref().filter(|run| current_run != Some(*run));
-
-        if let Some(run) = new_run {
+        if let Some(run) = part.run_id.as_ref().filter(|run| current_run != Some(*run)) {
             if let Some(previous) = current_run
                 && let Some(kept) = turn.kept_runs.iter().find(|kept| kept.run_id == *previous)
             {
                 end_run(messages, &mut reply, Some(kept.state));
             }
-
             current_run = Some(run);
             calling_attempt = None;
         }
@@ -446,19 +456,70 @@ pub(crate) fn part_result(
         .as_ref()
         .filter(|_section| part.kind == Some(PartKind::Task));
     let Some(section) = section else {
-        return call_result(&part.id, call, left_out, requester);
+        return call_result(&part.id, &part.text, call, left_out, requester);
     };
 
     if left_out.contains(&part.id) && tasks::returned_reports(section) {
         return texts::report_left_out(&tasks::reported_numbers(section));
     }
 
-    tasks::task_result(section).unwrap_or_else(|| call_result(&part.id, call, left_out, requester))
+    tasks::task_result(section)
+        .unwrap_or_else(|| call_result(&part.id, &part.text, call, left_out, requester))
+}
+
+/// Safe argument keys used to label a trimmed tool result without exposing
+/// large payloads or secrets (ADR-0083).
+const TARGET_KEYS: [&str; 13] = [
+    "path", "folder", "url", "command", "query", "pattern", "host", "server", "vmid", "database",
+    "target", "action", "name",
+];
+
+/// Most characters kept in a trimmed result's target label.
+const MAX_TARGET_CHARS: usize = 80;
+
+/// Extracts a concise single-line target label from a call's arguments or
+/// activity for trimmed tool results (ADR-0083).
+pub(crate) fn call_target_summary(arguments: &str, activity: Option<&str>) -> Option<String> {
+    let from_args = serde_json::from_str::<serde_json::Value>(arguments)
+        .ok()
+        .and_then(|value| {
+            let object = value.as_object()?;
+            TARGET_KEYS.iter().find_map(|key| {
+                let entry = object.get(*key)?;
+                match entry {
+                    serde_json::Value::String(text) => clean_target(text),
+                    serde_json::Value::Number(number) => Some(format!("{key}={number}")),
+                    _ => None,
+                }
+            })
+        });
+    from_args.or_else(|| activity.and_then(clean_target))
+}
+
+fn clean_target(raw: &str) -> Option<String> {
+    let collapsed: String = raw
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .filter(|character| !character.is_control())
+        .collect();
+    if collapsed.is_empty() {
+        return None;
+    }
+    let mut chars = collapsed.chars();
+    let kept: String = chars.by_ref().take(MAX_TARGET_CHARS).collect();
+    if chars.next().is_some() {
+        Some(format!("{kept}…"))
+    } else {
+        Some(kept)
+    }
 }
 
 /// What the model reads as a tool call's result.
 pub(crate) fn call_result(
     part: &PartId,
+    arguments: &str,
     call: &ToolCallDocument,
     left_out: &HashSet<PartId>,
     requester: Requester,
@@ -471,7 +532,13 @@ pub(crate) fn call_result(
                     .iter()
                     .map(|archive| archive.id.to_string())
                     .collect();
-                texts::result_left_out(&archives)
+                let target = call_target_summary(arguments, call.activity.as_deref());
+                texts::result_left_out(
+                    &call.tool,
+                    target.as_deref(),
+                    result.output.len(),
+                    &archives,
+                )
             }
             Some(result) => result.output.clone(),
             None => texts::CANCELED.to_owned(),

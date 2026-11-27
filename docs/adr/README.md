@@ -3,7 +3,7 @@
 |              |                                                                                                                                                                                           |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Status       | Living index                                                                                                                                                                              |
-| Last updated | 2026-11-26                                                                                                                                                                                |
+| Last updated | 2026-11-27                                                                                                                                                                                |
 | Related      | [ADR-0001](0001-record-architecture-decisions.md), [Template](0000-template.md), [Decisions](../roadmap/milestones.md#5-decisions), [Validations](../roadmap/milestones.md#4-validations) |
 
 [ADR-0001](0001-record-architecture-decisions.md) describes the process, and new ADRs start from the [template](0000-template.md).
@@ -98,3 +98,4 @@ Each ADR has exactly one of these statuses:
 | [0080](0080-let-plugins-manage-proxmox-vms-and-vnc-consoles.md)                        | Let plugins manage Proxmox VMs and VNC consoles                                               | Accepted (D74)         | V16        |
 | [0081](0081-let-agents-inspect-and-configure-mannie.md)                                | Let agents inspect and configure Mannie from chat                                             | Accepted (D75)         | V17        |
 | [0082](0082-soften-browser-certificate-pinning-and-inspect-rejected-certificates.md)   | Soften Browser certificate pinning and inspect rejected certificates                          | Accepted (D76)         | V13        |
+| [0083](0083-compact-conversations-on-step-boundaries.md)                               | Compact conversations on step boundaries with calibrated budgets and visible markers          | Accepted (D77)         | Tests      |

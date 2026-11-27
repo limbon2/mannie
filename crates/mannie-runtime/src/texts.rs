@@ -414,16 +414,27 @@ pub fn unknown_tool(name: &str) -> String {
     format!("There is no tool named {name}.")
 }
 
-/// Stands in for a result that was left out of the context to save space.
-pub fn result_left_out(archives: &[String]) -> String {
+/// Stands in for a result that was left out of the context to save space
+/// (ADR-0083). Carries factual metadata instead of urging the model to re-run
+/// the tool.
+pub fn result_left_out(
+    tool: &str,
+    target: Option<&str>,
+    output_bytes: usize,
+    archives: &[String],
+) -> String {
+    let subject = match target {
+        Some(target) => format!("{tool} ({target})"),
+        None => tool.to_owned(),
+    };
+
     if archives.is_empty() {
-        "This result was removed from the context to save space. Run the tool again if you \
-still need it."
-            .to_owned()
+        format!(
+            "[Result of {subject} ({output_bytes} bytes) was trimmed from context to save space; rely on what was already recorded unless you need to inspect it again.]"
+        )
     } else {
         format!(
-            "This result was removed from the context to save space. Run the tool again, or read \
-the archived output {} with read_tool_output.",
+            "[Result of {subject} ({output_bytes} bytes) was trimmed from context to save space. Read archived output {} with read_tool_output if needed.]",
             archives.join(" and ")
         )
     }
@@ -482,13 +493,16 @@ pub fn tool_call_as_text(tool: &str, arguments: &str, result: &str) -> String {
 }
 
 /// The instructions of the call that writes a checkpoint. Its headings keep
-/// what is done and established, with where it comes from, apart from what
-/// nobody checked, so that the assistant neither redoes finished work nor
-/// relies on a guess.
+/// what is in progress, done and established, with where it comes from, apart
+/// from what nobody checked, so that the assistant neither redoes finished work
+/// nor loses live workflow position (ADR-0083).
 pub const COMPACTION_INSTRUCTIONS: &str = "You are writing a checkpoint of a conversation between the owner and an assistant, \
 so that the assistant can continue it with less context. Write it as plain text in the language of the conversation, \
 under these headings, and leave out a heading with nothing under it:\n\
 Goal: what the owner wants now, with their requests and preferences.\n\
+In progress: the exact active position in any ongoing multi-step task, wizard, install, edit or workflow; \
+values, fields or steps already applied versus still pending; and active external state such as open browser pages, \
+VMs, hosts, terminals, branches or working directories.\n\
 Done: what was completed, each with what shows it, such as a changed file, a command's result or a task's report.\n\
 Established facts: facts, numbers, names, file paths and code that are still relevant, each with where it comes from, \
 such as a path and line, a command and its result, or a task's report.\n\
@@ -499,6 +513,20 @@ Next steps: what the assistant said it would do next, with the files involved.\n
 Keep the cite links, such as [Guide.pdf p. 12](cite:notebooks/…), of the passages of the owner's sources that the \
 answers relied on, exactly as written, so that they can be cited again.\n\
 Leave out pleasantries and repetition. Do not add anything the conversation does not say.";
+
+/// Marks that earlier steps of a turn are covered by the checkpoint above
+/// (ADR-0083).
+pub const COMPACTION_TURN_CONTINUED: &str =
+    "[Earlier steps of this turn are summarized in the checkpoint above.]";
+
+/// The user anchor message that precedes the remaining steps of a turn whose
+/// earlier steps are covered by a step-boundary checkpoint (ADR-0083).
+pub fn resumed_turn_anchor(owner_request: Option<&str>) -> String {
+    match owner_request.map(str::trim).filter(|text| !text.is_empty()) {
+        Some(request) => format!("{request}\n\n{COMPACTION_TURN_CONTINUED}"),
+        None => COMPACTION_TURN_CONTINUED.to_owned(),
+    }
+}
 
 /// Introduces the earlier checkpoint in a compaction request.
 pub const COMPACTION_PREVIOUS_SUMMARY: &str = "The summary of what came before:";

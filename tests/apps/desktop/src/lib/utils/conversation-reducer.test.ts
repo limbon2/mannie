@@ -308,7 +308,95 @@ describe('applyUpdate', () => {
 
     expect(state.context?.usedTokens).toBe(40);
     expect(state.checkpoint?.id).toBe('checkpoint');
+    expect(state.checkpoints.map((entry) => entry.id)).toEqual(['checkpoint']);
     expect(state.cursor).toBe(4);
+  });
+
+  it('keeps every checkpoint in order from snapshots and events, including step boundaries', () => {
+    const state = emptyTranscript();
+    const initial = snapshot([turn(0, 'completed'), turn(1, 'running')], 2);
+    if (initial.type === 'snapshot') {
+      const first = {
+        coversThroughPart: 'part-step-1',
+        coversThroughTurn: 0,
+        createdAt: 100,
+        id: 'cp-1',
+        tokensAfter: 3_000,
+        tokensBefore: 20_000,
+        trigger: 'automatic',
+      };
+      const second = {
+        coversThroughTurn: 0,
+        createdAt: 200,
+        id: 'cp-2',
+        tokensAfter: 2_500,
+        tokensBefore: 21_000,
+        trigger: 'manual',
+      };
+      initial.snapshot.checkpoint = second;
+      initial.snapshot.checkpoints = [second, first];
+    }
+
+    applyUpdate(state, initial);
+    expect(state.checkpoints.map((entry) => entry.id)).toEqual(['cp-1', 'cp-2']);
+    expect(state.checkpoints[0]?.coversThroughPart).toBe('part-step-1');
+    expect(state.checkpoint?.id).toBe('cp-2');
+
+    applyUpdate(
+      state,
+      event(3, {
+        checkpoint: {
+          coversThroughPart: 'part-step-2',
+          coversThroughTurn: 1,
+          createdAt: 300,
+          id: 'cp-3',
+          tokensAfter: 4_000,
+          tokensBefore: 24_000,
+          trigger: 'overflow',
+        },
+        kind: 'checkpoint_created',
+      }),
+    );
+
+    expect(state.checkpoints.map((entry) => entry.id)).toEqual(['cp-1', 'cp-2', 'cp-3']);
+    expect(state.checkpoint?.id).toBe('cp-3');
+    expect(state.checkpoint?.coversThroughPart).toBe('part-step-2');
+    expect(state.checkpoint?.trigger).toBe('overflow');
+  });
+
+  it('reads older snapshots that send only the latest checkpoint and tracks pruned context usage', () => {
+    const state = emptyTranscript();
+    const older = snapshot([turn(0, 'completed')], 1);
+    if (older.type === 'snapshot') {
+      older.snapshot.checkpoint = {
+        coversThroughTurn: 0,
+        createdAt: 50,
+        id: 'legacy-cp',
+        tokensAfter: 1_000,
+        tokensBefore: 8_000,
+      };
+    }
+
+    applyUpdate(state, older);
+    expect(state.checkpoints.map((entry) => entry.id)).toEqual(['legacy-cp']);
+    expect(state.checkpoint?.id).toBe('legacy-cp');
+
+    applyUpdate(
+      state,
+      event(2, {
+        kind: 'context_usage_changed',
+        usage: {
+          budgetTokens: 30_000,
+          estimated: false,
+          resultsPruned: true,
+          unprunedTokens: 27_000,
+          usedTokens: 19_000,
+        },
+      }),
+    );
+
+    expect(state.context?.resultsPruned).toBe(true);
+    expect(state.context?.unprunedTokens).toBe(27_000);
   });
 });
 

@@ -1567,6 +1567,8 @@ async fn checkpoints_and_context_usage_reach_the_snapshot() {
         used_tokens: 1_200,
         budget_tokens: 100_000,
         estimated: false,
+        results_pruned: false,
+        unpruned_tokens: None,
     };
 
     let applied = fixture
@@ -1577,6 +1579,7 @@ async fn checkpoints_and_context_usage_reach_the_snapshot() {
                     checkpoint: NewCheckpoint {
                         id: checkpoint_id.clone(),
                         covers_through_turn: 0,
+                        covers_through_part: None,
                         content_hash: "hash".to_owned(),
                         summary: "The owner asked a question.".to_owned(),
                         tokens_before: 9_000,
@@ -1630,6 +1633,130 @@ async fn checkpoints_and_context_usage_reach_the_snapshot() {
             .as_deref(),
         Some(r#"{"anchor":null}"#)
     );
+}
+
+fn checkpoint_record(
+    id: CheckpointId,
+    covers_through_turn: u32,
+    covers_through_part: Option<PartId>,
+    summary: &str,
+    trigger: &str,
+) -> NewCheckpoint {
+    NewCheckpoint {
+        id,
+        covers_through_turn,
+        covers_through_part,
+        content_hash: format!("hash-{trigger}"),
+        summary: summary.to_owned(),
+        tokens_before: 25_000,
+        tokens_after: 4_000,
+        trigger: trigger.to_owned(),
+    }
+}
+
+#[tokio::test]
+async fn multiple_checkpoints_step_boundaries_and_pruned_usage_round_trip() {
+    let fixture = Fixture::new();
+    let (conversation, _, _, _) = fixture.start("Turn zero").await;
+    let part_step_0 = fixture.part_id();
+    let part_step_1 = fixture.part_id();
+    let cp_step_0 = CheckpointId::parse(&fixture.uuid()).unwrap();
+    let cp_turn_0 = CheckpointId::parse(&fixture.uuid()).unwrap();
+    let cp_step_1 = CheckpointId::parse(&fixture.uuid()).unwrap();
+    let usage = ContextUsage {
+        used_tokens: 18_000,
+        budget_tokens: 30_000,
+        estimated: false,
+        results_pruned: true,
+        unpruned_tokens: Some(26_500),
+    };
+
+    let records = [
+        checkpoint_record(
+            cp_step_0.clone(),
+            0,
+            Some(part_step_0.clone()),
+            "Step zero summary.",
+            "automatic",
+        ),
+        checkpoint_record(
+            cp_turn_0.clone(),
+            0,
+            None,
+            "Whole turn zero summary.",
+            "manual",
+        ),
+        checkpoint_record(
+            cp_step_1.clone(),
+            1,
+            Some(part_step_1.clone()),
+            "Turn one step summary.",
+            "overflow",
+        ),
+    ];
+    for checkpoint in records {
+        fixture.clock.advance(std::time::Duration::from_secs(1));
+        fixture
+            .apply(&conversation, vec![Change::AddCheckpoint { checkpoint }])
+            .await;
+    }
+    fixture
+        .apply(
+            &conversation,
+            vec![Change::UpdateContext {
+                ledger: r#"{"anchor":null}"#.to_owned(),
+                usage,
+            }],
+        )
+        .await;
+
+    let snapshot = fixture
+        .store
+        .snapshot(&conversation, 50, 400)
+        .await
+        .unwrap()
+        .unwrap();
+    let views: Vec<_> = snapshot
+        .checkpoints
+        .iter()
+        .map(|view| (&view.id, &view.covers_through_part, view.trigger.as_deref()))
+        .collect();
+    assert_eq!(snapshot.context, Some(usage));
+    assert_eq!(
+        views,
+        vec![
+            (&cp_step_0, &Some(part_step_0.clone()), Some("automatic")),
+            (&cp_turn_0, &None, Some("manual")),
+            (&cp_step_1, &Some(part_step_1.clone()), Some("overflow")),
+        ]
+    );
+    assert_eq!(
+        snapshot.checkpoint.as_ref().map(|view| &view.id),
+        Some(&cp_step_1)
+    );
+
+    let stored = fixture.store.checkpoints(&conversation).await.unwrap();
+    let stored_summary: Vec<_> = stored
+        .iter()
+        .map(|entry| (&entry.id, &entry.covers_through_part))
+        .collect();
+    assert_eq!(
+        stored_summary,
+        vec![
+            (&cp_step_1, &Some(part_step_1)),
+            (&cp_turn_0, &None),
+            (&cp_step_0, &Some(part_step_0)),
+        ]
+    );
+
+    let read = fixture
+        .store
+        .checkpoint(&conversation, &cp_step_0)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(read.view.trigger.as_deref(), Some("automatic"));
+    assert_eq!(read.summary, "Step zero summary.");
 }
 
 #[tokio::test]

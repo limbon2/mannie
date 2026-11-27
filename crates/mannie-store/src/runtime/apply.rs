@@ -1249,6 +1249,7 @@ impl Batch<'_> {
             tokens_before: checkpoint.tokens_before,
             tokens_after: checkpoint.tokens_after,
             trigger: checkpoint.trigger,
+            covers_through_part: checkpoint.covers_through_part,
         };
         self.transaction
             .prepare_cached(INSERT_CHECKPOINT)?

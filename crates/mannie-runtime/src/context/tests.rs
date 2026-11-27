@@ -117,6 +117,7 @@ fn shape(interface: ApiInterface) -> RequestShape<'static> {
         requester: Requester::Owner,
         tool_images: &NO_IMAGES,
         full_context: &NO_FULL_CONTEXT,
+        resumed_turn_anchor: None,
     }
 }
 
@@ -760,7 +761,15 @@ fn results_left_out_name_their_archives() {
 
     assert_eq!(
         request.messages[2],
-        tool_result("call_1", &texts::result_left_out(&[archive.to_string()]))
+        tool_result(
+            "call_1",
+            &texts::result_left_out(
+                "read_file",
+                None,
+                "a long output".len(),
+                &[archive.to_string()]
+            )
+        )
     );
 }
 

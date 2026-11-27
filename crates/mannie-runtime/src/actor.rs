@@ -43,8 +43,8 @@ pub(crate) use self::child::ChildLink;
 use self::child::ChildRun;
 use self::tasks::TaskLane;
 use crate::assigned::AssignedRun;
-use crate::budget::{Ledger, budget_bytes, estimate_text, usage};
-use crate::calls::{CallCredential, CallError, CallOptions, Prepared, Setup};
+use crate::budget::{Ledger, budget_bytes, estimate_text, pruned_usage, usage};
+use crate::calls::{CallCredential, CallError, CallOptions, Prepared, Setup, next_prune_watermark};
 use crate::chatgpt::QueuedAccount;
 use crate::compaction::{self, ContextSize, Trigger};
 use crate::retry::RetryDecision;
@@ -253,6 +253,14 @@ pub(crate) struct RunActor {
     tool_calls: u32,
     /// The token counts of every call of the run together.
     usage: Option<Usage>,
+    /// The highest single-call reported input token count of this run.
+    peak_input_tokens: Option<u32>,
+    /// How many transient model-call retries this run made.
+    retries: u32,
+    /// Sticky watermark of pruned tool results in the active turn, held steady
+    /// across steps for prompt-prefix caching until context passes 80% again
+    /// (ADR-0083).
+    pruned_through_part: Option<PartId>,
     notes: u32,
     /// How often the reply continued to tell the model of background
     /// commands that ended as it would have ended (ADR-0041).
@@ -374,6 +382,9 @@ impl Runtime {
             browser_sites: Vec::new(),
             tool_calls: 0,
             usage: None,
+            peak_input_tokens: None,
+            retries: 0,
+            pruned_through_part: None,
             notes: 0,
             end_notes: 0,
             compacted_after_overflow: false,
@@ -612,24 +623,8 @@ impl RunActor {
                     );
                 }
                 StepEnd::Failed(ProviderError::ContextOverflow) => {
-                    if self.compacted_after_overflow {
-                        return Err(Ending::Failed(RunFailure::ContextOverflow));
-                    }
-                    self.compacted_after_overflow = true;
-                    self.discard_attempt().await?;
                     tries = 0;
-                    // The provider counted more than the budget, whatever the
-                    // projection said.
-                    let size = ContextSize {
-                        projected: prepared.size.projected.max(setup.budget),
-                        ..prepared.size
-                    };
-                    if !self
-                        .compact(&setup, &prepared, Trigger::Overflow, size)
-                        .await?
-                    {
-                        return Err(Ending::Failed(RunFailure::RequestTooLarge));
-                    }
+                    self.handle_overflow(&setup, prepared).await?;
                 }
                 StepEnd::Failed(ProviderError::Permanent(RunFailure::InvalidCredential))
                     if issued.is_some() =>
@@ -649,6 +644,47 @@ impl RunActor {
                 }
             }
         }
+    }
+
+    /// Handles a provider context overflow by compacting unpruned context
+    /// once per tool round, allowing a cut through the end of the active turn
+    /// if needed (ADR-0083).
+    async fn handle_overflow(&mut self, setup: &Setup, prepared: Prepared) -> Result<(), Ending> {
+        if self.compacted_after_overflow {
+            return Err(Ending::Failed(RunFailure::ContextOverflow));
+        }
+
+        self.compacted_after_overflow = true;
+        self.pruned_through_part = None;
+        self.discard_attempt().await?;
+
+        let overflow_prepared = if prepared.results_pruned {
+            self.runtime
+                .prepare_call(
+                    &self.conversation,
+                    &self.authority,
+                    setup,
+                    &CallOptions::default(),
+                )
+                .await?
+        } else {
+            prepared
+        };
+
+        // The provider counted more than the budget, whatever the projection said.
+        let size = ContextSize {
+            projected: overflow_prepared.size.projected.max(setup.budget),
+            ..overflow_prepared.size
+        };
+
+        if !self
+            .compact(setup, &overflow_prepared, Trigger::Overflow, size, true)
+            .await?
+        {
+            return Err(Ending::Failed(RunFailure::RequestTooLarge));
+        }
+
+        Ok(())
     }
 
     /// Decides what follows a model call that finished: a note that sends
@@ -764,36 +800,100 @@ impl RunActor {
     }
 
     /// Prepares a call, and compacts first when the context runs low. When a
-    /// compacted context still runs low, the latest turn's older tool results
-    /// are left out.
+    /// compacted context still runs low, advances an epoch watermark that
+    /// trims older tool results of the latest turn in a coarse batch
+    /// (ADR-0083).
     async fn prepare(&mut self, setup: &Setup) -> Result<Prepared, Ending> {
         let options = CallOptions {
-            leave_out_results: false,
+            prune_through: self.pruned_through_part.clone(),
         };
         let mut prepared = self
             .runtime
-            .prepare_call(&self.conversation, &self.authority, setup, options)
+            .prepare_call(&self.conversation, &self.authority, setup, &options)
             .await?;
         if !compaction::needed(prepared.size.projected, setup.budget) {
             return Ok(prepared);
         }
-        if self
-            .compact(setup, &prepared, Trigger::Automatic, prepared.size)
-            .await?
+
+        // Plan compaction against the unpruned context so earlier turns or
+        // settled steps are summarized cleanly instead of staying hidden
+        // behind result pruning.
+        let unpruned = if prepared.results_pruned {
+            self.runtime
+                .prepare_call(
+                    &self.conversation,
+                    &self.authority,
+                    setup,
+                    &CallOptions::default(),
+                )
+                .await?
+        } else {
+            prepared.clone()
+        };
+
+        let mut compaction_failure: Option<RunFailure> = None;
+        let compacted = match self
+            .compact(setup, &unpruned, Trigger::Automatic, unpruned.size, false)
+            .await
         {
+            Ok(written) => written,
+            Err(Ending::Failed(failure)) => {
+                compaction_failure = Some(failure);
+                false
+            }
+            Err(other) => return Err(other),
+        };
+
+        if compacted {
+            self.pruned_through_part = None;
             prepared = self
                 .runtime
-                .prepare_call(&self.conversation, &self.authority, setup, options)
+                .prepare_call(
+                    &self.conversation,
+                    &self.authority,
+                    setup,
+                    &CallOptions::default(),
+                )
                 .await?;
         }
+
         if setup.uses_tools() && compaction::needed(prepared.size.projected, setup.budget) {
-            let leave_out = CallOptions {
-                leave_out_results: true,
-            };
-            prepared = self
-                .runtime
-                .prepare_call(&self.conversation, &self.authority, setup, leave_out)
-                .await?;
+            let before = prepared.size.projected;
+            if let Some(mark) =
+                next_prune_watermark(setup, &prepared, self.pruned_through_part.as_ref())
+            {
+                self.pruned_through_part = Some(mark.clone());
+                let pruned_options = CallOptions {
+                    prune_through: Some(mark),
+                };
+                prepared = self
+                    .runtime
+                    .prepare_call(&self.conversation, &self.authority, setup, &pruned_options)
+                    .await?;
+                tracing::info!(
+                    run = %self.run,
+                    conversation = %self.conversation,
+                    projected_before = before,
+                    projected_after = prepared.size.projected,
+                    budget = setup.budget,
+                    "trimmed older tool results of the active turn to keep context within budget"
+                );
+            }
+        }
+
+        if let Some(failure) = compaction_failure {
+            if prepared.size.projected <= setup.budget {
+                tracing::warn!(
+                    run = %self.run,
+                    conversation = %self.conversation,
+                    failure = failure.code(),
+                    projected = prepared.size.projected,
+                    budget = setup.budget,
+                    "proactive automatic compaction failed while the request still fits; continuing without a checkpoint"
+                );
+            } else {
+                return Err(Ending::Failed(failure));
+            }
         }
         Ok(prepared)
     }
@@ -804,17 +904,31 @@ impl RunActor {
         prepared: &Prepared,
         trigger: Trigger,
         size: ContextSize,
+        allow_active_turn_end: bool,
     ) -> Result<bool, Ending> {
+        let Some(plan) =
+            Runtime::plan_checkpoint(setup, prepared, trigger, size, allow_active_turn_end)
+        else {
+            return Ok(false);
+        };
         let compacting = self.activity(RunActivity::Compacting);
         self.apply(vec![compacting], Durability::Normal).await?;
         let runtime = self.runtime.clone();
         let conversation = self.conversation.clone();
-        let written = self
-            .wait(runtime.write_checkpoint(&conversation, setup, prepared, trigger, size))
-            .await??;
+        let result = self
+            .wait(runtime.write_checkpoint_plan(
+                &conversation,
+                setup,
+                prepared,
+                plan,
+                trigger,
+                size,
+            ))
+            .await?;
         let preparing = self.activity(RunActivity::Preparing);
         self.apply(vec![preparing], Durability::Normal).await?;
-        Ok(written)
+        result?;
+        Ok(true)
     }
 
     /// Streams one call into parts until it finishes or fails.
@@ -1129,17 +1243,46 @@ impl RunActor {
                 );
             }
             self.usage = Some(add_usage(self.usage, call));
-            let ledger = Ledger {
-                binding: Some(setup.binding.clone()),
+            self.peak_input_tokens = Some(
+                self.peak_input_tokens
+                    .map_or(call.input, |peak| peak.max(call.input)),
+            );
+            let ledger = Ledger::from_report(
+                setup.binding.clone(),
                 checkpoint,
-                reported_input: Some(call.input),
-                estimated_input: Some(prepared.size.estimate),
-            };
+                call.input,
+                prepared.size.estimate,
+            );
             let used = call.input.saturating_add(call.output);
-            (ledger, usage(used, setup.budget, false))
+            let shown = match prepared
+                .unpruned_estimate
+                .filter(|_| prepared.results_pruned)
+            {
+                Some(unpruned_est) => {
+                    let unpruned = ledger
+                        .project(&setup.binding, ledger.checkpoint.as_deref(), unpruned_est)
+                        .saturating_add(call.output);
+                    pruned_usage(used, setup.budget, false, unpruned)
+                }
+                None => usage(used, setup.budget, false),
+            };
+            (ledger, shown)
         } else {
             let used = prepared.size.projected.saturating_add(self.step.output);
-            (prepared.ledger.clone(), usage(used, setup.budget, true))
+            let shown = match prepared
+                .unpruned_estimate
+                .filter(|_| prepared.results_pruned)
+            {
+                Some(unpruned_est) => {
+                    let unpruned = prepared
+                        .ledger
+                        .project(&setup.binding, checkpoint.as_deref(), unpruned_est)
+                        .saturating_add(self.step.output);
+                    pruned_usage(used, setup.budget, true, unpruned)
+                }
+                None => usage(used, setup.budget, true),
+            };
+            (prepared.ledger.clone(), shown)
         };
         self.pending.push(Change::UpdateContext {
             ledger: ledger.to_json(),
@@ -1234,6 +1377,7 @@ impl RunActor {
             return Err(Ending::Failed(cause));
         };
         drop(permit);
+        self.retries = self.retries.saturating_add(1);
         let next_attempt_at = self.runtime.inner.clock.now().saturating_add(delay);
         let mut changes: Vec<Change> = self.forget_attempt().into_iter().collect();
         tracing::info!(
@@ -1343,10 +1487,14 @@ impl RunActor {
             state = state.as_str(),
             failure = failure_code,
             attempts = self.attempt,
+            retries = self.retries,
             tool_rounds = self.tool_rounds,
             tool_calls = self.tool_calls,
             input_tokens = self.usage.map(|usage| usage.input),
+            peak_input_tokens = self.peak_input_tokens,
+            cached_input_tokens = self.usage.and_then(|usage| usage.cached_input),
             output_tokens = self.usage.map(|usage| usage.output),
+            pruned_results = self.pruned_through_part.is_some(),
             "a run ended"
         );
         // An assigned task's state carries the version of the ending that

@@ -1,14 +1,12 @@
 <script lang="ts">
   import ArrowDownIcon from '@lucide/svelte/icons/arrow-down';
-  import BookTextIcon from '@lucide/svelte/icons/book-text';
   import { tick } from 'svelte';
   import { on } from 'svelte/events';
 
   import PartOutlet from '#lib/components/app/shell/PartOutlet.svelte';
   import { Button } from '#lib/components/ui/button/index.js';
-  import * as Marker from '#lib/components/ui/marker/index.js';
   import { Spinner } from '#lib/components/ui/spinner/index.js';
-  import type { RunView } from '#lib/generated/bindings.js';
+  import type { CheckpointId, CheckpointView, PartId, RunView, TurnView } from '#lib/generated/bindings.js';
   import { m } from '#lib/paraglide/messages.js';
   import { chatActions } from '#lib/state/chat-actions.svelte.js';
   import { setConversationContext } from '#lib/state/conversation-context.js';
@@ -18,6 +16,7 @@
   import { latestTurn } from '#lib/utils/conversation-reducer.js';
   import { followsAfterScroll } from '#lib/utils/transcript-follow.js';
 
+  import CheckpointMarker from './CheckpointMarker.svelte';
   import RunStatus from './RunStatus.svelte';
 
   // The turns of a conversation (docs/features/chat/conversation-view.md,
@@ -70,6 +69,18 @@
   const cited = $derived(citedItems(transcript.turns));
   const latest = $derived(latestTurn(transcript));
   const checkpoint = $derived(transcript.checkpoint);
+  const checkpoints = $derived(transcript.checkpoints);
+  const firstLoadedTurn = $derived(transcript.turns.at(0));
+  /** The latest checkpoint when it ends above the first loaded turn, so the owner still sees it. */
+  const earlierCheckpoint = $derived.by(() => {
+    if (checkpoint === null) {
+      return null;
+    }
+    if (firstLoadedTurn === undefined) {
+      return null;
+    }
+    return checkpoint.coversThroughTurn < firstLoadedTurn.position ? checkpoint : null;
+  });
   const activity = $derived(latest?.run?.activity);
   /** The part that waits for the owner: a tool call, the card of a child whose call waits, or a question. */
   const waitingPart = $derived.by(() => {
@@ -204,9 +215,36 @@
     }
   }
 
-  /** Whether the checkpoint's marker follows this turn: the last one it covers. */
-  function checkpointFollows(position: number): boolean {
-    return checkpoint?.coversThroughTurn === position;
+  /** Whole-turn checkpoints whose last covered turn is at `position`. */
+  function turnCheckpointsAfter(position: number): CheckpointView[] {
+    return checkpoints.filter((entry) => {
+      const isTurn = entry.coversThroughTurn === position;
+      const isWholeTurn = (entry.coversThroughPart ?? null) === null;
+      return isTurn && isWholeTurn;
+    });
+  }
+
+  /** Step-boundary checkpoints placed right after `partId` inside `turn`. */
+  function stepCheckpointsAfter(turn: TurnView, partId: PartId): CheckpointView[] {
+    return checkpoints.filter((entry) => {
+      const isTurn = entry.coversThroughTurn === turn.position;
+      const isPart = (entry.coversThroughPart ?? null) === partId;
+      return isTurn && isPart;
+    });
+  }
+
+  /** Step-boundary checkpoints inside `turn` whose boundary part is hidden from the UI (e.g., a model-only item). */
+  function unmatchedStepCheckpoints(turn: TurnView): CheckpointView[] {
+    return checkpoints.filter((entry) => {
+      const partId = entry.coversThroughPart ?? null;
+      if (entry.coversThroughTurn !== turn.position) {
+        return false;
+      }
+      if (partId === null) {
+        return false;
+      }
+      return !turn.parts.some((part) => part.id === partId);
+    });
   }
 
   async function loadEarlier(): Promise<void> {
@@ -220,10 +258,8 @@
     scroller.scrollTop += scroller.scrollHeight - heightBefore;
   }
 
-  function showCheckpoint(): void {
-    if (checkpoint !== null) {
-      void chatActions.showCheckpoint({ checkpointId: checkpoint.id, conversationId: conversation.id });
-    }
+  function showCheckpoint(checkpointId: CheckpointId): void {
+    void chatActions.showCheckpoint({ checkpointId, conversationId: conversation.id });
   }
 </script>
 
@@ -258,26 +294,32 @@
           {/if}
         </div>
       {/if}
+      {#if earlierCheckpoint !== null}
+        <CheckpointMarker text={m.chat_checkpoint_marker_above()} onShow={() => showCheckpoint(earlierCheckpoint.id)} />
+      {/if}
+
       {#each transcript.turns as turn (turn.id)}
         <article class="flex flex-col gap-3" aria-label={m.chat_turn_label({ number: String(turn.position + 1) })}>
           {#each turn.parts as part (part.id)}
             <PartOutlet conversationId={conversation.id} latest={turn === latest} {part} />
+
+            {#each stepCheckpointsAfter(turn, part.id) as entry (entry.id)}
+              <CheckpointMarker text={m.chat_checkpoint_marker_step()} onShow={() => showCheckpoint(entry.id)} />
+            {/each}
           {/each}
+
+          {#each unmatchedStepCheckpoints(turn) as entry (entry.id)}
+            <CheckpointMarker text={m.chat_checkpoint_marker_step()} onShow={() => showCheckpoint(entry.id)} />
+          {/each}
+
           {#if turn === latest}
             <RunStatus conversationId={conversation.id} parts={turn.parts} {readOnly} run={turn.run} />
           {/if}
         </article>
-        {#if checkpointFollows(turn.position)}
-          <Marker.Root class="text-xs" variant="separator">
-            <Marker.Content class="flex items-center gap-2">
-              <span>{m.chat_checkpoint_marker()}</span>
-              <Button size="sm" variant="ghost" onclick={showCheckpoint}>
-                <BookTextIcon data-icon="inline-start" />
-                {m.chat_checkpoint_show()}
-              </Button>
-            </Marker.Content>
-          </Marker.Root>
-        {/if}
+
+        {#each turnCheckpointsAfter(turn.position) as entry (entry.id)}
+          <CheckpointMarker text={m.chat_checkpoint_marker()} onShow={() => showCheckpoint(entry.id)} />
+        {/each}
       {/each}
     </div>
   </div>
