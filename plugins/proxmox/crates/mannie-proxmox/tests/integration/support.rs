@@ -110,6 +110,12 @@ pub(crate) struct FakeState {
     pub(crate) power_actions: Vec<(u32, String)>,
     pub(crate) vnc_pointer_events: Vec<(u32, u16, u16, u8)>,
     pub(crate) vnc_key_events: Vec<(u32, u32, bool)>,
+    pub(crate) ticket_set_cookies: Vec<String>,
+    pub(crate) vncproxy_set_cookies: Vec<String>,
+    pub(crate) require_ws_cookies: Vec<String>,
+    pub(crate) ws_error_response: Option<String>,
+    pub(crate) last_ws_headers: Option<BTreeMap<String, String>>,
+    pub(crate) last_ws_alpn: Option<Vec<u8>>,
     vnc_key_event_received: Arc<Notify>,
 }
 
@@ -142,6 +148,12 @@ impl Default for FakeState {
             power_actions: Vec::new(),
             vnc_pointer_events: Vec::new(),
             vnc_key_events: Vec::new(),
+            ticket_set_cookies: Vec::new(),
+            vncproxy_set_cookies: Vec::new(),
+            require_ws_cookies: Vec::new(),
+            ws_error_response: None,
+            last_ws_headers: None,
+            last_ws_alpn: None,
             vnc_key_event_received: Arc::new(Notify::new()),
         }
     }
@@ -188,8 +200,10 @@ impl FakeProxmoxServer {
                     let Ok(tls_stream) = acceptor.accept(stream).await else {
                         return;
                     };
+                    let negotiated_alpn =
+                        tls_stream.get_ref().1.alpn_protocol().map(<[u8]>::to_vec);
                     tokio::select! {
-                        res = handle_connection(tls_stream, conn_state, conn_vnc) => {
+                        res = handle_connection(tls_stream, negotiated_alpn, conn_state, conn_vnc) => {
                             drop(res);
                         }
                         _ = conn_gen.changed() => {
@@ -461,13 +475,14 @@ pub(crate) fn build_ed25519_cert(
     hasher.update(&cert_der);
     let sha256 = hex_lower(&hasher.finalize());
 
-    let config = ServerConfig::builder()
+    let mut config = ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(
             vec![CertificateDer::from(cert_der.clone())],
             PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(leaf_pkcs8.as_ref().to_vec())),
         )
         .expect("build rustls ServerConfig");
+    config.alpn_protocols = vec![b"http/1.1".to_vec()];
 
     TestCertBundle {
         sha256,
@@ -586,6 +601,7 @@ fn hex_lower(bytes: &[u8]) -> String {
 
 async fn handle_connection<S>(
     mut stream: S,
+    negotiated_alpn: Option<Vec<u8>>,
     state: Arc<Mutex<FakeState>>,
     active_vnc_sockets: Arc<AtomicUsize>,
 ) -> std::io::Result<()>
@@ -598,12 +614,12 @@ where
         };
 
         if req.is_websocket_upgrade() {
-            handle_vnc_websocket(stream, req, state, active_vnc_sockets).await?;
+            handle_vnc_websocket(stream, req, negotiated_alpn, state, active_vnc_sockets).await?;
             return Ok(());
         }
 
-        let (status, body) = route_api_request(&req, &state);
-        write_http_json(&mut stream, status, &body).await?;
+        let (status, body, set_cookies) = route_api_request(&req, &state);
+        write_http_json(&mut stream, status, &body, &set_cookies).await?;
     }
 }
 
@@ -700,6 +716,7 @@ async fn write_http_json<S: AsyncWrite + Unpin>(
     stream: &mut S,
     status: u16,
     body: &Value,
+    set_cookies: &[String],
 ) -> std::io::Result<()> {
     let reason = match status {
         200 => "OK",
@@ -709,10 +726,16 @@ async fn write_http_json<S: AsyncWrite + Unpin>(
         _ => "Error",
     };
     let json_bytes = serde_json::to_vec(body).unwrap();
-    let header = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
+    let mut header = format!(
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: keep-alive\r\n",
         json_bytes.len()
     );
+    for cookie in set_cookies {
+        header.push_str("Set-Cookie: ");
+        header.push_str(cookie);
+        header.push_str("\r\n");
+    }
+    header.push_str("\r\n");
     stream.write_all(header.as_bytes()).await?;
     stream.write_all(&json_bytes).await?;
     stream.flush().await
@@ -722,7 +745,10 @@ async fn write_http_json<S: AsyncWrite + Unpin>(
     clippy::too_many_lines,
     reason = "fake Proxmox VE REST API router handles all test endpoints in one table"
 )]
-fn route_api_request(req: &HttpRequest, state: &Arc<Mutex<FakeState>>) -> (u16, Value) {
+fn route_api_request(
+    req: &HttpRequest,
+    state: &Arc<Mutex<FakeState>>,
+) -> (u16, Value, Vec<String>) {
     if req.method == "POST" && req.path == "/api2/json/access/ticket" {
         let form: BTreeMap<String, String> = url::form_urlencoded::parse(&req.body)
             .into_owned()
@@ -732,7 +758,7 @@ fn route_api_request(req: &HttpRequest, state: &Arc<Mutex<FakeState>>) -> (u16, 
         let user_ok = form.get("username").map(String::as_str) == Some(USERNAME);
         let pass_ok = form.get("password").map(String::as_str) == Some(PASSWORD);
         if !user_ok || !pass_ok {
-            return (401, json!({ "data": null }));
+            return (401, json!({ "data": null }), Vec::new());
         }
         if guard.tfa_required {
             return (
@@ -745,6 +771,7 @@ fn route_api_request(req: &HttpRequest, state: &Arc<Mutex<FakeState>>) -> (u16, 
                         "username": USERNAME,
                     }
                 }),
+                Vec::new(),
             );
         }
         return (
@@ -756,15 +783,16 @@ fn route_api_request(req: &HttpRequest, state: &Arc<Mutex<FakeState>>) -> (u16, 
                     "username": USERNAME,
                 }
             }),
+            guard.ticket_set_cookies.clone(),
         );
     }
 
     if !req.has_valid_cookie() {
-        return (401, json!({ "data": null }));
+        return (401, json!({ "data": null }), Vec::new());
     }
 
     if (req.method == "POST" || req.method == "PUT") && !req.has_valid_csrf() {
-        return (401, json!({ "data": null }));
+        return (401, json!({ "data": null }), Vec::new());
     }
 
     let mut guard = state.lock().unwrap();
@@ -793,7 +821,7 @@ fn route_api_request(req: &HttpRequest, state: &Arc<Mutex<FakeState>>) -> (u16, 
             "name": "lxc-ignored",
             "status": "running",
         }));
-        return (200, json!({ "data": items }));
+        return (200, json!({ "data": items }), Vec::new());
     }
 
     let segments: Vec<&str> = req.path.trim_start_matches('/').split('/').collect();
@@ -805,13 +833,13 @@ fn route_api_request(req: &HttpRequest, state: &Arc<Mutex<FakeState>>) -> (u16, 
         let node = segments[3];
         if segments[4] == "qemu" && segments.len() >= 6 {
             let Ok(vmid) = segments[5].parse::<u32>() else {
-                return (404, json!({ "data": null }));
+                return (404, json!({ "data": null }), Vec::new());
             };
 
             if req.method == "GET" && segments.get(6) == Some(&"config") {
                 return match guard.vms.iter().find(|v| v.vmid == vmid && v.node == node) {
-                    Some(vm) => (200, json!({ "data": vm.config })),
-                    None => (404, json!({ "data": null })),
+                    Some(vm) => (200, json!({ "data": vm.config }), Vec::new()),
+                    None => (404, json!({ "data": null }), Vec::new()),
                 };
             }
 
@@ -824,13 +852,13 @@ fn route_api_request(req: &HttpRequest, state: &Arc<Mutex<FakeState>>) -> (u16, 
                     .iter_mut()
                     .find(|v| v.vmid == vmid && v.node == node)
                 else {
-                    return (404, json!({ "data": null }));
+                    return (404, json!({ "data": null }), Vec::new());
                 };
                 for (k, v) in &form {
                     vm.config.insert(k.clone(), v.clone());
                 }
                 guard.config_updates.push((vmid, form));
-                return (200, json!({ "data": null }));
+                return (200, json!({ "data": null }), Vec::new());
             }
 
             if req.method == "GET"
@@ -848,8 +876,9 @@ fn route_api_request(req: &HttpRequest, state: &Arc<Mutex<FakeState>>) -> (u16, 
                                 "maxmem": 2_147_483_648_u64,
                             }
                         }),
+                        Vec::new(),
                     ),
-                    None => (404, json!({ "data": null })),
+                    None => (404, json!({ "data": null }), Vec::new()),
                 };
             }
 
@@ -860,21 +889,21 @@ fn route_api_request(req: &HttpRequest, state: &Arc<Mutex<FakeState>>) -> (u16, 
                     .iter_mut()
                     .find(|v| v.vmid == vmid && v.node == node)
                 else {
-                    return (404, json!({ "data": null }));
+                    return (404, json!({ "data": null }), Vec::new());
                 };
                 match action {
                     "start" | "reboot" | "reset" => "running".clone_into(&mut vm.status),
                     "stop" | "shutdown" => "stopped".clone_into(&mut vm.status),
-                    _ => return (404, json!({ "data": null })),
+                    _ => return (404, json!({ "data": null }), Vec::new()),
                 }
                 guard.power_actions.push((vmid, action.to_owned()));
                 let upid = format!("UPID:{node}:0001:0001:0001:qm{action}:{vmid}:lab@pve:");
-                return (200, json!({ "data": upid }));
+                return (200, json!({ "data": upid }), Vec::new());
             }
 
             if req.method == "POST" && segments.get(6) == Some(&"vncproxy") {
                 if !guard.vms.iter().any(|v| v.vmid == vmid && v.node == node) {
-                    return (404, json!({ "data": null }));
+                    return (404, json!({ "data": null }), Vec::new());
                 }
                 return (
                     200,
@@ -886,6 +915,7 @@ fn route_api_request(req: &HttpRequest, state: &Arc<Mutex<FakeState>>) -> (u16, 
                             "upid": format!("UPID:{node}:0002:0002:0002:vncproxy:{vmid}:lab@pve:"),
                         }
                     }),
+                    guard.vncproxy_set_cookies.clone(),
                 );
             }
         }
@@ -897,7 +927,7 @@ fn route_api_request(req: &HttpRequest, state: &Arc<Mutex<FakeState>>) -> (u16, 
                     .keys()
                     .map(|storage| json!({ "storage": storage, "content": "iso,vztmpl" }))
                     .collect();
-                return (200, json!({ "data": list }));
+                return (200, json!({ "data": list }), Vec::new());
             }
             if segments.len() == 7 && segments[6] == "content" {
                 let storage = segments[5];
@@ -908,7 +938,7 @@ fn route_api_request(req: &HttpRequest, state: &Arc<Mutex<FakeState>>) -> (u16, 
                     .flatten()
                     .map(|(volid, size)| json!({ "volid": volid, "size": size, "content": "iso" }))
                     .collect();
-                return (200, json!({ "data": list }));
+                return (200, json!({ "data": list }), Vec::new());
             }
         }
 
@@ -916,11 +946,12 @@ fn route_api_request(req: &HttpRequest, state: &Arc<Mutex<FakeState>>) -> (u16, 
             return (
                 200,
                 json!({ "data": { "status": "stopped", "exitstatus": "OK" } }),
+                Vec::new(),
             );
         }
     }
 
-    (404, json!({ "data": null }))
+    (404, json!({ "data": null }), Vec::new())
 }
 
 struct VncSocketGuard(Arc<AtomicUsize>);
@@ -938,19 +969,48 @@ impl Drop for VncSocketGuard {
 async fn handle_vnc_websocket<S>(
     mut stream: S,
     req: HttpRequest,
+    negotiated_alpn: Option<Vec<u8>>,
     state: Arc<Mutex<FakeState>>,
     active_vnc_sockets: Arc<AtomicUsize>,
 ) -> std::io::Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
+    let (required_cookies, custom_error) = {
+        let mut guard = state.lock().unwrap();
+        guard.last_ws_headers = Some(req.headers.clone());
+        guard.last_ws_alpn = negotiated_alpn;
+        (
+            guard.require_ws_cookies.clone(),
+            guard.ws_error_response.clone(),
+        )
+    };
+
+    if let Some(raw_error) = custom_error {
+        stream.write_all(raw_error.as_bytes()).await?;
+        stream.flush().await?;
+        return Ok(());
+    }
+
+    let cookie_header = req.header("cookie").unwrap_or_default();
+    let proxy_cookies_ok = required_cookies
+        .iter()
+        .all(|pair| cookie_header.contains(pair));
+    if !proxy_cookies_ok {
+        let bad_gateway = "HTTP/1.0 502 Bad Gateway\r\nServer: haproxy\r\n\r\n\
+            <html><body><h1>502 Bad Gateway</h1>\nMissing sticky proxy cookie.\n</body></html>";
+        stream.write_all(bad_gateway.as_bytes()).await?;
+        stream.flush().await?;
+        return Ok(());
+    }
+
     let params: BTreeMap<String, String> = url::form_urlencoded::parse(req.query.as_bytes())
         .into_owned()
         .collect();
     let vnc_ok =
         req.has_valid_cookie() && params.get("vncticket").map(String::as_str) == Some(VNC_TICKET);
     if !vnc_ok {
-        write_http_json(&mut stream, 401, &json!({ "data": null })).await?;
+        write_http_json(&mut stream, 401, &json!({ "data": null }), &[]).await?;
         return Ok(());
     }
 
