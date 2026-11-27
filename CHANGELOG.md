@@ -4,6 +4,24 @@ All notable changes to Mannie are recorded in this file. The format follows [Kee
 
 ## Unreleased
 
+## 0.10.2 - 2026-11-27
+
+### Changed
+
+#### Browser
+
+- Add structured diagnostics for Browser session termination causes, DevTools command failures and timeouts, navigation error statuses, and WebView2 process failures.
+
+### Fixed
+
+#### Proxmox
+
+- VNC WebSocket connections now match Proxmox REST and browser handshakes behind reverse proxies by omitting `:443` from the `Host` header, advertising `http/1.1` ALPN, sending `Origin`, `User-Agent`, `Pragma`, and `Cache-Control` headers, preserving origin-scoped reverse-proxy session cookies across `vncproxy` and `vncwebsocket`, and reporting scrubbed gateway diagnostics on non-101 responses.
+
+### Security
+
+- Rotate the Ed25519 release signing key for desktop updates and worker archives. Existing installations need a one-time manual install of this release before automatic updates resume.
+
 ## 0.10.1 - 2026-11-26
 
 ### Added
